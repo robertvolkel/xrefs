@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from './types';
 
 const BASE = '/api';
 
@@ -29,12 +29,24 @@ export async function getRecommendations(mpn: string): Promise<XrefRecommendatio
 
 export async function getRecommendationsWithOverrides(
   mpn: string,
-  overrides: Record<string, string>
+  overrides: Record<string, string>,
+  applicationContext?: ApplicationContext
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides }),
+    body: JSON.stringify({ overrides, applicationContext }),
+  });
+}
+
+export async function getRecommendationsWithContext(
+  mpn: string,
+  applicationContext: ApplicationContext
+): Promise<XrefRecommendation[]> {
+  return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ applicationContext }),
   });
 }
 

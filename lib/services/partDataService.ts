@@ -5,7 +5,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -15,6 +15,8 @@ import { mockSearch, mockGetAttributes } from '../mockSearchService';
 import { mockGetRecommendations } from '../mockXrefService';
 import { getLogicTableForSubcategory } from '../logicTables';
 import { findReplacements } from './matchingEngine';
+import { getContextQuestionsForFamily } from '../contextQuestions';
+import { applyContextToLogicTable } from './contextModifier';
 
 // ============================================================
 // CONFIGURATION CHECK
@@ -80,7 +82,8 @@ export async function getAttributes(mpn: string): Promise<PartAttributes | null>
 
 export async function getRecommendations(
   mpn: string,
-  attributeOverrides?: Record<string, string>
+  attributeOverrides?: Record<string, string>,
+  applicationContext?: ApplicationContext
 ): Promise<XrefRecommendation[]> {
   // Step 1: Get source part attributes
   const sourceAttrs = await getAttributes(mpn);
@@ -115,12 +118,21 @@ export async function getRecommendations(
     return mockGetRecommendations(mpn);
   }
 
+  // Step 2b: Apply application context to modify logic table weights/rules
+  let effectiveTable = logicTable;
+  if (applicationContext) {
+    const familyConfig = getContextQuestionsForFamily(logicTable.familyId);
+    if (familyConfig) {
+      effectiveTable = applyContextToLogicTable(logicTable, applicationContext, familyConfig);
+    }
+  }
+
   // Step 3: Try to get candidates from Digikey
   if (isDigikeyConfigured()) {
     try {
       const candidates = await fetchDigikeyCandidates(sourceAttrs);
       if (candidates.length > 0) {
-        return findReplacements(logicTable, sourceAttrs, candidates);
+        return findReplacements(effectiveTable, sourceAttrs, candidates);
       }
     } catch (error) {
       console.warn('Digikey candidate search failed, falling back to mock:', error);

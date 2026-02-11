@@ -84,6 +84,7 @@ export type AppPhase =
   | 'resolving'
   | 'loading-attributes'
   | 'awaiting-attributes'
+  | 'awaiting-context'
   | 'finding-matches'
   | 'viewing'
   | 'comparing';
@@ -99,7 +100,8 @@ export interface ChatMessage {
 export type InteractiveElement =
   | { type: 'confirmation'; part: PartSummary }
   | { type: 'options'; parts: PartSummary[] }
-  | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string };
+  | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
+  | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string };
 
 export interface MissingAttributeInfo {
   attributeId: string;
@@ -113,6 +115,57 @@ export interface PartDataProvider {
   search(query: string): Promise<SearchResult>;
   getAttributes(mpn: string): Promise<PartAttributes | null>;
   getRecommendations(mpn: string): Promise<XrefRecommendation[]>;
+}
+
+// ============================================================
+// APPLICATION CONTEXT TYPES
+// ============================================================
+
+/** Effect type that a context answer can have on a matching rule */
+export type ContextEffectType =
+  | 'escalate_to_mandatory'  // flag → hard gate (weight = 10)
+  | 'escalate_to_primary'    // secondary → primary concern (weight → 8-9)
+  | 'set_threshold'          // tighten threshold
+  | 'not_applicable'         // remove from evaluation (weight = 0)
+  | 'add_review_flag';       // change to application_review
+
+/** How a single context answer affects a specific attribute's matching rule */
+export interface AttributeEffect {
+  attributeId: string;
+  effect: ContextEffectType;
+  note?: string;
+}
+
+/** A predefined option for a context question */
+export interface ContextOption {
+  value: string;
+  label: string;
+  description?: string;
+  attributeEffects: AttributeEffect[];
+}
+
+/** A family-specific context question with predefined options */
+export interface ContextQuestion {
+  questionId: string;
+  questionText: string;
+  options: ContextOption[];
+  condition?: { questionId: string; values: string[] };
+  priority: number;
+  allowFreeText?: boolean;
+  freeTextPlaceholder?: string;
+}
+
+/** Context question configuration for a component family */
+export interface FamilyContextConfig {
+  familyIds: string[];
+  contextSensitivity: 'critical' | 'high' | 'moderate' | 'low';
+  questions: ContextQuestion[];
+}
+
+/** User's context answers for a specific part evaluation */
+export interface ApplicationContext {
+  familyId: string;
+  answers: Record<string, string>;
 }
 
 // ============================================================

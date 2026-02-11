@@ -16,6 +16,7 @@ function getGridColumns(phase: AppPhase, hasAttributes: boolean, recsRevealed: b
       return '1fr 0fr 0fr';
     case 'loading-attributes':
     case 'awaiting-attributes':
+    case 'awaiting-context':
       return '7fr 3fr 0fr';
     case 'finding-matches':
       return (recsRevealed && hasAttributes) ? '4fr 3fr 3fr' : '7fr 3fr 0fr';
@@ -86,6 +87,7 @@ export default function AppShell() {
   const showAttributesPanel = [
     'loading-attributes',
     'awaiting-attributes',
+    'awaiting-context',
     'finding-matches',
     'viewing',
     'comparing',
@@ -132,6 +134,8 @@ export default function AppShell() {
           onReset={appState.handleReset}
           onAttributeResponse={appState.handleAttributeResponse}
           onSkipAttributes={appState.handleSkipAttributes}
+          onContextResponse={appState.handleContextResponse}
+          onSkipContext={appState.handleSkipContext}
         />
       </Box>
 

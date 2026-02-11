@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ApiResponse, XrefRecommendation } from '@/lib/types';
+import { ApiResponse, ApplicationContext, XrefRecommendation } from '@/lib/types';
 import { getRecommendations } from '@/lib/services/partDataService';
 
 export async function GET(
@@ -17,8 +17,11 @@ export async function POST(
   { params }: { params: Promise<{ mpn: string }> }
 ): Promise<NextResponse<ApiResponse<XrefRecommendation[]>>> {
   const { mpn } = await params;
-  const { overrides } = await request.json() as { overrides?: Record<string, string> };
+  const { overrides, applicationContext } = await request.json() as {
+    overrides?: Record<string, string>;
+    applicationContext?: ApplicationContext;
+  };
 
-  const recommendations = await getRecommendations(decodeURIComponent(mpn), overrides);
+  const recommendations = await getRecommendations(decodeURIComponent(mpn), overrides, applicationContext);
   return NextResponse.json({ success: true, data: recommendations });
 }

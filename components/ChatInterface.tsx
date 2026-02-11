@@ -15,6 +15,8 @@ interface ChatInterfaceProps {
   onReset: () => void;
   onAttributeResponse?: (responses: Record<string, string>) => void;
   onSkipAttributes?: () => void;
+  onContextResponse?: (answers: Record<string, string>) => void;
+  onSkipContext?: () => void;
 }
 
 const CONTENT_MAX_WIDTH = 720;
@@ -28,12 +30,14 @@ export default function ChatInterface({
   onReset,
   onAttributeResponse,
   onSkipAttributes,
+  onContextResponse,
+  onSkipContext,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
   const isSearching = phase === 'searching';
   const isLanding = isIdle && messages.length === 0;
-  const inputDisabled = isSearching || phase === 'loading-attributes' || phase === 'awaiting-attributes' || phase === 'finding-matches';
+  const inputDisabled = isSearching || phase === 'loading-attributes' || phase === 'awaiting-attributes' || phase === 'awaiting-context' || phase === 'finding-matches';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -137,6 +141,8 @@ export default function ChatInterface({
               onSelectPart={onConfirm}
               onAttributeResponse={onAttributeResponse}
               onSkipAttributes={onSkipAttributes}
+              onContextResponse={onContextResponse}
+              onSkipContext={onSkipContext}
             />
           ))}
           {isSearching && (

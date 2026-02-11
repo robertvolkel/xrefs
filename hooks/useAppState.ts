@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from 'react';
 import {
   AppPhase,
+  ApplicationContext,
   ChatMessage,
   PartSummary,
   PartAttributes,
@@ -14,10 +15,12 @@ import {
   getPartAttributes,
   getRecommendations,
   getRecommendationsWithOverrides,
+  getRecommendationsWithContext,
   chatWithOrchestrator,
 } from '@/lib/api';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
+import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
 
 interface AppState {
   phase: AppPhase;
@@ -25,6 +28,7 @@ interface AppState {
   searchResult: SearchResult | null;
   sourcePart: PartSummary | null;
   sourceAttributes: PartAttributes | null;
+  applicationContext: ApplicationContext | null;
   recommendations: XrefRecommendation[];
   selectedRecommendation: XrefRecommendation | null;
   comparisonAttributes: PartAttributes | null;
@@ -37,6 +41,7 @@ const initialState: AppState = {
   searchResult: null,
   sourcePart: null,
   sourceAttributes: null,
+  applicationContext: null,
   recommendations: [],
   selectedRecommendation: null,
   comparisonAttributes: null,
@@ -47,6 +52,8 @@ export function useAppState() {
   const [state, setState] = useState<AppState>(initialState);
   // Track conversation history for the LLM orchestrator
   const conversationRef = useRef<OrchestratorMessage[]>([]);
+  // Track attribute overrides so handleContextResponse can include them
+  const pendingOverridesRef = useRef<Record<string, string>>({});
 
   const addMessage = useCallback(
     (
@@ -151,6 +158,26 @@ export function useAppState() {
             sourceAttributes: sourceAttrs,
           }));
           return; // Wait for handleAttributeResponse
+        }
+
+        // Step 2b: Check for application context questions
+        const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+        if (logicTableForContext) {
+          const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
+          if (contextConfig && contextConfig.questions.length > 0) {
+            addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              type: 'context-questions',
+              questions: contextConfig.questions,
+              familyId: logicTableForContext.familyId,
+            });
+            pendingOverridesRef.current = {};
+            setState((prev) => ({
+              ...prev,
+              phase: 'awaiting-context',
+              sourceAttributes: sourceAttrs,
+            }));
+            return; // Wait for handleContextResponse
+          }
         }
 
         if (missingAttrs.length > 6) {
@@ -281,6 +308,26 @@ export function useAppState() {
             sourceAttributes: attributes,
           }));
           return; // Wait for handleAttributeResponse
+        }
+
+        // Check for application context questions
+        const logicTableForContext = getLogicTableForSubcategory(attributes.part.subcategory);
+        if (logicTableForContext) {
+          const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
+          if (contextConfig && contextConfig.questions.length > 0) {
+            addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              type: 'context-questions',
+              questions: contextConfig.questions,
+              familyId: logicTableForContext.familyId,
+            });
+            pendingOverridesRef.current = {};
+            setState((prev) => ({
+              ...prev,
+              phase: 'awaiting-context',
+              sourceAttributes: attributes,
+            }));
+            return; // Wait for handleContextResponse
+          }
         }
 
         if (missingAttrs.length > 6) {
@@ -433,6 +480,25 @@ export function useAppState() {
       const mpn = state.sourcePart?.mpn;
       if (!mpn) return;
 
+      // Check for application context questions before finding matches
+      const sourceAttrs = state.sourceAttributes;
+      if (sourceAttrs) {
+        const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+        if (logicTableForContext) {
+          const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
+          if (contextConfig && contextConfig.questions.length > 0) {
+            addMessage('assistant', 'One more thing — let me understand your application to find the best match.', {
+              type: 'context-questions',
+              questions: contextConfig.questions,
+              familyId: logicTableForContext.familyId,
+            });
+            pendingOverridesRef.current = overrides;
+            setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
+            return; // Wait for handleContextResponse
+          }
+        }
+      }
+
       addMessage('assistant', `Finding cross-references for **${mpn}**...`);
       setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
 
@@ -452,12 +518,86 @@ export function useAppState() {
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, state.sourcePart]
+    [addMessage, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipAttributes = useCallback(async () => {
     await handleAttributeResponse({});
   }, [handleAttributeResponse]);
+
+  // ============================================================
+  // APPLICATION CONTEXT RESPONSE HANDLERS
+  // ============================================================
+
+  const handleContextResponse = useCallback(
+    async (answers: Record<string, string>) => {
+      // Filter out empty answers
+      const filteredAnswers = Object.fromEntries(
+        Object.entries(answers).filter(([, v]) => v.trim() !== '')
+      );
+      const filledCount = Object.keys(filteredAnswers).length;
+
+      if (filledCount > 0) {
+        const labels = Object.values(filteredAnswers);
+        addMessage('user', `Application context: ${labels.join(', ')}`);
+      } else {
+        addMessage('user', 'Proceeding with default matching.');
+      }
+
+      const mpn = state.sourcePart?.mpn;
+      if (!mpn) return;
+
+      // Build ApplicationContext if user provided answers
+      const familyId = state.sourceAttributes?.part.subcategory
+        ? getLogicTableForSubcategory(state.sourceAttributes.part.subcategory)?.familyId
+        : undefined;
+
+      const context: ApplicationContext | undefined = filledCount > 0 && familyId
+        ? { familyId, answers: filteredAnswers }
+        : undefined;
+
+      setState((prev) => ({
+        ...prev,
+        phase: 'finding-matches' as AppPhase,
+        applicationContext: context ?? null,
+      }));
+      addMessage('assistant', `Finding cross-references for **${mpn}**...`);
+
+      try {
+        const overrides = pendingOverridesRef.current;
+        const hasOverrides = Object.keys(overrides).length > 0;
+
+        let recs: XrefRecommendation[];
+        if (hasOverrides || context) {
+          recs = await getRecommendationsWithOverrides(
+            mpn,
+            hasOverrides ? overrides : {},
+            context
+          );
+        } else {
+          recs = await getRecommendations(mpn);
+        }
+
+        addMessage(
+          'assistant',
+          recs.length > 0
+            ? `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}. Review and compare in the panels.`
+            : `No cross-references found for ${mpn}.`
+        );
+        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
+      } catch {
+        addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
+        setState((prev) => ({ ...prev, phase: 'idle' }));
+      } finally {
+        pendingOverridesRef.current = {};
+      }
+    },
+    [addMessage, state.sourcePart, state.sourceAttributes]
+  );
+
+  const handleSkipContext = useCallback(async () => {
+    await handleContextResponse({});
+  }, [handleContextResponse]);
 
   return {
     ...state,
@@ -469,5 +609,7 @@ export function useAppState() {
     handleReset,
     handleAttributeResponse,
     handleSkipAttributes,
+    handleContextResponse,
+    handleSkipContext,
   };
 }

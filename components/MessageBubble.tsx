@@ -6,6 +6,7 @@ import { ChatMessage, PartSummary } from '@/lib/types';
 import PartConfirmation from './PartConfirmation';
 import PartOptionsSelector from './PartOptionsSelector';
 import MissingAttributesForm from './MissingAttributesForm';
+import ApplicationContextForm from './ApplicationContextForm';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -14,6 +15,8 @@ interface MessageBubbleProps {
   onSelectPart?: (part: PartSummary) => void;
   onAttributeResponse?: (responses: Record<string, string>) => void;
   onSkipAttributes?: () => void;
+  onContextResponse?: (answers: Record<string, string>) => void;
+  onSkipContext?: () => void;
 }
 
 function renderMarkdownBold(text: string) {
@@ -34,6 +37,8 @@ export default function MessageBubble({
   onSelectPart,
   onAttributeResponse,
   onSkipAttributes,
+  onContextResponse,
+  onSkipContext,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
@@ -99,6 +104,14 @@ export default function MessageBubble({
             missingAttributes={message.interactiveElement.missingAttributes}
             onSubmit={onAttributeResponse}
             onSkip={onSkipAttributes}
+          />
+        )}
+
+        {message.interactiveElement?.type === 'context-questions' && onContextResponse && onSkipContext && (
+          <ApplicationContextForm
+            questions={message.interactiveElement.questions}
+            onSubmit={onContextResponse}
+            onSkip={onSkipContext}
           />
         )}
       </Box>
