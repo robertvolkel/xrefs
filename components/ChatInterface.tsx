@@ -54,7 +54,7 @@ export default function ChatInterface({
       >
         <Box
           component="img"
-          src="/eemonkey-logo.png"
+          src="/xrefslogo.png"
           alt="EEMonkey"
           sx={{ height: 77, mb: 1, opacity: 0.55 }}
         />
@@ -99,7 +99,7 @@ export default function ChatInterface({
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             <Box
               component="img"
-              src="/eemonkey-logo.png"
+              src="/xrefslogo.png"
               alt="EEMonkey"
               onClick={onReset}
               sx={{ height: 38, opacity: 0.55, cursor: 'pointer', '&:hover': { opacity: 0.8 } }}

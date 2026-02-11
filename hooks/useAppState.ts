@@ -136,9 +136,10 @@ export function useAppState() {
         // Step 2: Check for missing attributes against the logic table
         const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
         const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
+        const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
-        if (missingAttrs.length > 0 && missingAttrs.length <= 6) {
-          // Pause and ask user for missing attribute values
+        if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
+          // Pause and ask user for missing critical attribute values
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
@@ -266,8 +267,9 @@ export function useAppState() {
         // Check for missing attributes against the logic table
         const logicTable = getLogicTableForSubcategory(attributes.part.subcategory);
         const missingAttrs = logicTable ? detectMissingAttributes(attributes, logicTable) : [];
+        const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
-        if (missingAttrs.length > 0 && missingAttrs.length <= 6) {
+        if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,

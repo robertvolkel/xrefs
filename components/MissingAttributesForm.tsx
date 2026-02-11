@@ -1,8 +1,18 @@
 'use client';
-import { useState } from 'react';
-import { Box, Button, Stack, TextField, Typography } from '@mui/material';
+import { useMemo, useState } from 'react';
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Box,
+  Button,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { MissingAttributeInfo } from '@/lib/types';
 
 interface MissingAttributesFormProps {
@@ -27,6 +37,45 @@ function getPlaceholder(attr: MissingAttributeInfo): string {
   }
 }
 
+function AttributeField({
+  attr,
+  value,
+  onChange,
+  isCritical,
+}: {
+  attr: MissingAttributeInfo;
+  value: string;
+  onChange: (value: string) => void;
+  isCritical: boolean;
+}) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          width: 140,
+          flexShrink: 0,
+          fontSize: '0.8rem',
+          fontWeight: isCritical ? 600 : 400,
+          color: isCritical ? 'text.primary' : 'text.secondary',
+        }}
+      >
+        {attr.attributeName}
+      </Typography>
+      <TextField
+        size="small"
+        placeholder={getPlaceholder(attr)}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        sx={{
+          flex: 1,
+          '& .MuiInputBase-input': { fontSize: '0.82rem', py: 0.75 },
+        }}
+      />
+    </Box>
+  );
+}
+
 export default function MissingAttributesForm({
   missingAttributes,
   onSubmit,
@@ -34,12 +83,13 @@ export default function MissingAttributesForm({
 }: MissingAttributesFormProps) {
   const [values, setValues] = useState<Record<string, string>>({});
 
+  const { critical, optional } = useMemo(() => ({
+    critical: missingAttributes.filter(a => a.weight >= 7),
+    optional: missingAttributes.filter(a => a.weight < 7),
+  }), [missingAttributes]);
+
   const handleChange = (attrId: string, value: string) => {
     setValues(prev => ({ ...prev, [attrId]: value }));
-  };
-
-  const handleSubmit = () => {
-    onSubmit(values);
   };
 
   return (
@@ -47,40 +97,61 @@ export default function MissingAttributesForm({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
         Fill in what you know to improve replacement accuracy:
       </Typography>
+
+      {/* Critical attributes — always visible */}
       <Stack spacing={1.5}>
-        {missingAttributes.map((attr) => (
-          <Box key={attr.attributeId} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Typography
-              variant="body2"
-              sx={{
-                width: 140,
-                flexShrink: 0,
-                fontSize: '0.8rem',
-                fontWeight: attr.weight >= 7 ? 600 : 400,
-                color: attr.weight >= 7 ? 'text.primary' : 'text.secondary',
-              }}
-            >
-              {attr.attributeName}
-            </Typography>
-            <TextField
-              size="small"
-              placeholder={getPlaceholder(attr)}
-              value={values[attr.attributeId] ?? ''}
-              onChange={(e) => handleChange(attr.attributeId, e.target.value)}
-              sx={{
-                flex: 1,
-                '& .MuiInputBase-input': { fontSize: '0.82rem', py: 0.75 },
-              }}
-            />
-          </Box>
+        {critical.map((attr) => (
+          <AttributeField
+            key={attr.attributeId}
+            attr={attr}
+            value={values[attr.attributeId] ?? ''}
+            onChange={(v) => handleChange(attr.attributeId, v)}
+            isCritical
+          />
         ))}
       </Stack>
+
+      {/* Optional attributes — collapsible */}
+      {optional.length > 0 && (
+        <Accordion
+          disableGutters
+          elevation={0}
+          sx={{
+            mt: 1.5,
+            '&::before': { display: 'none' },
+            bgcolor: 'transparent',
+          }}
+        >
+          <AccordionSummary
+            expandIcon={<ExpandMoreIcon sx={{ fontSize: '1rem' }} />}
+            sx={{ px: 0, minHeight: 'auto', '& .MuiAccordionSummary-content': { my: 0.5 } }}
+          >
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
+              Additional details ({optional.length} parameter{optional.length !== 1 ? 's' : ''})
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ px: 0, pt: 0.5 }}>
+            <Stack spacing={1.5}>
+              {optional.map((attr) => (
+                <AttributeField
+                  key={attr.attributeId}
+                  attr={attr}
+                  value={values[attr.attributeId] ?? ''}
+                  onChange={(v) => handleChange(attr.attributeId, v)}
+                  isCritical={false}
+                />
+              ))}
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
+      )}
+
       <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
         <Button
           variant="contained"
           size="small"
           startIcon={<CheckIcon />}
-          onClick={handleSubmit}
+          onClick={() => onSubmit(values)}
         >
           Continue
         </Button>

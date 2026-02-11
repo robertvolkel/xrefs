@@ -98,7 +98,7 @@ export default function LogicShell() {
           <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
             <Box
               component="img"
-              src="/eemonkey-logo.png"
+              src="/xrefslogo.png"
               alt="EEMonkey"
               sx={{ height: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
             />
