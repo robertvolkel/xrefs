@@ -1,0 +1,136 @@
+import { LogicTable } from '../types';
+
+/**
+ * MLCC (Multilayer Ceramic Capacitor) Logic Table
+ * DigiKey Family ID: 12
+ *
+ * Derived from: docs/mlcc_capacitors_logic.docx
+ * 14 attributes with specific matching rules for cross-reference validation.
+ */
+export const mlccLogicTable: LogicTable = {
+  familyId: '12',
+  familyName: 'Ceramic Capacitors – MLCC (Surface Mount)',
+  category: 'Passives',
+  description: 'Hard logic filters for MLCC replacement part validation',
+  rules: [
+    {
+      attributeId: 'capacitance',
+      attributeName: 'Capacitance',
+      logicType: 'identity',
+      weight: 10,
+      engineeringReason: 'A 100nF capacitor must be replaced by a 100nF capacitor. Ensure values are normalized before comparison.',
+      sortOrder: 1,
+    },
+    {
+      attributeId: 'package_case',
+      attributeName: 'Package / Case',
+      logicType: 'identity',
+      weight: 10,
+      engineeringReason: 'The replacement must match the original footprint exactly. MLCC pad geometries differ across sizes and are not interchangeable without a board redesign.',
+      sortOrder: 2,
+    },
+    {
+      attributeId: 'voltage_rated',
+      attributeName: 'Voltage Rating',
+      logicType: 'threshold',
+      thresholdDirection: 'gte',
+      weight: 9,
+      engineeringReason: 'The replacement must handle at least the same voltage. Caution: higher voltage-rated MLCCs may exhibit different DC bias derating.',
+      sortOrder: 3,
+    },
+    {
+      attributeId: 'dielectric',
+      attributeName: 'Dielectric / Temperature Characteristic',
+      logicType: 'identity_upgrade',
+      upgradeHierarchy: ['C0G', 'NP0', 'X7R', 'X7S', 'X6S', 'X5R', 'Y5V', 'Z5U'],
+      weight: 9,
+      engineeringReason: 'Dielectrics have a strict hierarchy. Class I (C0G/NP0) is most stable. You can upgrade (X5R→X7R) but never downgrade (C0G→X7R).',
+      sortOrder: 4,
+    },
+    {
+      attributeId: 'tolerance',
+      attributeName: 'Tolerance',
+      logicType: 'threshold',
+      thresholdDirection: 'lte',
+      weight: 7,
+      engineeringReason: 'A tighter tolerance is always acceptable. ±5% can replace ±10%, but not vice versa. Common: ±20%(M), ±10%(K), ±5%(J), ±2%(G), ±1%(F).',
+      sortOrder: 5,
+    },
+    {
+      attributeId: 'operating_temp',
+      attributeName: 'Operating Temp Range',
+      logicType: 'threshold',
+      thresholdDirection: 'range_superset',
+      weight: 8,
+      engineeringReason: 'The replacement must cover at least the full operating range of the original.',
+      sortOrder: 6,
+    },
+    {
+      attributeId: 'height',
+      attributeName: 'Height (Seated Max)',
+      logicType: 'fit',
+      weight: 6,
+      engineeringReason: 'Critical for tight enclosures, stacked PCBs, and low-profile designs. A taller part may not fit.',
+      sortOrder: 7,
+    },
+    {
+      attributeId: 'esr',
+      attributeName: 'ESR',
+      logicType: 'threshold',
+      thresholdDirection: 'lte',
+      weight: 5,
+      engineeringReason: 'Lower ESR is generally better for decoupling and filtering. Exception: some resonant/EMI filter designs require specific ESR.',
+      sortOrder: 8,
+    },
+    {
+      attributeId: 'esl',
+      attributeName: 'ESL',
+      logicType: 'threshold',
+      thresholdDirection: 'lte',
+      weight: 5,
+      engineeringReason: 'Lower ESL improves high-frequency decoupling. Reverse-geometry packages have significantly lower ESL.',
+      sortOrder: 9,
+    },
+    {
+      attributeId: 'flexible_termination',
+      attributeName: 'Flexible Termination',
+      logicType: 'identity_flag',
+      weight: 8,
+      engineeringReason: 'If original requires flex termination, replacement must also have it. Required on flex-rigid PCBs and large packages prone to flex cracking.',
+      sortOrder: 10,
+    },
+    {
+      attributeId: 'msl',
+      attributeName: 'Moisture Sensitivity Level',
+      logicType: 'threshold',
+      thresholdDirection: 'lte',
+      weight: 4,
+      engineeringReason: 'MSL 1 (unlimited floor life) is best. Lower MSL number is less restrictive and always acceptable.',
+      sortOrder: 11,
+    },
+    {
+      attributeId: 'aec_q200',
+      attributeName: 'AEC-Q200 Qualification',
+      logicType: 'identity_flag',
+      weight: 8,
+      engineeringReason: 'Required for automotive/high-reliability. A non-qualified part cannot replace a qualified one.',
+      sortOrder: 12,
+    },
+    {
+      attributeId: 'dc_bias_derating',
+      attributeName: 'DC Bias Derating',
+      logicType: 'application_review',
+      weight: 7,
+      engineeringReason: 'Class II MLCCs lose significant capacitance under DC bias. Different manufacturers can derate differently. Consult DC bias curves.',
+      sortOrder: 13,
+    },
+    {
+      attributeId: 'packaging',
+      attributeName: 'Packaging',
+      logicType: 'operational',
+      weight: 2,
+      engineeringReason: 'Tape & Reel required for automated pick-and-place. Ensure reel width and pitch match feeder specs.',
+      sortOrder: 14,
+    },
+  ],
+};

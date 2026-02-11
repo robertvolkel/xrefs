@@ -1,0 +1,41 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { OrchestratorMessage } from '@/lib/types';
+import { chat } from '@/lib/services/llmOrchestrator';
+
+interface ChatRequestBody {
+  messages: OrchestratorMessage[];
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  try {
+    const body: ChatRequestBody = await request.json();
+
+    if (!body.messages || body.messages.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Messages are required' },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { success: false, error: 'ANTHROPIC_API_KEY not configured' },
+        { status: 500 }
+      );
+    }
+
+    const response = await chat(body.messages, apiKey);
+
+    return NextResponse.json({
+      success: true,
+      data: response,
+    });
+  } catch (error) {
+    console.error('Chat API error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
