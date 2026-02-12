@@ -211,21 +211,21 @@ export default function ComparisonView({
                   <TableCell
                     sx={{ borderColor: 'divider', py: ROW_PY }}
                   >
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Stack direction="row" alignItems="flex-start" spacing={0.75}>
                       <Box
                         sx={{
-                          width: 8,
-                          height: 8,
+                          width: 12,
+                          height: 12,
                           borderRadius: '50%',
                           bgcolor: dot.color,
                           flexShrink: 0,
+                          mt: '3px',
                         }}
                       />
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{ fontSize: '0.68rem' }}
-                        noWrap
+                        sx={{ fontSize: ROW_FONT_SIZE }}
                       >
                         {dot.label}
                       </Typography>

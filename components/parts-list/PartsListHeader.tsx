@@ -31,7 +31,7 @@ export default function PartsListHeader({ onReset, showReset, listName }: PartsL
         <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
           <Box
             component="img"
-            src="/xrefslogo.png"
+            src="/eemonkey-logo.png"
             alt="EEMonkey"
             sx={{ height: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
           />

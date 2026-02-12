@@ -74,7 +74,7 @@ export default function MessageBubble({
           color="text.secondary"
           sx={{ fontWeight: 600, mb: 0.5, display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}
         >
-          {isUser ? 'You' : 'XRefs'}
+          {isUser ? 'You' : 'Agent'}
         </Typography>
         <Typography
           variant="body2"

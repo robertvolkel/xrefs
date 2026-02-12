@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 
-const SYSTEM_PROMPT = `You are XRefs, an expert electronic component cross-reference assistant. You help engineers find replacement parts — specifically Chinese-manufactured alternatives to western components.
+const SYSTEM_PROMPT = `You are Agent, an expert electronic component cross-reference assistant. You help engineers find replacement parts — specifically Chinese-manufactured alternatives to western components.
 
 Your role:
 - Help users identify specific parts from their queries

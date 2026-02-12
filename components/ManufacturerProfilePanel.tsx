@@ -144,33 +144,6 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           </Box>
         )}
 
-        {/* Authorized Distributors */}
-        {profile.authorizedDistributors.length > 0 && (
-          <Box sx={{ mb: SECTION_PY }}>
-            <SectionHeader>Authorized Distributors</SectionHeader>
-            <Stack spacing={0.5}>
-              {profile.authorizedDistributors.map((dist) => (
-                <Typography
-                  key={dist.name}
-                  component="a"
-                  href={dist.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  sx={{
-                    fontSize: ROW_FONT_SIZE,
-                    color: 'primary.main',
-                    textDecoration: 'none',
-                    '&:hover': { textDecoration: 'underline' },
-                    display: 'block',
-                  }}
-                >
-                  {dist.name}
-                </Typography>
-              ))}
-            </Stack>
-          </Box>
-        )}
-
         <Divider sx={{ mb: SECTION_PY }} />
 
         {/* Certifications */}
@@ -211,6 +184,33 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                     {getLocationLabel(loc.type)}
                   </Typography>
                 </Stack>
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        {/* Authorized Distributors */}
+        {profile.authorizedDistributors.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Authorized Distributors</SectionHeader>
+            <Stack spacing={0.5}>
+              {profile.authorizedDistributors.map((dist) => (
+                <Typography
+                  key={dist.name}
+                  component="a"
+                  href={dist.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{
+                    fontSize: ROW_FONT_SIZE,
+                    color: 'primary.main',
+                    textDecoration: 'none',
+                    '&:hover': { textDecoration: 'underline' },
+                    display: 'block',
+                  }}
+                >
+                  {dist.name}
+                </Typography>
               ))}
             </Stack>
           </Box>
