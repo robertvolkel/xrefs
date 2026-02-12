@@ -1,3 +1,13 @@
+:root {
+  --app-height: 100dvh;
+}
+
+@supports not (height: 100dvh) {
+  :root {
+    --app-height: 100vh;
+  }
+}
+
 *,
 *::before,
 *::after {

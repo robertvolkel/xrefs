@@ -13,11 +13,7 @@ import {
   Stack,
 } from '@mui/material';
 import { PartAttributes } from '@/lib/types';
-
-// Fixed header height so it aligns with ComparisonView header
-const HEADER_HEIGHT = 100;
-const ROW_FONT_SIZE = '0.78rem';
-const ROW_PY = '10px';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -27,12 +23,12 @@ interface AttributesPanelProps {
 
 export default function AttributesPanel({ attributes, loading, title }: AttributesPanelProps) {
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — fixed height to align with right panel */}
       <Box
         sx={{
-          height: HEADER_HEIGHT,
-          minHeight: HEADER_HEIGHT,
+          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
           p: 2,
           borderBottom: 1,
           borderColor: 'divider',
@@ -70,10 +66,10 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
         <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 Parameter
               </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 Value
               </TableCell>
             </TableRow>
@@ -82,10 +78,10 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
             {loading
               ? Array.from({ length: 12 }).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell sx={{ borderColor: 'divider', py: ROW_PY }}>
+                    <TableCell sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                       <Skeleton width={120} height={16} />
                     </TableCell>
-                    <TableCell sx={{ borderColor: 'divider', py: ROW_PY }}>
+                    <TableCell sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                       <Skeleton width={80} height={16} />
                     </TableCell>
                   </TableRow>
@@ -97,10 +93,10 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
                       <TableCell
                         sx={{
                           color: 'text.secondary',
-                          fontSize: ROW_FONT_SIZE,
+                          fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
                           borderColor: 'divider',
                           width: '50%',
-                          py: ROW_PY,
+                          py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                         }}
                       >
                         {param.parameterName}
@@ -108,9 +104,9 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
                       <TableCell
                         sx={{
                           fontFamily: 'monospace',
-                          fontSize: ROW_FONT_SIZE,
+                          fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
                           borderColor: 'divider',
-                          py: ROW_PY,
+                          py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                         }}
                       >
                         {param.value}

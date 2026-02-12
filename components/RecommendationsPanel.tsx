@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
@@ -24,11 +25,11 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   }, [obsoleteCount]);
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box
         sx={{
-          height: 100,
-          minHeight: 100,
+          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
           p: 2,
           borderBottom: 1,
           borderColor: 'divider',

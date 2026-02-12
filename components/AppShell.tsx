@@ -4,8 +4,10 @@ import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { useAppState } from '@/hooks/useAppState';
 import { AppPhase, ManufacturerProfile } from '@/lib/types';
 import { getManufacturerProfile } from '@/lib/mockManufacturerData';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
+import MobileAppLayout from './MobileAppLayout';
 import AttributesPanel from './AttributesPanel';
 import RecommendationsPanel from './RecommendationsPanel';
 import ComparisonView from './ComparisonView';
@@ -46,7 +48,7 @@ function getGridColumns(
 
 function RecommendationsSkeleton() {
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box
         sx={{
           height: 100,
@@ -140,12 +142,43 @@ export default function AppShell() {
     if (!showRightPanel) setChatManuallyCollapsed(false);
   }, [showRightPanel]);
 
+  const isMobile = useIsMobile();
+
+  if (isMobile) {
+    return (
+      <MobileAppLayout
+        phase={appState.phase}
+        messages={appState.messages}
+        sourceAttributes={appState.sourceAttributes}
+        comparisonAttributes={appState.comparisonAttributes}
+        recommendations={appState.recommendations}
+        selectedRecommendation={appState.selectedRecommendation}
+        mfrProfile={mfrProfile}
+        showAttributesPanel={showAttributesPanel}
+        showRightPanel={showRightPanel}
+        isLoadingRecs={isLoadingRecs}
+        onSearch={appState.handleSearch}
+        onConfirm={appState.handleConfirmPart}
+        onReject={appState.handleRejectPart}
+        onReset={handleReset}
+        onAttributeResponse={appState.handleAttributeResponse}
+        onSkipAttributes={appState.handleSkipAttributes}
+        onContextResponse={appState.handleContextResponse}
+        onSkipContext={appState.handleSkipContext}
+        onSelectRecommendation={appState.handleSelectRecommendation}
+        onBackToRecommendations={appState.handleBackToRecommendations}
+        onManufacturerClick={handleManufacturerClick}
+        onCloseMfrProfile={handleExpandChat}
+      />
+    );
+  }
+
   return (
     <Box
       sx={{
         display: 'grid',
         gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed, mfrOpen),
-        height: '100vh',
+        height: 'var(--app-height)',
         width: '100vw',
         overflow: 'hidden',
         transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -268,7 +301,7 @@ export default function AppShell() {
         ) : showRightPanel ? (
           <Box
             sx={{
-              height: '100vh',
+              height: '100%',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

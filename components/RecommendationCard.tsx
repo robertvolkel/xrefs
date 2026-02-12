@@ -23,14 +23,14 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
       }}
     >
       <CardActionArea onClick={onClick}>
-        <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+        <CardContent sx={{ py: 1.5, px: { xs: 1.5, sm: 2 }, '&:last-child': { pb: 1.5 } }}>
           <Stack direction="row" alignItems="center" spacing={2}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Stack direction="row" alignItems="center" spacing={0.75}>
                 <Typography
                   variant="subtitle2"
                   color="primary"
-                  sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  sx={{ fontFamily: 'monospace', fontSize: { xs: '0.9rem', sm: '0.85rem' } }}
                   noWrap
                 >
                   {part.mpn}

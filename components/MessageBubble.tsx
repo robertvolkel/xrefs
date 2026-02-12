@@ -43,12 +43,12 @@ export default function MessageBubble({
   const isUser = message.role === 'user';
 
   return (
-    <Box sx={{ display: 'flex', gap: 1.5, mb: 2.5, alignItems: 'flex-start' }}>
+    <Box sx={{ display: 'flex', gap: { xs: 1, sm: 1.5 }, mb: 2.5, alignItems: 'flex-start' }}>
       {/* Avatar */}
       <Box
         sx={{
-          width: 28,
-          height: 28,
+          width: { xs: 32, sm: 28 },
+          height: { xs: 32, sm: 28 },
           borderRadius: '50%',
           bgcolor: isUser ? 'primary.main' : 'background.paper',
           border: isUser ? 'none' : 1,
@@ -61,9 +61,9 @@ export default function MessageBubble({
         }}
       >
         {isUser ? (
-          <PersonIcon sx={{ fontSize: 16, color: 'primary.contrastText' }} />
+          <PersonIcon sx={{ fontSize: { xs: 18, sm: 16 }, color: 'primary.contrastText' }} />
         ) : (
-          <SmartToyIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+          <SmartToyIcon sx={{ fontSize: { xs: 18, sm: 16 }, color: 'text.secondary' }} />
         )}
       </Box>
 

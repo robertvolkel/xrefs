@@ -18,6 +18,7 @@ export default function PartConfirmation({ part, onConfirm, onReject }: PartConf
         size="small"
         startIcon={<CheckIcon />}
         onClick={() => onConfirm(part)}
+        sx={{ minHeight: { xs: 44, sm: 'auto' } }}
       >
         Yes, that&apos;s it
       </Button>
@@ -27,6 +28,7 @@ export default function PartConfirmation({ part, onConfirm, onReject }: PartConf
         startIcon={<CloseIcon />}
         onClick={onReject}
         color="inherit"
+        sx={{ minHeight: { xs: 44, sm: 'auto' } }}
       >
         No
       </Button>

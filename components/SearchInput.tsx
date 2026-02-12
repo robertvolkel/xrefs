@@ -32,7 +32,7 @@ export default function SearchInput({ onSubmit, disabled, landing }: SearchInput
     <Box
       sx={{
         width: '100%',
-        maxWidth: landing ? 600 : '100%',
+        maxWidth: landing ? { xs: '100%', sm: 600 } : '100%',
       }}
     >
       <Paper
@@ -63,7 +63,7 @@ export default function SearchInput({ onSubmit, disabled, landing }: SearchInput
           disabled={disabled}
           autoFocus
           sx={{
-            fontSize: '0.95rem',
+            fontSize: { xs: '1rem', sm: '0.95rem' },
             py: 1,
             '& input::placeholder': {
               opacity: 0.5,
@@ -83,8 +83,8 @@ export default function SearchInput({ onSubmit, disabled, landing }: SearchInput
               bgcolor: value.trim() ? 'primary.dark' : 'action.hover',
             },
             transition: 'all 0.2s ease',
-            width: 36,
-            height: 36,
+            width: { xs: 44, sm: 36 },
+            height: { xs: 44, sm: 36 },
           }}
         >
           <SendIcon sx={{ fontSize: 18 }} />

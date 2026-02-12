@@ -95,7 +95,7 @@ function QuestionField({
                 }}
                 sx={{
                   ml: 0,
-                  minWidth: 200,
+                  minWidth: { xs: 140, sm: 200 },
                   '& .MuiInputBase-input': { fontSize: '0.82rem', py: 0.75 },
                 }}
               />
@@ -141,7 +141,7 @@ export default function ApplicationContextForm({
   };
 
   return (
-    <Box sx={{ mt: 1.5, maxWidth: 520 }}>
+    <Box sx={{ mt: 1.5, maxWidth: { xs: '100%', sm: 520 } }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
         To find the best replacement, tell me about your application:
       </Typography>

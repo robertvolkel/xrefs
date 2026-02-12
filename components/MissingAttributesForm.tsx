@@ -53,9 +53,9 @@ function AttributeField({
       <Typography
         variant="body2"
         sx={{
-          width: 140,
+          width: { xs: 100, sm: 140 },
           flexShrink: 0,
-          fontSize: '0.8rem',
+          fontSize: { xs: '0.78rem', sm: '0.8rem' },
           fontWeight: isCritical ? 600 : 400,
           color: isCritical ? 'text.primary' : 'text.secondary',
         }}
@@ -93,7 +93,7 @@ export default function MissingAttributesForm({
   };
 
   return (
-    <Box sx={{ mt: 1.5, maxWidth: 480 }}>
+    <Box sx={{ mt: 1.5, maxWidth: { xs: '100%', sm: 480 } }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
         Fill in what you know to improve replacement accuracy:
       </Typography>

@@ -10,7 +10,7 @@ export default function CollapsedChatNav({ onExpand }: CollapsedChatNavProps) {
   return (
     <Box
       sx={{
-        height: '100vh',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',

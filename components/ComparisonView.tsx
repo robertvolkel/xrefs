@@ -1,4 +1,5 @@
 'use client';
+import React from 'react';
 import {
   Box,
   Typography,
@@ -14,10 +15,7 @@ import {
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
-// Must match AttributesPanel for row alignment
-const HEADER_HEIGHT = 100;
-const ROW_FONT_SIZE = '0.78rem';
-const ROW_PY = '10px';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -35,21 +33,20 @@ const DOT_GREY = '#90A4AE';
 function getDotInfo(
   ruleResult: RuleResult | undefined,
   matchStatus: MatchStatus,
-  note: string | undefined
 ): { color: string; label: string } {
   // Prefer ruleResult when available (from matching engine)
   if (ruleResult) {
     switch (ruleResult) {
       case 'pass':
-        return { color: DOT_GREEN, label: note ? `Pass (${note})` : 'Pass' };
+        return { color: DOT_GREEN, label: 'Pass' };
       case 'upgrade':
-        return { color: DOT_GREEN, label: note ? `Pass (${note})` : 'Pass' };
+        return { color: DOT_GREEN, label: 'Pass' };
       case 'review':
-        return { color: DOT_YELLOW, label: note ? `Review (${note})` : 'Review' };
+        return { color: DOT_YELLOW, label: 'Review' };
       case 'fail':
-        return { color: DOT_RED, label: note ? `Fail (${note})` : 'Fail' };
+        return { color: DOT_RED, label: 'Fail' };
       case 'info':
-        return { color: DOT_GREY, label: note || 'Info' };
+        return { color: DOT_GREY, label: 'Info' };
     }
   }
 
@@ -118,12 +115,12 @@ export default function ComparisonView({
     .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — same fixed height as AttributesPanel */}
       <Box
         sx={{
-          height: HEADER_HEIGHT,
-          minHeight: HEADER_HEIGHT,
+          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
           p: 2,
           borderBottom: 1,
           borderColor: 'divider',
@@ -167,72 +164,101 @@ export default function ComparisonView({
       </Box>
 
       {/* Comparison table — rows aligned with left panel */}
-      <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
-        <Table size="small" stickyHeader>
+      <TableContainer sx={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+        <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 Parameter
               </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 Value
               </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 Result
               </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {rows.map((row) => {
-              const dot = getDotInfo(row.ruleResult, row.matchStatus, row.note);
+              const dot = getDotInfo(row.ruleResult, row.matchStatus);
               return (
-                <TableRow key={row.parameterId} hover>
-                  <TableCell
-                    sx={{
-                      color: 'text.secondary',
-                      fontSize: ROW_FONT_SIZE,
-                      borderColor: 'divider',
-                      width: '35%',
-                      py: ROW_PY,
-                    }}
-                  >
-                    {row.parameterName}
-                  </TableCell>
-                  <TableCell
-                    sx={{
-                      fontFamily: 'monospace',
-                      fontSize: ROW_FONT_SIZE,
-                      borderColor: 'divider',
-                      color: getValueColor(row.matchStatus),
-                      py: ROW_PY,
-                      width: '30%',
-                    }}
-                  >
-                    {row.replacementValue}
-                  </TableCell>
-                  <TableCell
-                    sx={{ borderColor: 'divider', py: ROW_PY }}
-                  >
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
-                      <Box
+                <React.Fragment key={row.parameterId}>
+                  <TableRow hover>
+                    <TableCell
+                      sx={{
+                        color: 'text.secondary',
+                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                        borderColor: row.note ? 'transparent' : 'divider',
+                        width: '35%',
+                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                      }}
+                    >
+                      {row.parameterName}
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        fontFamily: 'monospace',
+                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                        borderColor: row.note ? 'transparent' : 'divider',
+                        color: getValueColor(row.matchStatus),
+                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                        width: '30%',
+                      }}
+                    >
+                      {row.replacementValue}
+                    </TableCell>
+                    <TableCell
+                      sx={{ borderColor: row.note ? 'transparent' : 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={0.75}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            bgcolor: dot.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }}
+                        >
+                          {dot.label}
+                        </Typography>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                  {row.note && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={3}
                         sx={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: '50%',
-                          bgcolor: dot.color,
-                          flexShrink: 0,
+                          borderColor: 'divider',
+                          pt: 0,
+                          pb: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                          borderTop: 1,
+                          borderTopColor: 'divider',
+                          borderTopStyle: 'dashed',
                         }}
-                      />
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontSize: ROW_FONT_SIZE }}
                       >
-                        {dot.label}
-                      </Typography>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{
+                            fontSize: { xs: '0.75rem', md: '0.72rem' },
+                            lineHeight: 1.5,
+                            opacity: 0.8,
+                          }}
+                        >
+                          {row.note}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
               );
             })}
           </TableBody>

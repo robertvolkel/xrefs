@@ -6,6 +6,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
 import SearchInput from './SearchInput';
+import { CONTENT_MAX_WIDTH, HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
@@ -21,8 +22,6 @@ interface ChatInterfaceProps {
   showHamburger?: boolean;
   onCollapse?: () => void;
 }
-
-const CONTENT_MAX_WIDTH = 720;
 
 export default function ChatInterface({
   messages,
@@ -57,17 +56,17 @@ export default function ChatInterface({
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          height: '100vh',
-          px: 3,
+          height: '100%',
+          px: { xs: 2, sm: 3 },
         }}
       >
         <Box
           component="img"
           src="/eemonkey-logo.png"
           alt="EEMonkey"
-          sx={{ height: 77, mb: 1, opacity: 0.55 }}
+          sx={{ height: { xs: 60, sm: 77 }, mb: 1, opacity: 0.55 }}
         />
-        <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+        <Typography variant="body1" color="text.secondary" sx={{ mb: 4, textAlign: 'center', px: 1 }}>
           Find Chinese replacement components. Bring costs down. Be the hero.
         </Typography>
         <SearchInput onSubmit={onSearch} disabled={false} landing />
@@ -80,7 +79,7 @@ export default function ChatInterface({
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ position: 'absolute', bottom: 24, display: 'flex', alignItems: 'baseline', gap: 0.75 }}
+          sx={{ position: 'absolute', bottom: 24, display: { xs: 'none', sm: 'flex' }, alignItems: 'baseline', gap: 0.75 }}
         >
           <span>🇨🇳</span>
           <span>Made in China by very smart engineers</span>
@@ -99,12 +98,12 @@ export default function ChatInterface({
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100vh',
+        height: '100%',
       }}
     >
-      {/* Header — fixed 100px to align with other panels */}
-      <Box sx={{ height: 100, minHeight: 100, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: showHamburger ? 'flex-start' : 'center', pt: showHamburger ? 2 : 0 }}>
-        <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%' }}>
+      {/* Header — fixed height to align with other panels */}
+      <Box sx={{ height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT }, minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT }, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: showHamburger ? 'flex-start' : 'center', pt: showHamburger ? 2 : 0 }}>
+        <Box sx={{ maxWidth: { xs: '100%', md: CONTENT_MAX_WIDTH }, mx: 'auto', width: '100%' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             {showHamburger ? (
               <IconButton onClick={onCollapse} size="small" sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}>
@@ -136,11 +135,11 @@ export default function ChatInterface({
       <Box sx={{ flex: 1, overflowY: 'auto' }}>
         <Box
           sx={{
-            maxWidth: CONTENT_MAX_WIDTH,
+            maxWidth: { xs: '100%', md: CONTENT_MAX_WIDTH },
             mx: 'auto',
             width: '100%',
-            px: 3,
-            py: 3,
+            px: { xs: 2, sm: 3 },
+            py: { xs: 2, sm: 3 },
           }}
         >
           {messages.map((msg) => (
@@ -184,8 +183,8 @@ export default function ChatInterface({
       </Box>
 
       {/* Pinned input — centered */}
-      <Box sx={{ flexShrink: 0, pb: 2 }}>
-        <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%', px: 3 }}>
+      <Box sx={{ flexShrink: 0, pb: { xs: 1, sm: 2 } }}>
+        <Box sx={{ maxWidth: { xs: '100%', md: CONTENT_MAX_WIDTH }, mx: 'auto', width: '100%', px: { xs: 2, sm: 3 } }}>
           <SearchInput onSubmit={onSearch} disabled={inputDisabled} landing={false} />
         </Box>
       </Box>

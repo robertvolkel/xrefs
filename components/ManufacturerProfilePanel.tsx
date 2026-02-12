@@ -13,10 +13,7 @@ import FactoryIcon from '@mui/icons-material/Factory';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import BuildIcon from '@mui/icons-material/Build';
 import { ManufacturerProfile } from '@/lib/types';
-
-const HEADER_HEIGHT = 100;
-const ROW_FONT_SIZE = '0.78rem';
-const SECTION_PY = '16px';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, SECTION_PY } from '@/lib/layoutConstants';
 
 function getCertColor(category: string): string {
   switch (category) {
@@ -75,12 +72,12 @@ interface ManufacturerProfilePanelProps {
 
 export default function ManufacturerProfilePanel({ profile, onClose }: ManufacturerProfilePanelProps) {
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <Box
         sx={{
-          height: HEADER_HEIGHT,
-          minHeight: HEADER_HEIGHT,
+          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
           px: 2,
           py: 1.5,
           borderBottom: 1,
@@ -93,8 +90,8 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
         <Avatar
           src={profile.logoUrl}
           sx={{
-            width: 40,
-            height: 40,
+            width: { xs: 48, md: 40 },
+            height: { xs: 48, md: 40 },
             bgcolor: 'primary.main',
             fontSize: '0.85rem',
             fontWeight: 700,
@@ -106,7 +103,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           <Typography variant="subtitle2" sx={{ fontSize: '0.9rem', fontWeight: 600, lineHeight: 1.3 }} noWrap>
             {profile.name}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE }} noWrap>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }} noWrap>
             {profile.countryFlag} {profile.headquarters}
             {profile.foundedYear && ` · Est. ${profile.foundedYear}`}
           </Typography>
@@ -121,7 +118,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
         {/* About */}
         <Box sx={{ mb: SECTION_PY }}>
           <SectionHeader>About</SectionHeader>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE, lineHeight: 1.7 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.7 }}>
             {profile.summary}
           </Typography>
         </Box>
@@ -137,7 +134,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   label={cat}
                   size="small"
                   variant="outlined"
-                  sx={{ fontSize: '0.68rem', height: 22 }}
+                  sx={{ fontSize: { xs: '0.75rem', md: '0.68rem' }, height: { xs: 28, md: 22 } }}
                 />
               ))}
             </Stack>
@@ -158,8 +155,8 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   size="small"
                   variant="outlined"
                   sx={{
-                    fontSize: '0.68rem',
-                    height: 22,
+                    fontSize: { xs: '0.75rem', md: '0.68rem' },
+                    height: { xs: 28, md: 22 },
                     color: getCertColor(cert.category),
                     borderColor: getCertColor(cert.category),
                   }}
@@ -177,7 +174,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
               {profile.manufacturingLocations.map((loc) => (
                 <Stack key={loc.location} direction="row" alignItems="center" spacing={1}>
                   {getLocationIcon(loc.type)}
-                  <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE }}>
+                  <Typography variant="body2" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }}>
                     {loc.location}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
@@ -202,7 +199,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   target="_blank"
                   rel="noopener noreferrer"
                   sx={{
-                    fontSize: ROW_FONT_SIZE,
+                    fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
                     color: 'primary.main',
                     textDecoration: 'none',
                     '&:hover': { textDecoration: 'underline' },
@@ -228,7 +225,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   size="small"
                   color="success"
                   variant="outlined"
-                  sx={{ fontSize: '0.68rem', height: 22 }}
+                  sx={{ fontSize: { xs: '0.75rem', md: '0.68rem' }, height: { xs: 28, md: 22 } }}
                 />
               ))}
             </Stack>
@@ -246,7 +243,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   label={res.type}
                   size="small"
                   variant="filled"
-                  sx={{ fontSize: '0.68rem', height: 22, bgcolor: 'action.selected' }}
+                  sx={{ fontSize: { xs: '0.75rem', md: '0.68rem' }, height: { xs: 28, md: 22 }, bgcolor: 'action.selected' }}
                 />
               ))}
             </Stack>
