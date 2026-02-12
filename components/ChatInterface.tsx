@@ -97,8 +97,8 @@ export default function ChatInterface({
         height: '100vh',
       }}
     >
-      {/* Header */}
-      <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+      {/* Header — fixed 100px to align with other panels */}
+      <Box sx={{ height: 100, minHeight: 100, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             <Box

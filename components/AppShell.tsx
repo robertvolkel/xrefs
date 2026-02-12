@@ -155,7 +155,7 @@ export default function AppShell() {
         }}
       >
         {chatCollapsed ? (
-          <CollapsedChatNav onExpand={handleCloseMfrProfile} onReset={handleReset} />
+          <CollapsedChatNav onExpand={handleCloseMfrProfile} />
         ) : (
           <ChatInterface
             messages={appState.messages}
