@@ -116,7 +116,8 @@ export default function ComparisonView({
         ruleResult: matchDetail?.ruleResult,
         note: matchDetail?.note,
       };
-    });
+    })
+    .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -164,7 +165,12 @@ export default function ComparisonView({
               {replacementAttributes.part.manufacturer}
             </Typography>
           </Box>
-          <MatchPercentageBadge percentage={recommendation.matchPercentage} size="small" />
+          <MatchPercentageBadge
+            percentage={recommendation.matchPercentage}
+            size="small"
+            hasFailures={recommendation.matchDetails.some(d => d.ruleResult === 'fail')}
+            hasReviews={recommendation.matchDetails.some(d => d.ruleResult === 'review')}
+          />
         </Stack>
       </Box>
 
@@ -215,7 +221,7 @@ export default function ComparisonView({
                   <TableCell
                     sx={{ borderColor: 'divider', py: ROW_PY }}
                   >
-                    <Stack direction="row" alignItems="flex-start" spacing={0.75}>
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
                       <Box
                         sx={{
                           width: 12,
@@ -223,7 +229,6 @@ export default function ComparisonView({
                           borderRadius: '50%',
                           bgcolor: dot.color,
                           flexShrink: 0,
-                          mt: '3px',
                         }}
                       />
                       <Typography

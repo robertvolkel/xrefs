@@ -10,7 +10,9 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick }: RecommendationCardProps) {
-  const { part, matchPercentage, notes } = recommendation;
+  const { part, matchPercentage, matchDetails, notes } = recommendation;
+  const hasFailures = matchDetails.some(d => d.ruleResult === 'fail');
+  const hasReviews = !hasFailures && matchDetails.some(d => d.ruleResult === 'review');
 
   return (
     <Card
@@ -61,17 +63,28 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 {part.description}
               </Typography>
               {notes && (
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ mt: 0.5, display: 'block', fontStyle: 'italic', opacity: 0.8 }}
-                  noWrap
-                >
-                  {notes}
-                </Typography>
+                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.5 }}>
+                  <Box
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      bgcolor: hasFailures ? '#FF5252' : hasReviews ? '#FFD54F' : '#90A4AE',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: '0.75rem', fontStyle: 'italic', opacity: 0.8 }}
+                    noWrap
+                  >
+                    {notes}
+                  </Typography>
+                </Stack>
               )}
             </Box>
-            <MatchPercentageBadge percentage={matchPercentage} />
+            <MatchPercentageBadge percentage={matchPercentage} hasFailures={hasFailures} hasReviews={hasReviews} />
           </Stack>
         </CardContent>
       </CardActionArea>

@@ -171,7 +171,7 @@ export default function AppShell() {
           position: 'relative',
         }}
       >
-        {/* Collapsed nav — always mounted, fades in when collapsed */}
+        {/* Collapsed nav — appears near end of collapse, disappears immediately on expand */}
         <Box
           sx={{
             position: 'absolute',
@@ -180,7 +180,9 @@ export default function AppShell() {
             bottom: 0,
             width: 60,
             opacity: chatCollapsed ? 1 : 0,
-            transition: 'opacity 0.25s ease',
+            transition: chatCollapsed
+              ? 'opacity 0.12s ease 0.25s'
+              : 'opacity 0.1s ease',
             pointerEvents: chatCollapsed ? 'auto' : 'none',
             zIndex: 2,
           }}
@@ -188,11 +190,13 @@ export default function AppShell() {
           <CollapsedChatNav onExpand={handleExpandChat} />
         </Box>
 
-        {/* Chat — always mounted, fades out when collapsed */}
+        {/* Chat — visible during slide, fades near end of collapse */}
         <Box
           sx={{
             opacity: chatCollapsed ? 0 : 1,
-            transition: 'opacity 0.2s ease',
+            transition: chatCollapsed
+              ? 'opacity 0.12s ease 0.25s'
+              : 'opacity 0.15s ease',
             height: '100%',
             pointerEvents: chatCollapsed ? 'none' : 'auto',
           }}
@@ -282,12 +286,14 @@ export default function AppShell() {
         ) : null}
       </Box>
 
-      {/* Far right panel: Manufacturer Profile */}
+      {/* Far right panel: Manufacturer Profile — slides in from right */}
       <Box
         sx={{
-          overflow: 'auto',
+          overflow: 'hidden',
           opacity: mfrOpen ? 1 : 0,
-          transition: 'opacity 0.3s ease 0.2s',
+          transition: mfrOpen
+            ? 'opacity 0.15s ease 0.2s'
+            : 'opacity 0.1s ease',
           minWidth: 0,
         }}
       >

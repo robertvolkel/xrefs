@@ -77,7 +77,7 @@ function evaluateIdentity(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'fail',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: !candidateParam ? 'Candidate missing this attribute' : undefined,
+      note: !candidateParam ? 'Missing attribute data' : undefined,
     };
   }
 
@@ -265,7 +265,7 @@ function evaluateThreshold(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'review',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: !candidateParam ? 'Candidate missing this attribute' : undefined,
+      note: !candidateParam ? 'Missing attribute data' : undefined,
     };
   }
 
@@ -628,10 +628,10 @@ export function findReplacements(
 
     const noteParts: string[] = [];
     if (!evaluation.passed) {
-      noteParts.push('⚠️ Has hard failures — may not be a valid replacement.');
+      noteParts.push('Has failing attributes');
     }
     if (evaluation.reviewFlags.length > 0) {
-      noteParts.push(`Review needed: ${evaluation.reviewFlags.join(', ')}`);
+      noteParts.push(`Needs review: ${evaluation.reviewFlags.join(', ')}`);
     }
     if (evaluation.notes.length > 0) {
       // Add unique notes

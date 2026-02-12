@@ -199,6 +199,8 @@ export default function PartsListTable({
                       <MatchPercentageBadge
                         percentage={topRec.matchPercentage}
                         size="small"
+                        hasFailures={topRec.matchDetails.some(d => d.ruleResult === 'fail')}
+                        hasReviews={topRec.matchDetails.some(d => d.ruleResult === 'review')}
                       />
                     )}
                   </TableCell>
