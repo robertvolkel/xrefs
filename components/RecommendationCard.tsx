@@ -1,7 +1,6 @@
 'use client';
 import { Card, CardActionArea, CardContent, Chip, Typography, Stack, Box } from '@mui/material';
 import { XrefRecommendation } from '@/lib/types';
-import MatchPercentageBadge from './MatchPercentageBadge';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -10,7 +9,7 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick }: RecommendationCardProps) {
-  const { part, matchPercentage, matchDetails, notes } = recommendation;
+  const { part, matchDetails, notes } = recommendation;
   const hasFailures = matchDetails.some(d => d.ruleResult === 'fail');
   const hasReviews = !hasFailures && matchDetails.some(d => d.ruleResult === 'review');
 
@@ -84,7 +83,6 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 </Stack>
               )}
             </Box>
-            <MatchPercentageBadge percentage={matchPercentage} hasFailures={hasFailures} hasReviews={hasReviews} />
           </Stack>
         </CardContent>
       </CardActionArea>

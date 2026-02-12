@@ -16,7 +16,6 @@ import {
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { PartsListRow } from '@/lib/types';
-import MatchPercentageBadge from '../MatchPercentageBadge';
 
 interface PartsListTableProps {
   rows: PartsListRow[];
@@ -87,7 +86,6 @@ export default function PartsListTable({
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Status</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'center' }}>Hits</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Top Suggestion</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'center' }}>Match</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Price</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Stock</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }} />
@@ -191,18 +189,6 @@ export default function PartsListTable({
                         No replacement found
                       </Typography>
                     ) : null}
-                  </TableCell>
-
-                  {/* Match */}
-                  <TableCell sx={{ textAlign: 'center', px: 1, whiteSpace: 'nowrap' }}>
-                    {topRec && (
-                      <MatchPercentageBadge
-                        percentage={topRec.matchPercentage}
-                        size="small"
-                        hasFailures={topRec.matchDetails.some(d => d.ruleResult === 'fail')}
-                        hasReviews={topRec.matchDetails.some(d => d.ruleResult === 'review')}
-                      />
-                    )}
                   </TableCell>
 
                   {/* Price (of top suggestion) */}

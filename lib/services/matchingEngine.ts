@@ -77,7 +77,6 @@ function evaluateIdentity(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'fail',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: !candidateParam ? 'Missing attribute data' : undefined,
     };
   }
 
@@ -265,7 +264,6 @@ function evaluateThreshold(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'review',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: !candidateParam ? 'Missing attribute data' : undefined,
     };
   }
 

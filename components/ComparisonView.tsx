@@ -14,8 +14,6 @@ import {
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
-import MatchPercentageBadge from './MatchPercentageBadge';
-
 // Must match AttributesPanel for row alignment
 const HEADER_HEIGHT = 100;
 const ROW_FONT_SIZE = '0.78rem';
@@ -165,12 +163,6 @@ export default function ComparisonView({
               {replacementAttributes.part.manufacturer}
             </Typography>
           </Box>
-          <MatchPercentageBadge
-            percentage={recommendation.matchPercentage}
-            size="small"
-            hasFailures={recommendation.matchDetails.some(d => d.ruleResult === 'fail')}
-            hasReviews={recommendation.matchDetails.some(d => d.ruleResult === 'review')}
-          />
         </Stack>
       </Box>
 

@@ -148,7 +148,7 @@ export default function AppShell() {
         height: '100vh',
         width: '100vw',
         overflow: 'hidden',
-        transition: 'grid-template-columns 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
         bgcolor: 'background.default',
         '@media (max-width: 900px)': {
           gridTemplateColumns: '1fr !important',
@@ -181,7 +181,7 @@ export default function AppShell() {
             width: 60,
             opacity: chatCollapsed ? 1 : 0,
             transition: chatCollapsed
-              ? 'opacity 0.12s ease 0.25s'
+              ? 'opacity 0.15s ease 0.55s'
               : 'opacity 0.1s ease',
             pointerEvents: chatCollapsed ? 'auto' : 'none',
             zIndex: 2,
@@ -195,7 +195,7 @@ export default function AppShell() {
           sx={{
             opacity: chatCollapsed ? 0 : 1,
             transition: chatCollapsed
-              ? 'opacity 0.12s ease 0.25s'
+              ? 'opacity 0.15s ease 0.55s'
               : 'opacity 0.15s ease',
             height: '100%',
             pointerEvents: chatCollapsed ? 'none' : 'auto',
@@ -223,7 +223,7 @@ export default function AppShell() {
         sx={{
           overflow: 'auto',
           opacity: showAttributesPanel ? 1 : 0,
-          transition: 'opacity 0.3s ease 0.15s',
+          transition: 'opacity 0.3s ease 0.35s',
           borderRight: (showRightPanel || chatCollapsed) ? 1 : 0,
           borderColor: 'divider',
           minWidth: 0,
@@ -241,7 +241,7 @@ export default function AppShell() {
         sx={{
           overflow: 'auto',
           opacity: showRightPanel ? 1 : 0,
-          transition: 'opacity 0.3s ease 0.2s',
+          transition: 'opacity 0.3s ease 0.4s',
           borderRight: mfrOpen ? 1 : 0,
           borderColor: 'divider',
           minWidth: 0,
@@ -292,7 +292,7 @@ export default function AppShell() {
           overflow: 'hidden',
           opacity: mfrOpen ? 1 : 0,
           transition: mfrOpen
-            ? 'opacity 0.15s ease 0.2s'
+            ? 'opacity 0.2s ease 0.45s'
             : 'opacity 0.1s ease',
           minWidth: 0,
         }}
