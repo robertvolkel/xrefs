@@ -40,7 +40,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           Recommended Replacements
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mt: 0.5 }}>
+        <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
           {filtered && obsoleteCount > 0
             ? `${activeCount} active match${activeCount !== 1 ? 'es' : ''} · ${obsoleteCount} obsolete hidden`
             : `${recommendations.length} match${recommendations.length !== 1 ? 'es' : ''} found — click to compare`
