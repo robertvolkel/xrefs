@@ -1,5 +1,21 @@
 import { ManufacturerProfile } from './types';
 
+const DISTRIBUTOR_URLS: Record<string, string> = {
+  'Digi-Key': 'https://www.digikey.com',
+  'Mouser': 'https://www.mouser.com',
+  'Arrow': 'https://www.arrow.com',
+  'Avnet': 'https://www.avnet.com',
+  'Newark': 'https://www.newark.com',
+  'Farnell': 'https://www.farnell.com',
+  'TTI': 'https://www.ttiinc.com',
+  'LCSC': 'https://www.lcsc.com',
+  'Szlcsc': 'https://www.szlcsc.com',
+};
+
+function dist(names: string[]) {
+  return names.map(name => ({ name, url: DISTRIBUTOR_URLS[name] ?? '' }));
+}
+
 const profiles: ManufacturerProfile[] = [
   {
     id: 'murata',
@@ -12,6 +28,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 45,
     distributorCount: 38,
     isSecondSource: false,
+    productCategories: ['MLCCs', 'Chip Inductors', 'EMI Filters', 'Resonators', 'Sensors', 'Power Modules', 'RF Components', 'Thermistors'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -32,7 +49,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Wuxi, China', type: 'assembly_test' },
       { location: 'Philippines', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free', 'Conflict-Free Minerals'],
     summary: 'Global leader in ceramic passive components. Murata dominates the MLCC market with the widest range of capacitance values, voltage ratings, and package sizes. Known for ultra-miniature components and automotive-grade reliability.',
   },
@@ -47,6 +64,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 32,
     distributorCount: 25,
     isSecondSource: false,
+    productCategories: ['MLCCs', 'Chip Inductors', 'Chip Resistors', 'Camera Modules', 'Substrates'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -63,7 +81,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Tianjin, China', type: 'fab' },
       { location: 'Philippines', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free'],
     summary: 'Major MLCC producer and part of the Samsung Group. Strong in high-capacitance MLCCs and automotive-grade components. Second largest MLCC manufacturer globally with significant investment in next-gen dielectrics.',
   },
@@ -78,6 +96,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 38,
     distributorCount: 30,
     isSecondSource: false,
+    productCategories: ['MLCCs', 'Chip Resistors', 'Chip Inductors', 'Tantalum Capacitors', 'Film Capacitors', 'Ferrite Beads'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -94,7 +113,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Suzhou, China', type: 'fab' },
       { location: 'Batangas, Philippines', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free', 'Conflict-Free Minerals'],
     summary: 'One of the world\'s largest passive component manufacturers. After acquiring KEMET and Pulse Electronics, Yageo offers a comprehensive portfolio spanning resistors, capacitors, and inductors. Strong presence in automotive and industrial markets.',
   },
@@ -109,6 +128,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 52,
     distributorCount: 35,
     isSecondSource: false,
+    productCategories: ['MLCCs', 'Inductors', 'Ferrite Beads', 'Transformers', 'Film Capacitors', 'Aluminum Electrolytic Capacitors', 'Sensors', 'Power Supplies'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -130,7 +150,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Zhuhai, China', type: 'assembly_test' },
       { location: 'Philippines', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free', 'Conflict-Free Minerals'],
     summary: 'Pioneer in ferrite technology and a major diversified electronic components manufacturer. TDK excels in inductors, ferrite beads, and capacitors. Strong presence in automotive, industrial, and consumer electronics through brands including TDK, EPCOS, and InvenSense.',
   },
@@ -145,6 +165,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 28,
     distributorCount: 22,
     isSecondSource: false,
+    productCategories: ['MLCCs', 'Tantalum Capacitors', 'Polymer Capacitors', 'Film Capacitors', 'Aluminum Electrolytic Capacitors', 'EMI Filters'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -163,7 +184,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Matamoros, Mexico', type: 'fab' },
       { location: 'Suzhou, China', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark']),
     complianceFlags: ['RoHS', 'REACH', 'ITAR-compliant', 'Conflict-Free Minerals'],
     summary: 'A Yageo company specializing in capacitor technologies. Known for their polymer, tantalum, and film capacitor expertise. KEMET offers strong flex-termination MLCC options and is a trusted supplier for defense/aerospace applications.',
   },
@@ -178,6 +199,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 55,
     distributorCount: 40,
     isSecondSource: false,
+    productCategories: ['Chip Resistors', 'Wirewound Resistors', 'Current Sense Resistors', 'MLCCs', 'Film Capacitors', 'Inductors', 'Diodes', 'MOSFETs'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -198,7 +220,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Tianjin, China', type: 'assembly_test' },
       { location: 'Israel', type: 'fab' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell', 'TTI'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell', 'TTI']),
     complianceFlags: ['RoHS', 'REACH', 'ITAR-compliant', 'Conflict-Free Minerals'],
     summary: 'One of the largest manufacturers of discrete semiconductors and passive components. The Dale brand is synonymous with precision resistors. Vishay offers the broadest portfolio of resistors, inductors, and capacitors across all tolerance ranges.',
   },
@@ -213,6 +235,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 12,
     distributorCount: 8,
     isSecondSource: true,
+    productCategories: ['MLCCs', 'Chip Resistors'],
     certifications: [
       { name: 'ISO 9001', category: 'quality' },
       { name: 'ISO 14001', category: 'environmental' },
@@ -225,7 +248,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Shenzhen, China', type: 'both' },
       { location: 'Dongguan, China', type: 'fab' },
     ],
-    authorizedDistributors: ['LCSC', 'Szlcsc'],
+    authorizedDistributors: dist(['LCSC', 'Szlcsc']),
     complianceFlags: ['RoHS', 'REACH'],
     summary: 'Chinese MLCC manufacturer focused on cost-competitive alternatives to Japanese and Korean brands. Strong in standard capacitance values with growing automotive qualification portfolio. Popular in Chinese domestic market and increasingly exported globally.',
   },
@@ -240,6 +263,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 18,
     distributorCount: 12,
     isSecondSource: true,
+    productCategories: ['MLCCs', 'Chip Resistors', 'Chip Inductors', 'Varistors', 'Thermistors'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -253,7 +277,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Zhaoqing, Guangdong, China', type: 'both' },
       { location: 'Huizhou, Guangdong, China', type: 'fab' },
     ],
-    authorizedDistributors: ['LCSC', 'Digi-Key', 'Mouser'],
+    authorizedDistributors: dist(['LCSC', 'Digi-Key', 'Mouser']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free'],
     summary: 'Leading Chinese passive component manufacturer. Publicly listed (SHE: 000636), Fenghua produces MLCCs, chip resistors, and inductors. One of the first Chinese manufacturers to achieve IATF 16949 automotive certification. Active second-source for Japanese and Korean parts.',
   },
@@ -268,6 +292,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 10,
     distributorCount: 6,
     isSecondSource: true,
+    productCategories: ['MLCCs', 'Ceramic Substrates', 'Electronic Ceramics'],
     certifications: [
       { name: 'ISO 9001', category: 'quality' },
       { name: 'ISO 14001', category: 'environmental' },
@@ -278,7 +303,7 @@ const profiles: ManufacturerProfile[] = [
     manufacturingLocations: [
       { location: 'Chaozhou, Guangdong, China', type: 'both' },
     ],
-    authorizedDistributors: ['LCSC'],
+    authorizedDistributors: dist(['LCSC']),
     complianceFlags: ['RoHS', 'REACH'],
     summary: 'One of China\'s original ceramic component manufacturers. State-owned enterprise focused on MLCC production for consumer and industrial markets. Known for competitive pricing on standard-grade ceramic capacitors.',
   },
@@ -293,6 +318,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 8,
     distributorCount: 15,
     isSecondSource: false,
+    productCategories: ['Chip Resistors', 'Current Sense Resistors', 'Thin Film Resistors', 'Anti-Surge Resistors'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -305,7 +331,7 @@ const profiles: ManufacturerProfile[] = [
     manufacturingLocations: [
       { location: 'Ciudad Juarez, Mexico', type: 'both' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Newark'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Newark']),
     complianceFlags: ['RoHS', 'REACH', 'Conflict-Free Minerals'],
     summary: 'Specialized resistor manufacturer known for high-quality chip resistors and current sense resistors. A subsidiary of SEI (Stackpole Electronics Inc.), focused on automotive and industrial resistor applications with competitive pricing.',
   },
@@ -320,6 +346,7 @@ const profiles: ManufacturerProfile[] = [
     familyCount: 48,
     distributorCount: 35,
     isSecondSource: false,
+    productCategories: ['Aluminum Electrolytic Capacitors', 'Film Capacitors', 'MLCCs', 'Chip Resistors', 'Inductors', 'Relays', 'Connectors', 'Sensors'],
     certifications: [
       { name: 'IATF 16949', category: 'automotive' },
       { name: 'ISO 9001', category: 'quality' },
@@ -340,7 +367,7 @@ const profiles: ManufacturerProfile[] = [
       { location: 'Thailand', type: 'assembly_test' },
       { location: 'Indonesia', type: 'assembly_test' },
     ],
-    authorizedDistributors: ['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell'],
+    authorizedDistributors: dist(['Digi-Key', 'Mouser', 'Arrow', 'Avnet', 'Newark', 'Farnell']),
     complianceFlags: ['RoHS', 'REACH', 'Halogen-Free', 'Conflict-Free Minerals'],
     summary: 'Major Japanese electronics conglomerate with a broad passive component portfolio. Particularly strong in aluminum electrolytic capacitors, film capacitors, and resistors. Panasonic Industry Solutions serves automotive, industrial, and consumer markets worldwide.',
   },

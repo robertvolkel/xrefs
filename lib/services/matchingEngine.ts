@@ -622,6 +622,8 @@ export function findReplacements(
       sourceValue: r.sourceValue,
       replacementValue: r.candidateValue,
       matchStatus: r.matchStatus,
+      ruleResult: r.result,
+      note: r.note,
     }));
 
     const noteParts: string[] = [];

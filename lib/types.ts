@@ -55,6 +55,8 @@ export interface MatchDetail {
   sourceValue: string;
   replacementValue: string;
   matchStatus: MatchStatus;
+  ruleResult?: RuleResult;
+  note?: string;
 }
 
 export type MatchStatus = 'exact' | 'compatible' | 'better' | 'worse' | 'different';
@@ -268,12 +270,18 @@ export interface ManufacturerProfile {
   familyCount?: number;
   distributorCount?: number;
   isSecondSource: boolean;
+  productCategories: string[];
   certifications: ManufacturerCertification[];
   designResources: DesignResource[];
   manufacturingLocations: ManufacturerLocation[];
-  authorizedDistributors: string[];
+  authorizedDistributors: AuthorizedDistributor[];
   complianceFlags: string[];
   summary: string;
+}
+
+export interface AuthorizedDistributor {
+  name: string;
+  url: string;
 }
 
 export interface ManufacturerCertification {

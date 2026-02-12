@@ -10,10 +10,9 @@ import {
   TableRow,
   IconButton,
   Stack,
-  Chip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import { PartAttributes, XrefRecommendation, MatchStatus } from '@/lib/types';
+import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
 import MatchPercentageBadge from './MatchPercentageBadge';
 
 // Must match AttributesPanel for row alignment
@@ -29,37 +28,63 @@ interface ComparisonViewProps {
   onManufacturerClick?: (manufacturer: string) => void;
 }
 
-function getStatusColor(status: MatchStatus): string {
-  switch (status) {
+const DOT_GREEN = '#69F0AE';
+const DOT_YELLOW = '#FFD54F';
+const DOT_RED = '#FF5252';
+const DOT_GREY = '#90A4AE';
+
+function getDotInfo(
+  ruleResult: RuleResult | undefined,
+  matchStatus: MatchStatus,
+  note: string | undefined
+): { color: string; label: string } {
+  // Prefer ruleResult when available (from matching engine)
+  if (ruleResult) {
+    switch (ruleResult) {
+      case 'pass':
+        return { color: DOT_GREEN, label: note ? `Pass (${note})` : 'Pass' };
+      case 'upgrade':
+        return { color: DOT_GREEN, label: note ? `Pass (${note})` : 'Pass' };
+      case 'review':
+        return { color: DOT_YELLOW, label: note ? `Review (${note})` : 'Review' };
+      case 'fail':
+        return { color: DOT_RED, label: note ? `Fail (${note})` : 'Fail' };
+      case 'info':
+        return { color: DOT_GREY, label: note || 'Info' };
+    }
+  }
+
+  // Fallback: derive from matchStatus (mock data without ruleResult)
+  switch (matchStatus) {
     case 'exact':
-      return 'inherit';
+      return { color: DOT_GREEN, label: 'Pass' };
     case 'better':
-      return '#69F0AE';
-    case 'worse':
-      return '#FF5252';
+      return { color: DOT_GREEN, label: 'Pass' };
     case 'compatible':
-      return '#FFD54F';
+      return { color: DOT_YELLOW, label: 'OK' };
+    case 'worse':
+      return { color: DOT_RED, label: 'Worse' };
     case 'different':
-      return '#A0A0A0';
+      return { color: DOT_GREY, label: 'Diff' };
     default:
-      return 'inherit';
+      return { color: DOT_GREY, label: '' };
   }
 }
 
-function getStatusLabel(status: MatchStatus): string {
-  switch (status) {
+function getValueColor(matchStatus: MatchStatus): string {
+  switch (matchStatus) {
     case 'exact':
-      return 'Match';
+      return 'inherit';
     case 'better':
-      return 'Better';
+      return DOT_GREEN;
     case 'worse':
-      return 'Worse';
+      return DOT_RED;
     case 'compatible':
-      return 'OK';
+      return DOT_YELLOW;
     case 'different':
-      return 'Diff';
+      return DOT_GREY;
     default:
-      return '';
+      return 'inherit';
   }
 }
 
@@ -87,6 +112,8 @@ export default function ComparisonView({
         parameterName: sourceParam.parameterName,
         replacementValue: replParam?.value ?? '—',
         matchStatus: matchDetail?.matchStatus ?? ('different' as MatchStatus),
+        ruleResult: matchDetail?.ruleResult,
+        note: matchDetail?.note,
       };
     });
 
@@ -148,56 +175,65 @@ export default function ComparisonView({
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
                 Value
               </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY, width: 56 }} align="center">
-                Status
+              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: ROW_PY }}>
+                Result
               </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.parameterId} hover>
-                <TableCell
-                  sx={{
-                    color: 'text.secondary',
-                    fontSize: ROW_FONT_SIZE,
-                    borderColor: 'divider',
-                    width: '40%',
-                    py: ROW_PY,
-                  }}
-                >
-                  {row.parameterName}
-                </TableCell>
-                <TableCell
-                  sx={{
-                    fontFamily: 'monospace',
-                    fontSize: ROW_FONT_SIZE,
-                    borderColor: 'divider',
-                    color: getStatusColor(row.matchStatus),
-                    py: ROW_PY,
-                  }}
-                >
-                  {row.replacementValue}
-                </TableCell>
-                <TableCell
-                  align="center"
-                  sx={{ borderColor: 'divider', py: ROW_PY }}
-                >
-                  {row.matchStatus !== 'exact' && (
-                    <Chip
-                      label={getStatusLabel(row.matchStatus)}
-                      size="small"
-                      sx={{
-                        fontSize: '0.6rem',
-                        height: 18,
-                        color: getStatusColor(row.matchStatus),
-                        borderColor: getStatusColor(row.matchStatus),
-                      }}
-                      variant="outlined"
-                    />
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+            {rows.map((row) => {
+              const dot = getDotInfo(row.ruleResult, row.matchStatus, row.note);
+              return (
+                <TableRow key={row.parameterId} hover>
+                  <TableCell
+                    sx={{
+                      color: 'text.secondary',
+                      fontSize: ROW_FONT_SIZE,
+                      borderColor: 'divider',
+                      width: '35%',
+                      py: ROW_PY,
+                    }}
+                  >
+                    {row.parameterName}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontFamily: 'monospace',
+                      fontSize: ROW_FONT_SIZE,
+                      borderColor: 'divider',
+                      color: getValueColor(row.matchStatus),
+                      py: ROW_PY,
+                      width: '30%',
+                    }}
+                  >
+                    {row.replacementValue}
+                  </TableCell>
+                  <TableCell
+                    sx={{ borderColor: 'divider', py: ROW_PY }}
+                  >
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          bgcolor: dot.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontSize: '0.68rem' }}
+                        noWrap
+                      >
+                        {dot.label}
+                      </Typography>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>

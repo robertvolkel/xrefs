@@ -117,40 +117,31 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
 
       {/* Scrollable body */}
       <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 2 }}>
-        {/* Quick Stats */}
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: SECTION_PY }}>
-          {profile.catalogSize && (
-            <Chip
-              label={`${(profile.catalogSize / 1000).toFixed(0)}K parts`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: '0.7rem', height: 24 }}
-            />
-          )}
-          {profile.familyCount && (
-            <Chip
-              label={`${profile.familyCount} families`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: '0.7rem', height: 24 }}
-            />
-          )}
-          {profile.distributorCount && (
-            <Chip
-              label={`${profile.distributorCount} distributors`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: '0.7rem', height: 24 }}
-            />
-          )}
-          {profile.isSecondSource && (
-            <Chip
-              label="Second Source"
-              size="small"
-              sx={{ fontSize: '0.7rem', height: 24, bgcolor: 'warning.dark', color: 'warning.contrastText' }}
-            />
-          )}
-        </Stack>
+        {/* About */}
+        <Box sx={{ mb: SECTION_PY }}>
+          <SectionHeader>About</SectionHeader>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE, lineHeight: 1.7 }}>
+            {profile.summary}
+          </Typography>
+        </Box>
+
+        {/* Product Categories */}
+        {profile.productCategories.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Product Categories</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.productCategories.map((cat) => (
+                <Chip
+                  key={cat}
+                  label={cat}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: '0.68rem', height: 22 }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
 
         <Divider sx={{ mb: SECTION_PY }} />
 
@@ -221,9 +212,26 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
         {profile.authorizedDistributors.length > 0 && (
           <Box sx={{ mb: SECTION_PY }}>
             <SectionHeader>Authorized Distributors</SectionHeader>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE }}>
-              {profile.authorizedDistributors.join(' · ')}
-            </Typography>
+            <Stack spacing={0.5}>
+              {profile.authorizedDistributors.map((dist) => (
+                <Typography
+                  key={dist.name}
+                  component="a"
+                  href={dist.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{
+                    fontSize: ROW_FONT_SIZE,
+                    color: 'primary.main',
+                    textDecoration: 'none',
+                    '&:hover': { textDecoration: 'underline' },
+                    display: 'block',
+                  }}
+                >
+                  {dist.name}
+                </Typography>
+              ))}
+            </Stack>
           </Box>
         )}
 
@@ -246,15 +254,6 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           </Box>
         )}
 
-        <Divider sx={{ mb: SECTION_PY }} />
-
-        {/* Summary */}
-        <Box>
-          <SectionHeader>About</SectionHeader>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE, lineHeight: 1.7 }}>
-            {profile.summary}
-          </Typography>
-        </Box>
       </Box>
     </Box>
   );
