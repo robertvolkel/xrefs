@@ -89,7 +89,8 @@ export type AppPhase =
   | 'awaiting-context'
   | 'finding-matches'
   | 'viewing'
-  | 'comparing';
+  | 'comparing'
+  | 'unsupported';
 
 export interface ChatMessage {
   id: string;

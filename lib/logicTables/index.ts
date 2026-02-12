@@ -92,3 +92,13 @@ export function getLogicTableForSubcategory(subcategory: string): LogicTable | n
 export function getAllLogicTables(): LogicTable[] {
   return Object.values(logicTableRegistry);
 }
+
+/** Check if a subcategory has a logic table */
+export function isFamilySupported(subcategory: string): boolean {
+  return subcategory in subcategoryToFamily;
+}
+
+/** Get human-readable names of all supported families (deduplicated) */
+export function getSupportedFamilyNames(): string[] {
+  return [...new Set(Object.values(logicTableRegistry).map(t => t.familyName))];
+}

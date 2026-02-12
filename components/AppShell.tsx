@@ -35,6 +35,7 @@ function getGridColumns(
     case 'loading-attributes':
     case 'awaiting-attributes':
     case 'awaiting-context':
+    case 'unsupported':
       return '2fr 1fr 0fr 0fr';
     case 'finding-matches':
       return (recsRevealed && hasAttributes) ? '1fr 1fr 1fr 0fr' : '2fr 1fr 0fr 0fr';
@@ -133,6 +134,7 @@ export default function AppShell() {
     'finding-matches',
     'viewing',
     'comparing',
+    'unsupported',
   ].includes(appState.phase);
   const showRightPanel = recsRevealed && hasAttributes;
   const isLoadingRecs = appState.phase === 'finding-matches';

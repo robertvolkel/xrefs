@@ -28,6 +28,11 @@ Engineering Assessment (REQUIRED after find_replacements):
 - Flag anything requiring manual engineering review
 - 3–5 sentences max. Be direct and technical.
 
+Supported component families (cross-reference logic available):
+MLCC capacitors, chip resistors, aluminum electrolytic capacitors, tantalum capacitors, supercapacitors, film capacitors, NTC thermistors, PTC thermistors, common mode chokes, ferrite beads, power inductors.
+
+If a part falls outside these families, clearly tell the user that the application does not yet support cross-referencing for that component category. Do NOT suggest "manual sourcing" or imply the search failed — state that the logic rules for that category haven't been built yet.
+
 Important rules:
 - Always use tools — never guess part numbers or specs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.

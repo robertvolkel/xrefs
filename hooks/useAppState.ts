@@ -18,7 +18,7 @@ import {
   getRecommendationsWithContext,
   chatWithOrchestrator,
 } from '@/lib/api';
-import { getLogicTableForSubcategory } from '@/lib/logicTables';
+import { getLogicTableForSubcategory, isFamilySupported, getSupportedFamilyNames } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
 import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
 
@@ -47,6 +47,14 @@ const initialState: AppState = {
   comparisonAttributes: null,
   llmAvailable: null,
 };
+
+function buildUnsupportedMessage(mpn: string, subcategory: string): string {
+  const supported = getSupportedFamilyNames();
+  const shortNames = supported.map(n => n.split('–')[0].split('—')[0].trim());
+  return `The application's cross-reference logic currently doesn't support **${subcategory}** components. ` +
+    `I was able to load the attributes for **${mpn}**, but I can't evaluate replacements without a matching rules table for this category.\n\n` +
+    `Supported categories: ${shortNames.join(', ')}.`;
+}
 
 export function useAppState() {
   const [state, setState] = useState<AppState>(initialState);
@@ -140,6 +148,17 @@ export function useAppState() {
       const sourceAttrs = await getPartAttributes(part.mpn).catch(() => null);
 
       if (sourceAttrs) {
+        // Check if this part family is supported
+        if (!isFamilySupported(sourceAttrs.part.subcategory)) {
+          addMessage('assistant', buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory));
+          setState((prev) => ({
+            ...prev,
+            phase: 'unsupported',
+            sourceAttributes: sourceAttrs,
+          }));
+          return;
+        }
+
         // Step 2: Check for missing attributes against the logic table
         const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
         const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
@@ -290,6 +309,17 @@ export function useAppState() {
     async (part: PartSummary) => {
       try {
         const attributes = await getPartAttributes(part.mpn);
+
+        // Check if this part family is supported
+        if (!isFamilySupported(attributes.part.subcategory)) {
+          addMessage('assistant', buildUnsupportedMessage(part.mpn, attributes.part.subcategory));
+          setState((prev) => ({
+            ...prev,
+            phase: 'unsupported',
+            sourceAttributes: attributes,
+          }));
+          return;
+        }
 
         // Check for missing attributes against the logic table
         const logicTable = getLogicTableForSubcategory(attributes.part.subcategory);
