@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useEffect } from 'react';
-import { Box, Button, CircularProgress, Link, Stack, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, IconButton, Link, Stack, Typography } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
@@ -17,6 +18,8 @@ interface ChatInterfaceProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  showHamburger?: boolean;
+  onCollapse?: () => void;
 }
 
 const CONTENT_MAX_WIDTH = 720;
@@ -32,6 +35,8 @@ export default function ChatInterface({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  showHamburger,
+  onCollapse,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
@@ -101,13 +106,19 @@ export default function ChatInterface({
       <Box sx={{ height: 100, minHeight: 100, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Box
-              component="img"
-              src="/eemonkey-logo.png"
-              alt="EEMonkey"
-              onClick={onReset}
-              sx={{ height: 38, opacity: 0.55, cursor: 'pointer', '&:hover': { opacity: 0.8 } }}
-            />
+            {showHamburger ? (
+              <IconButton onClick={onCollapse} size="small" sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}>
+                <MenuIcon fontSize="small" />
+              </IconButton>
+            ) : (
+              <Box
+                component="img"
+                src="/eemonkey-logo.png"
+                alt="EEMonkey"
+                onClick={onReset}
+                sx={{ height: 38, opacity: 0.55, cursor: 'pointer', '&:hover': { opacity: 0.8 } }}
+              />
+            )}
             <Button
               size="small"
               startIcon={<RestartAltIcon />}

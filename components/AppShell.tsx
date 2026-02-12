@@ -15,10 +15,14 @@ function getGridColumns(
   phase: AppPhase,
   hasAttributes: boolean,
   recsRevealed: boolean,
-  chatCollapsed: boolean
+  chatCollapsed: boolean,
+  mfrOpen: boolean
 ): string {
-  if (chatCollapsed) {
+  if (chatCollapsed && mfrOpen) {
     return '60px 3fr 3fr 3fr';
+  }
+  if (chatCollapsed) {
+    return '60px 1fr 1fr 0fr';
   }
 
   switch (phase) {
@@ -98,18 +102,25 @@ export default function AppShell() {
 
   // Manufacturer profile panel state (the "dance")
   const [mfrProfile, setMfrProfile] = useState<ManufacturerProfile | null>(null);
-  const chatCollapsed = mfrProfile !== null;
+  // Manual chat collapse via hamburger (independent of MFR profile)
+  const [chatManuallyCollapsed, setChatManuallyCollapsed] = useState(false);
+  const chatCollapsed = mfrProfile !== null || chatManuallyCollapsed;
+  const mfrOpen = mfrProfile !== null;
 
   const handleManufacturerClick = useCallback((manufacturer: string) => {
     const profile = getManufacturerProfile(manufacturer);
     if (profile) setMfrProfile(profile);
   }, []);
 
-  const handleCloseMfrProfile = useCallback(() => setMfrProfile(null), []);
+  const handleExpandChat = useCallback(() => {
+    setChatManuallyCollapsed(false);
+    setMfrProfile(null);
+  }, []);
 
-  // Wraps reset to also clear MFR profile
+  // Wraps reset to also clear MFR profile and manual collapse
   const handleReset = useCallback(() => {
     setMfrProfile(null);
+    setChatManuallyCollapsed(false);
     appState.handleReset();
   }, [appState.handleReset]);
 
@@ -124,11 +135,16 @@ export default function AppShell() {
   const showRightPanel = recsRevealed && hasAttributes;
   const isLoadingRecs = appState.phase === 'finding-matches';
 
+  // Auto-clear manual collapse when leaving 3-panel mode
+  useEffect(() => {
+    if (!showRightPanel) setChatManuallyCollapsed(false);
+  }, [showRightPanel]);
+
   return (
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed),
+        gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed, mfrOpen),
         height: '100vh',
         width: '100vw',
         overflow: 'hidden',
@@ -155,7 +171,7 @@ export default function AppShell() {
         }}
       >
         {chatCollapsed ? (
-          <CollapsedChatNav onExpand={handleCloseMfrProfile} />
+          <CollapsedChatNav onExpand={handleExpandChat} />
         ) : (
           <ChatInterface
             messages={appState.messages}
@@ -168,6 +184,8 @@ export default function AppShell() {
             onSkipAttributes={appState.handleSkipAttributes}
             onContextResponse={appState.handleContextResponse}
             onSkipContext={appState.handleSkipContext}
+            showHamburger={showRightPanel}
+            onCollapse={() => setChatManuallyCollapsed(true)}
           />
         )}
       </Box>
@@ -196,7 +214,7 @@ export default function AppShell() {
           overflow: 'auto',
           opacity: showRightPanel ? 1 : 0,
           transition: 'opacity 0.3s ease 0.2s',
-          borderRight: chatCollapsed ? 1 : 0,
+          borderRight: mfrOpen ? 1 : 0,
           borderColor: 'divider',
           minWidth: 0,
         }}
@@ -244,13 +262,13 @@ export default function AppShell() {
       <Box
         sx={{
           overflow: 'auto',
-          opacity: chatCollapsed ? 1 : 0,
+          opacity: mfrOpen ? 1 : 0,
           transition: 'opacity 0.3s ease 0.2s',
           minWidth: 0,
         }}
       >
         {mfrProfile && (
-          <ManufacturerProfilePanel profile={mfrProfile} onClose={handleCloseMfrProfile} />
+          <ManufacturerProfilePanel profile={mfrProfile} onClose={handleExpandChat} />
         )}
       </Box>
     </Box>
