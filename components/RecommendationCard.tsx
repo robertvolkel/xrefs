@@ -76,7 +76,6 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                     variant="caption"
                     color="text.secondary"
                     sx={{ fontSize: '0.75rem', fontStyle: 'italic', opacity: 0.8 }}
-                    noWrap
                   >
                     {notes}
                   </Typography>

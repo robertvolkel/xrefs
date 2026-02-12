@@ -33,12 +33,12 @@ function getGridColumns(
     case 'loading-attributes':
     case 'awaiting-attributes':
     case 'awaiting-context':
-      return '7fr 3fr 0fr 0fr';
+      return '2fr 1fr 0fr 0fr';
     case 'finding-matches':
-      return (recsRevealed && hasAttributes) ? '4fr 3fr 3fr 0fr' : '7fr 3fr 0fr 0fr';
+      return (recsRevealed && hasAttributes) ? '1fr 1fr 1fr 0fr' : '2fr 1fr 0fr 0fr';
     case 'viewing':
     case 'comparing':
-      return hasAttributes ? '4fr 3fr 3fr 0fr' : '7fr 3fr 0fr 0fr';
+      return hasAttributes ? '1fr 1fr 1fr 0fr' : '2fr 1fr 0fr 0fr';
     default:
       return '1fr 0fr 0fr 0fr';
   }
@@ -181,8 +181,8 @@ export default function AppShell() {
             width: 60,
             opacity: chatCollapsed ? 1 : 0,
             transition: chatCollapsed
-              ? 'opacity 0.15s ease 0.55s'
-              : 'opacity 0.1s ease',
+              ? 'opacity 0.3s ease 0.5s'
+              : 'opacity 0.2s ease',
             pointerEvents: chatCollapsed ? 'auto' : 'none',
             zIndex: 2,
           }}
@@ -195,8 +195,8 @@ export default function AppShell() {
           sx={{
             opacity: chatCollapsed ? 0 : 1,
             transition: chatCollapsed
-              ? 'opacity 0.15s ease 0.55s'
-              : 'opacity 0.15s ease',
+              ? 'opacity 0.3s ease 0.15s'
+              : 'opacity 0.3s ease 0.5s',
             height: '100%',
             pointerEvents: chatCollapsed ? 'none' : 'auto',
           }}

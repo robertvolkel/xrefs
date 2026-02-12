@@ -14,7 +14,7 @@ export default function CollapsedChatNav({ onExpand }: CollapsedChatNavProps) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        bgcolor: 'background.paper',
+        bgcolor: 'background.default',
         pt: 2,
       }}
     >
