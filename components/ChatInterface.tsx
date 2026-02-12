@@ -103,7 +103,7 @@ export default function ChatInterface({
       }}
     >
       {/* Header — fixed 100px to align with other panels */}
-      <Box sx={{ height: 100, minHeight: 100, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+      <Box sx={{ height: 100, minHeight: 100, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: showHamburger ? 'flex-start' : 'center', pt: showHamburger ? 2 : 0 }}>
         <Box sx={{ maxWidth: CONTENT_MAX_WIDTH, mx: 'auto', width: '100%' }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
             {showHamburger ? (
@@ -126,7 +126,7 @@ export default function ChatInterface({
               color="inherit"
               sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
             >
-              New Search
+              Start Over
             </Button>
           </Stack>
         </Box>

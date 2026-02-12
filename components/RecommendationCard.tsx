@@ -1,5 +1,5 @@
 'use client';
-import { Card, CardActionArea, CardContent, Typography, Stack, Box } from '@mui/material';
+import { Card, CardActionArea, CardContent, Chip, Typography, Stack, Box } from '@mui/material';
 import { XrefRecommendation } from '@/lib/types';
 import MatchPercentageBadge from './MatchPercentageBadge';
 
@@ -25,14 +25,17 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
         <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
           <Stack direction="row" alignItems="center" spacing={2}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography
-                variant="subtitle2"
-                color="primary"
-                sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
-                noWrap
-              >
-                {part.mpn}
-              </Typography>
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Typography
+                  variant="subtitle2"
+                  color="primary"
+                  sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  noWrap
+                >
+                  {part.mpn}
+                </Typography>
+                <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              </Stack>
               <Typography variant="body2" color="text.secondary" noWrap component="div">
                 {onManufacturerClick ? (
                   <Box

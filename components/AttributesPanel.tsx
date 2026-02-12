@@ -52,15 +52,15 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
             <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               {title}
             </Typography>
-            <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-              {attributes.part.mpn}
-            </Typography>
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.5 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }} noWrap>
-                {attributes.part.manufacturer}
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
+                {attributes.part.mpn}
               </Typography>
               <Chip label={attributes.part.status} size="small" color={attributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
             </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
+              {attributes.part.manufacturer}
+            </Typography>
           </>
         ) : null}
       </Box>

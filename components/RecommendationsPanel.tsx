@@ -1,5 +1,6 @@
 'use client';
-import { Box, Typography, Stack } from '@mui/material';
+import { useEffect, useState } from 'react';
+import { Box, Typography } from '@mui/material';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 
@@ -11,6 +12,16 @@ interface RecommendationsPanelProps {
 
 export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick }: RecommendationsPanelProps) {
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
+  const obsoleteCount = sorted.filter(r => r.part.status === 'Obsolete').length;
+  const activeCount = sorted.length - obsoleteCount;
+  const [filtered, setFiltered] = useState(false);
+
+  useEffect(() => {
+    setFiltered(false);
+    if (obsoleteCount === 0) return;
+    const timer = setTimeout(() => setFiltered(true), 2000);
+    return () => clearTimeout(timer);
+  }, [obsoleteCount]);
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -30,20 +41,35 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           Recommended Replacements
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mt: 0.5 }}>
-          {recommendations.length} match{recommendations.length !== 1 ? 'es' : ''} found — click to compare
+          {filtered && obsoleteCount > 0
+            ? `${activeCount} active match${activeCount !== 1 ? 'es' : ''} · ${obsoleteCount} obsolete hidden`
+            : `${recommendations.length} match${recommendations.length !== 1 ? 'es' : ''} found — click to compare`
+          }
         </Typography>
       </Box>
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-        <Stack spacing={1.5}>
-          {sorted.map((rec) => (
-            <RecommendationCard
+        {sorted.map((rec) => {
+          const isObsolete = rec.part.status === 'Obsolete';
+          const shouldHide = filtered && isObsolete;
+          return (
+            <Box
               key={rec.part.mpn}
-              recommendation={rec}
-              onClick={() => onSelect(rec)}
-              onManufacturerClick={onManufacturerClick}
-            />
-          ))}
-        </Stack>
+              sx={{
+                maxHeight: shouldHide ? 0 : 300,
+                opacity: shouldHide ? 0 : 1,
+                overflow: 'hidden',
+                mb: shouldHide ? 0 : 1.5,
+                transition: 'opacity 0.3s ease, max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s, margin-bottom 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s',
+              }}
+            >
+              <RecommendationCard
+                recommendation={rec}
+                onClick={() => onSelect(rec)}
+                onManufacturerClick={onManufacturerClick}
+              />
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );

@@ -9,6 +9,7 @@ import {
   TableHead,
   TableRow,
   IconButton,
+  Chip,
   Stack,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -140,9 +141,12 @@ export default function ComparisonView({
             <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Comparing with
             </Typography>
-            <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-              {replacementAttributes.part.mpn}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
+                {replacementAttributes.part.mpn}
+              </Typography>
+              <Chip label={replacementAttributes.part.status} size="small" color={replacementAttributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+            </Stack>
             <Typography
               variant="body2"
               color="text.secondary"

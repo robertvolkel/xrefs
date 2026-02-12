@@ -160,7 +160,7 @@ export default function AppShell() {
         },
       }}
     >
-      {/* Left panel: Chat or Collapsed Nav */}
+      {/* Left panel: Chat + Collapsed Nav (both rendered, crossfade) */}
       <Box
         sx={{
           overflow: 'hidden',
@@ -168,11 +168,35 @@ export default function AppShell() {
           borderColor: 'divider',
           transition: 'border-color 0.3s ease',
           minWidth: 0,
+          position: 'relative',
         }}
       >
-        {chatCollapsed ? (
+        {/* Collapsed nav — always mounted, fades in when collapsed */}
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: 60,
+            opacity: chatCollapsed ? 1 : 0,
+            transition: 'opacity 0.25s ease',
+            pointerEvents: chatCollapsed ? 'auto' : 'none',
+            zIndex: 2,
+          }}
+        >
           <CollapsedChatNav onExpand={handleExpandChat} />
-        ) : (
+        </Box>
+
+        {/* Chat — always mounted, fades out when collapsed */}
+        <Box
+          sx={{
+            opacity: chatCollapsed ? 0 : 1,
+            transition: 'opacity 0.2s ease',
+            height: '100%',
+            pointerEvents: chatCollapsed ? 'none' : 'auto',
+          }}
+        >
           <ChatInterface
             messages={appState.messages}
             phase={appState.phase}
@@ -187,7 +211,7 @@ export default function AppShell() {
             showHamburger={showRightPanel}
             onCollapse={() => setChatManuallyCollapsed(true)}
           />
-        )}
+        </Box>
       </Box>
 
       {/* Center panel: Source Attributes */}
