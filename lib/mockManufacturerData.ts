@@ -20,6 +20,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'murata',
     name: 'Murata Manufacturing',
+    logoUrl: 'https://logo.clearbit.com/murata.com',
     headquarters: 'Nagaokakyo, Kyoto, Japan',
     country: 'Japan',
     countryFlag: '\u{1F1EF}\u{1F1F5}',
@@ -56,6 +57,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'samsung-electro-mechanics',
     name: 'Samsung Electro-Mechanics',
+    logoUrl: 'https://logo.clearbit.com/samsungsem.com',
     headquarters: 'Suwon, South Korea',
     country: 'South Korea',
     countryFlag: '\u{1F1F0}\u{1F1F7}',
@@ -88,6 +90,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'yageo',
     name: 'Yageo',
+    logoUrl: 'https://logo.clearbit.com/yageo.com',
     headquarters: 'New Taipei City, Taiwan',
     country: 'Taiwan',
     countryFlag: '\u{1F1F9}\u{1F1FC}',
@@ -120,6 +123,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'tdk',
     name: 'TDK Corporation',
+    logoUrl: 'https://logo.clearbit.com/tdk.com',
     headquarters: 'Tokyo, Japan',
     country: 'Japan',
     countryFlag: '\u{1F1EF}\u{1F1F5}',
@@ -157,6 +161,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'kemet',
     name: 'KEMET',
+    logoUrl: 'https://logo.clearbit.com/kemet.com',
     headquarters: 'Fort Lauderdale, FL, USA',
     country: 'USA',
     countryFlag: '\u{1F1FA}\u{1F1F8}',
@@ -191,6 +196,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'vishay',
     name: 'Vishay Dale',
+    logoUrl: 'https://logo.clearbit.com/vishay.com',
     headquarters: 'Malvern, PA, USA',
     country: 'USA',
     countryFlag: '\u{1F1FA}\u{1F1F8}',
@@ -310,6 +316,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'stackpole',
     name: 'Stackpole Electronics',
+    logoUrl: 'https://logo.clearbit.com/seielect.com',
     headquarters: 'Raleigh, NC, USA',
     country: 'USA',
     countryFlag: '\u{1F1FA}\u{1F1F8}',
@@ -338,6 +345,7 @@ const profiles: ManufacturerProfile[] = [
   {
     id: 'panasonic',
     name: 'Panasonic',
+    logoUrl: 'https://logo.clearbit.com/panasonic.com',
     headquarters: 'Kadoma, Osaka, Japan',
     country: 'Japan',
     countryFlag: '\u{1F1EF}\u{1F1F5}',

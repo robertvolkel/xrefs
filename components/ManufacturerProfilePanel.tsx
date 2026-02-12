@@ -91,6 +91,7 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
         }}
       >
         <Avatar
+          src={profile.logoUrl}
           sx={{
             width: 40,
             height: 40,
@@ -143,71 +144,6 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           </Box>
         )}
 
-        <Divider sx={{ mb: SECTION_PY }} />
-
-        {/* Certifications */}
-        {profile.certifications.length > 0 && (
-          <Box sx={{ mb: SECTION_PY }}>
-            <SectionHeader>Certifications</SectionHeader>
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-              {profile.certifications.map((cert) => (
-                <Chip
-                  key={cert.name}
-                  label={cert.name}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    fontSize: '0.68rem',
-                    height: 22,
-                    color: getCertColor(cert.category),
-                    borderColor: getCertColor(cert.category),
-                  }}
-                />
-              ))}
-            </Stack>
-          </Box>
-        )}
-
-        {/* Design Resources */}
-        {profile.designResources.length > 0 && (
-          <Box sx={{ mb: SECTION_PY }}>
-            <SectionHeader>Design Resources</SectionHeader>
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-              {profile.designResources.map((res) => (
-                <Chip
-                  key={res.type}
-                  label={res.type}
-                  size="small"
-                  variant="filled"
-                  sx={{ fontSize: '0.68rem', height: 22, bgcolor: 'action.selected' }}
-                />
-              ))}
-            </Stack>
-          </Box>
-        )}
-
-        <Divider sx={{ mb: SECTION_PY }} />
-
-        {/* Manufacturing Locations */}
-        {profile.manufacturingLocations.length > 0 && (
-          <Box sx={{ mb: SECTION_PY }}>
-            <SectionHeader>Manufacturing Locations</SectionHeader>
-            <Stack spacing={0.75}>
-              {profile.manufacturingLocations.map((loc) => (
-                <Stack key={loc.location} direction="row" alignItems="center" spacing={1}>
-                  {getLocationIcon(loc.type)}
-                  <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE }}>
-                    {loc.location}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-                    {getLocationLabel(loc.type)}
-                  </Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </Box>
-        )}
-
         {/* Authorized Distributors */}
         {profile.authorizedDistributors.length > 0 && (
           <Box sx={{ mb: SECTION_PY }}>
@@ -235,6 +171,51 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           </Box>
         )}
 
+        <Divider sx={{ mb: SECTION_PY }} />
+
+        {/* Certifications */}
+        {profile.certifications.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Certifications</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.certifications.map((cert) => (
+                <Chip
+                  key={cert.name}
+                  label={cert.name}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    fontSize: '0.68rem',
+                    height: 22,
+                    color: getCertColor(cert.category),
+                    borderColor: getCertColor(cert.category),
+                  }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        {/* Manufacturing Locations */}
+        {profile.manufacturingLocations.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Manufacturing Locations</SectionHeader>
+            <Stack spacing={0.75}>
+              {profile.manufacturingLocations.map((loc) => (
+                <Stack key={loc.location} direction="row" alignItems="center" spacing={1}>
+                  {getLocationIcon(loc.type)}
+                  <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE }}>
+                    {loc.location}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                    {getLocationLabel(loc.type)}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Box>
+        )}
+
         {/* Compliance Flags */}
         {profile.complianceFlags.length > 0 && (
           <Box sx={{ mb: SECTION_PY }}>
@@ -248,6 +229,24 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
                   color="success"
                   variant="outlined"
                   sx={{ fontSize: '0.68rem', height: 22 }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        {/* Design Resources */}
+        {profile.designResources.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Design Resources</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.designResources.map((res) => (
+                <Chip
+                  key={res.type}
+                  label={res.type}
+                  size="small"
+                  variant="filled"
+                  sx={{ fontSize: '0.68rem', height: 22, bgcolor: 'action.selected' }}
                 />
               ))}
             </Stack>
