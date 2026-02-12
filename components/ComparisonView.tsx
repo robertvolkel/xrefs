@@ -26,6 +26,7 @@ interface ComparisonViewProps {
   replacementAttributes: PartAttributes;
   recommendation: XrefRecommendation;
   onBack: () => void;
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
 function getStatusColor(status: MatchStatus): string {
@@ -67,6 +68,7 @@ export default function ComparisonView({
   replacementAttributes,
   recommendation,
   onBack,
+  onManufacturerClick,
 }: ComparisonViewProps) {
   const matchMap = new Map(
     recommendation.matchDetails.map((d) => [d.parameterId, d])
@@ -114,7 +116,20 @@ export default function ComparisonView({
             <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
               {replacementAttributes.part.mpn}
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }} noWrap>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                fontSize: '0.78rem',
+                ...(onManufacturerClick && {
+                  cursor: 'pointer',
+                  '&:hover': { color: 'primary.main', textDecoration: 'underline' },
+                  transition: 'color 0.15s ease',
+                }),
+              }}
+              noWrap
+              onClick={onManufacturerClick ? () => onManufacturerClick(replacementAttributes.part.manufacturer) : undefined}
+            >
               {replacementAttributes.part.manufacturer}
             </Typography>
           </Box>

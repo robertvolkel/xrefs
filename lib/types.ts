@@ -253,6 +253,45 @@ export interface OrchestratorResponse {
 }
 
 // ============================================================
+// MANUFACTURER PROFILE TYPES
+// ============================================================
+
+export interface ManufacturerProfile {
+  id: string;
+  name: string;
+  logoUrl?: string;
+  headquarters: string;
+  country: string;
+  countryFlag: string;
+  foundedYear?: number;
+  catalogSize?: number;
+  familyCount?: number;
+  distributorCount?: number;
+  isSecondSource: boolean;
+  certifications: ManufacturerCertification[];
+  designResources: DesignResource[];
+  manufacturingLocations: ManufacturerLocation[];
+  authorizedDistributors: string[];
+  complianceFlags: string[];
+  summary: string;
+}
+
+export interface ManufacturerCertification {
+  name: string;
+  category: 'automotive' | 'quality' | 'environmental' | 'safety' | 'military';
+}
+
+export interface DesignResource {
+  type: 'SPICE Models' | 'Reference Designs' | 'Selection Guides' | 'Online Simulation' | 'CAD Libraries' | 'Application Notes';
+  url?: string;
+}
+
+export interface ManufacturerLocation {
+  location: string;
+  type: 'fab' | 'assembly_test' | 'both';
+}
+
+// ============================================================
 // PARTS LIST TYPES
 // ============================================================
 

@@ -1,0 +1,261 @@
+'use client';
+import {
+  Box,
+  Typography,
+  IconButton,
+  Stack,
+  Chip,
+  Divider,
+  Avatar,
+} from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
+import FactoryIcon from '@mui/icons-material/Factory';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import BuildIcon from '@mui/icons-material/Build';
+import { ManufacturerProfile } from '@/lib/types';
+
+const HEADER_HEIGHT = 100;
+const ROW_FONT_SIZE = '0.78rem';
+const SECTION_PY = '16px';
+
+function getCertColor(category: string): string {
+  switch (category) {
+    case 'automotive': return '#42A5F5';
+    case 'quality': return '#66BB6A';
+    case 'environmental': return '#26A69A';
+    case 'safety': return '#FFA726';
+    case 'military': return '#EF5350';
+    default: return '#90A4AE';
+  }
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(/[\s-]+/)
+    .filter(w => w.length > 0 && w[0] === w[0].toUpperCase())
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('');
+}
+
+function getLocationIcon(type: string) {
+  switch (type) {
+    case 'fab': return <FactoryIcon sx={{ fontSize: 14, color: 'text.secondary' }} />;
+    case 'assembly_test': return <BuildIcon sx={{ fontSize: 14, color: 'text.secondary' }} />;
+    case 'both': return <PrecisionManufacturingIcon sx={{ fontSize: 14, color: 'text.secondary' }} />;
+    default: return null;
+  }
+}
+
+function getLocationLabel(type: string): string {
+  switch (type) {
+    case 'fab': return 'Fabrication';
+    case 'assembly_test': return 'Assembly & Test';
+    case 'both': return 'Fab + Assembly';
+    default: return type;
+  }
+}
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <Typography
+      variant="overline"
+      color="text.secondary"
+      sx={{ fontSize: '0.65rem', letterSpacing: '0.08em', mb: 1, display: 'block' }}
+    >
+      {children}
+    </Typography>
+  );
+}
+
+interface ManufacturerProfilePanelProps {
+  profile: ManufacturerProfile;
+  onClose: () => void;
+}
+
+export default function ManufacturerProfilePanel({ profile, onClose }: ManufacturerProfilePanelProps) {
+  return (
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <Box
+        sx={{
+          height: HEADER_HEIGHT,
+          minHeight: HEADER_HEIGHT,
+          px: 2,
+          py: 1.5,
+          borderBottom: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+        }}
+      >
+        <Avatar
+          sx={{
+            width: 40,
+            height: 40,
+            bgcolor: 'primary.main',
+            fontSize: '0.85rem',
+            fontWeight: 700,
+          }}
+        >
+          {getInitials(profile.name)}
+        </Avatar>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" sx={{ fontSize: '0.9rem', fontWeight: 600, lineHeight: 1.3 }} noWrap>
+            {profile.name}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE }} noWrap>
+            {profile.countryFlag} {profile.headquarters}
+            {profile.foundedYear && ` · Est. ${profile.foundedYear}`}
+          </Typography>
+        </Box>
+        <IconButton onClick={onClose} size="small" sx={{ ml: 'auto' }}>
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </Box>
+
+      {/* Scrollable body */}
+      <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 2 }}>
+        {/* Quick Stats */}
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: SECTION_PY }}>
+          {profile.catalogSize && (
+            <Chip
+              label={`${(profile.catalogSize / 1000).toFixed(0)}K parts`}
+              size="small"
+              variant="outlined"
+              sx={{ fontSize: '0.7rem', height: 24 }}
+            />
+          )}
+          {profile.familyCount && (
+            <Chip
+              label={`${profile.familyCount} families`}
+              size="small"
+              variant="outlined"
+              sx={{ fontSize: '0.7rem', height: 24 }}
+            />
+          )}
+          {profile.distributorCount && (
+            <Chip
+              label={`${profile.distributorCount} distributors`}
+              size="small"
+              variant="outlined"
+              sx={{ fontSize: '0.7rem', height: 24 }}
+            />
+          )}
+          {profile.isSecondSource && (
+            <Chip
+              label="Second Source"
+              size="small"
+              sx={{ fontSize: '0.7rem', height: 24, bgcolor: 'warning.dark', color: 'warning.contrastText' }}
+            />
+          )}
+        </Stack>
+
+        <Divider sx={{ mb: SECTION_PY }} />
+
+        {/* Certifications */}
+        {profile.certifications.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Certifications</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.certifications.map((cert) => (
+                <Chip
+                  key={cert.name}
+                  label={cert.name}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    fontSize: '0.68rem',
+                    height: 22,
+                    color: getCertColor(cert.category),
+                    borderColor: getCertColor(cert.category),
+                  }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        {/* Design Resources */}
+        {profile.designResources.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Design Resources</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.designResources.map((res) => (
+                <Chip
+                  key={res.type}
+                  label={res.type}
+                  size="small"
+                  variant="filled"
+                  sx={{ fontSize: '0.68rem', height: 22, bgcolor: 'action.selected' }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        <Divider sx={{ mb: SECTION_PY }} />
+
+        {/* Manufacturing Locations */}
+        {profile.manufacturingLocations.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Manufacturing Locations</SectionHeader>
+            <Stack spacing={0.75}>
+              {profile.manufacturingLocations.map((loc) => (
+                <Stack key={loc.location} direction="row" alignItems="center" spacing={1}>
+                  {getLocationIcon(loc.type)}
+                  <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE }}>
+                    {loc.location}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                    {getLocationLabel(loc.type)}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        {/* Authorized Distributors */}
+        {profile.authorizedDistributors.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Authorized Distributors</SectionHeader>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE }}>
+              {profile.authorizedDistributors.join(' · ')}
+            </Typography>
+          </Box>
+        )}
+
+        {/* Compliance Flags */}
+        {profile.complianceFlags.length > 0 && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>Compliance</SectionHeader>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              {profile.complianceFlags.map((flag) => (
+                <Chip
+                  key={flag}
+                  label={flag}
+                  size="small"
+                  color="success"
+                  variant="outlined"
+                  sx={{ fontSize: '0.68rem', height: 22 }}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        <Divider sx={{ mb: SECTION_PY }} />
+
+        {/* Summary */}
+        <Box>
+          <SectionHeader>About</SectionHeader>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: ROW_FONT_SIZE, lineHeight: 1.7 }}>
+            {profile.summary}
+          </Typography>
+        </Box>
+      </Box>
+    </Box>
+  );
+}

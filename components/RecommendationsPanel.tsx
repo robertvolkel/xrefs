@@ -6,9 +6,10 @@ import RecommendationCard from './RecommendationCard';
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
   onSelect: (rec: XrefRecommendation) => void;
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick }: RecommendationsPanelProps) {
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
 
   return (
@@ -39,6 +40,7 @@ export default function RecommendationsPanel({ recommendations, onSelect }: Reco
               key={rec.part.mpn}
               recommendation={rec}
               onClick={() => onSelect(rec)}
+              onManufacturerClick={onManufacturerClick}
             />
           ))}
         </Stack>
