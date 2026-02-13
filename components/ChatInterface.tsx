@@ -62,12 +62,12 @@ export default function ChatInterface({
       >
         <Box
           component="img"
-          src="/eemonkey-logo.png"
-          alt="EEMonkey"
+          src="/xqv2-logo.png"
+          alt="XQ"
           sx={{ height: { xs: 60, sm: 77 }, mb: 1, opacity: 0.55 }}
         />
         <Typography variant="body1" color="text.secondary" sx={{ mb: 4, textAlign: 'center', px: 1 }}>
-          Find Chinese replacement components. Bring costs down. Be the hero.
+          Go ahead.
         </Typography>
         <SearchInput onSubmit={onSearch} disabled={false} landing />
         <Typography variant="body2" color="text.secondary" sx={{ mt: 4 }}>
@@ -112,8 +112,8 @@ export default function ChatInterface({
             ) : (
               <Box
                 component="img"
-                src="/eemonkey-logo.png"
-                alt="EEMonkey"
+                src="/xqv2-logo.png"
+                alt="XQ"
                 onClick={onReset}
                 sx={{ height: 38, opacity: 0.55, cursor: 'pointer', '&:hover': { opacity: 0.8 } }}
               />
