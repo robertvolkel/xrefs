@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiResponse, PartAttributes } from '@/lib/types';
 import { getAttributes } from '@/lib/services/partDataService';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ mpn: string }> }
 ): Promise<NextResponse<ApiResponse<PartAttributes>>> {
+  const { error: authError } = await requireAuth();
+  if (authError) return authError;
+
   const { mpn } = await params;
 
   const attributes = await getAttributes(decodeURIComponent(mpn));

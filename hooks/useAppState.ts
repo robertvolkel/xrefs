@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   AppPhase,
   ApplicationContext,
@@ -21,6 +21,7 @@ import {
 import { getLogicTableForSubcategory, isFamilySupported, getSupportedFamilyNames } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
 import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
+import { logSearch } from '@/lib/supabaseLogger';
 
 interface AppState {
   phase: AppPhase;
@@ -62,6 +63,27 @@ export function useAppState() {
   const conversationRef = useRef<OrchestratorMessage[]>([]);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
+  // Track original search query for search history logging
+  const queryRef = useRef<string>('');
+  const loggedRef = useRef(false);
+
+  // Log search when reaching 'viewing' or 'unsupported' phase
+  useEffect(() => {
+    if ((state.phase === 'viewing' || state.phase === 'unsupported') && !loggedRef.current) {
+      loggedRef.current = true;
+      logSearch({
+        query: queryRef.current,
+        sourceMpn: state.sourcePart?.mpn,
+        sourceManufacturer: state.sourcePart?.manufacturer,
+        sourceCategory: state.sourceAttributes?.part.subcategory,
+        recommendationCount: state.recommendations.length,
+        phaseReached: state.phase,
+      });
+    }
+    if (state.phase === 'idle') {
+      loggedRef.current = false;
+    }
+  }, [state.phase, state.sourcePart, state.sourceAttributes, state.recommendations]);
 
   const addMessage = useCallback(
     (
@@ -404,6 +426,8 @@ export function useAppState() {
 
   const handleSearch = useCallback(
     async (query: string) => {
+      queryRef.current = query;
+      loggedRef.current = false;
       if (state.llmAvailable === false) {
         await handleSearchDeterministic(query);
       } else {

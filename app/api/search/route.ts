@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiResponse, SearchResult } from '@/lib/types';
 import { searchParts } from '@/lib/services/partDataService';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 
 export async function POST(request: NextRequest): Promise<NextResponse<ApiResponse<SearchResult>>> {
   try {
+    const { error: authError } = await requireAuth();
+    if (authError) return authError;
     const body = await request.json();
     const query: string = body.query;
 

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { BatchValidateRequest, BatchValidateItem } from '@/lib/types';
 import { searchParts, getAttributes, getRecommendations } from '@/lib/services/partDataService';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 
 const CONCURRENCY = 3;
 
@@ -58,6 +59,9 @@ async function processItem(
 
 export async function POST(request: NextRequest) {
   try {
+    const { error: authError } = await requireAuth();
+    if (authError) return authError;
+
     const body: BatchValidateRequest = await request.json();
 
     if (!body.items || body.items.length === 0) {

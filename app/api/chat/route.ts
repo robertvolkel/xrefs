@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OrchestratorMessage } from '@/lib/types';
 import { chat } from '@/lib/services/llmOrchestrator';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 
 interface ChatRequestBody {
   messages: OrchestratorMessage[];
@@ -8,6 +9,9 @@ interface ChatRequestBody {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    const { error: authError } = await requireAuth();
+    if (authError) return authError;
+
     const body: ChatRequestBody = await request.json();
 
     if (!body.messages || body.messages.length === 0) {

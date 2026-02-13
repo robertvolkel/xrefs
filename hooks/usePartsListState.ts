@@ -11,14 +11,14 @@ import {
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { validatePartsList, getPartAttributes, getRecommendations } from '@/lib/api';
+import { PartsListSummary } from '@/lib/partsListStorage';
 import {
-  getSavedLists,
-  savePartsList,
-  updatePartsList,
-  loadPartsList,
-  deletePartsList,
-  PartsListSummary,
-} from '@/lib/partsListStorage';
+  getSavedListsSupabase,
+  savePartsListSupabase,
+  updatePartsListSupabase,
+  loadPartsListSupabase,
+  deletePartsListSupabase,
+} from '@/lib/supabasePartsListStorage';
 
 // ============================================================
 // STATE
@@ -72,7 +72,9 @@ export function usePartsListState() {
 
   // Load saved lists on mount
   useEffect(() => {
-    setState(prev => ({ ...prev, savedLists: getSavedLists() }));
+    getSavedListsSupabase().then(lists => {
+      setState(prev => ({ ...prev, savedLists: lists }));
+    });
   }, []);
 
   // ----------------------------------------------------------
@@ -105,9 +107,12 @@ export function usePartsListState() {
   // Batch validation (defined before column mapping so it can be called directly)
   // ----------------------------------------------------------
 
-  const startValidation = useCallback(async (rows: PartsListRow[]) => {
+  const startValidation = useCallback(async (initialRows: PartsListRow[]) => {
     savedRef.current = false;
-    const items = rows.map(r => ({
+    // Keep a local copy of rows so we can save the final state without reading React state
+    let localRows = [...initialRows];
+
+    const items = initialRows.map(r => ({
       rowIndex: r.rowIndex,
       mpn: r.rawMpn,
       manufacturer: r.rawManufacturer || undefined,
@@ -136,6 +141,20 @@ export function usePartsListState() {
             const item: BatchValidateItem = JSON.parse(line);
             processed++;
 
+            // Update local copy
+            const localIdx = localRows.findIndex(r => r.rowIndex === item.rowIndex);
+            if (localIdx >= 0) {
+              localRows[localIdx] = {
+                ...localRows[localIdx],
+                status: item.status,
+                resolvedPart: item.resolvedPart,
+                sourceAttributes: item.sourceAttributes,
+                suggestedReplacement: item.suggestedReplacement,
+                allRecommendations: item.allRecommendations,
+                errorMessage: item.errorMessage,
+              };
+            }
+
             setState(prev => {
               const newRows = [...prev.rows];
               const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
@@ -162,31 +181,38 @@ export function usePartsListState() {
         }
       }
 
-      // Validation complete — save to localStorage
-      setState(prev => {
-        // Guard: StrictMode may double-invoke this updater — only save once
-        if (savedRef.current) {
-          return { ...prev, phase: 'results', validationProgress: 1 };
-        }
+      // Validation complete — save to Supabase
+      if (!savedRef.current) {
         savedRef.current = true;
 
-        const name = prev.listName ?? 'Untitled List';
-        let listId = prev.activeListId;
+        // Read name/listId from state via functional update
+        let saveName = 'Untitled List';
+        let saveListId: string | null = null;
+        setState(prev => {
+          saveName = prev.listName ?? 'Untitled List';
+          saveListId = prev.activeListId;
+          return { ...prev, phase: 'results', validationProgress: 1 };
+        });
 
-        if (listId) {
-          updatePartsList(listId, prev.rows);
-        } else {
-          listId = savePartsList(name, prev.rows);
+        // Async save using local rows (avoids stale state reads)
+        try {
+          if (saveListId) {
+            await updatePartsListSupabase(saveListId, localRows);
+          } else {
+            saveListId = await savePartsListSupabase(saveName, localRows);
+          }
+          const lists = await getSavedListsSupabase();
+          setState(prev => ({
+            ...prev,
+            activeListId: saveListId,
+            savedLists: lists,
+          }));
+        } catch {
+          // Save failed silently — user can still see results
         }
-
-        return {
-          ...prev,
-          phase: 'results',
-          validationProgress: 1,
-          activeListId: listId,
-          savedLists: getSavedLists(),
-        };
-      });
+      } else {
+        setState(prev => ({ ...prev, phase: 'results', validationProgress: 1 }));
+      }
     } catch (error) {
       setState(prev => ({
         ...prev,
@@ -240,8 +266,8 @@ export function usePartsListState() {
   // Load a saved list
   // ----------------------------------------------------------
 
-  const handleLoadList = useCallback((id: string) => {
-    const loaded = loadPartsList(id);
+  const handleLoadList = useCallback(async (id: string) => {
+    const loaded = await loadPartsListSupabase(id);
     if (!loaded) return;
 
     setState(prev => ({
@@ -261,11 +287,12 @@ export function usePartsListState() {
   // Delete a saved list
   // ----------------------------------------------------------
 
-  const handleDeleteList = useCallback((id: string) => {
-    deletePartsList(id);
+  const handleDeleteList = useCallback(async (id: string) => {
+    await deletePartsListSupabase(id);
+    const lists = await getSavedListsSupabase();
     setState(prev => ({
       ...prev,
-      savedLists: getSavedLists(),
+      savedLists: lists,
       // If we deleted the active list, go back to empty
       ...(prev.activeListId === id ? { phase: 'empty' as const, rows: [], activeListId: null, listName: null } : {}),
     }));
@@ -276,6 +303,9 @@ export function usePartsListState() {
   // ----------------------------------------------------------
 
   const handleModalConfirmReplacement = useCallback((rec: XrefRecommendation) => {
+    let rowsToSave: PartsListRow[] | null = null;
+    let listIdToSave: string | null = null;
+
     setState(prev => {
       if (prev.modalRowIndex === null) return prev;
 
@@ -285,9 +315,10 @@ export function usePartsListState() {
         newRows[idx] = { ...newRows[idx], suggestedReplacement: rec };
       }
 
-      // Auto-save if this list is persisted
+      // Capture for async save
       if (prev.activeListId) {
-        updatePartsList(prev.activeListId, newRows);
+        rowsToSave = newRows;
+        listIdToSave = prev.activeListId;
       }
 
       return {
@@ -299,6 +330,11 @@ export function usePartsListState() {
         modalComparing: false,
       };
     });
+
+    // Auto-save if this list is persisted (fire-and-forget)
+    if (rowsToSave && listIdToSave) {
+      updatePartsListSupabase(listIdToSave, rowsToSave).catch(() => {});
+    }
   }, []);
 
   // ----------------------------------------------------------

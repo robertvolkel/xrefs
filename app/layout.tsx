@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ThemeRegistry from "@/components/ThemeRegistry";
+import AuthProvider from "@/components/AuthProvider";
+import { createClient } from "@/lib/supabase/server";
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -14,15 +16,22 @@ export const metadata: Metadata = {
   description: "Find replacement electronic components with parametric comparison",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <ThemeRegistry>{children}</ThemeRegistry>
+        <ThemeRegistry>
+          <AuthProvider initialUser={user}>
+            {children}
+          </AuthProvider>
+        </ThemeRegistry>
       </body>
     </html>
   );
