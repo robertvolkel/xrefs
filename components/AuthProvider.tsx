@@ -26,15 +26,20 @@ export default function AuthProvider({
   const [loading, setLoading] = useState(!initialUser);
 
   useEffect(() => {
-    const supabase = createClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setUser(session?.user ?? null);
-        setLoading(false);
-      }
-    );
+    try {
+      const supabase = createClient();
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        (_event, session) => {
+          setUser(session?.user ?? null);
+          setLoading(false);
+        }
+      );
 
-    return () => subscription.unsubscribe();
+      return () => subscription.unsubscribe();
+    } catch {
+      // Supabase not configured — stay with initialUser
+      setLoading(false);
+    }
   }, []);
 
   return (
