@@ -121,12 +121,12 @@ export default function ComparisonView({
         sx={{
           height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
           minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
-          p: 2,
+          px: 2,
+          py: 1.5,
           borderBottom: 1,
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
         }}
       >
         <Stack direction="row" alignItems="center" spacing={1}>

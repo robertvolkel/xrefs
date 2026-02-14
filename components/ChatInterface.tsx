@@ -1,8 +1,6 @@
 'use client';
 import { useRef, useEffect } from 'react';
-import { Box, Button, CircularProgress, IconButton, Link, Stack, Typography } from '@mui/material';
-import MenuIcon from '@mui/icons-material/Menu';
-import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import { Box, CircularProgress, Link, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
 import SearchInput from './SearchInput';
@@ -19,8 +17,7 @@ interface ChatInterfaceProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
-  showHamburger?: boolean;
-  onCollapse?: () => void;
+  onFileSelect?: (file: File) => void;
 }
 
 export default function ChatInterface({
@@ -34,14 +31,14 @@ export default function ChatInterface({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
-  showHamburger,
-  onCollapse,
+  onFileSelect,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
   const isSearching = phase === 'searching';
   const isLanding = isIdle && messages.length === 0;
   const inputDisabled = isSearching || phase === 'loading-attributes' || phase === 'awaiting-attributes' || phase === 'awaiting-context' || phase === 'finding-matches';
+  const chatTitle = messages.find((m) => m.role === 'user')?.content;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,29 +57,14 @@ export default function ChatInterface({
           px: { xs: 2, sm: 3 },
         }}
       >
-        <Box
-          component="img"
-          src="/xqv2-logo.png"
-          alt="XQ"
-          sx={{ height: { xs: 60, sm: 77 }, mb: 1, opacity: 0.55 }}
-        />
-        <Typography variant="body1" color="text.secondary" sx={{ mb: 4, textAlign: 'center', px: 1 }}>
-          Go ahead.
-        </Typography>
-        <SearchInput onSubmit={onSearch} disabled={false} landing />
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 4 }}>
-          Or upload a{' '}
-          <Link href="/parts-list" underline="always" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
-            parts list
-          </Link>
-        </Typography>
+        <SearchInput onSubmit={onSearch} disabled={false} landing onFileSelect={onFileSelect} />
         <Typography
           variant="caption"
           color="text.secondary"
           sx={{ position: 'absolute', bottom: 24, display: { xs: 'none', sm: 'flex' }, alignItems: 'baseline', gap: 0.75 }}
         >
           <span>🇨🇳</span>
-          <span>Made in China by very smart engineers</span>
+          <span>Made in China</span>
           <span style={{ margin: '0 2px' }}>|</span>
           <Link href="/logic" underline="hover" variant="caption" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
             View replacement logic
@@ -101,35 +83,30 @@ export default function ChatInterface({
         height: '100%',
       }}
     >
-      {/* Header — fixed height to align with other panels */}
-      <Box sx={{ height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT }, minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT }, px: 2, borderBottom: 1, borderColor: 'divider', flexShrink: 0, display: 'flex', alignItems: showHamburger ? 'flex-start' : 'center', pt: showHamburger ? 2 : 0 }}>
-        <Box sx={{ maxWidth: { xs: '100%', md: CONTENT_MAX_WIDTH }, mx: 'auto', width: '100%' }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            {showHamburger ? (
-              <IconButton onClick={onCollapse} size="small" sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}>
-                <MenuIcon fontSize="small" />
-              </IconButton>
-            ) : (
-              <Box
-                component="img"
-                src="/xqv2-logo.png"
-                alt="XQ"
-                onClick={onReset}
-                sx={{ height: 38, opacity: 0.55, cursor: 'pointer', '&:hover': { opacity: 0.8 } }}
-              />
-            )}
-            <Button
-              size="small"
-              startIcon={<RestartAltIcon />}
-              onClick={onReset}
-              color="inherit"
-              sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
-            >
-              Start Over
-            </Button>
-          </Stack>
+      {/* Chat title — top-aligned in HEADER_HEIGHT zone to match "SOURCE PART" label */}
+      {chatTitle && (
+        <Box
+          sx={{
+            height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+            minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            flexShrink: 0,
+            pt: '30px',
+            px: { xs: 2, sm: 3 },
+          }}
+        >
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ fontSize: '0.85rem', fontWeight: 500 }}
+            noWrap
+          >
+            {chatTitle}
+          </Typography>
         </Box>
-      </Box>
+      )}
 
       {/* Messages — centered column */}
       <Box sx={{ flex: 1, overflowY: 'auto' }}>
@@ -139,7 +116,7 @@ export default function ChatInterface({
             mx: 'auto',
             width: '100%',
             px: { xs: 2, sm: 3 },
-            py: { xs: 2, sm: 3 },
+            py: { xs: 1.5, sm: 2 },
           }}
         >
           {messages.map((msg) => (

@@ -1,12 +1,15 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { useAppState } from '@/hooks/useAppState';
 import { AppPhase, ManufacturerProfile } from '@/lib/types';
 import { getManufacturerProfile } from '@/lib/mockManufacturerData';
+import { setPendingFile } from '@/lib/pendingFile';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
+import AppSidebar from './AppSidebar';
 import MobileAppLayout from './MobileAppLayout';
 import AttributesPanel from './AttributesPanel';
 import RecommendationsPanel from './RecommendationsPanel';
@@ -52,14 +55,14 @@ function RecommendationsSkeleton() {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box
         sx={{
-          height: 100,
-          minHeight: 100,
-          p: 2,
+          height: 80,
+          minHeight: 80,
+          px: 2,
+          py: 1.5,
           borderBottom: 1,
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
         }}
       >
         <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -109,6 +112,13 @@ export default function AppShell() {
   const [chatManuallyCollapsed, setChatManuallyCollapsed] = useState(false);
   const chatCollapsed = mfrProfile !== null || chatManuallyCollapsed;
   const mfrOpen = mfrProfile !== null;
+
+  const router = useRouter();
+
+  const handleFileSelect = useCallback((file: File) => {
+    setPendingFile(file);
+    router.push('/parts-list');
+  }, [router]);
 
   const handleManufacturerClick = useCallback((manufacturer: string) => {
     const profile = getManufacturerProfile(manufacturer);
@@ -176,25 +186,27 @@ export default function AppShell() {
   }
 
   return (
-    <Box
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed, mfrOpen),
-        height: 'var(--app-height)',
-        width: '100vw',
-        overflow: 'hidden',
-        transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-        bgcolor: 'background.default',
-        '@media (max-width: 900px)': {
-          gridTemplateColumns: '1fr !important',
-          gridTemplateRows: showRightPanel
-            ? '40vh 30vh 30vh'
-            : showAttributesPanel
-              ? '60vh 40vh'
-              : '1fr',
-        },
-      }}
-    >
+    <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
+      <AppSidebar onReset={handleReset} />
+      <Box
+        sx={{
+          flex: 1,
+          display: 'grid',
+          gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed, mfrOpen),
+          height: '100%',
+          overflow: 'hidden',
+          transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+          bgcolor: 'background.default',
+          '@media (max-width: 900px)': {
+            gridTemplateColumns: '1fr !important',
+            gridTemplateRows: showRightPanel
+              ? '40vh 30vh 30vh'
+              : showAttributesPanel
+                ? '60vh 40vh'
+                : '1fr',
+          },
+        }}
+      >
       {/* Left panel: Chat + Collapsed Nav (both rendered, crossfade) */}
       <Box
         sx={{
@@ -247,8 +259,7 @@ export default function AppShell() {
             onSkipAttributes={appState.handleSkipAttributes}
             onContextResponse={appState.handleContextResponse}
             onSkipContext={appState.handleSkipContext}
-            showHamburger={showRightPanel}
-            onCollapse={() => setChatManuallyCollapsed(true)}
+            onFileSelect={handleFileSelect}
           />
         </Box>
       </Box>
@@ -335,6 +346,7 @@ export default function AppShell() {
         {mfrProfile && (
           <ManufacturerProfilePanel profile={mfrProfile} onClose={handleExpandChat} />
         )}
+      </Box>
       </Box>
     </Box>
   );

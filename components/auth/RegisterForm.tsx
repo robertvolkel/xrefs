@@ -78,13 +78,6 @@ export default function RegisterForm() {
       }}
     >
       <Box
-        component="img"
-        src="/xqv2-logo.png"
-        alt="XQ"
-        sx={{ height: 77, mb: 4, opacity: 0.55 }}
-      />
-
-      <Box
         component="form"
         onSubmit={handleSubmit}
         sx={{

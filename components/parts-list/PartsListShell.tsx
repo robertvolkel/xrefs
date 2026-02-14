@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Box } from '@mui/material';
 import { usePartsListState } from '@/hooks/usePartsListState';
+import { consumePendingFile } from '@/lib/pendingFile';
 import PartsListHeader from './PartsListHeader';
 import FileUploadZone from './FileUploadZone';
 import ColumnMappingDialog from './ColumnMappingDialog';
@@ -34,6 +36,12 @@ export default function PartsListShell() {
     handleModalConfirmReplacement,
     handleReset,
   } = usePartsListState();
+
+  // Auto-process file passed from landing page via pendingFile module
+  useEffect(() => {
+    const file = consumePendingFile();
+    if (file) handleFileSelected(file);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Box

@@ -224,7 +224,6 @@ export default function MobileAppLayout({
             onSkipAttributes={onSkipAttributes}
             onContextResponse={onContextResponse}
             onSkipContext={onSkipContext}
-            showHamburger={false}
           />
         </Box>
 

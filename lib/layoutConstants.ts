@@ -1,10 +1,11 @@
 // Shared layout constants — single source of truth for panel alignment
 // Desktop values
-export const HEADER_HEIGHT = 100;
+export const HEADER_HEIGHT = 80;
 export const ROW_FONT_SIZE = '0.78rem';
 export const ROW_PY = '10px';
 export const SECTION_PY = '16px';
 export const CONTENT_MAX_WIDTH = 720;
+export const SIDEBAR_WIDTH = 60;
 
 // Mobile values
 export const HEADER_HEIGHT_MOBILE = 56;
