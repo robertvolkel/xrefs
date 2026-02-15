@@ -1,12 +1,13 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { Box, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import { createClient } from '@/lib/supabase/client';
-import { HEADER_HEIGHT, SIDEBAR_WIDTH } from '@/lib/layoutConstants';
+import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -14,7 +15,10 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ onReset }: AppSidebarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+
+  const isListsActive = pathname === '/lists';
 
   const handleLogout = async () => {
     setAnchorEl(null);
@@ -45,21 +49,34 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
         pb: 2,
       }}
     >
-      {/* Logo — top-aligned in HEADER_HEIGHT zone to match "SOURCE PART" label */}
-      <Box
-        onClick={onReset}
-        sx={{
-          height: HEADER_HEIGHT,
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'center',
-          pt: '30px',
-          cursor: 'pointer',
-          opacity: 0.7,
-          '&:hover': { opacity: 1 },
-        }}
-      >
-        <Box component="img" src="/xq-logo.png" alt="XQ" sx={{ width: 28 }} />
+      {/* Top group: Logo + nav icons */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: '30px' }}>
+        {/* Logo */}
+        <Box
+          onClick={onReset}
+          sx={{
+            cursor: 'pointer',
+            opacity: 0.7,
+            '&:hover': { opacity: 1 },
+          }}
+        >
+          <Box component="img" src="/xq-logo.png" alt="XQ" sx={{ width: 28 }} />
+        </Box>
+
+        {/* Navigation icons — 3x the 30px logo top padding */}
+        <IconButton
+          onClick={() => router.push('/lists')}
+          size="small"
+          sx={{
+            mt: '51px',
+            opacity: isListsActive ? 1 : 0.7,
+            bgcolor: isListsActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { opacity: 1 },
+          }}
+        >
+          <DescriptionOutlinedIcon fontSize="small" />
+        </IconButton>
       </Box>
 
       {/* Settings */}

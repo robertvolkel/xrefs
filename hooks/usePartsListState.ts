@@ -7,10 +7,9 @@ import {
   ParsedSpreadsheet,
   XrefRecommendation,
   PartAttributes,
-  BatchValidateItem,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { validatePartsList, getPartAttributes, getRecommendations } from '@/lib/api';
+import { getPartAttributes, getRecommendations } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import {
   getSavedListsSupabase,
@@ -19,6 +18,12 @@ import {
   loadPartsListSupabase,
   deletePartsListSupabase,
 } from '@/lib/supabasePartsListStorage';
+import {
+  startBackgroundValidation,
+  getActiveValidation,
+  subscribe as subscribeValidation,
+  clearValidation,
+} from '@/lib/validationManager';
 
 // ============================================================
 // STATE
@@ -39,8 +44,10 @@ interface PartsListState {
   error: string | null;
   /** ID of the currently active saved list (null if unsaved) */
   activeListId: string | null;
-  /** Name of the current list (from filename) */
+  /** Name of the current list (from filename or user input) */
   listName: string | null;
+  /** User-provided description for AI context */
+  listDescription: string | null;
   /** All saved list summaries */
   savedLists: PartsListSummary[];
 }
@@ -58,6 +65,7 @@ const INITIAL_STATE: PartsListState = {
   error: null,
   activeListId: null,
   listName: null,
+  listDescription: null,
   savedLists: [],
 };
 
@@ -67,8 +75,11 @@ const INITIAL_STATE: PartsListState = {
 
 export function usePartsListState() {
   const [state, setState] = useState<PartsListState>(INITIAL_STATE);
-  // Guard against StrictMode double-invoking setState updaters with side effects
-  const savedRef = useRef(false);
+  // Refs to reliably read latest values from async code (setState batching
+  // means functional updaters don't run synchronously in React 18)
+  const listNameRef = useRef<string | null>(null);
+  const listDescriptionRef = useRef<string | null>(null);
+  const activeListIdRef = useRef<string | null>(null);
 
   // Load saved lists on mount
   useEffect(() => {
@@ -78,20 +89,63 @@ export function usePartsListState() {
   }, []);
 
   // ----------------------------------------------------------
+  // Validation manager subscription
+  // ----------------------------------------------------------
+
+  // Subscribe to the background validation manager for live updates.
+  // The manager runs outside React lifecycle, so validation continues
+  // even if this component unmounts.
+  useEffect(() => {
+    const unsub = subscribeValidation((rows, progress, done, error) => {
+      setState(prev => {
+        // Only update if we're in a validating/results phase for this list
+        if (prev.phase !== 'validating' && prev.phase !== 'results') return prev;
+        return {
+          ...prev,
+          rows,
+          validationProgress: progress,
+          phase: done ? 'results' : 'validating',
+          error: error || prev.error,
+        };
+      });
+
+      // Refresh saved lists when done so card counts update
+      if (done) {
+        getSavedListsSupabase().then(lists => {
+          setState(prev => ({ ...prev, savedLists: lists }));
+        });
+      }
+    });
+
+    return unsub;
+  }, []);
+
+  // ----------------------------------------------------------
   // File handling
   // ----------------------------------------------------------
 
-  const handleFileSelected = useCallback(async (file: File) => {
+  const handleFileSelected = useCallback(async (
+    file: File,
+    overrideName?: string,
+    overrideDescription?: string,
+  ) => {
     try {
       const parsedData = await parseSpreadsheetFile(file);
-      const columnMapping = autoDetectColumns(parsedData.headers);
+      const columnMapping = autoDetectColumns(parsedData.headers, parsedData.rows);
+
+      const name = overrideName || file.name.replace(/\.[^.]+$/, '');
+      const desc = overrideDescription ?? null;
+      listNameRef.current = name;
+      listDescriptionRef.current = desc;
+      activeListIdRef.current = null;
 
       setState(prev => ({
         ...prev,
         phase: 'mapping',
         parsedData,
         columnMapping,
-        listName: file.name.replace(/\.[^.]+$/, ''),
+        listName: name,
+        listDescription: desc,
         activeListId: null,
         error: null,
       }));
@@ -104,129 +158,10 @@ export function usePartsListState() {
   }, []);
 
   // ----------------------------------------------------------
-  // Batch validation (defined before column mapping so it can be called directly)
-  // ----------------------------------------------------------
-
-  const startValidation = useCallback(async (initialRows: PartsListRow[]) => {
-    savedRef.current = false;
-    // Keep a local copy of rows so we can save the final state without reading React state
-    let localRows = [...initialRows];
-
-    const items = initialRows.map(r => ({
-      rowIndex: r.rowIndex,
-      mpn: r.rawMpn,
-      manufacturer: r.rawManufacturer || undefined,
-      description: r.rawDescription || undefined,
-    }));
-
-    try {
-      const stream = await validatePartsList(items);
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let processed = 0;
-      const total = items.length;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const item: BatchValidateItem = JSON.parse(line);
-            processed++;
-
-            // Update local copy
-            const localIdx = localRows.findIndex(r => r.rowIndex === item.rowIndex);
-            if (localIdx >= 0) {
-              localRows[localIdx] = {
-                ...localRows[localIdx],
-                status: item.status,
-                resolvedPart: item.resolvedPart,
-                sourceAttributes: item.sourceAttributes,
-                suggestedReplacement: item.suggestedReplacement,
-                allRecommendations: item.allRecommendations,
-                errorMessage: item.errorMessage,
-              };
-            }
-
-            setState(prev => {
-              const newRows = [...prev.rows];
-              const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
-              if (idx >= 0) {
-                newRows[idx] = {
-                  ...newRows[idx],
-                  status: item.status,
-                  resolvedPart: item.resolvedPart,
-                  sourceAttributes: item.sourceAttributes,
-                  suggestedReplacement: item.suggestedReplacement,
-                  allRecommendations: item.allRecommendations,
-                  errorMessage: item.errorMessage,
-                };
-              }
-              return {
-                ...prev,
-                rows: newRows,
-                validationProgress: processed / total,
-              };
-            });
-          } catch {
-            // Skip malformed lines
-          }
-        }
-      }
-
-      // Validation complete — save to Supabase
-      if (!savedRef.current) {
-        savedRef.current = true;
-
-        // Read name/listId from state via functional update
-        let saveName = 'Untitled List';
-        let saveListId: string | null = null;
-        setState(prev => {
-          saveName = prev.listName ?? 'Untitled List';
-          saveListId = prev.activeListId;
-          return { ...prev, phase: 'results', validationProgress: 1 };
-        });
-
-        // Async save using local rows (avoids stale state reads)
-        try {
-          if (saveListId) {
-            await updatePartsListSupabase(saveListId, localRows);
-          } else {
-            saveListId = await savePartsListSupabase(saveName, localRows);
-          }
-          const lists = await getSavedListsSupabase();
-          setState(prev => ({
-            ...prev,
-            activeListId: saveListId,
-            savedLists: lists,
-          }));
-        } catch {
-          // Save failed silently — user can still see results
-        }
-      } else {
-        setState(prev => ({ ...prev, phase: 'results', validationProgress: 1 }));
-      }
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        phase: 'results',
-        error: error instanceof Error ? error.message : 'Validation failed',
-      }));
-    }
-  }, []);
-
-  // ----------------------------------------------------------
   // Column mapping
   // ----------------------------------------------------------
 
-  const handleColumnMappingConfirmed = useCallback((mapping: ColumnMapping) => {
+  const handleColumnMappingConfirmed = useCallback(async (mapping: ColumnMapping) => {
     let validRows: PartsListRow[] = [];
 
     setState(prev => {
@@ -252,11 +187,26 @@ export function usePartsListState() {
       };
     });
 
-    // Start validation directly (no useEffect needed — prevents StrictMode double-fire)
-    if (validRows.length > 0) {
-      startValidation(validRows);
+    if (validRows.length === 0) return;
+
+    // Save list to Supabase immediately (all rows as "pending") so it
+    // appears in the Lists dashboard right away.
+    const saveName = listNameRef.current || 'Untitled List';
+    const saveDesc = listDescriptionRef.current ?? undefined;
+    try {
+      const listId = await savePartsListSupabase(saveName, validRows, saveDesc);
+      if (listId) {
+        activeListIdRef.current = listId;
+        setState(prev => ({ ...prev, activeListId: listId }));
+      }
+
+      // Start background validation (runs outside React lifecycle)
+      startBackgroundValidation(listId || '', validRows);
+    } catch {
+      // Save failed — start validation anyway (just won't persist)
+      startBackgroundValidation('', validRows);
     }
-  }, [startValidation]);
+  }, []);
 
   const handleColumnMappingCancelled = useCallback(() => {
     setState(prev => ({ ...prev, phase: 'empty', parsedData: null, columnMapping: null, listName: null }));
@@ -267,14 +217,48 @@ export function usePartsListState() {
   // ----------------------------------------------------------
 
   const handleLoadList = useCallback(async (id: string) => {
+    // Check if there's an active background validation for this list
+    const activeVal = getActiveValidation(id);
+    if (activeVal) {
+      // Rejoin the in-progress validation
+      listNameRef.current = null; // will be set from Supabase data below
+      activeListIdRef.current = id;
+
+      // Load the name from Supabase, but use live rows from the manager
+      const loaded = await loadPartsListSupabase(id);
+      const name = loaded?.name || 'Untitled List';
+      const desc = loaded?.description || null;
+      listNameRef.current = name;
+      listDescriptionRef.current = desc;
+
+      setState(prev => ({
+        ...prev,
+        phase: 'validating',
+        rows: activeVal.rows,
+        listName: name,
+        listDescription: desc,
+        activeListId: id,
+        validationProgress: activeVal.progress,
+        parsedData: null,
+        columnMapping: null,
+        error: null,
+      }));
+      return;
+    }
+
     const loaded = await loadPartsListSupabase(id);
     if (!loaded) return;
+
+    listNameRef.current = loaded.name;
+    listDescriptionRef.current = loaded.description || null;
+    activeListIdRef.current = id;
 
     setState(prev => ({
       ...prev,
       phase: 'results',
       rows: loaded.rows,
       listName: loaded.name,
+      listDescription: loaded.description || null,
       activeListId: id,
       validationProgress: 1,
       parsedData: null,
@@ -303,9 +287,6 @@ export function usePartsListState() {
   // ----------------------------------------------------------
 
   const handleModalConfirmReplacement = useCallback((rec: XrefRecommendation) => {
-    let rowsToSave: PartsListRow[] | null = null;
-    let listIdToSave: string | null = null;
-
     setState(prev => {
       if (prev.modalRowIndex === null) return prev;
 
@@ -313,12 +294,6 @@ export function usePartsListState() {
       const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
       if (idx >= 0) {
         newRows[idx] = { ...newRows[idx], suggestedReplacement: rec };
-      }
-
-      // Capture for async save
-      if (prev.activeListId) {
-        rowsToSave = newRows;
-        listIdToSave = prev.activeListId;
       }
 
       return {
@@ -331,9 +306,18 @@ export function usePartsListState() {
       };
     });
 
-    // Auto-save if this list is persisted (fire-and-forget)
-    if (rowsToSave && listIdToSave) {
-      updatePartsListSupabase(listIdToSave, rowsToSave).catch(() => {});
+    // Auto-save if this list is persisted (fire-and-forget, read from ref)
+    const listId = activeListIdRef.current;
+    if (listId) {
+      // Small delay so React processes the setState above first
+      setTimeout(() => {
+        setState(prev => {
+          if (prev.activeListId) {
+            updatePartsListSupabase(prev.activeListId, prev.rows).catch(() => {});
+          }
+          return prev;
+        });
+      }, 0);
     }
   }, []);
 
@@ -409,6 +393,10 @@ export function usePartsListState() {
   // ----------------------------------------------------------
 
   const handleReset = useCallback(() => {
+    listNameRef.current = null;
+    listDescriptionRef.current = null;
+    activeListIdRef.current = null;
+    clearValidation();
     setState(prev => ({ ...INITIAL_STATE, savedLists: prev.savedLists }));
   }, []);
 

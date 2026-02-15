@@ -15,6 +15,7 @@ import AttributesPanel from './AttributesPanel';
 import RecommendationsPanel from './RecommendationsPanel';
 import ComparisonView from './ComparisonView';
 import ManufacturerProfilePanel from './ManufacturerProfilePanel';
+import NewListDialog from './lists/NewListDialog';
 
 function getGridColumns(
   phase: AppPhase,
@@ -115,10 +116,27 @@ export default function AppShell() {
 
   const router = useRouter();
 
+  // New list dialog state (triggered by file upload from SearchInput)
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [newListDialogOpen, setNewListDialogOpen] = useState(false);
+
   const handleFileSelect = useCallback((file: File) => {
-    setPendingFile(file);
+    setPendingUploadFile(file);
+    setNewListDialogOpen(true);
+  }, []);
+
+  const handleNewListConfirm = useCallback((name: string, description: string) => {
+    if (!pendingUploadFile) return;
+    setPendingFile(pendingUploadFile, name, description);
+    setNewListDialogOpen(false);
+    setPendingUploadFile(null);
     router.push('/parts-list');
-  }, [router]);
+  }, [pendingUploadFile, router]);
+
+  const handleNewListCancel = useCallback(() => {
+    setNewListDialogOpen(false);
+    setPendingUploadFile(null);
+  }, []);
 
   const handleManufacturerClick = useCallback((manufacturer: string) => {
     const profile = getManufacturerProfile(manufacturer);
@@ -348,6 +366,14 @@ export default function AppShell() {
         )}
       </Box>
       </Box>
+
+      {/* New list naming dialog (triggered by file upload from SearchInput) */}
+      <NewListDialog
+        open={newListDialogOpen}
+        fileName={pendingUploadFile?.name ?? ''}
+        onConfirm={handleNewListConfirm}
+        onCancel={handleNewListCancel}
+      />
     </Box>
   );
 }

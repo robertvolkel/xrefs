@@ -35,16 +35,27 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
 /** Get summaries of all saved lists for the current user (newest first) */
 export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('parts_lists')
-    .select('id, name, created_at, updated_at, total_rows, resolved_count')
+    .select('id, name, description, created_at, updated_at, total_rows, resolved_count')
     .order('updated_at', { ascending: false });
+
+  // Fallback: if description column doesn't exist yet, query without it
+  if (error) {
+    const fallback = await supabase
+      .from('parts_lists')
+      .select('id, name, created_at, updated_at, total_rows, resolved_count')
+      .order('updated_at', { ascending: false });
+    data = fallback.data as typeof data;
+    error = fallback.error;
+  }
 
   if (error || !data) return [];
 
-  return data.map(row => ({
+  return data.map((row) => ({
     id: row.id,
     name: row.name,
+    description: row.description || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     totalRows: row.total_rows,
@@ -53,22 +64,39 @@ export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
 }
 
 /** Save a new parts list. Returns the generated ID. */
-export async function savePartsListSupabase(name: string, rows: PartsListRow[]): Promise<string | null> {
+export async function savePartsListSupabase(
+  name: string,
+  rows: PartsListRow[],
+  description?: string,
+): Promise<string | null> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data, error } = await supabase
+  const basePayload = {
+    user_id: user.id,
+    name,
+    total_rows: rows.length,
+    resolved_count: rows.filter(r => r.status === 'resolved').length,
+    rows: toStoredRows(rows),
+  };
+
+  // Try with description first, fall back without if column doesn't exist
+  let { data, error } = await supabase
     .from('parts_lists')
-    .insert({
-      user_id: user.id,
-      name,
-      total_rows: rows.length,
-      resolved_count: rows.filter(r => r.status === 'resolved').length,
-      rows: toStoredRows(rows),
-    })
+    .insert({ ...basePayload, description: description || '' })
     .select('id')
     .single();
+
+  if (error) {
+    const fallback = await supabase
+      .from('parts_lists')
+      .insert(basePayload)
+      .select('id')
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error || !data) return null;
   return data.id;
@@ -89,18 +117,30 @@ export async function updatePartsListSupabase(id: string, rows: PartsListRow[]):
 }
 
 /** Load a saved parts list by ID */
-export async function loadPartsListSupabase(id: string): Promise<{ name: string; rows: PartsListRow[] } | null> {
+export async function loadPartsListSupabase(id: string): Promise<{ name: string; description: string; rows: PartsListRow[] } | null> {
   const supabase = createClient();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('parts_lists')
-    .select('name, rows')
+    .select('name, description, rows')
     .eq('id', id)
     .single();
+
+  // Fallback: if description column doesn't exist yet
+  if (error) {
+    const fallback = await supabase
+      .from('parts_lists')
+      .select('name, rows')
+      .eq('id', id)
+      .single();
+    data = fallback.data as typeof data;
+    error = fallback.error;
+  }
 
   if (error || !data) return null;
 
   return {
     name: data.name,
+    description: (data as Record<string, unknown>).description as string || '',
     rows: fromStoredRows(data.rows as StoredRow[]),
   };
 }

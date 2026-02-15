@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Box } from '@mui/material';
 import { usePartsListState } from '@/hooks/usePartsListState';
-import { consumePendingFile } from '@/lib/pendingFile';
+import { consumePendingFile, peekPendingFile } from '@/lib/pendingFile';
 import PartsListHeader from './PartsListHeader';
 import FileUploadZone from './FileUploadZone';
 import ColumnMappingDialog from './ColumnMappingDialog';
@@ -11,6 +12,11 @@ import PartsListTable from './PartsListTable';
 import PartDetailModal from './PartDetailModal';
 
 export default function PartsListShell() {
+  const searchParams = useSearchParams();
+  // Suppress the empty-state flash while we're about to load a list or process a file
+  const willAutoLoad = useRef(
+    !!searchParams.get('listId') || !!peekPendingFile(),
+  );
   const {
     phase,
     parsedData,
@@ -37,10 +43,20 @@ export default function PartsListShell() {
     handleReset,
   } = usePartsListState();
 
-  // Auto-process file passed from landing page via pendingFile module
+  // Auto-process pending file or load list from URL param
   useEffect(() => {
-    const file = consumePendingFile();
-    if (file) handleFileSelected(file);
+    const pending = consumePendingFile();
+    if (pending) {
+      handleFileSelected(pending.file, pending.name, pending.description);
+      willAutoLoad.current = false;
+      return;
+    }
+
+    const listId = searchParams.get('listId');
+    if (listId) {
+      handleLoadList(listId);
+    }
+    willAutoLoad.current = false;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -58,7 +74,7 @@ export default function PartsListShell() {
         listName={listName}
       />
 
-      {phase === 'empty' && (
+      {phase === 'empty' && !willAutoLoad.current && (
         <FileUploadZone
           onFileSelected={handleFileSelected}
           error={error}

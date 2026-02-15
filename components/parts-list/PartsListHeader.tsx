@@ -25,10 +25,10 @@ export default function PartsListHeader({ onReset, showReset, listName }: PartsL
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <IconButton href="/" size="small" sx={{ color: 'text.secondary' }}>
+        <IconButton href="/lists" size="small" sx={{ color: 'text.secondary' }}>
           <ArrowBackIcon fontSize="small" />
         </IconButton>
-        <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
+        <Link href="/lists" sx={{ display: 'flex', alignItems: 'center' }}>
           <Box
             component="img"
             src="/xq-logo.png"
@@ -36,9 +36,11 @@ export default function PartsListHeader({ onReset, showReset, listName }: PartsL
             sx={{ width: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
           />
         </Link>
-        <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-          Your Lists
-        </Typography>
+        <Link href="/lists" underline="hover" sx={{ ml: 1 }}>
+          <Typography variant="body2" color="text.secondary" component="span">
+            Your Lists
+          </Typography>
+        </Link>
         {listName && (
           <Typography variant="body2" color="text.primary" sx={{ ml: 0.5, fontWeight: 500 }}>
             / {listName}

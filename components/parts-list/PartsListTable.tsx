@@ -75,19 +75,32 @@ export default function PartsListTable({
 
       {/* Table */}
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
-        <Table size="small" stickyHeader>
+        <Table size="small" stickyHeader sx={{ tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '3%' }} />   {/* # */}
+            <col style={{ width: '14%' }} />  {/* Part */}
+            <col style={{ width: '24%' }} />  {/* Description */}
+            <col style={{ width: '5%' }} />   {/* Price */}
+            <col style={{ width: '6%' }} />   {/* Stock */}
+            <col style={{ width: '7%' }} />   {/* Status */}
+            <col style={{ width: '4%' }} />   {/* Hits */}
+            <col style={{ width: '15%' }} />  {/* Top Suggestion */}
+            <col style={{ width: '5%' }} />   {/* Suggestion Price */}
+            <col style={{ width: '6%' }} />   {/* Suggestion Stock */}
+            <col style={{ width: '3%' }} />   {/* Action */}
+          </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>#</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Part</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Description</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Price</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Stock</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Status</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'center' }}>Hits</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap' }}>Top Suggestion</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Price</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, whiteSpace: 'nowrap', textAlign: 'right' }}>Stock</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>#</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Part</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Description</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Price</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Stock</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Status</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'center' }}>Hits</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Top Suggestion</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Price</TableCell>
+              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Stock</TableCell>
               <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }} />
             </TableRow>
           </TableHead>
@@ -114,7 +127,7 @@ export default function PartsListTable({
                   </TableCell>
 
                   {/* Part (MPN + Manufacturer) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, whiteSpace: 'nowrap' }}>
+                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, overflow: 'hidden' }}>
                     <Typography
                       variant="body2"
                       noWrap
@@ -132,7 +145,6 @@ export default function PartsListTable({
                     sx={{
                       fontSize: ROW_FONT_SIZE,
                       px: 1,
-                      maxWidth: 320,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
@@ -170,7 +182,7 @@ export default function PartsListTable({
                   </TableCell>
 
                   {/* Top Suggestion (MPN + Manufacturer) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, whiteSpace: 'nowrap' }}>
+                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, overflow: 'hidden' }}>
                     {topRec ? (
                       <Box>
                         <Typography

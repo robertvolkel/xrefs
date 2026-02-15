@@ -1,11 +1,22 @@
-let pendingFile: File | null = null;
-
-export function setPendingFile(file: File) {
-  pendingFile = file;
+interface PendingFileData {
+  file: File;
+  name: string;
+  description: string;
 }
 
-export function consumePendingFile(): File | null {
-  const f = pendingFile;
-  pendingFile = null;
-  return f;
+let pending: PendingFileData | null = null;
+
+export function setPendingFile(file: File, name: string, description: string) {
+  pending = { file, name, description };
+}
+
+/** Check if there's a pending file without consuming it */
+export function peekPendingFile(): boolean {
+  return pending !== null;
+}
+
+export function consumePendingFile(): PendingFileData | null {
+  const p = pending;
+  pending = null;
+  return p;
 }

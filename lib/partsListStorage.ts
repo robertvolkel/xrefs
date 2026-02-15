@@ -25,6 +25,7 @@ export interface StoredRow {
 export interface SavedPartsList {
   id: string;
   name: string;
+  description?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;
@@ -36,6 +37,7 @@ export interface SavedPartsList {
 export interface PartsListSummary {
   id: string;
   name: string;
+  description?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;

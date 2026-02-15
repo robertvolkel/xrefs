@@ -49,38 +49,108 @@ const MFR_PATTERNS = [
 ];
 
 const DESC_PATTERNS = [
-  'description', 'desc', 'detail', 'name', 'part description',
-  'component description', 'item description',
+  'description', 'desc', 'detail', 'part description',
+  'component description', 'item description', 'part name',
+  'component name', 'item name', 'name',
 ];
 
-function matchesPatterns(header: string, patterns: string[]): boolean {
+/**
+ * Score how well a header matches a set of patterns.
+ * Exact match = 1000 + pattern length (highly specific).
+ * Substring match = pattern length (longer patterns score higher).
+ * Returns 0 for no match.
+ */
+function scoreHeader(header: string, patterns: string[]): number {
   const normalized = header.toLowerCase().trim();
-  return patterns.some(p => normalized === p || normalized.includes(p));
+  let best = 0;
+  for (const p of patterns) {
+    if (normalized === p) return 1000 + p.length; // exact match, can't beat this
+    if (normalized.includes(p)) best = Math.max(best, p.length);
+  }
+  return best;
 }
 
-/** Auto-detect column indices for MPN, Manufacturer, Description */
-export function autoDetectColumns(headers: string[]): ColumnMapping | null {
-  let mpnColumn = -1;
-  let manufacturerColumn = -1;
-  let descriptionColumn = -1;
+/** Descriptions contain semicolons, units, and longer text */
+function scoreContentAsDescription(rows: string[][], colIndex: number): number {
+  const sample = rows.slice(0, 10);
+  let score = 0;
+  for (const row of sample) {
+    const cell = row[colIndex] || '';
+    if (cell.includes(';')) score += 3;
+    if (cell.length > 20) score += 2;
+    if (/\d+\s*(V|A|[uµnp]F|ohm|Ω|%|mA|W|MHz|kHz)/i.test(cell)) score += 2;
+  }
+  return score;
+}
 
-  for (let i = 0; i < headers.length; i++) {
-    const header = headers[i];
-    if (mpnColumn === -1 && matchesPatterns(header, MPN_PATTERNS)) {
-      mpnColumn = i;
-    } else if (manufacturerColumn === -1 && matchesPatterns(header, MFR_PATTERNS)) {
-      manufacturerColumn = i;
-    } else if (descriptionColumn === -1 && matchesPatterns(header, DESC_PATTERNS)) {
-      descriptionColumn = i;
+/** MPNs are short alphanumeric codes */
+function scoreContentAsMPN(rows: string[][], colIndex: number): number {
+  const sample = rows.slice(0, 10);
+  let score = 0;
+  for (const row of sample) {
+    const cell = (row[colIndex] || '').trim();
+    if (!cell) continue;
+    if (cell.length >= 3 && cell.length <= 40 && /^[A-Z0-9]/i.test(cell)) score += 2;
+    if (!cell.includes(';') && cell.split(/\s+/).length <= 3) score += 1;
+  }
+  return score;
+}
+
+/**
+ * Auto-detect column indices for MPN, Manufacturer, Description.
+ * Uses a scoring system: exact header matches beat substring matches,
+ * with content-based heuristics as a tiebreaker.
+ */
+export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnMapping | null {
+  type Field = 'mpn' | 'mfr' | 'desc';
+  const fields: Field[] = ['mpn', 'mfr', 'desc'];
+  const patternMap: Record<Field, string[]> = {
+    mpn: MPN_PATTERNS,
+    mfr: MFR_PATTERNS,
+    desc: DESC_PATTERNS,
+  };
+
+  // Score every column for every field (header-based)
+  const scores: Record<Field, number[]> = {
+    mpn: headers.map((h) => scoreHeader(h, patternMap.mpn)),
+    mfr: headers.map((h) => scoreHeader(h, patternMap.mfr)),
+    desc: headers.map((h) => scoreHeader(h, patternMap.desc)),
+  };
+
+  // Add content-based bonus when rows are available
+  if (rows && rows.length > 0) {
+    for (let i = 0; i < headers.length; i++) {
+      scores.desc[i] += scoreContentAsDescription(rows, i) * 0.5;
+      scores.mpn[i] += scoreContentAsMPN(rows, i) * 0.5;
     }
   }
 
-  // Need at least MPN or description to be useful
-  if (mpnColumn === -1 && descriptionColumn === -1) return null;
+  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC).
+  // Each column can only be assigned to one field.
+  const assigned = new Set<number>();
+  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1 };
+
+  for (const field of fields) {
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < headers.length; i++) {
+      if (assigned.has(i)) continue;
+      if (scores[field][i] > bestScore) {
+        bestScore = scores[field][i];
+        bestIdx = i;
+      }
+    }
+    if (bestIdx !== -1) {
+      assigned.add(bestIdx);
+      result[field] = bestIdx;
+    }
+  }
+
+  if (result.mpn === -1 && result.desc === -1) return null;
 
   return {
-    mpnColumn,
-    manufacturerColumn,
-    descriptionColumn,
+    mpnColumn: result.mpn,
+    manufacturerColumn: result.mfr,
+    descriptionColumn: result.desc,
   };
 }
