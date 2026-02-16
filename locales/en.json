@@ -9,13 +9,15 @@
   },
 
   "sidebar": {
-    "accountSettings": "Account Settings",
+    "accountSettings": "My Account Settings",
+    "orgSettings": "Organization Settings",
+    "crossRefLogic": "Cross-Reference Logic",
     "logout": "Log Out",
     "yourLists": "Your Lists"
   },
 
   "accountSettings": {
-    "title": "Account Settings",
+    "title": "My Account Settings",
     "globalSettings": "Global Settings",
     "myProfile": "My Profile",
     "dataSources": "Data Sources",
@@ -203,6 +205,32 @@
     "enterValue": "Enter value...",
     "tellAboutApplication": "To find the best replacement, tell me about your application:",
     "skipUseDefaults": "Skip — use defaults"
+  },
+
+  "orgSettings": {
+    "title": "Organization Settings",
+    "userManagement": "User Management",
+    "name": "Name",
+    "email": "Email",
+    "role": "Role",
+    "status": "Status",
+    "lastActive": "Last Active",
+    "searches": "Searches",
+    "joined": "Joined",
+    "actions": "Actions",
+    "admin": "Admin",
+    "user": "User",
+    "active": "Active",
+    "disabled": "Disabled",
+    "never": "Never",
+    "confirmRoleTitle": "Change Role",
+    "confirmRoleMessage": "Change {{name}} to {{role}}?",
+    "confirmDisableTitle": "Disable Account",
+    "confirmDisableMessage": "Disable {{name}}'s account? They will be logged out and unable to sign in.",
+    "confirmEnableTitle": "Enable Account",
+    "confirmEnableMessage": "Re-enable {{name}}'s account? They will be able to sign in again.",
+    "confirm": "Confirm",
+    "you": "(you)"
   },
 
   "comparison": {

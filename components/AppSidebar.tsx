@@ -6,11 +6,15 @@ import { Box, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider } 
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
+import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
+import { useProfile } from '@/lib/hooks/useProfile';
 import AccountSettingsDialog from './AccountSettingsDialog';
+import OrgSettingsDialog from './OrgSettingsDialog';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -20,8 +24,10 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
+  const { isAdmin } = useProfile();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [orgSettingsOpen, setOrgSettingsOpen] = useState(false);
 
   const isListsActive = pathname === '/lists';
 
@@ -40,6 +46,11 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
   const handleOpenSettings = () => {
     setAnchorEl(null);
     setSettingsOpen(true);
+  };
+
+  const handleOpenOrgSettings = () => {
+    setAnchorEl(null);
+    setOrgSettingsOpen(true);
   };
 
   return (
@@ -120,6 +131,23 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
           <ListItemIcon><ManageAccountsIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('sidebar.accountSettings')}</ListItemText>
         </MenuItem>
+
+        {isAdmin && <Divider />}
+
+        {isAdmin && (
+          <MenuItem onClick={handleOpenOrgSettings}>
+            <ListItemIcon><CorporateFareOutlinedIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('sidebar.orgSettings')}</ListItemText>
+          </MenuItem>
+        )}
+
+        {isAdmin && (
+          <MenuItem onClick={() => { setAnchorEl(null); router.push('/logic'); }}>
+            <ListItemIcon><AccountTreeOutlinedIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('sidebar.crossRefLogic')}</ListItemText>
+          </MenuItem>
+        )}
+
         <Divider />
         <MenuItem onClick={handleLogout}>
           <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
@@ -128,6 +156,7 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
       </Menu>
 
       <AccountSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <OrgSettingsDialog open={orgSettingsOpen} onClose={() => setOrgSettingsOpen(false)} />
     </Box>
   );
 }

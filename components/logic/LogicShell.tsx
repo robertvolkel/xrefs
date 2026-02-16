@@ -4,7 +4,6 @@ import { useState, useMemo } from 'react';
 import {
   Box,
   Chip,
-  IconButton,
   Link,
   List,
   ListItemButton,
@@ -19,7 +18,6 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { LogicTable, LogicType, MatchingRule } from '@/lib/types';
 
@@ -92,9 +90,6 @@ export default function LogicShell() {
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <IconButton href="/" size="small" sx={{ color: 'text.secondary' }}>
-            <ArrowBackIcon fontSize="small" />
-          </IconButton>
           <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
             <Box
               component="img"

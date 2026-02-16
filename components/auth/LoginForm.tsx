@@ -61,6 +61,12 @@ export default function LoginForm() {
           gap: 2,
         }}
       >
+        {searchParams.get('disabled') === '1' && (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            Your account has been disabled. Contact your administrator for assistance.
+          </Alert>
+        )}
+
         {error && (
           <Alert severity="error" sx={{ mb: 1 }}>
             {error}

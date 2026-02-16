@@ -15,13 +15,13 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    const { user, supabaseResponse } = await updateSession(request);
+    const { user, disabled, supabaseResponse } = await updateSession(request);
     const { pathname } = request.nextUrl;
 
     // Allow public routes
     if (PUBLIC_ROUTES.some(route => pathname.startsWith(route))) {
       // Logged-in users visiting auth pages → redirect home
-      if (user) {
+      if (user && !disabled) {
         return NextResponse.redirect(new URL('/', request.url));
       }
       return supabaseResponse;
@@ -36,6 +36,13 @@ export async function middleware(request: NextRequest) {
     if (!user) {
       const redirectUrl = new URL('/login', request.url);
       redirectUrl.searchParams.set('redirect', pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    // Block disabled users — redirect to login with disabled flag
+    if (disabled) {
+      const redirectUrl = new URL('/login', request.url);
+      redirectUrl.searchParams.set('disabled', '1');
       return NextResponse.redirect(redirectUrl);
     }
 

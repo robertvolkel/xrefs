@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, CircularProgress, Link, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
 import SearchInput from './SearchInput';
@@ -67,10 +67,6 @@ export default function ChatInterface({
         >
           <span>🇨🇳</span>
           <span>{t('chat.madeInChina')}</span>
-          <span style={{ margin: '0 2px' }}>|</span>
-          <Link href="/logic" underline="hover" variant="caption" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
-            {t('chat.viewReplacementLogic')}
-          </Link>
         </Typography>
       </Box>
     );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -143,6 +143,40 @@ function RowActionsMenu({
 }
 
 // ============================================================
+// OVERFLOW TOOLTIP — only shows when text is truncated
+// ============================================================
+
+function OverflowTooltip({
+  children,
+  sx,
+  variant,
+}: {
+  children: string;
+  sx?: React.ComponentProps<typeof Typography>['sx'];
+  variant?: React.ComponentProps<typeof Typography>['variant'];
+}) {
+  const ref = useRef<HTMLElement>(null);
+  const [overflowed, setOverflowed] = useState(false);
+
+  return (
+    <Tooltip title={children} disableHoverListener={!overflowed} enterDelay={400}>
+      <Typography
+        ref={ref}
+        variant={variant}
+        noWrap
+        onMouseEnter={() => {
+          const el = ref.current;
+          if (el) setOverflowed(el.scrollWidth > el.clientWidth);
+        }}
+        sx={{ fontSize: ROW_FONT_SIZE, ...sx }}
+      >
+        {children}
+      </Typography>
+    </Tooltip>
+  );
+}
+
+// ============================================================
 // CELL RENDERER
 // ============================================================
 
@@ -185,13 +219,9 @@ function CellRenderer({
       case 'sys:top_suggestion':
         if (topRec) {
           return (
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ fontSize: ROW_FONT_SIZE, fontFamily: 'monospace', fontWeight: 500 }}
-            >
+            <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
               {topRec.part.mpn}
-            </Typography>
+            </OverflowTooltip>
           );
         }
         return row.status === 'resolved' ? (
@@ -202,9 +232,9 @@ function CellRenderer({
 
       case 'sys:top_suggestion_mfr':
         return topRec?.part.manufacturer ? (
-          <Typography noWrap sx={{ fontSize: ROW_FONT_SIZE }}>
+          <OverflowTooltip>
             {topRec.part.manufacturer}
-          </Typography>
+          </OverflowTooltip>
         ) : null;
 
       case 'sys:top_suggestion_price':
@@ -268,9 +298,9 @@ function CellRenderer({
 
   // Default: text with ellipsis
   return (
-    <Typography noWrap sx={{ fontSize: ROW_FONT_SIZE }}>
+    <OverflowTooltip>
       {String(value)}
-    </Typography>
+    </OverflowTooltip>
   );
 }
 
@@ -357,7 +387,7 @@ export default function PartsListTable({
                 </TableCell>
               )}
               {columns.map(col => {
-                const isSortable = onSort && col.label && col.id !== 'sys:action' && col.id !== 'sys:row_actions';
+                const isSortable = onSort && col.label && col.id !== 'sys:row_number' && col.id !== 'sys:action' && col.id !== 'sys:row_actions';
                 const isActive = sortColumnId === col.id;
                 return (
                   <TableCell

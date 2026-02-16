@@ -35,5 +35,16 @@ export async function updateSession(request: NextRequest) {
   // Refresh session — IMPORTANT: don't remove this
   const { data: { user } } = await supabase.auth.getUser();
 
-  return { user, supabaseResponse };
+  // Check if user is disabled via profiles table
+  let disabled = false;
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('disabled')
+      .eq('id', user.id)
+      .single();
+    disabled = profile?.disabled === true;
+  }
+
+  return { user, disabled, supabaseResponse };
 }

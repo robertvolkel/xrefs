@@ -1,5 +1,17 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from './types';
 
+// Admin types
+export interface AdminUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: 'user' | 'admin';
+  disabled: boolean;
+  created_at: string;
+  search_count: number;
+  last_active: string | null;
+}
+
 const BASE = '/api';
 
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
@@ -59,6 +71,32 @@ export async function chatWithOrchestrator(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages }),
   });
+}
+
+// ── Admin API ──────────────────────────────────────────────
+
+export async function getUsers(): Promise<AdminUser[]> {
+  return fetchApi<AdminUser[]>(`${BASE}/admin/users`);
+}
+
+export async function updateUserRole(userId: string, role: 'user' | 'admin'): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update role');
+}
+
+export async function toggleUserDisabled(userId: string, disabled: boolean): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update user status');
 }
 
 /** Validate a batch of parts. Returns a ReadableStream for streaming NDJSON. */

@@ -9,13 +9,15 @@
   },
 
   "sidebar": {
-    "accountSettings": "Kontoeinstellungen",
+    "accountSettings": "Meine Kontoeinstellungen",
+    "orgSettings": "Organisationseinstellungen",
+    "crossRefLogic": "Querverweislogik",
     "logout": "Abmelden",
     "yourLists": "Ihre Listen"
   },
 
   "accountSettings": {
-    "title": "Kontoeinstellungen",
+    "title": "Meine Kontoeinstellungen",
     "globalSettings": "Allgemeine Einstellungen",
     "myProfile": "Mein Profil",
     "dataSources": "Datenquellen",

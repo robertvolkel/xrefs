@@ -143,7 +143,7 @@ export default function ColumnPickerDialog({
         {mode === 'create' ? t('columnPicker.createTitle') : t('columnPicker.editTitle')}
       </DialogTitle>
 
-      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 0, pt: '0 !important', minHeight: 480 }}>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 0, pt: '0 !important', height: 480 }}>
         <Tabs
           value={tab}
           onChange={(_, v) => setTab(v)}

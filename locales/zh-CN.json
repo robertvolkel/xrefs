@@ -9,13 +9,15 @@
   },
 
   "sidebar": {
-    "accountSettings": "账户设置",
+    "accountSettings": "我的账户设置",
+    "orgSettings": "组织设置",
+    "crossRefLogic": "交叉参考逻辑",
     "logout": "退出登录",
     "yourLists": "我的列表"
   },
 
   "accountSettings": {
-    "title": "账户设置",
+    "title": "我的账户设置",
     "globalSettings": "全局设置",
     "myProfile": "个人资料",
     "dataSources": "数据源",

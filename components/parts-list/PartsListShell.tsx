@@ -11,11 +11,13 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  InputAdornment,
   ListItemIcon,
   ListItemText,
   Menu,
   MenuItem,
   Select,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -24,7 +26,9 @@ import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import ClearIcon from '@mui/icons-material/Clear';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SearchIcon from '@mui/icons-material/Search';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { usePartsListState } from '@/hooks/usePartsListState';
@@ -34,6 +38,7 @@ import {
   buildAvailableColumns,
   collectParameterKeys,
   ColumnDefinition,
+  getCellValue,
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
@@ -112,6 +117,7 @@ export default function PartsListShell() {
   // Sort state
   const [sortColumnId, setSortColumnId] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Clear selection when rows change (e.g., after delete or validation)
   const rowCountRef = useRef(rows.length);
@@ -346,6 +352,18 @@ export default function PartsListShell() {
     [rows, hiddenRows],
   );
 
+  // Filter rows by search term across all visible columns
+  const searchedRows = useMemo(() => {
+    const trimmed = searchTerm.trim().toLowerCase();
+    if (!trimmed) return visibleRows;
+    return visibleRows.filter(row =>
+      activeColumns.some(col => {
+        const val = getCellValue(col, row);
+        return val != null && String(val).toLowerCase().includes(trimmed);
+      }),
+    );
+  }, [visibleRows, searchTerm, activeColumns]);
+
   // Sort handler: cycle through asc → desc → none
   const handleSort = useCallback((columnId: string) => {
     setSortColumnId(prev => {
@@ -365,11 +383,11 @@ export default function PartsListShell() {
 
   // Sorted rows
   const sortedRows = useMemo(() => {
-    if (!sortColumnId) return visibleRows;
+    if (!sortColumnId) return searchedRows;
     const col = activeColumns.find(c => c.id === sortColumnId);
-    if (!col) return visibleRows;
+    if (!col) return searchedRows;
 
-    return [...visibleRows].sort((a, b) => {
+    return [...searchedRows].sort((a, b) => {
       const aVal = getSortValue(col, a);
       const bVal = getSortValue(col, b);
 
@@ -386,7 +404,7 @@ export default function PartsListShell() {
       }
       return sortDirection === 'desc' ? -cmp : cmp;
     });
-  }, [visibleRows, sortColumnId, sortDirection, activeColumns]);
+  }, [searchedRows, sortColumnId, sortDirection, activeColumns]);
 
   // Row actions handlers
   const handleHideRow = useCallback((rowIndex: number) => {
@@ -516,7 +534,9 @@ export default function PartsListShell() {
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 100 }}>
             {selectionCount > 0
               ? t('partsList.selectedCount', { selected: selectionCount, total: visibleRows.length })
-              : t('partsList.partsCount', { count: visibleRows.length })}
+              : searchTerm.trim()
+                ? t('partsList.searchCount', { filtered: searchedRows.length, total: visibleRows.length, defaultValue: '{{filtered}} of {{total}} parts' })
+                : t('partsList.partsCount', { count: visibleRows.length })}
           </Typography>
 
           <Tooltip title={t('partsList.refreshTooltip')}>
@@ -546,6 +566,31 @@ export default function PartsListShell() {
               </Button>
             </span>
           </Tooltip>
+
+          <TextField
+            size="small"
+            placeholder={t('partsList.searchPlaceholder', { defaultValue: 'Search…' })}
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            sx={{ ml: 'auto', maxWidth: 250 }}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                  </InputAdornment>
+                ),
+                endAdornment: searchTerm ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setSearchTerm('')} sx={{ p: 0.25 }}>
+                      <ClearIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+                sx: { fontSize: '0.82rem' },
+              },
+            }}
+          />
         </Box>
       )}
 
