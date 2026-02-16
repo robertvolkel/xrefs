@@ -71,7 +71,12 @@ export async function validatePartsList(
     body: JSON.stringify({ items }),
   });
   if (!res.ok || !res.body) {
-    throw new Error('Batch validation failed');
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.error) detail = body.error;
+    } catch { /* ignore parse errors */ }
+    throw new Error(`Validation failed: ${detail}`);
   }
   return res.body;
 }

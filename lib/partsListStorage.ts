@@ -5,7 +5,7 @@
  * Each list stores row data (without heavy allRecommendations to save space).
  */
 
-import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation } from './types';
+import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData } from './types';
 
 const STORAGE_KEY = 'xrefs_parts_lists';
 
@@ -15,9 +15,13 @@ export interface StoredRow {
   rawMpn: string;
   rawManufacturer: string;
   rawDescription: string;
+  /** All original cell values from the uploaded spreadsheet row */
+  rawCells: string[];
   status: PartsListRow['status'];
   resolvedPart?: PartSummary;
   suggestedReplacement?: XrefRecommendation;
+  /** Flattened Digikey data stored during validation */
+  enrichedData?: EnrichedPartData;
   errorMessage?: string;
 }
 
@@ -31,6 +35,7 @@ export interface SavedPartsList {
   totalRows: number;
   resolvedCount: number;
   rows: StoredRow[];
+  spreadsheetHeaders: string[];
 }
 
 /** Summary for listing (no row data) */
@@ -42,6 +47,7 @@ export interface PartsListSummary {
   updatedAt: string;
   totalRows: number;
   resolvedCount: number;
+  spreadsheetHeaders: string[];
 }
 
 function generateId(): string {
@@ -70,9 +76,11 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
     rawMpn: r.rawMpn,
     rawManufacturer: r.rawManufacturer,
     rawDescription: r.rawDescription,
+    rawCells: r.rawCells ?? [],
     status: r.status,
     resolvedPart: r.resolvedPart,
     suggestedReplacement: r.suggestedReplacement,
+    enrichedData: r.enrichedData,
     errorMessage: r.errorMessage,
   }));
 }
@@ -81,6 +89,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
 function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
   return stored.map(r => ({
     ...r,
+    rawCells: r.rawCells ?? [],
     sourceAttributes: undefined,
     allRecommendations: undefined,
   }));
@@ -111,6 +120,7 @@ export function savePartsList(name: string, rows: PartsListRow[]): string {
     totalRows: rows.length,
     resolvedCount: rows.filter(r => r.status === 'resolved').length,
     rows: toStoredRows(rows),
+    spreadsheetHeaders: [],
   });
 
   writeAll(lists);

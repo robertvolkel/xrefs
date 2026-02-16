@@ -15,6 +15,9 @@ interface NewListDialogProps {
   fileName: string;
   onConfirm: (name: string, description: string) => void;
   onCancel: () => void;
+  mode?: 'create' | 'edit';
+  initialName?: string;
+  initialDescription?: string;
 }
 
 /** Strip file extension to produce a default list name */
@@ -27,17 +30,24 @@ export default function NewListDialog({
   fileName,
   onConfirm,
   onCancel,
+  mode = 'create',
+  initialName,
+  initialDescription,
 }: NewListDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
-  // Reset fields when dialog opens with a new file
+  // Reset fields when dialog opens
   useEffect(() => {
-    if (open && fileName) {
+    if (!open) return;
+    if (mode === 'edit') {
+      setName(initialName ?? '');
+      setDescription(initialDescription ?? '');
+    } else if (fileName) {
       setName(defaultNameFromFile(fileName));
       setDescription('');
     }
-  }, [open, fileName]);
+  }, [open, fileName, mode, initialName, initialDescription]);
 
   const canConfirm = name.trim().length > 0;
 
@@ -52,7 +62,7 @@ export default function NewListDialog({
       }}
     >
       <DialogTitle sx={{ pb: 1, fontWeight: 600 }}>
-        Create a new list
+        {mode === 'edit' ? 'List Settings' : 'Create a new list'}
       </DialogTitle>
 
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: '16px !important' }}>
@@ -91,7 +101,7 @@ export default function NewListDialog({
           disabled={!canConfirm}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >
-          Create List
+          {mode === 'edit' ? 'Save' : 'Create List'}
         </Button>
       </DialogActions>
     </Dialog>

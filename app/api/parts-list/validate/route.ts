@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { BatchValidateRequest, BatchValidateItem } from '@/lib/types';
 import { searchParts, getAttributes, getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
+import { buildEnrichedData } from '@/lib/services/enrichedDataBuilder';
 
 const CONCURRENCY = 3;
 
@@ -40,6 +41,9 @@ async function processItem(
     const recs = await getRecommendations(resolvedPart.mpn);
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
 
+    // Step 4: Build enriched data for column views
+    const enrichedData = sourceAttributes ? buildEnrichedData(sourceAttributes) : undefined;
+
     return {
       rowIndex: item.rowIndex,
       status: 'resolved',
@@ -47,6 +51,7 @@ async function processItem(
       sourceAttributes,
       suggestedReplacement,
       allRecommendations: recs,
+      enrichedData,
     };
   } catch (error) {
     return {

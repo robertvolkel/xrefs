@@ -1,16 +1,24 @@
 'use client';
 
-import { Box, Button, IconButton, Link, Typography } from '@mui/material';
+import { Box, IconButton, Link, Typography } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { ReactNode } from 'react';
 
 interface PartsListHeaderProps {
-  onReset: () => void;
-  showReset: boolean;
   listName?: string | null;
+  onEditName?: () => void;
+  /** Pre-built view controls (dropdown + icons) rendered on the right side */
+  viewControls?: ReactNode;
+  showViewControls?: boolean;
 }
 
-export default function PartsListHeader({ onReset, showReset, listName }: PartsListHeaderProps) {
+export default function PartsListHeader({
+  listName,
+  onEditName,
+  viewControls,
+  showViewControls,
+}: PartsListHeaderProps) {
   return (
     <Box
       sx={{
@@ -42,20 +50,23 @@ export default function PartsListHeader({ onReset, showReset, listName }: PartsL
           </Typography>
         </Link>
         {listName && (
-          <Typography variant="body2" color="text.primary" sx={{ ml: 0.5, fontWeight: 500 }}>
-            / {listName}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 0.5 }}>
+            <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+              / {listName}
+            </Typography>
+            {onEditName && (
+              <IconButton size="small" onClick={onEditName} sx={{ color: 'text.secondary' }}>
+                <SettingsIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            )}
+          </Box>
         )}
       </Box>
-      {showReset && (
-        <Button
-          size="small"
-          startIcon={<RestartAltIcon />}
-          onClick={onReset}
-          sx={{ color: 'text.secondary' }}
-        >
-          New Upload
-        </Button>
+
+      {showViewControls && viewControls && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {viewControls}
+        </Box>
       )}
     </Box>
   );

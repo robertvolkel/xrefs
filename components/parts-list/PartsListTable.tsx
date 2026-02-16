@@ -1,30 +1,59 @@
 'use client';
 
+import { useState } from 'react';
 import {
   Box,
+  Checkbox,
   Chip,
   IconButton,
   LinearProgress,
+  Link,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Tooltip,
   Typography,
 } from '@mui/material';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { PartsListRow } from '@/lib/types';
+import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
 interface PartsListTableProps {
   rows: PartsListRow[];
   validationProgress: number;
   isValidating: boolean;
   onRowClick: (rowIndex: number) => void;
+  columns: ColumnDefinition[];
+  error?: string | null;
+  selectedRows?: Set<number>;
+  onToggleRow?: (rowIndex: number) => void;
+  onToggleAll?: () => void;
+  sortColumnId?: string | null;
+  sortDirection?: 'asc' | 'desc';
+  onSort?: (columnId: string) => void;
+  onRefreshRow?: (rowIndex: number) => void;
+  onDeleteRow?: (rowIndex: number) => void;
+  onHideRow?: (rowIndex: number) => void;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
+
+// ============================================================
+// STATUS CHIP
+// ============================================================
 
 function StatusChip({ status }: { status: PartsListRow['status'] }) {
   switch (status) {
@@ -41,201 +70,370 @@ function StatusChip({ status }: { status: PartsListRow['status'] }) {
   }
 }
 
+// ============================================================
+// ROW ACTIONS MENU
+// ============================================================
+
+function RowActionsMenu({
+  rowIndex,
+  onRefresh,
+  onHide,
+  onDelete,
+}: {
+  rowIndex: number;
+  onRefresh?: (rowIndex: number) => void;
+  onHide?: (rowIndex: number) => void;
+  onDelete?: (rowIndex: number) => void;
+}) {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const open = Boolean(anchorEl);
+
+  return (
+    <>
+      <IconButton
+        size="small"
+        onClick={(e) => {
+          e.stopPropagation();
+          setAnchorEl(e.currentTarget);
+        }}
+        sx={{ p: 0.25 }}
+      >
+        <MoreVertIcon sx={{ fontSize: 16 }} />
+      </IconButton>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={() => setAnchorEl(null)}
+        onClick={(e) => e.stopPropagation()}
+        slotProps={{ paper: { sx: { minWidth: 180 } } }}
+      >
+        {onRefresh && (
+          <MenuItem
+            onClick={() => { onRefresh(rowIndex); setAnchorEl(null); }}
+            sx={{ fontSize: '0.82rem' }}
+          >
+            <ListItemIcon><RefreshIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Refresh</ListItemText>
+          </MenuItem>
+        )}
+        {onHide && (
+          <MenuItem
+            onClick={() => { onHide(rowIndex); setAnchorEl(null); }}
+            sx={{ fontSize: '0.82rem' }}
+          >
+            <ListItemIcon><VisibilityOffIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Remove from view</ListItemText>
+          </MenuItem>
+        )}
+        {onDelete && (
+          <MenuItem
+            onClick={() => { onDelete(rowIndex); setAnchorEl(null); }}
+            sx={{ fontSize: '0.82rem', color: 'error.main' }}
+          >
+            <ListItemIcon><DeleteOutlineIcon fontSize="small" sx={{ color: 'error.main' }} /></ListItemIcon>
+            <ListItemText>Delete from list</ListItemText>
+          </MenuItem>
+        )}
+      </Menu>
+    </>
+  );
+}
+
+// ============================================================
+// CELL RENDERER
+// ============================================================
+
+function CellRenderer({
+  column,
+  row,
+  onRowClick,
+  onRefreshRow,
+  onDeleteRow,
+  onHideRow,
+}: {
+  column: ColumnDefinition;
+  row: PartsListRow;
+  onRowClick: (rowIndex: number) => void;
+  onRefreshRow?: (rowIndex: number) => void;
+  onDeleteRow?: (rowIndex: number) => void;
+  onHideRow?: (rowIndex: number) => void;
+}) {
+  // System columns have custom rendering
+  if (column.source === 'system') {
+    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
+    const topRec = row.suggestedReplacement;
+
+    switch (column.id) {
+      case 'sys:row_number':
+        return <>{row.rowIndex + 1}</>;
+
+      case 'sys:status':
+        return <StatusChip status={row.status} />;
+
+      case 'sys:hits':
+        return row.status === 'resolved' ? (
+          <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}>
+            {recCount}
+          </Typography>
+        ) : null;
+
+      case 'sys:top_suggestion':
+        if (topRec) {
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: ROW_FONT_SIZE, fontFamily: 'monospace', fontWeight: 500 }}
+            >
+              {topRec.part.mpn}
+            </Typography>
+          );
+        }
+        return row.status === 'resolved' ? (
+          <Typography variant="caption" color="text.secondary">
+            No match
+          </Typography>
+        ) : null;
+
+      case 'sys:top_suggestion_mfr':
+        return topRec?.part.manufacturer ? (
+          <Typography noWrap sx={{ fontSize: ROW_FONT_SIZE }}>
+            {topRec.part.manufacturer}
+          </Typography>
+        ) : null;
+
+      case 'sys:top_suggestion_price':
+        return topRec?.part.unitPrice != null ? <>${topRec.part.unitPrice.toFixed(2)}</> : null;
+
+      case 'sys:top_suggestion_stock':
+        return topRec?.part.quantityAvailable != null
+          ? <>{topRec.part.quantityAvailable.toLocaleString()}</>
+          : null;
+
+      case 'sys:action':
+        return row.status === 'resolved' ? (
+          <Tooltip title="Explore replacements">
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRowClick(row.rowIndex);
+              }}
+            >
+              <OpenInNewIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        ) : null;
+
+      case 'sys:row_actions':
+        return (
+          <RowActionsMenu
+            rowIndex={row.rowIndex}
+            onRefresh={onRefreshRow}
+            onHide={onHideRow}
+            onDelete={onDeleteRow}
+          />
+        );
+
+      default:
+        return null;
+    }
+  }
+
+  // Data columns: use getCellValue
+  const value = getCellValue(column, row);
+  if (value === undefined || value === null || value === '') return null;
+
+  // Link columns
+  if (column.isLink && typeof value === 'string' && value.startsWith('http')) {
+    return (
+      <Link href={value} target="_blank" rel="noopener noreferrer" sx={{ fontSize: ROW_FONT_SIZE }}>
+        Link
+      </Link>
+    );
+  }
+
+  // Numeric columns
+  if (column.isNumeric && typeof value === 'number') {
+    if (column.id.includes('Price') || column.id.includes('unitPrice')) {
+      return <>${value.toFixed(2)}</>;
+    }
+    return <>{value.toLocaleString()}</>;
+  }
+
+  // Default: text with ellipsis
+  return (
+    <Typography noWrap sx={{ fontSize: ROW_FONT_SIZE }}>
+      {String(value)}
+    </Typography>
+  );
+}
+
+// ============================================================
+// TABLE
+// ============================================================
+
 export default function PartsListTable({
   rows,
   validationProgress,
   isValidating,
   onRowClick,
+  columns,
+  error,
+  selectedRows,
+  onToggleRow,
+  onToggleAll,
+  sortColumnId,
+  sortDirection = 'asc',
+  onSort,
+  onRefreshRow,
+  onDeleteRow,
+  onHideRow,
 }: PartsListTableProps) {
-  const resolved = rows.filter(r => r.status === 'resolved').length;
   const total = rows.length;
   const processed = rows.filter(r => r.status !== 'pending' && r.status !== 'validating').length;
+  const hasSelection = selectedRows !== undefined && onToggleRow !== undefined;
+  const allSelected = hasSelection && rows.length > 0 && rows.every(r => selectedRows!.has(r.rowIndex));
+  const someSelected = hasSelection && rows.some(r => selectedRows!.has(r.rowIndex));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', px: 3 }}>
       {/* Progress bar */}
-      <Box sx={{ px: 3, pt: 2, pb: 1, flexShrink: 0 }}>
-        {isValidating ? (
+      <Box sx={{ pt: 2, pb: 1, flexShrink: 0 }}>
+        {error ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <ErrorOutlineIcon sx={{ fontSize: 18, color: 'error.main' }} />
+            <Typography variant="body2" color="error.main">
+              {error}
+            </Typography>
+            {processed > 0 && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                ({processed} of {total} parts processed before failure)
+              </Typography>
+            )}
+          </Box>
+        ) : isValidating ? (
           <>
             <LinearProgress
-              variant="determinate"
+              variant={processed === 0 ? 'indeterminate' : 'determinate'}
               value={validationProgress * 100}
               sx={{ mb: 1, borderRadius: 1 }}
             />
             <Typography variant="caption" color="text.secondary">
-              Validating... {processed} of {total} parts processed
+              {processed === 0
+                ? `Starting validation of ${total} parts...`
+                : `Validating... ${processed} of ${total} parts processed`}
             </Typography>
           </>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            {resolved} of {total} parts resolved
-          </Typography>
-        )}
+        ) : null}
       </Box>
 
       {/* Table */}
-      <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
+      <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
         <Table size="small" stickyHeader sx={{ tableLayout: 'fixed' }}>
           <colgroup>
-            <col style={{ width: '3%' }} />   {/* # */}
-            <col style={{ width: '14%' }} />  {/* Part */}
-            <col style={{ width: '24%' }} />  {/* Description */}
-            <col style={{ width: '5%' }} />   {/* Price */}
-            <col style={{ width: '6%' }} />   {/* Stock */}
-            <col style={{ width: '7%' }} />   {/* Status */}
-            <col style={{ width: '4%' }} />   {/* Hits */}
-            <col style={{ width: '15%' }} />  {/* Top Suggestion */}
-            <col style={{ width: '5%' }} />   {/* Suggestion Price */}
-            <col style={{ width: '6%' }} />   {/* Suggestion Stock */}
-            <col style={{ width: '3%' }} />   {/* Action */}
+            {hasSelection && <col style={{ width: '40px' }} />}
+            {columns.map(col => (
+              <col key={col.id} style={{ width: col.defaultWidth ?? '120px' }} />
+            ))}
           </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>#</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Part</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Description</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Price</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Stock</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Status</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'center' }}>Hits</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }}>Top Suggestion</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Price</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1, textAlign: 'right' }}>Stock</TableCell>
-              <TableCell sx={{ fontWeight: 600, fontSize: '0.75rem', px: 1 }} />
+              {hasSelection && (
+                <TableCell sx={{ px: 0.5, width: 40 }}>
+                  <Checkbox
+                    size="small"
+                    checked={allSelected}
+                    indeterminate={someSelected && !allSelected}
+                    onChange={onToggleAll}
+                    sx={{ p: 0.25 }}
+                  />
+                </TableCell>
+              )}
+              {columns.map(col => {
+                const isSortable = onSort && col.label && col.id !== 'sys:action' && col.id !== 'sys:row_actions';
+                const isActive = sortColumnId === col.id;
+                return (
+                  <TableCell
+                    key={col.id}
+                    sortDirection={isActive ? sortDirection : false}
+                    sx={{
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                      px: 1,
+                      textAlign: col.align ?? 'left',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {isSortable ? (
+                      <TableSortLabel
+                        active={isActive}
+                        direction={isActive ? sortDirection : 'asc'}
+                        onClick={() => onSort(col.id)}
+                        sx={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          ...(col.align === 'center' && { width: '100%', justifyContent: 'center' }),
+                        }}
+                      >
+                        {col.label}
+                      </TableSortLabel>
+                    ) : (
+                      col.label
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => {
-              const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
-              const topRec = row.suggestedReplacement;
-
-              return (
-                <TableRow
-                  key={row.rowIndex}
-                  hover
-                  sx={{
-                    cursor: row.status === 'resolved' ? 'pointer' : 'default',
-                    '&:hover': row.status === 'resolved'
-                      ? { bgcolor: 'rgba(160, 196, 255, 0.05)' }
-                      : {},
-                  }}
-                  onClick={() => row.status === 'resolved' && onRowClick(row.rowIndex)}
-                >
-                  {/* # */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, color: 'text.secondary', px: 1, whiteSpace: 'nowrap' }}>
-                    {row.rowIndex + 1}
+            {rows.map((row) => (
+              <TableRow
+                key={row.rowIndex}
+                hover
+                sx={{
+                  cursor: row.status === 'resolved' ? 'pointer' : 'default',
+                  '&:hover': row.status === 'resolved'
+                    ? { bgcolor: 'rgba(160, 196, 255, 0.05)' }
+                    : {},
+                }}
+                onClick={() => row.status === 'resolved' && onRowClick(row.rowIndex)}
+              >
+                {hasSelection && (
+                  <TableCell sx={{ px: 0.5, width: 40 }}>
+                    <Checkbox
+                      size="small"
+                      checked={selectedRows!.has(row.rowIndex)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => onToggleRow!(row.rowIndex)}
+                      sx={{ p: 0.25 }}
+                    />
                   </TableCell>
-
-                  {/* Part (MPN + Manufacturer) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, overflow: 'hidden' }}>
-                    <Typography
-                      variant="body2"
-                      noWrap
-                      sx={{ fontSize: ROW_FONT_SIZE, fontFamily: 'monospace', fontWeight: 500 }}
-                    >
-                      {row.rawMpn}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" noWrap sx={{ fontSize: '0.7rem', display: 'block' }}>
-                      {row.rawManufacturer}
-                    </Typography>
-                  </TableCell>
-
-                  {/* Description */}
+                )}
+                {columns.map(col => (
                   <TableCell
+                    key={col.id}
                     sx={{
                       fontSize: ROW_FONT_SIZE,
                       px: 1,
+                      textAlign: col.align ?? 'left',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {row.rawDescription}
+                    <CellRenderer
+                      column={col}
+                      row={row}
+                      onRowClick={onRowClick}
+                      onRefreshRow={onRefreshRow}
+                      onDeleteRow={onDeleteRow}
+                      onHideRow={onHideRow}
+                    />
                   </TableCell>
-
-                  {/* Price (original part) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, textAlign: 'right', px: 1, whiteSpace: 'nowrap' }}>
-                    {row.sourceAttributes?.part.unitPrice != null
-                      ? `$${row.sourceAttributes.part.unitPrice.toFixed(2)}`
-                      : null}
-                  </TableCell>
-
-                  {/* Stock (original part) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, textAlign: 'right', px: 1, whiteSpace: 'nowrap' }}>
-                    {row.sourceAttributes?.part.quantityAvailable != null
-                      ? row.sourceAttributes.part.quantityAvailable.toLocaleString()
-                      : null}
-                  </TableCell>
-
-                  {/* Status */}
-                  <TableCell sx={{ px: 1, whiteSpace: 'nowrap' }}>
-                    <StatusChip status={row.status} />
-                  </TableCell>
-
-                  {/* Suggestions count */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, textAlign: 'center', px: 1, whiteSpace: 'nowrap' }}>
-                    {row.status === 'resolved' ? (
-                      <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}>
-                        {recCount}
-                      </Typography>
-                    ) : null}
-                  </TableCell>
-
-                  {/* Top Suggestion (MPN + Manufacturer) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, px: 1, overflow: 'hidden' }}>
-                    {topRec ? (
-                      <Box>
-                        <Typography
-                          variant="body2"
-                          noWrap
-                          sx={{ fontSize: ROW_FONT_SIZE, fontFamily: 'monospace', fontWeight: 500 }}
-                        >
-                          {topRec.part.mpn}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap sx={{ fontSize: '0.7rem', display: 'block' }}>
-                          {topRec.part.manufacturer}
-                        </Typography>
-                      </Box>
-                    ) : row.status === 'resolved' ? (
-                      <Typography variant="caption" color="text.secondary">
-                        No replacement found
-                      </Typography>
-                    ) : null}
-                  </TableCell>
-
-                  {/* Price (of top suggestion) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, textAlign: 'right', px: 1, whiteSpace: 'nowrap' }}>
-                    {topRec?.part.unitPrice != null
-                      ? `$${topRec.part.unitPrice.toFixed(2)}`
-                      : null}
-                  </TableCell>
-
-                  {/* Stock (of top suggestion) */}
-                  <TableCell sx={{ fontSize: ROW_FONT_SIZE, textAlign: 'right', px: 1, whiteSpace: 'nowrap' }}>
-                    {topRec?.part.quantityAvailable != null
-                      ? topRec.part.quantityAvailable.toLocaleString()
-                      : null}
-                  </TableCell>
-
-                  {/* Action */}
-                  <TableCell sx={{ px: 1 }}>
-                    {row.status === 'resolved' && (
-                      <Tooltip title="Explore replacements">
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRowClick(row.rowIndex);
-                          }}
-                        >
-                          <OpenInNewIcon sx={{ fontSize: 16 }} />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+                ))}
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       </TableContainer>

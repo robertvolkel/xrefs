@@ -11,6 +11,10 @@ export interface Part {
   imageUrl?: string;
   unitPrice?: number;
   quantityAvailable?: number;
+  productUrl?: string;
+  digikeyPartNumber?: string;
+  rohsStatus?: string;
+  moistureSensitivityLevel?: string;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -307,17 +311,43 @@ export interface ManufacturerLocation {
 /** Status of an individual row during batch validation */
 export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
 
+/** Flattened, storage-friendly Digikey product data built during validation */
+export interface EnrichedPartData {
+  // Product Identification
+  digikeyPartNumber?: string;
+  productUrl?: string;
+  // Product Attributes
+  category?: string;
+  subcategory?: string;
+  /** All parametric parameters: parameterId → { name, value } */
+  parameters: Record<string, { name: string; value: string }>;
+  // Documentation
+  datasheetUrl?: string;
+  photoUrl?: string;
+  // Pricing & Availability
+  unitPrice?: number;
+  quantityAvailable?: number;
+  productStatus?: string;
+  // Environmental & Compliance
+  rohsStatus?: string;
+  moistureSensitivityLevel?: string;
+}
+
 /** A row from the uploaded parts list */
 export interface PartsListRow {
   rowIndex: number;
   rawMpn: string;
   rawManufacturer: string;
   rawDescription: string;
+  /** All original cell values from the uploaded spreadsheet row */
+  rawCells: string[];
   status: PartsListRowStatus;
   resolvedPart?: PartSummary;
   sourceAttributes?: PartAttributes;
   suggestedReplacement?: XrefRecommendation;
   allRecommendations?: XrefRecommendation[];
+  /** Flattened Digikey data stored during validation */
+  enrichedData?: EnrichedPartData;
   errorMessage?: string;
 }
 
@@ -353,6 +383,7 @@ export interface BatchValidateItem {
   sourceAttributes?: PartAttributes;
   suggestedReplacement?: XrefRecommendation;
   allRecommendations?: XrefRecommendation[];
+  enrichedData?: EnrichedPartData;
   errorMessage?: string;
 }
 

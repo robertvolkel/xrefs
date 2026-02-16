@@ -143,6 +143,10 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
     imageUrl: product.PhotoUrl || undefined,
     unitPrice: product.UnitPrice ?? undefined,
     quantityAvailable: product.QuantityAvailable ?? undefined,
+    productUrl: product.ProductUrl || undefined,
+    digikeyPartNumber: product.DigiKeyPartNumber || undefined,
+    rohsStatus: product.Classifications?.RohsStatus || undefined,
+    moistureSensitivityLevel: product.Classifications?.MoistureSensitivityLevel || undefined,
   };
 }
 

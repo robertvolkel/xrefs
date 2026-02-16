@@ -24,10 +24,15 @@ interface ActiveValidation {
   progress: number;
   done: boolean;
   error: string | null;
-  subscribers: Set<ValidationSubscriber>;
 }
 
 let active: ActiveValidation | null = null;
+
+// Persistent subscriber set — survives across validation runs.
+// Previously subscribers were stored on the `active` object, so if
+// subscribe() was called before validation started (active === null),
+// the callback was silently dropped and the UI never received updates.
+const subscribers = new Set<ValidationSubscriber>();
 
 /** Check if there's an active (in-progress) validation for the given list */
 export function getActiveValidation(listId: string) {
@@ -39,19 +44,19 @@ export function getActiveValidation(listId: string) {
 
 /** Subscribe to validation progress. Returns unsubscribe function. */
 export function subscribe(cb: ValidationSubscriber): () => void {
+  subscribers.add(cb);
+  // Immediately send current state so the UI catches up
   if (active) {
-    active.subscribers.add(cb);
-    // Immediately send current state so the UI catches up
     cb([...active.rows], active.progress, active.done, active.error);
   }
   return () => {
-    active?.subscribers.delete(cb);
+    subscribers.delete(cb);
   };
 }
 
 function notify() {
   if (!active) return;
-  for (const cb of active.subscribers) {
+  for (const cb of subscribers) {
     cb([...active.rows], active.progress, active.done, active.error);
   }
 }
@@ -70,7 +75,6 @@ export async function startBackgroundValidation(
     progress: 0,
     done: false,
     error: null,
-    subscribers: new Set(),
   };
 
   const items = initialRows.map((r) => ({
@@ -112,6 +116,7 @@ export async function startBackgroundValidation(
               sourceAttributes: item.sourceAttributes,
               suggestedReplacement: item.suggestedReplacement,
               allRecommendations: item.allRecommendations,
+              enrichedData: item.enrichedData,
               errorMessage: item.errorMessage,
             };
           }

@@ -7,14 +7,16 @@ import {
   ParsedSpreadsheet,
   XrefRecommendation,
   PartAttributes,
+  BatchValidateItem,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { getPartAttributes, getRecommendations } from '@/lib/api';
+import { getPartAttributes, getRecommendations, validatePartsList } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import {
   getSavedListsSupabase,
   savePartsListSupabase,
   updatePartsListSupabase,
+  updatePartsListDetailsSupabase,
   loadPartsListSupabase,
   deletePartsListSupabase,
 } from '@/lib/supabasePartsListStorage';
@@ -50,6 +52,8 @@ interface PartsListState {
   listDescription: string | null;
   /** All saved list summaries */
   savedLists: PartsListSummary[];
+  /** Original spreadsheet column headers */
+  spreadsheetHeaders: string[];
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -67,6 +71,7 @@ const INITIAL_STATE: PartsListState = {
   listName: null,
   listDescription: null,
   savedLists: [],
+  spreadsheetHeaders: [],
 };
 
 // ============================================================
@@ -163,15 +168,19 @@ export function usePartsListState() {
 
   const handleColumnMappingConfirmed = useCallback(async (mapping: ColumnMapping) => {
     let validRows: PartsListRow[] = [];
+    let headers: string[] = [];
 
     setState(prev => {
       if (!prev.parsedData) return prev;
+
+      headers = prev.parsedData.headers;
 
       const rows: PartsListRow[] = prev.parsedData.rows.map((row, i) => ({
         rowIndex: i,
         rawMpn: mapping.mpnColumn >= 0 ? (row[mapping.mpnColumn] ?? '') : '',
         rawManufacturer: mapping.manufacturerColumn >= 0 ? (row[mapping.manufacturerColumn] ?? '') : '',
         rawDescription: mapping.descriptionColumn >= 0 ? (row[mapping.descriptionColumn] ?? '') : '',
+        rawCells: row,
         status: 'pending' as const,
       }));
 
@@ -184,6 +193,7 @@ export function usePartsListState() {
         columnMapping: mapping,
         rows: validRows,
         validationProgress: 0,
+        spreadsheetHeaders: headers,
       };
     });
 
@@ -194,7 +204,7 @@ export function usePartsListState() {
     const saveName = listNameRef.current || 'Untitled List';
     const saveDesc = listDescriptionRef.current ?? undefined;
     try {
-      const listId = await savePartsListSupabase(saveName, validRows, saveDesc);
+      const listId = await savePartsListSupabase(saveName, validRows, saveDesc, headers);
       if (listId) {
         activeListIdRef.current = listId;
         setState(prev => ({ ...prev, activeListId: listId }));
@@ -239,6 +249,7 @@ export function usePartsListState() {
         listDescription: desc,
         activeListId: id,
         validationProgress: activeVal.progress,
+        spreadsheetHeaders: loaded?.spreadsheetHeaders ?? [],
         parsedData: null,
         columnMapping: null,
         error: null,
@@ -261,6 +272,7 @@ export function usePartsListState() {
       listDescription: loaded.description || null,
       activeListId: id,
       validationProgress: 1,
+      spreadsheetHeaders: loaded.spreadsheetHeaders,
       parsedData: null,
       columnMapping: null,
       error: null,
@@ -389,6 +401,142 @@ export function usePartsListState() {
   }, []);
 
   // ----------------------------------------------------------
+  // Update list details (name / description)
+  // ----------------------------------------------------------
+
+  const handleUpdateListDetails = useCallback(async (name: string, description: string) => {
+    const listId = activeListIdRef.current;
+    if (!listId) return;
+
+    listNameRef.current = name;
+    listDescriptionRef.current = description;
+    setState(prev => ({ ...prev, listName: name, listDescription: description }));
+
+    await updatePartsListDetailsSupabase(listId, name, description).catch(() => {});
+    const lists = await getSavedListsSupabase();
+    setState(prev => ({ ...prev, savedLists: lists }));
+  }, []);
+
+  // ----------------------------------------------------------
+  // Refresh selected rows (re-validate)
+  // ----------------------------------------------------------
+
+  const handleRefreshRows = useCallback(async (rowIndices: number[]) => {
+    if (rowIndices.length === 0) return;
+    const indexSet = new Set(rowIndices);
+
+    // Reset selected rows to pending
+    setState(prev => ({
+      ...prev,
+      phase: 'validating',
+      error: null,
+      rows: prev.rows.map(r =>
+        indexSet.has(r.rowIndex)
+          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, suggestedReplacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined }
+          : r,
+      ),
+    }));
+
+    // Build items for the subset
+    const items = rowIndices.map(idx => {
+      // Read from current state via a synchronous snapshot
+      const row = state.rows.find(r => r.rowIndex === idx);
+      return {
+        rowIndex: idx,
+        mpn: row?.rawMpn ?? '',
+        manufacturer: row?.rawManufacturer || undefined,
+        description: row?.rawDescription || undefined,
+      };
+    });
+
+    try {
+      const stream = await validatePartsList(items);
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const item: BatchValidateItem = JSON.parse(line);
+            setState(prev => {
+              const newRows = [...prev.rows];
+              const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
+              if (idx >= 0) {
+                newRows[idx] = {
+                  ...newRows[idx],
+                  status: item.status,
+                  resolvedPart: item.resolvedPart,
+                  sourceAttributes: item.sourceAttributes,
+                  suggestedReplacement: item.suggestedReplacement,
+                  allRecommendations: item.allRecommendations,
+                  enrichedData: item.enrichedData,
+                  errorMessage: item.errorMessage,
+                };
+              }
+              const pending = newRows.filter(r => indexSet.has(r.rowIndex) && r.status === 'pending').length;
+              return {
+                ...prev,
+                rows: newRows,
+                phase: pending === 0 ? 'results' : 'validating',
+              };
+            });
+          } catch { /* skip malformed lines */ }
+        }
+      }
+
+      // Final state + persist
+      setState(prev => ({ ...prev, phase: 'results' }));
+      const listId = activeListIdRef.current;
+      if (listId) {
+        setState(prev => {
+          updatePartsListSupabase(listId, prev.rows).catch(() => {});
+          return prev;
+        });
+      }
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        phase: 'results',
+        error: error instanceof Error ? error.message : 'Refresh failed',
+      }));
+    }
+  }, [state.rows]);
+
+  // ----------------------------------------------------------
+  // Delete selected rows
+  // ----------------------------------------------------------
+
+  const handleDeleteRows = useCallback(async (rowIndices: number[]) => {
+    if (rowIndices.length === 0) return;
+    const indexSet = new Set(rowIndices);
+
+    setState(prev => {
+      const newRows = prev.rows.filter(r => !indexSet.has(r.rowIndex));
+      return { ...prev, rows: newRows };
+    });
+
+    const listId = activeListIdRef.current;
+    if (listId) {
+      // Persist the updated rows (read from next state)
+      setTimeout(() => {
+        setState(prev => {
+          updatePartsListSupabase(listId, prev.rows).catch(() => {});
+          return prev;
+        });
+      }, 0);
+    }
+  }, []);
+
+  // ----------------------------------------------------------
   // Reset
   // ----------------------------------------------------------
 
@@ -422,5 +570,8 @@ export function usePartsListState() {
     handleModalBackToRecs,
     handleModalConfirmReplacement,
     handleReset,
+    handleUpdateListDetails,
+    handleRefreshRows,
+    handleDeleteRows,
   };
 }
