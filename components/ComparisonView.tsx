@@ -14,6 +14,7 @@ import {
   Stack,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
 
@@ -33,35 +34,36 @@ const DOT_GREY = '#90A4AE';
 function getDotInfo(
   ruleResult: RuleResult | undefined,
   matchStatus: MatchStatus,
+  t: (key: string) => string,
 ): { color: string; label: string } {
   // Prefer ruleResult when available (from matching engine)
   if (ruleResult) {
     switch (ruleResult) {
       case 'pass':
-        return { color: DOT_GREEN, label: 'Pass' };
+        return { color: DOT_GREEN, label: t('comparison.pass') };
       case 'upgrade':
-        return { color: DOT_GREEN, label: 'Pass' };
+        return { color: DOT_GREEN, label: t('comparison.pass') };
       case 'review':
-        return { color: DOT_YELLOW, label: 'Review' };
+        return { color: DOT_YELLOW, label: t('comparison.review') };
       case 'fail':
-        return { color: DOT_RED, label: 'Fail' };
+        return { color: DOT_RED, label: t('comparison.fail') };
       case 'info':
-        return { color: DOT_GREY, label: 'Info' };
+        return { color: DOT_GREY, label: t('comparison.info') };
     }
   }
 
   // Fallback: derive from matchStatus (mock data without ruleResult)
   switch (matchStatus) {
     case 'exact':
-      return { color: DOT_GREEN, label: 'Pass' };
+      return { color: DOT_GREEN, label: t('comparison.pass') };
     case 'better':
-      return { color: DOT_GREEN, label: 'Pass' };
+      return { color: DOT_GREEN, label: t('comparison.pass') };
     case 'compatible':
-      return { color: DOT_YELLOW, label: 'OK' };
+      return { color: DOT_YELLOW, label: t('comparison.ok') };
     case 'worse':
-      return { color: DOT_RED, label: 'Worse' };
+      return { color: DOT_RED, label: t('comparison.worse') };
     case 'different':
-      return { color: DOT_GREY, label: 'Diff' };
+      return { color: DOT_GREY, label: t('comparison.diff') };
     default:
       return { color: DOT_GREY, label: '' };
   }
@@ -91,6 +93,7 @@ export default function ComparisonView({
   onBack,
   onManufacturerClick,
 }: ComparisonViewProps) {
+  const { t } = useTranslation();
   const matchMap = new Map(
     recommendation.matchDetails.map((d) => [d.parameterId, d])
   );
@@ -135,7 +138,7 @@ export default function ComparisonView({
           </IconButton>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Comparing with
+              {t('comparison.comparingWith')}
             </Typography>
             <Stack direction="row" alignItems="center" spacing={0.75}>
               <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
@@ -169,19 +172,19 @@ export default function ComparisonView({
           <TableHead>
             <TableRow>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                Parameter
+                {t('comparison.parameterHeader')}
               </TableCell>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                Value
+                {t('comparison.valueHeader')}
               </TableCell>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                Result
+                {t('comparison.resultHeader')}
               </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {rows.map((row) => {
-              const dot = getDotInfo(row.ruleResult, row.matchStatus);
+              const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
               return (
                 <React.Fragment key={row.parameterId}>
                   <TableRow hover>

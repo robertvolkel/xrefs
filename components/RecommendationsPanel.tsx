@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -12,6 +13,7 @@ interface RecommendationsPanelProps {
 }
 
 export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick }: RecommendationsPanelProps) {
+  const { t } = useTranslation();
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
   const obsoleteCount = sorted.filter(r => r.part.status === 'Obsolete').length;
   const activeCount = sorted.length - obsoleteCount;
@@ -39,12 +41,12 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         }}
       >
         <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Recommended Replacements
+          {t('recommendations.header')}
         </Typography>
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
           {filtered && obsoleteCount > 0
-            ? `${activeCount} active match${activeCount !== 1 ? 'es' : ''} · ${obsoleteCount} obsolete hidden`
-            : `${recommendations.length} match${recommendations.length !== 1 ? 'es' : ''} found — click to compare`
+            ? t('recommendations.headerFiltered', { activeCount, obsoleteCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+            : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
         </Typography>
       </Box>

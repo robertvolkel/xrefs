@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
@@ -47,6 +48,7 @@ import NewListDialog from '@/components/lists/NewListDialog';
 export default function PartsListShell() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { t } = useTranslation();
   const willAutoLoad = useRef(
     !!searchParams.get('listId') || !!peekPendingFile(),
   );
@@ -165,8 +167,16 @@ export default function PartsListShell() {
     setDeleteConfirmOpen(false);
   }, [pendingDeleteIndices, hideRowInView, activeView.id, activeListId]);
 
+  // Guard against React Strict Mode double-invoking the effect.
+  // consumePendingFile() is destructive (nullifies the singleton), so the
+  // second invocation would find nothing and incorrectly clear willAutoLoad.
+  const autoLoadFired = useRef(false);
+
   // Auto-process pending file or load list from URL param
   useEffect(() => {
+    if (autoLoadFired.current) return;
+    autoLoadFired.current = true;
+
     const pending = consumePendingFile();
     if (pending) {
       handleFileSelected(pending.file, pending.name, pending.description);
@@ -199,13 +209,31 @@ export default function PartsListShell() {
   const parameterKeys = useMemo(() => collectParameterKeys(rows), [rows]);
 
   // If spreadsheetHeaders is empty but rows have rawCells, infer column count
+  // and recover labels from the column mapping where possible.
   // (handles lists saved before headers were properly persisted)
   const effectiveHeaders = useMemo(() => {
     if (spreadsheetHeaders.length > 0) return spreadsheetHeaders;
     const maxCols = rows.reduce((max, r) => Math.max(max, r.rawCells?.length ?? 0), 0);
     if (maxCols === 0) return [];
-    return Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
-  }, [spreadsheetHeaders, rows]);
+
+    // Try to recover labels from the inferred mapping
+    const mapping = columnMapping ?? (() => {
+      const row = rows.find(r => r.rawMpn && r.rawCells?.length);
+      if (!row) return null;
+      return {
+        mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
+        manufacturerColumn: row.rawCells.findIndex(c => c === row.rawManufacturer),
+        descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
+      };
+    })();
+
+    return Array.from({ length: maxCols }, (_, i) => {
+      if (mapping?.mpnColumn === i) return 'MPN';
+      if (mapping?.manufacturerColumn === i) return 'Manufacturer';
+      if (mapping?.descriptionColumn === i) return 'Description';
+      return `Column ${i + 1}`;
+    });
+  }, [spreadsheetHeaders, rows, columnMapping]);
 
   const availableColumns = useMemo(() => {
     const all = buildAvailableColumns(effectiveHeaders, parameterKeys);
@@ -372,7 +400,7 @@ export default function PartsListShell() {
   const viewControlsNode = (
     <>
       <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, mr: 0.5 }}>
-        View:
+        {t('partsList.viewLabel')}
       </Typography>
 
       <Select
@@ -415,7 +443,7 @@ export default function PartsListShell() {
           sx={{ fontSize: '0.82rem' }}
         >
           <ListItemIcon><EditIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Edit view columns</ListItemText>
+          <ListItemText>{t('partsList.editView')}</ListItemText>
         </MenuItem>
         <MenuItem
           onClick={() => {
@@ -426,23 +454,22 @@ export default function PartsListShell() {
           sx={{ fontSize: '0.82rem' }}
         >
           <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Create new view</ListItemText>
+          <ListItemText>{t('partsList.createNewView')}</ListItemText>
         </MenuItem>
-        {!isBuiltinView(activeView.id) && (
-          <MenuItem
-            onClick={() => {
-              setViewMenuAnchor(null);
-              setDeleteViewConfirmOpen(true);
-            }}
-            sx={{ fontSize: '0.82rem', color: 'error.main' }}
-          >
-            <ListItemIcon><DeleteOutlineIcon fontSize="small" sx={{ color: 'error.main' }} /></ListItemIcon>
-            <ListItemText>Delete this view</ListItemText>
-          </MenuItem>
-        )}
+        <MenuItem
+          disabled={isBuiltinView(activeView.id)}
+          onClick={() => {
+            setViewMenuAnchor(null);
+            setDeleteViewConfirmOpen(true);
+          }}
+          sx={{ fontSize: '0.82rem', ...(!isBuiltinView(activeView.id) && { color: 'error.main' }) }}
+        >
+          <ListItemIcon><DeleteOutlineIcon fontSize="small" sx={{ ...(!isBuiltinView(activeView.id) && { color: 'error.main' }) }} /></ListItemIcon>
+          <ListItemText>{t('partsList.deleteThisView')}</ListItemText>
+        </MenuItem>
       </Menu>
 
-      <Tooltip title={activeView.id === defaultViewId ? 'This is the default view' : 'Set as default view'}>
+      <Tooltip title={activeView.id === defaultViewId ? t('partsList.isDefaultView') : t('partsList.setDefaultView')}>
         <IconButton
           size="small"
           onClick={() => setDefaultView(activeView.id)}
@@ -488,11 +515,11 @@ export default function PartsListShell() {
         >
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 100 }}>
             {selectionCount > 0
-              ? `${selectionCount} of ${visibleRows.length} selected`
-              : `${visibleRows.length} parts`}
+              ? t('partsList.selectedCount', { selected: selectionCount, total: visibleRows.length })
+              : t('partsList.partsCount', { count: visibleRows.length })}
           </Typography>
 
-          <Tooltip title="Re-validate selected parts">
+          <Tooltip title={t('partsList.refreshTooltip')}>
             <span>
               <Button
                 size="small"
@@ -501,12 +528,12 @@ export default function PartsListShell() {
                 onClick={handleRefreshSelected}
                 sx={{ fontSize: '0.78rem', textTransform: 'none', color: 'text.secondary' }}
               >
-                Refresh
+                {t('partsList.refreshButton')}
               </Button>
             </span>
           </Tooltip>
 
-          <Tooltip title="Remove selected parts">
+          <Tooltip title={t('partsList.deleteTooltip')}>
             <span>
               <Button
                 size="small"
@@ -515,7 +542,7 @@ export default function PartsListShell() {
                 onClick={() => promptDelete([...selectedRows])}
                 sx={{ fontSize: '0.78rem', textTransform: 'none', color: 'text.secondary' }}
               >
-                Delete
+                {t('partsList.deleteButton')}
               </Button>
             </span>
           </Tooltip>
@@ -568,12 +595,12 @@ export default function PartsListShell() {
         availableColumns={availableColumns}
         initialView={pickerMode === 'edit' ? { ...activeView, columns: resolvedViewColumns } : undefined}
         isBuiltinView={pickerMode === 'edit' && isBuiltinView(activeView.id)}
-        onSave={(name, columns) => {
+        onSave={(name, columns, description) => {
           if (pickerMode === 'create') {
-            createView(name, columns);
+            createView(name, columns, description);
           } else {
             const newName = !isBuiltinView(activeView.id) ? name : undefined;
-            updateView(activeView.id, columns, newName);
+            updateView(activeView.id, columns, newName, description);
           }
           setPickerOpen(false);
         }}
@@ -601,11 +628,11 @@ export default function PartsListShell() {
         fullWidth
       >
         <DialogTitle sx={{ pb: 0.5 }}>
-          Delete &ldquo;{activeView.name}&rdquo;?
+          {t('partsList.deleteViewTitle', { name: activeView.name })}
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            This view will be permanently removed. Your parts list data will not be affected.
+            {t('partsList.deleteViewMessage')}
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -614,7 +641,7 @@ export default function PartsListShell() {
             onClick={() => setDeleteViewConfirmOpen(false)}
             sx={{ textTransform: 'none' }}
           >
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             color="error"
@@ -625,7 +652,7 @@ export default function PartsListShell() {
             }}
             sx={{ textTransform: 'none' }}
           >
-            Delete
+            {t('common.delete')}
           </Button>
         </DialogActions>
       </Dialog>
@@ -638,11 +665,11 @@ export default function PartsListShell() {
         fullWidth
       >
         <DialogTitle sx={{ pb: 0.5 }}>
-          Remove {pendingDeleteIndices.length === 1 ? 'part' : `${pendingDeleteIndices.length} parts`}?
+          {t('partsList.removePartsTitle', { count: pendingDeleteIndices.length })}
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            Choose how to handle the selected {pendingDeleteIndices.length === 1 ? 'part' : 'parts'}:
+            {t('partsList.removePartsMessage', { count: pendingDeleteIndices.length })}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ flexDirection: 'column', alignItems: 'stretch', gap: 1, px: 3, pb: 2 }}>
@@ -652,7 +679,7 @@ export default function PartsListShell() {
             onClick={handleHideFromViewConfirmed}
             sx={{ textTransform: 'none', justifyContent: 'flex-start' }}
           >
-            Remove from this view only
+            {t('partsList.removeFromViewOnly')}
           </Button>
           <Button
             variant="outlined"
@@ -661,14 +688,14 @@ export default function PartsListShell() {
             onClick={handleDeleteConfirmed}
             sx={{ textTransform: 'none', justifyContent: 'flex-start' }}
           >
-            Delete from list permanently
+            {t('partsList.deleteFromListPermanently')}
           </Button>
           <Button
             color="inherit"
             onClick={() => setDeleteConfirmOpen(false)}
             sx={{ textTransform: 'none' }}
           >
-            Cancel
+            {t('common.cancel')}
           </Button>
         </DialogActions>
       </Dialog>

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, KeyboardEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, Divider, IconButton, InputBase, Paper } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import SearchIcon from '@mui/icons-material/Search';
@@ -13,6 +14,7 @@ interface SearchInputProps {
 }
 
 export default function SearchInput({ onSubmit, disabled, landing, onFileSelect }: SearchInputProps) {
+  const { t } = useTranslation();
   const [value, setValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -92,7 +94,7 @@ export default function SearchInput({ onSubmit, disabled, landing, onFileSelect 
         )}
         <InputBase
           fullWidth
-          placeholder="Enter a part number (e.g. EEF-LX0E471R)"
+          placeholder={t('chat.searchPlaceholder')}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}

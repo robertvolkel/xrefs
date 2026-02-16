@@ -1,0 +1,221 @@
+{
+  "common": {
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "search": "搜索",
+    "loading": "加载中...",
+    "comingSoon": "即将推出"
+  },
+
+  "sidebar": {
+    "accountSettings": "账户设置",
+    "logout": "退出登录",
+    "yourLists": "我的列表"
+  },
+
+  "accountSettings": {
+    "title": "账户设置",
+    "globalSettings": "全局设置",
+    "myProfile": "个人资料",
+    "dataSources": "数据源",
+    "notifications": "通知与邮件",
+    "language": "首选语言",
+    "currency": "首选货币",
+    "currencyPlaceholder": "货币设置即将推出",
+    "saved": "设置已保存"
+  },
+
+  "auth": {
+    "emailLabel": "邮箱",
+    "passwordLabel": "密码",
+    "signInButton": "登录",
+    "signingInButton": "登录中...",
+    "invalidCredentials": "邮箱或密码错误。",
+    "noAccount": "还没有账户？",
+    "registerLink": "注册",
+    "inviteCodeLabel": "邀请码",
+    "firstNameLabel": "名",
+    "lastNameLabel": "姓",
+    "confirmPasswordLabel": "确认密码",
+    "createAccountButton": "创建账户",
+    "creatingAccountButton": "正在创建账户...",
+    "passwordMismatch": "两次输入的密码不一致。",
+    "passwordTooShort": "密码长度不能少于6个字符。",
+    "haveAccount": "已有账户？",
+    "signInLink": "登录"
+  },
+
+  "lists": {
+    "pageHeader": "我的列表",
+    "newListButton": "新建列表",
+    "searchPlaceholder": "搜索列表...",
+    "emptyHeading": "暂无零件列表",
+    "emptySubheading": "上传电子表格以开始使用",
+    "noMatching": "没有匹配 \"{{query}}\" 的列表",
+    "dragDropOverlay": "拖放文件以创建新列表"
+  },
+
+  "listCard": {
+    "lastEditedToday": "今天 {{time}} 最后编辑",
+    "lastEditedYesterday": "昨天 {{time}} 最后编辑",
+    "lastEditedDaysAgo": "{{days}} 天前最后编辑",
+    "lastEditedWeeksAgo_one": "{{count}} 周前最后编辑",
+    "lastEditedWeeksAgo_other": "{{count}} 周前最后编辑",
+    "lastEditedMonthsAgo_one": "{{count}} 个月前最后编辑",
+    "lastEditedMonthsAgo_other": "{{count}} 个月前最后编辑",
+    "lastEditedDate": "最后编辑于 {{date}}",
+    "totalParts": "共 {{count}} 个零件",
+    "resolved": "{{count}} 已解析",
+    "notResolved": "{{count}} 未解析",
+    "pinToTop": "置顶",
+    "unpin": "取消置顶",
+    "settings": "列表设置",
+    "deleteConfirmTitle": "删除 \"{{name}}\"？",
+    "deleteConfirmMessage": "此列表及其所有数据将被永久删除，此操作无法撤销。"
+  },
+
+  "newListDialog": {
+    "createTitle": "创建新列表",
+    "editTitle": "列表设置",
+    "nameLabel": "您正在做什么？",
+    "namePlaceholder": "为列表命名",
+    "descriptionLabel": "描述您的目标、要求、约束条件...",
+    "descriptionPlaceholder": "例如：汽车电源重新设计，需要AEC-Q200认证的替代品",
+    "createButton": "创建列表",
+    "saveButton": "保存"
+  },
+
+  "partsList": {
+    "viewLabel": "视图：",
+    "editView": "编辑视图",
+    "createNewView": "创建新视图",
+    "deleteThisView": "删除此视图",
+    "isDefaultView": "这是默认视图",
+    "setDefaultView": "设为默认视图",
+    "selectedCount": "已选择 {{selected}}/{{total}}",
+    "partsCount": "{{count}} 个零件",
+    "refreshTooltip": "重新验证选中的零件",
+    "refreshButton": "刷新",
+    "deleteTooltip": "移除选中的零件",
+    "deleteButton": "删除",
+    "deleteViewTitle": "删除 \"{{name}}\"？",
+    "deleteViewMessage": "此视图将被永久删除。您的零件列表数据不会受到影响。",
+    "removePartsTitle_one": "移除 {{count}} 个零件？",
+    "removePartsTitle_other": "移除 {{count}} 个零件？",
+    "removePartsMessage_one": "选择如何处理选中的 {{count}} 个零件：",
+    "removePartsMessage_other": "选择如何处理选中的 {{count}} 个零件：",
+    "removeFromViewOnly": "仅从此视图移除",
+    "deleteFromListPermanently": "从列表中永久删除",
+    "noMatch": "无匹配",
+    "linkText": "链接",
+    "exploreReplacements": "查找替代品",
+    "startingValidation": "正在开始验证 {{total}} 个零件...",
+    "validatingProgress": "验证中... 已处理 {{processed}}/{{total}} 个零件",
+    "errorProgress": "（失败前已处理 {{processed}}/{{total}} 个零件）"
+  },
+
+  "status": {
+    "pending": "待处理",
+    "validating": "验证中...",
+    "resolved": "已解析",
+    "notFound": "未找到",
+    "error": "错误"
+  },
+
+  "rowActions": {
+    "refresh": "刷新",
+    "removeFromView": "从视图移除",
+    "deleteFromList": "从列表删除"
+  },
+
+  "columnPicker": {
+    "createTitle": "创建视图",
+    "editTitle": "编辑视图",
+    "viewNameLabel": "视图名称",
+    "searchPlaceholder": "搜索列...",
+    "activeColumnsHeader": "活动列 ({{count}})",
+    "noColumnsSelected": "未选择任何列",
+    "untitledView": "未命名视图",
+    "actionColumn": "（操作）",
+    "settingsTab": "设置",
+    "columnsTab": "列",
+    "descriptionLabel": "描述",
+    "descriptionPlaceholder": "描述此视图的用途以及助手应关注的重点..."
+  },
+
+  "columnMapping": {
+    "dialogTitle": "映射您的列",
+    "instructions": "我们在 <strong>{{fileName}}</strong> 中检测到 {{columnCount}} 列和 {{rowCount}} 行数据。请至少映射一个零件编号或描述列。如果没有MPN，我们将根据描述来解析零件。",
+    "mpnLabel": "零件编号 (MPN)",
+    "manufacturerLabel": "制造商",
+    "descriptionLabel": "描述",
+    "notMapped": "未映射",
+    "columnFallback": "第 {{number}} 列",
+    "colFallback": "列 {{number}}",
+    "previewCaption": "预览（前 {{count}} 行）",
+    "confirmButton": "确认并验证"
+  },
+
+  "fileUpload": {
+    "heading": "上传零件列表",
+    "subheading": "拖放 Excel 或 CSV 文件，或点击浏览",
+    "buttonText": "上传零件列表",
+    "supportedFormats": ".xlsx、.xls 或 .csv",
+    "previousLists": "历史列表",
+    "listSummary": "{{resolved}}/{{total}} 已解析 · {{date}}"
+  },
+
+  "partDetail": {
+    "sourcePartTitle": "源零件",
+    "backToRecommendations": "返回推荐列表",
+    "useThisReplacement": "使用此替代品"
+  },
+
+  "recommendations": {
+    "header": "推荐替代品",
+    "headerFiltered": "{{activeCount}} 个活跃匹配 · {{obsoleteCount}} 个已停产已隐藏",
+    "headerUnfiltered": "找到 {{count}} 个匹配 — 点击比较",
+    "match": "个匹配",
+    "matches": "个匹配"
+  },
+
+  "attributes": {
+    "parameterHeader": "参数",
+    "valueHeader": "值"
+  },
+
+  "chat": {
+    "searchPlaceholder": "输入零件编号（例如 EEF-LX0E471R）",
+    "madeInChina": "中国制造",
+    "viewReplacementLogic": "查看替代逻辑",
+    "searching": "搜索中...",
+    "you": "你",
+    "agent": "助手",
+    "yesThatsIt": "是的，就是这个",
+    "no": "不是",
+    "fillInAttributes": "填写您已知的信息以提高替代准确性：",
+    "additionalDetails_one": "附加详情（{{count}} 个参数）",
+    "additionalDetails_other": "附加详情（{{count}} 个参数）",
+    "continue": "继续",
+    "skipAll": "全部跳过",
+    "yesOrNo": "是或否",
+    "enterValue": "输入值...",
+    "tellAboutApplication": "为了找到最佳替代品，请告诉我您的应用场景：",
+    "skipUseDefaults": "跳过 — 使用默认值"
+  },
+
+  "comparison": {
+    "comparingWith": "对比",
+    "parameterHeader": "参数",
+    "valueHeader": "值",
+    "resultHeader": "结果",
+    "pass": "通过",
+    "review": "待审",
+    "fail": "不通过",
+    "info": "信息",
+    "ok": "合格",
+    "worse": "较差",
+    "diff": "差异"
+  }
+}

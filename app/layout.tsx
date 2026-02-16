@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ThemeRegistry from "@/components/ThemeRegistry";
 import AuthProvider from "@/components/AuthProvider";
+import I18nProvider from "@/components/I18nProvider";
 import { createClient } from "@/lib/supabase/server";
 
 export const viewport: Viewport = {
@@ -35,7 +36,9 @@ export default async function RootLayout({
       <body suppressHydrationWarning>
         <ThemeRegistry>
           <AuthProvider initialUser={user}>
-            {children}
+            <I18nProvider>
+              {children}
+            </I18nProvider>
           </AuthProvider>
         </ThemeRegistry>
       </body>

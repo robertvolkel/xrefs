@@ -2,6 +2,7 @@
 import { Box, Typography } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import { useTranslation } from 'react-i18next';
 import { ChatMessage, PartSummary } from '@/lib/types';
 import PartConfirmation from './PartConfirmation';
 import PartOptionsSelector from './PartOptionsSelector';
@@ -40,6 +41,7 @@ export default function MessageBubble({
   onContextResponse,
   onSkipContext,
 }: MessageBubbleProps) {
+  const { t } = useTranslation();
   const isUser = message.role === 'user';
 
   return (
@@ -74,7 +76,7 @@ export default function MessageBubble({
           color="text.secondary"
           sx={{ fontWeight: 600, mb: 0.5, display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}
         >
-          {isUser ? 'You' : 'Agent'}
+          {isUser ? t('chat.you') : t('chat.agent')}
         </Typography>
         <Typography
           variant="body2"

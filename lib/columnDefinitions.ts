@@ -52,7 +52,7 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'System', defaultWidth: '70px', align: 'right', isNumeric: true },
   { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'System', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'sys:action', label: '', source: 'system', group: 'System', defaultWidth: '40px' },
-  { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px' },
+  { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
 // ============================================================

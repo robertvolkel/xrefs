@@ -14,6 +14,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DescriptionIcon from '@mui/icons-material/Description';
 import { PartsListSummary } from '@/lib/partsListStorage';
+import { useTranslation } from 'react-i18next';
 
 interface FileUploadZoneProps {
   onFileSelected: (file: File) => void;
@@ -30,6 +31,7 @@ export default function FileUploadZone({
   onLoadList,
   onDeleteList,
 }: FileUploadZoneProps) {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -84,10 +86,10 @@ export default function FileUploadZone({
       }}
     >
       <Typography variant="h5" color="text.primary" sx={{ fontWeight: 600, mb: 1 }}>
-        Upload a Parts List
+        {t('fileUpload.heading')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-        Drop an Excel or CSV file, or click to browse
+        {t('fileUpload.subheading')}
       </Typography>
 
       <Box
@@ -117,10 +119,10 @@ export default function FileUploadZone({
       >
         <CloudUploadIcon sx={{ fontSize: 48, color: 'text.secondary' }} />
         <Button variant="contained" size="large" startIcon={<CloudUploadIcon />}>
-          Upload a List of Parts
+          {t('fileUpload.buttonText')}
         </Button>
         <Typography variant="caption" color="text.secondary">
-          .xlsx, .xls, or .csv
+          {t('fileUpload.supportedFormats')}
         </Typography>
       </Box>
 
@@ -133,7 +135,7 @@ export default function FileUploadZone({
       {savedLists.length > 0 && (
         <Box sx={{ mt: 5, width: '100%', maxWidth: 520 }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontWeight: 500 }}>
-            Previous Lists
+            {t('fileUpload.previousLists')}
           </Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {savedLists.map((list) => (
@@ -152,9 +154,7 @@ export default function FileUploadZone({
                             {list.name}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {list.resolvedCount} of {list.totalRows} resolved
-                            {' \u00B7 '}
-                            {new Date(list.updatedAt).toLocaleDateString()}
+                            {t('fileUpload.listSummary', { resolved: list.resolvedCount, total: list.totalRows, date: new Date(list.updatedAt).toLocaleDateString() })}
                           </Typography>
                         </Box>
                       </Box>

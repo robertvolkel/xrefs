@@ -11,6 +11,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import { useTranslation } from 'react-i18next';
 import { PartsListRow, XrefRecommendation, PartAttributes } from '@/lib/types';
 import AttributesPanel from '../AttributesPanel';
 import RecommendationsPanel from '../RecommendationsPanel';
@@ -41,6 +42,7 @@ export default function PartDetailModal({
   onBackToRecs,
   onConfirmReplacement,
 }: PartDetailModalProps) {
+  const { t } = useTranslation();
   if (!row) return null;
 
   const recs = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
@@ -71,7 +73,7 @@ export default function PartDetailModal({
           <AttributesPanel
             attributes={row.sourceAttributes ?? null}
             loading={!row.sourceAttributes}
-            title="Source Part"
+            title={t('partDetail.sourcePartTitle')}
           />
         </Box>
 
@@ -101,13 +103,13 @@ export default function PartDetailModal({
       {isComparing && selectedRec && (
         <DialogActions sx={{ px: 3, py: 2, borderTop: 1, borderColor: 'divider' }}>
           <Button onClick={onBackToRecs} color="inherit">
-            Back to Recommendations
+            {t('partDetail.backToRecommendations')}
           </Button>
           <Button
             variant="contained"
             onClick={() => onConfirmReplacement(selectedRec)}
           >
-            Use This Replacement
+            {t('partDetail.useThisReplacement')}
           </Button>
         </DialogActions>
       )}

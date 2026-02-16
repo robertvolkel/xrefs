@@ -15,6 +15,8 @@ export interface SavedView {
   id: string;
   name: string;
   columns: string[];
+  /** Purpose/instructions for this view — used as context for the chat agent */
+  description?: string;
   /** Per-list hidden row indices: { [listId]: number[] } */
   hiddenRows?: Record<string, number[]>;
 }

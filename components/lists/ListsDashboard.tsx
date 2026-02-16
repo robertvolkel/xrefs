@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
   IconButton,
   InputBase,
-  Link,
   Paper,
   Skeleton,
   Typography,
@@ -20,18 +20,38 @@ import { PartsListSummary } from '@/lib/partsListStorage';
 import {
   getSavedListsSupabase,
   deletePartsListSupabase,
+  updatePartsListDetailsSupabase,
 } from '@/lib/supabasePartsListStorage';
 import { setPendingFile } from '@/lib/pendingFile';
 import ListCard from './ListCard';
 import NewListDialog from './NewListDialog';
 
+const PINNED_KEY = 'xrefs_pinned_lists';
+
+function loadPinnedIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedIds(ids: Set<string>): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(PINNED_KEY, JSON.stringify([...ids]));
+}
+
 export default function ListsDashboard() {
   const router = useRouter();
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [lists, setLists] = useState<PartsListSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => loadPinnedIds());
 
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -48,12 +68,19 @@ export default function ListsDashboard() {
     });
   }, []);
 
-  // Client-side filtering
+  // Client-side filtering + sort pinned to top
   const filteredLists = useMemo(() => {
-    if (!searchQuery.trim()) return lists;
-    const q = searchQuery.toLowerCase();
-    return lists.filter((l) => l.name.toLowerCase().includes(q));
-  }, [lists, searchQuery]);
+    let result = lists;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((l) => l.name.toLowerCase().includes(q));
+    }
+    return [...result].sort((a, b) => {
+      const aPinned = pinnedIds.has(a.id) ? 1 : 0;
+      const bPinned = pinnedIds.has(b.id) ? 1 : 0;
+      return bPinned - aPinned;
+    });
+  }, [lists, searchQuery, pinnedIds]);
 
   // --- File handling ---
 
@@ -122,6 +149,31 @@ export default function ListsDashboard() {
     setLists((prev) => prev.filter((l) => l.id !== id));
   };
 
+  const handleTogglePin = useCallback((id: string) => {
+    setPinnedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      savePinnedIds(next);
+      return next;
+    });
+  }, []);
+
+  // Settings dialog state
+  const [settingsList, setSettingsList] = useState<PartsListSummary | null>(null);
+
+  const handleSettingsSave = useCallback(async (name: string, description: string) => {
+    if (!settingsList) return;
+    await updatePartsListDetailsSupabase(settingsList.id, name, description);
+    setLists(prev => prev.map(l =>
+      l.id === settingsList.id ? { ...l, name, description } : l,
+    ));
+    setSettingsList(null);
+  }, [settingsList]);
+
   return (
     <Box
       onDragOver={handleDragOver}
@@ -153,7 +205,7 @@ export default function ListsDashboard() {
           }}
         >
           <Typography variant="h6" color="primary.main" sx={{ opacity: 0.8 }}>
-            Drop file to create a new list
+            {t('lists.dragDropOverlay')}
           </Typography>
         </Box>
       )}
@@ -172,19 +224,11 @@ export default function ListsDashboard() {
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <IconButton href="/" size="small" sx={{ color: 'text.secondary' }}>
+          <IconButton onClick={() => router.push('/')} size="small" sx={{ color: 'text.secondary' }}>
             <ArrowBackIcon fontSize="small" />
           </IconButton>
-          <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
-            <Box
-              component="img"
-              src="/xq-logo.png"
-              alt="XQ"
-              sx={{ width: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
-            />
-          </Link>
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-            Your Lists
+          <Typography variant="body2" color="text.secondary">
+            {t('lists.pageHeader')}
           </Typography>
         </Box>
 
@@ -195,7 +239,7 @@ export default function ListsDashboard() {
           onClick={handleNewListClick}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >
-          New List
+          {t('lists.newListButton')}
         </Button>
       </Box>
 
@@ -225,7 +269,7 @@ export default function ListsDashboard() {
             <SearchIcon sx={{ color: 'text.secondary', mr: 1.5, fontSize: 22 }} />
             <InputBase
               fullWidth
-              placeholder="Search lists..."
+              placeholder={t('lists.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               sx={{ fontSize: '0.95rem', py: 0.75 }}
@@ -272,14 +316,14 @@ export default function ListsDashboard() {
               sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }}
             />
             <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
-              No parts lists yet
+              {t('lists.emptyHeading')}
             </Typography>
             <Typography
               variant="body2"
               color="text.secondary"
               sx={{ mb: 3 }}
             >
-              Upload a spreadsheet to get started
+              {t('lists.emptySubheading')}
             </Typography>
             <Button
               variant="contained"
@@ -287,7 +331,7 @@ export default function ListsDashboard() {
               onClick={handleNewListClick}
               sx={{ borderRadius: 20, textTransform: 'none' }}
             >
-              New List
+              {t('lists.newListButton')}
             </Button>
           </Box>
         )}
@@ -296,30 +340,28 @@ export default function ListsDashboard() {
         {!loading && lists.length > 0 && filteredLists.length === 0 && (
           <Box sx={{ textAlign: 'center', py: 6 }}>
             <Typography variant="body2" color="text.secondary">
-              No lists matching &ldquo;{searchQuery}&rdquo;
+              {t('lists.noMatching', { query: searchQuery })}
             </Typography>
           </Box>
         )}
 
-        {/* Cards grid */}
+        {/* Cards — masonry layout */}
         {!loading && filteredLists.length > 0 && (
           <Box
             sx={{
-              display: 'grid',
-              gridTemplateColumns: {
-                xs: '1fr',
-                sm: 'repeat(2, 1fr)',
-                md: 'repeat(3, 1fr)',
-              },
-              gap: 2,
+              columns: { xs: 1, sm: 2, md: 3 },
+              columnGap: 2,
             }}
           >
             {filteredLists.map((list) => (
               <ListCard
                 key={list.id}
                 list={list}
+                pinned={pinnedIds.has(list.id)}
                 onClick={() => handleCardClick(list.id)}
                 onDelete={() => handleDelete(list.id)}
+                onTogglePin={() => handleTogglePin(list.id)}
+                onSettings={() => setSettingsList(list)}
               />
             ))}
           </Box>
@@ -341,6 +383,17 @@ export default function ListsDashboard() {
         fileName={selectedFile?.name ?? ''}
         onConfirm={handleDialogConfirm}
         onCancel={handleDialogCancel}
+      />
+
+      {/* List settings dialog */}
+      <NewListDialog
+        open={settingsList !== null}
+        fileName=""
+        mode="edit"
+        initialName={settingsList?.name ?? ''}
+        initialDescription={settingsList?.description ?? ''}
+        onConfirm={handleSettingsSave}
+        onCancel={() => setSettingsList(null)}
       />
     </Box>
   );

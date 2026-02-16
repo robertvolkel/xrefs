@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Button, TextField, Typography, Alert, Link as MuiLink } from '@mui/material';
 import NextLink from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useTranslation } from 'react-i18next';
 
 export default function LoginForm() {
+  const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
@@ -26,7 +28,7 @@ export default function LoginForm() {
     });
 
     if (authError) {
-      setError('Invalid email or password.');
+      setError(t('auth.invalidCredentials'));
       setLoading(false);
       return;
     }
@@ -66,7 +68,7 @@ export default function LoginForm() {
         )}
 
         <TextField
-          label="Email"
+          label={t('auth.emailLabel')}
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -77,7 +79,7 @@ export default function LoginForm() {
         />
 
         <TextField
-          label="Password"
+          label={t('auth.passwordLabel')}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -93,13 +95,13 @@ export default function LoginForm() {
           disabled={loading}
           sx={{ mt: 1, py: 1.2 }}
         >
-          {loading ? 'Signing in...' : 'Sign In'}
+          {loading ? t('auth.signingInButton') : t('auth.signInButton')}
         </Button>
 
         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 2 }}>
-          Don&apos;t have an account?{' '}
+          {t('auth.noAccount')}{' '}
           <MuiLink component={NextLink} href="/register" underline="always" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
-            Register
+            {t('auth.registerLink')}
           </MuiLink>
         </Typography>
       </Box>

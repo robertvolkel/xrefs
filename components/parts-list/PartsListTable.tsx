@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Checkbox,
@@ -56,17 +57,18 @@ const ROW_FONT_SIZE = '0.78rem';
 // ============================================================
 
 function StatusChip({ status }: { status: PartsListRow['status'] }) {
+  const { t } = useTranslation();
   switch (status) {
     case 'pending':
-      return <Chip label="Pending" size="small" sx={{ fontSize: '0.7rem' }} />;
+      return <Chip label={t('status.pending')} size="small" sx={{ fontSize: '0.7rem' }} />;
     case 'validating':
-      return <Chip label="Validating..." size="small" color="info" sx={{ fontSize: '0.7rem' }} />;
+      return <Chip label={t('status.validating')} size="small" color="info" sx={{ fontSize: '0.7rem' }} />;
     case 'resolved':
-      return <Chip label="Resolved" size="small" color="success" sx={{ fontSize: '0.7rem' }} />;
+      return <Chip label={t('status.resolved')} size="small" color="success" sx={{ fontSize: '0.7rem' }} />;
     case 'not-found':
-      return <Chip label="Not Found" size="small" color="error" sx={{ fontSize: '0.7rem' }} />;
+      return <Chip label={t('status.notFound')} size="small" color="error" sx={{ fontSize: '0.7rem' }} />;
     case 'error':
-      return <Chip label="Error" size="small" color="warning" sx={{ fontSize: '0.7rem' }} />;
+      return <Chip label={t('status.error')} size="small" color="warning" sx={{ fontSize: '0.7rem' }} />;
   }
 }
 
@@ -85,6 +87,7 @@ function RowActionsMenu({
   onHide?: (rowIndex: number) => void;
   onDelete?: (rowIndex: number) => void;
 }) {
+  const { t } = useTranslation();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const open = Boolean(anchorEl);
 
@@ -113,7 +116,7 @@ function RowActionsMenu({
             sx={{ fontSize: '0.82rem' }}
           >
             <ListItemIcon><RefreshIcon fontSize="small" /></ListItemIcon>
-            <ListItemText>Refresh</ListItemText>
+            <ListItemText>{t('rowActions.refresh')}</ListItemText>
           </MenuItem>
         )}
         {onHide && (
@@ -122,7 +125,7 @@ function RowActionsMenu({
             sx={{ fontSize: '0.82rem' }}
           >
             <ListItemIcon><VisibilityOffIcon fontSize="small" /></ListItemIcon>
-            <ListItemText>Remove from view</ListItemText>
+            <ListItemText>{t('rowActions.removeFromView')}</ListItemText>
           </MenuItem>
         )}
         {onDelete && (
@@ -131,7 +134,7 @@ function RowActionsMenu({
             sx={{ fontSize: '0.82rem', color: 'error.main' }}
           >
             <ListItemIcon><DeleteOutlineIcon fontSize="small" sx={{ color: 'error.main' }} /></ListItemIcon>
-            <ListItemText>Delete from list</ListItemText>
+            <ListItemText>{t('rowActions.deleteFromList')}</ListItemText>
           </MenuItem>
         )}
       </Menu>
@@ -158,6 +161,8 @@ function CellRenderer({
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
 }) {
+  const { t } = useTranslation();
+
   // System columns have custom rendering
   if (column.source === 'system') {
     const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
@@ -191,7 +196,7 @@ function CellRenderer({
         }
         return row.status === 'resolved' ? (
           <Typography variant="caption" color="text.secondary">
-            No match
+            {t('partsList.noMatch')}
           </Typography>
         ) : null;
 
@@ -212,7 +217,7 @@ function CellRenderer({
 
       case 'sys:action':
         return row.status === 'resolved' ? (
-          <Tooltip title="Explore replacements">
+          <Tooltip title={t('partsList.exploreReplacements')}>
             <IconButton
               size="small"
               onClick={(e) => {
@@ -248,7 +253,7 @@ function CellRenderer({
   if (column.isLink && typeof value === 'string' && value.startsWith('http')) {
     return (
       <Link href={value} target="_blank" rel="noopener noreferrer" sx={{ fontSize: ROW_FONT_SIZE }}>
-        Link
+        {t('partsList.linkText')}
       </Link>
     );
   }
@@ -290,6 +295,7 @@ export default function PartsListTable({
   onDeleteRow,
   onHideRow,
 }: PartsListTableProps) {
+  const { t } = useTranslation();
   const total = rows.length;
   const processed = rows.filter(r => r.status !== 'pending' && r.status !== 'validating').length;
   const hasSelection = selectedRows !== undefined && onToggleRow !== undefined;
@@ -308,7 +314,7 @@ export default function PartsListTable({
             </Typography>
             {processed > 0 && (
               <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                ({processed} of {total} parts processed before failure)
+                {t('partsList.errorProgress', { processed, total })}
               </Typography>
             )}
           </Box>
@@ -321,8 +327,8 @@ export default function PartsListTable({
             />
             <Typography variant="caption" color="text.secondary">
               {processed === 0
-                ? `Starting validation of ${total} parts...`
-                : `Validating... ${processed} of ${total} parts processed`}
+                ? t('partsList.startingValidation', { total })
+                : t('partsList.validatingProgress', { processed, total })}
             </Typography>
           </>
         ) : null}

@@ -1,0 +1,221 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "search": "Search",
+    "loading": "Loading...",
+    "comingSoon": "Coming soon"
+  },
+
+  "sidebar": {
+    "accountSettings": "Account Settings",
+    "logout": "Log Out",
+    "yourLists": "Your Lists"
+  },
+
+  "accountSettings": {
+    "title": "Account Settings",
+    "globalSettings": "Global Settings",
+    "myProfile": "My Profile",
+    "dataSources": "Data Sources",
+    "notifications": "Notifications & Emails",
+    "language": "Preferred Language",
+    "currency": "Preferred Currency",
+    "currencyPlaceholder": "Currency settings coming soon",
+    "saved": "Settings saved"
+  },
+
+  "auth": {
+    "emailLabel": "Email",
+    "passwordLabel": "Password",
+    "signInButton": "Sign In",
+    "signingInButton": "Signing in...",
+    "invalidCredentials": "Invalid email or password.",
+    "noAccount": "Don't have an account?",
+    "registerLink": "Register",
+    "inviteCodeLabel": "Invite Code",
+    "firstNameLabel": "First Name",
+    "lastNameLabel": "Last Name",
+    "confirmPasswordLabel": "Confirm Password",
+    "createAccountButton": "Create Account",
+    "creatingAccountButton": "Creating Account...",
+    "passwordMismatch": "Passwords do not match.",
+    "passwordTooShort": "Password must be at least 6 characters.",
+    "haveAccount": "Already have an account?",
+    "signInLink": "Sign In"
+  },
+
+  "lists": {
+    "pageHeader": "Your Lists",
+    "newListButton": "New List",
+    "searchPlaceholder": "Search lists...",
+    "emptyHeading": "No parts lists yet",
+    "emptySubheading": "Upload a spreadsheet to get started",
+    "noMatching": "No lists matching \"{{query}}\"",
+    "dragDropOverlay": "Drop file to create a new list"
+  },
+
+  "listCard": {
+    "lastEditedToday": "Last Edited Today at {{time}}",
+    "lastEditedYesterday": "Last Edited Yesterday at {{time}}",
+    "lastEditedDaysAgo": "Last Edited {{days}} Days Ago",
+    "lastEditedWeeksAgo_one": "Last Edited {{count}} Week Ago",
+    "lastEditedWeeksAgo_other": "Last Edited {{count}} Weeks Ago",
+    "lastEditedMonthsAgo_one": "Last Edited {{count}} Month Ago",
+    "lastEditedMonthsAgo_other": "Last Edited {{count}} Months Ago",
+    "lastEditedDate": "Last Edited {{date}}",
+    "totalParts": "{{count}} Total Parts",
+    "resolved": "{{count}} Resolved",
+    "notResolved": "{{count}} Not Resolved",
+    "pinToTop": "Pin to Top",
+    "unpin": "Unpin",
+    "settings": "List Settings",
+    "deleteConfirmTitle": "Delete \"{{name}}\"?",
+    "deleteConfirmMessage": "This list and all its data will be permanently deleted. This action cannot be undone."
+  },
+
+  "newListDialog": {
+    "createTitle": "Create a new list",
+    "editTitle": "List Settings",
+    "nameLabel": "What are you working on?",
+    "namePlaceholder": "Name your list",
+    "descriptionLabel": "Describe your goals, requirements, constraints...",
+    "descriptionPlaceholder": "e.g., Automotive power supply redesign, need AEC-Q200 qualified replacements",
+    "createButton": "Create List",
+    "saveButton": "Save"
+  },
+
+  "partsList": {
+    "viewLabel": "View:",
+    "editView": "Edit view",
+    "createNewView": "Create new view",
+    "deleteThisView": "Delete this view",
+    "isDefaultView": "This is the default view",
+    "setDefaultView": "Set as default view",
+    "selectedCount": "{{selected}} of {{total}} selected",
+    "partsCount": "{{count}} parts",
+    "refreshTooltip": "Re-validate selected parts",
+    "refreshButton": "Refresh",
+    "deleteTooltip": "Remove selected parts",
+    "deleteButton": "Delete",
+    "deleteViewTitle": "Delete \"{{name}}\"?",
+    "deleteViewMessage": "This view will be permanently removed. Your parts list data will not be affected.",
+    "removePartsTitle_one": "Remove {{count}} part?",
+    "removePartsTitle_other": "Remove {{count}} parts?",
+    "removePartsMessage_one": "Choose how to handle the selected {{count}} part:",
+    "removePartsMessage_other": "Choose how to handle the selected {{count}} parts:",
+    "removeFromViewOnly": "Remove from this view only",
+    "deleteFromListPermanently": "Delete from list permanently",
+    "noMatch": "No match",
+    "linkText": "Link",
+    "exploreReplacements": "Explore replacements",
+    "startingValidation": "Starting validation of {{total}} parts...",
+    "validatingProgress": "Validating... {{processed}} of {{total}} parts processed",
+    "errorProgress": "({{processed}} of {{total}} parts processed before failure)"
+  },
+
+  "status": {
+    "pending": "Pending",
+    "validating": "Validating...",
+    "resolved": "Resolved",
+    "notFound": "Not Found",
+    "error": "Error"
+  },
+
+  "rowActions": {
+    "refresh": "Refresh",
+    "removeFromView": "Remove from view",
+    "deleteFromList": "Delete from list"
+  },
+
+  "columnPicker": {
+    "createTitle": "Create View",
+    "editTitle": "Edit View",
+    "viewNameLabel": "View Name",
+    "searchPlaceholder": "Search columns...",
+    "activeColumnsHeader": "Active Columns ({{count}})",
+    "noColumnsSelected": "No columns selected",
+    "untitledView": "Untitled View",
+    "actionColumn": "(Action)",
+    "settingsTab": "Settings",
+    "columnsTab": "Columns",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Describe the purpose of this view and what the assistant should focus on..."
+  },
+
+  "columnMapping": {
+    "dialogTitle": "Map Your Columns",
+    "instructions": "We detected {{columnCount}} columns and {{rowCount}} data rows in <strong>{{fileName}}</strong>. Map at least a Part Number or Description column. If no MPN is available, we'll resolve parts from the description.",
+    "mpnLabel": "Part Number (MPN)",
+    "manufacturerLabel": "Manufacturer",
+    "descriptionLabel": "Description",
+    "notMapped": "Not mapped",
+    "columnFallback": "Column {{number}}",
+    "colFallback": "Col {{number}}",
+    "previewCaption": "Preview (first {{count}} rows)",
+    "confirmButton": "Confirm & Validate"
+  },
+
+  "fileUpload": {
+    "heading": "Upload a Parts List",
+    "subheading": "Drop an Excel or CSV file, or click to browse",
+    "buttonText": "Upload a List of Parts",
+    "supportedFormats": ".xlsx, .xls, or .csv",
+    "previousLists": "Previous Lists",
+    "listSummary": "{{resolved}} of {{total}} resolved · {{date}}"
+  },
+
+  "partDetail": {
+    "sourcePartTitle": "Source Part",
+    "backToRecommendations": "Back to Recommendations",
+    "useThisReplacement": "Use This Replacement"
+  },
+
+  "recommendations": {
+    "header": "Recommended Replacements",
+    "headerFiltered": "{{activeCount}} active {{matchWord}} · {{obsoleteCount}} obsolete hidden",
+    "headerUnfiltered": "{{count}} {{matchWord}} found — click to compare",
+    "match": "match",
+    "matches": "matches"
+  },
+
+  "attributes": {
+    "parameterHeader": "Parameter",
+    "valueHeader": "Value"
+  },
+
+  "chat": {
+    "searchPlaceholder": "Enter a part number (e.g. EEF-LX0E471R)",
+    "madeInChina": "Made in China",
+    "viewReplacementLogic": "View replacement logic",
+    "searching": "Searching...",
+    "you": "You",
+    "agent": "Agent",
+    "yesThatsIt": "Yes, that's it",
+    "no": "No",
+    "fillInAttributes": "Fill in what you know to improve replacement accuracy:",
+    "additionalDetails_one": "Additional details ({{count}} parameter)",
+    "additionalDetails_other": "Additional details ({{count}} parameters)",
+    "continue": "Continue",
+    "skipAll": "Skip all",
+    "yesOrNo": "Yes or No",
+    "enterValue": "Enter value...",
+    "tellAboutApplication": "To find the best replacement, tell me about your application:",
+    "skipUseDefaults": "Skip — use defaults"
+  },
+
+  "comparison": {
+    "comparingWith": "Comparing with",
+    "parameterHeader": "Parameter",
+    "valueHeader": "Value",
+    "resultHeader": "Result",
+    "pass": "Pass",
+    "review": "Review",
+    "fail": "Fail",
+    "info": "Info",
+    "ok": "OK",
+    "worse": "Worse",
+    "diff": "Diff"
+  }
+}

@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation';
 import { Box, Button, TextField, Typography, Alert, Link as MuiLink } from '@mui/material';
 import NextLink from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useTranslation } from 'react-i18next';
 
 export default function RegisterForm() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [inviteCode, setInviteCode] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -22,12 +24,12 @@ export default function RegisterForm() {
     setError('');
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError(t('auth.passwordMismatch'));
       return;
     }
 
     if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+      setError(t('auth.passwordTooShort'));
       return;
     }
 
@@ -95,7 +97,7 @@ export default function RegisterForm() {
         )}
 
         <TextField
-          label="Invite Code"
+          label={t('auth.inviteCodeLabel')}
           value={inviteCode}
           onChange={(e) => setInviteCode(e.target.value)}
           required
@@ -105,14 +107,14 @@ export default function RegisterForm() {
 
         <Box sx={{ display: 'flex', gap: 2 }}>
           <TextField
-            label="First Name"
+            label={t('auth.firstNameLabel')}
             value={firstName}
             onChange={(e) => setFirstName(e.target.value)}
             required
             fullWidth
           />
           <TextField
-            label="Last Name"
+            label={t('auth.lastNameLabel')}
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
             required
@@ -121,7 +123,7 @@ export default function RegisterForm() {
         </Box>
 
         <TextField
-          label="Email"
+          label={t('auth.emailLabel')}
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -131,7 +133,7 @@ export default function RegisterForm() {
         />
 
         <TextField
-          label="Password"
+          label={t('auth.passwordLabel')}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -141,7 +143,7 @@ export default function RegisterForm() {
         />
 
         <TextField
-          label="Confirm Password"
+          label={t('auth.confirmPasswordLabel')}
           type="password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
@@ -157,13 +159,13 @@ export default function RegisterForm() {
           disabled={loading}
           sx={{ mt: 1, py: 1.2 }}
         >
-          {loading ? 'Creating Account...' : 'Create Account'}
+          {loading ? t('auth.creatingAccountButton') : t('auth.createAccountButton')}
         </Button>
 
         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', mt: 2 }}>
-          Already have an account?{' '}
+          {t('auth.haveAccount')}{' '}
           <MuiLink component={NextLink} href="/login" underline="always" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
-            Sign In
+            {t('auth.signInLink')}
           </MuiLink>
         </Typography>
       </Box>

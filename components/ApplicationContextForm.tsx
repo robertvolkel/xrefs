@@ -1,5 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
@@ -24,10 +25,12 @@ function QuestionField({
   question,
   value,
   onChange,
+  enterValuePlaceholder,
 }: {
   question: ContextQuestion;
   value: string;
   onChange: (value: string) => void;
+  enterValuePlaceholder: string;
 }) {
   const isFreeText = question.allowFreeText;
   // For free-text questions, track whether user is typing a custom value
@@ -82,7 +85,7 @@ function QuestionField({
             label={
               <TextField
                 size="small"
-                placeholder={question.freeTextPlaceholder ?? 'Enter value...'}
+                placeholder={question.freeTextPlaceholder ?? enterValuePlaceholder}
                 value={customText}
                 onChange={(e) => {
                   setCustomText(e.target.value);
@@ -113,6 +116,7 @@ export default function ApplicationContextForm({
   onSubmit,
   onSkip,
 }: ApplicationContextFormProps) {
+  const { t } = useTranslation();
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
   // Filter questions based on conditions — only show questions whose conditions are met
@@ -143,7 +147,7 @@ export default function ApplicationContextForm({
   return (
     <Box sx={{ mt: 1.5, maxWidth: { xs: '100%', sm: 520 } }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
-        To find the best replacement, tell me about your application:
+        {t('chat.tellAboutApplication')}
       </Typography>
 
       <Stack spacing={2}>
@@ -153,6 +157,7 @@ export default function ApplicationContextForm({
             question={question}
             value={answers[question.questionId] ?? ''}
             onChange={(v) => handleChange(question.questionId, v)}
+            enterValuePlaceholder={t('chat.enterValue')}
           />
         ))}
       </Stack>
@@ -164,7 +169,7 @@ export default function ApplicationContextForm({
           startIcon={<CheckIcon />}
           onClick={() => onSubmit(answers)}
         >
-          Continue
+          {t('chat.continue')}
         </Button>
         <Button
           size="small"
@@ -173,7 +178,7 @@ export default function ApplicationContextForm({
           color="inherit"
           sx={{ opacity: 0.7 }}
         >
-          Skip — use defaults
+          {t('chat.skipUseDefaults')}
         </Button>
       </Stack>
     </Box>

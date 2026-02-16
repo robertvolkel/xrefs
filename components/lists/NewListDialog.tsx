@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogTitle,
@@ -34,6 +35,7 @@ export default function NewListDialog({
   initialName,
   initialDescription,
 }: NewListDialogProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
@@ -62,13 +64,13 @@ export default function NewListDialog({
       }}
     >
       <DialogTitle sx={{ pb: 1, fontWeight: 600 }}>
-        {mode === 'edit' ? 'List Settings' : 'Create a new list'}
+        {mode === 'edit' ? t('newListDialog.editTitle') : t('newListDialog.createTitle')}
       </DialogTitle>
 
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: '16px !important' }}>
         <TextField
-          label="What are you working on?"
-          placeholder="Name your list"
+          label={t('newListDialog.nameLabel')}
+          placeholder={t('newListDialog.namePlaceholder')}
           value={name}
           onChange={(e) => setName(e.target.value)}
           fullWidth
@@ -78,8 +80,8 @@ export default function NewListDialog({
         />
 
         <TextField
-          label="Describe your goals, requirements, constraints..."
-          placeholder="e.g., Automotive power supply redesign, need AEC-Q200 qualified replacements"
+          label={t('newListDialog.descriptionLabel')}
+          placeholder={t('newListDialog.descriptionPlaceholder')}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           fullWidth
@@ -93,7 +95,7 @@ export default function NewListDialog({
 
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button onClick={onCancel} sx={{ borderRadius: 20, textTransform: 'none' }}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button
           variant="contained"
@@ -101,7 +103,7 @@ export default function NewListDialog({
           disabled={!canConfirm}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >
-          {mode === 'edit' ? 'Save' : 'Create List'}
+          {mode === 'edit' ? t('newListDialog.saveButton') : t('newListDialog.createButton')}
         </Button>
       </DialogActions>
     </Dialog>

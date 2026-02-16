@@ -20,6 +20,7 @@ import {
   FormControl,
   InputLabel,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { ParsedSpreadsheet, ColumnMapping } from '@/lib/types';
 
 interface ColumnMappingDialogProps {
@@ -39,6 +40,7 @@ export default function ColumnMappingDialog({
   onConfirm,
   onCancel,
 }: ColumnMappingDialogProps) {
+  const { t } = useTranslation();
   const [mpnCol, setMpnCol] = useState<number>(NOT_MAPPED);
   const [mfrCol, setMfrCol] = useState<number>(NOT_MAPPED);
   const [descCol, setDescCol] = useState<number>(NOT_MAPPED);
@@ -67,54 +69,52 @@ export default function ColumnMappingDialog({
       fullWidth
       PaperProps={{ sx: { bgcolor: 'background.paper' } }}
     >
-      <DialogTitle>Map Your Columns</DialogTitle>
+      <DialogTitle>{t('columnMapping.dialogTitle')}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          We detected {headers.length} columns and {rows.length} data rows in{' '}
-          <strong>{parsedData.fileName}</strong>. Map at least a Part Number or Description column.
-          If no MPN is available, we&apos;ll resolve parts from the description.
+          <span dangerouslySetInnerHTML={{ __html: t('columnMapping.instructions', { columnCount: headers.length, rowCount: rows.length, fileName: parsedData.fileName }) }} />
         </Typography>
 
         {/* Column selectors */}
         <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
           <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Part Number (MPN)</InputLabel>
+            <InputLabel>{t('columnMapping.mpnLabel')}</InputLabel>
             <Select
               value={mpnCol}
-              label="Part Number (MPN)"
+              label={t('columnMapping.mpnLabel')}
               onChange={(e) => setMpnCol(e.target.value as number)}
             >
-              <MenuItem value={NOT_MAPPED}><em>Not mapped</em></MenuItem>
+              <MenuItem value={NOT_MAPPED}><em>{t('columnMapping.notMapped')}</em></MenuItem>
               {headers.map((h, i) => (
-                <MenuItem key={i} value={i}>{h || `Column ${i + 1}`}</MenuItem>
+                <MenuItem key={i} value={i}>{h || t('columnMapping.columnFallback', { number: i + 1 })}</MenuItem>
               ))}
             </Select>
           </FormControl>
 
           <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Manufacturer</InputLabel>
+            <InputLabel>{t('columnMapping.manufacturerLabel')}</InputLabel>
             <Select
               value={mfrCol}
-              label="Manufacturer"
+              label={t('columnMapping.manufacturerLabel')}
               onChange={(e) => setMfrCol(e.target.value as number)}
             >
-              <MenuItem value={NOT_MAPPED}><em>Not mapped</em></MenuItem>
+              <MenuItem value={NOT_MAPPED}><em>{t('columnMapping.notMapped')}</em></MenuItem>
               {headers.map((h, i) => (
-                <MenuItem key={i} value={i}>{h || `Column ${i + 1}`}</MenuItem>
+                <MenuItem key={i} value={i}>{h || t('columnMapping.columnFallback', { number: i + 1 })}</MenuItem>
               ))}
             </Select>
           </FormControl>
 
           <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel>Description</InputLabel>
+            <InputLabel>{t('columnMapping.descriptionLabel')}</InputLabel>
             <Select
               value={descCol}
-              label="Description"
+              label={t('columnMapping.descriptionLabel')}
               onChange={(e) => setDescCol(e.target.value as number)}
             >
-              <MenuItem value={NOT_MAPPED}><em>Not mapped</em></MenuItem>
+              <MenuItem value={NOT_MAPPED}><em>{t('columnMapping.notMapped')}</em></MenuItem>
               {headers.map((h, i) => (
-                <MenuItem key={i} value={i}>{h || `Column ${i + 1}`}</MenuItem>
+                <MenuItem key={i} value={i}>{h || t('columnMapping.columnFallback', { number: i + 1 })}</MenuItem>
               ))}
             </Select>
           </FormControl>
@@ -122,7 +122,7 @@ export default function ColumnMappingDialog({
 
         {/* Preview table */}
         <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-          Preview (first {previewRows.length} rows)
+          {t('columnMapping.previewCaption', { count: previewRows.length })}
         </Typography>
         <TableContainer sx={{ maxHeight: 240, border: 1, borderColor: 'divider', borderRadius: 1 }}>
           <Table size="small" stickyHeader>
@@ -139,7 +139,7 @@ export default function ColumnMappingDialog({
                         : 'background.paper',
                     }}
                   >
-                    {h || `Col ${i + 1}`}
+                    {h || t('columnMapping.colFallback', { number: i + 1 })}
                   </TableCell>
                 ))}
               </TableRow>
@@ -167,13 +167,13 @@ export default function ColumnMappingDialog({
         </TableContainer>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onCancel} color="inherit">Cancel</Button>
+        <Button onClick={onCancel} color="inherit">{t('common.cancel')}</Button>
         <Button
           onClick={() => onConfirm({ mpnColumn: mpnCol, manufacturerColumn: mfrCol, descriptionColumn: descCol })}
           variant="contained"
           disabled={!canConfirm}
         >
-          Confirm & Validate
+          {t('columnMapping.confirmButton')}
         </Button>
       </DialogActions>
     </Dialog>

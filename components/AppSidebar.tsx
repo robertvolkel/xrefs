@@ -1,13 +1,16 @@
 'use client';
 import { useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { useTranslation } from 'react-i18next';
 import { Box, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
+import AccountSettingsDialog from './AccountSettingsDialog';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -16,7 +19,9 @@ interface AppSidebarProps {
 export default function AppSidebar({ onReset }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const { t } = useTranslation();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const isListsActive = pathname === '/lists';
 
@@ -30,6 +35,11 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
     }
     router.push('/login');
     router.refresh();
+  };
+
+  const handleOpenSettings = () => {
+    setAnchorEl(null);
+    setSettingsOpen(true);
   };
 
   return (
@@ -68,7 +78,7 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
           onClick={() => router.push('/lists')}
           size="small"
           sx={{
-            mt: '51px',
+            mt: '41px',
             opacity: isListsActive ? 1 : 0.7,
             bgcolor: isListsActive ? 'action.selected' : 'transparent',
             borderRadius: 1,
@@ -76,6 +86,18 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
           }}
         >
           <DescriptionOutlinedIcon fontSize="small" />
+        </IconButton>
+
+        <IconButton
+          disabled
+          size="small"
+          sx={{
+            mt: 1.5,
+            opacity: 0.3,
+            borderRadius: 1,
+          }}
+        >
+          <FolderOutlinedIcon fontSize="small" />
         </IconButton>
       </Box>
 
@@ -94,16 +116,18 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       >
-        <MenuItem disabled>
+        <MenuItem onClick={handleOpenSettings}>
           <ListItemIcon><ManageAccountsIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Account Settings</ListItemText>
+          <ListItemText>{t('sidebar.accountSettings')}</ListItemText>
         </MenuItem>
         <Divider />
         <MenuItem onClick={handleLogout}>
           <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Log Out</ListItemText>
+          <ListItemText>{t('sidebar.logout')}</ListItemText>
         </MenuItem>
       </Menu>
+
+      <AccountSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </Box>
   );
 }

@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, CircularProgress, Link, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
@@ -33,6 +34,7 @@ export default function ChatInterface({
   onSkipContext,
   onFileSelect,
 }: ChatInterfaceProps) {
+  const { t } = useTranslation();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
   const isSearching = phase === 'searching';
@@ -64,10 +66,10 @@ export default function ChatInterface({
           sx={{ position: 'absolute', bottom: 24, display: { xs: 'none', sm: 'flex' }, alignItems: 'baseline', gap: 0.75 }}
         >
           <span>🇨🇳</span>
-          <span>Made in China</span>
+          <span>{t('chat.madeInChina')}</span>
           <span style={{ margin: '0 2px' }}>|</span>
           <Link href="/logic" underline="hover" variant="caption" sx={{ color: 'text.secondary', '&:hover': { color: 'text.primary' } }}>
-            View replacement logic
+            {t('chat.viewReplacementLogic')}
           </Link>
         </Typography>
       </Box>
@@ -151,7 +153,7 @@ export default function ChatInterface({
                 <CircularProgress size={14} />
               </Box>
               <Typography variant="body2" color="text.secondary">
-                Searching...
+                {t('chat.searching')}
               </Typography>
             </Box>
           )}

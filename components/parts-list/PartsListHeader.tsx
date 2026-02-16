@@ -1,9 +1,11 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { Box, IconButton, Link, Typography } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface PartsListHeaderProps {
   listName?: string | null;
@@ -19,6 +21,9 @@ export default function PartsListHeader({
   viewControls,
   showViewControls,
 }: PartsListHeaderProps) {
+  const { t } = useTranslation();
+  const router = useRouter();
+
   return (
     <Box
       sx={{
@@ -33,20 +38,12 @@ export default function PartsListHeader({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <IconButton href="/lists" size="small" sx={{ color: 'text.secondary' }}>
+        <IconButton onClick={() => router.back()} size="small" sx={{ color: 'text.secondary' }}>
           <ArrowBackIcon fontSize="small" />
         </IconButton>
-        <Link href="/lists" sx={{ display: 'flex', alignItems: 'center' }}>
-          <Box
-            component="img"
-            src="/xq-logo.png"
-            alt="XQ"
-            sx={{ width: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
-          />
-        </Link>
-        <Link href="/lists" underline="hover" sx={{ ml: 1 }}>
+        <Link href="/lists" underline="hover">
           <Typography variant="body2" color="text.secondary" component="span">
-            Your Lists
+            {t('sidebar.yourLists')}
           </Typography>
         </Link>
         {listName && (

@@ -1,0 +1,221 @@
+{
+  "common": {
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "search": "Suchen",
+    "loading": "Wird geladen...",
+    "comingSoon": "Demnächst verfügbar"
+  },
+
+  "sidebar": {
+    "accountSettings": "Kontoeinstellungen",
+    "logout": "Abmelden",
+    "yourLists": "Ihre Listen"
+  },
+
+  "accountSettings": {
+    "title": "Kontoeinstellungen",
+    "globalSettings": "Allgemeine Einstellungen",
+    "myProfile": "Mein Profil",
+    "dataSources": "Datenquellen",
+    "notifications": "Benachrichtigungen & E-Mails",
+    "language": "Bevorzugte Sprache",
+    "currency": "Bevorzugte Währung",
+    "currencyPlaceholder": "Währungseinstellungen demnächst verfügbar",
+    "saved": "Einstellungen gespeichert"
+  },
+
+  "auth": {
+    "emailLabel": "E-Mail",
+    "passwordLabel": "Passwort",
+    "signInButton": "Anmelden",
+    "signingInButton": "Anmeldung...",
+    "invalidCredentials": "Ungültige E-Mail oder Passwort.",
+    "noAccount": "Noch kein Konto?",
+    "registerLink": "Registrieren",
+    "inviteCodeLabel": "Einladungscode",
+    "firstNameLabel": "Vorname",
+    "lastNameLabel": "Nachname",
+    "confirmPasswordLabel": "Passwort bestätigen",
+    "createAccountButton": "Konto erstellen",
+    "creatingAccountButton": "Konto wird erstellt...",
+    "passwordMismatch": "Passwörter stimmen nicht überein.",
+    "passwordTooShort": "Das Passwort muss mindestens 6 Zeichen lang sein.",
+    "haveAccount": "Bereits ein Konto?",
+    "signInLink": "Anmelden"
+  },
+
+  "lists": {
+    "pageHeader": "Ihre Listen",
+    "newListButton": "Neue Liste",
+    "searchPlaceholder": "Listen durchsuchen...",
+    "emptyHeading": "Noch keine Bauteillisten",
+    "emptySubheading": "Laden Sie eine Tabelle hoch, um zu beginnen",
+    "noMatching": "Keine Listen für \"{{query}}\" gefunden",
+    "dragDropOverlay": "Datei ablegen, um eine neue Liste zu erstellen"
+  },
+
+  "listCard": {
+    "lastEditedToday": "Zuletzt bearbeitet heute um {{time}}",
+    "lastEditedYesterday": "Zuletzt bearbeitet gestern um {{time}}",
+    "lastEditedDaysAgo": "Zuletzt bearbeitet vor {{days}} Tagen",
+    "lastEditedWeeksAgo_one": "Zuletzt bearbeitet vor {{count}} Woche",
+    "lastEditedWeeksAgo_other": "Zuletzt bearbeitet vor {{count}} Wochen",
+    "lastEditedMonthsAgo_one": "Zuletzt bearbeitet vor {{count}} Monat",
+    "lastEditedMonthsAgo_other": "Zuletzt bearbeitet vor {{count}} Monaten",
+    "lastEditedDate": "Zuletzt bearbeitet am {{date}}",
+    "totalParts": "{{count}} Bauteile gesamt",
+    "resolved": "{{count}} aufgelöst",
+    "notResolved": "{{count}} nicht aufgelöst",
+    "pinToTop": "Oben anheften",
+    "unpin": "Loslösen",
+    "settings": "Listeneinstellungen",
+    "deleteConfirmTitle": "\"{{name}}\" löschen?",
+    "deleteConfirmMessage": "Diese Liste und alle zugehörigen Daten werden dauerhaft gelöscht. Diese Aktion kann nicht rückgängig gemacht werden."
+  },
+
+  "newListDialog": {
+    "createTitle": "Neue Liste erstellen",
+    "editTitle": "Listeneinstellungen",
+    "nameLabel": "Woran arbeiten Sie?",
+    "namePlaceholder": "Liste benennen",
+    "descriptionLabel": "Beschreiben Sie Ihre Ziele, Anforderungen, Einschränkungen...",
+    "descriptionPlaceholder": "z.B. Automotive-Netzteil-Redesign, AEC-Q200-qualifizierte Ersatzteile benötigt",
+    "createButton": "Liste erstellen",
+    "saveButton": "Speichern"
+  },
+
+  "partsList": {
+    "viewLabel": "Ansicht:",
+    "editView": "Ansicht bearbeiten",
+    "createNewView": "Neue Ansicht erstellen",
+    "deleteThisView": "Diese Ansicht löschen",
+    "isDefaultView": "Dies ist die Standardansicht",
+    "setDefaultView": "Als Standardansicht festlegen",
+    "selectedCount": "{{selected}} von {{total}} ausgewählt",
+    "partsCount": "{{count}} Bauteile",
+    "refreshTooltip": "Ausgewählte Bauteile erneut validieren",
+    "refreshButton": "Aktualisieren",
+    "deleteTooltip": "Ausgewählte Bauteile entfernen",
+    "deleteButton": "Löschen",
+    "deleteViewTitle": "\"{{name}}\" löschen?",
+    "deleteViewMessage": "Diese Ansicht wird dauerhaft entfernt. Ihre Bauteilliste wird nicht beeinflusst.",
+    "removePartsTitle_one": "{{count}} Bauteil entfernen?",
+    "removePartsTitle_other": "{{count}} Bauteile entfernen?",
+    "removePartsMessage_one": "Wählen Sie, wie das ausgewählte {{count}} Bauteil behandelt werden soll:",
+    "removePartsMessage_other": "Wählen Sie, wie die ausgewählten {{count}} Bauteile behandelt werden sollen:",
+    "removeFromViewOnly": "Nur aus dieser Ansicht entfernen",
+    "deleteFromListPermanently": "Dauerhaft aus der Liste löschen",
+    "noMatch": "Kein Treffer",
+    "linkText": "Link",
+    "exploreReplacements": "Ersatzteile suchen",
+    "startingValidation": "Validierung von {{total}} Bauteilen wird gestartet...",
+    "validatingProgress": "Validierung... {{processed}} von {{total}} Bauteilen verarbeitet",
+    "errorProgress": "({{processed}} von {{total}} Bauteilen vor Fehler verarbeitet)"
+  },
+
+  "status": {
+    "pending": "Ausstehend",
+    "validating": "Wird validiert...",
+    "resolved": "Aufgelöst",
+    "notFound": "Nicht gefunden",
+    "error": "Fehler"
+  },
+
+  "rowActions": {
+    "refresh": "Aktualisieren",
+    "removeFromView": "Aus Ansicht entfernen",
+    "deleteFromList": "Aus Liste löschen"
+  },
+
+  "columnPicker": {
+    "createTitle": "Ansicht erstellen",
+    "editTitle": "Ansicht bearbeiten",
+    "viewNameLabel": "Ansichtsname",
+    "searchPlaceholder": "Spalten durchsuchen...",
+    "activeColumnsHeader": "Aktive Spalten ({{count}})",
+    "noColumnsSelected": "Keine Spalten ausgewählt",
+    "untitledView": "Unbenannte Ansicht",
+    "actionColumn": "(Aktion)",
+    "settingsTab": "Einstellungen",
+    "columnsTab": "Spalten",
+    "descriptionLabel": "Beschreibung",
+    "descriptionPlaceholder": "Beschreiben Sie den Zweck dieser Ansicht und worauf der Assistent sich konzentrieren soll..."
+  },
+
+  "columnMapping": {
+    "dialogTitle": "Spalten zuordnen",
+    "instructions": "Wir haben {{columnCount}} Spalten und {{rowCount}} Datenzeilen in <strong>{{fileName}}</strong> erkannt. Ordnen Sie mindestens eine Teilenummer- oder Beschreibungsspalte zu. Wenn keine MPN verfügbar ist, lösen wir Bauteile anhand der Beschreibung auf.",
+    "mpnLabel": "Teilenummer (MPN)",
+    "manufacturerLabel": "Hersteller",
+    "descriptionLabel": "Beschreibung",
+    "notMapped": "Nicht zugeordnet",
+    "columnFallback": "Spalte {{number}}",
+    "colFallback": "Sp. {{number}}",
+    "previewCaption": "Vorschau (erste {{count}} Zeilen)",
+    "confirmButton": "Bestätigen & Validieren"
+  },
+
+  "fileUpload": {
+    "heading": "Bauteilliste hochladen",
+    "subheading": "Excel- oder CSV-Datei hierher ziehen oder klicken zum Durchsuchen",
+    "buttonText": "Bauteilliste hochladen",
+    "supportedFormats": ".xlsx, .xls oder .csv",
+    "previousLists": "Vorherige Listen",
+    "listSummary": "{{resolved}} von {{total}} aufgelöst · {{date}}"
+  },
+
+  "partDetail": {
+    "sourcePartTitle": "Quellbauteil",
+    "backToRecommendations": "Zurück zu Empfehlungen",
+    "useThisReplacement": "Diesen Ersatz verwenden"
+  },
+
+  "recommendations": {
+    "header": "Empfohlene Ersatzteile",
+    "headerFiltered": "{{activeCount}} aktive {{matchWord}} · {{obsoleteCount}} veraltete ausgeblendet",
+    "headerUnfiltered": "{{count}} {{matchWord}} gefunden — zum Vergleichen klicken",
+    "match": "Treffer",
+    "matches": "Treffer"
+  },
+
+  "attributes": {
+    "parameterHeader": "Parameter",
+    "valueHeader": "Wert"
+  },
+
+  "chat": {
+    "searchPlaceholder": "Teilenummer eingeben (z.B. EEF-LX0E471R)",
+    "madeInChina": "Hergestellt in China",
+    "viewReplacementLogic": "Ersatzlogik anzeigen",
+    "searching": "Suche läuft...",
+    "you": "Sie",
+    "agent": "Assistent",
+    "yesThatsIt": "Ja, das ist es",
+    "no": "Nein",
+    "fillInAttributes": "Geben Sie an, was Sie wissen, um die Ersatzgenauigkeit zu verbessern:",
+    "additionalDetails_one": "Weitere Details ({{count}} Parameter)",
+    "additionalDetails_other": "Weitere Details ({{count}} Parameter)",
+    "continue": "Weiter",
+    "skipAll": "Alle überspringen",
+    "yesOrNo": "Ja oder Nein",
+    "enterValue": "Wert eingeben...",
+    "tellAboutApplication": "Um den besten Ersatz zu finden, erzählen Sie mir von Ihrer Anwendung:",
+    "skipUseDefaults": "Überspringen — Standardwerte verwenden"
+  },
+
+  "comparison": {
+    "comparingWith": "Vergleich mit",
+    "parameterHeader": "Parameter",
+    "valueHeader": "Wert",
+    "resultHeader": "Ergebnis",
+    "pass": "Bestanden",
+    "review": "Prüfung",
+    "fail": "Fehlgeschlagen",
+    "info": "Info",
+    "ok": "OK",
+    "worse": "Schlechter",
+    "diff": "Abweichung"
+  }
+}

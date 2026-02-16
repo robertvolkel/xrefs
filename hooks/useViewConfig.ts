@@ -16,9 +16,14 @@ function generateId(): string {
 export function useViewConfig() {
   const [state, setState] = useState<ViewState>(() => loadViewState());
 
-  const persist = useCallback((newState: ViewState) => {
-    setState(newState);
-    saveViewState(newState);
+  // Helper: update state and persist to localStorage in one step.
+  // Uses functional updater to avoid stale closure issues.
+  const update = useCallback((updater: (prev: ViewState) => ViewState) => {
+    setState(prev => {
+      const next = updater(prev);
+      saveViewState(next);
+      return next;
+    });
   }, []);
 
   const activeView = useMemo(
@@ -27,67 +32,72 @@ export function useViewConfig() {
   );
 
   const selectView = useCallback((viewId: string) => {
-    persist({ ...state, activeViewId: viewId });
-  }, [state, persist]);
+    update(prev => ({ ...prev, activeViewId: viewId }));
+  }, [update]);
 
-  const createView = useCallback((name: string, columns: string[]): SavedView => {
-    const newView: SavedView = { id: generateId(), name, columns };
-    persist({
-      ...state,
-      views: [...state.views, newView],
+  const createView = useCallback((name: string, columns: string[], description?: string): SavedView => {
+    const newView: SavedView = { id: generateId(), name, columns, ...(description ? { description } : {}) };
+    update(prev => ({
+      ...prev,
+      views: [...prev.views, newView],
       activeViewId: newView.id,
-    });
+    }));
     return newView;
-  }, [state, persist]);
+  }, [update]);
 
-  const updateView = useCallback((viewId: string, columns: string[], name?: string) => {
-    persist({
-      ...state,
-      views: state.views.map(v => v.id === viewId ? { ...v, columns, ...(name ? { name } : {}) } : v),
-    });
-  }, [state, persist]);
+  const updateView = useCallback((viewId: string, columns: string[], name?: string, description?: string) => {
+    update(prev => ({
+      ...prev,
+      views: prev.views.map(v => v.id === viewId
+        ? { ...v, columns, ...(name ? { name } : {}), ...(description !== undefined ? { description } : {}) }
+        : v),
+    }));
+  }, [update]);
 
   const renameView = useCallback((viewId: string, name: string) => {
-    persist({
-      ...state,
-      views: state.views.map(v => v.id === viewId ? { ...v, name } : v),
-    });
-  }, [state, persist]);
+    update(prev => ({
+      ...prev,
+      views: prev.views.map(v => v.id === viewId ? { ...v, name } : v),
+    }));
+  }, [update]);
 
   const deleteView = useCallback((viewId: string) => {
     if (isBuiltinView(viewId)) return;
-    const newViews = state.views.filter(v => v.id !== viewId);
-    const newActive = state.activeViewId === viewId ? 'default' : state.activeViewId;
-    const newDefault = state.defaultViewId === viewId ? 'default' : state.defaultViewId;
-    persist({
-      ...state,
-      views: newViews,
-      activeViewId: newActive,
-      defaultViewId: newDefault,
+    update(prev => {
+      const newViews = prev.views.filter(v => v.id !== viewId);
+      return {
+        ...prev,
+        views: newViews,
+        activeViewId: prev.activeViewId === viewId ? 'default' : prev.activeViewId,
+        defaultViewId: prev.defaultViewId === viewId ? 'default' : prev.defaultViewId,
+      };
     });
-  }, [state, persist]);
+  }, [update]);
 
   const setDefaultView = useCallback((viewId: string) => {
-    persist({ ...state, defaultViewId: viewId });
-  }, [state, persist]);
+    update(prev => ({ ...prev, defaultViewId: viewId }));
+  }, [update]);
 
   const duplicateView = useCallback((viewId: string, newName: string): SavedView => {
-    const source = state.views.find(v => v.id === viewId);
-    if (!source) return state.views[0];
-    const newView: SavedView = { id: generateId(), name: newName, columns: [...source.columns] };
-    persist({
-      ...state,
-      views: [...state.views, newView],
-      activeViewId: newView.id,
+    let newView: SavedView | null = null;
+    update(prev => {
+      const source = prev.views.find(v => v.id === viewId);
+      if (!source) return prev;
+      newView = { id: generateId(), name: newName, columns: [...source.columns] };
+      return {
+        ...prev,
+        views: [...prev.views, newView],
+        activeViewId: newView.id,
+      };
     });
-    return newView;
-  }, [state, persist]);
+    return newView ?? state.views[0];
+  }, [update, state.views]);
 
   /** Hide a row in a specific view for a specific list */
   const hideRowInView = useCallback((viewId: string, listId: string, rowIndex: number) => {
-    persist({
-      ...state,
-      views: state.views.map(v => {
+    update(prev => ({
+      ...prev,
+      views: prev.views.map(v => {
         if (v.id !== viewId) return v;
         const existing = v.hiddenRows?.[listId] ?? [];
         if (existing.includes(rowIndex)) return v;
@@ -96,8 +106,8 @@ export function useViewConfig() {
           hiddenRows: { ...v.hiddenRows, [listId]: [...existing, rowIndex] },
         };
       }),
-    });
-  }, [state, persist]);
+    }));
+  }, [update]);
 
   /** Get the set of hidden row indices for a view + list combination */
   const getHiddenRows = useCallback((viewId: string, listId: string): Set<number> => {

@@ -12,6 +12,7 @@ import {
   Skeleton,
   Stack,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { PartAttributes } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
 
@@ -22,6 +23,7 @@ interface AttributesPanelProps {
 }
 
 export default function AttributesPanel({ attributes, loading, title }: AttributesPanelProps) {
+  const { t } = useTranslation();
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — fixed height to align with right panel */}
@@ -67,10 +69,10 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
           <TableHead>
             <TableRow>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                Parameter
+                {t('attributes.parameterHeader')}
               </TableCell>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                Value
+                {t('attributes.valueHeader')}
               </TableCell>
             </TableRow>
           </TableHead>
