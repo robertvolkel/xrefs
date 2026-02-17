@@ -8,12 +8,11 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
-  Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useTranslation } from 'react-i18next';
 import { PartsListRow, XrefRecommendation, PartAttributes } from '@/lib/types';
-import AttributesPanel from '../AttributesPanel';
+import ModalChatPanel from './ModalChatPanel';
 import RecommendationsPanel from '../RecommendationsPanel';
 import ComparisonView from '../ComparisonView';
 
@@ -27,6 +26,7 @@ interface PartDetailModalProps {
   onSelectRec: (rec: XrefRecommendation) => void;
   onBackToRecs: () => void;
   onConfirmReplacement: (rec: XrefRecommendation) => void;
+  onRecommendationsRefreshed: (recs: XrefRecommendation[]) => void;
 }
 
 const PANEL_HEIGHT = '70vh';
@@ -41,6 +41,7 @@ export default function PartDetailModal({
   onSelectRec,
   onBackToRecs,
   onConfirmReplacement,
+  onRecommendationsRefreshed,
 }: PartDetailModalProps) {
   const { t } = useTranslation();
   if (!row) return null;
@@ -68,18 +69,18 @@ export default function PartDetailModal({
       </DialogTitle>
 
       <DialogContent sx={{ p: 0, display: 'flex', overflow: 'hidden' }}>
-        {/* Source attributes panel */}
-        <Box sx={{ width: isComparing ? '33%' : '40%', height: PANEL_HEIGHT, overflow: 'hidden', transition: 'width 0.2s ease' }}>
-          <AttributesPanel
-            attributes={row.sourceAttributes ?? null}
-            loading={!row.sourceAttributes}
-            title={t('partDetail.sourcePartTitle')}
+        {/* Refinement chat panel */}
+        <Box sx={{ width: isComparing ? '33%' : '40%', height: PANEL_HEIGHT, overflow: 'hidden', transition: 'width 0.2s ease', borderRight: 1, borderColor: 'divider' }}>
+          <ModalChatPanel
+            row={row}
+            open={open}
+            onRecommendationsRefreshed={onRecommendationsRefreshed}
           />
         </Box>
 
         {/* Recommendations panel */}
         {!isComparing && (
-          <Box sx={{ width: '60%', height: PANEL_HEIGHT, overflow: 'hidden', borderLeft: 1, borderColor: 'divider' }}>
+          <Box sx={{ width: '60%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
             <RecommendationsPanel
               recommendations={recs}
               onSelect={onSelectRec}
@@ -89,7 +90,7 @@ export default function PartDetailModal({
 
         {/* Comparison view (when a rec is selected) */}
         {isComparing && selectedRec && row.sourceAttributes && comparisonAttrs && (
-          <Box sx={{ width: '67%', height: PANEL_HEIGHT, overflow: 'hidden', borderLeft: 1, borderColor: 'divider' }}>
+          <Box sx={{ width: '67%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
             <ComparisonView
               sourceAttributes={row.sourceAttributes}
               replacementAttributes={comparisonAttrs}

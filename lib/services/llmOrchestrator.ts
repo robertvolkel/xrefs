@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 
 const SYSTEM_PROMPT = `You are Agent, an expert electronic component cross-reference assistant. You help engineers find replacement parts — specifically Chinese-manufactured alternatives to western components.
@@ -33,10 +33,15 @@ MLCC capacitors, chip resistors, aluminum electrolytic capacitors, tantalum capa
 
 If a part falls outside these families, clearly tell the user that the application does not yet support cross-referencing for that component category. Do NOT suggest "manual sourcing" or imply the search failed — state that the logic rules for that category haven't been built yet.
 
+Formatting rules:
+- Use bullet points (- item) for lists — never write long paragraphs.
+- Use **bold** for part numbers, manufacturers, and key specs.
+- Keep messages scannable: short sentences, line breaks between sections.
+- No filler, no repetition. Engineers don't need hand-holding.
+
 Important rules:
 - Always use tools — never guess part numbers or specs.
-- After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
-- Keep ALL messages short. No filler, no repetition. Engineers don't need hand-holding.`;
+- After confirming a part, ALWAYS call both get_part_attributes and find_replacements.`;
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
@@ -215,6 +220,174 @@ export async function chat(
   if (Object.keys(toolData.attributes).length > 0) {
     result.attributes = toolData.attributes;
   }
+  if (Object.keys(toolData.recommendations).length > 0) {
+    result.recommendations = toolData.recommendations;
+  }
+
+  return result;
+}
+
+// ==============================================================
+// REFINEMENT CHAT — for the modal context
+// ==============================================================
+
+function buildRefinementSystemPrompt(
+  mpn: string,
+  overrides: Record<string, string>,
+  applicationContext?: ApplicationContext,
+): string {
+  let prompt = `You are a cross-reference refinement assistant helping an engineer evaluate replacement candidates for **${mpn}**.
+
+Your role:
+- Answer questions about the current replacement recommendations
+- Help the user understand trade-offs between candidates
+- Re-run the matching engine with adjusted parameters when the user provides new constraints
+- Be concise and technical — your users are electronics engineers
+
+You have access to a tool that re-runs the matching engine. Use it when the user:
+- Mentions a new requirement (e.g. "I need AEC-Q200 compliance")
+- Wants to change a parameter (e.g. "What if the voltage rating needs to be 50V?")
+- Asks to re-evaluate with different criteria
+
+Do NOT use the tool for general questions about the recommendations.`;
+
+  if (Object.keys(overrides).length > 0) {
+    prompt += `\n\nUser-provided attribute overrides:\n${JSON.stringify(overrides, null, 2)}`;
+  }
+  if (applicationContext) {
+    prompt += `\n\nApplication context answers:\n${JSON.stringify(applicationContext.answers, null, 2)}`;
+  }
+
+  prompt += `\n\nFormatting rules:
+- Use bullet points (- item) for lists — never write long paragraphs
+- Use **bold** for part numbers, manufacturers, and key specs
+- Keep messages scannable: short sentences, line breaks between sections
+- No filler, no repetition. Engineers don't need hand-holding.`;
+
+  return prompt;
+}
+
+const refinementTools: Anthropic.Tool[] = [
+  {
+    name: 'refine_replacements',
+    description: 'Re-run the matching engine for the source part with optional attribute overrides and application context. Use this when the user provides new requirements or wants to change evaluation criteria.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        attribute_overrides: {
+          type: 'object',
+          description: 'Key-value map of attribute IDs to override values (e.g. { "voltage_rating": "50V" })',
+          additionalProperties: { type: 'string' },
+        },
+        context_answers: {
+          type: 'object',
+          description: 'Key-value map of context question IDs to answer values',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: [],
+    },
+  },
+];
+
+/**
+ * Run the refinement chat for the modal context.
+ * Focused on a single part — helps users refine replacement recommendations.
+ */
+export async function refinementChat(
+  messages: OrchestratorMessage[],
+  mpn: string,
+  overrides: Record<string, string>,
+  applicationContext: ApplicationContext | undefined,
+  apiKey: string,
+): Promise<OrchestratorResponse> {
+  const client = new Anthropic({ apiKey });
+  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext);
+
+  const anthropicMessages: Anthropic.MessageParam[] = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const toolData: ToolResultData = {
+    attributes: {},
+    recommendations: {},
+  };
+
+  let response = await client.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 2048,
+    system: systemPrompt,
+    tools: refinementTools,
+    messages: anthropicMessages,
+  });
+
+  while (response.stop_reason === 'tool_use') {
+    const toolUseBlocks = response.content.filter(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
+    );
+
+    anthropicMessages.push({
+      role: 'assistant',
+      content: response.content,
+    });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+      toolUseBlocks.map(async (toolUse) => {
+        const input = toolUse.input as { attribute_overrides?: Record<string, string>; context_answers?: Record<string, string> };
+
+        // Merge any new overrides from the LLM with existing ones
+        const mergedOverrides = { ...overrides, ...(input.attribute_overrides ?? {}) };
+
+        // Merge context answers if provided
+        let mergedContext = applicationContext;
+        if (input.context_answers && Object.keys(input.context_answers).length > 0) {
+          const existingAnswers = applicationContext?.answers ?? {};
+          mergedContext = {
+            familyId: applicationContext?.familyId ?? '',
+            answers: { ...existingAnswers, ...input.context_answers },
+          };
+        }
+
+        const recs = await getRecommendations(mpn, mergedOverrides, mergedContext);
+        toolData.recommendations[mpn] = recs;
+
+        return {
+          type: 'tool_result' as const,
+          tool_use_id: toolUse.id,
+          content: JSON.stringify(recs.map(r => ({
+            mpn: r.part.mpn,
+            manufacturer: r.part.manufacturer,
+            matchPercentage: r.matchPercentage,
+            passed: r.matchPercentage > 0,
+            keyDifferences: r.matchDetails
+              .filter(d => d.matchStatus !== 'exact')
+              .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
+          }))),
+        };
+      })
+    );
+
+    anthropicMessages.push({
+      role: 'user',
+      content: toolResults,
+    });
+
+    response = await client.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 2048,
+      system: systemPrompt,
+      tools: refinementTools,
+      messages: anthropicMessages,
+    });
+  }
+
+  const textBlocks = response.content.filter(
+    (block): block is Anthropic.TextBlock => block.type === 'text'
+  );
+  const message = textBlocks.map(b => b.text).join('\n');
+
+  const result: OrchestratorResponse = { message };
   if (Object.keys(toolData.recommendations).length > 0) {
     result.recommendations = toolData.recommendations;
   }

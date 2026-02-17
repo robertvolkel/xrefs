@@ -55,7 +55,11 @@
     "emptyHeading": "Noch keine Bauteillisten",
     "emptySubheading": "Laden Sie eine Tabelle hoch, um zu beginnen",
     "noMatching": "Keine Listen für \"{{query}}\" gefunden",
-    "dragDropOverlay": "Datei ablegen, um eine neue Liste zu erstellen"
+    "dragDropOverlay": "Datei ablegen, um eine neue Liste zu erstellen",
+    "currencyChangedTitle": "Währung geändert",
+    "currencyChangedMessage": "Währung auf {{currency}} gesetzt. Alle Preise in dieser Liste aktualisieren?",
+    "refreshButton": "Aktualisieren",
+    "notNowButton": "Nicht jetzt"
   },
 
   "listCard": {
@@ -85,7 +89,8 @@
     "descriptionLabel": "Beschreiben Sie Ihre Ziele, Anforderungen, Einschränkungen...",
     "descriptionPlaceholder": "z.B. Automotive-Netzteil-Redesign, AEC-Q200-qualifizierte Ersatzteile benötigt",
     "createButton": "Liste erstellen",
-    "saveButton": "Speichern"
+    "saveButton": "Speichern",
+    "currencyLabel": "Währung"
   },
 
   "partsList": {

@@ -68,6 +68,7 @@ function notify() {
 export async function startBackgroundValidation(
   listId: string,
   initialRows: PartsListRow[],
+  currency?: string,
 ): Promise<void> {
   active = {
     listId,
@@ -85,7 +86,7 @@ export async function startBackgroundValidation(
   }));
 
   try {
-    const stream = await validatePartsList(items);
+    const stream = await validatePartsList(items, currency);
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';

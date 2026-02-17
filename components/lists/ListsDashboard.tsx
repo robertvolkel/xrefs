@@ -6,6 +6,10 @@ import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   InputBase,
   Paper,
@@ -127,7 +131,7 @@ export default function ListsDashboard() {
     fileInputRef.current?.click();
   };
 
-  const handleDialogConfirm = (name: string, description: string) => {
+  const handleDialogConfirm = (name: string, description: string, _currency: string) => {
     if (!selectedFile) return;
     setPendingFile(selectedFile, name, description);
     setDialogOpen(false);
@@ -165,13 +169,20 @@ export default function ListsDashboard() {
   // Settings dialog state
   const [settingsList, setSettingsList] = useState<PartsListSummary | null>(null);
 
-  const handleSettingsSave = useCallback(async (name: string, description: string) => {
+  // Currency-change refresh confirmation
+  const [refreshPrompt, setRefreshPrompt] = useState<{ listId: string; currency: string } | null>(null);
+
+  const handleSettingsSave = useCallback(async (name: string, description: string, currency: string) => {
     if (!settingsList) return;
-    await updatePartsListDetailsSupabase(settingsList.id, name, description);
+    const currencyChanged = currency !== (settingsList.currency ?? 'USD');
+    await updatePartsListDetailsSupabase(settingsList.id, name, description, currency);
     setLists(prev => prev.map(l =>
-      l.id === settingsList.id ? { ...l, name, description } : l,
+      l.id === settingsList.id ? { ...l, name, description, currency } : l,
     ));
     setSettingsList(null);
+    if (currencyChanged) {
+      setRefreshPrompt({ listId: settingsList.id, currency });
+    }
   }, [settingsList]);
 
   return (
@@ -392,9 +403,48 @@ export default function ListsDashboard() {
         mode="edit"
         initialName={settingsList?.name ?? ''}
         initialDescription={settingsList?.description ?? ''}
+        initialCurrency={settingsList?.currency ?? 'USD'}
         onConfirm={handleSettingsSave}
         onCancel={() => setSettingsList(null)}
       />
+
+      {/* Currency-change refresh confirmation */}
+      <Dialog
+        open={refreshPrompt !== null}
+        onClose={() => setRefreshPrompt(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, bgcolor: 'background.paper' } }}
+      >
+        <DialogTitle sx={{ fontWeight: 600 }}>
+          {t('lists.currencyChangedTitle')}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {t('lists.currencyChangedMessage', { currency: refreshPrompt?.currency })}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button
+            onClick={() => setRefreshPrompt(null)}
+            sx={{ borderRadius: 20, textTransform: 'none' }}
+          >
+            {t('lists.notNowButton')}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (refreshPrompt) {
+                router.push(`/parts-list?listId=${refreshPrompt.listId}&refresh=true`);
+              }
+              setRefreshPrompt(null);
+            }}
+            sx={{ borderRadius: 20, textTransform: 'none' }}
+          >
+            {t('lists.refreshButton')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

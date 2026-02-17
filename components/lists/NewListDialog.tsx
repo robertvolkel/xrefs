@@ -9,16 +9,50 @@ import {
   DialogActions,
   Button,
   TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
+
+const CURRENCIES = [
+  { code: 'USD', label: 'USD — US Dollar' },
+  { code: 'EUR', label: 'EUR — Euro' },
+  { code: 'CNY', label: 'CNY — Chinese Yuan' },
+  { code: 'JPY', label: 'JPY — Japanese Yen' },
+  { code: 'GBP', label: 'GBP — British Pound' },
+  { code: 'CAD', label: 'CAD — Canadian Dollar' },
+  { code: 'AUD', label: 'AUD — Australian Dollar' },
+  { code: 'HKD', label: 'HKD — Hong Kong Dollar' },
+  { code: 'SGD', label: 'SGD — Singapore Dollar' },
+  { code: 'TWD', label: 'TWD — Taiwan Dollar' },
+  { code: 'KRW', label: 'KRW — South Korean Won' },
+  { code: 'NZD', label: 'NZD — New Zealand Dollar' },
+  { code: 'INR', label: 'INR — Indian Rupee' },
+  { code: 'CHF', label: 'CHF — Swiss Franc' },
+  { code: 'SEK', label: 'SEK — Swedish Krona' },
+  { code: 'NOK', label: 'NOK — Norwegian Krone' },
+  { code: 'DKK', label: 'DKK — Danish Krone' },
+  { code: 'PLN', label: 'PLN — Polish Złoty' },
+  { code: 'CZK', label: 'CZK — Czech Koruna' },
+  { code: 'HUF', label: 'HUF — Hungarian Forint' },
+  { code: 'RON', label: 'RON — Romanian Leu' },
+  { code: 'ILS', label: 'ILS — Israeli Shekel' },
+  { code: 'MYR', label: 'MYR — Malaysian Ringgit' },
+  { code: 'THB', label: 'THB — Thai Baht' },
+  { code: 'PHP', label: 'PHP — Philippine Peso' },
+  { code: 'ZAR', label: 'ZAR — South African Rand' },
+];
 
 interface NewListDialogProps {
   open: boolean;
   fileName: string;
-  onConfirm: (name: string, description: string) => void;
+  onConfirm: (name: string, description: string, currency: string) => void;
   onCancel: () => void;
   mode?: 'create' | 'edit';
   initialName?: string;
   initialDescription?: string;
+  initialCurrency?: string;
 }
 
 /** Strip file extension to produce a default list name */
@@ -34,10 +68,12 @@ export default function NewListDialog({
   mode = 'create',
   initialName,
   initialDescription,
+  initialCurrency,
 }: NewListDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [currency, setCurrency] = useState('USD');
 
   // Reset fields when dialog opens
   useEffect(() => {
@@ -45,11 +81,13 @@ export default function NewListDialog({
     if (mode === 'edit') {
       setName(initialName ?? '');
       setDescription(initialDescription ?? '');
+      setCurrency(initialCurrency ?? 'USD');
     } else if (fileName) {
       setName(defaultNameFromFile(fileName));
       setDescription('');
+      setCurrency(initialCurrency ?? 'USD');
     }
-  }, [open, fileName, mode, initialName, initialDescription]);
+  }, [open, fileName, mode, initialName, initialDescription, initialCurrency]);
 
   const canConfirm = name.trim().length > 0;
 
@@ -91,6 +129,21 @@ export default function NewListDialog({
           variant="outlined"
           slotProps={{ inputLabel: { shrink: true } }}
         />
+
+        <FormControl size="small" fullWidth>
+          <InputLabel>{t('newListDialog.currencyLabel')}</InputLabel>
+          <Select
+            value={currency}
+            label={t('newListDialog.currencyLabel')}
+            onChange={(e) => setCurrency(e.target.value)}
+          >
+            {CURRENCIES.map((c) => (
+              <MenuItem key={c.code} value={c.code}>
+                {c.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
@@ -99,7 +152,7 @@ export default function NewListDialog({
         </Button>
         <Button
           variant="contained"
-          onClick={() => onConfirm(name.trim(), description.trim())}
+          onClick={() => onConfirm(name.trim(), description.trim(), currency)}
           disabled={!canConfirm}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >

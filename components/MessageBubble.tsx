@@ -20,7 +20,8 @@ interface MessageBubbleProps {
   onSkipContext?: () => void;
 }
 
-function renderMarkdownBold(text: string) {
+/** Render inline bold within a single line */
+function renderInline(text: string) {
   const parts = text.split(/\*\*(.*?)\*\*/g);
   return parts.map((part, i) =>
     i % 2 === 1 ? (
@@ -29,6 +30,45 @@ function renderMarkdownBold(text: string) {
       <span key={i}>{part}</span>
     )
   );
+}
+
+/** Render basic markdown: paragraphs, bullet lists, and bold */
+function renderMarkdown(text: string) {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let bulletBuffer: string[] = [];
+  let key = 0;
+
+  const flushBullets = () => {
+    if (bulletBuffer.length === 0) return;
+    elements.push(
+      <Box key={key++} component="ul" sx={{ m: 0, pl: 2.5, mb: 1, '& li': { mb: 0.25 } }}>
+        {bulletBuffer.map((item, i) => (
+          <li key={i}><span>{renderInline(item)}</span></li>
+        ))}
+      </Box>
+    );
+    bulletBuffer = [];
+  };
+
+  for (const line of lines) {
+    const bulletMatch = line.match(/^[-•*]\s+(.*)/);
+    if (bulletMatch) {
+      bulletBuffer.push(bulletMatch[1]);
+    } else {
+      flushBullets();
+      const trimmed = line.trim();
+      if (trimmed === '') {
+        // blank line — paragraph break
+        elements.push(<Box key={key++} sx={{ height: '0.5em' }} />);
+      } else {
+        elements.push(<span key={key++}>{renderInline(trimmed)}<br /></span>);
+      }
+    }
+  }
+  flushBullets();
+
+  return elements;
 }
 
 export default function MessageBubble({
@@ -79,11 +119,12 @@ export default function MessageBubble({
           {isUser ? t('chat.you') : t('chat.agent')}
         </Typography>
         <Typography
+          component="div"
           variant="body2"
           color="text.primary"
           sx={{ lineHeight: 1.7 }}
         >
-          {renderMarkdownBold(message.content)}
+          {renderMarkdown(message.content)}
         </Typography>
 
         {message.interactiveElement?.type === 'confirmation' && onConfirm && onReject && (

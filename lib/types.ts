@@ -373,6 +373,8 @@ export interface BatchValidateRequest {
     manufacturer?: string;
     description?: string;
   }>;
+  /** Currency code for pricing (e.g. 'USD', 'CNY'). Passed to Digikey API. */
+  currency?: string;
 }
 
 /** Single item response from batch validation */

@@ -50,6 +50,8 @@ interface PartsListState {
   listName: string | null;
   /** User-provided description for AI context */
   listDescription: string | null;
+  /** Currency code for pricing (e.g. 'USD', 'CNY') */
+  listCurrency: string;
   /** All saved list summaries */
   savedLists: PartsListSummary[];
   /** Original spreadsheet column headers */
@@ -70,6 +72,7 @@ const INITIAL_STATE: PartsListState = {
   activeListId: null,
   listName: null,
   listDescription: null,
+  listCurrency: 'USD',
   savedLists: [],
   spreadsheetHeaders: [],
 };
@@ -84,6 +87,7 @@ export function usePartsListState() {
   // means functional updaters don't run synchronously in React 18)
   const listNameRef = useRef<string | null>(null);
   const listDescriptionRef = useRef<string | null>(null);
+  const listCurrencyRef = useRef<string>('USD');
   const activeListIdRef = useRef<string | null>(null);
 
   // Load saved lists on mount
@@ -211,10 +215,10 @@ export function usePartsListState() {
       }
 
       // Start background validation (runs outside React lifecycle)
-      startBackgroundValidation(listId || '', validRows);
+      startBackgroundValidation(listId || '', validRows, listCurrencyRef.current);
     } catch {
       // Save failed — start validation anyway (just won't persist)
-      startBackgroundValidation('', validRows);
+      startBackgroundValidation('', validRows, state.listCurrency);
     }
   }, []);
 
@@ -240,6 +244,7 @@ export function usePartsListState() {
       const desc = loaded?.description || null;
       listNameRef.current = name;
       listDescriptionRef.current = desc;
+      listCurrencyRef.current = loaded?.currency || 'USD';
 
       setState(prev => ({
         ...prev,
@@ -247,6 +252,7 @@ export function usePartsListState() {
         rows: activeVal.rows,
         listName: name,
         listDescription: desc,
+        listCurrency: listCurrencyRef.current,
         activeListId: id,
         validationProgress: activeVal.progress,
         spreadsheetHeaders: loaded?.spreadsheetHeaders ?? [],
@@ -262,6 +268,7 @@ export function usePartsListState() {
 
     listNameRef.current = loaded.name;
     listDescriptionRef.current = loaded.description || null;
+    listCurrencyRef.current = loaded.currency || 'USD';
     activeListIdRef.current = id;
 
     setState(prev => ({
@@ -270,6 +277,7 @@ export function usePartsListState() {
       rows: loaded.rows,
       listName: loaded.name,
       listDescription: loaded.description || null,
+      listCurrency: listCurrencyRef.current,
       activeListId: id,
       validationProgress: 1,
       spreadsheetHeaders: loaded.spreadsheetHeaders,
@@ -400,21 +408,48 @@ export function usePartsListState() {
     }));
   }, []);
 
+  const handleModalRecsRefreshed = useCallback((recs: XrefRecommendation[]) => {
+    setState(prev => {
+      if (prev.modalRowIndex === null) return prev;
+      const newRows = [...prev.rows];
+      const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
+      if (idx >= 0) {
+        const topRec = recs.length > 0 ? recs[0] : undefined;
+        newRows[idx] = {
+          ...newRows[idx],
+          allRecommendations: recs,
+          suggestedReplacement: topRec ?? newRows[idx].suggestedReplacement,
+        };
+      }
+      return { ...prev, rows: newRows };
+    });
+  }, []);
+
   // ----------------------------------------------------------
   // Update list details (name / description)
   // ----------------------------------------------------------
 
-  const handleUpdateListDetails = useCallback(async (name: string, description: string) => {
+  const handleUpdateListDetails = useCallback(async (name: string, description: string, currency?: string) => {
     const listId = activeListIdRef.current;
     if (!listId) return;
 
+    const currencyChanged = currency != null && currency !== listCurrencyRef.current;
+
     listNameRef.current = name;
     listDescriptionRef.current = description;
-    setState(prev => ({ ...prev, listName: name, listDescription: description }));
+    if (currency) listCurrencyRef.current = currency;
+    setState(prev => ({
+      ...prev,
+      listName: name,
+      listDescription: description,
+      ...(currency && { listCurrency: currency }),
+    }));
 
-    await updatePartsListDetailsSupabase(listId, name, description).catch(() => {});
+    await updatePartsListDetailsSupabase(listId, name, description, currency).catch(() => {});
     const lists = await getSavedListsSupabase();
     setState(prev => ({ ...prev, savedLists: lists }));
+
+    return currencyChanged;
   }, []);
 
   // ----------------------------------------------------------
@@ -450,7 +485,7 @@ export function usePartsListState() {
     });
 
     try {
-      const stream = await validatePartsList(items);
+      const stream = await validatePartsList(items, listCurrencyRef.current);
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -543,6 +578,7 @@ export function usePartsListState() {
   const handleReset = useCallback(() => {
     listNameRef.current = null;
     listDescriptionRef.current = null;
+    listCurrencyRef.current = 'USD';
     activeListIdRef.current = null;
     clearValidation();
     setState(prev => ({ ...INITIAL_STATE, savedLists: prev.savedLists }));
@@ -569,6 +605,7 @@ export function usePartsListState() {
     handleModalSelectRec,
     handleModalBackToRecs,
     handleModalConfirmReplacement,
+    handleModalRecsRefreshed,
     handleReset,
     handleUpdateListDetails,
     handleRefreshRows,

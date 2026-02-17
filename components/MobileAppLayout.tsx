@@ -53,6 +53,7 @@ interface MobileAppLayoutProps {
   // App state
   phase: AppPhase;
   messages: ChatMessage[];
+  statusText?: string;
   sourceAttributes: PartAttributes | null;
   comparisonAttributes: PartAttributes | null;
   recommendations: XrefRecommendation[];
@@ -80,6 +81,7 @@ interface MobileAppLayoutProps {
 export default function MobileAppLayout({
   phase,
   messages,
+  statusText,
   sourceAttributes,
   comparisonAttributes,
   recommendations,
@@ -216,6 +218,7 @@ export default function MobileAppLayout({
           <ChatInterface
             messages={messages}
             phase={phase}
+            statusText={statusText}
             onSearch={onSearch}
             onConfirm={onConfirm}
             onReject={onReject}

@@ -30,13 +30,13 @@ function isDigikeyConfigured(): boolean {
 // SEARCH
 // ============================================================
 
-export async function searchParts(query: string): Promise<SearchResult> {
+export async function searchParts(query: string, currency?: string): Promise<SearchResult> {
   if (!isDigikeyConfigured()) {
     return mockSearch(query);
   }
 
   try {
-    const response = await keywordSearch(query, { limit: 10 });
+    const response = await keywordSearch(query, { limit: 10 }, currency);
     const result = mapKeywordResponseToSearchResult(response);
 
     // If Digikey returned nothing, try mock as fallback
@@ -56,7 +56,7 @@ export async function searchParts(query: string): Promise<SearchResult> {
 // ATTRIBUTES
 // ============================================================
 
-export async function getAttributes(mpn: string): Promise<PartAttributes | null> {
+export async function getAttributes(mpn: string, currency?: string): Promise<PartAttributes | null> {
   // Always check mock first for instant results on known parts
   const mockAttrs = mockGetAttributes(mpn);
 
@@ -65,7 +65,7 @@ export async function getAttributes(mpn: string): Promise<PartAttributes | null>
   }
 
   try {
-    const response = await getProductDetails(mpn);
+    const response = await getProductDetails(mpn, currency);
     if (response.Product) {
       return mapDigikeyProductToAttributes(response.Product);
     }
@@ -83,10 +83,11 @@ export async function getAttributes(mpn: string): Promise<PartAttributes | null>
 export async function getRecommendations(
   mpn: string,
   attributeOverrides?: Record<string, string>,
-  applicationContext?: ApplicationContext
+  applicationContext?: ApplicationContext,
+  currency?: string,
 ): Promise<XrefRecommendation[]> {
   // Step 1: Get source part attributes
-  const sourceAttrs = await getAttributes(mpn);
+  const sourceAttrs = await getAttributes(mpn, currency);
   if (!sourceAttrs) return [];
 
   // Step 1b: Merge user-supplied attribute overrides
@@ -130,7 +131,7 @@ export async function getRecommendations(
   // Step 3: Try to get candidates from Digikey
   if (isDigikeyConfigured()) {
     try {
-      const candidates = await fetchDigikeyCandidates(sourceAttrs);
+      const candidates = await fetchDigikeyCandidates(sourceAttrs, currency);
       if (candidates.length > 0) {
         return findReplacements(effectiveTable, sourceAttrs, candidates);
       }
@@ -153,13 +154,14 @@ export async function getRecommendations(
  * Returns mapped PartAttributes[] ready for the matching engine.
  */
 async function fetchDigikeyCandidates(
-  sourceAttrs: PartAttributes
+  sourceAttrs: PartAttributes,
+  currency?: string,
 ): Promise<PartAttributes[]> {
   // Build a search query from key parameters
   const keywords = buildCandidateSearchQuery(sourceAttrs);
   if (!keywords) return [];
 
-  const response = await keywordSearch(keywords, { limit: 20 });
+  const response = await keywordSearch(keywords, { limit: 20 }, currency);
 
   const allProducts = [
     ...(response.ExactMatches ?? []),

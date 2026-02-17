@@ -109,16 +109,20 @@ async function getAccessToken(): Promise<string> {
 // HTTP HELPER WITH RETRY
 // ============================================================
 
-function buildHeaders(token: string): Record<string, string> {
-  return {
+function buildHeaders(token: string, currency?: string): Record<string, string> {
+  const headers: Record<string, string> = {
     'Authorization': `Bearer ${token}`,
     'X-DIGIKEY-Client-Id': process.env.DIGIKEY_CLIENT_ID!,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
+  if (currency) {
+    headers['X-DIGIKEY-Locale-Currency'] = currency;
+  }
+  return headers;
 }
 
-async function digikeyFetch(url: string, options: RequestInit): Promise<Response> {
+async function digikeyFetch(url: string, options: RequestInit, currency?: string): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const res = await fetch(url, options);
@@ -136,7 +140,7 @@ async function digikeyFetch(url: string, options: RequestInit): Promise<Response
       tokenExpiresAt = 0;
       if (attempt < MAX_RETRIES - 1) {
         const newToken = await getAccessToken();
-        const headers = buildHeaders(newToken);
+        const headers = buildHeaders(newToken, currency);
         options = { ...options, headers };
         continue;
       }
@@ -166,7 +170,8 @@ const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 /** Search for parts by keyword/MPN */
 export async function keywordSearch(
   keywords: string,
-  options: DigikeySearchOptions = {}
+  options: DigikeySearchOptions = {},
+  currency?: string,
 ): Promise<DigikeyKeywordResponse> {
   const token = await getAccessToken();
 
@@ -183,19 +188,21 @@ export async function keywordSearch(
 
   const res = await digikeyFetch(SEARCH_URL, {
     method: 'POST',
-    headers: buildHeaders(token),
+    headers: buildHeaders(token, currency),
     body: JSON.stringify(body),
-  });
+  }, currency);
 
   return res.json();
 }
 
 /** Get detailed product information including all parametric specs */
 export async function getProductDetails(
-  productNumber: string
+  productNumber: string,
+  currency?: string,
 ): Promise<DigikeyProductDetailResponse> {
-  // Check cache
-  const cached = detailsCache.get(productNumber);
+  // Check cache (include currency in key so different currencies don't collide)
+  const cacheKey = currency ? `${productNumber}__${currency}` : productNumber;
+  const cached = detailsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data;
   }
@@ -206,14 +213,15 @@ export async function getProductDetails(
     `${DETAILS_URL}/${encodeURIComponent(productNumber)}/productdetails`,
     {
       method: 'GET',
-      headers: buildHeaders(token),
-    }
+      headers: buildHeaders(token, currency),
+    },
+    currency,
   );
 
   const data: DigikeyProductDetailResponse = await res.json();
 
   // Store in cache
-  detailsCache.set(productNumber, { data, timestamp: Date.now() });
+  detailsCache.set(cacheKey, { data, timestamp: Date.now() });
 
   // Evict old entries if cache too large
   if (detailsCache.size > 200) {

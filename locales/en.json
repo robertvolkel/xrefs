@@ -55,7 +55,11 @@
     "emptyHeading": "No parts lists yet",
     "emptySubheading": "Upload a spreadsheet to get started",
     "noMatching": "No lists matching \"{{query}}\"",
-    "dragDropOverlay": "Drop file to create a new list"
+    "dragDropOverlay": "Drop file to create a new list",
+    "currencyChangedTitle": "Currency Changed",
+    "currencyChangedMessage": "Currency set to {{currency}}. Refresh all pricing in this list?",
+    "refreshButton": "Refresh",
+    "notNowButton": "Not now"
   },
 
   "listCard": {
@@ -85,7 +89,8 @@
     "descriptionLabel": "Describe your goals, requirements, constraints...",
     "descriptionPlaceholder": "e.g., Automotive power supply redesign, need AEC-Q200 qualified replacements",
     "createButton": "Create List",
-    "saveButton": "Save"
+    "saveButton": "Save",
+    "currencyLabel": "Currency"
   },
 
   "partsList": {

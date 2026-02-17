@@ -40,21 +40,25 @@ export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('id, name, description, created_at, updated_at, total_rows, resolved_count, spreadsheet_headers')
+    .select('id, name, description, currency, created_at, updated_at, total_rows, resolved_count, spreadsheet_headers')
     .order('updated_at', { ascending: false });
 
   if (error || !data) return [];
 
-  return data.map((row) => ({
-    id: row.id,
-    name: row.name,
-    description: (row as Record<string, unknown>).description as string || '',
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    totalRows: row.total_rows,
-    resolvedCount: row.resolved_count,
-    spreadsheetHeaders: ((row as Record<string, unknown>).spreadsheet_headers as string[]) ?? [],
-  }));
+  return data.map((row) => {
+    const record = row as Record<string, unknown>;
+    return {
+      id: row.id,
+      name: row.name,
+      description: (record.description as string) || '',
+      currency: (record.currency as string) || 'USD',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      totalRows: row.total_rows,
+      resolvedCount: row.resolved_count,
+      spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
+    };
+  });
 }
 
 /** Save a new parts list. Returns the generated ID. */
@@ -107,13 +111,14 @@ export async function updatePartsListSupabase(id: string, rows: PartsListRow[]):
 export async function loadPartsListSupabase(id: string): Promise<{
   name: string;
   description: string;
+  currency: string;
   rows: PartsListRow[];
   spreadsheetHeaders: string[];
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, rows, spreadsheet_headers')
+    .select('name, description, currency, rows, spreadsheet_headers')
     .eq('id', id)
     .single();
 
@@ -123,16 +128,18 @@ export async function loadPartsListSupabase(id: string): Promise<{
   return {
     name: data.name,
     description: (record.description as string) || '',
+    currency: (record.currency as string) || 'USD',
     rows: fromStoredRows(data.rows as StoredRow[]),
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
   };
 }
 
-/** Update list name and description */
+/** Update list name, description, and currency */
 export async function updatePartsListDetailsSupabase(
   id: string,
   name: string,
   description: string,
+  currency?: string,
 ): Promise<void> {
   const supabase = createClient();
   await supabase
@@ -140,6 +147,7 @@ export async function updatePartsListDetailsSupabase(
     .update({
       name,
       description,
+      ...(currency && { currency }),
       updated_at: new Date().toISOString(),
     })
     .eq('id', id);

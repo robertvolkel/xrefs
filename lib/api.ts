@@ -73,6 +73,20 @@ export async function chatWithOrchestrator(
   });
 }
 
+/** Send messages to the refinement chat orchestrator (modal context) */
+export async function modalChat(
+  messages: OrchestratorMessage[],
+  mpn: string,
+  overrides?: Record<string, string>,
+  applicationContext?: ApplicationContext,
+): Promise<OrchestratorResponse> {
+  return fetchApi<OrchestratorResponse>(`${BASE}/modal-chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, mpn, overrides, applicationContext }),
+  });
+}
+
 // ── Admin API ──────────────────────────────────────────────
 
 export async function getUsers(): Promise<AdminUser[]> {
@@ -101,12 +115,13 @@ export async function toggleUserDisabled(userId: string, disabled: boolean): Pro
 
 /** Validate a batch of parts. Returns a ReadableStream for streaming NDJSON. */
 export async function validatePartsList(
-  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string }>
+  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string }>,
+  currency?: string,
 ): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch(`${BASE}/parts-list/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, currency }),
   });
   if (!res.ok || !res.body) {
     let detail = `HTTP ${res.status}`;

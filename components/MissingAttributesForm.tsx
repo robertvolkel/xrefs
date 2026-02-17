@@ -97,7 +97,15 @@ export default function MissingAttributesForm({
   };
 
   return (
-    <Box sx={{ mt: 1.5, maxWidth: { xs: '100%', sm: 480 } }}>
+    <Box sx={{
+      mt: 1.5,
+      maxWidth: { xs: '100%', sm: 480 },
+      border: 1,
+      borderColor: 'divider',
+      borderRadius: 2,
+      bgcolor: 'background.default',
+      p: 2,
+    }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, fontSize: '0.82rem' }}>
         {t('chat.fillInAttributes')}
       </Typography>

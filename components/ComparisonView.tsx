@@ -16,7 +16,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
-import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -170,7 +170,7 @@ export default function ComparisonView({
       <TableContainer sx={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
         <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
           <TableHead>
-            <TableRow>
+            <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 {t('comparison.parameterHeader')}
               </TableCell>
@@ -187,7 +187,7 @@ export default function ComparisonView({
               const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
               return (
                 <React.Fragment key={row.parameterId}>
-                  <TableRow hover>
+                  <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
                     <TableCell
                       sx={{
                         color: 'text.secondary',
@@ -227,7 +227,7 @@ export default function ComparisonView({
                         <Typography
                           variant="caption"
                           color="text.secondary"
-                          sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }}
+                          sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
                         >
                           {dot.label}
                         </Typography>

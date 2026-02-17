@@ -30,6 +30,7 @@ export interface SavedPartsList {
   id: string;
   name: string;
   description?: string;
+  currency?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;
@@ -43,6 +44,7 @@ export interface PartsListSummary {
   id: string;
   name: string;
   description?: string;
+  currency?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;

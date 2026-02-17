@@ -26,6 +26,7 @@ import { logSearch } from '@/lib/supabaseLogger';
 interface AppState {
   phase: AppPhase;
   messages: ChatMessage[];
+  statusText: string;
   searchResult: SearchResult | null;
   sourcePart: PartSummary | null;
   sourceAttributes: PartAttributes | null;
@@ -39,6 +40,7 @@ interface AppState {
 const initialState: AppState = {
   phase: 'idle',
   messages: [],
+  statusText: '',
   searchResult: null,
   sourcePart: null,
   sourceAttributes: null,
@@ -104,6 +106,10 @@ export function useAppState() {
     []
   );
 
+  const setStatus = useCallback((text: string) => {
+    setState((prev) => ({ ...prev, statusText: text }));
+  }, []);
+
   // ============================================================
   // LLM-POWERED SEARCH FLOW
   // ============================================================
@@ -111,6 +117,7 @@ export function useAppState() {
   const handleSearchWithLLM = useCallback(
     async (query: string) => {
       addMessage('user', query);
+      setStatus('Thinking...');
       setState((prev) => ({ ...prev, phase: 'searching' }));
 
       // Add to conversation history
@@ -124,6 +131,7 @@ export function useAppState() {
 
         // Mark LLM as available
         setState((prev) => ({ ...prev, llmAvailable: true }));
+        setStatus('');
 
         // Extract search result if the LLM searched
         const searchResult = response.searchResult;
@@ -145,6 +153,7 @@ export function useAppState() {
         }
       } catch {
         // LLM not available — mark it and fall back
+        setStatus('');
         setState((prev) => ({ ...prev, llmAvailable: false }));
         // Remove the conversation entry we just added
         conversationRef.current.pop();
@@ -152,12 +161,13 @@ export function useAppState() {
         await handleSearchDeterministic(query, true);
       }
     },
-    [addMessage]
+    [addMessage, setStatus]
   );
 
   const handleConfirmWithLLM = useCallback(
     async (part: PartSummary) => {
       addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
+      setStatus('Fetching specifications from Digikey...');
       setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
 
       // Tell the LLM the user confirmed
@@ -172,6 +182,7 @@ export function useAppState() {
       if (sourceAttrs) {
         // Check if this part family is supported
         if (!isFamilySupported(sourceAttrs.part.subcategory)) {
+          setStatus('');
           addMessage('assistant', buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory));
           setState((prev) => ({
             ...prev,
@@ -188,6 +199,7 @@ export function useAppState() {
 
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           // Pause and ask user for missing critical attribute values
+          setStatus('');
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
@@ -206,6 +218,7 @@ export function useAppState() {
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
+            setStatus('');
             addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
               type: 'context-questions',
               questions: contextConfig.questions,
@@ -226,6 +239,7 @@ export function useAppState() {
         } else {
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
         }
+        setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({
           ...prev,
           phase: 'finding-matches',
@@ -235,12 +249,14 @@ export function useAppState() {
 
       // Step 3: Fire orchestrator for recommendations
       const response = await chatWithOrchestrator(conversationRef.current).catch(() => null);
+      setStatus('');
       if (response) {
         conversationRef.current.push({ role: 'assistant', content: response.message });
 
         const recs = response.recommendations?.[part.mpn];
         if (recs && recs.length > 0) {
-          const assessmentMsg = response.message || `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}. Review and compare in the panels.`;
+          const paramCount = sourceAttrs?.parameters.length ?? 0;
+          const assessmentMsg = response.message || `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`;
           addMessage('assistant', assessmentMsg);
           setState((prev) => ({
             ...prev,
@@ -250,7 +266,9 @@ export function useAppState() {
           }));
         } else {
           // Orchestrator didn't return recs — try direct API
+          setStatus('Evaluating candidates against replacement rules...');
           const fallbackRecs = await getRecommendations(part.mpn);
+          setStatus('');
           if (fallbackRecs.length > 0) {
             addMessage('assistant', response.message || `Found **${fallbackRecs.length} potential replacement${fallbackRecs.length !== 1 ? 's' : ''}** for ${part.mpn}.`);
           } else {
@@ -270,8 +288,11 @@ export function useAppState() {
           await loadAttributesAndRecommendations(part);
           return;
         }
+        setStatus('Evaluating candidates against replacement rules...');
         const recs = await getRecommendations(part.mpn);
-        addMessage('assistant', `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}.`);
+        setStatus('');
+        const paramCount = sourceAttrs.parameters.length;
+        addMessage('assistant', `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`);
         setState((prev) => ({
           ...prev,
           phase: 'viewing',
@@ -279,7 +300,7 @@ export function useAppState() {
         }));
       }
     },
-    [addMessage]
+    [addMessage, setStatus]
   );
 
   // ============================================================
@@ -292,9 +313,11 @@ export function useAppState() {
         addMessage('user', query);
         setState((prev) => ({ ...prev, phase: 'searching' }));
       }
+      setStatus(`Searching Digikey for "${query}"...`);
 
       try {
         const result = await searchParts(query);
+        setStatus('');
 
         if (result.type === 'none') {
           addMessage(
@@ -319,21 +342,24 @@ export function useAppState() {
           setState((prev) => ({ ...prev, phase: 'resolving', searchResult: result }));
         }
       } catch {
+        setStatus('');
         addMessage('assistant', 'Something went wrong while searching. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage]
+    [addMessage, setStatus]
   );
 
   /** Load attributes + recommendations via direct API calls */
   const loadAttributesAndRecommendations = useCallback(
     async (part: PartSummary) => {
       try {
+        setStatus('Fetching specifications from Digikey...');
         const attributes = await getPartAttributes(part.mpn);
 
         // Check if this part family is supported
         if (!isFamilySupported(attributes.part.subcategory)) {
+          setStatus('');
           addMessage('assistant', buildUnsupportedMessage(part.mpn, attributes.part.subcategory));
           setState((prev) => ({
             ...prev,
@@ -349,6 +375,7 @@ export function useAppState() {
         const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
+          setStatus('');
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
@@ -367,6 +394,7 @@ export function useAppState() {
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
+            setStatus('');
             addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
               type: 'context-questions',
               questions: contextConfig.questions,
@@ -387,6 +415,7 @@ export function useAppState() {
         } else {
           addMessage('assistant', `Loaded attributes for **${part.mpn}**. Searching for cross-references...`);
         }
+        setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({
           ...prev,
           phase: 'finding-matches',
@@ -394,9 +423,11 @@ export function useAppState() {
         }));
 
         const recs = await getRecommendations(part.mpn);
+        setStatus('');
+        const paramCount = attributes.parameters.length;
         addMessage(
           'assistant',
-          `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}. Review and compare in the panels.`
+          `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
         );
         setState((prev) => ({
           ...prev,
@@ -404,11 +435,12 @@ export function useAppState() {
           recommendations: recs,
         }));
       } catch {
+        setStatus('');
         addMessage('assistant', 'Something went wrong while fetching part details. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage]
+    [addMessage, setStatus]
   );
 
   const handleConfirmDeterministic = useCallback(
@@ -460,12 +492,15 @@ export function useAppState() {
       'assistant',
       'No problem. Please try searching again with more detail, such as including the manufacturer name.'
     );
+    setStatus('');
     setState((prev) => ({ ...prev, phase: 'idle', searchResult: null }));
-  }, [addMessage, state.llmAvailable]);
+  }, [addMessage, setStatus, state.llmAvailable]);
 
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {
+    setStatus('Fetching replacement specs from Digikey...');
     try {
       const attributes = await getPartAttributes(rec.part.mpn);
+      setStatus('');
       setState((prev) => ({
         ...prev,
         phase: 'comparing',
@@ -473,6 +508,7 @@ export function useAppState() {
         comparisonAttributes: attributes,
       }));
     } catch {
+      setStatus('');
       setState((prev) => ({
         ...prev,
         phase: 'comparing',
@@ -480,7 +516,7 @@ export function useAppState() {
         comparisonAttributes: null,
       }));
     }
-  }, []);
+  }, [setStatus]);
 
   const handleBackToRecommendations = useCallback(() => {
     setState((prev) => ({
@@ -493,8 +529,9 @@ export function useAppState() {
 
   const handleReset = useCallback(() => {
     conversationRef.current = [];
+    setStatus('');
     setState(initialState);
-  }, []);
+  }, [setStatus]);
 
   // ============================================================
   // MISSING ATTRIBUTES RESPONSE HANDLERS
@@ -554,25 +591,29 @@ export function useAppState() {
       }
 
       addMessage('assistant', `Finding cross-references for **${mpn}**...`);
+      setStatus('Evaluating candidates against replacement rules...');
       setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
 
       try {
         const recs = filledCount > 0
           ? await getRecommendationsWithOverrides(mpn, overrides)
           : await getRecommendations(mpn);
+        setStatus('');
+        const paramCount = state.sourceAttributes?.parameters.length ?? 0;
         addMessage(
           'assistant',
           recs.length > 0
-            ? `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}. Review and compare in the panels.`
+            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
             : `No cross-references found for ${mpn}.`
         );
         setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
       } catch {
+        setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipAttributes = useCallback(async () => {
@@ -616,6 +657,7 @@ export function useAppState() {
         applicationContext: context ?? null,
       }));
       addMessage('assistant', `Finding cross-references for **${mpn}**...`);
+      setStatus('Evaluating candidates against replacement rules...');
 
       try {
         const overrides = pendingOverridesRef.current;
@@ -632,21 +674,24 @@ export function useAppState() {
           recs = await getRecommendations(mpn);
         }
 
+        setStatus('');
+        const paramCount = state.sourceAttributes?.parameters.length ?? 0;
         addMessage(
           'assistant',
           recs.length > 0
-            ? `Found **${recs.length} potential replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}. Review and compare in the panels.`
+            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
             : `No cross-references found for ${mpn}.`
         );
         setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
       } catch {
+        setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       } finally {
         pendingOverridesRef.current = {};
       }
     },
-    [addMessage, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipContext = useCallback(async () => {

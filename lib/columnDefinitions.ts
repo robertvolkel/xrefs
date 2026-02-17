@@ -46,12 +46,11 @@ export interface ColumnDefinition {
 export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:row_number', label: '#', source: 'system', group: 'System', defaultWidth: '40px', align: 'center' },
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
-  { id: 'sys:hits', label: 'Hits', source: 'system', group: 'System', defaultWidth: '50px', align: 'center' },
-  { id: 'sys:top_suggestion', label: 'Top Suggestion', source: 'system', group: 'System', defaultWidth: '160px' },
-  { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'System', defaultWidth: '130px' },
-  { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'System', defaultWidth: '70px', align: 'right', isNumeric: true },
-  { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'System', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'sys:action', label: '', source: 'system', group: 'System', defaultWidth: '40px' },
+  { id: 'sys:hits', label: 'Hits', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
+  { id: 'sys:top_suggestion', label: 'Top Suggestion', source: 'system', group: 'Replacements', defaultWidth: '160px' },
+  { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'Replacements', defaultWidth: '130px' },
+  { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
+  { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -96,7 +95,6 @@ export const DEFAULT_VIEW_COLUMNS: string[] = [
   'sys:top_suggestion_mfr',
   'sys:top_suggestion_price',
   'sys:top_suggestion_stock',
-  'sys:action',
 ];
 
 // ============================================================

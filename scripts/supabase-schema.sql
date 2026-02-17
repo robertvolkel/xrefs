@@ -42,6 +42,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
@@ -58,3 +60,9 @@ SELECT
   CASE WHEN email = 'rvolkel@supplyframe.com' THEN 'admin' ELSE 'user' END
 FROM auth.users
 WHERE id NOT IN (SELECT id FROM profiles);
+
+-- =============================================================
+-- Add currency column to parts_lists
+-- =============================================================
+
+ALTER TABLE parts_lists ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD';

@@ -25,7 +25,6 @@ import {
 } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -48,6 +47,7 @@ interface PartsListTableProps {
   onRefreshRow?: (rowIndex: number) => void;
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
+  currency?: string;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -180,6 +180,14 @@ function OverflowTooltip({
 // CELL RENDERER
 // ============================================================
 
+function formatPrice(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency}`;
+  }
+}
+
 function CellRenderer({
   column,
   row,
@@ -187,6 +195,7 @@ function CellRenderer({
   onRefreshRow,
   onDeleteRow,
   onHideRow,
+  currency = 'USD',
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -194,6 +203,7 @@ function CellRenderer({
   onRefreshRow?: (rowIndex: number) => void;
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
+  currency?: string;
 }) {
   const { t } = useTranslation();
 
@@ -210,11 +220,21 @@ function CellRenderer({
         return <StatusChip status={row.status} />;
 
       case 'sys:hits':
-        return row.status === 'resolved' ? (
-          <Typography variant="body2" sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}>
+        if (row.status !== 'resolved') return null;
+        if (recCount === 0) return <>0</>;
+        return (
+          <Link
+            component="button"
+            variant="body2"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onRowClick(row.rowIndex);
+            }}
+            sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}
+          >
             {recCount}
-          </Typography>
-        ) : null;
+          </Link>
+        );
 
       case 'sys:top_suggestion':
         if (topRec) {
@@ -238,27 +258,12 @@ function CellRenderer({
         ) : null;
 
       case 'sys:top_suggestion_price':
-        return topRec?.part.unitPrice != null ? <>${topRec.part.unitPrice.toFixed(2)}</> : null;
+        return topRec?.part.unitPrice != null ? <>{formatPrice(topRec.part.unitPrice, currency)}</> : null;
 
       case 'sys:top_suggestion_stock':
         return topRec?.part.quantityAvailable != null
           ? <>{topRec.part.quantityAvailable.toLocaleString()}</>
           : null;
-
-      case 'sys:action':
-        return row.status === 'resolved' ? (
-          <Tooltip title={t('partsList.exploreReplacements')}>
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRowClick(row.rowIndex);
-              }}
-            >
-              <OpenInNewIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
-        ) : null;
 
       case 'sys:row_actions':
         return (
@@ -280,18 +285,27 @@ function CellRenderer({
   if (value === undefined || value === null || value === '') return null;
 
   // Link columns
-  if (column.isLink && typeof value === 'string' && value.startsWith('http')) {
-    return (
-      <Link href={value} target="_blank" rel="noopener noreferrer" sx={{ fontSize: ROW_FONT_SIZE }}>
-        {t('partsList.linkText')}
-      </Link>
-    );
+  if (column.isLink) {
+    if (typeof value === 'string' && (value.startsWith('http') || value.startsWith('//'))) {
+      return (
+        <Link
+          href={value}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          sx={{ fontSize: ROW_FONT_SIZE }}
+        >
+          {t('partsList.linkText')}
+        </Link>
+      );
+    }
+    return null;
   }
 
   // Numeric columns
   if (column.isNumeric && typeof value === 'number') {
     if (column.id.includes('Price') || column.id.includes('unitPrice')) {
-      return <>${value.toFixed(2)}</>;
+      return <>{formatPrice(value, currency)}</>;
     }
     return <>{value.toLocaleString()}</>;
   }
@@ -324,6 +338,7 @@ export default function PartsListTable({
   onRefreshRow,
   onDeleteRow,
   onHideRow,
+  currency = 'USD',
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -465,6 +480,7 @@ export default function PartsListTable({
                       onRefreshRow={onRefreshRow}
                       onDeleteRow={onDeleteRow}
                       onHideRow={onHideRow}
+                      currency={currency}
                     />
                   </TableCell>
                 ))}

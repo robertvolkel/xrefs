@@ -1,9 +1,10 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Box, Skeleton, Stack, Typography } from '@mui/material';
+import { Box, IconButton, Skeleton, Stack, Typography } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import { useAppState } from '@/hooks/useAppState';
-import { AppPhase, ManufacturerProfile } from '@/lib/types';
+import { ManufacturerProfile } from '@/lib/types';
 import { getManufacturerProfile } from '@/lib/mockManufacturerData';
 import { setPendingFile } from '@/lib/pendingFile';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -18,37 +19,16 @@ import ManufacturerProfilePanel from './ManufacturerProfilePanel';
 import NewListDialog from './lists/NewListDialog';
 
 function getGridColumns(
-  phase: AppPhase,
-  hasAttributes: boolean,
-  recsRevealed: boolean,
+  showAttrs: boolean,
+  showRecs: boolean,
   chatCollapsed: boolean,
   mfrOpen: boolean
 ): string {
-  if (chatCollapsed && mfrOpen) {
-    return '60px 3fr 3fr 3fr';
-  }
-  if (chatCollapsed) {
-    return '60px 1fr 1fr 0fr';
-  }
-
-  switch (phase) {
-    case 'idle':
-    case 'searching':
-    case 'resolving':
-      return '1fr 0fr 0fr 0fr';
-    case 'loading-attributes':
-    case 'awaiting-attributes':
-    case 'awaiting-context':
-    case 'unsupported':
-      return '2fr 1fr 0fr 0fr';
-    case 'finding-matches':
-      return (recsRevealed && hasAttributes) ? '1fr 1fr 1fr 0fr' : '2fr 1fr 0fr 0fr';
-    case 'viewing':
-    case 'comparing':
-      return hasAttributes ? '1fr 1fr 1fr 0fr' : '2fr 1fr 0fr 0fr';
-    default:
-      return '1fr 0fr 0fr 0fr';
-  }
+  if (chatCollapsed && mfrOpen) return '60px 3fr 3fr 3fr';
+  if (chatCollapsed) return '60px 1fr 1fr 0fr';
+  if (showRecs) return '1fr 1fr 1fr 0fr';
+  if (showAttrs) return '2fr 1fr 0fr 0fr';
+  return '1fr 0fr 0fr 0fr';
 }
 
 function RecommendationsSkeleton() {
@@ -107,6 +87,10 @@ export default function AppShell() {
     }
   }, [appState.phase]);
 
+  // Panel dismissed state (user closed via X button)
+  const [recsDismissed, setRecsDismissed] = useState(false);
+  const [attrsDismissed, setAttrsDismissed] = useState(false);
+
   // Manufacturer profile panel state (the "dance")
   const [mfrProfile, setMfrProfile] = useState<ManufacturerProfile | null>(null);
   // Manual chat collapse via hamburger (independent of MFR profile)
@@ -148,14 +132,24 @@ export default function AppShell() {
     setMfrProfile(null);
   }, []);
 
-  // Wraps reset to also clear MFR profile and manual collapse
+  // Wraps reset to also clear MFR profile, manual collapse, and dismissed state
   const handleReset = useCallback(() => {
     setMfrProfile(null);
     setChatManuallyCollapsed(false);
+    setRecsDismissed(false);
+    setAttrsDismissed(false);
     appState.handleReset();
   }, [appState.handleReset]);
 
-  const showAttributesPanel = [
+  // Reset dismissed state when starting a new search
+  useEffect(() => {
+    if (['idle', 'searching', 'resolving'].includes(appState.phase)) {
+      setRecsDismissed(false);
+      setAttrsDismissed(false);
+    }
+  }, [appState.phase]);
+
+  const showAttributesPanel = !attrsDismissed && [
     'loading-attributes',
     'awaiting-attributes',
     'awaiting-context',
@@ -164,8 +158,19 @@ export default function AppShell() {
     'comparing',
     'unsupported',
   ].includes(appState.phase);
-  const showRightPanel = recsRevealed && hasAttributes;
+  const showRightPanel = !recsDismissed && recsRevealed && hasAttributes;
   const isLoadingRecs = appState.phase === 'finding-matches';
+
+  // Close handlers for panel dismiss
+  const handleCloseRecs = useCallback(() => setRecsDismissed(true), []);
+  const handleCloseAttrs = useCallback(() => {
+    setAttrsDismissed(true);
+    setRecsDismissed(true); // closing attrs also hides recs
+  }, []);
+
+  // Only the rightmost panel gets a close button (MFR has its own)
+  const showRecsClose = !mfrOpen && showRightPanel;
+  const showAttrsClose = !mfrOpen && !showRightPanel && showAttributesPanel;
 
   // Auto-clear manual collapse when leaving 3-panel mode
   useEffect(() => {
@@ -179,6 +184,7 @@ export default function AppShell() {
       <MobileAppLayout
         phase={appState.phase}
         messages={appState.messages}
+        statusText={appState.statusText}
         sourceAttributes={appState.sourceAttributes}
         comparisonAttributes={appState.comparisonAttributes}
         recommendations={appState.recommendations}
@@ -210,7 +216,7 @@ export default function AppShell() {
         sx={{
           flex: 1,
           display: 'grid',
-          gridTemplateColumns: getGridColumns(appState.phase, hasAttributes, recsRevealed, chatCollapsed, mfrOpen),
+          gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
           height: '100%',
           overflow: 'hidden',
           transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -269,6 +275,7 @@ export default function AppShell() {
           <ChatInterface
             messages={appState.messages}
             phase={appState.phase}
+            statusText={appState.statusText}
             onSearch={appState.handleSearch}
             onConfirm={appState.handleConfirmPart}
             onReject={appState.handleRejectPart}
@@ -291,8 +298,26 @@ export default function AppShell() {
           borderRight: (showRightPanel || chatCollapsed) ? 1 : 0,
           borderColor: 'divider',
           minWidth: 0,
+          position: 'relative',
         }}
       >
+        {showAttrsClose && (
+          <IconButton
+            onClick={handleCloseAttrs}
+            size="small"
+            sx={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              zIndex: 10,
+              opacity: 0.5,
+              '&:hover': { opacity: 1 },
+              transition: 'opacity 0.2s ease',
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        )}
         <AttributesPanel
           attributes={appState.sourceAttributes}
           loading={appState.phase === 'loading-attributes'}
@@ -309,8 +334,26 @@ export default function AppShell() {
           borderRight: mfrOpen ? 1 : 0,
           borderColor: 'divider',
           minWidth: 0,
+          position: 'relative',
         }}
       >
+        {showRecsClose && (
+          <IconButton
+            onClick={handleCloseRecs}
+            size="small"
+            sx={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              zIndex: 10,
+              opacity: 0.5,
+              '&:hover': { opacity: 1 },
+              transition: 'opacity 0.2s ease',
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        )}
         {isLoadingRecs ? (
           <RecommendationsSkeleton />
         ) : appState.phase === 'comparing' &&

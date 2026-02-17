@@ -67,6 +67,7 @@ export default function PartsListShell() {
     error,
     listName,
     listDescription,
+    listCurrency,
     spreadsheetHeaders,
     activeListId,
     modalRow,
@@ -82,6 +83,7 @@ export default function PartsListShell() {
     handleModalSelectRec,
     handleModalBackToRecs,
     handleModalConfirmReplacement,
+    handleModalRecsRefreshed,
     handleUpdateListDetails,
     handleRefreshRows,
     handleDeleteRows,
@@ -178,6 +180,9 @@ export default function PartsListShell() {
   // second invocation would find nothing and incorrectly clear willAutoLoad.
   const autoLoadFired = useRef(false);
 
+  // Flag for auto-refreshing all rows after load (e.g. currency change)
+  const pendingRefreshAll = useRef(false);
+
   // Auto-process pending file or load list from URL param
   useEffect(() => {
     if (autoLoadFired.current) return;
@@ -191,6 +196,9 @@ export default function PartsListShell() {
 
     const listId = searchParams.get('listId');
     if (listId) {
+      if (searchParams.get('refresh') === 'true') {
+        pendingRefreshAll.current = true;
+      }
       handleLoadList(listId);
       return;
     }
@@ -198,6 +206,14 @@ export default function PartsListShell() {
     // Nothing to auto-load — clear the flag so the redirect effect can fire
     willAutoLoad.current = false;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trigger full refresh once list loads with rows available
+  useEffect(() => {
+    if (pendingRefreshAll.current && phase === 'results' && rows.length > 0) {
+      pendingRefreshAll.current = false;
+      handleRefreshRows(rows.map(r => r.rowIndex));
+    }
+  }, [phase, rows, handleRefreshRows]);
 
   // Redirect to /lists whenever phase falls back to 'empty' (e.g. cancel mapping)
   useEffect(() => {
@@ -611,6 +627,7 @@ export default function PartsListShell() {
           onRefreshRow={(idx) => handleRefreshRows([idx])}
           onDeleteRow={(idx) => promptDelete([idx])}
           onHideRow={handleHideRow}
+          currency={listCurrency}
         />
       )}
 
@@ -632,6 +649,7 @@ export default function PartsListShell() {
         onSelectRec={handleModalSelectRec}
         onBackToRecs={handleModalBackToRecs}
         onConfirmReplacement={handleModalConfirmReplacement}
+        onRecommendationsRefreshed={handleModalRecsRefreshed}
       />
 
       <ColumnPickerDialog
@@ -658,9 +676,13 @@ export default function PartsListShell() {
         mode="edit"
         initialName={listName ?? ''}
         initialDescription={listDescription ?? ''}
-        onConfirm={(name, description) => {
-          handleUpdateListDetails(name, description);
+        initialCurrency={listCurrency}
+        onConfirm={async (name, description, currency) => {
+          const currencyChanged = await handleUpdateListDetails(name, description, currency);
           setEditNameOpen(false);
+          if (currencyChanged && rows.length > 0) {
+            handleRefreshRows(rows.map(r => r.rowIndex));
+          }
         }}
         onCancel={() => setEditNameOpen(false)}
       />

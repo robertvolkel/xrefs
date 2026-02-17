@@ -8,7 +8,8 @@ const CONCURRENCY = 3;
 
 /** Process a single item: search → attributes → recommendations */
 async function processItem(
-  item: { rowIndex: number; mpn: string; manufacturer?: string; description?: string }
+  item: { rowIndex: number; mpn: string; manufacturer?: string; description?: string },
+  currency?: string,
 ): Promise<BatchValidateItem> {
   try {
     // Step 1: Search for the part (use MPN if available, otherwise description)
@@ -22,7 +23,7 @@ async function processItem(
       ? `${item.manufacturer} ${query}`
       : query;
 
-    const searchResult = await searchParts(searchQuery);
+    const searchResult = await searchParts(searchQuery, currency);
 
     if (searchResult.type === 'none') {
       return { rowIndex: item.rowIndex, status: 'not-found' };
@@ -32,13 +33,13 @@ async function processItem(
     const resolvedPart = searchResult.matches[0];
 
     // Step 2: Get attributes
-    const sourceAttributes = await getAttributes(resolvedPart.mpn);
+    const sourceAttributes = await getAttributes(resolvedPart.mpn, currency);
     if (!sourceAttributes) {
       return { rowIndex: item.rowIndex, status: 'resolved', resolvedPart };
     }
 
     // Step 3: Get recommendations
-    const recs = await getRecommendations(resolvedPart.mpn);
+    const recs = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency);
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
 
     // Step 4: Build enriched data for column views
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
         // Process in chunks for concurrency control
         for (let i = 0; i < body.items.length; i += CONCURRENCY) {
           const chunk = body.items.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(chunk.map(processItem));
+          const results = await Promise.all(chunk.map(item => processItem(item, body.currency)));
 
           for (const result of results) {
             await writer.write(encoder.encode(JSON.stringify(result) + '\n'));

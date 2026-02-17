@@ -55,7 +55,11 @@
     "emptyHeading": "暂无零件列表",
     "emptySubheading": "上传电子表格以开始使用",
     "noMatching": "没有匹配 \"{{query}}\" 的列表",
-    "dragDropOverlay": "拖放文件以创建新列表"
+    "dragDropOverlay": "拖放文件以创建新列表",
+    "currencyChangedTitle": "货币已更改",
+    "currencyChangedMessage": "货币已设置为 {{currency}}。刷新此列表中的所有价格？",
+    "refreshButton": "刷新",
+    "notNowButton": "暂不"
   },
 
   "listCard": {
@@ -85,7 +89,8 @@
     "descriptionLabel": "描述您的目标、要求、约束条件...",
     "descriptionPlaceholder": "例如：汽车电源重新设计，需要AEC-Q200认证的替代品",
     "createButton": "创建列表",
-    "saveButton": "保存"
+    "saveButton": "保存",
+    "currencyLabel": "货币"
   },
 
   "partsList": {

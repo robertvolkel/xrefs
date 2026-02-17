@@ -10,6 +10,7 @@ import { CONTENT_MAX_WIDTH, HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/la
 interface ChatInterfaceProps {
   messages: ChatMessage[];
   phase: AppPhase;
+  statusText?: string;
   onSearch: (query: string) => void;
   onConfirm: (part: PartSummary) => void;
   onReject: () => void;
@@ -24,6 +25,7 @@ interface ChatInterfaceProps {
 export default function ChatInterface({
   messages,
   phase,
+  statusText,
   onSearch,
   onConfirm,
   onReject,
@@ -40,6 +42,7 @@ export default function ChatInterface({
   const isSearching = phase === 'searching';
   const isLanding = isIdle && messages.length === 0;
   const inputDisabled = isSearching || phase === 'loading-attributes' || phase === 'awaiting-attributes' || phase === 'awaiting-context' || phase === 'finding-matches';
+  const showSpinner = !!statusText;
   const chatTitle = messages.find((m) => m.role === 'user')?.content;
 
   useEffect(() => {
@@ -130,7 +133,7 @@ export default function ChatInterface({
               onSkipContext={onSkipContext}
             />
           ))}
-          {isSearching && (
+          {showSpinner && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
               <Box
                 sx={{
@@ -149,7 +152,7 @@ export default function ChatInterface({
                 <CircularProgress size={14} />
               </Box>
               <Typography variant="body2" color="text.secondary">
-                {t('chat.searching')}
+                {statusText}
               </Typography>
             </Box>
           )}

@@ -14,7 +14,7 @@ import {
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes } from '@/lib/types';
-import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE } from '@/lib/layoutConstants';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -67,7 +67,7 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
         <Table size="small" stickyHeader>
           <TableHead>
-            <TableRow>
+            <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
               <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                 {t('attributes.parameterHeader')}
               </TableCell>
@@ -91,7 +91,7 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
               : attributes?.parameters
                   .sort((a, b) => a.sortOrder - b.sortOrder)
                   .map((param) => (
-                    <TableRow key={param.parameterId} hover>
+                    <TableRow key={param.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
                       <TableCell
                         sx={{
                           color: 'text.secondary',
