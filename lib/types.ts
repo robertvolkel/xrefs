@@ -71,6 +71,7 @@ export interface PartSummary {
   manufacturer: string;
   description: string;
   category: ComponentCategory;
+  status?: PartStatus;
 }
 
 export interface SearchResult {

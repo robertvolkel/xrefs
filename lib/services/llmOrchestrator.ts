@@ -2,7 +2,90 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 
-const SYSTEM_PROMPT = `You are Agent, an expert electronic component cross-reference assistant. You help engineers find replacement parts — specifically Chinese-manufactured alternatives to western components.
+// ==============================================================
+// Shared: recommendation summary + filter tool
+// ==============================================================
+
+/** Build a compact text summary of recommendations for the system prompt */
+function summarizeRecommendations(recs: XrefRecommendation[]): string {
+  if (recs.length === 0) return '';
+
+  const lines = recs.slice(0, 30).map((r, i) => {
+    const issues = r.matchDetails
+      .filter(d => d.ruleResult === 'review' || d.ruleResult === 'fail')
+      .map(d => `${d.parameterName} (${d.ruleResult})`);
+    const issueStr = issues.length > 0 ? ` | ${issues.join(', ')}` : '';
+    return `${i + 1}. **${r.part.mpn}** | ${r.part.manufacturer} | ${r.matchPercentage}% match | ${r.part.status}${issueStr}`;
+  });
+
+  let summary = `\n\nCurrent replacement recommendations (${recs.length} total):\n${lines.join('\n')}`;
+  if (recs.length > 30) {
+    summary += `\n... and ${recs.length - 30} more`;
+  }
+  return summary;
+}
+
+const filterRecommendationsTool: Anthropic.Tool = {
+  name: 'filter_recommendations',
+  description: 'Filter and sort the current replacement recommendations. Use this when the user asks to narrow down by manufacturer, match quality, or other criteria. Returns the filtered list and updates the UI.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      manufacturer_filter: {
+        type: 'string',
+        description: 'Case-insensitive partial match on manufacturer name (e.g. "TDK", "Panasonic")',
+      },
+      min_match_percentage: {
+        type: 'number',
+        description: 'Minimum match percentage threshold (e.g. 80)',
+      },
+      exclude_obsolete: {
+        type: 'boolean',
+        description: 'If true, hide obsolete/discontinued parts',
+      },
+      sort_by: {
+        type: 'string',
+        enum: ['match_percentage', 'manufacturer', 'price'],
+        description: 'Sort order for the results',
+      },
+    },
+    required: [],
+  },
+};
+
+/** Apply filter_recommendations tool input to a recommendations array */
+function applyRecommendationFilter(
+  recs: XrefRecommendation[],
+  input: { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string },
+): XrefRecommendation[] {
+  let filtered = [...recs];
+
+  if (input.manufacturer_filter) {
+    const query = input.manufacturer_filter.toLowerCase();
+    filtered = filtered.filter(r => r.part.manufacturer.toLowerCase().includes(query));
+  }
+  if (input.min_match_percentage != null) {
+    filtered = filtered.filter(r => r.matchPercentage >= input.min_match_percentage!);
+  }
+  if (input.exclude_obsolete) {
+    filtered = filtered.filter(r => r.part.status !== 'Obsolete');
+  }
+  if (input.sort_by === 'manufacturer') {
+    filtered.sort((a, b) => a.part.manufacturer.localeCompare(b.part.manufacturer));
+  } else if (input.sort_by === 'price') {
+    filtered.sort((a, b) => (a.part.unitPrice ?? Infinity) - (b.part.unitPrice ?? Infinity));
+  } else {
+    filtered.sort((a, b) => b.matchPercentage - a.matchPercentage);
+  }
+
+  return filtered;
+}
+
+// ==============================================================
+// Main chat
+// ==============================================================
+
+const SYSTEM_PROMPT = `You are Agent, an expert electronic component cross-reference assistant. You help engineers find equivalent or superior replacement parts from any manufacturer.
 
 Your role:
 - Help users identify specific parts from their queries
@@ -41,7 +124,8 @@ Formatting rules:
 
 Important rules:
 - Always use tools — never guess part numbers or specs.
-- After confirming a part, ALWAYS call both get_part_attributes and find_replacements.`;
+- After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
+- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation, even if you already completed the full workflow for a different part in this conversation.`;
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
@@ -99,25 +183,27 @@ interface ToolResultData {
 /** Execute a tool call and return the result + parsed data */
 async function executeTool(
   name: string,
-  input: Record<string, string>,
-  data: ToolResultData
+  input: Record<string, unknown>,
+  data: ToolResultData,
+  currentRecommendations?: XrefRecommendation[],
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
-      const result = await searchParts(input.query);
+      const result = await searchParts((input as { query: string }).query);
       data.searchResult = result;
       return JSON.stringify(result);
     }
     case 'get_part_attributes': {
-      const attrs = await getAttributes(input.mpn);
-      if (!attrs) return JSON.stringify({ error: `Part ${input.mpn} not found` });
-      data.attributes[input.mpn] = attrs;
+      const mpn = (input as { mpn: string }).mpn;
+      const attrs = await getAttributes(mpn);
+      if (!attrs) return JSON.stringify({ error: `Part ${mpn} not found` });
+      data.attributes[mpn] = attrs;
       return JSON.stringify(attrs);
     }
     case 'find_replacements': {
-      const recs = await getRecommendations(input.mpn);
-      data.recommendations[input.mpn] = recs;
-      // Return a summary for Claude (full data goes to the client via toolResultData)
+      const mpn = (input as { mpn: string }).mpn;
+      const recs = await getRecommendations(mpn);
+      data.recommendations[mpn] = recs;
       return JSON.stringify(recs.map(r => ({
         mpn: r.part.mpn,
         manufacturer: r.part.manufacturer,
@@ -129,6 +215,24 @@ async function executeTool(
           .filter(d => d.matchStatus !== 'exact')
           .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
       })));
+    }
+    case 'filter_recommendations': {
+      const filterInput = input as { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string };
+      const sourceRecs = currentRecommendations ?? [];
+      const filtered = applyRecommendationFilter(sourceRecs, filterInput);
+      // Store the first MPN key we find, or use 'filtered'
+      const key = Object.keys(data.recommendations)[0] ?? 'filtered';
+      data.recommendations[key] = filtered;
+      return JSON.stringify({
+        total: sourceRecs.length,
+        filtered: filtered.length,
+        results: filtered.map(r => ({
+          mpn: r.part.mpn,
+          manufacturer: r.part.manufacturer,
+          matchPercentage: r.matchPercentage,
+          status: r.part.status,
+        })),
+      });
     }
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
@@ -142,7 +246,8 @@ async function executeTool(
  */
 export async function chat(
   messages: OrchestratorMessage[],
-  apiKey: string
+  apiKey: string,
+  currentRecommendations?: XrefRecommendation[],
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -157,12 +262,21 @@ export async function chat(
     recommendations: {},
   };
 
+  // Build system prompt — append recommendation context if available
+  let systemPrompt = SYSTEM_PROMPT;
+  const activeTools = [...tools];
+  if (currentRecommendations && currentRecommendations.length > 0) {
+    systemPrompt += summarizeRecommendations(currentRecommendations);
+    systemPrompt += '\n\nYou also have a filter_recommendations tool to narrow down the list by manufacturer, match quality, etc. Use it when the user asks to filter or sort the existing results.';
+    activeTools.push(filterRecommendationsTool);
+  }
+
   // Tool-use loop: keep going until Claude gives a final text response
   let response = await client.messages.create({
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 2048,
-    system: SYSTEM_PROMPT,
-    tools,
+    system: systemPrompt,
+    tools: activeTools,
     messages: anthropicMessages,
   });
 
@@ -180,8 +294,9 @@ export async function chat(
       toolUseBlocks.map(async (toolUse) => {
         const result = await executeTool(
           toolUse.name,
-          toolUse.input as Record<string, string>,
-          toolData
+          toolUse.input as Record<string, unknown>,
+          toolData,
+          currentRecommendations,
         );
         return {
           type: 'tool_result' as const,
@@ -199,8 +314,8 @@ export async function chat(
     response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      tools,
+      system: systemPrompt,
+      tools: activeTools,
       messages: anthropicMessages,
     });
   }
@@ -235,27 +350,30 @@ function buildRefinementSystemPrompt(
   mpn: string,
   overrides: Record<string, string>,
   applicationContext?: ApplicationContext,
+  recommendations?: XrefRecommendation[],
 ): string {
   let prompt = `You are a cross-reference refinement assistant helping an engineer evaluate replacement candidates for **${mpn}**.
 
 Your role:
 - Answer questions about the current replacement recommendations
 - Help the user understand trade-offs between candidates
-- Re-run the matching engine with adjusted parameters when the user provides new constraints
+- Filter or narrow down the recommendations when the user asks (use filter_recommendations)
+- Re-run the matching engine with adjusted parameters when the user provides new constraints (use refine_replacements)
 - Be concise and technical — your users are electronics engineers
 
-You have access to a tool that re-runs the matching engine. Use it when the user:
-- Mentions a new requirement (e.g. "I need AEC-Q200 compliance")
-- Wants to change a parameter (e.g. "What if the voltage rating needs to be 50V?")
-- Asks to re-evaluate with different criteria
-
-Do NOT use the tool for general questions about the recommendations.`;
+Tool usage:
+- Use filter_recommendations when the user wants to narrow the existing list (e.g. "show only TDK", "hide obsolete parts", "only parts with >80% match")
+- Use refine_replacements when the user provides a NEW requirement that changes how parts are evaluated (e.g. "I need AEC-Q200 compliance", "voltage must be 50V")
+- Do NOT use any tool for general questions — answer from context.`;
 
   if (Object.keys(overrides).length > 0) {
     prompt += `\n\nUser-provided attribute overrides:\n${JSON.stringify(overrides, null, 2)}`;
   }
   if (applicationContext) {
     prompt += `\n\nApplication context answers:\n${JSON.stringify(applicationContext.answers, null, 2)}`;
+  }
+  if (recommendations && recommendations.length > 0) {
+    prompt += summarizeRecommendations(recommendations);
   }
 
   prompt += `\n\nFormatting rules:
@@ -300,9 +418,15 @@ export async function refinementChat(
   overrides: Record<string, string>,
   applicationContext: ApplicationContext | undefined,
   apiKey: string,
+  currentRecommendations?: XrefRecommendation[],
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
-  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext);
+  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations);
+
+  const activeTools: Anthropic.Tool[] = [...refinementTools];
+  if (currentRecommendations && currentRecommendations.length > 0) {
+    activeTools.push(filterRecommendationsTool);
+  }
 
   const anthropicMessages: Anthropic.MessageParam[] = messages.map(m => ({
     role: m.role,
@@ -318,7 +442,7 @@ export async function refinementChat(
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 2048,
     system: systemPrompt,
-    tools: refinementTools,
+    tools: activeTools,
     messages: anthropicMessages,
   });
 
@@ -334,12 +458,32 @@ export async function refinementChat(
 
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
       toolUseBlocks.map(async (toolUse) => {
+        if (toolUse.name === 'filter_recommendations') {
+          const filterInput = toolUse.input as { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string };
+          const sourceRecs = currentRecommendations ?? [];
+          const filtered = applyRecommendationFilter(sourceRecs, filterInput);
+          toolData.recommendations[mpn] = filtered;
+          return {
+            type: 'tool_result' as const,
+            tool_use_id: toolUse.id,
+            content: JSON.stringify({
+              total: sourceRecs.length,
+              filtered: filtered.length,
+              results: filtered.map(r => ({
+                mpn: r.part.mpn,
+                manufacturer: r.part.manufacturer,
+                matchPercentage: r.matchPercentage,
+                status: r.part.status,
+              })),
+            }),
+          };
+        }
+
+        // refine_replacements tool
         const input = toolUse.input as { attribute_overrides?: Record<string, string>; context_answers?: Record<string, string> };
 
-        // Merge any new overrides from the LLM with existing ones
         const mergedOverrides = { ...overrides, ...(input.attribute_overrides ?? {}) };
 
-        // Merge context answers if provided
         let mergedContext = applicationContext;
         if (input.context_answers && Object.keys(input.context_answers).length > 0) {
           const existingAnswers = applicationContext?.answers ?? {};
@@ -377,7 +521,7 @@ export async function refinementChat(
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
       system: systemPrompt,
-      tools: refinementTools,
+      tools: activeTools,
       messages: anthropicMessages,
     });
   }

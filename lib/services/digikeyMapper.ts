@@ -218,6 +218,7 @@ export function mapDigikeyProductToSummary(product: DigikeyProduct): PartSummary
     manufacturer: product.Manufacturer?.Name ?? 'Unknown',
     description: product.Description?.ProductDescription ?? '',
     category: mapCategory(categoryName),
+    status: mapStatus(product.ProductStatus?.Status ?? 'Active'),
   };
 }
 

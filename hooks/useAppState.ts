@@ -63,11 +63,18 @@ export function useAppState() {
   const [state, setState] = useState<AppState>(initialState);
   // Track conversation history for the LLM orchestrator
   const conversationRef = useRef<OrchestratorMessage[]>([]);
+  // Track current recommendations for follow-up LLM calls
+  const recsRef = useRef<XrefRecommendation[]>([]);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track original search query for search history logging
   const queryRef = useRef<string>('');
   const loggedRef = useRef(false);
+
+  // Keep recsRef in sync with state for async callbacks
+  useEffect(() => {
+    recsRef.current = state.recommendations;
+  }, [state.recommendations]);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -124,7 +131,10 @@ export function useAppState() {
       conversationRef.current.push({ role: 'user', content: query });
 
       try {
-        const response = await chatWithOrchestrator(conversationRef.current);
+        const response = await chatWithOrchestrator(
+          conversationRef.current,
+          recsRef.current.length > 0 ? recsRef.current : undefined,
+        );
 
         // Track assistant response in conversation history
         conversationRef.current.push({ role: 'assistant', content: response.message });
@@ -136,20 +146,43 @@ export function useAppState() {
         // Extract search result if the LLM searched
         const searchResult = response.searchResult;
 
+        // When a new search is initiated, clear stale data from previous part
+        const partResetFields = searchResult ? {
+          sourcePart: null as AppState['sourcePart'],
+          sourceAttributes: null as AppState['sourceAttributes'],
+          recommendations: [] as XrefRecommendation[],
+          selectedRecommendation: null as AppState['selectedRecommendation'],
+          comparisonAttributes: null as AppState['comparisonAttributes'],
+          applicationContext: null as AppState['applicationContext'],
+        } : {};
+
         if (searchResult && searchResult.type === 'single') {
           const part = searchResult.matches[0];
           addMessage('assistant', response.message, { type: 'confirmation', part });
-          setState((prev) => ({ ...prev, phase: 'resolving', searchResult }));
+          setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'multiple') {
           addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
-          setState((prev) => ({ ...prev, phase: 'resolving', searchResult }));
+          setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'none') {
           addMessage('assistant', response.message);
-          setState((prev) => ({ ...prev, phase: 'idle', searchResult: null }));
+          setState((prev) => ({ ...prev, ...partResetFields, phase: 'idle', searchResult: null }));
         } else {
-          // LLM responded without searching (e.g., asked for clarification)
+          // No search performed — check if LLM returned filtered recommendations
           addMessage('assistant', response.message);
-          setState((prev) => ({ ...prev, phase: 'idle' }));
+          const updatedRecs = response.recommendations
+            ? Object.values(response.recommendations)[0]
+            : undefined;
+
+          if (updatedRecs && updatedRecs.length > 0) {
+            // filter_recommendations tool returned results — update the list
+            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: updatedRecs }));
+          } else {
+            // No search, no filtered recs — stay in viewing if we have recs, else idle
+            setState((prev) => ({
+              ...prev,
+              phase: prev.recommendations.length > 0 ? 'viewing' : 'idle',
+            }));
+          }
         }
       } catch {
         // LLM not available — mark it and fall back
@@ -248,7 +281,10 @@ export function useAppState() {
       }
 
       // Step 3: Fire orchestrator for recommendations
-      const response = await chatWithOrchestrator(conversationRef.current).catch(() => null);
+      const response = await chatWithOrchestrator(
+        conversationRef.current,
+        recsRef.current.length > 0 ? recsRef.current : undefined,
+      ).catch(() => null);
       setStatus('');
       if (response) {
         conversationRef.current.push({ role: 'assistant', content: response.message });

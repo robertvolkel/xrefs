@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ApplicationContext, OrchestratorMessage } from '@/lib/types';
+import { ApplicationContext, OrchestratorMessage, XrefRecommendation } from '@/lib/types';
 import { refinementChat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 
@@ -8,6 +8,7 @@ interface ModalChatRequestBody {
   mpn: string;
   overrides?: Record<string, string>;
   applicationContext?: ApplicationContext;
+  recommendations?: XrefRecommendation[];
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body.overrides ?? {},
       body.applicationContext,
       apiKey,
+      body.recommendations,
     );
 
     return NextResponse.json({

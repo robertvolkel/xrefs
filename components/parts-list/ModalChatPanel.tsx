@@ -12,9 +12,10 @@ interface ModalChatPanelProps {
   row: PartsListRow | null;
   open: boolean;
   onRecommendationsRefreshed: (recs: XrefRecommendation[]) => void;
+  onLoadingChange?: (loading: boolean) => void;
 }
 
-export default function ModalChatPanel({ row, open, onRecommendationsRefreshed }: ModalChatPanelProps) {
+export default function ModalChatPanel({ row, open, onRecommendationsRefreshed, onLoadingChange }: ModalChatPanelProps) {
   const { t } = useTranslation();
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -29,6 +30,11 @@ export default function ModalChatPanel({ row, open, onRecommendationsRefreshed }
     handleSkipContext,
     handleSendMessage,
   } = useModalChat({ row, open, onRecommendationsRefreshed });
+
+  // Surface loading state to parent
+  useEffect(() => {
+    onLoadingChange?.(isLoading);
+  }, [isLoading, onLoadingChange]);
 
   // Auto-scroll when messages change
   useEffect(() => {

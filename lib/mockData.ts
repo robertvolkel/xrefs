@@ -414,32 +414,32 @@ const tiLM1117Recs: XrefRecommendation[] = [
 
 export const searchIndex: Record<string, PartSummary[]> = {
   // MLCC exact matches
-  'GRM188R71E105KA12': [{ mpn: 'GRM188R71E105KA12', manufacturer: 'Murata Manufacturing', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors' }],
-  'CL10B105KA8NNNC': [{ mpn: 'CL10B105KA8NNNC', manufacturer: 'Samsung Electro-Mechanics', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors' }],
-  'C0603C105K3PACTU': [{ mpn: 'C0603C105K3PACTU', manufacturer: 'KEMET', description: 'MLCC 1µF 25V X7R 0603 Flex Term', category: 'Capacitors' }],
+  'GRM188R71E105KA12': [{ mpn: 'GRM188R71E105KA12', manufacturer: 'Murata Manufacturing', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors', status: 'Active' }],
+  'CL10B105KA8NNNC': [{ mpn: 'CL10B105KA8NNNC', manufacturer: 'Samsung Electro-Mechanics', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors', status: 'Active' }],
+  'C0603C105K3PACTU': [{ mpn: 'C0603C105K3PACTU', manufacturer: 'KEMET', description: 'MLCC 1µF 25V X7R 0603 Flex Term', category: 'Capacitors', status: 'Active' }],
 
   // Resistor exact matches
-  'CRCW060310K0FKEA': [{ mpn: 'CRCW060310K0FKEA', manufacturer: 'Vishay Dale', description: 'Thick Film Resistor 10kΩ 1% 0603', category: 'Resistors' }],
-  'RC0603FR-0710KL': [{ mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo', description: 'Thick Film Resistor 10kΩ 1% 0603', category: 'Resistors' }],
+  'CRCW060310K0FKEA': [{ mpn: 'CRCW060310K0FKEA', manufacturer: 'Vishay Dale', description: 'Thick Film Resistor 10kΩ 1% 0603', category: 'Resistors', status: 'Active' }],
+  'RC0603FR-0710KL': [{ mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo', description: 'Thick Film Resistor 10kΩ 1% 0603', category: 'Resistors', status: 'Active' }],
 
   // IC exact matches
-  'LM1117IMPX-3.3/NOPB': [{ mpn: 'LM1117IMPX-3.3/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 3.3V 800mA SOT-223', category: 'ICs' }],
+  'LM1117IMPX-3.3/NOPB': [{ mpn: 'LM1117IMPX-3.3/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 3.3V 800mA SOT-223', category: 'ICs', status: 'Active' }],
 
   // Ambiguous queries
   'LM1117': [
-    { mpn: 'LM1117IMPX-3.3/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 3.3V 800mA SOT-223', category: 'ICs' },
-    { mpn: 'LM1117IMPX-5.0/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 5.0V 800mA SOT-223', category: 'ICs' },
-    { mpn: 'LM1117IMPX-ADJ/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator ADJ 800mA SOT-223', category: 'ICs' },
+    { mpn: 'LM1117IMPX-3.3/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 3.3V 800mA SOT-223', category: 'ICs', status: 'Active' },
+    { mpn: 'LM1117IMPX-5.0/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator 5.0V 800mA SOT-223', category: 'ICs', status: 'Active' },
+    { mpn: 'LM1117IMPX-ADJ/NOPB', manufacturer: 'Texas Instruments', description: 'Linear Voltage Regulator ADJ 800mA SOT-223', category: 'ICs', status: 'Active' },
   ],
   '1UF': [
-    { mpn: 'GRM188R71E105KA12', manufacturer: 'Murata Manufacturing', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors' },
-    { mpn: 'CL10B105KA8NNNC', manufacturer: 'Samsung Electro-Mechanics', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors' },
-    { mpn: 'C0603C105K3PACTU', manufacturer: 'KEMET', description: 'MLCC 1µF 25V X7R 0603 Flex Term', category: 'Capacitors' },
+    { mpn: 'GRM188R71E105KA12', manufacturer: 'Murata Manufacturing', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors', status: 'Active' },
+    { mpn: 'CL10B105KA8NNNC', manufacturer: 'Samsung Electro-Mechanics', description: 'MLCC 1µF 25V X7R 0603', category: 'Capacitors', status: 'Active' },
+    { mpn: 'C0603C105K3PACTU', manufacturer: 'KEMET', description: 'MLCC 1µF 25V X7R 0603 Flex Term', category: 'Capacitors', status: 'Active' },
   ],
   '10K': [
-    { mpn: 'CRCW060310K0FKEA', manufacturer: 'Vishay Dale', description: 'Thick Film 10kΩ 1% 0603', category: 'Resistors' },
-    { mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo', description: 'Thick Film 10kΩ 1% 0603', category: 'Resistors' },
-    { mpn: 'RNCP0603FTD10K0', manufacturer: 'Stackpole Electronics', description: 'Thin Film 10kΩ 1% 0603', category: 'Resistors' },
+    { mpn: 'CRCW060310K0FKEA', manufacturer: 'Vishay Dale', description: 'Thick Film 10kΩ 1% 0603', category: 'Resistors', status: 'Active' },
+    { mpn: 'RC0603FR-0710KL', manufacturer: 'Yageo', description: 'Thick Film 10kΩ 1% 0603', category: 'Resistors', status: 'Active' },
+    { mpn: 'RNCP0603FTD10K0', manufacturer: 'Stackpole Electronics', description: 'Thin Film 10kΩ 1% 0603', category: 'Resistors', status: 'Active' },
   ],
 };
 

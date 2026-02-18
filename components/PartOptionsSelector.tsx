@@ -27,6 +27,9 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                   {part.mpn}
                 </Typography>
                 <Chip label={part.category} size="small" variant="outlined" />
+                {part.status && (
+                  <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                )}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {part.manufacturer} &mdash; {part.description}

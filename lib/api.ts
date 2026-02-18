@@ -64,12 +64,13 @@ export async function getRecommendationsWithContext(
 
 /** Send messages to the Claude LLM orchestrator */
 export async function chatWithOrchestrator(
-  messages: OrchestratorMessage[]
+  messages: OrchestratorMessage[],
+  recommendations?: XrefRecommendation[],
 ): Promise<OrchestratorResponse> {
   return fetchApi<OrchestratorResponse>(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, recommendations }),
   });
 }
 
@@ -79,11 +80,12 @@ export async function modalChat(
   mpn: string,
   overrides?: Record<string, string>,
   applicationContext?: ApplicationContext,
+  recommendations?: XrefRecommendation[],
 ): Promise<OrchestratorResponse> {
   return fetchApi<OrchestratorResponse>(`${BASE}/modal-chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, mpn, overrides, applicationContext }),
+    body: JSON.stringify({ messages, mpn, overrides, applicationContext, recommendations }),
   });
 }
 

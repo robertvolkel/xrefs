@@ -1,5 +1,4 @@
 'use client';
-import React from 'react';
 import {
   Box,
   Typography,
@@ -12,6 +11,7 @@ import {
   IconButton,
   Chip,
   Stack,
+  Tooltip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useTranslation } from 'react-i18next';
@@ -185,83 +185,63 @@ export default function ComparisonView({
           <TableBody>
             {rows.map((row) => {
               const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
+              const resultContent = (
+                <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: row.note ? 'help' : 'default' }}>
+                  <Box
+                    sx={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      bgcolor: dot.color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
+                  >
+                    {dot.label}
+                  </Typography>
+                </Stack>
+              );
               return (
-                <React.Fragment key={row.parameterId}>
-                  <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                    <TableCell
-                      sx={{
-                        color: 'text.secondary',
-                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-                        borderColor: row.note ? 'transparent' : 'divider',
-                        width: '35%',
-                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
-                      }}
-                    >
-                      {row.parameterName}
-                    </TableCell>
-                    <TableCell
-                      sx={{
-                        fontFamily: 'monospace',
-                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-                        borderColor: row.note ? 'transparent' : 'divider',
-                        color: getValueColor(row.matchStatus),
-                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
-                        width: '30%',
-                      }}
-                    >
-                      {row.replacementValue}
-                    </TableCell>
-                    <TableCell
-                      sx={{ borderColor: row.note ? 'transparent' : 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}
-                    >
-                      <Stack direction="row" alignItems="center" spacing={0.75}>
-                        <Box
-                          sx={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            bgcolor: dot.color,
-                            flexShrink: 0,
-                          }}
-                        />
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
-                        >
-                          {dot.label}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                  {row.note && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={3}
-                        sx={{
-                          borderColor: 'divider',
-                          pt: 0,
-                          pb: { xs: ROW_PY_MOBILE, md: ROW_PY },
-                          borderTop: 1,
-                          borderTopColor: 'divider',
-                          borderTopStyle: 'dashed',
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{
-                            fontSize: { xs: '0.75rem', md: '0.72rem' },
-                            lineHeight: 1.5,
-                            opacity: 0.8,
-                          }}
-                        >
-                          {row.note}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </React.Fragment>
+                <TableRow key={row.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell
+                    sx={{
+                      color: 'text.secondary',
+                      fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                      borderColor: 'divider',
+                      width: '40%',
+                      py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                    }}
+                  >
+                    {row.parameterName}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontFamily: 'monospace',
+                      fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                      borderColor: 'divider',
+                      color: getValueColor(row.matchStatus),
+                      py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                      width: '45%',
+                    }}
+                  >
+                    {row.replacementValue}
+                  </TableCell>
+                  <TableCell
+                    sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '15%' }}
+                  >
+                    {row.note ? (
+                      <Tooltip title={row.note} placement="left" arrow>
+                        {resultContent}
+                      </Tooltip>
+                    ) : (
+                      resultContent
+                    )}
+                  </TableCell>
+                </TableRow>
               );
             })}
           </TableBody>

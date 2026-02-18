@@ -8,7 +8,6 @@ import {
   XrefRecommendation,
   PartsListRow,
   OrchestratorMessage,
-  MissingAttributeInfo,
 } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
@@ -51,19 +50,21 @@ function makeMessage(role: 'user' | 'assistant', content: string, interactiveEle
   };
 }
 
+const INITIAL_STATE: ModalChatState = {
+  messages: [],
+  phase: 'init',
+  overrides: {},
+  applicationContext: null,
+  isLoading: false,
+  familyId: null,
+};
+
 // ----------------------------------------------------------
 // Hook
 // ----------------------------------------------------------
 
 export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModalChatOptions) {
-  const [state, setState] = useState<ModalChatState>({
-    messages: [],
-    phase: 'init',
-    overrides: {},
-    applicationContext: null,
-    isLoading: false,
-    familyId: null,
-  });
+  const [state, setState] = useState<ModalChatState>(INITIAL_STATE);
 
   // Track overrides/context in refs so handlers don't need state deps
   const overridesRef = useRef<Record<string, string>>({});
@@ -71,90 +72,95 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
   const familyIdRef = useRef<string | null>(null);
   const conversationRef = useRef<OrchestratorMessage[]>([]);
   const mpnRef = useRef<string>('');
-  const initRef = useRef(false);
+  const recsRef = useRef<XrefRecommendation[]>([]);
+  // Track which row we initialized for (avoids re-init issues with strict mode)
+  const initForRowRef = useRef<number | null>(null);
 
   // ----------------------------------------------------------
   // Initialization — runs when modal opens with a row
   // ----------------------------------------------------------
 
   useEffect(() => {
-    if (!open || !row || !row.sourceAttributes) {
+    if (!open || !row) {
       // Reset when modal closes
-      if (!open && initRef.current) {
-        setState({
-          messages: [],
-          phase: 'init',
-          overrides: {},
-          applicationContext: null,
-          isLoading: false,
-          familyId: null,
-        });
+      if (!open && initForRowRef.current !== null) {
+        setState(INITIAL_STATE);
         overridesRef.current = {};
         contextRef.current = null;
         familyIdRef.current = null;
         conversationRef.current = [];
         mpnRef.current = '';
-        initRef.current = false;
+        initForRowRef.current = null;
       }
       return;
     }
 
-    // Prevent re-running if already initialized for this row
-    if (initRef.current) return;
-    initRef.current = true;
+    // Prevent re-running if already initialized for this specific row
+    if (initForRowRef.current === row.rowIndex) return;
+    initForRowRef.current = row.rowIndex;
 
+    // Determine part info
+    const mpn = row.sourceAttributes?.part.mpn ?? row.resolvedPart?.mpn ?? row.rawMpn;
+    mpnRef.current = mpn;
+    recsRef.current = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
+
+    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
+
+    // If we have source attributes, check for missing attrs and context questions
     const attrs = row.sourceAttributes;
-    mpnRef.current = attrs.part.mpn;
-    const logicTable = getLogicTableForSubcategory(attrs.part.subcategory);
+    const subcategory = attrs?.part.subcategory;
+    const logicTable = subcategory ? getLogicTableForSubcategory(subcategory) : null;
 
     if (!logicTable) {
-      // No logic table — go straight to open chat
-      setState(prev => ({
-        ...prev,
+      // No logic table or no attributes — go straight to open chat
+      setState({
+        ...INITIAL_STATE,
         messages: [
-          makeMessage('assistant', `Showing **${attrs.part.mpn}** recommendations. Ask me anything to help narrow down the best replacement.`),
+          makeMessage('assistant', `Showing **${recCount}** replacements for **${mpn}**. Ask me anything to help narrow down the best replacement.`),
         ],
         phase: 'open-chat',
-      }));
+      });
       return;
     }
 
     familyIdRef.current = logicTable.familyId;
 
     // Check for missing critical attributes
-    const missingAttrs = detectMissingAttributes(attrs, logicTable);
-    const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
+    if (attrs) {
+      const missingAttrs = detectMissingAttributes(attrs, logicTable);
+      const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
-    if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
-      setState(prev => ({
-        ...prev,
-        familyId: logicTable.familyId,
-        messages: [
-          makeMessage(
-            'assistant',
-            `I found **${row.allRecommendations?.length ?? 0}** replacements for **${attrs.part.mpn}**. I'm missing some information that could improve the results.`,
-            {
-              type: 'attribute-query',
-              missingAttributes: missingAttrs,
-              partMpn: attrs.part.mpn,
-            }
-          ),
-        ],
-        phase: 'awaiting-attributes',
-      }));
-      return;
+      if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
+        setState({
+          ...INITIAL_STATE,
+          familyId: logicTable.familyId,
+          messages: [
+            makeMessage(
+              'assistant',
+              `I found **${recCount}** replacements for **${mpn}**. I'm missing some information that could improve the results.`,
+              {
+                type: 'attribute-query',
+                missingAttributes: missingAttrs,
+                partMpn: mpn,
+              }
+            ),
+          ],
+          phase: 'awaiting-attributes',
+        });
+        return;
+      }
     }
 
     // Check for context questions
     const contextConfig = getContextQuestionsForFamily(logicTable.familyId);
     if (contextConfig && contextConfig.questions.length > 0) {
-      setState(prev => ({
-        ...prev,
+      setState({
+        ...INITIAL_STATE,
         familyId: logicTable.familyId,
         messages: [
           makeMessage(
             'assistant',
-            `I found **${row.allRecommendations?.length ?? 0}** replacements for **${attrs.part.mpn}**. Let me understand your application to refine the results.`,
+            `I found **${recCount}** replacements for **${mpn}**. Let me understand your application to refine the results.`,
             {
               type: 'context-questions',
               questions: contextConfig.questions,
@@ -163,20 +169,20 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
           ),
         ],
         phase: 'awaiting-context',
-      }));
+      });
       return;
     }
 
     // Nothing to ask — go to open chat
-    setState(prev => ({
-      ...prev,
+    setState({
+      ...INITIAL_STATE,
       familyId: logicTable.familyId,
       messages: [
-        makeMessage('assistant', `Showing **${row.allRecommendations?.length ?? 0}** replacements for **${attrs.part.mpn}**. Ask me anything to help narrow down the best replacement.`),
+        makeMessage('assistant', `Showing **${recCount}** replacements for **${mpn}**. Ask me anything to help narrow down the best replacement.`),
       ],
       phase: 'open-chat',
-    }));
-  }, [open, row]);
+    });
+  }, [open, row?.rowIndex, row?.sourceAttributes]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ----------------------------------------------------------
   // Refresh recommendations with current overrides + context
@@ -191,6 +197,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
       const overrides = overridesRef.current;
       const context = contextRef.current;
       const recs = await getRecommendationsWithOverrides(mpn, overrides, context ?? undefined);
+      recsRef.current = recs;
       onRecommendationsRefreshed(recs);
     } catch {
       // Silently fail — keep existing recommendations
@@ -245,7 +252,6 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
   // ----------------------------------------------------------
 
   const handleAttributeResponse = useCallback((responses: Record<string, string>) => {
-    // Filter out empty responses
     const filled: Record<string, string> = {};
     for (const [k, v] of Object.entries(responses)) {
       if (v.trim()) filled[k] = v.trim();
@@ -352,7 +358,6 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
       isLoading: true,
     }));
 
-    // Build conversation for the orchestrator
     conversationRef.current.push({ role: 'user', content: trimmed });
 
     try {
@@ -361,15 +366,16 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
         mpnRef.current,
         overridesRef.current,
         contextRef.current ?? undefined,
+        recsRef.current,
       );
 
       conversationRef.current.push({ role: 'assistant', content: result.message });
 
-      // If the LLM returned new recommendations, update the right panel
       const recsMap = result.recommendations;
       if (recsMap) {
         const recs = Object.values(recsMap)[0];
         if (recs) {
+          recsRef.current = recs;
           onRecommendationsRefreshed(recs);
         }
       }

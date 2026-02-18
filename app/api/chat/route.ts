@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { OrchestratorMessage } from '@/lib/types';
+import { OrchestratorMessage, XrefRecommendation } from '@/lib/types';
 import { chat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 
 interface ChatRequestBody {
   messages: OrchestratorMessage[];
+  recommendations?: XrefRecommendation[];
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const response = await chat(body.messages, apiKey);
+    const response = await chat(body.messages, apiKey, body.recommendations);
 
     return NextResponse.json({
       success: true,

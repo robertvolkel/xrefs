@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useState } from 'react';
 import {
   Box,
   Button,
@@ -14,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { PartsListRow, XrefRecommendation, PartAttributes } from '@/lib/types';
 import ModalChatPanel from './ModalChatPanel';
 import RecommendationsPanel from '../RecommendationsPanel';
+import AttributesPanel from '../AttributesPanel';
 import ComparisonView from '../ComparisonView';
 
 interface PartDetailModalProps {
@@ -29,7 +31,7 @@ interface PartDetailModalProps {
   onRecommendationsRefreshed: (recs: XrefRecommendation[]) => void;
 }
 
-const PANEL_HEIGHT = '70vh';
+const PANEL_HEIGHT = '74vh';
 
 export default function PartDetailModal({
   open,
@@ -44,6 +46,9 @@ export default function PartDetailModal({
   onRecommendationsRefreshed,
 }: PartDetailModalProps) {
   const { t } = useTranslation();
+  const [recsLoading, setRecsLoading] = useState(false);
+  const handleLoadingChange = useCallback((loading: boolean) => setRecsLoading(loading), []);
+
   if (!row) return null;
 
   const recs = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
@@ -70,11 +75,12 @@ export default function PartDetailModal({
 
       <DialogContent sx={{ p: 0, display: 'flex', overflow: 'hidden' }}>
         {/* Refinement chat panel */}
-        <Box sx={{ width: isComparing ? '33%' : '40%', height: PANEL_HEIGHT, overflow: 'hidden', transition: 'width 0.2s ease', borderRight: 1, borderColor: 'divider' }}>
+        <Box sx={{ width: isComparing ? '30%' : '40%', height: PANEL_HEIGHT, overflow: 'hidden', transition: 'width 0.2s ease', borderRight: 1, borderColor: 'divider' }}>
           <ModalChatPanel
             row={row}
             open={open}
             onRecommendationsRefreshed={onRecommendationsRefreshed}
+            onLoadingChange={handleLoadingChange}
           />
         </Box>
 
@@ -84,20 +90,29 @@ export default function PartDetailModal({
             <RecommendationsPanel
               recommendations={recs}
               onSelect={onSelectRec}
+              loading={recsLoading}
             />
           </Box>
         )}
 
-        {/* Comparison view (when a rec is selected) */}
+        {/* Source attributes + Comparison (when a rec is selected) */}
         {isComparing && selectedRec && row.sourceAttributes && comparisonAttrs && (
-          <Box sx={{ width: '67%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
-            <ComparisonView
-              sourceAttributes={row.sourceAttributes}
-              replacementAttributes={comparisonAttrs}
-              recommendation={selectedRec}
-              onBack={onBackToRecs}
-            />
-          </Box>
+          <>
+            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'hidden', borderRight: 1, borderColor: 'divider' }}>
+              <AttributesPanel
+                attributes={row.sourceAttributes}
+                title={t('partDetail.sourcePartTitle')}
+              />
+            </Box>
+            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
+              <ComparisonView
+                sourceAttributes={row.sourceAttributes}
+                replacementAttributes={comparisonAttrs}
+                recommendation={selectedRec}
+                onBack={onBackToRecs}
+              />
+            </Box>
+          </>
         )}
       </DialogContent>
 

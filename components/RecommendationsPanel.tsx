@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
@@ -10,9 +10,10 @@ interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
   onSelect: (rec: XrefRecommendation) => void;
   onManufacturerClick?: (manufacturer: string) => void;
+  loading?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
   const obsoleteCount = sorted.filter(r => r.part.status === 'Obsolete').length;
@@ -27,7 +28,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   }, [obsoleteCount]);
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <Box
         sx={{
           height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
@@ -74,6 +75,28 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           );
         })}
       </Box>
+
+      {/* Loading overlay while recommendations are refreshing */}
+      {loading && (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            bgcolor: 'rgba(0, 0, 0, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: 1.5,
+            zIndex: 1,
+          }}
+        >
+          <CircularProgress size={32} />
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+            {t('recommendations.updating', 'Updating recommendations...')}
+          </Typography>
+        </Box>
+      )}
     </Box>
   );
 }

@@ -354,11 +354,32 @@ export function usePartsListState() {
       modalComparing: false,
     }));
 
-    // Fetch recommendations asynchronously
     const currentRow = state.rows.find(r => r.rowIndex === rowIndex);
-    if (currentRow?.resolvedPart && !currentRow.allRecommendations) {
+    if (!currentRow?.resolvedPart) return;
+
+    const mpn = currentRow.resolvedPart.mpn;
+
+    // Fetch sourceAttributes if not cached (e.g. list loaded from Supabase)
+    if (!currentRow.sourceAttributes) {
       try {
-        const recs = await getRecommendations(currentRow.resolvedPart.mpn);
+        const attrs = await getPartAttributes(mpn);
+        setState(prev => {
+          const newRows = [...prev.rows];
+          const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
+          if (idx >= 0) {
+            newRows[idx] = { ...newRows[idx], sourceAttributes: attrs };
+          }
+          return { ...prev, rows: newRows };
+        });
+      } catch {
+        // Chat will proceed without attributes
+      }
+    }
+
+    // Fetch recommendations if not cached
+    if (!currentRow.allRecommendations) {
+      try {
+        const recs = await getRecommendations(mpn);
         setState(prev => {
           const newRows = [...prev.rows];
           const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
