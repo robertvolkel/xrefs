@@ -14,7 +14,7 @@ export function mockGetRecommendations(mpn: string): XrefRecommendation[] {
   if (!sourceAttrs) return [];
 
   // Check if this part's family has a logic table
-  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
 
   if (logicTable) {
     // Use the real matching engine

@@ -7,6 +7,7 @@ export const ntcThermistorContext: FamilyContextConfig = {
     {
       questionId: 'function',
       questionText: "What is this thermistor's function?",
+      required: true,
       priority: 1,
       options: [
         {
@@ -19,6 +20,8 @@ export const ntcThermistorContext: FamilyContextConfig = {
             { attributeId: 'r25_tolerance', effect: 'escalate_to_primary', note: 'Sensing — R25 tolerance directly affects measurement accuracy' },
             { attributeId: 'b_value_tolerance', effect: 'escalate_to_primary', note: 'Sensing — B-value tolerance affects curve accuracy at temperature extremes' },
             { attributeId: 'rt_curve', effect: 'escalate_to_primary', note: 'Sensing — R-T curve/Steinhart-Hart must match for accurate readings' },
+            { attributeId: 'long_term_stability', effect: 'escalate_to_primary', note: 'Sensing — long-term resistance drift degrades measurement accuracy over time' },
+            { attributeId: 'thermal_time_constant', effect: 'add_review_flag', note: 'Sensing — thermal time constant matters for fast response loops' },
             { attributeId: 'dissipation_constant', effect: 'add_review_flag', note: 'Sensing — self-heating error depends on dissipation constant' },
           ],
         },
@@ -29,6 +32,7 @@ export const ntcThermistorContext: FamilyContextConfig = {
           attributeEffects: [
             { attributeId: 'resistance_r25', effect: 'escalate_to_primary', note: 'Inrush — cold resistance (R0/R25) determines initial current limiting' },
             { attributeId: 'max_power', effect: 'escalate_to_mandatory', note: 'Inrush — max power rating must handle the energy dissipated during inrush' },
+            { attributeId: 'max_steady_state_current', effect: 'escalate_to_mandatory', note: 'Inrush limiter — max steady-state current must handle the continuous load after inrush' },
             { attributeId: 'b_value', effect: 'not_applicable', note: 'Inrush — B-value precision is irrelevant for current limiting' },
             { attributeId: 'b_value_tolerance', effect: 'not_applicable', note: 'Inrush — B-value tolerance is irrelevant' },
             { attributeId: 'rt_curve', effect: 'not_applicable', note: 'Inrush — R-T curve matching is irrelevant' },
@@ -45,6 +49,7 @@ export const ntcThermistorContext: FamilyContextConfig = {
             { attributeId: 'b_value', effect: 'escalate_to_mandatory', note: 'Compensation — B-value must match the compensation target exactly' },
             { attributeId: 'r25_tolerance', effect: 'escalate_to_primary', note: 'Compensation — tolerance on R25 is critical for accuracy' },
             { attributeId: 'b_value_tolerance', effect: 'escalate_to_primary', note: 'Compensation — tolerance on B-value is critical' },
+            { attributeId: 'long_term_stability', effect: 'escalate_to_primary', note: 'Compensation — long-term drift degrades compensation accuracy' },
           ],
         },
       ],
@@ -70,6 +75,7 @@ export const ntcThermistorContext: FamilyContextConfig = {
             { attributeId: 'b_value_tolerance', effect: 'escalate_to_mandatory', note: 'Precision sensing — B-value tolerance ≤1% required' },
             { attributeId: 'rt_curve', effect: 'escalate_to_mandatory', note: 'Precision sensing — must verify R-T curve point-by-point, not just B-value' },
             { attributeId: 'interchangeability', effect: 'escalate_to_mandatory', note: 'Precision sensing — interchangeability curve compliance is critical' },
+            { attributeId: 'long_term_stability', effect: 'escalate_to_mandatory', note: 'Precision sensing — long-term drift degrades measurement accuracy' },
           ],
         },
       ],

@@ -44,6 +44,15 @@ function QuestionField({
         sx={{ fontWeight: 600, fontSize: '0.82rem', mb: 0.5 }}
       >
         {question.questionText}
+        {question.required && (
+          <Typography
+            component="span"
+            variant="caption"
+            sx={{ ml: 1, color: 'warning.main', fontWeight: 700, fontSize: '0.7rem' }}
+          >
+            Required
+          </Typography>
+        )}
       </Typography>
 
       <RadioGroup
@@ -129,6 +138,13 @@ export default function ApplicationContextForm({
     });
   }, [questions, answers]);
 
+  // Check if any visible required questions are unanswered
+  const hasUnansweredRequired = useMemo(() => {
+    return visibleQuestions.some(
+      (q) => q.required && (!answers[q.questionId] || answers[q.questionId].trim() === '')
+    );
+  }, [visibleQuestions, answers]);
+
   const handleChange = (questionId: string, value: string) => {
     setAnswers((prev) => {
       const next = { ...prev, [questionId]: value };
@@ -176,6 +192,7 @@ export default function ApplicationContextForm({
           size="small"
           startIcon={<CheckIcon />}
           onClick={() => onSubmit(answers)}
+          disabled={hasUnansweredRequired}
         >
           {t('chat.continue')}
         </Button>
@@ -184,7 +201,8 @@ export default function ApplicationContextForm({
           startIcon={<SkipNextIcon />}
           onClick={onSkip}
           color="inherit"
-          sx={{ opacity: 0.7 }}
+          disabled={hasUnansweredRequired}
+          sx={{ opacity: hasUnansweredRequired ? 0.4 : 0.7 }}
         >
           {t('chat.skipUseDefaults')}
         </Button>

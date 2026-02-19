@@ -16,6 +16,11 @@
     "yourLists": "我的列表"
   },
 
+  "history": {
+    "newChat": "新对话",
+    "empty": "暂无对话。请搜索一个元器件以开始。"
+  },
+
   "accountSettings": {
     "title": "我的账户设置",
     "globalSettings": "全局设置",

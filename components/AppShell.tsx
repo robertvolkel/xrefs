@@ -1,15 +1,17 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, IconButton, Skeleton, Stack, Typography } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useAppState } from '@/hooks/useAppState';
+import { useConversations } from '@/lib/hooks/useConversations';
 import { ManufacturerProfile } from '@/lib/types';
 import { getManufacturerProfile } from '@/lib/mockManufacturerData';
 import { setPendingFile } from '@/lib/pendingFile';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
+import ChatHistoryDrawer from './ChatHistoryDrawer';
 import AppSidebar from './AppSidebar';
 import MobileAppLayout from './MobileAppLayout';
 import AttributesPanel from './AttributesPanel';
@@ -71,7 +73,16 @@ function RecommendationsSkeleton() {
 
 export default function AppShell() {
   const appState = useAppState();
+  const {
+    conversations, loading: convoLoading,
+    create: createConvo, save: saveConvo, load: loadConvo,
+    remove: removeConvo, refresh: refreshConvos,
+  } = useConversations();
+  const searchParams = useSearchParams();
   const hasAttributes = (appState.sourceAttributes?.parameters.length ?? 0) > 0;
+
+  // Chat history drawer state
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Delay showing the skeleton panel by 2s after attributes load
   const [recsRevealed, setRecsRevealed] = useState(false);
@@ -104,11 +115,6 @@ export default function AppShell() {
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [newListDialogOpen, setNewListDialogOpen] = useState(false);
 
-  const handleFileSelect = useCallback((file: File) => {
-    setPendingUploadFile(file);
-    setNewListDialogOpen(true);
-  }, []);
-
   const handleNewListConfirm = useCallback((name: string, description: string, _currency: string, customer: string, defaultViewId: string) => {
     if (!pendingUploadFile) return;
     setPendingFile(pendingUploadFile, name, description, customer, defaultViewId);
@@ -121,6 +127,100 @@ export default function AppShell() {
     setNewListDialogOpen(false);
     setPendingUploadFile(null);
   }, []);
+
+  // ============================================================
+  // CONVERSATION PERSISTENCE
+  // ============================================================
+
+  // Hydrate from URL param (e.g., navigated from /lists with ?c=<id>)
+  const hydrationDoneRef = useRef(false);
+  useEffect(() => {
+    if (hydrationDoneRef.current) return;
+    const convoId = searchParams.get('c');
+    if (!convoId) return;
+    hydrationDoneRef.current = true;
+    loadConvo(convoId).then((snapshot) => {
+      if (!snapshot) return;
+      setRecsRevealed(snapshot.phase === 'viewing' || snapshot.phase === 'comparing');
+      appState.hydrateState(snapshot);
+      // Clean the URL
+      router.replace('/', { scroll: false });
+    });
+  }, [searchParams, loadConvo, appState.hydrateState, router]);
+
+  // Auto-save: create or update conversation when messages/phase change
+  const prevSaveKeyRef = useRef('');
+  useEffect(() => {
+    const msgCount = appState.messages.length;
+    if (msgCount === 0) return;
+
+    // Don't persist transient phases — they'd cause frozen UI on reload
+    const TRANSIENT_PHASES = ['searching', 'loading-attributes', 'finding-matches'];
+    if (TRANSIENT_PHASES.includes(appState.phase)) return;
+
+    const saveKey = `${msgCount}:${appState.phase}`;
+    if (saveKey === prevSaveKeyRef.current) return;
+    prevSaveKeyRef.current = saveKey;
+
+    const firstUserMsg = appState.messages.find((m) => m.role === 'user');
+    if (!firstUserMsg) return;
+
+    if (!appState.conversationId) {
+      // First save — create conversation
+      const title = firstUserMsg.content.length > 50
+        ? firstUserMsg.content.slice(0, 50) + '...'
+        : firstUserMsg.content;
+      createConvo(title, null, appState.messages, appState.getOrchestratorMessages(), appState.phase)
+        .then((id) => { if (id) appState.setConversationId(id); });
+    } else {
+      // Update existing conversation
+      saveConvo(appState.conversationId, {
+        messages: appState.messages,
+        orchestratorMessages: appState.getOrchestratorMessages(),
+        phase: appState.phase,
+        sourcePart: appState.sourcePart,
+        sourceAttributes: appState.sourceAttributes,
+        applicationContext: appState.applicationContext,
+        recommendations: appState.recommendations,
+        selectedRecommendation: appState.selectedRecommendation,
+        comparisonAttributes: appState.comparisonAttributes,
+        sourceMpn: appState.sourcePart?.mpn ?? null,
+      });
+    }
+  }, [appState.messages.length, appState.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh conversation list when drawer opens
+  useEffect(() => {
+    if (historyOpen) refreshConvos();
+  }, [historyOpen, refreshConvos]);
+
+  const handleSelectConversation = useCallback(async (id: string) => {
+    const snapshot = await loadConvo(id);
+    if (!snapshot) return;
+    setMfrProfile(null);
+    setChatManuallyCollapsed(false);
+    setRecsDismissed(false);
+    setAttrsDismissed(false);
+    setRecsRevealed(snapshot.phase === 'viewing' || snapshot.phase === 'comparing');
+    appState.hydrateState(snapshot);
+    setHistoryOpen(false);
+  }, [loadConvo, appState.hydrateState]);
+
+  const handleNewChat = useCallback(() => {
+    setMfrProfile(null);
+    setChatManuallyCollapsed(false);
+    setRecsDismissed(false);
+    setAttrsDismissed(false);
+    appState.handleReset();
+    setHistoryOpen(false);
+  }, [appState.handleReset]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    await removeConvo(id);
+    if (appState.conversationId === id) {
+      appState.handleReset();
+    }
+  }, [removeConvo, appState.conversationId, appState.handleReset]);
 
   const handleManufacturerClick = useCallback((manufacturer: string) => {
     const profile = getManufacturerProfile(manufacturer);
@@ -211,7 +311,21 @@ export default function AppShell() {
 
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
-      <AppSidebar onReset={handleReset} />
+      <AppSidebar
+        onReset={handleReset}
+        onToggleHistory={() => setHistoryOpen((prev) => !prev)}
+        historyOpen={historyOpen}
+      />
+      <ChatHistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        conversations={conversations}
+        loading={convoLoading}
+        activeConversationId={appState.conversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewChat={handleNewChat}
+        onDeleteConversation={handleDeleteConversation}
+      />
       <Box
         sx={{
           flex: 1,
@@ -284,7 +398,6 @@ export default function AppShell() {
             onSkipAttributes={appState.handleSkipAttributes}
             onContextResponse={appState.handleContextResponse}
             onSkipContext={appState.handleSkipContext}
-            onFileSelect={handleFileSelect}
           />
         </Box>
       </Box>

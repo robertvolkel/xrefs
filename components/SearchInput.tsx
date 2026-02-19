@@ -1,22 +1,19 @@
 'use client';
-import { useState, useRef, KeyboardEvent } from 'react';
+import { useState, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Divider, IconButton, InputBase, Paper } from '@mui/material';
+import { Box, IconButton, InputBase, Paper } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import SearchIcon from '@mui/icons-material/Search';
-import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 interface SearchInputProps {
   onSubmit: (query: string) => void;
   disabled: boolean;
   landing: boolean;
-  onFileSelect?: (file: File) => void;
 }
 
-export default function SearchInput({ onSubmit, disabled, landing, onFileSelect }: SearchInputProps) {
+export default function SearchInput({ onSubmit, disabled, landing }: SearchInputProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = () => {
     const trimmed = value.trim();
@@ -31,15 +28,6 @@ export default function SearchInput({ onSubmit, disabled, landing, onFileSelect 
       e.preventDefault();
       handleSubmit();
     }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && onFileSelect) {
-      onFileSelect(file);
-    }
-    // Reset so the same file can be re-selected
-    e.target.value = '';
   };
 
   return (
@@ -68,30 +56,6 @@ export default function SearchInput({ onSubmit, disabled, landing, onFileSelect 
         }}
       >
         <SearchIcon sx={{ color: 'text.secondary', mr: 1.5, fontSize: 22 }} />
-        {landing && onFileSelect && (
-          <>
-            <IconButton
-              onClick={() => fileInputRef.current?.click()}
-              size="small"
-              sx={{
-                color: 'text.secondary',
-                opacity: 0.6,
-                '&:hover': { opacity: 1 },
-                mr: 0.5,
-              }}
-            >
-              <UploadFileIcon sx={{ fontSize: 20 }} />
-            </IconButton>
-            <Divider orientation="vertical" flexItem sx={{ mr: 1.5, my: 1 }} />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              hidden
-              onChange={handleFileChange}
-            />
-          </>
-        )}
         <InputBase
           fullWidth
           placeholder={t('chat.searchPlaceholder')}

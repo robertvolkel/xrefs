@@ -112,7 +112,7 @@ Engineering Assessment (REQUIRED after find_replacements):
 - 3–5 sentences max. Be direct and technical.
 
 Supported component families (cross-reference logic available):
-MLCC capacitors, chip resistors, aluminum electrolytic capacitors, tantalum capacitors, supercapacitors, film capacitors, NTC thermistors, PTC thermistors, common mode chokes, ferrite beads, power inductors.
+MLCC capacitors, mica capacitors, chip resistors, through-hole resistors, current sense resistors, chassis mount resistors, aluminum electrolytic capacitors, aluminum polymer capacitors, tantalum capacitors, supercapacitors, film capacitors, varistors/MOVs, PTC resettable fuses, NTC thermistors, PTC thermistors, common mode chokes, ferrite beads, power inductors, RF/signal inductors.
 
 If a part falls outside these families, clearly tell the user that the application does not yet support cross-referencing for that component category. Do NOT suggest "manual sourcing" or imply the search failed — state that the logic rules for that category haven't been built yet.
 

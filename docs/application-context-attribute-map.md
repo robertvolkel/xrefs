@@ -8,18 +8,26 @@ This document maps every component family to the application-context questions t
 
 ## Families Ranked by Application-Context Sensitivity
 
-| Rank | Family | Context Sensitivity | Why |
-|------|--------|-------------------|-----|
-| 1 | Thermistors (67/68) | **Critical** | Same component type serves 5 completely different functions — wrong category = wrong part |
-| 2 | Common Mode Chokes (69) | **Critical** | Signal-line vs. power-line are different components sharing a name |
-| 3 | Ferrite Beads (70) | **High** | Power rail vs. signal line changes every priority; DC bias derating invisible without operating current |
-| 4 | Film Capacitors (64) | **High** | AC vs. DC, continuous vs. pulse, safety-rated vs. general — each activates different dominant attributes |
-| 5 | MLCCs (12) | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
-| 6 | Tantalum Capacitors (59) | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
-| 7 | Power Inductors (71) | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 8 | Aluminum Electrolytics (58) | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 9 | Supercapacitors (61) | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 10 | Chip Resistors (52) | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| Rank | Family | ID | Context Sensitivity | Why |
+|------|--------|-----|-------------------|-----|
+| 1 | Thermistors (NTC/PTC) | 67/68 | **Critical** | Same component type serves 5 completely different functions — wrong category = wrong part |
+| 2 | Common Mode Chokes | 69 | **Critical** | Signal-line vs. power-line are different components sharing a name |
+| 3 | Ferrite Beads | 70 | **High** | Power rail vs. signal line changes every priority; DC bias derating invisible without operating current |
+| 4 | Film Capacitors | 64 | **High** | AC vs. DC, continuous vs. pulse, safety-rated vs. general — each activates different dominant attributes |
+| 5 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
+| 6 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
+| 7 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
+| 8 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 9 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 10 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 11 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 12 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 13 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 14 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 15 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 16 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 17 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 18 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -325,7 +333,189 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 7. Power Inductors (Family 71)
+### 7. RF / Signal Inductors (Family 72)
+
+**Context sensitivity: HIGH**
+
+This is a variant of Power Inductors (Family 71) but with inverted priorities. Q factor and SRF replace Isat as the dominant concerns. Context questions reflect the RF/signal domain rather than power conversion.
+
+#### Question 1: What is the operating frequency?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Specific frequency (e.g., 13.56MHz, 433MHz, 2.4GHz)** | Q factor must be verified at this specific frequency (Q is frequency-dependent). SRF must be well above this frequency (rule of thumb: SRF ≥ 10× operating frequency). Core material suitability depends on frequency — ferrite cores become lossy above ~10MHz; air core or ceramic is needed for UHF+. |
+| **Broadband / wideband** | Q factor must be adequate across the full band. SRF must be above the highest frequency of interest. Flag for impedance curve review. |
+| **Unknown** | Flag all candidates for Application Review on frequency suitability. Do not substitute without knowing the operating frequency. |
+
+**Affected attributes:**
+- `Q Factor` → can be evaluated at the specific frequency if known
+- `SRF (Self-Resonant Frequency)` → threshold becomes quantitatively verifiable (must be ≥10× operating freq)
+- `Core Material` → air core required above ~100MHz, ceramic core for moderate RF, ferrite only for low-MHz
+
+#### Question 2: What Q factor is required?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High Q (>50) — tuned filter, oscillator, matching network** | Q factor becomes a hard threshold. Core material must support high Q (air core, ceramic). Shielding may reduce Q — verify trade-off. Inductance tolerance becomes critical (tight = less detuning). |
+| **Moderate Q (20–50) — general signal filtering** | Standard Q matching. More core material options available. |
+| **Low Q acceptable (<20) — broadband / non-resonant** | Q is a soft threshold. Focus shifts to inductance accuracy and SRF. |
+
+**Affected attributes:**
+- `Q Factor` → threshold tightens for high-Q applications
+- `Core Material` → air core / ceramic required for highest Q
+- `Shielding` → Application Review (shielding reduces Q due to eddy current losses)
+- `Inductance Tolerance` → tightens for tuned circuits (detuning risk)
+
+#### Question 3: Is EMI shielding required?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — shielded required** | Shielding flag becomes mandatory. But note: shielded RF inductors have lower Q than unshielded due to eddy current losses in the shield. The original design made a deliberate trade-off — match it. |
+| **No / don't know** | Shielded can replace unshielded (upgrade), but verify Q impact. |
+
+**Affected attributes:**
+- `Shielding` → Identity (Flag), mandatory if required
+- `Q Factor` → Application Review (verify Q is still adequate with shielding)
+
+---
+
+### 8. Current Sense Resistors (Family 54)
+
+**Context sensitivity: MODERATE-HIGH**
+
+This is a variant of Chip Resistors (Family 52) with tightened thresholds and additional attributes. Context questions focus on measurement precision and circuit topology.
+
+#### Question 1: Is this a Kelvin (4-terminal) sensing application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — 4-terminal Kelvin sensing pads on PCB** | Kelvin sensing flag becomes MANDATORY. A 2-terminal resistor physically cannot replace a 4-terminal one — the sense pads on the PCB connect to pads that don't exist on a 2-terminal part. This is a hard physical constraint, not just a performance preference. |
+| **No — standard 2-terminal** | 4-terminal replacements are acceptable (they work in 2-terminal footprints with reduced benefit), but 2-terminal is fine. |
+
+**Affected attributes:**
+- `Kelvin (4-Terminal) Sensing` → Identity (Flag), mandatory if yes
+- `Package / Footprint` → 4-terminal parts have a different pad layout
+
+#### Question 2: What measurement precision is required?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High precision (<1% system accuracy)** | Tolerance ≤0.5%. TCR ≤15 ppm/°C. Metal element / metal strip composition. Long-term stability/drift becomes a concern. Reverse-geometry or low-inductance package may be needed. |
+| **Standard precision (1–5% system accuracy)** | Tolerance ≤1%. TCR ≤50 ppm/°C. Thick film is acceptable. |
+| **Rough sensing (>5% system accuracy)** | Tolerance ≤5%. TCR ≤100 ppm/°C. Standard chip resistor matching is largely sufficient. |
+
+**Affected attributes:**
+- `Tolerance` → threshold tightens with precision
+- `TCR` → threshold tightens with precision
+- `Composition` → metal element/strip required for high precision
+- `Parasitic Inductance` → Application Review for high precision at high frequency
+- `Long-Term Stability / Drift` → escalates to primary for high precision
+
+#### Question 3: What is the switching frequency of the current being measured?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **DC or low frequency (<10kHz)** | Parasitic inductance is not a concern. Standard package geometry is fine. |
+| **High frequency (>100kHz switching converter)** | Parasitic inductance becomes Application Review. Reverse-geometry packages (e.g., 0612 instead of 1206) or metal strip types have lower inductance. Standard wirewound or high-inductance types will corrupt the measurement at high frequency. |
+| **Unknown** | Flag parasitic inductance for review. |
+
+**Affected attributes:**
+- `Parasitic Inductance` → Application Review, critical at high switching frequencies
+- `Package` → reverse-geometry preferred for high-frequency sensing
+
+---
+
+### 9. Varistors / MOVs (Family 65)
+
+**Context sensitivity: MODERATE-HIGH**
+
+#### Question 1: What is the transient source / application type?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **AC mains surge protection (lightning, switching transients)** | Safety rating (UL 1449, IEC 61643) becomes MANDATORY. Thermal disconnect / fuse becomes MANDATORY for UL compliance. Energy rating and peak surge current (8/20µs waveform) are PRIMARY. Maximum continuous AC voltage must cover mains voltage. |
+| **DC bus / automotive protection (load dump, inductive spikes)** | Safety rating is not required. Maximum continuous DC voltage is primary. Peak surge current matters but energy requirements are often lower than mains applications. AEC-Q200 may be required for automotive. Response time becomes more important (DC transients can be faster). |
+| **ESD / signal-line protection** | Small SMD form factor. Low capacitance becomes important (high capacitance on a signal line degrades signal integrity). Response time is primary. Energy rating is secondary (ESD pulses are low energy). Clamping voltage must be tight enough to protect sensitive ICs. |
+
+**Affected attributes:**
+- `Safety Rating (UL, IEC)` → mandatory for mains, not applicable for DC/ESD
+- `Thermal Disconnect / Fuse` → mandatory for mains UL compliance
+- `Energy Rating (Joules)` → primary for mains, secondary for ESD
+- `Peak Surge Current (8/20µs)` → primary for mains/DC, secondary for ESD
+- `Maximum Continuous Voltage (AC/DC)` → must match the application voltage type
+- `Clamping Voltage` → critical for ESD/signal protection (tight clamping needed)
+- `Response Time` → primary for DC/ESD, secondary for mains (MOVs are inherently fast enough for 50/60Hz)
+- `AEC-Q200` → flag for automotive DC applications
+- `Leakage Current` → important for battery-powered DC applications
+
+#### Question 2 (if mains): Does the original have a thermal disconnect / fuse?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | Replacement MUST also have a thermal disconnect. This is a safety feature that prevents thermal runaway from causing a fire. Non-negotiable for UL-listed SPDs. |
+| **No / bare MOV** | Thermal disconnect is not required but may be an upgrade. Verify the circuit has external overcurrent protection (fuse upstream of the MOV). |
+| **Unknown** | Flag as Application Review — inspect the original part or circuit design before substitution. |
+
+**Affected attributes:**
+- `Thermal Disconnect / Fuse` → Identity (Flag), mandatory if original has one
+
+#### Question 3: Is this in an automotive application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q200 becomes mandatory. Operating temp range must cover automotive (-40°C to +125°C typically). Surge ratings must cover automotive transients (ISO 7637 load dump: up to 40V/100A on 12V systems). |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q200` → Identity (Flag) for automotive
+- `Operating Temp Range` → must cover automotive range
+- `Peak Surge Current` → must cover automotive transient standards
+
+---
+
+### 10. PTC Resettable Fuses (Family 66)
+
+**Context sensitivity: MODERATE-HIGH**
+
+#### Question 1: What is the maximum circuit voltage?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Specific voltage (e.g., 5V, 12V, 24V, 48V)** | This is the MOST CRITICAL context question. The circuit voltage appears across the PTC fuse when it trips. Vmax of the replacement must exceed this voltage. A 6V-rated PTC fuse on a 12V circuit will arc, crack, or fail permanently when tripped — potentially causing a fire instead of providing protection. This is the single most common and most dangerous PTC fuse substitution mistake. |
+| **Unknown** | Do NOT proceed without determining circuit voltage. Flag as mandatory Application Review. |
+
+**Affected attributes:**
+- `Maximum Voltage (Vmax)` → hard threshold, non-negotiable
+- This question should BLOCK the matching engine from returning results if unanswered
+
+#### Question 2: What is the ambient operating temperature?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Specific temperature (e.g., 25°C, 50°C, 85°C)** | PTC fuses derate severely with temperature. At 50°C ambient, hold current may drop to 60–70% of the 25°C rating. At 85°C, it may be below 50%. The replacement must provide adequate hold current at the actual ambient temperature, not just at 25°C. Enables quantitative derating check. |
+| **Room temperature (20–30°C)** | Use nominal 25°C ratings. Minimal derating concern. |
+| **Unknown** | Flag for Application Review with derating curve note. |
+
+**Affected attributes:**
+- `Hold Current (Ihold)` → effective value derates with temperature
+- `Trip Current (Itrip)` → effective value derates with temperature
+- `Operating Temp Range` → must cover actual ambient
+
+#### Question 3: Will the fuse experience frequent trip/reset cycles?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — frequent faults expected (e.g., USB port, user-accessible connector)** | Endurance (trip/reset cycles) becomes primary. Post-trip resistance creep becomes Application Review — after many cycles, the initial resistance increases, which causes more voltage drop. On low-voltage circuits (3.3V, 5V), this voltage drop may become unacceptable. |
+| **No — fault is a rare event** | Endurance is secondary. Standard cycle rating is sufficient. |
+
+**Affected attributes:**
+- `Endurance (Trip/Reset Cycles)` → escalates to primary for frequent-cycling applications
+- `Post-Trip Resistance (R1max)` → Application Review for low-voltage circuits with frequent cycling
+- `Initial Resistance` → becomes more important (starting point for resistance creep)
+
+---
+
+### 11. Power Inductors (Family 71)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -367,7 +557,7 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 8. Aluminum Electrolytic Capacitors (Family 58)
+### 12. Aluminum Electrolytic Capacitors (Family 58)
 
 **Context sensitivity: MODERATE**
 
@@ -406,7 +596,7 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 9. Supercapacitors / EDLCs (Family 61)
+### 13. Supercapacitors / EDLCs (Family 61)
 
 **Context sensitivity: MODERATE**
 
@@ -439,7 +629,74 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 10. Chip Resistors (Family 52)
+### 14. Chassis Mount / High Power Resistors (Family 55)
+
+**Context sensitivity: MODERATE**
+
+This is a variant of Chip Resistors (Family 52). Inherits the base chip resistor context questions plus thermal management context.
+
+#### Question 1: What is the heatsink / thermal setup?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Dedicated heatsink with known thermal resistance** | Power rating can be evaluated at the actual heatsink temperature. Thermal resistance (°C/W) of the replacement must be ≤ original to maintain the same junction temperature. The heatsink interface dimensions (bolt hole spacing, tab size) must match exactly. |
+| **Chassis-mounted (PCB enclosure wall, metal frame)** | Similar to heatsink but thermal path depends on chassis material and contact quality. Thermal compound / pad interface matters. Power derating must be evaluated at expected chassis temperature. |
+| **No heatsink / free-standing** | Power rating is severely derated. A 50W resistor with no heatsink may only safely dissipate 5–10W. The replacement must match or exceed the free-air derating. |
+
+**Affected attributes:**
+- `Thermal Resistance (°C/W)` → threshold becomes quantitatively evaluable
+- `Power Rating` → effective rating depends on thermal setup
+- `Heatsink Interface Dimensions` → Identity (Fit), must match mounting
+
+#### Question 2: Is forced airflow present?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — fan-cooled** | Power rating improves with airflow. Some manufacturers specify separate ratings for natural convection vs. forced air. |
+| **No — natural convection only** | Use the natural convection power rating. |
+
+**Affected attributes:**
+- `Power Rating` → use correct derating (natural convection vs. forced air)
+
+#### Question 3 (inherited): Precision or harsh environment?
+
+Same as Chip Resistors (Family 52) Q1 and Q2. If the project context already answers environment, skip.
+
+---
+
+### 15. Aluminum Polymer Capacitors (Family 60)
+
+**Context sensitivity: LOW-MODERATE**
+
+Inherits from Aluminum Electrolytic (Family 58) with modifications. Lifetime/endurance questions are removed (polymer doesn't dry out). Ripple frequency still matters.
+
+#### Question 1: What is the switching/ripple frequency?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **120Hz (mains rectification)** | Use the datasheet ripple current value directly. |
+| **Specific high frequency (e.g., 100kHz switching supply)** | Aluminum polymer caps handle high-frequency ripple better than liquid electrolytics due to lower ESR, but still verify the replacement's ripple current rating at the actual frequency. |
+| **Unknown** | Use 120Hz baseline. |
+
+**Affected attributes:**
+- `Ripple Current` → threshold, verify at actual frequency
+- `ESR` → primary attribute (this is the main reason engineers choose polymer)
+
+#### Question 2: Is ESR the primary selection criterion?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — chosen specifically for low ESR** | ESR threshold becomes very tight. A replacement polymer cap with 2× the ESR defeats the purpose. |
+| **No — general decoupling / filtering** | Standard ESR matching is sufficient. |
+
+**Affected attributes:**
+- `ESR` → threshold tightens if ESR is the primary reason for choosing polymer
+
+**Note:** Ambient temperature and polarization questions are inherited from aluminum electrolytic context but lifetime calculation is not applicable (no Arrhenius-style dry-out for polymer).
+
+---
+
+### 16. Chip Resistors (Family 52)
 
 **Context sensitivity: LOW**
 
@@ -471,22 +728,67 @@ Chip resistors are the most straightforward parametric match. Only two context q
 
 ---
 
+### 17. Through-Hole Resistors (Family 53)
+
+**Context sensitivity: LOW**
+
+Inherits all context from Chip Resistors (Family 52). No additional application context questions — lead spacing and body dimensions are physical constraints determined by the original part, not by the application.
+
+#### Questions: Same as Chip Resistors (Family 52)
+
+1. Precision / instrumentation application?
+2. Harsh / industrial / automotive environment?
+
+No additional questions. The delta attributes (lead spacing, mounting style, body dimensions) are resolved from the original part's physical specifications, not from application context.
+
+---
+
+### 18. Mica Capacitors (Family 13)
+
+**Context sensitivity: LOW**
+
+Mica capacitors are chosen for precision — that decision was already made when the engineer specified mica. The application context is largely implied by the choice of dielectric.
+
+#### Question 1: What environment?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Automotive** | AEC-Q200 becomes mandatory (if available — mica caps in automotive are rare). |
+| **Military / aerospace** | MIL-spec compliance may be required. Tighter temperature range and tolerance. |
+| **Standard** | No additional flags. |
+
+**Affected attributes:**
+- `AEC-Q200` → Identity (Flag) for automotive
+- MIL-spec compliance → Identity (Flag) for military
+
+**Note:** DC bias derating, flex termination, and piezoelectric noise questions from the base MLCC table are NOT asked for mica — these issues don't apply to mica dielectric (removed in the delta document).
+
+---
+
 ## Summary: Application Context Questions by Family
 
 This table shows which questions to ask and in what order. The chat engine should ask ONLY the questions relevant to the resolved family.
 
-| Family | Q1 (Always Ask) | Q2 (Conditional) | Q3 (Conditional) | Q4 (Conditional) |
-|--------|-----------------|-------------------|-------------------|-------------------|
-| **Thermistors** | Function? (sensing / inrush / compensation / protection / heater) | If sensing: Accuracy needed? | If sensing: R-T curve in firmware? | — |
-| **CM Chokes** | Signal-line or power-line? | If signal: Which interface? | If power: Mains-connected? | — |
-| **Ferrite Beads** | Power rail or signal line? | Operating DC current? | If signal: Signal frequency? | — |
-| **Film Caps** | Application? (EMI / DC / snubber / motor-run / precision) | If EMI: Safety class? | If snubber: dV/dt requirement? | — |
-| **MLCCs** | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
-| **Tantalums** | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
-| **Power Inductors** | Circuit type? (switcher / linear / EMI) | Operating DC current? | Shielding required? | — |
-| **Al Electrolytics** | Ripple frequency? | Ambient temperature? | Polarized or non-polarized? | — |
-| **Supercapacitors** | Function? (backup / pulse / harvesting) | Cold-start required? | — | — |
-| **Chip Resistors** | Precision application? | Harsh environment? | — | — |
+| Family | ID | Q1 (Always Ask) | Q2 (Conditional) | Q3 (Conditional) | Q4 (Conditional) |
+|--------|----|-----------------|-------------------|-------------------|-------------------|
+| **Thermistors** | 67/68 | Function? (sensing / inrush / compensation / protection / heater) | If sensing: Accuracy needed? | If sensing: R-T curve in firmware? | — |
+| **CM Chokes** | 69 | Signal-line or power-line? | If signal: Which interface? | If power: Mains-connected? | — |
+| **Ferrite Beads** | 70 | Power rail or signal line? | Operating DC current? | If signal: Signal frequency? | — |
+| **Film Caps** | 64 | Application? (EMI / DC / snubber / motor-run / precision) | If EMI: Safety class? | If snubber: dV/dt requirement? | — |
+| **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
+| **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
+| **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |
+| **Current Sense Resistors** | 54 | Kelvin (4-terminal) sensing? | Measurement precision? | Switching frequency? | — |
+| **Power Inductors** | 71 | Circuit type? (switcher / linear / EMI) | Operating DC current? | Shielding required? | — |
+| **Varistors / MOVs** | 65 | Application type? (mains / DC / ESD) | If mains: Thermal disconnect? | Automotive? | — |
+| **PTC Resettable Fuses** | 66 | Maximum circuit voltage? | Ambient temperature? | Frequent trip/reset cycles? | — |
+| **Al Electrolytics** | 58 | Ripple frequency? | Ambient temperature? | Polarized or non-polarized? | — |
+| **Supercapacitors** | 61 | Function? (backup / pulse / harvesting) | Cold-start required? | — | — |
+| **Chassis Mount Resistors** | 55 | Thermal setup? (heatsink / chassis / free-standing) | Forced airflow? | Precision? Environment? | — |
+| **Al Polymer Caps** | 60 | Ripple frequency? | ESR primary criterion? | — | — |
+| **Chip Resistors** | 52 | Precision application? | Harsh environment? | — | — |
+| **Through-Hole Resistors** | 53 | Precision application? | Harsh environment? | — | — |
+| **Mica Capacitors** | 13 | Environment? | — | — | — |
 
 ---
 
@@ -534,3 +836,20 @@ The user's answers populate the `ApplicationContext` object, which is passed to 
 2. Tighten thresholds (e.g., precision sensing tightens tolerance thresholds)
 3. Escalate Application Review attributes to effective hard gates (e.g., failure mode for safety-critical tantalum applications)
 4. Add flag notes to the assessment (e.g., "Verify impedance at 300mA operating current using manufacturer's DC bias curve")
+
+### Variant Families Inherit and Modify
+
+For variant families (53, 54, 55, 60, 13, 72) that inherit from a base table:
+- Start with the base family's context questions
+- Apply any overrides or additions from the variant's section in this document
+- Remove any questions that are explicitly marked as not applicable for the variant
+- The delta document (`passive_variants_delta.docx`) defines the attribute-level changes; this document defines the context-question-level changes
+
+### Blocking Questions
+
+Some questions are so critical that the matching engine should NOT return results if they go unanswered:
+- **PTC Resettable Fuses:** "What is the maximum circuit voltage?" — Vmax violations cause fire risk
+- **Varistors (mains):** "Does the original have a thermal disconnect?" — fire safety
+- **Thermistors:** "What is this thermistor's function?" — wrong category = completely wrong matching
+
+Implement these as `required: true` on the ContextQuestion, and have the orchestrator refuse to proceed until the user answers.

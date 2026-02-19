@@ -135,7 +135,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
     // If we have source attributes, check for missing attrs and context questions
     const attrs = row.sourceAttributes;
     const subcategory = attrs?.part.subcategory;
-    const logicTable = subcategory ? getLogicTableForSubcategory(subcategory) : null;
+    const logicTable = subcategory ? getLogicTableForSubcategory(subcategory, attrs ?? undefined) : null;
 
     if (!logicTable) {
       // No logic table — go straight to open chat

@@ -66,3 +66,47 @@ WHERE id NOT IN (SELECT id FROM profiles);
 -- =============================================================
 
 ALTER TABLE parts_lists ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD';
+
+-- =============================================================
+-- Conversations table — chat history persistence
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  source_mpn TEXT,
+  phase TEXT NOT NULL DEFAULT 'idle',
+  messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  orchestrator_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_part JSONB,
+  source_attributes JSONB,
+  application_context JSONB,
+  recommendations JSONB NOT NULL DEFAULT '[]'::jsonb,
+  selected_recommendation JSONB,
+  comparison_attributes JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
+  ON conversations(user_id, updated_at DESC);
+
+-- Row Level Security
+ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own conversations"
+  ON conversations FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can insert own conversations"
+  ON conversations FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Users can update own conversations"
+  ON conversations FOR UPDATE TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can delete own conversations"
+  ON conversations FOR DELETE TO authenticated
+  USING (user_id = auth.uid());

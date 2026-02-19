@@ -9,7 +9,7 @@ import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
-import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
@@ -18,9 +18,11 @@ import OrgSettingsDialog from './OrgSettingsDialog';
 
 interface AppSidebarProps {
   onReset?: () => void;
+  onToggleHistory?: () => void;
+  historyOpen?: boolean;
 }
 
-export default function AppSidebar({ onReset }: AppSidebarProps) {
+export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
@@ -100,15 +102,17 @@ export default function AppSidebar({ onReset }: AppSidebarProps) {
         </IconButton>
 
         <IconButton
-          disabled
+          onClick={onToggleHistory}
           size="small"
           sx={{
             mt: 1.5,
-            opacity: 0.3,
+            opacity: historyOpen ? 1 : 0.7,
+            bgcolor: historyOpen ? 'action.selected' : 'transparent',
             borderRadius: 1,
+            '&:hover': { opacity: 1 },
           }}
         >
-          <FolderOutlinedIcon fontSize="small" />
+          <ChatBubbleOutlineIcon fontSize="small" />
         </IconButton>
       </Box>
 

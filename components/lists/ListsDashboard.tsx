@@ -10,13 +10,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
   InputBase,
   Paper,
   Skeleton,
   Typography,
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -252,14 +250,9 @@ export default function ListsDashboard() {
           flexShrink: 0,
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <IconButton onClick={() => router.push('/')} size="small" sx={{ color: 'text.secondary' }}>
-            <ArrowBackIcon fontSize="small" />
-          </IconButton>
-          <Typography variant="body2" color="text.secondary">
-            {t('lists.pageHeader')}
-          </Typography>
-        </Box>
+        <Typography variant="body2" color="text.secondary">
+          {t('lists.pageHeader')}
+        </Typography>
 
         <Button
           variant="contained"

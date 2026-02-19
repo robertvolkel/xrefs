@@ -23,42 +23,47 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   return json.data;
 }
 
-export async function searchParts(query: string): Promise<SearchResult> {
+export async function searchParts(query: string, signal?: AbortSignal): Promise<SearchResult> {
   return fetchApi<SearchResult>(`${BASE}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
+    signal,
   });
 }
 
-export async function getPartAttributes(mpn: string): Promise<PartAttributes> {
-  return fetchApi<PartAttributes>(`${BASE}/attributes/${encodeURIComponent(mpn)}`);
+export async function getPartAttributes(mpn: string, signal?: AbortSignal): Promise<PartAttributes> {
+  return fetchApi<PartAttributes>(`${BASE}/attributes/${encodeURIComponent(mpn)}`, { signal });
 }
 
-export async function getRecommendations(mpn: string): Promise<XrefRecommendation[]> {
-  return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`);
+export async function getRecommendations(mpn: string, signal?: AbortSignal): Promise<XrefRecommendation[]> {
+  return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, { signal });
 }
 
 export async function getRecommendationsWithOverrides(
   mpn: string,
   overrides: Record<string, string>,
-  applicationContext?: ApplicationContext
+  applicationContext?: ApplicationContext,
+  signal?: AbortSignal,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ overrides, applicationContext }),
+    signal,
   });
 }
 
 export async function getRecommendationsWithContext(
   mpn: string,
-  applicationContext: ApplicationContext
+  applicationContext: ApplicationContext,
+  signal?: AbortSignal,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ applicationContext }),
+    signal,
   });
 }
 
@@ -66,11 +71,13 @@ export async function getRecommendationsWithContext(
 export async function chatWithOrchestrator(
   messages: OrchestratorMessage[],
   recommendations?: XrefRecommendation[],
+  signal?: AbortSignal,
 ): Promise<OrchestratorResponse> {
   return fetchApi<OrchestratorResponse>(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, recommendations }),
+    signal,
   });
 }
 

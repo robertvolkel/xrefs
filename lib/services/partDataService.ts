@@ -92,7 +92,7 @@ export async function getRecommendations(
 
   // Step 1b: Merge user-supplied attribute overrides
   if (attributeOverrides && Object.keys(attributeOverrides).length > 0) {
-    const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+    const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
     for (const [attrId, value] of Object.entries(attributeOverrides)) {
       const existing = sourceAttrs.parameters.find(p => p.parameterId === attrId);
       if (existing) {
@@ -111,8 +111,8 @@ export async function getRecommendations(
     }
   }
 
-  // Step 2: Check if this family has a logic table
-  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+  // Step 2: Check if this family has a logic table (classifier detects variants)
+  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
 
   // No logic table → fall back to hardcoded mock recommendations
   if (!logicTable) {

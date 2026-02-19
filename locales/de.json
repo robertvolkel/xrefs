@@ -16,6 +16,11 @@
     "yourLists": "Ihre Listen"
   },
 
+  "history": {
+    "newChat": "Neuer Chat",
+    "empty": "Noch keine Gespräche. Suchen Sie nach einem Bauteil, um zu beginnen."
+  },
+
   "accountSettings": {
     "title": "Meine Kontoeinstellungen",
     "globalSettings": "Allgemeine Einstellungen",

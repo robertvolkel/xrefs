@@ -16,6 +16,11 @@
     "yourLists": "Your Lists"
   },
 
+  "history": {
+    "newChat": "New Chat",
+    "empty": "No conversations yet. Start by searching for a part."
+  },
+
   "accountSettings": {
     "title": "My Account Settings",
     "globalSettings": "Global Settings",

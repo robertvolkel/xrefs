@@ -1,28 +1,44 @@
 import { FamilyContextConfig } from '../types';
 import { mlccContext } from './mlcc';
+import { micaCapacitorsContext } from './micaCapacitors';
 import { chipResistorsContext } from './chipResistors';
+import { throughHoleResistorsContext } from './throughHoleResistors';
+import { currentSenseResistorsContext } from './currentSenseResistors';
+import { chassisMountResistorsContext } from './chassisMountResistors';
 import { alElectrolyticContext } from './alElectrolytic';
+import { aluminumPolymerContext } from './aluminumPolymer';
 import { tantalumContext } from './tantalum';
 import { supercapacitorContext } from './supercapacitor';
 import { filmCapacitorContext } from './filmCapacitor';
+import { varistorsMOVsContext } from './varistorsMOVs';
+import { ptcResettableFusesContext } from './ptcResettableFuses';
 import { ntcThermistorContext } from './ntcThermistor';
 import { ptcThermistorContext } from './ptcThermistor';
 import { commonModeChokeContext } from './commonModeChoke';
 import { ferriteBeadContext } from './ferriteBead';
 import { powerInductorContext } from './powerInductor';
+import { rfSignalInductorsContext } from './rfSignalInductors';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
+  micaCapacitorsContext,
   chipResistorsContext,
+  throughHoleResistorsContext,
+  currentSenseResistorsContext,
+  chassisMountResistorsContext,
   alElectrolyticContext,
+  aluminumPolymerContext,
   tantalumContext,
   supercapacitorContext,
   filmCapacitorContext,
+  varistorsMOVsContext,
+  ptcResettableFusesContext,
   ntcThermistorContext,
   ptcThermistorContext,
   commonModeChokeContext,
   ferriteBeadContext,
   powerInductorContext,
+  rfSignalInductorsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

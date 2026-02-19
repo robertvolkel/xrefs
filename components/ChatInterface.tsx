@@ -19,7 +19,6 @@ interface ChatInterfaceProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
-  onFileSelect?: (file: File) => void;
 }
 
 export default function ChatInterface({
@@ -34,7 +33,6 @@ export default function ChatInterface({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
-  onFileSelect,
 }: ChatInterfaceProps) {
   const { t } = useTranslation();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -43,7 +41,10 @@ export default function ChatInterface({
   const isLanding = isIdle && messages.length === 0;
   const inputDisabled = isSearching || phase === 'loading-attributes' || phase === 'awaiting-attributes' || phase === 'awaiting-context' || phase === 'finding-matches';
   const showSpinner = !!statusText;
-  const chatTitle = messages.find((m) => m.role === 'user')?.content;
+  const firstUserMessage = messages.find((m) => m.role === 'user')?.content;
+  const chatTitle = firstUserMessage && firstUserMessage.length > 30
+    ? firstUserMessage.slice(0, 30) + '…'
+    : firstUserMessage;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -62,7 +63,7 @@ export default function ChatInterface({
           px: { xs: 2, sm: 3 },
         }}
       >
-        <SearchInput onSubmit={onSearch} disabled={false} landing onFileSelect={onFileSelect} />
+        <SearchInput onSubmit={onSearch} disabled={false} landing />
         <Typography
           variant="caption"
           color="text.secondary"

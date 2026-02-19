@@ -4,7 +4,6 @@ import { useState, useMemo } from 'react';
 import {
   Box,
   Chip,
-  Link,
   List,
   ListItemButton,
   ListItemText,
@@ -89,19 +88,9 @@ export default function LogicShell() {
           flexShrink: 0,
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Link href="/" sx={{ display: 'flex', alignItems: 'center' }}>
-            <Box
-              component="img"
-              src="/xq-logo.png"
-              alt="XQ"
-              sx={{ width: 28, opacity: 0.55, '&:hover': { opacity: 0.8 } }}
-            />
-          </Link>
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-            Cross-Reference Logic
-          </Typography>
-        </Box>
+        <Typography variant="body2" color="text.secondary">
+          Cross-Reference Logic
+        </Typography>
       </Box>
 
       {/* Body: sidebar + content */}

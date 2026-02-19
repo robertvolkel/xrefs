@@ -161,6 +161,8 @@ export interface ContextQuestion {
   priority: number;
   allowFreeText?: boolean;
   freeTextPlaceholder?: string;
+  /** If true, the matching engine will not proceed until this question is answered. */
+  required?: boolean;
 }
 
 /** Context question configuration for a component family */
@@ -258,6 +260,38 @@ export interface OrchestratorResponse {
   searchResult?: SearchResult;
   attributes?: Record<string, PartAttributes>;
   recommendations?: Record<string, XrefRecommendation[]>;
+}
+
+// ============================================================
+// CONVERSATION PERSISTENCE TYPES
+// ============================================================
+
+/** Summary for listing conversations in the history drawer */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  sourceMpn: string | null;
+  phase: AppPhase;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Full conversation state for persistence and hydration */
+export interface ConversationSnapshot {
+  id: string;
+  title: string;
+  sourceMpn: string | null;
+  phase: AppPhase;
+  messages: ChatMessage[];
+  orchestratorMessages: OrchestratorMessage[];
+  sourcePart: PartSummary | null;
+  sourceAttributes: PartAttributes | null;
+  applicationContext: ApplicationContext | null;
+  recommendations: XrefRecommendation[];
+  selectedRecommendation: XrefRecommendation | null;
+  comparisonAttributes: PartAttributes | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ============================================================

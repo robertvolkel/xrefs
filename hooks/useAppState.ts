@@ -4,6 +4,7 @@ import {
   AppPhase,
   ApplicationContext,
   ChatMessage,
+  ConversationSnapshot,
   PartSummary,
   PartAttributes,
   XrefRecommendation,
@@ -24,6 +25,7 @@ import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
 import { logSearch } from '@/lib/supabaseLogger';
 
 interface AppState {
+  conversationId: string | null;
   phase: AppPhase;
   messages: ChatMessage[];
   statusText: string;
@@ -38,6 +40,7 @@ interface AppState {
 }
 
 const initialState: AppState = {
+  conversationId: null,
   phase: 'idle',
   messages: [],
   statusText: '',
@@ -70,6 +73,16 @@ export function useAppState() {
   // Track original search query for search history logging
   const queryRef = useRef<string>('');
   const loggedRef = useRef(false);
+  // Abort in-flight requests when switching conversations or resetting
+  const abortRef = useRef<AbortController | null>(null);
+
+  /** Cancel any in-flight request and return a fresh AbortSignal. */
+  const freshAbort = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return controller.signal;
+  }, []);
 
   // Keep recsRef in sync with state for async callbacks
   useEffect(() => {
@@ -123,6 +136,7 @@ export function useAppState() {
 
   const handleSearchWithLLM = useCallback(
     async (query: string) => {
+      const signal = freshAbort();
       addMessage('user', query);
       setStatus('Thinking...');
       setState((prev) => ({ ...prev, phase: 'searching' }));
@@ -134,7 +148,10 @@ export function useAppState() {
         const response = await chatWithOrchestrator(
           conversationRef.current,
           recsRef.current.length > 0 ? recsRef.current : undefined,
+          signal,
         );
+
+        if (signal.aborted) return; // conversation switched mid-flight
 
         // Track assistant response in conversation history
         conversationRef.current.push({ role: 'assistant', content: response.message });
@@ -199,6 +216,7 @@ export function useAppState() {
 
   const handleConfirmWithLLM = useCallback(
     async (part: PartSummary) => {
+      const signal = freshAbort();
       addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
       setStatus('Fetching specifications from Digikey...');
       setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
@@ -210,7 +228,8 @@ export function useAppState() {
       });
 
       // Step 1: Fetch attributes (fast, direct API)
-      const sourceAttrs = await getPartAttributes(part.mpn).catch(() => null);
+      const sourceAttrs = await getPartAttributes(part.mpn, signal).catch(() => null);
+      if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
         // Check if this part family is supported
@@ -228,7 +247,7 @@ export function useAppState() {
         }
 
         // Step 2: Check for missing attributes against the logic table
-        const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+        const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
         const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
         const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
@@ -253,7 +272,7 @@ export function useAppState() {
         }
 
         // Step 2b: Check for application context questions
-        const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+        const logicTableForContext = logicTable;
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
@@ -294,7 +313,9 @@ export function useAppState() {
       const response = await chatWithOrchestrator(
         conversationRef.current,
         recsRef.current.length > 0 ? recsRef.current : undefined,
+        signal,
       ).catch(() => null);
+      if (signal.aborted) return;
       setStatus('');
       if (response) {
         conversationRef.current.push({ role: 'assistant', content: response.message });
@@ -313,7 +334,8 @@ export function useAppState() {
         } else {
           // Orchestrator didn't return recs — try direct API
           setStatus('Evaluating candidates against replacement rules...');
-          const fallbackRecs = await getRecommendations(part.mpn);
+          const fallbackRecs = await getRecommendations(part.mpn, signal);
+          if (signal.aborted) return;
           setStatus('');
           if (fallbackRecs.length > 0) {
             addMessage('assistant', response.message || `Found **${fallbackRecs.length} potential replacement${fallbackRecs.length !== 1 ? 's' : ''}** for ${part.mpn}.`);
@@ -335,7 +357,8 @@ export function useAppState() {
           return;
         }
         setStatus('Evaluating candidates against replacement rules...');
-        const recs = await getRecommendations(part.mpn);
+        const recs = await getRecommendations(part.mpn, signal);
+        if (signal.aborted) return;
         setStatus('');
         const paramCount = sourceAttrs.parameters.length;
         addMessage('assistant', `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`);
@@ -416,7 +439,7 @@ export function useAppState() {
         }
 
         // Check for missing attributes against the logic table
-        const logicTable = getLogicTableForSubcategory(attributes.part.subcategory);
+        const logicTable = getLogicTableForSubcategory(attributes.part.subcategory, attributes);
         const missingAttrs = logicTable ? detectMissingAttributes(attributes, logicTable) : [];
         const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
@@ -436,7 +459,7 @@ export function useAppState() {
         }
 
         // Check for application context questions
-        const logicTableForContext = getLogicTableForSubcategory(attributes.part.subcategory);
+        const logicTableForContext = logicTable;
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
@@ -574,6 +597,8 @@ export function useAppState() {
   }, []);
 
   const handleReset = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     conversationRef.current = [];
     setStatus('');
     setState(initialState);
@@ -585,6 +610,7 @@ export function useAppState() {
 
   const handleAttributeResponse = useCallback(
     async (responses: Record<string, string>) => {
+      const signal = freshAbort();
       // Filter out empty values
       const overrides = Object.fromEntries(
         Object.entries(responses).filter(([, v]) => v.trim() !== '')
@@ -620,7 +646,7 @@ export function useAppState() {
       // Check for application context questions before finding matches
       const sourceAttrs = state.sourceAttributes;
       if (sourceAttrs) {
-        const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory);
+        const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
@@ -652,8 +678,9 @@ export function useAppState() {
 
       try {
         const recs = filledCount > 0
-          ? await getRecommendationsWithOverrides(mpn, overrides)
-          : await getRecommendations(mpn);
+          ? await getRecommendationsWithOverrides(mpn, overrides, undefined, signal)
+          : await getRecommendations(mpn, signal);
+        if (signal.aborted) return;
 
         setStatus('Generating engineering assessment...');
 
@@ -669,7 +696,9 @@ export function useAppState() {
         const assessmentResponse = await chatWithOrchestrator(
           conversationRef.current,
           recs,
+          signal,
         ).catch(() => null);
+        if (signal.aborted) return;
 
         setStatus('');
 
@@ -710,11 +739,37 @@ export function useAppState() {
 
   const handleContextResponse = useCallback(
     async (answers: Record<string, string>) => {
+      const signal = freshAbort();
       // Filter out empty answers
       const filteredAnswers = Object.fromEntries(
         Object.entries(answers).filter(([, v]) => v.trim() !== '')
       );
       const filledCount = Object.keys(filteredAnswers).length;
+
+      // Block if any visible required questions are unanswered
+      const familyIdForBlock = state.sourceAttributes?.part.subcategory
+        ? getLogicTableForSubcategory(state.sourceAttributes.part.subcategory, state.sourceAttributes)?.familyId
+        : undefined;
+      if (familyIdForBlock) {
+        const contextConfig = getContextQuestionsForFamily(familyIdForBlock);
+        if (contextConfig) {
+          const visibleRequired = contextConfig.questions
+            .filter((q) => q.required)
+            .filter((q) => {
+              if (!q.condition) return true;
+              const depAnswer = filteredAnswers[q.condition.questionId];
+              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
+            });
+          const unanswered = visibleRequired.filter((q) => !filteredAnswers[q.questionId]);
+          if (unanswered.length > 0) {
+            addMessage(
+              'assistant',
+              `⚠️ Please answer the required question${unanswered.length > 1 ? 's' : ''} before proceeding: ${unanswered.map((q) => `"${q.questionText}"`).join(', ')}`
+            );
+            return;
+          }
+        }
+      }
 
       if (filledCount > 0) {
         const labels = Object.values(filteredAnswers);
@@ -728,7 +783,7 @@ export function useAppState() {
 
       // Build ApplicationContext if user provided answers
       const familyId = state.sourceAttributes?.part.subcategory
-        ? getLogicTableForSubcategory(state.sourceAttributes.part.subcategory)?.familyId
+        ? getLogicTableForSubcategory(state.sourceAttributes.part.subcategory, state.sourceAttributes)?.familyId
         : undefined;
 
       const context: ApplicationContext | undefined = filledCount > 0 && familyId
@@ -752,11 +807,13 @@ export function useAppState() {
           recs = await getRecommendationsWithOverrides(
             mpn,
             hasOverrides ? overrides : {},
-            context
+            context,
+            signal,
           );
         } else {
-          recs = await getRecommendations(mpn);
+          recs = await getRecommendations(mpn, signal);
         }
+        if (signal.aborted) return;
 
         setStatus('Generating engineering assessment...');
 
@@ -772,7 +829,9 @@ export function useAppState() {
         const assessmentResponse = await chatWithOrchestrator(
           conversationRef.current,
           recs,
+          signal,
         ).catch(() => null);
+        if (signal.aborted) return;
 
         setStatus('');
 
@@ -810,6 +869,78 @@ export function useAppState() {
     await handleContextResponse({});
   }, [handleContextResponse]);
 
+  // ============================================================
+  // CONVERSATION PERSISTENCE HELPERS
+  // ============================================================
+
+  const getOrchestratorMessages = useCallback(() => conversationRef.current, []);
+
+  const setConversationId = useCallback((id: string) => {
+    setState((prev) => ({ ...prev, conversationId: id }));
+  }, []);
+
+  const hydrateState = useCallback((snapshot: ConversationSnapshot) => {
+    // Cancel any in-flight async operations from the previous conversation
+    abortRef.current?.abort();
+    abortRef.current = null;
+
+    conversationRef.current = snapshot.orchestratorMessages;
+    recsRef.current = snapshot.recommendations;
+    pendingOverridesRef.current = {};
+    queryRef.current = snapshot.sourceMpn ?? '';
+    loggedRef.current = true; // don't re-log on hydration
+
+    // Recover from transient phases (only valid while an async op is running)
+    let phase = snapshot.phase;
+    let messages = snapshot.messages;
+
+    const TRANSIENT_PHASES: AppPhase[] = ['searching', 'loading-attributes', 'finding-matches'];
+    if (TRANSIENT_PHASES.includes(phase)) {
+      // Determine the best safe phase based on available data
+      if (phase === 'finding-matches') {
+        phase = snapshot.recommendations.length > 0 ? 'viewing' : 'viewing';
+      } else if (phase === 'loading-attributes') {
+        phase = snapshot.sourceAttributes ? 'viewing' : snapshot.sourcePart ? 'resolving' : 'idle';
+      } else {
+        // 'searching' → idle
+        phase = 'idle';
+      }
+
+      // Append a recovery message
+      const recoveryText = phase === 'idle'
+        ? 'Your previous search was interrupted. Please search again.'
+        : 'Loading was interrupted but your progress has been restored.';
+
+      messages = [
+        ...messages,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: recoveryText,
+          timestamp: new Date(),
+        },
+      ];
+    }
+
+    // Infer llmAvailable from conversation evidence
+    const llmWasUsed = snapshot.orchestratorMessages.length > 0;
+
+    setState({
+      conversationId: snapshot.id,
+      phase,
+      messages,
+      statusText: '',
+      searchResult: null,
+      sourcePart: snapshot.sourcePart,
+      sourceAttributes: snapshot.sourceAttributes,
+      applicationContext: snapshot.applicationContext,
+      recommendations: snapshot.recommendations,
+      selectedRecommendation: snapshot.selectedRecommendation,
+      comparisonAttributes: snapshot.comparisonAttributes,
+      llmAvailable: llmWasUsed ? true : null,
+    });
+  }, []);
+
   return {
     ...state,
     handleSearch,
@@ -822,5 +953,8 @@ export function useAppState() {
     handleSkipAttributes,
     handleContextResponse,
     handleSkipContext,
+    getOrchestratorMessages,
+    setConversationId,
+    hydrateState,
   };
 }
