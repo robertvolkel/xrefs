@@ -137,3 +137,90 @@ export function classifyFamily(baseFamilyId: string, attrs: PartAttributes): str
   }
   return baseFamilyId;
 }
+
+// ============================================================
+// ATTRIBUTE ENRICHMENT — Rectifier Diodes (Family B1)
+// ============================================================
+
+/**
+ * Infer and populate the `recovery_category` parameter for rectifier diodes
+ * when the data source doesn't provide it explicitly.
+ *
+ * Classification logic:
+ * 1. If `recovery_category` is already present, keep it.
+ * 2. If `trr` (reverse recovery time) is available, classify by threshold:
+ *    - trr < 100ns → Ultrafast  (spec says <50ns but allowing margin for datasheet variation)
+ *    - trr < 500ns → Fast
+ *    - trr ≥ 500ns → Standard
+ * 3. Otherwise, infer from manufacturer family naming in the description/MPN:
+ *    - "ultrafast", "UFRD", "US" prefix → Ultrafast
+ *    - "fast", "FRD", "FR" prefix → Fast
+ *    - "standard", "GP" (general purpose) → Standard
+ *
+ * Mutates `attrs.parameters` in place if recovery_category is added.
+ */
+export function enrichRectifierAttributes(attrs: PartAttributes): void {
+  // Already has recovery_category — nothing to do
+  if (findParam(attrs, 'recovery_category')) return;
+
+  const category = inferRecoveryCategory(attrs);
+  if (category) {
+    attrs.parameters.push({
+      parameterId: 'recovery_category',
+      parameterName: 'Recovery Category',
+      value: category,
+      sortOrder: 0,
+    });
+  }
+}
+
+function inferRecoveryCategory(attrs: PartAttributes): string | null {
+  // Method 1: Infer from trr value
+  const trr = getNumericParam(attrs, 'trr');
+  if (trr !== null) {
+    // trr is typically in nanoseconds; handle µs values too
+    const trrNs = parseTrrToNs(attrs);
+    if (trrNs !== null) {
+      if (trrNs < 100) return 'Ultrafast';
+      if (trrNs < 500) return 'Fast';
+      return 'Standard';
+    }
+  }
+
+  // Method 2: Infer from description / MPN keywords
+  const desc = attrs.part.description.toLowerCase();
+  const mpn = attrs.part.mpn.toUpperCase();
+
+  if (desc.includes('ultrafast') || desc.includes('ultra fast') ||
+      /\bUFRD\b/.test(mpn) || /\bUS\d/.test(mpn)) {
+    return 'Ultrafast';
+  }
+  if (desc.includes('fast recovery') || desc.includes('fast rectifier') ||
+      /\bFRD\b/.test(mpn) || /\bFR\d/.test(mpn)) {
+    return 'Fast';
+  }
+  if (desc.includes('standard recovery') || desc.includes('general purpose') ||
+      /\bGP\b/.test(desc)) {
+    return 'Standard';
+  }
+
+  return null;
+}
+
+/** Parse trr value to nanoseconds, handling ns/µs/us unit suffixes */
+function parseTrrToNs(attrs: PartAttributes): number | null {
+  const param = findParam(attrs, 'trr');
+  if (!param) return null;
+
+  const val = param.value.toLowerCase().replace(/\s+/g, '');
+  // Match patterns like "35ns", "0.5µs", "500ns", "2us"
+  const match = val.match(/([\d.]+)\s*(ns|µs|us|μs)?/);
+  if (!match) return null;
+
+  const num = parseFloat(match[1]);
+  const unit = match[2] ?? 'ns';
+
+  if (unit === 'ns') return num;
+  if (unit === 'µs' || unit === 'us' || unit === 'μs') return num * 1000;
+  return num; // default ns
+}

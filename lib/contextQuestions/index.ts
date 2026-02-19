@@ -18,6 +18,8 @@ import { commonModeChokeContext } from './commonModeChoke';
 import { ferriteBeadContext } from './ferriteBead';
 import { powerInductorContext } from './powerInductor';
 import { rfSignalInductorsContext } from './rfSignalInductors';
+// Block B: Discrete Semiconductors
+import { rectifierDiodesContext } from './rectifierDiodes';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -39,6 +41,8 @@ const allConfigs: FamilyContextConfig[] = [
   ferriteBeadContext,
   powerInductorContext,
   rfSignalInductorsContext,
+  // Block B: Discrete Semiconductors
+  rectifierDiodesContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

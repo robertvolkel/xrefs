@@ -13,7 +13,7 @@ import {
 } from './digikeyMapper';
 import { mockSearch, mockGetAttributes } from '../mockSearchService';
 import { mockGetRecommendations } from '../mockXrefService';
-import { getLogicTableForSubcategory } from '../logicTables';
+import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
@@ -111,8 +111,14 @@ export async function getRecommendations(
     }
   }
 
+  // Step 1c: Enrich rectifier diodes with inferred recovery_category if missing
+  const logicTablePrecheck = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
+  if (logicTablePrecheck?.familyId === 'B1') {
+    enrichRectifierAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
-  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
+  const logicTable = logicTablePrecheck;
 
   // No logic table → fall back to hardcoded mock recommendations
   if (!logicTable) {

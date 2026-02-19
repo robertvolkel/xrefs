@@ -17,17 +17,18 @@ This document maps every component family to the application-context questions t
 | 5 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
 | 6 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
 | 7 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
-| 8 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 9 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 10 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 11 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 12 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 13 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 14 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 15 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 16 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 17 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 18 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 8 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
+| 9 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 10 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 11 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 12 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 13 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 14 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 15 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 16 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 17 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 18 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 19 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -765,6 +766,71 @@ Mica capacitors are chosen for precision — that decision was already made when
 
 ---
 
+### 19. Rectifier Diodes — Standard, Fast, and Ultrafast Recovery (Family B1)
+
+**Context sensitivity: HIGH**
+
+This is the first Block B (discrete semiconductor) family. Context sensitivity is high because the switching frequency of the application fundamentally determines whether recovery time or forward voltage is the dominant spec — and the circuit topology changes which parameters are primary.
+
+#### Question 1: What is the switching frequency?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **50/60Hz (mains rectification)** | Recovery time (trr) is IRRELEVANT — even a 5µs standard recovery diode's trr is negligible compared to the 16–20ms period. Forward voltage (Vf) becomes the dominant spec because conduction loss overwhelms switching loss. Standard recovery diodes are preferred (lowest Vf). Reverse recovery charge (Qrr) and recovery behavior (soft/snappy) can be ignored. Junction capacitance (Cj) is irrelevant. |
+| **1kHz–50kHz (low-frequency switching, motor drives)** | trr begins to matter. Fast recovery diodes are the minimum. Vf is still important but the Vf/trr trade-off starts to shift. Recovery behavior (soft vs. snappy) starts to matter — snappy recovery generates voltage spikes that scale with frequency. |
+| **50kHz–500kHz (SMPS, DC-DC converters)** | trr and Qrr become PRIMARY — switching losses dominate conduction losses. Ultrafast recovery is typically required. Vf is secondary. Recovery behavior becomes critical — snappy recovery causes significant EMI and voltage ringing at these frequencies. Junction capacitance contributes to switching losses. |
+| **>500kHz** | The engineer should probably be using a Schottky diode (zero recovery) or SiC diode, not a silicon rectifier. Flag for review — if the original is a silicon rectifier at this frequency, it may be a legacy design. |
+
+**Affected attributes:**
+- `Recovery Category` → standard acceptable at 50/60Hz, fast required >1kHz, ultrafast required >50kHz
+- `Reverse Recovery Time (trr)` → irrelevant at 50/60Hz, primary above 50kHz
+- `Reverse Recovery Charge (Qrr)` → irrelevant at 50/60Hz, primary above 50kHz
+- `Forward Voltage (Vf)` → primary at 50/60Hz, secondary above 50kHz
+- `Recovery Behavior (Soft/Snappy)` → not applicable at 50/60Hz, Application Review above 1kHz, critical above 50kHz
+- `Junction Capacitance (Cj)` → not applicable at 50/60Hz, Application Review above 100kHz
+
+#### Question 2: What is the circuit topology / function?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Power supply rectifier (half-bridge, full-bridge, center-tap)** | Standard rectifier application. Io (average current) is the primary current spec. Configuration must match exactly (single, dual common-cathode, dual common-anode, bridge). Ifsm (surge) is important due to capacitor inrush on power-on. Voltage rating must cover the full reverse voltage with margin. |
+| **Freewheeling / clamp diode (across inductor or relay coil)** | The diode clamps inductive voltage spikes. Fast/ultrafast recovery is critical regardless of the main circuit's switching frequency — the inductor deenergizes rapidly. Reverse voltage rating must cover the inductive spike voltage, not just the supply voltage. Vf is less critical (the diode only conducts during brief transient events). Forward surge current (Ifsm) must handle the peak inductor current. |
+| **OR-ing / redundant power** | Two supplies feed the load through separate diodes. Vf becomes extremely important — any Vf mismatch between the two diodes causes unequal current sharing. Low Vf and matched Vf between the two paths matter. Reverse leakage (Ir) matters because the non-active diode sees continuous reverse bias. Reverse recovery is rarely important (one supply doesn't typically switch off at high frequency). |
+| **Reverse polarity protection** | A single diode in series or parallel with the power input. Vf is critical (it's a permanent voltage loss from the supply). Io must handle the full load current. Reverse leakage matters (series protection). Recovery time is irrelevant (the diode doesn't switch during normal operation). |
+| **Voltage multiplier / charge pump** | Capacitors and diodes in a ladder configuration. Vf directly reduces the output voltage of each stage. Reverse voltage per diode equals the peak-to-peak input voltage. Recovery time may matter at higher pump frequencies. |
+
+**Affected attributes:**
+- `Configuration` → Identity, topology-specific (bridge for full-bridge, dual for center-tap, single for most others)
+- `Forward Voltage (Vf)` → escalates to primary for OR-ing, polarity protection, and voltage multipliers
+- `Reverse Recovery Time (trr)` → escalates to primary for freewheeling, irrelevant for polarity protection
+- `Ifsm (Surge)` → escalates to primary for power supply rectifiers (capacitor inrush) and freewheeling (inductor energy)
+- `Reverse Leakage (Ir)` → escalates to primary for OR-ing (continuous reverse bias)
+- `Max Repetitive Reverse Voltage (Vrrm)` → must account for inductive spikes for freewheeling, peak-to-peak for multipliers
+
+#### Question 3: Is this a low-voltage application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — supply voltage ≤12V** | Vf becomes the dominant concern regardless of other factors. A 1.1V Vf on a 5V rail is 22% loss. A 0.7V Vf is 14% loss. Every 100mV of Vf difference matters. Flag the engineer to consider Schottky diodes (Vf ≈ 0.3–0.5V) if they haven't already. If the original is a silicon rectifier in a low-voltage application, it may be a legacy design or chosen for a specific reason (higher voltage handling, lower leakage than Schottky). |
+| **No — supply voltage >12V** | Standard Vf matching. A 100mV Vf difference on a 48V or 400V rail is negligible. |
+
+**Affected attributes:**
+- `Forward Voltage (Vf)` → escalates to dominant spec for low-voltage
+- Consider recommending Schottky diode family as alternative → flag in assessment
+
+#### Question 4: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Operating temp range must cover automotive requirements. Note: automotive uses AEC-Q101 for discretes, NOT AEC-Q200 (which is for passives). |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag) for automotive
+- `Operating Temp Range` → must cover automotive range (-40°C to +125°C or +150°C)
+
+---
+
 ## Summary: Application Context Questions by Family
 
 This table shows which questions to ask and in what order. The chat engine should ask ONLY the questions relevant to the resolved family.
@@ -789,6 +855,9 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **Chip Resistors** | 52 | Precision application? | Harsh environment? | — | — |
 | **Through-Hole Resistors** | 53 | Precision application? | Harsh environment? | — | — |
 | **Mica Capacitors** | 13 | Environment? | — | — | — |
+| | | | | | |
+| **— BLOCK B: DISCRETE SEMICONDUCTORS —** | | | | | |
+| **Rectifier Diodes** | B1 | Switching frequency? (50/60Hz / low-freq / SMPS / >500kHz) | Circuit topology? (rectifier / freewheeling / OR-ing / polarity protection / multiplier) | Low-voltage application? | Automotive? |
 
 ---
 

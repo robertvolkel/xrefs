@@ -17,6 +17,7 @@ import { chassisMountResistorsLogicTable } from './chassisMountResistors';
 import { aluminumPolymerLogicTable } from './aluminumPolymer';
 import { micaCapacitorsLogicTable } from './micaCapacitors';
 import { rfSignalInductorsLogicTable } from './rfSignalInductors';
+import { rectifierDiodesLogicTable } from './rectifierDiodes';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -40,6 +41,8 @@ const logicTableRegistry: Record<string, LogicTable> = {
   '70': ferriteBeadsLogicTable,
   '71': powerInductorsLogicTable,
   '72': rfSignalInductorsLogicTable,
+  // Block B: Discrete Semiconductors
+  'B1': rectifierDiodesLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -123,6 +126,18 @@ const subcategoryToFamily: Record<string, string> = {
   'RF Inductor': '72',
   'Signal Inductor': '72',
   'RF Choke': '72',
+  // --- Block B: Discrete Semiconductors ---
+  // Rectifier Diodes (Family B1)
+  'Rectifier Diode': 'B1',
+  'Rectifier': 'B1',
+  'Diode - Rectifier': 'B1',
+  'Diodes - Rectifiers - Single': 'B1',
+  'Diodes - Rectifiers - Array': 'B1',
+  'Diodes - Bridge Rectifiers': 'B1',
+  'Fast Recovery Diode': 'B1',
+  'Ultrafast Recovery Diode': 'B1',
+  'Standard Recovery Diode': 'B1',
+  'Recovery Rectifier': 'B1',
 };
 
 export function getLogicTable(familyId: string): LogicTable | null {
@@ -163,4 +178,4 @@ export function getSupportedFamilyNames(): string[] {
   return [...new Set(Object.values(logicTableRegistry).map(t => t.familyName))];
 }
 
-export { classifyFamily } from './familyClassifier';
+export { classifyFamily, enrichRectifierAttributes } from './familyClassifier';
