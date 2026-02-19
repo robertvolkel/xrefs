@@ -89,8 +89,20 @@ export default function ListCard({ list, pinned, onClick, onDelete, onTogglePin,
             sx={{
               p: 2.5,
               '&:last-child': { pb: 0 },
+              position: 'relative',
             }}
           >
+            {pinned && (
+              <PushPinIcon
+                sx={{
+                  fontSize: 14,
+                  color: 'success.dark',
+                  position: 'absolute',
+                  top: 24,
+                  right: 12,
+                }}
+              />
+            )}
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
               <DescriptionIcon
                 sx={{ fontSize: 24, color: 'primary.main', mt: 0.25, opacity: 0.7 }}
@@ -110,10 +122,6 @@ export default function ListCard({ list, pinned, onClick, onDelete, onTogglePin,
                   >
                     {list.name}
                   </Typography>
-
-                  {pinned && (
-                    <PushPinIcon sx={{ fontSize: 14, color: 'text.secondary', opacity: 0.6, flexShrink: 0 }} />
-                  )}
 
                   <IconButton
                     size="small"
@@ -135,6 +143,16 @@ export default function ListCard({ list, pinned, onClick, onDelete, onTogglePin,
                     <MoreVertIcon sx={{ fontSize: 18 }} />
                   </IconButton>
                 </Box>
+
+                {list.customer && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ mt: 0.25, fontWeight: 500 }}
+                  >
+                    {list.customer}
+                  </Typography>
+                )}
 
                 {list.description && (
                   <Typography
@@ -159,11 +177,6 @@ export default function ListCard({ list, pinned, onClick, onDelete, onTogglePin,
                   <Typography variant="caption" color="text.secondary">
                     {t('listCard.totalParts', { count: list.totalRows })}
                   </Typography>
-                  {list.resolvedCount > 0 && (
-                    <Typography variant="caption" sx={{ color: 'success.main', ml: 1 }}>
-                      {t('listCard.resolved', { count: list.resolvedCount })}
-                    </Typography>
-                  )}
                   {notResolved > 0 && (
                     <Typography variant="caption" sx={{ color: 'error.main', ml: 1 }}>
                       {t('listCard.notResolved', { count: notResolved })}

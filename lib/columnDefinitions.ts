@@ -59,6 +59,7 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
 // ============================================================
 
 const DIGIKEY_PRODUCT_COLUMNS: ColumnDefinition[] = [
+  { id: 'dk:manufacturer', label: 'Manufacturer', source: 'digikey-product', enrichedField: 'manufacturer', group: 'DigiKey: Product ID', defaultWidth: '140px' },
   { id: 'dk:digikeyPartNumber', label: 'DigiKey Part #', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'DigiKey: Product ID', defaultWidth: '140px' },
   { id: 'dk:category', label: 'Category', source: 'digikey-product', enrichedField: 'category', group: 'DigiKey: Product Attributes', defaultWidth: '120px' },
   { id: 'dk:subcategory', label: 'Subcategory', source: 'digikey-product', enrichedField: 'subcategory', group: 'DigiKey: Product Attributes', defaultWidth: '140px' },
@@ -183,7 +184,13 @@ export function getCellValue(
         : undefined;
 
     case 'digikey-product': {
-      if (!row.enrichedData || !column.enrichedField) return undefined;
+      if (!column.enrichedField) return undefined;
+      // Manufacturer fallback: rows validated before this field was added
+      // may not have enrichedData.manufacturer, so fall back to resolvedPart.
+      if (column.enrichedField === 'manufacturer') {
+        return row.enrichedData?.manufacturer ?? row.resolvedPart?.manufacturer;
+      }
+      if (!row.enrichedData) return undefined;
       const val = row.enrichedData[column.enrichedField];
       // parameters is a Record, not a display value
       if (column.enrichedField === 'parameters') return undefined;

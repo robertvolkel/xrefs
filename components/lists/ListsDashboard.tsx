@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import {
@@ -26,9 +26,12 @@ import {
   deletePartsListSupabase,
   updatePartsListDetailsSupabase,
 } from '@/lib/supabasePartsListStorage';
-import { setPendingFile } from '@/lib/pendingFile';
+import { setPendingFile, setPendingParsedData } from '@/lib/pendingFile';
+import { ParsedSpreadsheet } from '@/lib/types';
+import { useViewConfig } from '@/hooks/useViewConfig';
 import ListCard from './ListCard';
 import NewListDialog from './NewListDialog';
+import InputMethodDialog from './InputMethodDialog';
 
 const PINNED_KEY = 'xrefs_pinned_lists';
 
@@ -50,8 +53,7 @@ function savePinnedIds(ids: Set<string>): void {
 export default function ListsDashboard() {
   const router = useRouter();
   const { t } = useTranslation();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const { views } = useViewConfig();
   const [lists, setLists] = useState<PartsListSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,9 +62,13 @@ export default function ListsDashboard() {
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
 
+  // InputMethodDialog state
+  const [inputMethodOpen, setInputMethodOpen] = useState(false);
+
   // NewListDialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [parsedFromPaste, setParsedFromPaste] = useState<ParsedSpreadsheet | null>(null);
 
   // Load lists on mount
   useEffect(() => {
@@ -77,7 +83,10 @@ export default function ListsDashboard() {
     let result = lists;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter((l) => l.name.toLowerCase().includes(q));
+      result = result.filter((l) =>
+        l.name.toLowerCase().includes(q) ||
+        (l.customer && l.customer.toLowerCase().includes(q)),
+      );
     }
     return [...result].sort((a, b) => {
       const aPinned = pinnedIds.has(a.id) ? 1 : 0;
@@ -115,33 +124,42 @@ export default function ListsDashboard() {
     [handleFile],
   );
 
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) handleFile(file);
-      // Reset so same file can be re-selected
-      if (e.target) e.target.value = '';
-    },
-    [handleFile],
-  );
-
   // --- Actions ---
 
   const handleNewListClick = () => {
-    fileInputRef.current?.click();
+    setInputMethodOpen(true);
   };
 
-  const handleDialogConfirm = (name: string, description: string, _currency: string) => {
-    if (!selectedFile) return;
-    setPendingFile(selectedFile, name, description);
-    setDialogOpen(false);
-    setSelectedFile(null);
-    router.push('/parts-list');
+  const handleInputMethodFile = useCallback((file: File) => {
+    setInputMethodOpen(false);
+    setSelectedFile(file);
+    setDialogOpen(true);
+  }, []);
+
+  const handleInputMethodPaste = useCallback((parsed: ParsedSpreadsheet) => {
+    setInputMethodOpen(false);
+    setParsedFromPaste(parsed);
+    setDialogOpen(true);
+  }, []);
+
+  const handleDialogConfirm = (name: string, description: string, _currency: string, customer: string, defaultViewId: string) => {
+    if (parsedFromPaste) {
+      setPendingParsedData(parsedFromPaste, name, description, customer, defaultViewId);
+      setDialogOpen(false);
+      setParsedFromPaste(null);
+      router.push('/parts-list');
+    } else if (selectedFile) {
+      setPendingFile(selectedFile, name, description, customer, defaultViewId);
+      setDialogOpen(false);
+      setSelectedFile(null);
+      router.push('/parts-list');
+    }
   };
 
   const handleDialogCancel = () => {
     setDialogOpen(false);
     setSelectedFile(null);
+    setParsedFromPaste(null);
   };
 
   const handleCardClick = (id: string) => {
@@ -172,12 +190,12 @@ export default function ListsDashboard() {
   // Currency-change refresh confirmation
   const [refreshPrompt, setRefreshPrompt] = useState<{ listId: string; currency: string } | null>(null);
 
-  const handleSettingsSave = useCallback(async (name: string, description: string, currency: string) => {
+  const handleSettingsSave = useCallback(async (name: string, description: string, currency: string, customer: string, defaultViewId: string) => {
     if (!settingsList) return;
     const currencyChanged = currency !== (settingsList.currency ?? 'USD');
-    await updatePartsListDetailsSupabase(settingsList.id, name, description, currency);
+    await updatePartsListDetailsSupabase(settingsList.id, name, description, currency, customer, defaultViewId);
     setLists(prev => prev.map(l =>
-      l.id === settingsList.id ? { ...l, name, description, currency } : l,
+      l.id === settingsList.id ? { ...l, name, description, currency, customer, defaultViewId } : l,
     ));
     setSettingsList(null);
     if (currencyChanged) {
@@ -257,7 +275,7 @@ export default function ListsDashboard() {
       {/* Content area */}
       <Box sx={{ flex: 1, overflow: 'auto', px: { xs: 2, md: 4 }, py: 3, display: 'flex', flexDirection: 'column' }}>
         {/* Search bar */}
-        <Box sx={{ maxWidth: 480, mb: 3, mx: 'auto' }}>
+        <Box sx={{ maxWidth: 600, width: '100%', mb: 3, mx: 'auto' }}>
           <Paper
             elevation={0}
             sx={{
@@ -379,21 +397,21 @@ export default function ListsDashboard() {
         )}
       </Box>
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        onChange={handleInputChange}
-        style={{ display: 'none' }}
+      {/* Input method chooser (Upload / Paste) */}
+      <InputMethodDialog
+        open={inputMethodOpen}
+        onFileSelected={handleInputMethodFile}
+        onTextParsed={handleInputMethodPaste}
+        onCancel={() => setInputMethodOpen(false)}
       />
 
       {/* New list dialog */}
       <NewListDialog
         open={dialogOpen}
-        fileName={selectedFile?.name ?? ''}
+        fileName={selectedFile?.name ?? (parsedFromPaste ? parsedFromPaste.fileName : '')}
         onConfirm={handleDialogConfirm}
         onCancel={handleDialogCancel}
+        views={views}
       />
 
       {/* List settings dialog */}
@@ -404,8 +422,11 @@ export default function ListsDashboard() {
         initialName={settingsList?.name ?? ''}
         initialDescription={settingsList?.description ?? ''}
         initialCurrency={settingsList?.currency ?? 'USD'}
+        initialCustomer={settingsList?.customer ?? ''}
+        initialDefaultViewId={settingsList?.defaultViewId ?? ''}
         onConfirm={handleSettingsSave}
         onCancel={() => setSettingsList(null)}
+        views={views}
       />
 
       {/* Currency-change refresh confirmation */}

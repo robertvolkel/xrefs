@@ -72,8 +72,7 @@
     "lastEditedMonthsAgo_other": "Last Edited {{count}} Months Ago",
     "lastEditedDate": "Last Edited {{date}}",
     "totalParts": "{{count}} Total Parts",
-    "resolved": "{{count}} Resolved",
-    "notResolved": "{{count}} Not Resolved",
+    "notResolved": "{{count}} Unresolved",
     "pinToTop": "Pin to Top",
     "unpin": "Unpin",
     "settings": "List Settings",
@@ -81,16 +80,33 @@
     "deleteConfirmMessage": "This list and all its data will be permanently deleted. This action cannot be undone."
   },
 
+  "inputMethod": {
+    "dialogTitle": "Create New List",
+    "uploadTab": "Upload File",
+    "pasteTab": "Paste Text",
+    "dropZoneText": "Drop a file here or click to browse",
+    "dropZoneFormats": ".xlsx, .xls, or .csv",
+    "pasteTextPlaceholder": "Paste tab-separated data, CSV, or a list of part numbers...",
+    "pastePreview": "{{rows}} rows detected, {{cols}} columns",
+    "nextButton": "Next",
+    "noDataError": "No data found in pasted text",
+    "fileSelected": "{{name}} selected"
+  },
+
   "newListDialog": {
     "createTitle": "Create a new list",
     "editTitle": "List Settings",
     "nameLabel": "What are you working on?",
     "namePlaceholder": "Name your list",
-    "descriptionLabel": "Describe your goals, requirements, constraints...",
+    "customerLabel": "Customer",
+    "customerPlaceholder": "e.g., Acme Corp",
+    "descriptionLabel": "Describe the application, goals, requirements, or constraints",
     "descriptionPlaceholder": "e.g., Automotive power supply redesign, need AEC-Q200 qualified replacements",
     "createButton": "Create List",
     "saveButton": "Save",
-    "currencyLabel": "Currency"
+    "currencyLabel": "Currency",
+    "defaultViewLabel": "Default View",
+    "defaultViewNone": "Use global default"
   },
 
   "partsList": {
@@ -148,7 +164,10 @@
     "settingsTab": "Settings",
     "columnsTab": "Columns",
     "descriptionLabel": "Description",
-    "descriptionPlaceholder": "Describe the purpose of this view and what the assistant should focus on..."
+    "descriptionPlaceholder": "Describe the purpose of this view and what the assistant should focus on...",
+    "saveConfirmTitle": "Save view changes?",
+    "saveConfirmMessage": "This view is shared across all your lists. Saving will update it everywhere.",
+    "dontShowAgain": "Don't show this again"
   },
 
   "columnMapping": {

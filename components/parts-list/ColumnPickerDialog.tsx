@@ -9,6 +9,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   List,
   ListItem,
@@ -104,20 +105,22 @@ export default function ColumnPickerDialog({
     );
   };
 
-  const moveUp = (index: number) => {
-    if (index === 0) return;
+  const moveUp = (colId: string) => {
     setActiveColumnIds(prev => {
+      const idx = prev.indexOf(colId);
+      if (idx <= 0) return prev;
       const next = [...prev];
-      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
       return next;
     });
   };
 
-  const moveDown = (index: number) => {
+  const moveDown = (colId: string) => {
     setActiveColumnIds(prev => {
-      if (index >= prev.length - 1) return prev;
+      const idx = prev.indexOf(colId);
+      if (idx < 0 || idx >= prev.length - 1) return prev;
       const next = [...prev];
-      [next[index], next[index + 1]] = [next[index + 1], next[index]];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
       return next;
     });
   };
@@ -126,9 +129,30 @@ export default function ColumnPickerDialog({
     setActiveColumnIds(prev => prev.filter(c => c !== id));
   };
 
-  const handleSave = () => {
+  const SKIP_CONFIRM_KEY = 'xrefs_skip_view_save_confirm';
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+
+  const doSave = () => {
     const trimmedName = name.trim() || 'Untitled View';
     onSave(trimmedName, activeColumnIds, description.trim());
+  };
+
+  const handleSave = () => {
+    if (mode === 'edit' && typeof window !== 'undefined' && localStorage.getItem(SKIP_CONFIRM_KEY) !== 'true') {
+      setDontShowAgain(false);
+      setConfirmOpen(true);
+      return;
+    }
+    doSave();
+  };
+
+  const handleConfirmSave = () => {
+    if (dontShowAgain && typeof window !== 'undefined') {
+      localStorage.setItem(SKIP_CONFIRM_KEY, 'true');
+    }
+    setConfirmOpen(false);
+    doSave();
   };
 
   return (
@@ -271,14 +295,14 @@ export default function ColumnPickerDialog({
                       <Box sx={{ display: 'flex', gap: 0 }}>
                         <IconButton
                           size="small"
-                          onClick={() => moveUp(index)}
+                          onClick={() => moveUp(col.id)}
                           disabled={index === 0}
                         >
                           <ArrowUpwardIcon sx={{ fontSize: 16 }} />
                         </IconButton>
                         <IconButton
                           size="small"
-                          onClick={() => moveDown(index)}
+                          onClick={() => moveDown(col.id)}
                           disabled={index === activeColumns.length - 1}
                         >
                           <ArrowDownwardIcon sx={{ fontSize: 16 }} />
@@ -324,6 +348,32 @@ export default function ColumnPickerDialog({
           {t('common.save')}
         </Button>
       </DialogActions>
+
+      {/* Confirmation dialog for edit mode */}
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ pb: 0.5 }}>{t('columnPicker.saveConfirmTitle')}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {t('columnPicker.saveConfirmMessage')}
+          </Typography>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={dontShowAgain}
+                onChange={e => setDontShowAgain(e.target.checked)}
+                size="small"
+              />
+            }
+            label={t('columnPicker.dontShowAgain')}
+            sx={{ mt: 1.5 }}
+            slotProps={{ typography: { variant: 'body2' } }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>
+          <Button variant="contained" onClick={handleConfirmSave}>{t('common.save')}</Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 }

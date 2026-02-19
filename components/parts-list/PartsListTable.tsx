@@ -442,13 +442,6 @@ export default function PartsListTable({
               <TableRow
                 key={row.rowIndex}
                 hover
-                sx={{
-                  cursor: row.status === 'resolved' ? 'pointer' : 'default',
-                  '&:hover': row.status === 'resolved'
-                    ? { bgcolor: 'rgba(160, 196, 255, 0.05)' }
-                    : {},
-                }}
-                onClick={() => row.status === 'resolved' && onRowClick(row.rowIndex)}
               >
                 {hasSelection && (
                   <TableCell sx={{ px: 0.5, width: 40 }}>

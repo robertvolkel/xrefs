@@ -315,6 +315,7 @@ export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-fo
 /** Flattened, storage-friendly Digikey product data built during validation */
 export interface EnrichedPartData {
   // Product Identification
+  manufacturer?: string;
   digikeyPartNumber?: string;
   productUrl?: string;
   // Product Attributes

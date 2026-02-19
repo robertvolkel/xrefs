@@ -216,7 +216,9 @@ export function useAppState() {
         // Check if this part family is supported
         if (!isFamilySupported(sourceAttrs.part.subcategory)) {
           setStatus('');
-          addMessage('assistant', buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory));
+          const unsupportedMsg = buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory);
+          addMessage('assistant', unsupportedMsg);
+          conversationRef.current.push({ role: 'assistant', content: unsupportedMsg });
           setState((prev) => ({
             ...prev,
             phase: 'unsupported',
@@ -238,6 +240,10 @@ export function useAppState() {
             missingAttributes: missingAttrs,
             partMpn: part.mpn,
           });
+          conversationRef.current.push({
+            role: 'assistant',
+            content: `Loaded attributes for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
+          });
           setState((prev) => ({
             ...prev,
             phase: 'awaiting-attributes',
@@ -256,6 +262,10 @@ export function useAppState() {
               type: 'context-questions',
               questions: contextConfig.questions,
               familyId: logicTableForContext.familyId,
+            });
+            conversationRef.current.push({
+              role: 'assistant',
+              content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
             });
             pendingOverridesRef.current = {};
             setState((prev) => ({
@@ -619,6 +629,16 @@ export function useAppState() {
               questions: contextConfig.questions,
               familyId: logicTableForContext.familyId,
             });
+            conversationRef.current.push({
+              role: 'user',
+              content: filledCount > 0
+                ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}`
+                : 'Proceeding without additional attribute information.',
+            });
+            conversationRef.current.push({
+              role: 'assistant',
+              content: `Received attribute values. Now asking application context questions for ${mpn} before finding replacements.`,
+            });
             pendingOverridesRef.current = overrides;
             setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
             return; // Wait for handleContextResponse
@@ -634,18 +654,46 @@ export function useAppState() {
         const recs = filledCount > 0
           ? await getRecommendationsWithOverrides(mpn, overrides)
           : await getRecommendations(mpn);
+
+        setStatus('Generating engineering assessment...');
+
+        // Sync attribute response to conversation for orchestrator
+        conversationRef.current.push({
+          role: 'user',
+          content: filledCount > 0
+            ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+            : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
+        });
+
+        // Call orchestrator for engineering assessment
+        const assessmentResponse = await chatWithOrchestrator(
+          conversationRef.current,
+          recs,
+        ).catch(() => null);
+
         setStatus('');
-        const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-        addMessage(
-          'assistant',
-          recs.length > 0
+
+        if (assessmentResponse?.message) {
+          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
+          addMessage('assistant', assessmentResponse.message);
+        } else {
+          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
+          const genericMsg = recs.length > 0
             ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`
-        );
+            : `No cross-references found for ${mpn}.`;
+          conversationRef.current.push({ role: 'assistant', content: genericMsg });
+          addMessage('assistant', genericMsg);
+        }
+
+        // Always use overrides-adjusted recs from direct API, not orchestrator's
         setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
+        conversationRef.current.push({
+          role: 'assistant',
+          content: 'Failed to find replacements due to an error.',
+        });
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
@@ -710,18 +758,46 @@ export function useAppState() {
           recs = await getRecommendations(mpn);
         }
 
+        setStatus('Generating engineering assessment...');
+
+        // Sync context response to conversation for orchestrator
+        conversationRef.current.push({
+          role: 'user',
+          content: filledCount > 0
+            ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+            : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
+        });
+
+        // Call orchestrator for engineering assessment of the results
+        const assessmentResponse = await chatWithOrchestrator(
+          conversationRef.current,
+          recs,
+        ).catch(() => null);
+
         setStatus('');
-        const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-        addMessage(
-          'assistant',
-          recs.length > 0
+
+        if (assessmentResponse?.message) {
+          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
+          addMessage('assistant', assessmentResponse.message);
+        } else {
+          // Fallback to generic message if orchestrator fails
+          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
+          const genericMsg = recs.length > 0
             ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`
-        );
+            : `No cross-references found for ${mpn}.`;
+          conversationRef.current.push({ role: 'assistant', content: genericMsg });
+          addMessage('assistant', genericMsg);
+        }
+
+        // Always use context-adjusted recs from direct API, not orchestrator's
         setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
+        conversationRef.current.push({
+          role: 'assistant',
+          content: 'Failed to find replacements due to an error.',
+        });
         setState((prev) => ({ ...prev, phase: 'idle' }));
       } finally {
         pendingOverridesRef.current = {};

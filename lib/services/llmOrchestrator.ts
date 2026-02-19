@@ -125,7 +125,7 @@ Formatting rules:
 Important rules:
 - Always use tools — never guess part numbers or specs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
-- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation, even if you already completed the full workflow for a different part in this conversation.`;
+- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.`;
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [

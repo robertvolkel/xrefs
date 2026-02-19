@@ -40,7 +40,7 @@ export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('id, name, description, currency, created_at, updated_at, total_rows, resolved_count, spreadsheet_headers')
+    .select('id, name, description, currency, customer, default_view_id, created_at, updated_at, total_rows, resolved_count, spreadsheet_headers')
     .order('updated_at', { ascending: false });
 
   if (error || !data) return [];
@@ -52,6 +52,8 @@ export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
       name: row.name,
       description: (record.description as string) || '',
       currency: (record.currency as string) || 'USD',
+      customer: (record.customer as string) || '',
+      defaultViewId: (record.default_view_id as string) || '',
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       totalRows: row.total_rows,
@@ -67,6 +69,8 @@ export async function savePartsListSupabase(
   rows: PartsListRow[],
   description?: string,
   spreadsheetHeaders?: string[],
+  customer?: string,
+  defaultViewId?: string,
 ): Promise<string | null> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -78,6 +82,8 @@ export async function savePartsListSupabase(
       user_id: user.id,
       name,
       description: description || '',
+      customer: customer || '',
+      default_view_id: defaultViewId || '',
       total_rows: rows.length,
       resolved_count: rows.filter(r => r.status === 'resolved').length,
       rows: toStoredRows(rows),
@@ -112,13 +118,15 @@ export async function loadPartsListSupabase(id: string): Promise<{
   name: string;
   description: string;
   currency: string;
+  customer: string;
+  defaultViewId: string;
   rows: PartsListRow[];
   spreadsheetHeaders: string[];
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, currency, rows, spreadsheet_headers')
+    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers')
     .eq('id', id)
     .single();
 
@@ -129,17 +137,21 @@ export async function loadPartsListSupabase(id: string): Promise<{
     name: data.name,
     description: (record.description as string) || '',
     currency: (record.currency as string) || 'USD',
+    customer: (record.customer as string) || '',
+    defaultViewId: (record.default_view_id as string) || '',
     rows: fromStoredRows(data.rows as StoredRow[]),
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
   };
 }
 
-/** Update list name, description, and currency */
+/** Update list name, description, currency, customer, and default view */
 export async function updatePartsListDetailsSupabase(
   id: string,
   name: string,
   description: string,
   currency?: string,
+  customer?: string,
+  defaultViewId?: string,
 ): Promise<void> {
   const supabase = createClient();
   await supabase
@@ -148,6 +160,8 @@ export async function updatePartsListDetailsSupabase(
       name,
       description,
       ...(currency && { currency }),
+      ...(customer !== undefined && { customer }),
+      ...(defaultViewId !== undefined && { default_view_id: defaultViewId }),
       updated_at: new Date().toISOString(),
     })
     .eq('id', id);

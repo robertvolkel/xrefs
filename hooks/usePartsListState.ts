@@ -52,6 +52,10 @@ interface PartsListState {
   listDescription: string | null;
   /** Currency code for pricing (e.g. 'USD', 'CNY') */
   listCurrency: string;
+  /** Customer name for this list */
+  listCustomer: string | null;
+  /** Default view ID for this list */
+  listDefaultViewId: string | null;
   /** All saved list summaries */
   savedLists: PartsListSummary[];
   /** Original spreadsheet column headers */
@@ -73,6 +77,8 @@ const INITIAL_STATE: PartsListState = {
   listName: null,
   listDescription: null,
   listCurrency: 'USD',
+  listCustomer: null,
+  listDefaultViewId: null,
   savedLists: [],
   spreadsheetHeaders: [],
 };
@@ -88,6 +94,8 @@ export function usePartsListState() {
   const listNameRef = useRef<string | null>(null);
   const listDescriptionRef = useRef<string | null>(null);
   const listCurrencyRef = useRef<string>('USD');
+  const listCustomerRef = useRef<string | null>(null);
+  const listDefaultViewIdRef = useRef<string | null>(null);
   const activeListIdRef = useRef<string | null>(null);
 
   // Load saved lists on mount
@@ -137,6 +145,8 @@ export function usePartsListState() {
     file: File,
     overrideName?: string,
     overrideDescription?: string,
+    overrideCustomer?: string,
+    overrideDefaultViewId?: string,
   ) => {
     try {
       const parsedData = await parseSpreadsheetFile(file);
@@ -144,8 +154,12 @@ export function usePartsListState() {
 
       const name = overrideName || file.name.replace(/\.[^.]+$/, '');
       const desc = overrideDescription ?? null;
+      const cust = overrideCustomer ?? null;
+      const viewId = overrideDefaultViewId ?? null;
       listNameRef.current = name;
       listDescriptionRef.current = desc;
+      listCustomerRef.current = cust;
+      listDefaultViewIdRef.current = viewId;
       activeListIdRef.current = null;
 
       setState(prev => ({
@@ -155,6 +169,8 @@ export function usePartsListState() {
         columnMapping,
         listName: name,
         listDescription: desc,
+        listCustomer: cust,
+        listDefaultViewId: viewId,
         activeListId: null,
         error: null,
       }));
@@ -164,6 +180,40 @@ export function usePartsListState() {
         error: error instanceof Error ? error.message : 'Failed to parse file',
       }));
     }
+  }, []);
+
+  /** Entry point for pre-parsed data (e.g. pasted text). Skips file parsing. */
+  const handleParsedDataReady = useCallback((
+    parsed: ParsedSpreadsheet,
+    overrideName?: string,
+    overrideDescription?: string,
+    overrideCustomer?: string,
+    overrideDefaultViewId?: string,
+  ) => {
+    const columnMapping = autoDetectColumns(parsed.headers, parsed.rows);
+
+    const name = overrideName || parsed.fileName;
+    const desc = overrideDescription ?? null;
+    const cust = overrideCustomer ?? null;
+    const viewId = overrideDefaultViewId ?? null;
+    listNameRef.current = name;
+    listDescriptionRef.current = desc;
+    listCustomerRef.current = cust;
+    listDefaultViewIdRef.current = viewId;
+    activeListIdRef.current = null;
+
+    setState(prev => ({
+      ...prev,
+      phase: 'mapping',
+      parsedData: parsed,
+      columnMapping,
+      listName: name,
+      listDescription: desc,
+      listCustomer: cust,
+      listDefaultViewId: viewId,
+      activeListId: null,
+      error: null,
+    }));
   }, []);
 
   // ----------------------------------------------------------
@@ -208,7 +258,9 @@ export function usePartsListState() {
     const saveName = listNameRef.current || 'Untitled List';
     const saveDesc = listDescriptionRef.current ?? undefined;
     try {
-      const listId = await savePartsListSupabase(saveName, validRows, saveDesc, headers);
+      const saveCustomer = listCustomerRef.current ?? undefined;
+      const saveDefaultViewId = listDefaultViewIdRef.current ?? undefined;
+      const listId = await savePartsListSupabase(saveName, validRows, saveDesc, headers, saveCustomer, saveDefaultViewId);
       if (listId) {
         activeListIdRef.current = listId;
         setState(prev => ({ ...prev, activeListId: listId }));
@@ -245,6 +297,8 @@ export function usePartsListState() {
       listNameRef.current = name;
       listDescriptionRef.current = desc;
       listCurrencyRef.current = loaded?.currency || 'USD';
+      listCustomerRef.current = loaded?.customer || null;
+      listDefaultViewIdRef.current = loaded?.defaultViewId || null;
 
       setState(prev => ({
         ...prev,
@@ -253,6 +307,8 @@ export function usePartsListState() {
         listName: name,
         listDescription: desc,
         listCurrency: listCurrencyRef.current,
+        listCustomer: listCustomerRef.current,
+        listDefaultViewId: listDefaultViewIdRef.current,
         activeListId: id,
         validationProgress: activeVal.progress,
         spreadsheetHeaders: loaded?.spreadsheetHeaders ?? [],
@@ -269,6 +325,8 @@ export function usePartsListState() {
     listNameRef.current = loaded.name;
     listDescriptionRef.current = loaded.description || null;
     listCurrencyRef.current = loaded.currency || 'USD';
+    listCustomerRef.current = loaded.customer || null;
+    listDefaultViewIdRef.current = loaded.defaultViewId || null;
     activeListIdRef.current = id;
 
     setState(prev => ({
@@ -278,6 +336,8 @@ export function usePartsListState() {
       listName: loaded.name,
       listDescription: loaded.description || null,
       listCurrency: listCurrencyRef.current,
+      listCustomer: listCustomerRef.current,
+      listDefaultViewId: listDefaultViewIdRef.current,
       activeListId: id,
       validationProgress: 1,
       spreadsheetHeaders: loaded.spreadsheetHeaders,
@@ -358,40 +418,29 @@ export function usePartsListState() {
     if (!currentRow?.resolvedPart) return;
 
     const mpn = currentRow.resolvedPart.mpn;
+    const needsAttrs = !currentRow.sourceAttributes;
+    const needsRecs = !currentRow.allRecommendations;
 
-    // Fetch sourceAttributes if not cached (e.g. list loaded from Supabase)
-    if (!currentRow.sourceAttributes) {
-      try {
-        const attrs = await getPartAttributes(mpn);
-        setState(prev => {
-          const newRows = [...prev.rows];
-          const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
-          if (idx >= 0) {
-            newRows[idx] = { ...newRows[idx], sourceAttributes: attrs };
-          }
-          return { ...prev, rows: newRows };
-        });
-      } catch {
-        // Chat will proceed without attributes
-      }
-    }
+    if (!needsAttrs && !needsRecs) return; // Both already cached
 
-    // Fetch recommendations if not cached
-    if (!currentRow.allRecommendations) {
-      try {
-        const recs = await getRecommendations(mpn);
-        setState(prev => {
-          const newRows = [...prev.rows];
-          const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
-          if (idx >= 0) {
-            newRows[idx] = { ...newRows[idx], allRecommendations: recs };
-          }
-          return { ...prev, rows: newRows };
-        });
-      } catch {
-        // Recommendations will show as empty
+    // Fetch in parallel and update row atomically
+    const [attrs, recs] = await Promise.all([
+      needsAttrs ? getPartAttributes(mpn).catch(() => null) : Promise.resolve(null),
+      needsRecs ? getRecommendations(mpn).catch(() => null) : Promise.resolve(null),
+    ]);
+
+    setState(prev => {
+      const newRows = [...prev.rows];
+      const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
+      if (idx >= 0) {
+        newRows[idx] = {
+          ...newRows[idx],
+          ...(attrs ? { sourceAttributes: attrs } : {}),
+          ...(recs ? { allRecommendations: recs } : {}),
+        };
       }
-    }
+      return { ...prev, rows: newRows };
+    });
   }, [state.rows]);
 
   const handleCloseModal = useCallback(() => {
@@ -450,7 +499,13 @@ export function usePartsListState() {
   // Update list details (name / description)
   // ----------------------------------------------------------
 
-  const handleUpdateListDetails = useCallback(async (name: string, description: string, currency?: string) => {
+  const handleUpdateListDetails = useCallback(async (
+    name: string,
+    description: string,
+    currency?: string,
+    customer?: string,
+    defaultViewId?: string,
+  ) => {
     const listId = activeListIdRef.current;
     if (!listId) return;
 
@@ -459,14 +514,18 @@ export function usePartsListState() {
     listNameRef.current = name;
     listDescriptionRef.current = description;
     if (currency) listCurrencyRef.current = currency;
+    if (customer !== undefined) listCustomerRef.current = customer;
+    if (defaultViewId !== undefined) listDefaultViewIdRef.current = defaultViewId;
     setState(prev => ({
       ...prev,
       listName: name,
       listDescription: description,
       ...(currency && { listCurrency: currency }),
+      ...(customer !== undefined && { listCustomer: customer }),
+      ...(defaultViewId !== undefined && { listDefaultViewId: defaultViewId }),
     }));
 
-    await updatePartsListDetailsSupabase(listId, name, description, currency).catch(() => {});
+    await updatePartsListDetailsSupabase(listId, name, description, currency, customer, defaultViewId).catch(() => {});
     const lists = await getSavedListsSupabase();
     setState(prev => ({ ...prev, savedLists: lists }));
 
@@ -600,6 +659,8 @@ export function usePartsListState() {
     listNameRef.current = null;
     listDescriptionRef.current = null;
     listCurrencyRef.current = 'USD';
+    listCustomerRef.current = null;
+    listDefaultViewIdRef.current = null;
     activeListIdRef.current = null;
     clearValidation();
     setState(prev => ({ ...INITIAL_STATE, savedLists: prev.savedLists }));
@@ -617,6 +678,7 @@ export function usePartsListState() {
     ...state,
     modalRow,
     handleFileSelected,
+    handleParsedDataReady,
     handleColumnMappingConfirmed,
     handleColumnMappingCancelled,
     handleLoadList,

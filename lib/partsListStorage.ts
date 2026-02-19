@@ -31,6 +31,8 @@ export interface SavedPartsList {
   name: string;
   description?: string;
   currency?: string;
+  customer?: string;
+  defaultViewId?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;
@@ -45,6 +47,8 @@ export interface PartsListSummary {
   name: string;
   description?: string;
   currency?: string;
+  customer?: string;
+  defaultViewId?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;

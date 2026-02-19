@@ -109,9 +109,9 @@ export default function AppShell() {
     setNewListDialogOpen(true);
   }, []);
 
-  const handleNewListConfirm = useCallback((name: string, description: string) => {
+  const handleNewListConfirm = useCallback((name: string, description: string, _currency: string, customer: string, defaultViewId: string) => {
     if (!pendingUploadFile) return;
-    setPendingFile(pendingUploadFile, name, description);
+    setPendingFile(pendingUploadFile, name, description, customer, defaultViewId);
     setNewListDialogOpen(false);
     setPendingUploadFile(null);
     router.push('/parts-list');

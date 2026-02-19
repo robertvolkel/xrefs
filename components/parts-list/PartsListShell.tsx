@@ -68,6 +68,8 @@ export default function PartsListShell() {
     listName,
     listDescription,
     listCurrency,
+    listCustomer,
+    listDefaultViewId,
     spreadsheetHeaders,
     activeListId,
     modalRow,
@@ -75,6 +77,7 @@ export default function PartsListShell() {
     modalComparisonAttrs,
     modalComparing,
     handleFileSelected,
+    handleParsedDataReady,
     handleColumnMappingConfirmed,
     handleColumnMappingCancelled,
     handleLoadList,
@@ -190,7 +193,11 @@ export default function PartsListShell() {
 
     const pending = consumePendingFile();
     if (pending) {
-      handleFileSelected(pending.file, pending.name, pending.description);
+      if (pending.parsedData) {
+        handleParsedDataReady(pending.parsedData, pending.name, pending.description, pending.customer, pending.defaultViewId);
+      } else if (pending.file) {
+        handleFileSelected(pending.file, pending.name, pending.description, pending.customer, pending.defaultViewId);
+      }
       return;
     }
 
@@ -226,6 +233,19 @@ export default function PartsListShell() {
       router.replace('/lists');
     }
   }, [phase, router]);
+
+  // Apply per-list default view when a list loads
+  const appliedListViewRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeListId || !listDefaultViewId) return;
+    // Only apply once per list load (avoid re-applying on every render)
+    if (appliedListViewRef.current === activeListId) return;
+    // Verify the view still exists
+    if (views.some(v => v.id === listDefaultViewId)) {
+      appliedListViewRef.current = activeListId;
+      selectView(listDefaultViewId);
+    }
+  }, [activeListId, listDefaultViewId, views, selectView]);
 
   // Build available column catalog from current list data
   const parameterKeys = useMemo(() => collectParameterKeys(rows), [rows]);
@@ -301,7 +321,9 @@ export default function PartsListShell() {
     if (!row) return null;
     return {
       mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
-      manufacturerColumn: row.rawCells.findIndex(c => c === row.rawManufacturer),
+      manufacturerColumn: row.rawManufacturer
+        ? row.rawCells.findIndex(c => c === row.rawManufacturer)
+        : -1,
       descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
     };
   }, [columnMapping, rows]);
@@ -329,7 +351,10 @@ export default function PartsListShell() {
       cols = cols
         .map(id => {
           if (id === 'mapped:mpn' && inferredMapping.mpnColumn >= 0) return `ss:${inferredMapping.mpnColumn}`;
-          if (id === 'mapped:manufacturer' && inferredMapping.manufacturerColumn >= 0) return `ss:${inferredMapping.manufacturerColumn}`;
+          if (id === 'mapped:manufacturer') {
+            if (inferredMapping.manufacturerColumn >= 0) return `ss:${inferredMapping.manufacturerColumn}`;
+            return 'dk:manufacturer';
+          }
           if (id === 'mapped:description' && inferredMapping.descriptionColumn >= 0) return `ss:${inferredMapping.descriptionColumn}`;
           return id;
         })
@@ -657,12 +682,12 @@ export default function PartsListShell() {
         mode={pickerMode}
         availableColumns={availableColumns}
         initialView={pickerMode === 'edit' ? { ...activeView, columns: resolvedViewColumns } : undefined}
-        isBuiltinView={pickerMode === 'edit' && isBuiltinView(activeView.id)}
+        isBuiltinView={pickerMode === 'edit' && activeView.id === 'raw'}
         onSave={(name, columns, description) => {
           if (pickerMode === 'create') {
             createView(name, columns, description);
           } else {
-            const newName = !isBuiltinView(activeView.id) ? name : undefined;
+            const newName = activeView.id !== 'raw' ? name : undefined;
             updateView(activeView.id, columns, newName, description);
           }
           setPickerOpen(false);
@@ -677,8 +702,11 @@ export default function PartsListShell() {
         initialName={listName ?? ''}
         initialDescription={listDescription ?? ''}
         initialCurrency={listCurrency}
-        onConfirm={async (name, description, currency) => {
-          const currencyChanged = await handleUpdateListDetails(name, description, currency);
+        initialCustomer={listCustomer ?? ''}
+        initialDefaultViewId={listDefaultViewId ?? ''}
+        views={views}
+        onConfirm={async (name, description, currency, customer, dvId) => {
+          const currencyChanged = await handleUpdateListDetails(name, description, currency, customer, dvId);
           setEditNameOpen(false);
           if (currencyChanged && rows.length > 0) {
             handleRefreshRows(rows.map(r => r.rowIndex));

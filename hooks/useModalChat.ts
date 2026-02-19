@@ -73,8 +73,8 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
   const conversationRef = useRef<OrchestratorMessage[]>([]);
   const mpnRef = useRef<string>('');
   const recsRef = useRef<XrefRecommendation[]>([]);
-  // Track which row we initialized for (avoids re-init issues with strict mode)
-  const initForRowRef = useRef<number | null>(null);
+  // Track which row+data state we initialized for (avoids re-init and handles async data arrival)
+  const initForRowRef = useRef<string | null>(null);
 
   // ----------------------------------------------------------
   // Initialization — runs when modal opens with a row
@@ -95,16 +95,42 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
       return;
     }
 
-    // Prevent re-running if already initialized for this specific row
-    if (initForRowRef.current === row.rowIndex) return;
-    initForRowRef.current = row.rowIndex;
+    // Wait for sourceAttributes before full initialization
+    if (!row.sourceAttributes) {
+      const loadingKey = `loading-${row.rowIndex}`;
+      if (initForRowRef.current !== loadingKey) {
+        initForRowRef.current = loadingKey;
+        const mpn = row.resolvedPart?.mpn ?? row.rawMpn;
+        setState({
+          ...INITIAL_STATE,
+          messages: [makeMessage('assistant', `Loading details for **${mpn}**...`)],
+          phase: 'init',
+        });
+      }
+      return;
+    }
+
+    // Build data-aware key so we re-initialize when allRecommendations arrives
+    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
+    const dataKey = `${row.rowIndex}:${recCount}`;
+
+    // Skip if already initialized with this exact data state
+    if (initForRowRef.current === dataKey) return;
+
+    // Don't re-init if user has already started interacting with forms
+    if (initForRowRef.current !== null &&
+        !initForRowRef.current.startsWith('loading-') &&
+        state.messages.length > 1) {
+      initForRowRef.current = dataKey; // Update key to prevent future re-init attempts
+      return;
+    }
+
+    initForRowRef.current = dataKey;
 
     // Determine part info
     const mpn = row.sourceAttributes?.part.mpn ?? row.resolvedPart?.mpn ?? row.rawMpn;
     mpnRef.current = mpn;
     recsRef.current = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
-
-    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
 
     // If we have source attributes, check for missing attrs and context questions
     const attrs = row.sourceAttributes;
@@ -112,7 +138,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
     const logicTable = subcategory ? getLogicTableForSubcategory(subcategory) : null;
 
     if (!logicTable) {
-      // No logic table or no attributes — go straight to open chat
+      // No logic table — go straight to open chat
       setState({
         ...INITIAL_STATE,
         messages: [
@@ -182,7 +208,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
       ],
       phase: 'open-chat',
     });
-  }, [open, row?.rowIndex, row?.sourceAttributes]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, row?.rowIndex, !!row?.sourceAttributes, row?.allRecommendations?.length ?? -1, state.messages.length]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ----------------------------------------------------------
   // Refresh recommendations with current overrides + context

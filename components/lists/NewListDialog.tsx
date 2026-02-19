@@ -14,6 +14,7 @@ import {
   Select,
   MenuItem,
 } from '@mui/material';
+import type { SavedView } from '@/lib/viewConfigStorage';
 
 const CURRENCIES = [
   { code: 'USD', label: 'USD — US Dollar' },
@@ -47,12 +48,16 @@ const CURRENCIES = [
 interface NewListDialogProps {
   open: boolean;
   fileName: string;
-  onConfirm: (name: string, description: string, currency: string) => void;
+  onConfirm: (name: string, description: string, currency: string, customer: string, defaultViewId: string) => void;
   onCancel: () => void;
   mode?: 'create' | 'edit';
   initialName?: string;
   initialDescription?: string;
   initialCurrency?: string;
+  initialCustomer?: string;
+  initialDefaultViewId?: string;
+  /** Available views for the default view selector */
+  views?: SavedView[];
 }
 
 /** Strip file extension to produce a default list name */
@@ -69,11 +74,16 @@ export default function NewListDialog({
   initialName,
   initialDescription,
   initialCurrency,
+  initialCustomer,
+  initialDefaultViewId,
+  views,
 }: NewListDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [currency, setCurrency] = useState('USD');
+  const [customer, setCustomer] = useState('');
+  const [defaultViewId, setDefaultViewId] = useState('');
 
   // Reset fields when dialog opens
   useEffect(() => {
@@ -82,12 +92,16 @@ export default function NewListDialog({
       setName(initialName ?? '');
       setDescription(initialDescription ?? '');
       setCurrency(initialCurrency ?? 'USD');
+      setCustomer(initialCustomer ?? '');
+      setDefaultViewId(initialDefaultViewId ?? '');
     } else if (fileName) {
       setName(defaultNameFromFile(fileName));
       setDescription('');
       setCurrency(initialCurrency ?? 'USD');
+      setCustomer('');
+      setDefaultViewId('');
     }
-  }, [open, fileName, mode, initialName, initialDescription, initialCurrency]);
+  }, [open, fileName, mode, initialName, initialDescription, initialCurrency, initialCustomer, initialDefaultViewId]);
 
   const canConfirm = name.trim().length > 0;
 
@@ -113,6 +127,16 @@ export default function NewListDialog({
           onChange={(e) => setName(e.target.value)}
           fullWidth
           autoFocus
+          variant="outlined"
+          slotProps={{ inputLabel: { shrink: true } }}
+        />
+
+        <TextField
+          label={t('newListDialog.customerLabel')}
+          placeholder={t('newListDialog.customerPlaceholder')}
+          value={customer}
+          onChange={(e) => setCustomer(e.target.value)}
+          fullWidth
           variant="outlined"
           slotProps={{ inputLabel: { shrink: true } }}
         />
@@ -144,6 +168,26 @@ export default function NewListDialog({
             ))}
           </Select>
         </FormControl>
+
+        {views && views.length > 0 && (
+          <FormControl size="small" fullWidth>
+            <InputLabel>{t('newListDialog.defaultViewLabel')}</InputLabel>
+            <Select
+              value={defaultViewId}
+              label={t('newListDialog.defaultViewLabel')}
+              onChange={(e) => setDefaultViewId(e.target.value)}
+            >
+              <MenuItem value="">
+                <em>{t('newListDialog.defaultViewNone')}</em>
+              </MenuItem>
+              {views.map((v) => (
+                <MenuItem key={v.id} value={v.id}>
+                  {v.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
@@ -152,7 +196,7 @@ export default function NewListDialog({
         </Button>
         <Button
           variant="contained"
-          onClick={() => onConfirm(name.trim(), description.trim(), currency)}
+          onClick={() => onConfirm(name.trim(), description.trim(), currency, customer.trim(), defaultViewId)}
           disabled={!canConfirm}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >
