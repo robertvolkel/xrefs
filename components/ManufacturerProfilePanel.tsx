@@ -100,9 +100,12 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
           {getInitials(profile.name)}
         </Avatar>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle2" sx={{ fontSize: '0.9rem', fontWeight: 600, lineHeight: 1.3 }} noWrap>
-            {profile.name}
-          </Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="subtitle2" sx={{ fontSize: '0.9rem', fontWeight: 600, lineHeight: 1.3 }} noWrap>
+              {profile.name}
+            </Typography>
+            <Chip label="Sample Data" size="small" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
+          </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }} noWrap>
             {profile.countryFlag} {profile.headquarters}
             {profile.foundedYear && ` · Est. ${profile.foundedYear}`}

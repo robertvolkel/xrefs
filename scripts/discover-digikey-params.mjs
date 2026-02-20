@@ -1,5 +1,63 @@
-const CLIENT_ID = 'lZeFLXH3VH5hcz2jVGhRmnWLTRk4Usmm';
-const CLIENT_SECRET = 'wLAzOJM9SJfQI4a0m6n9jVjIxz6f';
+/**
+ * Digikey Parameter Discovery Script
+ *
+ * Fetches parametric data for a given MPN from Digikey API and prints
+ * all ParameterText/ValueText pairs. Used to build parameter maps in
+ * lib/services/digikeyParamMap.ts.
+ *
+ * Usage:
+ *   node scripts/discover-digikey-params.mjs <MPN> [MPN2] [MPN3] ...
+ *
+ * Reads DIGIKEY_CLIENT_ID and DIGIKEY_CLIENT_SECRET from .env.local.
+ */
+
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
+// Load .env.local
+function loadEnv() {
+  try {
+    const envPath = resolve(process.cwd(), '.env.local');
+    const content = readFileSync(envPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (!process.env[key]) process.env[key] = value;
+    }
+  } catch {
+    // .env.local not found, rely on existing env vars
+  }
+}
+
+loadEnv();
+
+const CLIENT_ID = process.env.DIGIKEY_CLIENT_ID;
+const CLIENT_SECRET = process.env.DIGIKEY_CLIENT_SECRET;
+
+if (!CLIENT_ID || !CLIENT_SECRET) {
+  console.error('Error: DIGIKEY_CLIENT_ID and DIGIKEY_CLIENT_SECRET must be set in .env.local or environment.');
+  process.exit(1);
+}
+
+const mpns = process.argv.slice(2);
+if (mpns.length === 0) {
+  console.error('Usage: node scripts/discover-digikey-params.mjs <MPN> [MPN2] [MPN3] ...');
+  process.exit(1);
+}
+
+/** Get the deepest category name from Digikey's nested category structure */
+function getDeepestCategory(category) {
+  if (!category) return '(none)';
+  let current = category;
+  while (current.ChildCategories && current.ChildCategories.length > 0) {
+    current = current.ChildCategories[0];
+  }
+  return current.Name;
+}
 
 async function run() {
   // Step 1: Get OAuth token
@@ -21,86 +79,66 @@ async function run() {
 
   const tokenData = await tokenRes.json();
   const token = tokenData.access_token;
-  console.log('Token obtained. Expires in:', tokenData.expires_in, 's');
+  console.log('Token obtained.\n');
 
-  // Step 2: Search for a known MLCC
-  console.log('\nSearching for GRM188R71E105KA12...');
-  const searchRes = await fetch('https://api.digikey.com/products/v4/search/keyword', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-DIGIKEY-Client-Id': CLIENT_ID,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      Keywords: 'GRM188R71E105KA12',
-      Limit: 3,
-      Offset: 0,
-    }),
-  });
+  // Step 2: Fetch product details for each MPN
+  for (const mpn of mpns) {
+    console.log('='.repeat(70));
+    console.log(`MPN: ${mpn}`);
+    console.log('='.repeat(70));
 
-  if (!searchRes.ok) {
-    console.error('Search error:', searchRes.status, await searchRes.text());
-    return;
-  }
+    const detailRes = await fetch(
+      `https://api.digikey.com/products/v4/search/${encodeURIComponent(mpn)}/productdetails`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-DIGIKEY-Client-Id': CLIENT_ID,
+          'Accept': 'application/json',
+        },
+      }
+    );
 
-  const searchData = await searchRes.json();
-  console.log('Products found:', searchData.ProductsCount);
-
-  if (searchData.Products && searchData.Products.length > 0) {
-    const product = searchData.Products[0];
-    console.log('\nFirst product:');
-    console.log('  MPN:', product.ManufacturerProductNumber);
-    console.log('  Manufacturer:', JSON.stringify(product.Manufacturer));
-    console.log('  Description:', JSON.stringify(product.Description));
-    console.log('  Category:', JSON.stringify(product.Category));
-    console.log('  ProductStatus:', JSON.stringify(product.ProductStatus));
-    console.log('  DigiKeyPartNumber:', product.DigiKeyPartNumber);
-
-    console.log(`\n  Parameters (${product.Parameters?.length || 0}):`);
-    if (product.Parameters) {
-      product.Parameters.forEach(p => {
-        console.log(`    ID: ${p.ParameterId} | ${p.ParameterText} = ${p.ValueText}`);
-      });
+    if (!detailRes.ok) {
+      console.error(`  Error fetching ${mpn}: ${detailRes.status} ${await detailRes.text()}`);
+      console.log();
+      continue;
     }
 
-    console.log('\n  All product keys:', Object.keys(product).join(', '));
-  }
+    const detailData = await detailRes.json();
+    const product = detailData.Product;
 
-  if (searchData.ExactMatches && searchData.ExactMatches.length > 0) {
-    console.log('\nExact matches:', searchData.ExactMatches.length);
-  }
-
-  // Step 3: Get product details for full parametric data
-  console.log('\n\n--- Getting product details ---');
-  const detailRes = await fetch(
-    `https://api.digikey.com/products/v4/search/GRM188R71E105KA12/productdetails`,
-    {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-DIGIKEY-Client-Id': CLIENT_ID,
-        'Accept': 'application/json',
-      },
+    if (!product) {
+      console.error(`  No product data returned for ${mpn}`);
+      console.log();
+      continue;
     }
-  );
 
-  if (!detailRes.ok) {
-    console.error('Detail error:', detailRes.status, await detailRes.text());
-    return;
-  }
+    // Product info
+    console.log(`  Manufacturer:  ${product.Manufacturer?.Name ?? 'Unknown'}`);
+    console.log(`  Description:   ${product.Description?.ProductDescription ?? ''}`);
+    console.log(`  Category:      ${getDeepestCategory(product.Category)}`);
+    console.log(`  Status:        ${product.ProductStatus?.Status ?? 'Unknown'}`);
+    console.log(`  DigiKey PN:    ${product.DigiKeyPartNumber ?? ''}`);
 
-  const detailData = await detailRes.json();
-  const dp = detailData.Product;
-  console.log('Detail MPN:', dp.ManufacturerProductNumber);
-  console.log(`Detail Parameters (${dp.Parameters?.length || 0}):`);
-  if (dp.Parameters) {
-    dp.Parameters.forEach(p => {
-      console.log(`  ID: ${p.ParameterId} | ${p.ParameterText} = ${p.ValueText}`);
-    });
+    // Classifications
+    if (product.Classifications) {
+      const c = product.Classifications;
+      if (c.RohsStatus) console.log(`  RoHS:          ${c.RohsStatus}`);
+      if (c.MoistureSensitivityLevel) console.log(`  MSL:           ${c.MoistureSensitivityLevel}`);
+    }
+
+    // Parameters table
+    const params = product.Parameters ?? [];
+    console.log(`\n  Parameters (${params.length}):`);
+    console.log(`  ${'ID'.padEnd(8)} | ${'ParameterText'.padEnd(40)} | ValueText`);
+    console.log(`  ${'-'.repeat(8)}-+-${'-'.repeat(40)}-+----------`);
+    for (const p of params) {
+      console.log(`  ${String(p.ParameterId).padEnd(8)} | ${(p.ParameterText ?? '').padEnd(40)} | ${p.ValueText ?? ''}`);
+    }
+
+    console.log();
   }
-  console.log('\nDetail product keys:', Object.keys(dp).join(', '));
 }
 
 run().catch(e => console.error('Error:', e));

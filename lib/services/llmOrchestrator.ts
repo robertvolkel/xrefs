@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
+
 // ==============================================================
 // Shared: recommendation summary + filter tool
 // ==============================================================
@@ -274,7 +276,7 @@ export async function chat(
 
   // Tool-use loop: keep going until Claude gives a final text response
   let response = await client.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
+    model: MODEL,
     max_tokens: 2048,
     system: systemPrompt,
     tools: activeTools,
@@ -313,7 +315,7 @@ export async function chat(
     });
 
     response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: MODEL,
       max_tokens: 2048,
       system: systemPrompt,
       tools: activeTools,
@@ -440,7 +442,7 @@ export async function refinementChat(
   };
 
   let response = await client.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
+    model: MODEL,
     max_tokens: 2048,
     system: systemPrompt,
     tools: activeTools,
@@ -519,7 +521,7 @@ export async function refinementChat(
     });
 
     response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: MODEL,
       max_tokens: 2048,
       system: systemPrompt,
       tools: activeTools,

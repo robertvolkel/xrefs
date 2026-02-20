@@ -26,7 +26,8 @@ export type ComponentCategory =
   | 'ICs'
   | 'Diodes'
   | 'Transistors'
-  | 'Connectors';
+  | 'Connectors'
+  | 'Protection';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {
@@ -42,6 +43,8 @@ export interface ParametricAttribute {
 export interface PartAttributes {
   part: Part;
   parameters: ParametricAttribute[];
+  /** Where this data came from — 'digikey' for live API, 'mock' for fallback */
+  dataSource?: 'digikey' | 'mock';
 }
 
 /** A cross-reference recommendation */

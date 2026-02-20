@@ -61,18 +61,19 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
   const mockAttrs = mockGetAttributes(mpn);
 
   if (!isDigikeyConfigured()) {
-    return mockAttrs;
+    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
   }
 
   try {
     const response = await getProductDetails(mpn, currency);
     if (response.Product) {
-      return mapDigikeyProductToAttributes(response.Product);
+      const attrs = mapDigikeyProductToAttributes(response.Product);
+      return { ...attrs, dataSource: 'digikey' as const };
     }
-    return mockAttrs;
+    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
   } catch (error) {
     console.warn('Digikey product details failed, falling back to mock:', error);
-    return mockAttrs;
+    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
   }
 }
 

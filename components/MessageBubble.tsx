@@ -3,6 +3,8 @@ import { Box, Typography } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChatMessage, PartSummary } from '@/lib/types';
 import PartConfirmation from './PartConfirmation';
 import PartOptionsSelector from './PartOptionsSelector';
@@ -18,57 +20,6 @@ interface MessageBubbleProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
-}
-
-/** Render inline bold within a single line */
-function renderInline(text: string) {
-  const parts = text.split(/\*\*(.*?)\*\*/g);
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <strong key={i}>{part}</strong>
-    ) : (
-      <span key={i}>{part}</span>
-    )
-  );
-}
-
-/** Render basic markdown: paragraphs, bullet lists, and bold */
-function renderMarkdown(text: string) {
-  const lines = text.split('\n');
-  const elements: React.ReactNode[] = [];
-  let bulletBuffer: string[] = [];
-  let key = 0;
-
-  const flushBullets = () => {
-    if (bulletBuffer.length === 0) return;
-    elements.push(
-      <Box key={key++} component="ul" sx={{ m: 0, pl: 2.5, mb: 1, '& li': { mb: 0.25 } }}>
-        {bulletBuffer.map((item, i) => (
-          <li key={i}><span>{renderInline(item)}</span></li>
-        ))}
-      </Box>
-    );
-    bulletBuffer = [];
-  };
-
-  for (const line of lines) {
-    const bulletMatch = line.match(/^[-•*]\s+(.*)/);
-    if (bulletMatch) {
-      bulletBuffer.push(bulletMatch[1]);
-    } else {
-      flushBullets();
-      const trimmed = line.trim();
-      if (trimmed === '') {
-        // blank line — paragraph break
-        elements.push(<Box key={key++} sx={{ height: '0.5em' }} />);
-      } else {
-        elements.push(<span key={key++}>{renderInline(trimmed)}<br /></span>);
-      }
-    }
-  }
-  flushBullets();
-
-  return elements;
 }
 
 export default function MessageBubble({
@@ -122,9 +73,49 @@ export default function MessageBubble({
           component="div"
           variant="body2"
           color="text.primary"
-          sx={{ lineHeight: 1.7 }}
+          sx={{
+            lineHeight: 1.7,
+            '& p': { mt: 0, mb: 1 },
+            '& p:last-child': { mb: 0 },
+            '& ul, & ol': { mt: 0, mb: 1, pl: 2.5, '& li': { mb: 0.25 } },
+            '& code': {
+              fontFamily: '"Roboto Mono", monospace',
+              fontSize: '0.8em',
+              bgcolor: 'action.hover',
+              px: 0.6,
+              py: 0.15,
+              borderRadius: 0.5,
+            },
+            '& pre': {
+              bgcolor: 'background.paper',
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 1,
+              p: 1.5,
+              overflowX: 'auto',
+              mb: 1,
+              '& code': { bgcolor: 'transparent', p: 0, fontSize: '0.8em' },
+            },
+            '& a': { color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } },
+            '& h1, & h2, & h3, & h4, & h5, & h6': { mt: 1.5, mb: 0.5, fontWeight: 600 },
+            '& h1': { fontSize: '1.3em' },
+            '& h2': { fontSize: '1.15em' },
+            '& h3': { fontSize: '1.05em' },
+            '& blockquote': {
+              borderLeft: 3,
+              borderColor: 'divider',
+              pl: 1.5,
+              ml: 0,
+              color: 'text.secondary',
+              my: 1,
+            },
+            '& table': { borderCollapse: 'collapse', mb: 1, width: '100%' },
+            '& th, & td': { border: 1, borderColor: 'divider', px: 1, py: 0.5, textAlign: 'left' },
+            '& th': { fontWeight: 600, bgcolor: 'action.hover' },
+            '& hr': { border: 'none', borderTop: 1, borderColor: 'divider', my: 1.5 },
+          }}
         >
-          {renderMarkdown(message.content)}
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
         </Typography>
 
         {message.interactiveElement?.type === 'confirmation' && onConfirm && onReject && (

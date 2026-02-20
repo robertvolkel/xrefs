@@ -125,9 +125,14 @@ function evaluateIdentityUpgrade(
   const srcNorm = normalize(sourceValue);
   const candNorm = normalize(candidateValue);
 
-  // Find positions in hierarchy (lower index = better)
-  const srcIdx = hierarchy.findIndex(h => srcNorm.includes(h.toUpperCase()));
-  const candIdx = hierarchy.findIndex(h => candNorm.includes(h.toUpperCase()));
+  // Find positions in hierarchy (lower index = better).
+  // Try exact match first to avoid substring collisions (e.g., "Shielded" matching
+  // inside "Semi-Shielded" or "Unshielded"). Fall back to substring for values like
+  // "C0G (NP0)" that need to match hierarchy entry "C0G".
+  let srcIdx = hierarchy.findIndex(h => srcNorm === h.toUpperCase());
+  let candIdx = hierarchy.findIndex(h => candNorm === h.toUpperCase());
+  if (srcIdx === -1) srcIdx = hierarchy.findIndex(h => srcNorm.includes(h.toUpperCase()));
+  if (candIdx === -1) candIdx = hierarchy.findIndex(h => candNorm.includes(h.toUpperCase()));
 
   // If neither is in hierarchy, do exact string match
   if (srcIdx === -1 && candIdx === -1) {

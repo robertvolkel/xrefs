@@ -77,9 +77,10 @@ export const powerInductorsLogicTable: LogicTable = {
     {
       attributeId: 'shielding',
       attributeName: 'Shielding',
-      logicType: 'identity_flag',
+      logicType: 'identity_upgrade',
+      upgradeHierarchy: ['Shielded', 'Semi-Shielded', 'Unshielded'],
       weight: 8,
-      engineeringReason: 'If original requires shielding, replacement must also be shielded. Unshielded inductors radiate magnetic fields that can couple into nearby sensitive circuits.',
+      engineeringReason: 'Shielded is best (contains magnetic field), Semi-Shielded is acceptable, Unshielded radiates. Downgrading shielding risks EMI compliance failures.',
       sortOrder: 8,
     },
     {

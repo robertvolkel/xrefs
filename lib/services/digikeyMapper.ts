@@ -15,7 +15,7 @@ import {
   PartStatus,
 } from '../types';
 import { DigikeyProduct, DigikeyCategory, DigikeyKeywordResponse } from './digikeyClient';
-import { getParamMapping, hasCategoryMapping } from './digikeyParamMap';
+import { getParamMappings, hasCategoryMapping } from './digikeyParamMap';
 
 /** Traverse Digikey's hierarchical category to find the most specific (deepest) name */
 function getDeepestCategoryName(category: DigikeyCategory | undefined): string {
@@ -40,6 +40,7 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
+  if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
   // Default: ICs covers a huge range
   return 'ICs';
 }
@@ -51,12 +52,22 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('aluminum') && lower.includes('polymer')) return 'Aluminum Polymer';
   if (lower.includes('aluminum')) return 'Aluminum Electrolytic';
   if (lower.includes('tantalum')) return 'Tantalum';
-  if (lower.includes('film capacitor')) return 'Film';
+  if (lower.includes('supercapacitor') || lower.includes('double layer')) return 'Supercapacitor';
+  if (lower.includes('film capacitor')) return 'Film Capacitor';
   if (lower.includes('thick film')) return 'Thick Film';
   if (lower.includes('thin film')) return 'Thin Film';
   if (lower.includes('chip resistor') || lower.includes('surface mount')) {
     if (lower.includes('resistor')) return 'Thick Film';
   }
+  if (lower.includes('fixed inductor')) return 'Fixed Inductor';
+  if (lower.includes('ferrite bead')) return 'Ferrite Bead and Chip';
+  if (lower.includes('common mode choke')) return 'Common Mode Choke';
+  if (lower.includes('varistor')) return 'Varistor';
+  if (lower.includes('ptc resettable') || lower.includes('polyfuse') || lower.includes('pptc')) return 'PTC Resettable Fuse';
+  if (lower.includes('ntc thermistor')) return 'NTC Thermistor';
+  if (lower.includes('ptc thermistor')) return 'PTC Thermistor';
+  if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
+  if (lower.includes('single diode')) return 'Rectifier Diode';
   return categoryName;
 }
 
@@ -106,9 +117,111 @@ function transformFeaturesToFlexTerm(valueText: string): string {
   return 'No';
 }
 
-/** Transform Digikey's "Ratings" parameter to our "AEC-Q200" Yes/No */
-function transformRatingsToAecQ200(valueText: string): string {
+/** Check for AEC-Q200 in Digikey "Ratings" or "Features" text → Yes/No */
+function transformToAecQ200(valueText: string): string {
   if (valueText.toUpperCase().includes('AEC-Q200')) return 'Yes';
+  return 'No';
+}
+
+/** Check for anti-sulfur indication in Digikey "Features" text → Yes/No */
+function transformToAntiSulfur(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('anti-sulfur') || lower.includes('anti sulfur') || lower.includes('sulphur resistant')) return 'Yes';
+  return 'No';
+}
+
+/**
+ * Extract metric diameter from Digikey "Size / Dimension" field.
+ * Patterns: "0.197" Dia (5.00mm)", "0.276" Dia (7.00mm)"
+ * Returns the metric mm value string, e.g., "5.00mm"
+ */
+function transformToDiameter(valueText: string): string {
+  // Try metric diameter in parentheses: "Dia (5.00mm)"
+  const diaMatch = valueText.match(/Dia\s*\((\d+\.?\d*)\s*mm\)/i);
+  if (diaMatch) return `${diaMatch[1]}mm`;
+  // Fall back: try any "X.XXmm" in the string after "Dia"
+  const diaFallback = valueText.match(/Dia[^(]*?(\d+\.?\d*)\s*mm/i);
+  if (diaFallback) return `${diaFallback[1]}mm`;
+  return valueText;
+}
+
+/**
+ * Extract metric body length from Digikey "Size / Dimension" field.
+ * Pattern: "0.906" L x 0.453" W (23.00mm x 11.50mm)"
+ * Returns the metric length, e.g., "23.00mm"
+ */
+function transformToBodyLength(valueText: string): string {
+  // Try metric dimensions in parentheses: "(23.00mm x 11.50mm)"
+  const dimMatch = valueText.match(/\((\d+\.?\d*)\s*mm\s*x\s*\d+\.?\d*\s*mm\)/i);
+  if (dimMatch) return `${dimMatch[1]}mm`;
+  return valueText;
+}
+
+/**
+ * Extract dielectric type abbreviation from Digikey "Dielectric Material" field.
+ * Pattern: "Polypropylene (PP), Metallized" → "PP"
+ *          "Polyester, Metallized" → "PET"
+ *          "Polyphenylene Sulfide (PPS)" → "PPS"
+ */
+function transformToDielectricType(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  // Try parenthesized abbreviation first: "(PP)", "(PPS)", "(PEN)"
+  const abbrMatch = valueText.match(/\(([A-Z]{2,4})\)/);
+  if (abbrMatch) return abbrMatch[1];
+  // Fallback on material name
+  if (lower.includes('polypropylene')) return 'PP';
+  if (lower.includes('polyphenylene')) return 'PPS';
+  if (lower.includes('polyethylene naphthalate')) return 'PEN';
+  if (lower.includes('polyester') || lower.includes('polyethylene terephthalate')) return 'PET';
+  return valueText;
+}
+
+/**
+ * Infer self-healing capability from Digikey "Dielectric Material" field.
+ * "Metallized" construction implies self-healing capability.
+ */
+function transformToSelfHealing(valueText: string): string {
+  if (valueText.toLowerCase().includes('metallized')) return 'Yes';
+  return 'No';
+}
+
+/**
+ * Extract safety class (X1/X2/Y1/Y2) from Digikey "Ratings" field.
+ * Pattern: "AEC-Q200, X2" → "X2", "X2" → "X2", "-" → "-"
+ */
+function transformToSafetyRating(valueText: string): string {
+  const match = valueText.match(/\b([XY][12])\b/i);
+  return match ? match[1].toUpperCase() : valueText;
+}
+
+/**
+ * Extract recovery category from Digikey "Speed" compound field.
+ * Values: "Standard Recovery >500ns, > 200mA (Io)" → "Standard"
+ *         "Fast Recovery =< 500ns, > 200mA (Io)" → "Fast"
+ *         Contains "ultrafast" → "Ultrafast"
+ * Output must match the upgradeHierarchy in rectifierDiodes.ts exactly.
+ */
+function transformToRecoveryCategory(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('ultrafast') || lower.includes('ultra fast')) return 'Ultrafast';
+  if (lower.includes('fast')) return 'Fast';
+  if (lower.includes('standard')) return 'Standard';
+  return valueText;
+}
+
+/**
+ * Preserve raw B-value text without SI scaling.
+ * NTC B-values like "3380K" — the "K" is Kelvin, not kilo.
+ * extractNumericValue would misinterpret this as 3,380,000.
+ * This transformer returns the value as-is.
+ */
+function transformBValue(valueText: string): string {
+  return valueText;
+}
+
+/** Check for AEC-Q101 in Digikey text → Yes/No (for discrete semiconductors) */
+function transformToAecQ101(valueText: string): string {
+  if (valueText.toUpperCase().includes('AEC-Q101')) return 'Yes';
   return 'No';
 }
 
@@ -118,7 +231,25 @@ function transformValue(attributeId: string, valueText: string): string {
     case 'flexible_termination':
       return transformFeaturesToFlexTerm(valueText);
     case 'aec_q200':
-      return transformRatingsToAecQ200(valueText);
+      return transformToAecQ200(valueText);
+    case 'anti_sulfur':
+      return transformToAntiSulfur(valueText);
+    case 'diameter':
+      return transformToDiameter(valueText);
+    case 'body_length':
+      return transformToBodyLength(valueText);
+    case 'dielectric_type':
+      return transformToDielectricType(valueText);
+    case 'self_healing':
+      return transformToSelfHealing(valueText);
+    case 'safety_rating':
+      return transformToSafetyRating(valueText);
+    case 'recovery_category':
+      return transformToRecoveryCategory(valueText);
+    case 'b_value':
+      return transformBValue(valueText);
+    case 'aec_q101':
+      return transformToAecQ101(valueText);
     default:
       return valueText;
   }
@@ -150,30 +281,124 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
   };
 }
 
+/**
+ * Placeholder attributes for parameters that Digikey doesn't provide but logic
+ * tables expect (typically application_review rules). Keyed by category substring.
+ */
+const categoryPlaceholders: Record<string, ParametricAttribute[]> = {
+  'Ceramic Capacitors': [
+    { parameterId: 'dc_bias_derating', parameterName: 'DC Bias Derating', value: 'Consult datasheet', sortOrder: 13 },
+  ],
+  // Chip resistors: all attributes come from Digikey or are flag-type; no placeholders needed
+  'Common Mode Chokes': [
+    { parameterId: 'cm_inductance', parameterName: 'Common Mode Inductance', value: 'Consult datasheet', sortOrder: 14 },
+  ],
+  'Tantalum Capacitors': [
+    { parameterId: 'surge_voltage', parameterName: 'Surge / Inrush Voltage', value: 'Consult datasheet', sortOrder: 10 },
+    { parameterId: 'dc_bias_derating', parameterName: 'DC Bias Derating', value: 'Consult datasheet', sortOrder: 11 },
+  ],
+  'Tantalum - Polymer Capacitors': [
+    { parameterId: 'surge_voltage', parameterName: 'Surge / Inrush Voltage', value: 'Consult datasheet', sortOrder: 10 },
+    { parameterId: 'dc_bias_derating', parameterName: 'DC Bias Derating', value: 'Consult datasheet', sortOrder: 11 },
+  ],
+  'Aluminum - Polymer Capacitors': [
+    { parameterId: 'polarization', parameterName: 'Polarization', value: 'Polar', sortOrder: 3 },
+    { parameterId: 'polymer_type', parameterName: 'Conductive Polymer Type', value: 'Consult datasheet', sortOrder: 15 },
+  ],
+  'Electric Double Layer Capacitors': [
+    { parameterId: 'cap_aging', parameterName: 'Capacitance Aging', value: 'Consult datasheet', sortOrder: 12 },
+    { parameterId: 'esr_aging', parameterName: 'ESR Aging', value: 'Consult datasheet', sortOrder: 13 },
+  ],
+  'Varistors': [
+    { parameterId: 'clamping_voltage', parameterName: 'Clamping Voltage (Vc)', value: 'Consult datasheet', sortOrder: 9 },
+  ],
+  'NTC Thermistors': [
+    { parameterId: 'rt_curve', parameterName: 'R-T Curve Matching', value: 'Consult datasheet', sortOrder: 9 },
+    { parameterId: 'dissipation_constant', parameterName: 'Dissipation Constant', value: 'Consult datasheet', sortOrder: 10 },
+  ],
+  'PTC Thermistors': [
+    { parameterId: 'rt_curve', parameterName: 'R-T Curve Matching', value: 'Consult datasheet', sortOrder: 5 },
+  ],
+  'Single Diodes': [
+    { parameterId: 'recovery_behavior', parameterName: 'Recovery Behavior (Soft vs. Snappy)', value: 'Consult datasheet', sortOrder: 12 },
+  ],
+  'Bridge Rectifiers': [
+    { parameterId: 'recovery_behavior', parameterName: 'Recovery Behavior (Soft vs. Snappy)', value: 'Consult datasheet', sortOrder: 10 },
+  ],
+};
+
+/** Get placeholder attributes for a category */
+function getPlaceholders(categoryName: string): ParametricAttribute[] {
+  const lower = categoryName.toLowerCase();
+  for (const [key, placeholders] of Object.entries(categoryPlaceholders)) {
+    if (lower.includes(key.toLowerCase())) return placeholders;
+  }
+  return [];
+}
+
 /** Map a DigikeyProduct to our PartAttributes (Part + parametric attributes) */
 export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttributes {
   const part = mapDigikeyProductToPart(product);
   const categoryName = getDeepestCategoryName(product.Category);
   const parameters: ParametricAttribute[] = [];
+  const addedIds = new Set<string>();
 
   if (product.Parameters) {
+    // Build a lookup for fallback values (e.g., "Supplier Device Package" when
+    // "Package / Case" is "Nonstandard", common for power inductors)
+    const paramValueLookup = new Map<string, string>();
+    for (const p of product.Parameters) {
+      paramValueLookup.set(p.ParameterText, p.ValueText);
+    }
+
     if (hasCategoryMapping(categoryName)) {
       // Category-specific mapping: use curated param map
       for (const param of product.Parameters) {
-        const mapping = getParamMapping(categoryName, param.ParameterText);
-        if (!mapping) continue;
+        const mappings = getParamMappings(categoryName, param.ParameterText);
+        if (mappings.length === 0) continue;
 
-        const transformedValue = transformValue(mapping.attributeId, param.ValueText);
-        const { numericValue, unit } = extractNumericValue(param.ValueText);
+        for (const mapping of mappings) {
+          // Fall back to "Supplier Device Package" when Package/Case is "Nonstandard"
+          let valueText = param.ValueText;
+          if (mapping.attributeId === 'package_case' && valueText === 'Nonstandard') {
+            const supplierPkg = paramValueLookup.get('Supplier Device Package');
+            if (supplierPkg && supplierPkg !== '-') {
+              valueText = supplierPkg;
+            }
+          }
 
+          const transformedValue = transformValue(mapping.attributeId, valueText);
+          const { numericValue, unit } = extractNumericValue(valueText);
+
+          parameters.push({
+            parameterId: mapping.attributeId,
+            parameterName: mapping.attributeName,
+            value: transformedValue,
+            numericValue,
+            unit: mapping.unit ?? unit,
+            sortOrder: mapping.sortOrder,
+          });
+          addedIds.add(mapping.attributeId);
+        }
+      }
+
+      // Extract MSL from Classifications if not already in Parameters
+      if (!addedIds.has('msl') && product.Classifications?.MoistureSensitivityLevel) {
         parameters.push({
-          parameterId: mapping.attributeId,
-          parameterName: mapping.attributeName,
-          value: transformedValue,
-          numericValue,
-          unit: mapping.unit ?? unit,
-          sortOrder: mapping.sortOrder,
+          parameterId: 'msl',
+          parameterName: 'Moisture Sensitivity Level',
+          value: product.Classifications.MoistureSensitivityLevel,
+          sortOrder: 10,
         });
+        addedIds.add('msl');
+      }
+
+      // Add placeholder attributes for params Digikey doesn't provide
+      for (const placeholder of getPlaceholders(categoryName)) {
+        if (!addedIds.has(placeholder.parameterId)) {
+          parameters.push(placeholder);
+          addedIds.add(placeholder.parameterId);
+        }
       }
     } else {
       // Generic fallback: extract all Digikey parameters as-is
@@ -191,17 +416,6 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
         });
       }
     }
-  }
-
-  // If we have a mapped category but no DC bias derating parameter came from Digikey
-  // (it usually doesn't), add a placeholder for application_review
-  if (hasCategoryMapping(categoryName) && !parameters.find(p => p.parameterId === 'dc_bias_derating')) {
-    parameters.push({
-      parameterId: 'dc_bias_derating',
-      parameterName: 'DC Bias Derating',
-      value: 'Consult datasheet',
-      sortOrder: 13,
-    });
   }
 
   // Sort by sortOrder
