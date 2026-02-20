@@ -28,17 +28,30 @@ app/                          # Next.js App Router
   logic/                      # Admin logic table viewer page
 
 components/                   # React components
-  AppShell.tsx                # Main layout — CSS grid with animated panel transitions
+  AppShell.tsx                # Main layout orchestrator — composes hooks, delegates to DesktopLayout
+  DesktopLayout.tsx           # Desktop grid: chat, attributes, recommendations, MFR panels
   ChatInterface.tsx           # Chat UI with message list + search input
   AttributesPanel.tsx         # Part attributes table
   RecommendationsPanel.tsx    # Scored replacement list
   ComparisonView.tsx          # Side-by-side source vs replacement
-  parts-list/                 # Batch parts list components (shell, table, modals)
+  parts-list/                 # Batch parts list components
+    PartsListShell.tsx        # Parts list orchestrator — composes hooks, sort/filter pipeline
+    PartsListTable.tsx        # Sortable table with validation progress + selection
+    ViewControls.tsx          # View dropdown, kebab menu, default star, delete confirm
+    PartsListActionBar.tsx    # Selection count, refresh/delete buttons, search field
   lists/                      # Lists dashboard components
 
 hooks/
   useAppState.ts              # Main state machine (LLM mode with deterministic fallback)
+  useConversationPersistence.ts # URL hydration, auto-save, conversation CRUD
+  usePanelVisibility.ts       # Panel show/hide/dismiss, skeleton delay
+  useManufacturerProfile.ts   # MFR panel + chat collapse state
+  useNewListWorkflow.ts       # File upload dialog flow
   usePartsListState.ts        # Parts list file upload, parsing, validation
+  usePartsListAutoLoad.ts     # Auto-load from URL/pending file, redirect, default view
+  useRowSelection.ts          # Multi-select rows, toggle, refresh selected
+  useRowDeletion.ts           # Two-step delete confirmation (permanent vs. hide)
+  useColumnCatalog.ts         # Header inference, column building, mapping fallback
   useModalChat.ts             # Refinement chat state
   useViewConfig.ts            # Column view management
 

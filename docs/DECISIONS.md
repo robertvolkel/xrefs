@@ -312,3 +312,34 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 - `lib/types.ts` — added `dataSource` to `PartAttributes`
 - `lib/services/partDataService.ts` — tagged all return paths in `getAttributes()`
 - `components/AttributesPanel.tsx` — amber "Mock Data" chip in header
+
+---
+
+## 21. Component Refactoring: Extract Hooks + Sub-components
+
+**Decision:** Split large shell components (AppShell, PartsListShell) by extracting custom hooks for state/logic groups and sub-components for self-contained JSX blocks. Keep tightly-coupled pipelines (sort/filter/view resolution) in the shell.
+
+**What was extracted:**
+
+*AppShell (536 → 122 lines):*
+- `useConversationPersistence` — URL hydration (`?c=<id>`), auto-save on message/phase change, conversation CRUD, history drawer
+- `usePanelVisibility` — skeleton delay timer, dismissed state, `showAttributesPanel`/`showRightPanel` derivations, close handlers
+- `useManufacturerProfile` — MFR panel open/close, chat manual collapse, auto-clear when leaving 3-panel mode
+- `useNewListWorkflow` — pending file state, new list dialog confirm/cancel
+- `DesktopLayout` — all grid rendering: 4 panels (chat, attributes, recommendations, MFR), sidebar, history drawer
+
+*PartsListShell (800 → 348 lines):*
+- `usePartsListAutoLoad` — 4 initialization effects + 3 guard refs for pending file / URL param / redirect / default view
+- `useRowSelection` — multi-select state, auto-clear on row count change, toggle/refresh callbacks
+- `useRowDeletion` — two-step delete confirmation (permanent delete vs. hide from view)
+- `useColumnCatalog` — 4 interdependent memos: parameter keys, effective headers, available columns, inferred mapping
+- `ViewControls` — view dropdown, kebab menu (edit/create/delete), default star toggle, delete confirmation dialog
+- `PartsListActionBar` — selection count display, refresh/delete buttons, search field with clear
+
+**Rationale:** These components were 500-800 lines each, mixing state management, business logic, and rendering. Extraction makes each concern independently readable and testable. Hooks are the natural React boundary for state+effects groups. Sub-components are the natural boundary for self-contained JSX with local state.
+
+**What stays in the shell:** Sort/search/filter pipeline (memos that chain together and feed directly into render), view column resolution (depends on both column catalog output and active view), and thin dialog toggles (pickerOpen, editNameOpen — not worth a separate hook).
+
+**Verification approach:** TypeScript type checking (`tsc --noEmit`) after each extraction catches wiring errors. Existing 175 service-layer tests confirm no regressions. Production build confirms full compilation.
+
+**Tradeoff:** PartsListShell ended up at 348 lines (plan estimated ~180) because the sort/filter/view-resolution pipeline is ~120 lines of tightly-coupled memos that couldn't be extracted without artificial splitting. The circular dependency between `usePanelVisibility` (needs `mfrOpen`) and `useManufacturerProfile` (needs `showRightPanel`) was resolved by exposing a `clearManualCollapse` callback and wiring the auto-clear effect in the shell.

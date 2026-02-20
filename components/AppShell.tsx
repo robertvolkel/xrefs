@@ -1,281 +1,41 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Box, IconButton, Skeleton, Stack, Typography } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
+import { useCallback, useEffect } from 'react';
 import { useAppState } from '@/hooks/useAppState';
-import { useConversations } from '@/lib/hooks/useConversations';
-import { ManufacturerProfile } from '@/lib/types';
-import { getManufacturerProfile } from '@/lib/mockManufacturerData';
-import { setPendingFile } from '@/lib/pendingFile';
+import { useConversationPersistence } from '@/hooks/useConversationPersistence';
+import { usePanelVisibility } from '@/hooks/usePanelVisibility';
+import { useManufacturerProfile } from '@/hooks/useManufacturerProfile';
+import { useNewListWorkflow } from '@/hooks/useNewListWorkflow';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import ChatInterface from './ChatInterface';
-import CollapsedChatNav from './CollapsedChatNav';
-import ChatHistoryDrawer from './ChatHistoryDrawer';
-import AppSidebar from './AppSidebar';
 import MobileAppLayout from './MobileAppLayout';
-import AttributesPanel from './AttributesPanel';
-import RecommendationsPanel from './RecommendationsPanel';
-import ComparisonView from './ComparisonView';
-import ManufacturerProfilePanel from './ManufacturerProfilePanel';
+import DesktopLayout from './DesktopLayout';
 import NewListDialog from './lists/NewListDialog';
-
-function getGridColumns(
-  showAttrs: boolean,
-  showRecs: boolean,
-  chatCollapsed: boolean,
-  mfrOpen: boolean
-): string {
-  if (chatCollapsed && mfrOpen) return '60px 3fr 3fr 3fr';
-  if (chatCollapsed) return '60px 1fr 1fr 0fr';
-  if (showRecs) return '1fr 1fr 1fr 0fr';
-  if (showAttrs) return '2fr 1fr 0fr 0fr';
-  return '1fr 0fr 0fr 0fr';
-}
-
-function RecommendationsSkeleton() {
-  return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Box
-        sx={{
-          height: 80,
-          minHeight: 80,
-          px: 2,
-          py: 1.5,
-          borderBottom: 1,
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Recommended Replacements
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mt: 0.5 }}>
-          Finding cross-references...
-        </Typography>
-      </Box>
-      <Box sx={{ flex: 1, p: 2 }}>
-        <Stack spacing={1.5}>
-          {[0, 1, 2].map((i) => (
-            <Skeleton
-              key={i}
-              variant="rounded"
-              height={80}
-              sx={{ borderRadius: 2, opacity: 1 - i * 0.25 }}
-            />
-          ))}
-        </Stack>
-      </Box>
-    </Box>
-  );
-}
 
 export default function AppShell() {
   const appState = useAppState();
-  const {
-    conversations, loading: convoLoading,
-    create: createConvo, save: saveConvo, load: loadConvo,
-    remove: removeConvo, refresh: refreshConvos,
-  } = useConversations();
-  const searchParams = useSearchParams();
   const hasAttributes = (appState.sourceAttributes?.parameters.length ?? 0) > 0;
 
-  // Chat history drawer state
-  const [historyOpen, setHistoryOpen] = useState(false);
-
-  // Delay showing the skeleton panel by 2s after attributes load
-  const [recsRevealed, setRecsRevealed] = useState(false);
-  useEffect(() => {
-    if (appState.phase === 'finding-matches') {
-      const timer = setTimeout(() => setRecsRevealed(true), 2000);
-      return () => clearTimeout(timer);
-    }
-    if (appState.phase === 'viewing' || appState.phase === 'comparing') {
-      setRecsRevealed(true);
-    } else {
-      setRecsRevealed(false);
-    }
-  }, [appState.phase]);
-
-  // Panel dismissed state (user closed via X button)
-  const [recsDismissed, setRecsDismissed] = useState(false);
-  const [attrsDismissed, setAttrsDismissed] = useState(false);
-
-  // Manufacturer profile panel state (the "dance")
-  const [mfrProfile, setMfrProfile] = useState<ManufacturerProfile | null>(null);
-  // Manual chat collapse via hamburger (independent of MFR profile)
-  const [chatManuallyCollapsed, setChatManuallyCollapsed] = useState(false);
-  const chatCollapsed = mfrProfile !== null || chatManuallyCollapsed;
-  const mfrOpen = mfrProfile !== null;
-
-  const router = useRouter();
-
-  // New list dialog state (triggered by file upload from SearchInput)
-  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
-  const [newListDialogOpen, setNewListDialogOpen] = useState(false);
-
-  const handleNewListConfirm = useCallback((name: string, description: string, _currency: string, customer: string, defaultViewId: string) => {
-    if (!pendingUploadFile) return;
-    setPendingFile(pendingUploadFile, name, description, customer, defaultViewId);
-    setNewListDialogOpen(false);
-    setPendingUploadFile(null);
-    router.push('/parts-list');
-  }, [pendingUploadFile, router]);
-
-  const handleNewListCancel = useCallback(() => {
-    setNewListDialogOpen(false);
-    setPendingUploadFile(null);
-  }, []);
-
-  // ============================================================
-  // CONVERSATION PERSISTENCE
-  // ============================================================
-
-  // Hydrate from URL param (e.g., navigated from /lists with ?c=<id>)
-  const hydrationDoneRef = useRef(false);
-  useEffect(() => {
-    if (hydrationDoneRef.current) return;
-    const convoId = searchParams.get('c');
-    if (!convoId) return;
-    hydrationDoneRef.current = true;
-    loadConvo(convoId).then((snapshot) => {
-      if (!snapshot) return;
-      setRecsRevealed(snapshot.phase === 'viewing' || snapshot.phase === 'comparing');
-      appState.hydrateState(snapshot);
-      // Clean the URL
-      router.replace('/', { scroll: false });
-    });
-  }, [searchParams, loadConvo, appState.hydrateState, router]);
-
-  // Auto-save: create or update conversation when messages/phase change
-  const prevSaveKeyRef = useRef('');
-  useEffect(() => {
-    const msgCount = appState.messages.length;
-    if (msgCount === 0) return;
-
-    // Don't persist transient phases — they'd cause frozen UI on reload
-    const TRANSIENT_PHASES = ['searching', 'loading-attributes', 'finding-matches'];
-    if (TRANSIENT_PHASES.includes(appState.phase)) return;
-
-    const saveKey = `${msgCount}:${appState.phase}`;
-    if (saveKey === prevSaveKeyRef.current) return;
-    prevSaveKeyRef.current = saveKey;
-
-    const firstUserMsg = appState.messages.find((m) => m.role === 'user');
-    if (!firstUserMsg) return;
-
-    if (!appState.conversationId) {
-      // First save — create conversation
-      const title = firstUserMsg.content.length > 50
-        ? firstUserMsg.content.slice(0, 50) + '...'
-        : firstUserMsg.content;
-      createConvo(title, null, appState.messages, appState.getOrchestratorMessages(), appState.phase)
-        .then((id) => { if (id) appState.setConversationId(id); });
-    } else {
-      // Update existing conversation
-      saveConvo(appState.conversationId, {
-        messages: appState.messages,
-        orchestratorMessages: appState.getOrchestratorMessages(),
-        phase: appState.phase,
-        sourcePart: appState.sourcePart,
-        sourceAttributes: appState.sourceAttributes,
-        applicationContext: appState.applicationContext,
-        recommendations: appState.recommendations,
-        selectedRecommendation: appState.selectedRecommendation,
-        comparisonAttributes: appState.comparisonAttributes,
-        sourceMpn: appState.sourcePart?.mpn ?? null,
-      });
-    }
-  }, [appState.messages.length, appState.phase]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refresh conversation list when drawer opens
-  useEffect(() => {
-    if (historyOpen) refreshConvos();
-  }, [historyOpen, refreshConvos]);
-
-  const handleSelectConversation = useCallback(async (id: string) => {
-    const snapshot = await loadConvo(id);
-    if (!snapshot) return;
-    setMfrProfile(null);
-    setChatManuallyCollapsed(false);
-    setRecsDismissed(false);
-    setAttrsDismissed(false);
-    setRecsRevealed(snapshot.phase === 'viewing' || snapshot.phase === 'comparing');
-    appState.hydrateState(snapshot);
-    setHistoryOpen(false);
-  }, [loadConvo, appState.hydrateState]);
-
-  const handleNewChat = useCallback(() => {
-    setMfrProfile(null);
-    setChatManuallyCollapsed(false);
-    setRecsDismissed(false);
-    setAttrsDismissed(false);
-    appState.handleReset();
-    setHistoryOpen(false);
-  }, [appState.handleReset]);
-
-  const handleDeleteConversation = useCallback(async (id: string) => {
-    await removeConvo(id);
-    if (appState.conversationId === id) {
-      appState.handleReset();
-    }
-  }, [removeConvo, appState.conversationId, appState.handleReset]);
-
-  const handleManufacturerClick = useCallback((manufacturer: string) => {
-    const profile = getManufacturerProfile(manufacturer);
-    if (profile) setMfrProfile(profile);
-  }, []);
-
-  const handleExpandChat = useCallback(() => {
-    setChatManuallyCollapsed(false);
-    setMfrProfile(null);
-  }, []);
-
-  // Wraps reset to also clear MFR profile, manual collapse, and dismissed state
-  const handleReset = useCallback(() => {
-    setMfrProfile(null);
-    setChatManuallyCollapsed(false);
-    setRecsDismissed(false);
-    setAttrsDismissed(false);
-    appState.handleReset();
-  }, [appState.handleReset]);
-
-  // Reset dismissed state when starting a new search
-  useEffect(() => {
-    if (['idle', 'searching', 'resolving'].includes(appState.phase)) {
-      setRecsDismissed(false);
-      setAttrsDismissed(false);
-    }
-  }, [appState.phase]);
-
-  const showAttributesPanel = !attrsDismissed && [
-    'loading-attributes',
-    'awaiting-attributes',
-    'awaiting-context',
-    'finding-matches',
-    'viewing',
-    'comparing',
-    'unsupported',
-  ].includes(appState.phase);
-  const showRightPanel = !recsDismissed && recsRevealed && hasAttributes;
-  const isLoadingRecs = appState.phase === 'finding-matches';
-
-  // Close handlers for panel dismiss
-  const handleCloseRecs = useCallback(() => setRecsDismissed(true), []);
-  const handleCloseAttrs = useCallback(() => {
-    setAttrsDismissed(true);
-    setRecsDismissed(true); // closing attrs also hides recs
-  }, []);
-
-  // Only the rightmost panel gets a close button (MFR has its own)
-  const showRecsClose = !mfrOpen && showRightPanel;
-  const showAttrsClose = !mfrOpen && !showRightPanel && showAttributesPanel;
+  const mfr = useManufacturerProfile();
+  const panels = usePanelVisibility(appState.phase, hasAttributes, mfr.mfrOpen);
 
   // Auto-clear manual collapse when leaving 3-panel mode
   useEffect(() => {
-    if (!showRightPanel) setChatManuallyCollapsed(false);
-  }, [showRightPanel]);
+    if (!panels.showRightPanel) mfr.clearManualCollapse();
+  }, [panels.showRightPanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Unified reset: clears manufacturer profile + panel dismissed state
+  const resetPanelState = useCallback(() => {
+    mfr.reset();
+    panels.resetDismissed();
+  }, [mfr.reset, panels.resetDismissed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const persistence = useConversationPersistence(appState, resetPanelState, panels.setRecsRevealed);
+  const newList = useNewListWorkflow();
+
+  // Wraps reset to also clear MFR profile, manual collapse, and dismissed state
+  const handleReset = useCallback(() => {
+    resetPanelState();
+    appState.handleReset();
+  }, [resetPanelState, appState.handleReset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isMobile = useIsMobile();
 
@@ -289,10 +49,10 @@ export default function AppShell() {
         comparisonAttributes={appState.comparisonAttributes}
         recommendations={appState.recommendations}
         selectedRecommendation={appState.selectedRecommendation}
-        mfrProfile={mfrProfile}
-        showAttributesPanel={showAttributesPanel}
-        showRightPanel={showRightPanel}
-        isLoadingRecs={isLoadingRecs}
+        mfrProfile={mfr.mfrProfile}
+        showAttributesPanel={panels.showAttributesPanel}
+        showRightPanel={panels.showRightPanel}
+        isLoadingRecs={panels.isLoadingRecs}
         onSearch={appState.handleSearch}
         onConfirm={appState.handleConfirmPart}
         onReject={appState.handleRejectPart}
@@ -303,233 +63,60 @@ export default function AppShell() {
         onSkipContext={appState.handleSkipContext}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
-        onManufacturerClick={handleManufacturerClick}
-        onCloseMfrProfile={handleExpandChat}
+        onManufacturerClick={mfr.handleManufacturerClick}
+        onCloseMfrProfile={mfr.handleExpandChat}
       />
     );
   }
 
   return (
-    <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
-      <AppSidebar
+    <>
+      <DesktopLayout
+        phase={appState.phase}
+        messages={appState.messages}
+        statusText={appState.statusText}
+        sourceAttributes={appState.sourceAttributes}
+        comparisonAttributes={appState.comparisonAttributes}
+        recommendations={appState.recommendations}
+        selectedRecommendation={appState.selectedRecommendation}
+        conversationId={appState.conversationId}
+        showAttributesPanel={panels.showAttributesPanel}
+        showRightPanel={panels.showRightPanel}
+        isLoadingRecs={panels.isLoadingRecs}
+        showRecsClose={panels.showRecsClose}
+        showAttrsClose={panels.showAttrsClose}
+        chatCollapsed={mfr.chatCollapsed}
+        mfrOpen={mfr.mfrOpen}
+        mfrProfile={mfr.mfrProfile}
+        historyOpen={persistence.historyOpen}
+        conversations={persistence.conversations}
+        convoLoading={persistence.convoLoading}
+        onSearch={appState.handleSearch}
+        onConfirm={appState.handleConfirmPart}
+        onReject={appState.handleRejectPart}
         onReset={handleReset}
-        onToggleHistory={() => setHistoryOpen((prev) => !prev)}
-        historyOpen={historyOpen}
+        onAttributeResponse={appState.handleAttributeResponse}
+        onSkipAttributes={appState.handleSkipAttributes}
+        onContextResponse={appState.handleContextResponse}
+        onSkipContext={appState.handleSkipContext}
+        onSelectRecommendation={appState.handleSelectRecommendation}
+        onBackToRecommendations={appState.handleBackToRecommendations}
+        onCloseRecs={panels.handleCloseRecs}
+        onCloseAttrs={panels.handleCloseAttrs}
+        onManufacturerClick={mfr.handleManufacturerClick}
+        onExpandChat={mfr.handleExpandChat}
+        onToggleHistory={() => persistence.setHistoryOpen(!persistence.historyOpen)}
+        onCloseHistory={() => persistence.setHistoryOpen(false)}
+        onSelectConversation={persistence.handleSelectConversation}
+        onNewChat={persistence.handleNewChat}
+        onDeleteConversation={persistence.handleDeleteConversation}
       />
-      <ChatHistoryDrawer
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        conversations={conversations}
-        loading={convoLoading}
-        activeConversationId={appState.conversationId}
-        onSelectConversation={handleSelectConversation}
-        onNewChat={handleNewChat}
-        onDeleteConversation={handleDeleteConversation}
-      />
-      <Box
-        sx={{
-          flex: 1,
-          display: 'grid',
-          gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
-          height: '100%',
-          overflow: 'hidden',
-          transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-          bgcolor: 'background.default',
-          '@media (max-width: 900px)': {
-            gridTemplateColumns: '1fr !important',
-            gridTemplateRows: showRightPanel
-              ? '40vh 30vh 30vh'
-              : showAttributesPanel
-                ? '60vh 40vh'
-                : '1fr',
-          },
-        }}
-      >
-      {/* Left panel: Chat + Collapsed Nav (both rendered, crossfade) */}
-      <Box
-        sx={{
-          overflow: 'hidden',
-          borderRight: (showAttributesPanel || chatCollapsed) ? 1 : 0,
-          borderColor: 'divider',
-          transition: 'border-color 0.3s ease',
-          minWidth: 0,
-          position: 'relative',
-        }}
-      >
-        {/* Collapsed nav — appears near end of collapse, disappears immediately on expand */}
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            bottom: 0,
-            width: 60,
-            opacity: chatCollapsed ? 1 : 0,
-            transition: chatCollapsed
-              ? 'opacity 0.3s ease 0.5s'
-              : 'opacity 0.2s ease',
-            pointerEvents: chatCollapsed ? 'auto' : 'none',
-            zIndex: 2,
-          }}
-        >
-          <CollapsedChatNav onExpand={handleExpandChat} />
-        </Box>
-
-        {/* Chat — visible during slide, fades near end of collapse */}
-        <Box
-          sx={{
-            opacity: chatCollapsed ? 0 : 1,
-            transition: chatCollapsed
-              ? 'opacity 0.3s ease 0.15s'
-              : 'opacity 0.3s ease 0.5s',
-            height: '100%',
-            pointerEvents: chatCollapsed ? 'none' : 'auto',
-          }}
-        >
-          <ChatInterface
-            messages={appState.messages}
-            phase={appState.phase}
-            statusText={appState.statusText}
-            onSearch={appState.handleSearch}
-            onConfirm={appState.handleConfirmPart}
-            onReject={appState.handleRejectPart}
-            onReset={handleReset}
-            onAttributeResponse={appState.handleAttributeResponse}
-            onSkipAttributes={appState.handleSkipAttributes}
-            onContextResponse={appState.handleContextResponse}
-            onSkipContext={appState.handleSkipContext}
-          />
-        </Box>
-      </Box>
-
-      {/* Center panel: Source Attributes */}
-      <Box
-        sx={{
-          overflow: 'auto',
-          opacity: showAttributesPanel ? 1 : 0,
-          transition: 'opacity 0.3s ease 0.35s',
-          borderRight: (showRightPanel || chatCollapsed) ? 1 : 0,
-          borderColor: 'divider',
-          minWidth: 0,
-          position: 'relative',
-        }}
-      >
-        {showAttrsClose && (
-          <IconButton
-            onClick={handleCloseAttrs}
-            size="small"
-            sx={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              zIndex: 10,
-              opacity: 0.5,
-              '&:hover': { opacity: 1 },
-              transition: 'opacity 0.2s ease',
-            }}
-          >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        )}
-        <AttributesPanel
-          attributes={appState.sourceAttributes}
-          loading={appState.phase === 'loading-attributes'}
-          title="Source Part"
-        />
-      </Box>
-
-      {/* Right panel: Recommendations or Comparison */}
-      <Box
-        sx={{
-          overflow: 'auto',
-          opacity: showRightPanel ? 1 : 0,
-          transition: 'opacity 0.3s ease 0.4s',
-          borderRight: mfrOpen ? 1 : 0,
-          borderColor: 'divider',
-          minWidth: 0,
-          position: 'relative',
-        }}
-      >
-        {showRecsClose && (
-          <IconButton
-            onClick={handleCloseRecs}
-            size="small"
-            sx={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              zIndex: 10,
-              opacity: 0.5,
-              '&:hover': { opacity: 1 },
-              transition: 'opacity 0.2s ease',
-            }}
-          >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        )}
-        {isLoadingRecs ? (
-          <RecommendationsSkeleton />
-        ) : appState.phase === 'comparing' &&
-        appState.comparisonAttributes &&
-        appState.sourceAttributes ? (
-          <ComparisonView
-            sourceAttributes={appState.sourceAttributes}
-            replacementAttributes={appState.comparisonAttributes}
-            recommendation={appState.selectedRecommendation!}
-            onBack={appState.handleBackToRecommendations}
-            onManufacturerClick={handleManufacturerClick}
-          />
-        ) : appState.recommendations.length > 0 ? (
-          <RecommendationsPanel
-            recommendations={appState.recommendations}
-            onSelect={appState.handleSelectRecommendation}
-            onManufacturerClick={handleManufacturerClick}
-          />
-        ) : showRightPanel ? (
-          <Box
-            sx={{
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              p: 4,
-            }}
-          >
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}
-            >
-              No replacements found for this part. It might be one of a kind... or our database just needs a coffee break.
-            </Typography>
-          </Box>
-        ) : null}
-      </Box>
-
-      {/* Far right panel: Manufacturer Profile — slides in from right */}
-      <Box
-        sx={{
-          overflow: 'hidden',
-          opacity: mfrOpen ? 1 : 0,
-          transition: mfrOpen
-            ? 'opacity 0.2s ease 0.45s'
-            : 'opacity 0.1s ease',
-          minWidth: 0,
-        }}
-      >
-        {mfrProfile && (
-          <ManufacturerProfilePanel profile={mfrProfile} onClose={handleExpandChat} />
-        )}
-      </Box>
-      </Box>
-
-      {/* New list naming dialog (triggered by file upload from SearchInput) */}
       <NewListDialog
-        open={newListDialogOpen}
-        fileName={pendingUploadFile?.name ?? ''}
-        onConfirm={handleNewListConfirm}
-        onCancel={handleNewListCancel}
+        open={newList.newListDialogOpen}
+        fileName={newList.pendingUploadFile?.name ?? ''}
+        onConfirm={newList.handleNewListConfirm}
+        onCancel={newList.handleNewListCancel}
       />
-    </Box>
+    </>
   );
 }

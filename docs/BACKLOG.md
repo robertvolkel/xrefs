@@ -54,12 +54,25 @@ Extracted to `MODEL` constant reading from `ANTHROPIC_MODEL` env var (defaults t
 
 ---
 
-### Large components need splitting
-**Files:** `components/AppShell.tsx` (~800 lines), `components/parts-list/PartsListShell.tsx` (~800 lines), `components/parts-list/PartsListTable.tsx` (~500 lines)
+### ~~Large components need splitting~~ IN PROGRESS
+**Files:** `components/AppShell.tsx`, `components/parts-list/PartsListShell.tsx`, `components/parts-list/PartsListTable.tsx`
 
-These components manage too much state and rendering logic. Candidates for extraction:
-- AppShell: conversation persistence logic, panel transition logic, manufacturer profile state
-- PartsListShell: column catalog building, view management, search/sort logic
+**AppShell refactor COMPLETED** (536 → 122 lines). Extracted 4 hooks + 1 sub-component:
+- `hooks/useConversationPersistence.ts` — URL hydration, auto-save, drawer, select/new/delete
+- `hooks/usePanelVisibility.ts` — skeleton delay, dismissed state, show/hide derivations
+- `hooks/useManufacturerProfile.ts` — MFR panel, chat collapse, expand/reset
+- `hooks/useNewListWorkflow.ts` — file upload dialog confirm/cancel
+- `components/DesktopLayout.tsx` — grid template, all 4 panels, sidebar, history drawer
+
+**PartsListShell refactor COMPLETED** (800 → 348 lines). Extracted 4 hooks + 2 sub-components:
+- `hooks/usePartsListAutoLoad.ts` — auto-load from URL/pending file, redirect, default view
+- `hooks/useRowSelection.ts` — multi-select, toggle, refresh selected
+- `hooks/useRowDeletion.ts` — two-step delete confirmation (permanent vs. hide from view)
+- `hooks/useColumnCatalog.ts` — header inference, column building, column mapping fallback
+- `components/parts-list/ViewControls.tsx` — view dropdown, kebab menu, default star, delete confirm
+- `components/parts-list/PartsListActionBar.tsx` — selection count, refresh/delete buttons, search
+
+**Remaining:**
 - PartsListTable: cell rendering, status formatting, price formatting
 
 ---
