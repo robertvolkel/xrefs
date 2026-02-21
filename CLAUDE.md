@@ -30,6 +30,7 @@ app/                          # Next.js App Router
 components/                   # React components
   AppShell.tsx                # Main layout orchestrator — composes hooks, delegates to DesktopLayout
   DesktopLayout.tsx           # Desktop grid: chat, attributes, recommendations, MFR panels
+  ParticleWaveBackground.tsx  # Canvas particle wave animation — idle-state background, fades on panel reveal
   ChatInterface.tsx           # Chat UI with message list + search input
   AttributesPanel.tsx         # Part attributes table
   RecommendationsPanel.tsx    # Scored replacement list
@@ -156,6 +157,7 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **globals.css** should only have `box-sizing: border-box` on `*` — no `padding: 0; margin: 0`
 - **Layout constants** are shared via `lib/layoutConstants.ts` (HEADER_HEIGHT, ROW_FONT_SIZE, etc.)
 - **Two-step panel reveal**: idle → 70/30 (attributes) → 40/30/30 (recommendations)
+- **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
 - **partDataService** tries Digikey first; if unavailable, falls back to mock data
 

@@ -9,6 +9,7 @@ import AttributesPanel from './AttributesPanel';
 import RecommendationsPanel from './RecommendationsPanel';
 import ComparisonView from './ComparisonView';
 import ManufacturerProfilePanel from './ManufacturerProfilePanel';
+import ParticleWaveBackground from './ParticleWaveBackground';
 
 function getGridColumns(
   showAttrs: boolean,
@@ -147,25 +148,27 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         onNewChat={onNewChat}
         onDeleteConversation={onDeleteConversation}
       />
-      <Box
-        sx={{
-          flex: 1,
-          display: 'grid',
-          gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
-          height: '100%',
-          overflow: 'hidden',
-          transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-          bgcolor: 'background.default',
-          '@media (max-width: 900px)': {
-            gridTemplateColumns: '1fr !important',
-            gridTemplateRows: showRightPanel
-              ? '40vh 30vh 30vh'
-              : showAttributesPanel
-                ? '60vh 40vh'
-                : '1fr',
-          },
-        }}
-      >
+      <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default' }}>
+        <ParticleWaveBackground visible={!showAttributesPanel} />
+        <Box
+          sx={{
+            position: 'relative',
+            zIndex: 1,
+            display: 'grid',
+            gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
+            height: '100%',
+            overflow: 'hidden',
+            transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+            '@media (max-width: 900px)': {
+              gridTemplateColumns: '1fr !important',
+              gridTemplateRows: showRightPanel
+                ? '40vh 30vh 30vh'
+                : showAttributesPanel
+                  ? '60vh 40vh'
+                  : '1fr',
+            },
+          }}
+        >
         {/* Left panel: Chat + Collapsed Nav (both rendered, crossfade) */}
         <Box
           sx={{
@@ -233,6 +236,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             borderColor: 'divider',
             minWidth: 0,
             position: 'relative',
+            bgcolor: 'background.default',
           }}
         >
           {showAttrsClose && (
@@ -269,6 +273,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             borderColor: 'divider',
             minWidth: 0,
             position: 'relative',
+            bgcolor: 'background.default',
           }}
         >
           {showRecsClose && (
@@ -336,11 +341,13 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               ? 'opacity 0.2s ease 0.45s'
               : 'opacity 0.1s ease',
             minWidth: 0,
+            bgcolor: 'background.default',
           }}
         >
           {mfrProfile && (
             <ManufacturerProfilePanel profile={mfrProfile} onClose={onExpandChat} />
           )}
+        </Box>
         </Box>
       </Box>
     </Box>
