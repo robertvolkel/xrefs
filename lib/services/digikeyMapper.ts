@@ -27,6 +27,16 @@ function getDeepestCategoryName(category: DigikeyCategory | undefined): string {
   return current.Name;
 }
 
+/** Traverse Digikey's hierarchical category to find the most specific (deepest) CategoryId */
+function getDeepestCategoryId(category: DigikeyCategory | undefined): number | undefined {
+  if (!category) return undefined;
+  let current = category;
+  while (current.ChildCategories && current.ChildCategories.length > 0) {
+    current = current.ChildCategories[0];
+  }
+  return current.CategoryId;
+}
+
 // ============================================================
 // CATEGORY MAPPING
 // ============================================================
@@ -278,6 +288,7 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
     digikeyPartNumber: product.DigiKeyPartNumber || undefined,
     rohsStatus: product.Classifications?.RohsStatus || undefined,
     moistureSensitivityLevel: product.Classifications?.MoistureSensitivityLevel || undefined,
+    digikeyCategoryId: getDeepestCategoryId(product.Category),
   };
 }
 

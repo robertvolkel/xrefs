@@ -1391,3 +1391,81 @@ export function getMappedParameterTexts(categoryName: string): string[] {
 export function hasCategoryMapping(categoryName: string): boolean {
   return findCategoryMap(categoryName) !== null;
 }
+
+/**
+ * Map family IDs to the Digikey category names that provide their param maps.
+ * Some families share a Digikey category (e.g., 52/53/54/55 all use "Chip Resistor").
+ * B1 has two categories: "Single Diodes" and "Bridge Rectifiers".
+ */
+const familyToDigikeyCategories: Record<string, string[]> = {
+  '12': ['Ceramic Capacitors'],
+  '13': ['Ceramic Capacitors'],
+  '52': ['Chip Resistor'],
+  '53': ['Chip Resistor'],
+  '54': ['Chip Resistor'],
+  '55': ['Chip Resistor'],
+  '58': ['Aluminum Electrolytic Capacitors'],
+  '59': ['Tantalum Capacitors', 'Tantalum - Polymer Capacitors'],
+  '60': ['Aluminum - Polymer Capacitors'],
+  '61': ['Electric Double Layer Capacitors'],
+  '64': ['Film Capacitors'],
+  '65': ['Varistors'],
+  '66': ['PTC Resettable Fuses'],
+  '67': ['NTC Thermistors'],
+  '68': ['PTC Thermistors'],
+  '69': ['Common Mode Chokes'],
+  '70': ['Ferrite Beads and Chips'],
+  '71': ['Fixed Inductors'],
+  '72': ['Fixed Inductors'],
+  'B1': ['Single Diodes', 'Bridge Rectifiers'],
+};
+
+/** Get the Digikey category names associated with a family ID */
+export function getDigikeyCategoriesForFamily(familyId: string): string[] {
+  return familyToDigikeyCategories[familyId] ?? [];
+}
+
+/** Get the full param map for a Digikey category name */
+export function getFullParamMap(categoryName: string): Record<string, ParamMapEntry> | null {
+  return findCategoryMap(categoryName);
+}
+
+/** Get all category-to-param-map entries (for enumeration) */
+export function getAllCategoryParamMaps(): [string, Record<string, ParamMapEntry>][] {
+  return categoryParamMaps;
+}
+
+/**
+ * Compute the matchable weight for a family — the sum of rule weights
+ * that have corresponding Digikey parameter mappings.
+ */
+export function computeFamilyParamCoverage(
+  familyId: string,
+  rules: { attributeId: string; weight: number }[],
+): { totalWeight: number; matchableWeight: number } {
+  const categories = getDigikeyCategoriesForFamily(familyId);
+  const totalWeight = rules.reduce((sum, r) => sum + r.weight, 0);
+
+  if (categories.length === 0) {
+    return { totalWeight, matchableWeight: 0 };
+  }
+
+  // Collect all attributeIds that have Digikey param mappings
+  const mappedAttributeIds = new Set<string>();
+  for (const cat of categories) {
+    const map = findCategoryMap(cat);
+    if (!map) continue;
+    for (const entry of Object.values(map)) {
+      const mappings = Array.isArray(entry) ? entry : [entry];
+      for (const m of mappings) {
+        mappedAttributeIds.add(m.attributeId);
+      }
+    }
+  }
+
+  const matchableWeight = rules
+    .filter(r => mappedAttributeIds.has(r.attributeId))
+    .reduce((sum, r) => sum + r.weight, 0);
+
+  return { totalWeight, matchableWeight };
+}

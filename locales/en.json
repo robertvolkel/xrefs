@@ -11,7 +11,7 @@
   "sidebar": {
     "accountSettings": "My Account Settings",
     "orgSettings": "Organization Settings",
-    "crossRefLogic": "Cross-Reference Logic",
+    "platformSettings": "Platform Settings",
     "logout": "Log Out",
     "yourLists": "Your Lists"
   },
@@ -205,10 +205,11 @@
 
   "recommendations": {
     "header": "Recommended Replacements",
-    "headerFiltered": "{{activeCount}} active {{matchWord}} · {{obsoleteCount}} obsolete hidden",
+    "headerFiltered": "{{activeCount}} active {{matchWord}} · {{hiddenCount}} hidden",
     "headerUnfiltered": "{{count}} {{matchWord}} found — click to compare",
     "match": "match",
-    "matches": "matches"
+    "matches": "matches",
+    "activeOnly": "Active only"
   },
 
   "attributes": {
@@ -260,6 +261,51 @@
     "confirmEnableMessage": "Re-enable {{name}}'s account? They will be able to sign in again.",
     "confirm": "Confirm",
     "you": "(you)"
+  },
+
+  "admin": {
+    "title": "Platform Settings",
+    "dataSources": "Data Sources",
+    "paramMappings": "Parameter Mappings",
+    "logicRules": "Cross-Reference Logic",
+    "contextQuestions": "Application Context",
+    "configured": "Configured",
+    "notConfigured": "Not Configured",
+    "supportedFamilies": "Supported Families",
+    "paramMapsConfigured": "Parameter Maps Configured",
+    "digikeyCategory": "Digikey Category",
+    "internalAttribute": "Internal Attribute",
+    "parameterText": "Parameter Text",
+    "attributeId": "Attribute ID",
+    "attributeName": "Attribute Name",
+    "unit": "Unit",
+    "sortOrder": "Sort Order",
+    "multiMap": "Multi-Map",
+    "noParamMap": "No parameter map for this family",
+    "sharedMap": "Shares parameter map with: {{families}}",
+    "contextSensitivity": "Context Sensitivity",
+    "questions": "Questions",
+    "priority": "Priority",
+    "effects": "Effects",
+    "noContextConfig": "No context questions configured for this family",
+    "escalateToMandatory": "Escalate to Mandatory",
+    "escalateToPrimary": "Escalate to Primary",
+    "setThreshold": "Set Threshold",
+    "notApplicable": "Not Applicable",
+    "addReviewFlag": "Add Review Flag",
+    "taxonomyNav": "Taxonomy",
+    "taxonomy": "Digikey Taxonomy",
+    "taxonomyDescription": "Digikey product categories cross-referenced with supported component families.",
+    "coverageSummary": "Coverage: {{covered}} ({{percentage}}%) of {{total}} Digikey subcategories.",
+    "covered": "Covered",
+    "notCovered": "Not Covered",
+    "subcategoriesCovered": "{{count}} of {{total}} covered",
+    "ruleCount": "{{count}} rules",
+    "totalWeight": "Total Weight",
+    "matchableWeight": "Matchable Weight",
+    "paramCoverage": "Param Coverage",
+    "lastUpdated": "Last Updated",
+    "fetchError": "Failed to load Digikey taxonomy"
   },
 
   "comparison": {

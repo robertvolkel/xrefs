@@ -343,3 +343,83 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Verification approach:** TypeScript type checking (`tsc --noEmit`) after each extraction catches wiring errors. Existing 175 service-layer tests confirm no regressions. Production build confirms full compilation.
 
 **Tradeoff:** PartsListShell ended up at 348 lines (plan estimated ~180) because the sort/filter/view-resolution pipeline is ~120 lines of tightly-coupled memos that couldn't be extracted without artificial splitting. The circular dependency between `usePanelVisibility` (needs `mfrOpen`) and `useManufacturerProfile` (needs `showRightPanel`) was resolved by exposing a `clearManualCollapse` callback and wiring the auto-clear effect in the shell.
+
+---
+
+## 22. Platform Settings Admin Section
+
+**Decision:** Created a unified `/admin` route ("Platform Settings") with 4 view-only sections, accessible via a wrench icon in the sidebar (admin-only). Moved the cross-reference logic viewer from the settings dropdown menu into this section. The old `/logic` route redirects to `/admin?section=logic`.
+
+**Sections:**
+1. **Data Sources** — Shows Digikey API, Anthropic API, and Supabase configuration status via a dedicated admin-guarded API route (`/api/admin/data-sources`). Displays masked credentials, base URLs, and coverage metrics. No secrets are exposed — only prefixes, booleans, and public URLs.
+2. **Parameter Mappings** — Displays the Digikey ParameterText → internal attributeId mappings per family. Uses `getDigikeyCategoriesForFamily()` and `getFullParamMap()` (new exports from `digikeyParamMap.ts`). Handles multi-map entries (compound fields like "Features" → aec_q200 + anti_sulfur) and families with dual Digikey categories (B1: Single Diodes + Bridge Rectifiers shown as tabs).
+3. **Cross-Reference Logic** — The existing logic table viewer (formerly `LogicShell.tsx`), now refactored into `LogicPanel.tsx`.
+4. **Application Context** — Shows per-family context questions with options and attribute effects. Each effect displays attributeId → effect type with color-coded chips matching the logic rule color scheme.
+
+**Architecture:** `AdminShell` orchestrator manages section selection (URL params: `?section=data-sources|param-mappings|logic|context`), shared category/family picker state (used by sections 2-4), and renders the active panel. The family picker (`FamilyPicker.tsx`) was extracted from the old `LogicShell.tsx` for reuse across 3 sections.
+
+**Rationale:** The team needs full visibility into the platform's inner workings — data sources, parameter mappings, matching rules, and context logic — without reading code. A single admin section consolidates all "how does the engine work" views under one roof. View-only for now; editing can be added incrementally.
+
+**Files created:** `app/admin/page.tsx`, `app/api/admin/data-sources/route.ts`, `components/admin/AdminShell.tsx`, `AdminSectionNav.tsx`, `FamilyPicker.tsx`, `DataSourcesPanel.tsx`, `ParamMappingsPanel.tsx`, `LogicPanel.tsx`, `ContextPanel.tsx`.
+
+**Files modified:** `components/AppSidebar.tsx` (wrench icon + removed logic menu item), `lib/services/digikeyParamMap.ts` (new exports), `locales/*.json` (i18n keys).
+
+**Files removed:** `components/logic/LogicShell.tsx` (content split into FamilyPicker + LogicPanel).
+
+---
+
+## 23. Digikey Taxonomy Admin Section
+
+**Decision:** Added a 5th "Taxonomy" tab to Platform Settings (`/admin?section=taxonomy`) that displays Digikey's entire product category hierarchy, cross-referenced with supported component families to show coverage status, rule counts, weight statistics, and parameter coverage percentages.
+
+**How it works:**
+
+1. A new `getCategories()` function in `digikeyClient.ts` calls Digikey's `GET /products/v4/search/categories` endpoint and caches the response for 24 hours. The response is normalized to handle both `ChildCategories` and `Children` field names (Digikey API field naming is inconsistent).
+
+2. The API route (`/api/admin/taxonomy`) builds a reverse lookup from Digikey subcategory names to internal family coverage info. For each of the 20 supported families, it computes:
+   - **Rule count** from the logic table
+   - **Total weight** — sum of all rule weights
+   - **Matchable weight** — sum of weights for rules that have Digikey parameter mappings (computed by `computeFamilyParamCoverage()` in `digikeyParamMap.ts`)
+   - **Param coverage %** — matchableWeight / totalWeight
+   - **Last updated** — static dates derived from git history, stored in `familyLastUpdated` map in `logicTables/index.ts`
+
+3. Subcategory matching uses the same substring-contains approach as `findCategoryMap()`: check if the Digikey subcategory name (lowercased) contains the pattern string from `familyToDigikeyCategories`.
+
+4. Results are sorted with covered categories first, then alphabetical. The UI uses MUI Accordions — categories with coverage are expanded by default.
+
+**Rationale:** The team needs an at-a-glance inventory showing which parts of Digikey's catalog have cross-reference logic. Previously this information was scattered across `logicTables/index.ts`, `digikeyParamMap.ts`, and `DECISIONS.md`. The taxonomy view makes coverage gaps immediately visible and provides metrics (param coverage %) to assess data quality per family.
+
+**Key design choices:**
+- **Live API call with cache**, not a static snapshot — Digikey's category structure can change, and the 24h TTL keeps data fresh without excessive API calls.
+- **No family picker** — unlike other admin sections, taxonomy shows all families at once since the point is a birds-eye coverage view.
+- **Multiple families per subcategory** — Families 12+13 (MLCC + Mica) both map to "Ceramic Capacitors"; families 52-55 all map to "Chip Resistor"; families 71+72 both map to "Fixed Inductors". The UI renders multiple family info cards under the same subcategory.
+- **`computeFamilyParamCoverage()` stays in `digikeyParamMap.ts`** — it needs access to the module-private `findCategoryMap()` function, avoiding the need to export internal implementation details.
+
+**Files created:** `app/api/admin/taxonomy/route.ts`, `components/admin/TaxonomyPanel.tsx`.
+
+**Files modified:** `lib/services/digikeyClient.ts` (added `getCategories()`), `lib/types.ts` (taxonomy types), `lib/services/digikeyParamMap.ts` (added `computeFamilyParamCoverage()`), `lib/logicTables/index.ts` (added `familyLastUpdated` + `getFamilyLastUpdated()`), `components/admin/AdminSectionNav.tsx` (taxonomy tab), `components/admin/AdminShell.tsx` (wiring), `locales/*.json` (i18n keys).
+
+---
+
+## 24. Improved Candidate Search: Category Filter + Limit Increase + Active-Only UI Filter
+
+**Decision:** Enhanced the Digikey candidate search to use category-level API filtering and increased the result limit from 20 to 50. Replaced the auto-hide timer for obsolete parts with an explicit "Active only" checkbox in the Recommendations panel.
+
+**What changed:**
+
+1. **Digikey CategoryId preserved through the pipeline.** Added `digikeyCategoryId?: number` to the `Part` interface. `digikeyMapper.ts` now captures the deepest CategoryId from the product's hierarchical category structure via `getDeepestCategoryId()`. Previously this ID was discarded during mapping.
+
+2. **Candidate search uses category filter + higher limit.** `fetchDigikeyCandidates()` now passes the source part's `digikeyCategoryId` to `keywordSearch()` (which already supported a `categoryId` option but it was never used). Limit bumped from 20 → 50 (Digikey's API maximum). This constrains results to the same Digikey product category as the source part, preventing unrelated parts from consuming result slots.
+
+3. **Search query simplified when category filter is active.** `buildCandidateSearchQuery()` now skips the subcategory keyword (e.g., "MLCC") when a `digikeyCategoryId` is available, since the category filter handles that constraint. Falls back to the old keyword-inclusive behavior when no category ID exists (mock data path).
+
+4. **"Active only" checkbox replaces auto-filter.** The old behavior auto-hid obsolete parts after a 2-second delay with no user control and only targeted `status === 'Obsolete'`. The new checkbox (checked by default) filters all non-Active statuses: Obsolete, Discontinued, NRND, and LastTimeBuy. Users can uncheck it to see all lifecycle statuses — useful because non-active parts from Digikey may still be available from other distributors.
+
+**Rationale:** The previous keyword-only search relied entirely on Digikey's text relevance ranking with no category constraint. This meant a search for "10µF 0603" could waste slots on connectors or ICs that matched those keywords. Category filtering ensures all 50 results are from the correct component family. Not filtering by status or stock at the API level was intentional — users benefit from seeing non-active replacements as potential options from other sources, and the UI filter gives them instant control.
+
+**Files modified:**
+- `lib/types.ts` — added `digikeyCategoryId` to `Part`
+- `lib/services/digikeyMapper.ts` — added `getDeepestCategoryId()`, used in `mapDigikeyProductToPart()`
+- `lib/services/partDataService.ts` — updated `fetchDigikeyCandidates()` (category filter + limit 50) and `buildCandidateSearchQuery()` (conditional subcategory keyword)
+- `components/RecommendationsPanel.tsx` — replaced auto-filter with `activeOnly` checkbox
+- `locales/en.json`, `locales/de.json`, `locales/zh-CN.json` — added `activeOnly` key, updated `headerFiltered` template

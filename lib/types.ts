@@ -15,6 +15,7 @@ export interface Part {
   digikeyPartNumber?: string;
   rohsStatus?: string;
   moistureSensitivityLevel?: string;
+  digikeyCategoryId?: number;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -433,4 +434,51 @@ export interface BatchValidateResponse {
   results: BatchValidateItem[];
   totalProcessed: number;
   totalResolved: number;
+}
+
+// ============================================================
+// TAXONOMY / COVERAGE TYPES
+// ============================================================
+
+/** Coverage metadata for a supported family within the taxonomy */
+export interface FamilyCoverageInfo {
+  familyId: string;
+  familyName: string;
+  category: string;
+  ruleCount: number;
+  totalWeight: number;
+  matchableWeight: number;
+  paramCoverage: number;
+  lastUpdated: string;
+}
+
+/** A subcategory within the Digikey taxonomy, enriched with coverage data */
+export interface TaxonomySubcategory {
+  categoryId: number;
+  name: string;
+  productCount: number;
+  covered: boolean;
+  families: FamilyCoverageInfo[];
+}
+
+/** A top-level category in the Digikey taxonomy */
+export interface TaxonomyCategory {
+  categoryId: number;
+  name: string;
+  productCount: number;
+  subcategories: TaxonomySubcategory[];
+  coveredCount: number;
+}
+
+/** Full taxonomy response from the API */
+export interface TaxonomyResponse {
+  categories: TaxonomyCategory[];
+  summary: {
+    totalCategories: number;
+    totalSubcategories: number;
+    coveredSubcategories: number;
+    totalFamilies: number;
+    coveragePercentage: number;
+  };
+  fetchedAt: string;
 }

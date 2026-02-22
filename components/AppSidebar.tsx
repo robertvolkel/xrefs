@@ -6,10 +6,10 @@ import { Box, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider } 
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
-import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
@@ -32,6 +32,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const [orgSettingsOpen, setOrgSettingsOpen] = useState(false);
 
   const isListsActive = pathname === '/lists';
+  const isAdminActive = pathname === '/admin';
 
   const handleLogout = async () => {
     setAnchorEl(null);
@@ -86,26 +87,12 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <Box component="img" src="/xq-logo.png" alt="XQ" sx={{ width: 28 }} />
         </Box>
 
-        {/* Navigation icons — 3x the 30px logo top padding */}
-        <IconButton
-          onClick={() => router.push('/lists')}
-          size="small"
-          sx={{
-            mt: '41px',
-            opacity: isListsActive ? 1 : 0.7,
-            bgcolor: isListsActive ? 'action.selected' : 'transparent',
-            borderRadius: 1,
-            '&:hover': { opacity: 1 },
-          }}
-        >
-          <DescriptionOutlinedIcon fontSize="small" />
-        </IconButton>
-
+        {/* Navigation icons */}
         <IconButton
           onClick={onToggleHistory}
           size="small"
           sx={{
-            mt: 1.5,
+            mt: '22px',
             opacity: historyOpen ? 1 : 0.7,
             bgcolor: historyOpen ? 'action.selected' : 'transparent',
             borderRadius: 1,
@@ -114,15 +101,46 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
         >
           <ChatBubbleOutlineIcon fontSize="small" />
         </IconButton>
+
+        <IconButton
+          onClick={() => router.push('/lists')}
+          size="small"
+          sx={{
+            mt: 1.5,
+            opacity: isListsActive ? 1 : 0.7,
+            bgcolor: isListsActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { opacity: 1 },
+          }}
+        >
+          <DescriptionOutlinedIcon fontSize="small" />
+        </IconButton>
       </Box>
 
-      {/* Settings */}
-      <IconButton
-        onClick={(e) => setAnchorEl(e.currentTarget)}
-        sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
-      >
-        <SettingsIcon />
-      </IconButton>
+      {/* Bottom group: Admin + Settings */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        {isAdmin && (
+          <IconButton
+            onClick={() => router.push('/admin')}
+            size="small"
+            sx={{
+              mb: 1.5,
+              opacity: isAdminActive ? 1 : 0.7,
+              bgcolor: isAdminActive ? 'action.selected' : 'transparent',
+              borderRadius: 1,
+              '&:hover': { opacity: 1 },
+            }}
+          >
+            <BuildOutlinedIcon fontSize="small" />
+          </IconButton>
+        )}
+        <IconButton
+          onClick={(e) => setAnchorEl(e.currentTarget)}
+          sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
+        >
+          <SettingsIcon />
+        </IconButton>
+      </Box>
 
       <Menu
         anchorEl={anchorEl}
@@ -142,13 +160,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <MenuItem onClick={handleOpenOrgSettings}>
             <ListItemIcon><CorporateFareOutlinedIcon fontSize="small" /></ListItemIcon>
             <ListItemText>{t('sidebar.orgSettings')}</ListItemText>
-          </MenuItem>
-        )}
-
-        {isAdmin && (
-          <MenuItem onClick={() => { setAnchorEl(null); router.push('/logic'); }}>
-            <ListItemIcon><AccountTreeOutlinedIcon fontSize="small" /></ListItemIcon>
-            <ListItemText>{t('sidebar.crossRefLogic')}</ListItemText>
           </MenuItem>
         )}
 

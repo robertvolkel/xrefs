@@ -140,6 +140,34 @@ const subcategoryToFamily: Record<string, string> = {
   'Recovery Rectifier': 'B1',
 };
 
+/** Last-updated dates for each family's logic table (from git history) */
+const familyLastUpdated: Record<string, string> = {
+  '12': '2026-02-11',
+  '13': '2026-02-19',
+  '52': '2026-02-11',
+  '53': '2026-02-19',
+  '54': '2026-02-19',
+  '55': '2026-02-19',
+  '58': '2026-02-11',
+  '59': '2026-02-11',
+  '60': '2026-02-19',
+  '61': '2026-02-11',
+  '64': '2026-02-11',
+  '65': '2026-02-19',
+  '66': '2026-02-19',
+  '67': '2026-02-11',
+  '68': '2026-02-11',
+  '69': '2026-02-11',
+  '70': '2026-02-11',
+  '71': '2026-02-20',
+  '72': '2026-02-19',
+  'B1': '2026-02-19',
+};
+
+export function getFamilyLastUpdated(familyId: string): string {
+  return familyLastUpdated[familyId] ?? 'unknown';
+}
+
 export function getLogicTable(familyId: string): LogicTable | null {
   return logicTableRegistry[familyId] ?? null;
 }

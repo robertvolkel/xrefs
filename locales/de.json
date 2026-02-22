@@ -11,7 +11,7 @@
   "sidebar": {
     "accountSettings": "Meine Kontoeinstellungen",
     "orgSettings": "Organisationseinstellungen",
-    "crossRefLogic": "Querverweislogik",
+    "platformSettings": "Plattformeinstellungen",
     "logout": "Abmelden",
     "yourLists": "Ihre Listen"
   },
@@ -186,10 +186,11 @@
 
   "recommendations": {
     "header": "Empfohlene Ersatzteile",
-    "headerFiltered": "{{activeCount}} aktive {{matchWord}} · {{obsoleteCount}} veraltete ausgeblendet",
+    "headerFiltered": "{{activeCount}} aktive {{matchWord}} · {{hiddenCount}} ausgeblendet",
     "headerUnfiltered": "{{count}} {{matchWord}} gefunden — zum Vergleichen klicken",
     "match": "Treffer",
-    "matches": "Treffer"
+    "matches": "Treffer",
+    "activeOnly": "Nur aktive"
   },
 
   "attributes": {
@@ -215,6 +216,51 @@
     "enterValue": "Wert eingeben...",
     "tellAboutApplication": "Um den besten Ersatz zu finden, erzählen Sie mir von Ihrer Anwendung:",
     "skipUseDefaults": "Überspringen — Standardwerte verwenden"
+  },
+
+  "admin": {
+    "title": "Plattformeinstellungen",
+    "dataSources": "Datenquellen",
+    "paramMappings": "Parameterzuordnungen",
+    "logicRules": "Querverweislogik",
+    "contextQuestions": "Anwendungskontext",
+    "configured": "Konfiguriert",
+    "notConfigured": "Nicht konfiguriert",
+    "supportedFamilies": "Unterstützte Familien",
+    "paramMapsConfigured": "Parameterzuordnungen konfiguriert",
+    "digikeyCategory": "Digikey-Kategorie",
+    "internalAttribute": "Internes Attribut",
+    "parameterText": "Parametertext",
+    "attributeId": "Attribut-ID",
+    "attributeName": "Attributname",
+    "unit": "Einheit",
+    "sortOrder": "Sortierung",
+    "multiMap": "Multi-Map",
+    "noParamMap": "Keine Parameterzuordnung für diese Familie",
+    "sharedMap": "Teilt Parameterzuordnung mit: {{families}}",
+    "contextSensitivity": "Kontextsensitivität",
+    "questions": "Fragen",
+    "priority": "Priorität",
+    "effects": "Auswirkungen",
+    "noContextConfig": "Keine Kontextfragen für diese Familie konfiguriert",
+    "escalateToMandatory": "Auf Pflicht eskalieren",
+    "escalateToPrimary": "Auf Primär eskalieren",
+    "setThreshold": "Schwellenwert setzen",
+    "notApplicable": "Nicht zutreffend",
+    "addReviewFlag": "Prüfkennzeichen hinzufügen",
+    "taxonomyNav": "Taxonomie",
+    "taxonomy": "Digikey-Taxonomie",
+    "taxonomyDescription": "Digikey-Produktkategorien mit unterstützten Bauteilfamilien abgeglichen.",
+    "coverageSummary": "Abdeckung: {{covered}} ({{percentage}}%) von {{total}} Digikey-Unterkategorien.",
+    "covered": "Abgedeckt",
+    "notCovered": "Nicht abgedeckt",
+    "subcategoriesCovered": "{{count}} von {{total}} abgedeckt",
+    "ruleCount": "{{count}} Regeln",
+    "totalWeight": "Gesamtgewicht",
+    "matchableWeight": "Zuordenbares Gewicht",
+    "paramCoverage": "Param-Abdeckung",
+    "lastUpdated": "Zuletzt aktualisiert",
+    "fetchError": "Digikey-Taxonomie konnte nicht geladen werden"
   },
 
   "comparison": {

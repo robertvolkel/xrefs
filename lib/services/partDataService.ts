@@ -168,7 +168,11 @@ async function fetchDigikeyCandidates(
   const keywords = buildCandidateSearchQuery(sourceAttrs);
   if (!keywords) return [];
 
-  const response = await keywordSearch(keywords, { limit: 20 }, currency);
+  const response = await keywordSearch(
+    keywords,
+    { limit: 50, categoryId: sourceAttrs.part.digikeyCategoryId },
+    currency,
+  );
 
   const allProducts = [
     ...(response.ExactMatches ?? []),
@@ -190,7 +194,8 @@ async function fetchDigikeyCandidates(
   return candidates;
 }
 
-/** Build a keyword search string from source part attributes */
+/** Build a keyword search string from source part attributes.
+ *  When a category filter is applied, the subcategory keyword is unnecessary. */
 function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   const parts: string[] = [];
   const paramMap = new Map(sourceAttrs.parameters.map(p => [p.parameterId, p]));
@@ -209,8 +214,8 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
     if (match) parts.push(match[1]);
   }
 
-  // Subcategory as keyword
-  if (sourceAttrs.part.subcategory) {
+  // Only add subcategory as keyword if no category filter will be applied
+  if (!sourceAttrs.part.digikeyCategoryId && sourceAttrs.part.subcategory) {
     parts.push(sourceAttrs.part.subcategory);
   }
 

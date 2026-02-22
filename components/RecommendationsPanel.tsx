@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { useState } from 'react';
+import { Box, Checkbox, CircularProgress, FormControlLabel, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
@@ -16,16 +16,10 @@ interface RecommendationsPanelProps {
 export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
-  const obsoleteCount = sorted.filter(r => r.part.status === 'Obsolete').length;
-  const activeCount = sorted.length - obsoleteCount;
-  const [filtered, setFiltered] = useState(false);
+  const [activeOnly, setActiveOnly] = useState(true);
 
-  useEffect(() => {
-    setFiltered(false);
-    if (obsoleteCount === 0) return;
-    const timer = setTimeout(() => setFiltered(true), 2000);
-    return () => clearTimeout(timer);
-  }, [obsoleteCount]);
+  const activeCount = sorted.filter(r => r.part.status === 'Active').length;
+  const hiddenCount = sorted.length - activeCount;
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -41,20 +35,36 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           flexDirection: 'column',
         }}
       >
-        <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          {t('recommendations.header')}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {t('recommendations.header')}
+          </Typography>
+          {hiddenCount > 0 && (
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={activeOnly}
+                  onChange={(e) => setActiveOnly(e.target.checked)}
+                  size="small"
+                  sx={{ p: 0.5 }}
+                />
+              }
+              label={t('recommendations.activeOnly')}
+              sx={{ mr: 0, '& .MuiFormControlLabel-label': { fontSize: '0.72rem' } }}
+            />
+          )}
+        </Box>
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-          {filtered && obsoleteCount > 0
-            ? t('recommendations.headerFiltered', { activeCount, obsoleteCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+          {activeOnly && hiddenCount > 0
+            ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
             : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
         </Typography>
       </Box>
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
         {sorted.map((rec) => {
-          const isObsolete = rec.part.status === 'Obsolete';
-          const shouldHide = filtered && isObsolete;
+          const isNonActive = rec.part.status !== 'Active';
+          const shouldHide = activeOnly && isNonActive;
           return (
             <Box
               key={rec.part.mpn}

@@ -9,6 +9,7 @@ const BASE_URL = 'https://api.digikey.com';
 const TOKEN_URL = `${BASE_URL}/v1/oauth2/token`;
 const SEARCH_URL = `${BASE_URL}/products/v4/search/keyword`;
 const DETAILS_URL = `${BASE_URL}/products/v4/search`;
+const CATEGORIES_URL = `${BASE_URL}/products/v4/search/categories`;
 
 // ============================================================
 // DIGIKEY RESPONSE TYPES
@@ -17,6 +18,7 @@ const DETAILS_URL = `${BASE_URL}/products/v4/search`;
 export interface DigikeyCategory {
   CategoryId: number;
   Name: string;
+  ProductCount?: number;
   ChildCategories?: DigikeyCategory[];
 }
 
@@ -230,4 +232,42 @@ export async function getProductDetails(
   }
 
   return data;
+}
+
+// ============================================================
+// CATEGORIES
+// ============================================================
+
+let categoriesCache: { data: DigikeyCategory[]; timestamp: number } | null = null;
+const CATEGORIES_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Fetch the full product category taxonomy from Digikey */
+export async function getCategories(): Promise<DigikeyCategory[]> {
+  if (categoriesCache && Date.now() - categoriesCache.timestamp < CATEGORIES_CACHE_TTL) {
+    return categoriesCache.data;
+  }
+
+  const token = await getAccessToken();
+  const res = await digikeyFetch(CATEGORIES_URL, {
+    method: 'GET',
+    headers: buildHeaders(token),
+  });
+
+  const data = await res.json();
+
+  // The API may return children as "Children" or "ChildCategories" — normalize
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function normalize(cat: any): DigikeyCategory {
+    const children = cat.ChildCategories ?? cat.Children ?? [];
+    return {
+      CategoryId: cat.CategoryId,
+      Name: cat.Name,
+      ProductCount: cat.ProductCount ?? 0,
+      ChildCategories: children.map(normalize),
+    };
+  }
+
+  const categories: DigikeyCategory[] = (data.Categories ?? data).map(normalize);
+  categoriesCache = { data: categories, timestamp: Date.now() };
+  return categories;
 }

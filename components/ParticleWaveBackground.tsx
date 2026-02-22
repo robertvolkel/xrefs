@@ -6,10 +6,10 @@ import { Box } from '@mui/material';
 // ── Animation tuning (from provided HTML) ────────────────────
 const COLS = 90;
 const ROWS = 38;
-const SPEED = 0.00035;
+const SPEED = 0.00040;
 const DOT_RADIUS = 1.05;
-const MAX_ALPHA = 0.45;
-const FIELD_TOP = 0.5;
+const MAX_ALPHA = 0.6;
+const FIELD_TOP = 0.40;
 
 const WAVES = [
   { xFreq: 1.8, yFreq: 2.2, xSpeed: 1.0, ySpeed: 0.7, amp: 0.13 },

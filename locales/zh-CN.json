@@ -11,7 +11,7 @@
   "sidebar": {
     "accountSettings": "我的账户设置",
     "orgSettings": "组织设置",
-    "crossRefLogic": "交叉参考逻辑",
+    "platformSettings": "平台设置",
     "logout": "退出登录",
     "yourLists": "我的列表"
   },
@@ -186,10 +186,11 @@
 
   "recommendations": {
     "header": "推荐替代品",
-    "headerFiltered": "{{activeCount}} 个活跃匹配 · {{obsoleteCount}} 个已停产已隐藏",
+    "headerFiltered": "{{activeCount}} 个活跃匹配 · {{hiddenCount}} 个已隐藏",
     "headerUnfiltered": "找到 {{count}} 个匹配 — 点击比较",
     "match": "个匹配",
-    "matches": "个匹配"
+    "matches": "个匹配",
+    "activeOnly": "仅活跃"
   },
 
   "attributes": {
@@ -215,6 +216,51 @@
     "enterValue": "输入值...",
     "tellAboutApplication": "为了找到最佳替代品，请告诉我您的应用场景：",
     "skipUseDefaults": "跳过 — 使用默认值"
+  },
+
+  "admin": {
+    "title": "平台设置",
+    "dataSources": "数据源",
+    "paramMappings": "参数映射",
+    "logicRules": "交叉参考逻辑",
+    "contextQuestions": "应用上下文",
+    "configured": "已配置",
+    "notConfigured": "未配置",
+    "supportedFamilies": "支持的系列",
+    "paramMapsConfigured": "已配置的参数映射",
+    "digikeyCategory": "Digikey 类别",
+    "internalAttribute": "内部属性",
+    "parameterText": "参数文本",
+    "attributeId": "属性 ID",
+    "attributeName": "属性名称",
+    "unit": "单位",
+    "sortOrder": "排序",
+    "multiMap": "多映射",
+    "noParamMap": "此系列没有参数映射",
+    "sharedMap": "与以下系列共享参数映射：{{families}}",
+    "contextSensitivity": "上下文敏感度",
+    "questions": "问题",
+    "priority": "优先级",
+    "effects": "效果",
+    "noContextConfig": "此系列未配置上下文问题",
+    "escalateToMandatory": "升级为必须",
+    "escalateToPrimary": "升级为主要",
+    "setThreshold": "设置阈值",
+    "notApplicable": "不适用",
+    "addReviewFlag": "添加审查标记",
+    "taxonomyNav": "分类",
+    "taxonomy": "Digikey 分类",
+    "taxonomyDescription": "Digikey 产品类别与支持的元件系列交叉对照。",
+    "coverageSummary": "覆盖率：{{covered}} ({{percentage}}%)，共 {{total}} 个 Digikey 子类别。",
+    "covered": "已覆盖",
+    "notCovered": "未覆盖",
+    "subcategoriesCovered": "{{count}}/{{total}} 已覆盖",
+    "ruleCount": "{{count}} 条规则",
+    "totalWeight": "总权重",
+    "matchableWeight": "可匹配权重",
+    "paramCoverage": "参数覆盖率",
+    "lastUpdated": "最后更新",
+    "fetchError": "无法加载 Digikey 分类"
   },
 
   "comparison": {
