@@ -76,6 +76,10 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('ptc resettable') || lower.includes('polyfuse') || lower.includes('pptc')) return 'PTC Resettable Fuse';
   if (lower.includes('ntc thermistor')) return 'NTC Thermistor';
   if (lower.includes('ptc thermistor')) return 'PTC Thermistor';
+  if (lower.includes('schottky')) return 'Schottky Diode';
+  if (lower.includes('zener diode array')) return 'Diodes - Zener - Array';
+  if (lower.includes('single zener') || lower.includes('zener diode')) return 'Zener Diode';
+  if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
   return categoryName;
@@ -229,10 +233,42 @@ function transformBValue(valueText: string): string {
   return valueText;
 }
 
-/** Check for AEC-Q101 in Digikey text → Yes/No (for discrete semiconductors) */
+/**
+ * Check for AEC-Q101 (or AEC-Q100) in Digikey text → Yes/No (for discrete semiconductors).
+ * Digikey uses "AEC-Q100" for Zener diode categories despite Q101 being the correct
+ * discrete semiconductor qualification. Both indicate automotive qualification.
+ */
 function transformToAecQ101(valueText: string): string {
-  if (valueText.toUpperCase().includes('AEC-Q101')) return 'Yes';
+  const upper = valueText.toUpperCase();
+  if (upper.includes('AEC-Q101') || upper.includes('AEC-Q100')) return 'Yes';
   return 'No';
+}
+
+/** Normalize Schottky technology from Digikey "Technology" field */
+function transformToSchottkyTechnology(valueText: string): string {
+  if (valueText.toLowerCase().includes('schottky')) return 'Schottky';
+  return valueText;
+}
+
+/**
+ * Extract semiconductor material from Digikey "Technology" field.
+ * "Schottky" → Silicon (default), "SiC (Silicon Carbide) Schottky" → SiC.
+ */
+function transformToSemiconductorMaterial(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('sic') || lower.includes('silicon carbide')) return 'SiC';
+  return 'Silicon';
+}
+
+/**
+ * Normalize TVS "Type" field to internal topology names.
+ * Digikey uses "Zener" for traditional clamp TVS and "Steering (Rail to Rail)" for steering arrays.
+ */
+function transformToTvsTopology(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('steering')) return 'Steering Diode Array';
+  if (lower === 'zener') return 'Discrete';
+  return valueText;
 }
 
 /** Apply value transformations based on attributeId */
@@ -260,6 +296,12 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformBValue(valueText);
     case 'aec_q101':
       return transformToAecQ101(valueText);
+    case 'schottky_technology':
+      return transformToSchottkyTechnology(valueText);
+    case 'semiconductor_material':
+      return transformToSemiconductorMaterial(valueText);
+    case 'configuration':
+      return transformToTvsTopology(valueText);
     default:
       return valueText;
   }
@@ -362,10 +404,28 @@ function getPlaceholders(categoryName: string): ParametricAttribute[] {
   return [];
 }
 
+/**
+ * Resolve the param map category for a product.
+ * Schottky diodes share Digikey categories with standard rectifiers ("Single Diodes")
+ * and non-Schottky arrays ("Diode Arrays"), but need different attributeId mappings.
+ * This checks the "Technology" parameter and returns a virtual category name for routing.
+ */
+function resolveParamMapCategory(categoryName: string, parameters: DigikeyParameter[]): string {
+  const techParam = parameters?.find(p => p.ParameterText === 'Technology');
+  if (techParam && techParam.ValueText.toLowerCase().includes('schottky')) {
+    const lowerCat = categoryName.toLowerCase();
+    if (lowerCat.includes('single diode')) return 'Schottky Diodes';
+    if (lowerCat.includes('diode array')) return 'Schottky Diode Arrays';
+  }
+  return categoryName;
+}
+
 /** Map a DigikeyProduct to our PartAttributes (Part + parametric attributes) */
 export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttributes {
   const part = mapDigikeyProductToPart(product);
   const categoryName = getDeepestCategoryName(product.Category);
+  // Resolve to virtual category for param map routing (Schottky vs standard diodes)
+  const paramMapCategory = resolveParamMapCategory(categoryName, product.Parameters ?? []);
   const parameters: ParametricAttribute[] = [];
   const addedIds = new Set<string>();
 
@@ -377,10 +437,10 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
       paramValueLookup.set(p.ParameterText, p.ValueText);
     }
 
-    if (hasCategoryMapping(categoryName)) {
+    if (hasCategoryMapping(paramMapCategory)) {
       // Category-specific mapping: use curated param map
       for (const param of product.Parameters) {
-        const mappings = getParamMappings(categoryName, param.ParameterText);
+        const mappings = getParamMappings(paramMapCategory, param.ParameterText);
         if (mappings.length === 0) continue;
 
         for (const mapping of mappings) {
@@ -420,7 +480,7 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
       }
 
       // Add placeholder attributes for params Digikey doesn't provide
-      for (const placeholder of getPlaceholders(categoryName)) {
+      for (const placeholder of getPlaceholders(paramMapCategory)) {
         if (!addedIds.has(placeholder.parameterId)) {
           parameters.push(placeholder);
           addedIds.add(placeholder.parameterId);
@@ -441,6 +501,23 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
           sortOrder: i + 1,
         });
       }
+    }
+  }
+
+  // TVS polarity enrichment — derive from which channel field is present.
+  // Digikey uses "Unidirectional Channels" vs "Bidirectional Channels" field names
+  // to indicate polarity. The field value is the channel count (already mapped to num_channels).
+  if (product.Parameters && !addedIds.has('polarity')) {
+    const hasUni = product.Parameters.some(p => p.ParameterText === 'Unidirectional Channels');
+    const hasBi = product.Parameters.some(p => p.ParameterText === 'Bidirectional Channels');
+    if (hasUni || hasBi) {
+      parameters.push({
+        parameterId: 'polarity',
+        parameterName: 'Polarity (Unidirectional vs. Bidirectional)',
+        value: hasUni ? 'Unidirectional' : 'Bidirectional',
+        sortOrder: 1,
+      });
+      addedIds.add('polarity');
     }
   }
 

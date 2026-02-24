@@ -15,6 +15,7 @@ import {
   Skeleton,
   Typography,
 } from '@mui/material';
+import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -246,13 +247,13 @@ export default function ListsDashboard() {
           alignItems: 'center',
           justifyContent: 'space-between',
           px: 3,
-          py: 1.5,
+          height: PAGE_HEADER_HEIGHT,
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
         }}
       >
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('lists.pageHeader')}
         </Typography>
 

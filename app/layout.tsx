@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import InitColorSchemeScript from '@mui/material/InitColorSchemeScript';
 import "./globals.css";
 import ThemeRegistry from "@/components/ThemeRegistry";
 import AuthProvider from "@/components/AuthProvider";
@@ -34,6 +35,7 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
+        <InitColorSchemeScript attribute="data-mui-color-scheme" />
         <ThemeRegistry>
           <AuthProvider initialUser={user}>
             <I18nProvider>

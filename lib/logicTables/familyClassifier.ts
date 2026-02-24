@@ -86,6 +86,101 @@ const classifierRules: ClassifierRule[] = [
     },
   },
 
+  // --- Discrete semiconductor variants ---
+
+  // Schottky Barrier Diodes (B2, base: B1): Schottky/SBD/SiC keywords in description
+  {
+    variantFamilyId: 'B2',
+    baseFamilyId: 'B1',
+    matches: (attrs) => {
+      const desc = attrs.part.description.toLowerCase();
+      const mpn = attrs.part.mpn.toUpperCase();
+      const sub = attrs.part.subcategory.toLowerCase();
+      // Direct keyword matches
+      if (desc.includes('schottky') || desc.includes('sbd') || sub.includes('schottky')) {
+        return true;
+      }
+      // SiC diode indicators
+      if (desc.includes('sic diode') || desc.includes('silicon carbide') ||
+          /\bSIC\b/.test(mpn)) {
+        return true;
+      }
+      // Voltage heuristic: silicon Schottky is ≤200V; SiC Schottky at 600V+ is still Schottky
+      // but don't auto-classify by voltage alone — only as a supporting signal with other hints
+      return false;
+    },
+  },
+
+  // TVS Diodes / Transient Voltage Suppressors (B4, base: B1): TVS keywords, MPN prefixes
+  // Must be checked BEFORE Zener (B3) since B3 excludes TVS — B4 catches them first.
+  {
+    variantFamilyId: 'B4',
+    baseFamilyId: 'B1',
+    matches: (attrs) => {
+      const desc = attrs.part.description.toLowerCase();
+      const mpn = attrs.part.mpn.toUpperCase();
+      const sub = attrs.part.subcategory.toLowerCase();
+
+      // Direct keyword matches
+      if (desc.includes('tvs') || desc.includes('transient voltage') ||
+          desc.includes('transient suppressor') || desc.includes('esd protection') ||
+          desc.includes('esd suppressor') || sub.includes('tvs')) {
+        return true;
+      }
+
+      // Common TVS / ESD MPN prefixes
+      if (/\bSMAJ\d/.test(mpn) || /\bSMBJ\d/.test(mpn) || /\bSMCJ\d/.test(mpn) ||
+          /\bP6KE/.test(mpn) || /\bPESD/.test(mpn) ||
+          /\b1\.5KE/.test(mpn) || /\b5KP/.test(mpn) || /\bSMLVT/.test(mpn) ||
+          /\bTPD[0-9]/.test(mpn) ||  // TI TVS array family
+          /\bESDA/.test(mpn) ||       // ST TVS/ESD family
+          /\bPRTR/.test(mpn) ||       // Nexperia TVS array family
+          /\bUSBLC/.test(mpn)) {      // ST USB TVS
+        return true;
+      }
+
+      return false;
+    },
+  },
+
+  // Zener Diodes / Voltage Reference Diodes (B3, base: B1): Zener keywords, MPN prefixes
+  // Must be checked AFTER TVS (B4) and Schottky (B2) to prevent false matches.
+  // TVS diodes are excluded here as a safety net (B4 classifier catches them first).
+  {
+    variantFamilyId: 'B3',
+    baseFamilyId: 'B1',
+    matches: (attrs) => {
+      const desc = attrs.part.description.toLowerCase();
+      const mpn = attrs.part.mpn.toUpperCase();
+      const sub = attrs.part.subcategory.toLowerCase();
+
+      // Exclude TVS diodes — safety net (B4 classifier should catch these first)
+      if (desc.includes('tvs') || desc.includes('transient suppressor') ||
+          desc.includes('transient voltage') ||
+          /\bSMAJ\d/.test(mpn) || /\bSMBJ\d/.test(mpn) ||
+          /\bP6KE/.test(mpn) || /\bSMLVT/.test(mpn) ||
+          /\b1\.5KE/.test(mpn) || /\b5KP/.test(mpn) ||
+          sub.includes('tvs')) {
+        return false;
+      }
+
+      // Direct keyword matches
+      if (desc.includes('zener') || desc.includes('voltage reference diode') ||
+          sub.includes('zener')) {
+        return true;
+      }
+
+      // MPN prefix heuristics — common Zener families
+      if (/\bBZX[0-9]/.test(mpn) || /\bBZT[0-9]/.test(mpn) ||
+          /\bMMSZ/.test(mpn) || /\bDZ[0-9]/.test(mpn) ||
+          /\bTZX/.test(mpn) || /\bSMZJ/.test(mpn)) {
+        return true;
+      }
+
+      return false;
+    },
+  },
+
   // --- Inductor variants ---
 
   // RF/Signal Inductors (72, base: 71): RF indicators or very low inductance with Q/SRF

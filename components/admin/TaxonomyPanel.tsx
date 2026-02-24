@@ -244,6 +244,13 @@ export default function TaxonomyPanel() {
               percentage: summary.coveragePercentage,
             })}
           </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {t('admin.productCoverageSummary', {
+              covered: summary.coveredProducts.toLocaleString(),
+              total: summary.totalProducts.toLocaleString(),
+              percentage: summary.productCoveragePercentage,
+            })}
+          </Typography>
         </CardContent>
       </Card>
 

@@ -1307,10 +1307,431 @@ const bridgeRectifierParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * Single Schottky Diode parameter mapping (Family B2).
+ * Verified against: STPS2L60A (ST, SMA 60V 2A), SS34-E3/57T (Vishay, SMB 40V 3A),
+ *   1N5819-E3/54 (Vishay, DO-41 40V 1A)
+ * Digikey category: "Single Diodes" (same as B1 rectifier diodes — virtual category
+ *   "Schottky Diodes" resolved by digikeyMapper.resolveParamMapCategory())
+ *
+ * Notes from discovery:
+ * - Schottky diodes appear in "Single Diodes" alongside standard rectifiers
+ *   → routing uses the "Technology" parameter ("Schottky" or "SiC ... Schottky")
+ * - "Technology" multi-maps to: schottky_technology (identity, w10) + semiconductor_material (identity_flag, w9)
+ * - "Voltage - DC Reverse (Vr) (Max)" maps to vrrm (B2 has no Vdc, unlike B1)
+ * - "Speed" is SKIPPED — misleadingly shows "Fast Recovery" for Schottky
+ * - "Reverse Recovery Time (trr)" is SKIPPED — not applicable for majority carrier device
+ * - "Capacitance @ Vr, F" is sparse (often "-") but sometimes populated
+ * - No Ifsm, Rth_jc, Rth_ja, Tj_max, Pd, pin_configuration, height, or AEC-Q101
+ * - technology_trench_planar and vf_tempco not in Digikey parametric data
+ */
+const schottkyDiodeParamMap: Record<string, ParamMapEntry> = {
+  'Technology': [
+    {
+      attributeId: 'schottky_technology',
+      attributeName: 'Schottky Technology',
+      sortOrder: 1,
+    },
+    {
+      attributeId: 'semiconductor_material',
+      attributeName: 'Semiconductor Material (Si vs SiC)',
+      sortOrder: 2,
+    },
+  ],
+  'Voltage - DC Reverse (Vr) (Max)': {
+    attributeId: 'vrrm',
+    attributeName: 'Max Repetitive Peak Reverse Voltage (Vrrm)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Current - Average Rectified (Io)': {
+    attributeId: 'io_avg',
+    attributeName: 'Average Rectified Forward Current (Io)',
+    unit: 'A',
+    sortOrder: 4,
+  },
+  'Voltage - Forward (Vf) (Max) @ If': {
+    attributeId: 'vf',
+    attributeName: 'Forward Voltage Drop (Vf)',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Current - Reverse Leakage @ Vr': {
+    attributeId: 'ir_leakage',
+    attributeName: 'Reverse Leakage Current (Ir)',
+    sortOrder: 6,
+  },
+  'Capacitance @ Vr, F': {
+    attributeId: 'cj',
+    attributeName: 'Junction Capacitance (Cj)',
+    sortOrder: 7,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 8,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Form Factor',
+    sortOrder: 9,
+  },
+  'Operating Temperature - Junction': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+  'Packaging': {
+    attributeId: 'packaging',
+    attributeName: 'Packaging',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Schottky Diode Array parameter mapping (Family B2).
+ * Verified against: SCS220AE2HRC11 (ROHM, SiC 650V TO-247N dual),
+ *   BAT54S-7-F (Diodes Inc, 30V SOT-23 dual)
+ * Digikey category: "Diode Arrays" (virtual category "Schottky Diode Arrays"
+ *   resolved by digikeyMapper.resolveParamMapCategory())
+ *
+ * Notes from discovery:
+ * - Different field names from "Single Diodes":
+ *   "Current - Average Rectified (Io) (per Diode)" instead of "... (Io)"
+ *   "Diode Configuration" provides configuration (Common Cathode, Series, etc.)
+ * - SiC part: Technology = "SiC (Silicon Carbide) Schottky" → semiconductor_material = SiC
+ * - "Reverse Recovery Time (trr)" present but SKIPPED (shows "0 ns" for SiC)
+ * - No Capacitance field in diode arrays
+ * - Speed is SKIPPED (shows "No Recovery Time" or "Small Signal" — not useful)
+ */
+const schottkyDiodeArrayParamMap: Record<string, ParamMapEntry> = {
+  'Diode Configuration': {
+    attributeId: 'configuration',
+    attributeName: 'Configuration',
+    sortOrder: 1,
+  },
+  'Technology': [
+    {
+      attributeId: 'schottky_technology',
+      attributeName: 'Schottky Technology',
+      sortOrder: 2,
+    },
+    {
+      attributeId: 'semiconductor_material',
+      attributeName: 'Semiconductor Material (Si vs SiC)',
+      sortOrder: 3,
+    },
+  ],
+  'Voltage - DC Reverse (Vr) (Max)': {
+    attributeId: 'vrrm',
+    attributeName: 'Max Repetitive Peak Reverse Voltage (Vrrm)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Current - Average Rectified (Io) (per Diode)': {
+    attributeId: 'io_avg',
+    attributeName: 'Average Rectified Forward Current (Io)',
+    unit: 'A',
+    sortOrder: 5,
+  },
+  'Voltage - Forward (Vf) (Max) @ If': {
+    attributeId: 'vf',
+    attributeName: 'Forward Voltage Drop (Vf)',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  'Current - Reverse Leakage @ Vr': {
+    attributeId: 'ir_leakage',
+    attributeName: 'Reverse Leakage Current (Ir)',
+    sortOrder: 7,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 8,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Form Factor',
+    sortOrder: 9,
+  },
+  'Operating Temperature - Junction': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+  'Packaging': {
+    attributeId: 'packaging',
+    attributeName: 'Packaging',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Single Zener Diode parameter mapping (Family B3).
+ * Verified against: BZX84C5V1-7-F (Diodes Inc, SOT-23 300mW), MMSZ5231B-7-F (Diodes Inc, SOD-123 500mW),
+ *   BZT52C5V1-7-F (Diodes Inc, SOD-123 500mW), 1N4733A-TP (MCC, DO-41 1W),
+ *   1SMB5918BT3G (onsemi, SMB 3W), BZX84-A5V1,215 (Nexperia, SOT-23 ±1%),
+ *   MMSZ4684T1G (onsemi, SOD-123 3.3V), MMBZ5241BLT1G (onsemi, SOT-23 11V)
+ * Digikey category: "Single Zener Diodes"
+ *
+ * Notes from discovery:
+ * - Zener diodes have their OWN Digikey categories (not mixed with "Single Diodes" like Schottky)
+ *   → no resolveParamMapCategory() routing needed
+ * - "Voltage - Zener (Nom) (Vz)" is the primary spec — format "5.1 V"
+ * - "Power - Max" replaces Io as the current-equivalent spec — format "300 mW", "1 W", "3 W"
+ * - "Impedance (Max) (Zzt)" is dynamic impedance — format "60 Ohms", "7 Ohms"
+ *   Sometimes "-" on low-voltage Zeners (3.3V) where impedance is very high
+ * - "Qualification" shows "AEC-Q100" (NOT AEC-Q101) — Digikey categorization anomaly
+ *   for discrete semiconductors. transformToAecQ101() handles both Q100 and Q101.
+ * - "Grade" field: "Automotive" or "-" — display only, not mapped
+ * - Missing from Digikey parametric data:
+ *   Izt (w8), TC (w7), Izm (w6), Rth_ja (w6), Tj_max (w6), Cj (w4),
+ *   Zzk (w4), regulation_type (w3), pin_configuration (w10), height (w5)
+ * - No "Packaging" as a parametric field (handled at product level)
+ * - Weight coverage: ~51% (76/150)
+ */
+const singleZenerDiodeParamMap: Record<string, ParamMapEntry> = {
+  'Voltage - Zener (Nom) (Vz)': {
+    attributeId: 'vz',
+    attributeName: 'Zener Voltage (Vz)',
+    unit: 'V',
+    sortOrder: 1,
+  },
+  'Tolerance': {
+    attributeId: 'vz_tolerance',
+    attributeName: 'Zener Voltage Tolerance',
+    sortOrder: 2,
+  },
+  'Power - Max': {
+    attributeId: 'pd',
+    attributeName: 'Power Dissipation (Pd)',
+    unit: 'W',
+    sortOrder: 3,
+  },
+  'Impedance (Max) (Zzt)': {
+    attributeId: 'zzt',
+    attributeName: 'Dynamic Impedance (Zzt)',
+    unit: 'Ω',
+    sortOrder: 4,
+  },
+  'Current - Reverse Leakage @ Vr': {
+    attributeId: 'ir_leakage',
+    attributeName: 'Reverse Leakage Current (Ir)',
+    sortOrder: 5,
+  },
+  'Voltage - Forward (Vf) (Max) @ If': {
+    attributeId: 'vf',
+    attributeName: 'Forward Voltage (Vf)',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 7,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 8,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Form Factor',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Zener Diode Array parameter mapping (Family B3).
+ * Verified against: BZB84-C5V1,215 (Nexperia, SOT-23 dual common anode, AEC-Q100),
+ *   AZ23C5V1-7-F (Diodes Inc, SOT-23 dual common anode)
+ * Digikey category: "Zener Diode Arrays"
+ *
+ * Notes from discovery:
+ * - Adds "Configuration" field (e.g., "1 Pair Common Anode") — identity match
+ * - "Qualification" shows "AEC-Q100" with "Grade: Automotive" on automotive parts
+ * - Some fields from Single Zeners may be absent: Ir and Vf were missing on AZ23C
+ * - Same coverage gaps as Single Zener Diodes for Izt, TC, Izm, etc.
+ */
+const zenerDiodeArrayParamMap: Record<string, ParamMapEntry> = {
+  'Configuration': {
+    attributeId: 'configuration',
+    attributeName: 'Configuration',
+    sortOrder: 1,
+  },
+  'Voltage - Zener (Nom) (Vz)': {
+    attributeId: 'vz',
+    attributeName: 'Zener Voltage (Vz)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Tolerance': {
+    attributeId: 'vz_tolerance',
+    attributeName: 'Zener Voltage Tolerance',
+    sortOrder: 3,
+  },
+  'Power - Max': {
+    attributeId: 'pd',
+    attributeName: 'Power Dissipation (Pd)',
+    unit: 'W',
+    sortOrder: 4,
+  },
+  'Impedance (Max) (Zzt)': {
+    attributeId: 'zzt',
+    attributeName: 'Dynamic Impedance (Zzt)',
+    unit: 'Ω',
+    sortOrder: 5,
+  },
+  'Current - Reverse Leakage @ Vr': {
+    attributeId: 'ir_leakage',
+    attributeName: 'Reverse Leakage Current (Ir)',
+    sortOrder: 6,
+  },
+  'Voltage - Forward (Vf) (Max) @ If': {
+    attributeId: 'vf',
+    attributeName: 'Forward Voltage (Vf)',
+    unit: 'V',
+    sortOrder: 7,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 8,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 9,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 10,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Form Factor',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * TVS Diode parameter mapping (Family B4).
+ * Verified against: SMBJ5.0A-13-F (Diodes Inc, SMB 600W unidirectional),
+ *   SMAJ12A-E3/61 (Vishay, SMA 400W), SMCJ24A-E3/57T (Vishay, SMC 1500W),
+ *   SMBJ5.0CA-13-F (Diodes Inc, SMB 600W bidirectional),
+ *   TPD4E05U06DQAR (TI, 10-USON 4-channel steering array for HDMI),
+ *   USBLC6-2SC6Y (ST, SOT-23-6 2-channel steering, AEC-Q101),
+ *   P6KE15A-E3/54 (Vishay, DO-15 600W through-hole),
+ *   SM712-02HTG (Littelfuse, SOT-23 dual bidirectional CAN bus, AEC-Q101),
+ *   PRTR5V0U2X,215 (Nexperia, SOT-143B 2-channel steering, ultra-low-cap)
+ * Digikey category: "TVS Diodes" (single category — no separate array category)
+ *
+ * Notes from discovery:
+ * - ALL TVS diodes are in ONE category "TVS Diodes" (no arrays sub-category)
+ * - Polarity is encoded in the FIELD NAME, not a separate polarity field:
+ *   "Unidirectional Channels" (ID 1729) vs "Bidirectional Channels" (ID 1730)
+ *   → polarity is derived in digikeyMapper.ts via enrichment (not param map)
+ *   → channel count (1, 2, 4) maps to num_channels
+ * - "Type" (ID 183) distinguishes topology: "Zener" = traditional clamp,
+ *   "Steering (Rail to Rail)" = steering diode array → maps to configuration
+ * - "Capacitance @ Frequency" is often "-" but sometimes has values (1pF, 75pF)
+ * - "Power Line Protection" (Yes/No) and "Applications" are display-only
+ * - "Voltage - Clamping (Max) @ Ipp" and "Current - Peak Pulse" may be "-"
+ *   for ESD-only steering arrays (low power, no 10/1000µs rating)
+ * - Missing from Digikey parametric data:
+ *   ir_leakage (w5), response_time (w6), esd_rating (w7), pin_configuration (w10),
+ *   height (w5), rth_ja (w5), tj_max (w6), pd (w5), surge_standard (w8)
+ * - Weight coverage: ~70% (128/182)
+ */
+const tvsDiodeParamMap: Record<string, ParamMapEntry> = {
+  'Unidirectional Channels': {
+    attributeId: 'num_channels',
+    attributeName: 'Number of Channels / Lines',
+    sortOrder: 2,
+  },
+  'Bidirectional Channels': {
+    attributeId: 'num_channels',
+    attributeName: 'Number of Channels / Lines',
+    sortOrder: 2,
+  },
+  'Voltage - Reverse Standoff (Typ)': {
+    attributeId: 'vrwm',
+    attributeName: 'Standoff Voltage (Vrwm)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Voltage - Breakdown (Min)': {
+    attributeId: 'vbr',
+    attributeName: 'Breakdown Voltage (Vbr)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Voltage - Clamping (Max) @ Ipp': {
+    attributeId: 'vc',
+    attributeName: 'Clamping Voltage (Vc)',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Current - Peak Pulse (10/1000µs)': {
+    attributeId: 'ipp',
+    attributeName: 'Peak Pulse Current (Ipp)',
+    unit: 'A',
+    sortOrder: 6,
+  },
+  'Power - Peak Pulse': {
+    attributeId: 'ppk',
+    attributeName: 'Peak Pulse Power (Ppk)',
+    unit: 'W',
+    sortOrder: 7,
+  },
+  'Type': {
+    attributeId: 'configuration',
+    attributeName: 'Configuration / Topology',
+    sortOrder: 8,
+  },
+  'Capacitance @ Frequency': {
+    attributeId: 'cj',
+    attributeName: 'Junction Capacitance (Cj)',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 11,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 12,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Form Factor',
+    sortOrder: 13,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
  * (e.g., "Aluminum - Polymer" before "Aluminum" to avoid false matches).
+ * "Schottky Diode*" entries are virtual categories resolved by
+ * digikeyMapper.resolveParamMapCategory() from the "Technology" parameter.
+ * "Single Zener Diodes" and "Zener Diode Arrays" are direct Digikey categories.
+ * "TVS Diodes" is a single Digikey category covering all TVS types.
  */
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
@@ -1329,8 +1750,13 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['PTC Resettable Fuses', ptcResettableFuseParamMap],
   ['NTC Thermistors', ntcThermistorParamMap],
   ['PTC Thermistors', ptcThermistorParamMap],
+  ['Schottky Diode Arrays', schottkyDiodeArrayParamMap],
+  ['Schottky Diodes', schottkyDiodeParamMap],
+  ['Zener Diode Arrays', zenerDiodeArrayParamMap],
+  ['Single Zener Diodes', singleZenerDiodeParamMap],
   ['Bridge Rectifiers', bridgeRectifierParamMap],
   ['Single Diodes', singleDiodeParamMap],
+  ['TVS Diodes', tvsDiodeParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -1418,11 +1844,43 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   '71': ['Fixed Inductors'],
   '72': ['Fixed Inductors'],
   'B1': ['Single Diodes', 'Bridge Rectifiers'],
+  'B2': ['Schottky Diodes', 'Schottky Diode Arrays'],
+  'B3': ['Single Zener Diodes', 'Zener Diode Arrays'],
+  'B4': ['TVS Diodes'],
 };
 
-/** Get the Digikey category names associated with a family ID */
+/** Get the Digikey category names associated with a family ID (for param coverage) */
 export function getDigikeyCategoriesForFamily(familyId: string): string[] {
   return familyToDigikeyCategories[familyId] ?? [];
+}
+
+/**
+ * Taxonomy-specific overrides for families whose param map categories
+ * don't match actual Digikey taxonomy names.
+ *
+ * Why this is needed: `familyToDigikeyCategories` uses param map category names
+ * (for `computeFamilyParamCoverage()`), but Digikey's taxonomy may use different
+ * names or have categories that share a param map but are separate in the taxonomy.
+ *
+ * - B2: virtual categories "Schottky Diodes"/"Schottky Diode Arrays" don't exist
+ *   in taxonomy; Schottky parts live inside "Single Diodes" and "Diode Arrays".
+ * - 13 (Mica): shares Ceramic Capacitors param map, but Digikey taxonomy has
+ *   "Mica and PTFE Capacitors" as a separate subcategory.
+ * - 53 (Through-Hole Resistors): shares Chip Resistor param map, but Digikey
+ *   taxonomy has "Through Hole Resistors" as a separate subcategory.
+ * - 55 (Chassis Mount Resistors): shares Chip Resistor param map, but Digikey
+ *   taxonomy has "Chassis Mount Resistors" as a separate subcategory.
+ */
+const familyTaxonomyOverrides: Record<string, string[]> = {
+  '13': ['Mica and PTFE Capacitors'],
+  '53': ['Through Hole Resistors'],
+  '55': ['Chassis Mount Resistors'],
+  'B2': ['Single Diodes', 'Diode Arrays'],
+};
+
+/** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */
+export function getTaxonomyPatternsForFamily(familyId: string): string[] {
+  return familyTaxonomyOverrides[familyId] ?? familyToDigikeyCategories[familyId] ?? [];
 }
 
 /** Get the full param map for a Digikey category name */

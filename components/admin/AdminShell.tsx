@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { getAllLogicTables } from '@/lib/logicTables';
+import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import AdminSectionNav, { AdminSection } from './AdminSectionNav';
 import FamilyPicker from './FamilyPicker';
 import DataSourcesPanel from './DataSourcesPanel';
@@ -69,13 +70,13 @@ function AdminShellInner() {
           display: 'flex',
           alignItems: 'center',
           px: 3,
-          py: 2.5,
+          height: PAGE_HEADER_HEIGHT,
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
         }}
       >
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('admin.title')}
         </Typography>
       </Box>

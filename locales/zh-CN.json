@@ -257,6 +257,7 @@
     "taxonomy": "Digikey 分类",
     "taxonomyDescription": "Digikey 产品类别与支持的元件系列交叉对照。",
     "coverageSummary": "覆盖率：{{covered}} ({{percentage}}%)，共 {{total}} 个 Digikey 子类别。",
+    "productCoverageSummary": "{{covered}} / {{total}} 个产品 ({{percentage}}%)。",
     "covered": "已覆盖",
     "notCovered": "未覆盖",
     "subcategoriesCovered": "{{count}}/{{total}} 已覆盖",

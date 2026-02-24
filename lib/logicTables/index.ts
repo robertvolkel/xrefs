@@ -18,6 +18,9 @@ import { aluminumPolymerLogicTable } from './aluminumPolymer';
 import { micaCapacitorsLogicTable } from './micaCapacitors';
 import { rfSignalInductorsLogicTable } from './rfSignalInductors';
 import { rectifierDiodesLogicTable } from './rectifierDiodes';
+import { schottkyDiodesLogicTable } from './schottkyDiodes';
+import { zenerDiodesLogicTable } from './zenerDiodes';
+import { tvsDiodesLogicTable } from './tvsDiodes';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -43,6 +46,9 @@ const logicTableRegistry: Record<string, LogicTable> = {
   '72': rfSignalInductorsLogicTable,
   // Block B: Discrete Semiconductors
   'B1': rectifierDiodesLogicTable,
+  'B2': schottkyDiodesLogicTable,
+  'B3': zenerDiodesLogicTable,
+  'B4': tvsDiodesLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -138,6 +144,29 @@ const subcategoryToFamily: Record<string, string> = {
   'Ultrafast Recovery Diode': 'B1',
   'Standard Recovery Diode': 'B1',
   'Recovery Rectifier': 'B1',
+  // Schottky Barrier Diodes (Family B2)
+  'Schottky Diode': 'B2',
+  'Schottky Rectifier': 'B2',
+  'Schottky Barrier Diode': 'B2',
+  'SiC Schottky Diode': 'B2',
+  'SiC Diode': 'B2',
+  'Diodes - Schottky': 'B2',
+  // Zener Diodes / Voltage Reference Diodes (Family B3)
+  'Zener Diode': 'B3',
+  'Voltage Reference Diode': 'B3',
+  'Zener': 'B3',
+  'Diodes - Zener - Single': 'B3',
+  'Diodes - Zener - Array': 'B3',
+  'Zener Voltage Regulator': 'B3',
+  // TVS Diodes / Transient Voltage Suppressors (Family B4)
+  'TVS Diode': 'B4',
+  'TVS': 'B4',
+  'Transient Voltage Suppressor': 'B4',
+  'TVS - Diodes': 'B4',
+  'Diodes - TVS': 'B4',
+  'ESD Protection Diode': 'B4',
+  'ESD Suppressor': 'B4',
+  'Surge Suppressor': 'B4',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -162,6 +191,9 @@ const familyLastUpdated: Record<string, string> = {
   '71': '2026-02-20',
   '72': '2026-02-19',
   'B1': '2026-02-19',
+  'B2': '2026-02-24',
+  'B3': '2026-02-24',
+  'B4': '2026-02-24',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

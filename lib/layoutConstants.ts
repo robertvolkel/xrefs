@@ -7,6 +7,7 @@ export const ROW_HEIGHT = 38;
 export const SECTION_PY = '16px';
 export const CONTENT_MAX_WIDTH = 720;
 export const SIDEBAR_WIDTH = 60;
+export const PAGE_HEADER_HEIGHT = 56;
 
 // Mobile values
 export const HEADER_HEIGHT_MOBILE = 56;

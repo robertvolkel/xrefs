@@ -303,6 +303,7 @@
     "taxonomy": "Digikey Taxonomy",
     "taxonomyDescription": "Digikey product categories cross-referenced with supported component families.",
     "coverageSummary": "Coverage: {{covered}} ({{percentage}}%) of {{total}} Digikey subcategories.",
+    "productCoverageSummary": "{{covered}} of {{total}} products ({{percentage}}%).",
     "covered": "Covered",
     "notCovered": "Not Covered",
     "subcategoriesCovered": "{{count}} of {{total}} covered",

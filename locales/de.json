@@ -257,6 +257,7 @@
     "taxonomy": "Digikey-Taxonomie",
     "taxonomyDescription": "Digikey-Produktkategorien mit unterstützten Bauteilfamilien abgeglichen.",
     "coverageSummary": "Abdeckung: {{covered}} ({{percentage}}%) von {{total}} Digikey-Unterkategorien.",
+    "productCoverageSummary": "{{covered}} von {{total}} Produkten ({{percentage}}%).",
     "covered": "Abgedeckt",
     "notCovered": "Nicht abgedeckt",
     "subcategoriesCovered": "{{count}} von {{total}} abgedeckt",

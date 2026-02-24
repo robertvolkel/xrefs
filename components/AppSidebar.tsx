@@ -9,7 +9,7 @@ import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
-import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
+import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
 
 interface AppSidebarProps {
@@ -60,7 +60,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
     >
       {/* Top group: Logo + nav icons */}
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        {/* Logo — matches page header row (py: 2.5 + border) so bottom-aligns with title */}
+        {/* Logo — fixed height matches page header bars */}
         <Box
           onClick={onReset}
           sx={{
@@ -68,11 +68,10 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             opacity: 0.7,
             '&:hover': { opacity: 1 },
             display: 'flex',
-            alignItems: 'flex-end',
-            py: 2.5,
-            borderBottom: 0,
-            width: '100%',
+            alignItems: 'center',
             justifyContent: 'center',
+            height: PAGE_HEADER_HEIGHT,
+            width: '100%',
           }}
         >
           <Box component="img" src={logoSrc} alt="XQ" sx={{ width: 28 }} />

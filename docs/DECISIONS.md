@@ -581,3 +581,120 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `app/organization/page.tsx`, `components/settings/OrgShell.tsx`.
 
 **Files modified:** `components/AppSidebar.tsx` (org icon + wrench rotation + active state), `components/settings/OrgPanel.tsx` (removed Tabs, added padding), `components/settings/SettingsShell.tsx` (removed org handling), `components/settings/SettingsSectionNav.tsx` (removed org section + simplified), `locales/en.json` (title → "Organization", added `users` key).
+
+---
+
+## 30. Schottky Barrier Diodes — Family B2
+
+**Decision:** Added Schottky Barrier Diodes as the second Block B discrete semiconductor family (B2), classified as a variant of B1 (Rectifier Diodes) via the family classifier.
+
+**What changed:**
+
+1. **Logic table** (`lib/logicTables/schottkyDiodes.ts`). 22 rules derived from `docs/schottky_diodes_logic.docx`. Key differences from B1: no reverse recovery attributes (trr, Qrr, recovery_category, recovery_behavior — Schottky is a majority-carrier device with no minority carrier storage); Junction Capacitance (Cj) elevated from Application Review to Threshold (weight 6) since Cj is the switching speed limiter for Schottky; Vf weight elevated to 9 (vs 8 for B1) as the dominant specification; Ir weight elevated to 7 (vs 5) due to thermal runaway risk; thermal resistance weights elevated. New attributes: Semiconductor Material Si/SiC (identity_flag, weight 9), Technology Trench/Planar (application_review, weight 4), Vf Temperature Coefficient (application_review, weight 5).
+
+2. **Family classifier** (`lib/logicTables/familyClassifier.ts`). New variant rule: base B1 → B2 when description contains 'schottky', 'sbd', or 'sic diode'/'silicon carbide', or subcategory contains 'schottky'. Placed in a new "Discrete semiconductor variants" section.
+
+3. **Subcategory mappings** (`lib/logicTables/index.ts`). Six new entries: 'Schottky Diode', 'Schottky Rectifier', 'Schottky Barrier Diode', 'SiC Schottky Diode', 'SiC Diode', 'Diodes - Schottky' → all map to B2.
+
+4. **Digikey mapper** (`lib/services/digikeyMapper.ts`). Added Schottky detection in `mapSubcategory()` — category names containing 'schottky' map to 'Schottky Diode'. Placed before the 'single diode' check to ensure Schottky diodes in the "Single Diodes" category get correctly subcategorized.
+
+5. **Context questions** (`lib/contextQuestions/schottkyDiodes.ts`). 5 questions: low-voltage application (Vf dominance), operating/ambient temperature (leakage thermal runaway risk), Si vs SiC (hard gate), parallel operation (Vf tempco concern), automotive (AEC-Q101). Context sensitivity rated moderate-high.
+
+**Key design choices:**
+
+- **B2 classified from B1, not a standalone family.** Digikey puts Schottky diodes in "Diodes - Rectifiers - Single" alongside standard/fast/ultrafast. The classifier detects Schottky from keywords in the description or subcategory. Direct subcategory matches (e.g., from Digikey's `mapSubcategory()`) can also route to B2 without going through the classifier.
+- **No Vdc attribute.** Unlike B1 which has both Vrrm and Vdc, Schottky diodes typically specify only Vrrm.
+- **SiC as identity_flag, not a separate family.** SiC Schottky shares enough rules with silicon Schottky (same 22 attributes, same logic types) that a separate family isn't warranted. The identity_flag ensures SiC cannot be replaced by silicon. Context question Q3 handles the Si/SiC distinction.
+- **Digikey param map uses virtual category routing.** Schottky diodes share the "Single Diodes" Digikey category with standard rectifier diodes (B1), and Schottky arrays share "Diode Arrays" with non-Schottky arrays. Rather than modifying the existing B1 param maps, `resolveParamMapCategory()` in `digikeyMapper.ts` checks the "Technology" parameter — if it contains "Schottky", it routes to virtual categories "Schottky Diodes" or "Schottky Diode Arrays" which have their own param maps. Key differences from B1's param map: "Voltage - DC Reverse" maps to `vrrm` (not `vdc`), "Technology" multi-maps to both `schottky_technology` and `semiconductor_material` (Si vs SiC extracted via transformer), "Speed" and "trr" are intentionally skipped (misleading for Schottky). Array map uses "Diode Configuration" and "Current (per Diode)" fields unique to the "Diode Arrays" category.
+
+**Files created:** `lib/logicTables/schottkyDiodes.ts`, `lib/contextQuestions/schottkyDiodes.ts`.
+
+**Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/logicTables/familyClassifier.ts` (Schottky classifier rule), `lib/services/digikeyMapper.ts` (mapSubcategory + resolveParamMapCategory + 2 transformers), `lib/services/digikeyParamMap.ts` (schottkyDiodeParamMap + schottkyDiodeArrayParamMap + categoryParamMaps + familyToDigikeyCategories), `lib/contextQuestions/index.ts` (import + register), `CLAUDE.md` (family count + B2 row + docs count + param map status), `docs/application-context-attribute-map.md` (updated with B2 — 20 families).
+
+---
+
+## 31. Zener Diodes / Voltage Reference Diodes — Family B3
+
+**Decision:** Added Zener Diodes as the third Block B discrete semiconductor family (B3), classified as a variant of B1 (Rectifier Diodes) via the family classifier.
+
+**What changed:**
+
+1. **Logic table** (`lib/logicTables/zenerDiodes.ts`). 22 rules derived from `docs/zener_diodes_logic.docx`. Key differences from B1/B2: Zener Voltage (Vz) is Identity (not threshold) — THE primary spec, this is what the component exists to do; Zener Test Current (Izt) is Identity — Vz values are only comparable at the same test current; Dynamic Impedance (Zzt) as Threshold ≤ (weight 7) — regulation quality metric; Temperature Coefficient (TC) as Threshold ≤ on absolute value (weight 7) — voltage stability over temperature; Knee Impedance (Zzk) as Application Review (weight 4) — low-current operation concern; Regulation Type (Zener vs Avalanche) as Application Review (weight 3) — noise differences; Forward Voltage (Vf) demoted to Application Review (weight 3) — only relevant in bidirectional clamp circuits; Junction Capacitance (Cj) as Application Review (weight 4) — only for ESD/signal-line protection. No reverse recovery attributes (irrelevant for Zener operation). No Vdc attribute (Zener operates in breakdown, not blocking). Uses AEC-Q101 for automotive.
+
+2. **Family classifier** (`lib/logicTables/familyClassifier.ts`). New variant rule: base B1 → B3 when description contains 'zener' or 'voltage reference diode', or subcategory contains 'zener', or MPN starts with 'BZX', 'BZT', 'MMSZ', 'DZ', 'TZX', or 'SMZJ'. TVS diodes are explicitly excluded — checked first via keywords ('tvs', 'transient suppressor') and MPN prefixes ('SMAJ', 'SMBJ', 'P6KE', etc.) to prevent misclassification. TVS reserved for future family B4. Placed AFTER the Schottky (B2) classifier rule to maintain correct priority ordering.
+
+3. **Subcategory mappings** (`lib/logicTables/index.ts`). Six new entries: 'Zener Diode', 'Voltage Reference Diode', 'Zener', 'Diodes - Zener - Single', 'Diodes - Zener - Array', 'Zener Voltage Regulator' → all map to B3.
+
+4. **Context questions** (`lib/contextQuestions/zenerDiodes.ts`). 4 questions (2 conditional): Q1 Function (clamping / reference / ESD protection / level shifting) — THE critical question that completely changes matching priorities; Q2 Precision needed (conditional on reference — high/moderate/coarse); Q3 Signal speed (conditional on ESD — high-speed/low-speed); Q4 Automotive (AEC-Q101). Context sensitivity rated moderate-high.
+
+**Key design choices:**
+
+- **B3 classified from B1, not standalone.** Digikey puts Zener diodes in "Diodes - Zener - Single" and "Diodes - Zener - Array" categories. The classifier detects Zener from keywords in description, subcategory, or MPN. Direct subcategory matches can also route to B3 without going through the classifier.
+- **Explicit TVS exclusion in classifier.** Zener and TVS both clamp voltage but are fundamentally different products: Zener = steady-state regulation with tight tolerance and specified TC; TVS = transient absorption with high peak power and loose tolerance. The classifier checks for TVS indicators first and returns false, ensuring TVS parts stay in B1 (or future B4) rather than being misclassified as Zener.
+- **Vz as Identity, not Threshold.** Unlike Vrrm in B1/B2 (where higher is always safe), Zener voltage must be exact — a 5.1V Zener cannot be replaced by a 6.2V Zener. This is the fundamental semantic difference.
+- **Izt as Identity.** The test current is a measurement condition, not an operating limit. If Izt differs, Vz values aren't directly comparable.
+- **TC compared on absolute value.** Below ~5V TC is negative (Zener mechanism); above ~5V TC is positive (avalanche). The threshold compares |replacement TC| ≤ |original TC|.
+**Files created:** `lib/logicTables/zenerDiodes.ts`, `lib/contextQuestions/zenerDiodes.ts`.
+
+**Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/logicTables/familyClassifier.ts` (Zener classifier rule with TVS exclusion), `lib/contextQuestions/index.ts` (import + register), `CLAUDE.md` (family count + B3 row + docs count + variant families list + param map status), `docs/application-context-attribute-map.md` (updated with B3 — 21 families).
+
+---
+
+## 32. Zener Diodes — Digikey Parameter Map (B3)
+
+**Decision:** Built Digikey parameter maps for Zener Diodes (B3) with two dedicated Digikey categories.
+
+**Discovery findings:** Ran `scripts/discover-digikey-params.mjs` against 10 Zener diode MPNs spanning: SMD single (BZX84C5V1-7-F SOT-23, MMSZ5231B-7-F SOD-123, BZT52C5V1-7-F SOD-123, BZX84-A5V1,215 SOT-23 ±1%, MMSZ4684T1G SOD-123 3.3V, MMBZ5241BLT1G SOT-23 11V), through-hole (1N4733A-TP DO-41 1W), high power (1SMB5918BT3G SMB 3W), and dual arrays (BZB84-C5V1,215 Nexperia automotive, AZ23C5V1-7-F Diodes Inc).
+
+**Two param maps:**
+
+1. **`singleZenerDiodeParamMap`** — Digikey category "Single Zener Diodes". 10 mapped fields: Voltage - Zener (Nom) (Vz) → vz, Tolerance → vz_tolerance, Power - Max → pd, Impedance (Max) (Zzt) → zzt, Current - Reverse Leakage @ Vr → ir_leakage, Voltage - Forward (Vf) (Max) @ If → vf, Operating Temperature → operating_temp, Qualification → aec_q101, Mounting Type → mounting_style, Package / Case → package_case. Weight coverage: ~51% (76/150).
+
+2. **`zenerDiodeArrayParamMap`** — Digikey category "Zener Diode Arrays". Adds Configuration field (e.g., "1 Pair Common Anode"). Weight coverage: ~57% (85/150).
+
+**Key Digikey quirks:**
+
+- **AEC-Q100, not Q101.** Digikey reports "AEC-Q100" (IC qualification) for automotive Zener diodes instead of "AEC-Q101" (discrete semiconductor qualification). Updated `transformToAecQ101()` to accept both Q100 and Q101 as indicating automotive qualification.
+- **Own categories, no virtual routing needed.** Unlike Schottky (B2) which shares "Single Diodes" with B1 and needs `resolveParamMapCategory()` to distinguish via "Technology" parameter, Zener has dedicated categories. Simple substring matching in `findCategoryMap()` handles routing.
+- **Zzt sometimes absent.** Low-voltage Zeners (3.3V) may omit impedance — the Zener mechanism at low voltages produces very high impedance that Digikey doesn't always list.
+- **Many gaps.** Izt (w8), TC (w7), Izm (w6), Rth_ja (w6), Tj_max (w6), Cj (w4), Zzk (w4), regulation_type (w3), pin_configuration (w10), height (w5) are NOT in Digikey parametric data. These are datasheet-level specs. When both source and candidate are missing, matching engine rules pass.
+
+**Mapper updates:** Added Zener subcategory routing in `mapSubcategory()`: "zener diode array" → "Diodes - Zener - Array", "single zener"/"zener diode" → "Zener Diode". These map to existing `subcategoryToFamily` entries in `index.ts`.
+
+**Files modified:** `lib/services/digikeyParamMap.ts` (two new param maps + category array + familyToDigikeyCategories), `lib/services/digikeyMapper.ts` (mapSubcategory entries + transformToAecQ101 broadened), `lib/contextQuestions/zenerDiodes.ts` (fixed condition type from string to object).
+
+---
+
+## 33. TVS Diodes — Transient Voltage Suppressors — Family B4
+
+**Decision:** Added TVS Diodes as the fourth and final Block B discrete semiconductor family (B4), classified as a variant of B1 (Rectifier Diodes) via the family classifier. This completes all diode families.
+
+**What changed:**
+
+1. **Logic table** (`lib/logicTables/tvsDiodes.ts`). 23 rules derived from `docs/tvs_diodes_logic.docx`. Key differences from B1/B2/B3: Standoff Voltage (Vrwm) is Identity — must match circuit operating voltage exactly (too low → conduction, too high → poor clamping); Clamping Voltage (Vc) is THE primary spec at Threshold ≤ (weight 10) — the voltage the circuit sees during a surge; Peak Pulse Power (Ppk) at Threshold ≥ (weight 9) and Peak Pulse Current (Ipp) at Threshold ≥ (weight 8) — energy absorption capacity; Junction Capacitance (Cj) elevated to Threshold ≤ (weight 8) — critical for signal-line protection (Cj vs Vc is THE fundamental TVS tradeoff); ESD Rating as Threshold ≥ (weight 7) — IEC 61000-4-2 compliance; Surge Standard as identity_flag (weight 8) — automotive 100V, telecom 1kV; Polarity as Identity (weight 10) — Uni vs Bi fundamental topology choice. Zero application_review rules — protection is binary (works or doesn't). Total weight: 177.
+
+2. **Family classifier** (`lib/logicTables/familyClassifier.ts`). New variant rule placed BEFORE B3: base B1 → B4 when description contains 'tvs', 'transient voltage', 'transient suppressor', 'esd protection', 'esd suppressor', or subcategory contains 'tvs'; also matches MPN prefixes SMAJ, SMBJ, SMCJ, P6KE, PESD, 1.5KE, 5KP, SMLVT, TPD, ESDA, PRTR, USBLC. B4 must be checked before B3 because B3's TVS exclusion safety net assumes B4 catches them first.
+
+3. **Subcategory mappings** (`lib/logicTables/index.ts`). Eight new entries: 'TVS Diode', 'TVS', 'Transient Voltage Suppressor', 'TVS - Diodes', 'Diodes - TVS', 'ESD Protection Diode', 'ESD Suppressor', 'Surge Suppressor' → all map to B4.
+
+4. **Context questions** (`lib/contextQuestions/tvsDiodes.ts`). 4 questions (1 conditional): Q1 Application type (power_rail / signal_line / interface / automotive_load_dump) — determines Cj importance; Q2 Transient source (esd / eft_burst / surge / lightning / load_dump) — determines energy rating requirements; Q3 Interface speed (conditional on signal_line — usb2 / usb3 / hdmi / ethernet / spi_i2c / can_lin) — determines Cj budget; Q4 Automotive (AEC-Q101). Context sensitivity: high.
+
+5. **Digikey parameter map** (`lib/services/digikeyParamMap.ts`). Single `tvsDiodeParamMap` — all TVS in one "TVS Diodes" Digikey category (no separate array category). 13 mapped fields: Voltage - Reverse Standoff (Typ) → vrwm, Voltage - Breakdown (Min) → vbr, Voltage - Clamping (Max) @ Ipp → vc, Current - Peak Pulse (10/1000µs) → ipp, Power - Peak Pulse → ppk, Capacitance @ Frequency → cj, Unidirectional Channels → num_channels, Bidirectional Channels → num_channels, Type → configuration, Operating Temperature → operating_temp, Qualification → aec_q101, Mounting Type → mounting_style, Package / Case → package_case. Weight coverage: ~61% (108/177). Polarity (w10) is added by mapper enrichment, not param map, so not counted by `computeFamilyParamCoverage()`. Packaging not mapped.
+
+6. **Digikey mapper** (`lib/services/digikeyMapper.ts`). Added TVS subcategory routing in `mapSubcategory()`. Added `transformToTvsTopology()`: "Zener" → "Discrete", "Steering (Rail to Rail)" → "Steering Diode Array". Added TVS polarity enrichment — polarity derived from FIELD NAME presence ("Unidirectional Channels" vs "Bidirectional Channels"), not from a separate polarity parameter. This required post-processing in `mapDigikeyProductToAttributes()` rather than the standard param map approach.
+
+**Key design choices:**
+
+- **B4 classifier checked BEFORE B3.** B3 has a TVS exclusion safety net (checks TVS keywords first and returns false). But relying on B3's exclusion alone is fragile — if B4's classifier runs first, TVS parts are caught positively rather than excluded negatively. The B4→B3 ordering is more robust.
+- **Polarity from field name, not field value.** Digikey encodes polarity in the parameter name itself: "Unidirectional Channels" (ID 1729) vs "Bidirectional Channels" (ID 1730). The param map architecture maps field values to attributes, but here the information is in which field exists. Solved by adding a post-processing enrichment step in the mapper rather than forcing an awkward param map entry.
+- **Configuration transformer safe for all diode families.** `transformToTvsTopology()` only converts exact "Zener" string and "Steering" substring. B1/B2/B3 configuration values ("Single", "Dual Common Cathode", "1 Pair Common Anode") don't match these patterns.
+- **Zero application_review rules.** Unlike every other family, TVS has no application_review rules. Protection is binary — the TVS either clamps below the IC's absolute maximum rating or it doesn't. There are no "judgment call" parameters.
+- **Single Digikey category.** Unlike B1 (Single Diodes + Bridge Rectifiers), B2 (virtual Schottky Diodes + Schottky Diode Arrays), and B3 (Single Zener Diodes + Zener Diode Arrays), TVS has a single "TVS Diodes" category covering all form factors (discrete, arrays, multi-channel).
+
+**Discovery findings:** Ran `scripts/discover-digikey-params.mjs` against 6 TVS MPNs: SMBJ5.0A-13-F (Diodes Inc uni 5V), SMAJ12A-E3/61 (Vishay uni 12V), SMCJ24A-E3/57T (Vishay uni 24V), PESD5V0S2BT,215 (Nexperia bi ESD array), TPD2E001DRLR (TI ESD array), SMBJ5.0CA-13-F (Diodes Inc bi 5V). All in single "TVS Diodes" category. Polarity encoded in field name, not separate parameter. AEC-Q101 present in "Qualification" field for automotive parts.
+
+**Known data gaps (accepted):** ir_leakage (w5), response_time (w6), esd_rating (w7), pin_configuration (w10), height (w5), rth_ja (w5), tj_max (w6), pd (w5), surge_standard (w8) are NOT in Digikey parametric data. These are datasheet-level specs requiring manufacturer PDF parsing.
+
+**Files created:** `lib/logicTables/tvsDiodes.ts`, `lib/contextQuestions/tvsDiodes.ts`.
+
+**Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/logicTables/familyClassifier.ts` (B4 classifier rule before B3), `lib/services/digikeyParamMap.ts` (tvsDiodeParamMap + categoryParamMaps + familyToDigikeyCategories), `lib/services/digikeyMapper.ts` (mapSubcategory + transformToTvsTopology + polarity enrichment), `lib/contextQuestions/index.ts` (import + register), `CLAUDE.md` (family count 23 + B4 row + docs count 17 + param map status 4 discrete).

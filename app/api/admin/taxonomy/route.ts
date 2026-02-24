@@ -3,7 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { getCategories, DigikeyCategory } from '@/lib/services/digikeyClient';
 import { getAllLogicTables, getFamilyLastUpdated } from '@/lib/logicTables';
 import {
-  getDigikeyCategoriesForFamily,
+  getTaxonomyPatternsForFamily,
   computeFamilyParamCoverage,
 } from '@/lib/services/digikeyParamMap';
 import type {
@@ -34,7 +34,7 @@ export async function GET() {
     const reverseLookup = new Map<string, FamilyCoverageInfo[]>();
 
     for (const table of allTables) {
-      const digikeyNames = getDigikeyCategoriesForFamily(table.familyId);
+      const digikeyNames = getTaxonomyPatternsForFamily(table.familyId);
       const { totalWeight, matchableWeight } = computeFamilyParamCoverage(
         table.familyId,
         table.rules,
@@ -62,22 +62,43 @@ export async function GET() {
     }
 
     // 3. Enrich Digikey taxonomy with coverage data
+    // Recursively collect leaf categories (no children) from any depth.
+    // Passives are flat (leaves at L1), but Discrete Semiconductors has
+    // 3 levels: e.g., Diodes → Rectifiers → Single Diodes.
+    function collectLeaves(cats: DigikeyCategory[]): DigikeyCategory[] {
+      const leaves: DigikeyCategory[] = [];
+      for (const cat of cats) {
+        const children = cat.ChildCategories ?? [];
+        if (children.length === 0) {
+          leaves.push(cat);
+        } else {
+          leaves.push(...collectLeaves(children));
+        }
+      }
+      return leaves;
+    }
+
     let totalSubcategories = 0;
     let coveredSubcategories = 0;
+    let totalProducts = 0;
+    let coveredProducts = 0;
 
     const categories: TaxonomyCategory[] = digikeyCategories.map((topCat) => {
-      const children = topCat.ChildCategories ?? [];
-      const subcategories: TaxonomySubcategory[] = children.map((child) => {
+      const leaves = collectLeaves(topCat.ChildCategories ?? []);
+      const subcategories: TaxonomySubcategory[] = leaves.map((child) => {
         totalSubcategories++;
 
         // Match against reverse lookup using same approach as findCategoryMap():
-        // check if Digikey's subcategory name contains our pattern
+        // check if Digikey's subcategory name contains our pattern.
+        // Skip "Kits" categories — they're component bundles, not component categories.
         const childLower = child.Name.toLowerCase();
         let families: FamilyCoverageInfo[] = [];
 
-        for (const [pattern, infos] of reverseLookup) {
-          if (childLower.includes(pattern)) {
-            families = [...families, ...infos];
+        if (!childLower.includes('kit')) {
+          for (const [pattern, infos] of reverseLookup) {
+            if (childLower.includes(pattern)) {
+              families = [...families, ...infos];
+            }
           }
         }
 
@@ -90,7 +111,12 @@ export async function GET() {
         });
 
         const covered = families.length > 0;
-        if (covered) coveredSubcategories++;
+        const productCount = child.ProductCount ?? 0;
+        totalProducts += productCount;
+        if (covered) {
+          coveredSubcategories++;
+          coveredProducts += productCount;
+        }
 
         return {
           categoryId: child.CategoryId,
@@ -133,6 +159,11 @@ export async function GET() {
         totalFamilies: allTables.length,
         coveragePercentage: totalSubcategories > 0
           ? Math.round((coveredSubcategories / totalSubcategories) * 100)
+          : 0,
+        totalProducts,
+        coveredProducts,
+        productCoveragePercentage: totalProducts > 0
+          ? Math.round((coveredProducts / totalProducts) * 100)
           : 0,
       },
       fetchedAt: new Date().toISOString(),

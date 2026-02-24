@@ -4,6 +4,7 @@ import { useState, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
+import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import SettingsSectionNav, { SettingsSection } from './SettingsSectionNav';
 import ProfilePanel from './ProfilePanel';
 import AccountPanel from './AccountPanel';
@@ -38,13 +39,13 @@ function SettingsShellInner() {
           display: 'flex',
           alignItems: 'center',
           px: 3,
-          py: 2.5,
+          height: PAGE_HEADER_HEIGHT,
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
         }}
       >
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('settings.title')}
         </Typography>
       </Box>

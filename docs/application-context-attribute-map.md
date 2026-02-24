@@ -18,17 +18,20 @@ This document maps every component family to the application-context questions t
 | 6 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
 | 7 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
 | 8 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
-| 9 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 10 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 11 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 12 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 13 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 14 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 15 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 16 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 17 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 18 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 19 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 9 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
+| 10 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
+| 11 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
+| 12 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 13 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 14 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 15 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 16 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 17 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 18 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 19 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 20 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 21 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 22 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -831,6 +834,198 @@ This is the first Block B (discrete semiconductor) family. Context sensitivity i
 
 ---
 
+### 20. Schottky Barrier Diodes (Family B2)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Schottky diodes are chosen specifically for low Vf and zero reverse recovery time. The application context is less complex than rectifier diodes because the switching frequency question is largely answered by the choice of Schottky itself — the engineer already decided recovery time matters. The remaining context questions focus on the Vf/Ir trade-off, thermal environment, and whether SiC is involved.
+
+#### Question 1: Is this a low-voltage application (≤12V)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — 3.3V, 5V, or 12V rail** | Vf becomes the absolute dominant spec. Every 50mV of Vf difference is significant. At 3.3V, a 0.45V Schottky drops 14% of the supply. A 0.3V Schottky drops 9%. That 5% efficiency difference may determine battery life. Reverse leakage (Ir) is secondary unless battery-powered. Cj is secondary unless switching >1MHz. |
+| **No — higher voltage (>12V)** | Vf is still important but less dominant. Reverse leakage becomes more important because Ir × Vr = leakage power, and at higher voltages, this can be significant heat. Thermal runaway risk increases with voltage. |
+
+**Affected attributes:**
+- `Forward Voltage (Vf)` → escalates to absolute dominant for low-voltage
+- `Reverse Leakage (Ir)` → secondary for low-voltage (unless battery), primary for high-voltage
+- `Junction Capacitance (Cj)` → secondary unless high-frequency
+
+#### Question 2: What is the operating/ambient temperature?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High ambient (>60°C) or poor thermal path** | Reverse leakage escalates to critical concern. Schottky Ir approximately doubles every 10°C. A diode with 100µA leakage at 25°C has ~6.4mA at 85°C and ~50mA at 125°C. At high voltage, this leakage dissipates significant power (50mA × 40V = 2W), which further heats the junction — thermal runaway risk. The replacement's Ir at the actual operating temperature must be verified, not just the 25°C headline number. Flag for thermal runaway analysis. |
+| **Room temperature / well-cooled** | Standard Ir matching at 25°C is sufficient. Thermal runaway risk is low. |
+
+**Affected attributes:**
+- `Reverse Leakage (Ir)` → must evaluate at actual operating temperature, not just 25°C
+- `Thermal Resistance (Rθjc, Rθja)` → tighter matching required for high-ambient applications
+- `Tj_max` → thermal headroom becomes more important
+
+#### Question 3: Is this silicon or SiC Schottky?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Silicon (standard)** | Normal Schottky matching. Voltage ratings typically ≤200V. Vf is the dominant advantage. |
+| **SiC (Silicon Carbide)** | Different product category. Voltage ratings 600–1700V. Vf is higher than silicon Schottky (1.2–1.7V) but the advantage is zero recovery + high voltage + temperature stability. A silicon Schottky cannot replace SiC at these voltages. SiC-to-SiC matching focuses on reverse recovery (should be near-zero for both), Vf, and thermal characteristics. |
+| **Don't know** | Determine from voltage rating — if Vrrm ≥ 300V, it's almost certainly SiC. Below 200V, almost certainly silicon. 200–300V is a gray zone. |
+
+**Affected attributes:**
+- `Semiconductor Material (Si vs SiC)` → Identity (Flag), SiC cannot be replaced by Si at high voltage
+- `Forward Voltage (Vf)` → different expectations for Si vs SiC
+- `Reverse Leakage (Ir)` → SiC has much better temperature stability than Si
+
+#### Question 4: Are diodes operating in parallel?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — paralleled for higher current** | Vf temperature coefficient becomes critical. At high currents, Schottky Vf has a positive tempco (natural current sharing — safe). At low currents, Vf has a negative tempco (thermal runaway risk in parallel — dangerous). Vf matching between paralleled diodes matters. Flag for review of the operating point relative to the tempco crossover. |
+| **No** | Vf temperature coefficient is a secondary concern. Standard matching. |
+
+**Affected attributes:**
+- `Vf Temperature Coefficient` → escalates to primary for parallel operation
+- `Forward Voltage (Vf)` → matching between parallel devices matters
+
+#### Question 5: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Operating temp range must cover automotive requirements. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag) for automotive
+- `Operating Temp Range` → must cover automotive range
+
+---
+
+### 21. Zener Diodes / Voltage Reference Diodes (Family B3)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Zener diodes serve two fundamentally different purposes — voltage clamping/protection and voltage reference — and the application determines which specs matter. A Zener clamping a relay coil flyback spike cares only about Vz and power. A Zener providing a precision reference voltage for an ADC cares deeply about TC, dynamic impedance, and noise.
+
+#### Question 1: What is the primary function?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Voltage clamping / overvoltage protection** | Vz and power dissipation are the only primary specs. Tolerance can be loose (±5% or ±10% is fine). TC is irrelevant — the circuit just needs a clamp level. Dynamic impedance (Zzt) doesn't matter because the voltage doesn't need to be precise. Noise is irrelevant. This is the simplest matching case — almost any Zener with the right Vz and sufficient power rating works. |
+| **Voltage reference / precision bias** | TC becomes a primary spec — voltage stability over temperature is the whole point. Dynamic impedance (Zzt) becomes primary — lower Zzt means more stable voltage as current varies. Tolerance tightens to ±2% or ±1%. Noise may matter (especially for ADC reference chains or audio). The Zener voltage near 5.1V has the best TC due to physics — flag if the reference voltage is far from 5.1V. |
+| **ESD protection on signal line** | Junction capacitance (Cj) becomes primary — high Cj degrades signal integrity on fast data lines (USB, HDMI, SPI). Reverse leakage (Ir) matters because the Zener sits across the signal line during normal operation. Vz tolerance can be moderate. TC is irrelevant. Configuration matters — multi-line arrays are common for bus protection. |
+| **Voltage level shifting** | Vz accuracy at the actual operating current matters more than Vz at Izt. Dynamic impedance determines how much the level shift varies with load current. TC matters if the level shift must be stable over temperature. |
+
+**Affected attributes:**
+- `Temperature Coefficient (TC)` → irrelevant for clamping, primary for reference
+- `Dynamic Impedance (Zzt)` → irrelevant for clamping, primary for reference/level-shifting
+- `Knee Impedance (Zzk)` → Application Review for low-current reference, irrelevant otherwise
+- `Tolerance` → loose (±5–10%) for clamping, tight (±1–2%) for reference
+- `Junction Capacitance (Cj)` → primary for ESD/signal line, irrelevant for power clamping
+- `Reverse Leakage (Ir)` → primary for ESD/signal line, secondary otherwise
+- `Regulation Type (noise)` → Application Review for reference, irrelevant for clamping
+
+#### Question 2 (if reference): What precision is needed?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High precision (voltage stability <0.1% over temp range)** | TC becomes a hard threshold (≤0.01%/°C). Tolerance ≤1%. Dynamic impedance becomes a hard threshold. Noise voltage must be specified and matched. The engineer should potentially consider a dedicated IC voltage reference (e.g., LM4040, TL431) instead of a Zener — flag this in the assessment if TC requirements are very tight. |
+| **Moderate precision (voltage stability 0.1–1%)** | TC ≤0.05%/°C. Tolerance ≤2%. Standard Zzt matching. Noise is secondary. |
+| **Coarse reference (voltage stability >1%)** | Standard Vz and tolerance matching. TC is secondary. Zzt is secondary. |
+
+**Affected attributes:**
+- `Temperature Coefficient (TC)` → threshold tightens with precision
+- `Tolerance` → threshold tightens with precision
+- `Dynamic Impedance (Zzt)` → threshold tightens with precision
+- Noise voltage → escalates for high precision
+
+#### Question 3 (if ESD/signal): What is the signal speed?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High-speed digital (USB 2.0+, HDMI, SPI >10MHz)** | Cj becomes a hard threshold — must be ≤ original. Even a few pF difference matters at high data rates. Consider dedicated ESD protection diodes (TVS arrays) instead of Zeners — they're optimized for low Cj. Flag in assessment. |
+| **Low-speed digital or analog (I2C, UART, GPIO, sensor signals)** | Cj is secondary — low-speed signals tolerate higher capacitance. Standard Cj matching is sufficient. |
+
+**Affected attributes:**
+- `Junction Capacitance (Cj)` → hard threshold for high-speed, secondary for low-speed
+
+#### Question 4: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Operating temp range must cover automotive requirements. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag) for automotive
+- `Operating Temp Range` → must cover automotive range
+
+---
+
+### 22. TVS Diodes — Transient Voltage Suppressors (Family B4)
+
+**Context sensitivity: MODERATE-HIGH**
+
+TVS diodes protect circuits from voltage transients. The application context determines whether the critical specs are surge power handling (power rail) or ultra-low capacitance (signal line), and the transient source determines which surge standard and waveform to match against.
+
+#### Question 1: Is this protecting a power rail or a signal line?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Power rail protection** | Peak pulse power (Ppk) and peak pulse current (Ipp) are PRIMARY. Clamping voltage (Vc) must be below the protected circuit's absolute max voltage rating. Junction capacitance (Cj) is IRRELEVANT — power rails tolerate hundreds of pF. Response time is secondary (power surges have µs rise times). Package is typically discrete SMA/SMB/SMC or DO-201 for high power. |
+| **Signal-line protection (USB, HDMI, Ethernet, CAN, SPI, I2C)** | Junction capacitance (Cj) becomes PRIMARY — the TVS loads the signal during normal operation. Ultra-low-cap types (<1pF per line) required for high-speed interfaces. ESD rating (IEC 61000-4-2) becomes the primary power spec (not Ppk — signal lines see ESD, not power surges). Package is typically a multi-line array (SOT-23, DFN). Configuration/topology matters — steering diode arrays achieve lowest Cj. |
+| **Automotive bus protection (CAN, LIN, FlexRay)** | Combination of both concerns: must handle automotive transients (ISO 7637 load dump — high energy) while maintaining acceptable capacitance for the bus speed. AEC-Q101 mandatory. Clamping voltage must meet the bus transceiver's maximum rating. |
+
+**Affected attributes:**
+- `Peak Pulse Power (Ppk)` → primary for power rail, secondary for signal line
+- `Peak Pulse Current (Ipp)` → primary for power rail, secondary for signal line
+- `Junction Capacitance (Cj)` → irrelevant for power rail, primary for signal line
+- `ESD Rating` → secondary for power rail, primary for signal line
+- `Configuration/Topology` → steering diode arrays relevant for signal lines
+- `AEC-Q101` → mandatory for automotive
+
+#### Question 2: What transient source / surge standard?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **ESD (human body, IEC 61000-4-2)** | ESD rating is the primary power spec. Pulse waveform is very short (ns-scale). Energy per event is low (µJ–mJ). Response time must be <1ns. Most signal-line TVS are designed for this. |
+| **Lightning / power surge (IEC 61000-4-5, 8/20µs)** | Ppk at 8/20µs waveform is the primary spec. Much higher energy than ESD. Power-line TVS required. Cj is irrelevant. |
+| **Telecom lightning (GR-1089)** | Specific telecom surge standard. Very high energy. TVS must be explicitly rated for GR-1089 compliance. |
+| **Automotive transients (ISO 7637 load dump)** | Very high energy, long duration transients. TVS must be rated for automotive surge profiles. ISO 7637 compliance flag required. |
+| **Inductive switching spikes** | Fast transients from relay coils, solenoids, motors. Moderate energy. Fast response matters. Repetitive events — verify the TVS can handle the repetition rate. |
+
+**Affected attributes:**
+- `Peak Pulse Power (Ppk)` → must be rated at the correct waveform
+- `Surge Standard Compliance` → Identity Flag if original specifies a standard
+- `ESD Rating` → primary for ESD applications
+- `Response Time` → critical for ESD, less so for power surge
+
+#### Question 3 (if signal-line): What interface speed?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High-speed (USB 3.x, HDMI 2.x, PCIe, >1Gbps)** | Cj must be ultra-low (<1pF per line). Steering diode topology preferred. Even 2–3pF is too much — will cause signal integrity failures (eye diagram closure). |
+| **Medium-speed (USB 2.0, 100BASE-T Ethernet, SPI >10MHz)** | Cj should be <5pF per line. Standard low-cap TVS arrays work. |
+| **Low-speed (I2C, UART, CAN, GPIO, <10MHz)** | Cj up to 15–50pF is acceptable. More TVS options available. Power handling can be higher. |
+
+**Affected attributes:**
+- `Junction Capacitance (Cj)` → threshold tightens with signal speed
+- `Configuration/Topology` → steering topology preferred for highest speeds
+
+#### Question 4: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Must meet automotive transient profiles. Operating temp range must cover -40°C to +125°C or +150°C. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag) for automotive
+- `Surge Standard Compliance` → ISO 7637 for automotive
+- `Operating Temp Range` → must cover automotive range
+
+---
+
 ## Summary: Application Context Questions by Family
 
 This table shows which questions to ask and in what order. The chat engine should ask ONLY the questions relevant to the resolved family.
@@ -858,6 +1053,9 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | | | | | | |
 | **— BLOCK B: DISCRETE SEMICONDUCTORS —** | | | | | |
 | **Rectifier Diodes** | B1 | Switching frequency? (50/60Hz / low-freq / SMPS / >500kHz) | Circuit topology? (rectifier / freewheeling / OR-ing / polarity protection / multiplier) | Low-voltage application? | Automotive? |
+| **Schottky Diodes** | B2 | Low-voltage application (≤12V)? | Operating/ambient temperature? | Si or SiC? | Parallel operation? Automotive? |
+| **Zener Diodes** | B3 | Function? (clamping / reference / ESD protection / level shifting) | If reference: Precision needed? | If ESD/signal: Signal speed? | Automotive? |
+| **TVS Diodes** | B4 | Power rail or signal line? | Transient source / surge standard? | If signal: Interface speed? | Automotive? |
 
 ---
 

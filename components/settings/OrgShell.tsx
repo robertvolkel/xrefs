@@ -3,6 +3,7 @@
 import { Box, List, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import { useTranslation } from 'react-i18next';
+import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import OrgPanel from './OrgPanel';
 
 export default function OrgShell() {
@@ -16,13 +17,13 @@ export default function OrgShell() {
           display: 'flex',
           alignItems: 'center',
           px: 3,
-          py: 2.5,
+          height: PAGE_HEADER_HEIGHT,
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
         }}
       >
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('orgSettings.title')}
         </Typography>
       </Box>

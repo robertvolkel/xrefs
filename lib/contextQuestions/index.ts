@@ -20,6 +20,9 @@ import { powerInductorContext } from './powerInductor';
 import { rfSignalInductorsContext } from './rfSignalInductors';
 // Block B: Discrete Semiconductors
 import { rectifierDiodesContext } from './rectifierDiodes';
+import { schottkyDiodesContext } from './schottkyDiodes';
+import { zenerDiodesContext } from './zenerDiodes';
+import { tvsDiodesContext } from './tvsDiodes';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -43,6 +46,9 @@ const allConfigs: FamilyContextConfig[] = [
   rfSignalInductorsContext,
   // Block B: Discrete Semiconductors
   rectifierDiodesContext,
+  schottkyDiodesContext,
+  zenerDiodesContext,
+  tvsDiodesContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

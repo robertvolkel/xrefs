@@ -482,6 +482,9 @@ export interface TaxonomyResponse {
     coveredSubcategories: number;
     totalFamilies: number;
     coveragePercentage: number;
+    totalProducts: number;
+    coveredProducts: number;
+    productCoveragePercentage: number;
   };
   fetchedAt: string;
 }
