@@ -14,11 +14,14 @@ import {
 import CheckIcon from '@mui/icons-material/Check';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
 import { ContextQuestion } from '@/lib/types';
+import FeedbackButton from './FeedbackButton';
 
 interface ApplicationContextFormProps {
   questions: ContextQuestion[];
   onSubmit: (answers: Record<string, string>) => void;
   onSkip: () => void;
+  sourceMpn?: string;
+  sourceManufacturer?: string;
 }
 
 function QuestionField({
@@ -26,11 +29,15 @@ function QuestionField({
   value,
   onChange,
   enterValuePlaceholder,
+  sourceMpn,
+  sourceManufacturer,
 }: {
   question: ContextQuestion;
   value: string;
   onChange: (value: string) => void;
   enterValuePlaceholder: string;
+  sourceMpn?: string;
+  sourceManufacturer?: string;
 }) {
   const isFreeText = question.allowFreeText;
   // For free-text questions, track whether user is typing a custom value
@@ -39,21 +46,33 @@ function QuestionField({
 
   return (
     <Box>
-      <Typography
-        variant="body2"
-        sx={{ fontWeight: 600, fontSize: '0.82rem', mb: 0.5 }}
-      >
-        {question.questionText}
-        {question.required && (
-          <Typography
-            component="span"
-            variant="caption"
-            sx={{ ml: 1, color: 'warning.main', fontWeight: 700, fontSize: '0.7rem' }}
-          >
-            Required
-          </Typography>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        <Typography
+          variant="body2"
+          sx={{ fontWeight: 600, fontSize: '0.82rem', mb: 0.5 }}
+        >
+          {question.questionText}
+          {question.required && (
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{ ml: 1, color: 'warning.main', fontWeight: 700, fontSize: '0.7rem' }}
+            >
+              Required
+            </Typography>
+          )}
+        </Typography>
+        {sourceMpn && (
+          <FeedbackButton
+            feedbackStage="qualifying_questions"
+            sourceMpn={sourceMpn}
+            sourceManufacturer={sourceManufacturer}
+            questionId={question.questionId}
+            questionText={question.questionText}
+            sx={{ p: 0.25, mb: 0.5 }}
+          />
         )}
-      </Typography>
+      </Stack>
 
       <RadioGroup
         value={isCustom ? '__custom__' : value}
@@ -124,6 +143,8 @@ export default function ApplicationContextForm({
   questions,
   onSubmit,
   onSkip,
+  sourceMpn,
+  sourceManufacturer,
 }: ApplicationContextFormProps) {
   const { t } = useTranslation();
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -182,6 +203,8 @@ export default function ApplicationContextForm({
             value={answers[question.questionId] ?? ''}
             onChange={(v) => handleChange(question.questionId, v)}
             enterValuePlaceholder={t('chat.enterValue')}
+            sourceMpn={sourceMpn}
+            sourceManufacturer={sourceManufacturer}
           />
         ))}
       </Stack>

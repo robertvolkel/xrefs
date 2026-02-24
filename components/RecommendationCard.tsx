@@ -17,6 +17,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
     <Card
       variant="outlined"
       sx={{
+        position: 'relative',
         bgcolor: 'background.default',
         '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
         transition: 'border-color 0.2s ease, background-color 0.2s ease',
@@ -36,6 +37,9 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   {part.mpn}
                 </Typography>
                 <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                {part.qualifications?.map(q => (
+                  <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
+                ))}
               </Stack>
               <Typography variant="body2" color="text.secondary" noWrap component="div">
                 {onManufacturerClick ? (

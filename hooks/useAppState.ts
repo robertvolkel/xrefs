@@ -19,7 +19,7 @@ import {
   getRecommendationsWithContext,
   chatWithOrchestrator,
 } from '@/lib/api';
-import { getLogicTableForSubcategory, isFamilySupported, getSupportedFamilyNames } from '@/lib/logicTables';
+import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
 import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
 import { logSearch } from '@/lib/supabaseLogger';
@@ -34,6 +34,7 @@ interface AppState {
   sourceAttributes: PartAttributes | null;
   applicationContext: ApplicationContext | null;
   recommendations: XrefRecommendation[];
+  allRecommendations: XrefRecommendation[]; // full unfiltered set for filter reset
   selectedRecommendation: XrefRecommendation | null;
   comparisonAttributes: PartAttributes | null;
   llmAvailable: boolean | null; // null = not yet checked
@@ -49,17 +50,15 @@ const initialState: AppState = {
   sourceAttributes: null,
   applicationContext: null,
   recommendations: [],
+  allRecommendations: [],
   selectedRecommendation: null,
   comparisonAttributes: null,
   llmAvailable: null,
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
-  const supported = getSupportedFamilyNames();
-  const shortNames = supported.map(n => n.split('–')[0].split('—')[0].trim());
   return `The application's cross-reference logic currently doesn't support **${subcategory}** components. ` +
-    `I was able to load the attributes for **${mpn}**, but I can't evaluate replacements without a matching rules table for this category.\n\n` +
-    `Supported categories: ${shortNames.join(', ')}.`;
+    `I was able to load the attributes for **${mpn}**, but I can't evaluate replacements without a matching rules table for this category.`;
 }
 
 export function useAppState() {
@@ -68,6 +67,8 @@ export function useAppState() {
   const conversationRef = useRef<OrchestratorMessage[]>([]);
   // Track current recommendations for follow-up LLM calls
   const recsRef = useRef<XrefRecommendation[]>([]);
+  // Track full unfiltered recommendations — filters always operate on this set
+  const allRecsRef = useRef<XrefRecommendation[]>([]);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track original search query for search history logging
@@ -84,10 +85,13 @@ export function useAppState() {
     return controller.signal;
   }, []);
 
-  // Keep recsRef in sync with state for async callbacks
+  // Keep refs in sync with state for async callbacks
   useEffect(() => {
     recsRef.current = state.recommendations;
   }, [state.recommendations]);
+  useEffect(() => {
+    allRecsRef.current = state.allRecommendations;
+  }, [state.allRecommendations]);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -111,13 +115,15 @@ export function useAppState() {
     (
       role: 'user' | 'assistant',
       content: string,
-      interactiveElement?: ChatMessage['interactiveElement']
+      interactiveElement?: ChatMessage['interactiveElement'],
+      variant?: ChatMessage['variant'],
     ) => {
       const msg: ChatMessage = {
         id: crypto.randomUUID(),
         role,
         content,
         timestamp: new Date(),
+        variant,
         interactiveElement,
       };
       setState((prev) => ({ ...prev, messages: [...prev.messages, msg] }));
@@ -147,7 +153,7 @@ export function useAppState() {
       try {
         const response = await chatWithOrchestrator(
           conversationRef.current,
-          recsRef.current.length > 0 ? recsRef.current : undefined,
+          allRecsRef.current.length > 0 ? allRecsRef.current : undefined,
           signal,
         );
 
@@ -168,6 +174,7 @@ export function useAppState() {
           sourcePart: null as AppState['sourcePart'],
           sourceAttributes: null as AppState['sourceAttributes'],
           recommendations: [] as XrefRecommendation[],
+          allRecommendations: [] as XrefRecommendation[],
           selectedRecommendation: null as AppState['selectedRecommendation'],
           comparisonAttributes: null as AppState['comparisonAttributes'],
           applicationContext: null as AppState['applicationContext'],
@@ -236,7 +243,7 @@ export function useAppState() {
         if (!isFamilySupported(sourceAttrs.part.subcategory)) {
           setStatus('');
           const unsupportedMsg = buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory);
-          addMessage('assistant', unsupportedMsg);
+          addMessage('assistant', unsupportedMsg, undefined, 'warning');
           conversationRef.current.push({ role: 'assistant', content: unsupportedMsg });
           setState((prev) => ({
             ...prev,
@@ -312,7 +319,7 @@ export function useAppState() {
       // Step 3: Fire orchestrator for recommendations
       const response = await chatWithOrchestrator(
         conversationRef.current,
-        recsRef.current.length > 0 ? recsRef.current : undefined,
+        allRecsRef.current.length > 0 ? allRecsRef.current : undefined,
         signal,
       ).catch(() => null);
       if (signal.aborted) return;
@@ -330,6 +337,7 @@ export function useAppState() {
             phase: 'viewing',
             sourceAttributes: sourceAttrs ?? response.attributes?.[part.mpn] ?? prev.sourceAttributes,
             recommendations: recs,
+            allRecommendations: recs,
           }));
         } else {
           // Orchestrator didn't return recs — try direct API
@@ -347,6 +355,7 @@ export function useAppState() {
             phase: 'viewing',
             sourceAttributes: sourceAttrs ?? response.attributes?.[part.mpn] ?? prev.sourceAttributes,
             recommendations: fallbackRecs,
+            allRecommendations: fallbackRecs,
           }));
         }
       } else {
@@ -366,6 +375,7 @@ export function useAppState() {
           ...prev,
           phase: 'viewing',
           recommendations: recs,
+          allRecommendations: recs,
         }));
       }
     },
@@ -429,7 +439,7 @@ export function useAppState() {
         // Check if this part family is supported
         if (!isFamilySupported(attributes.part.subcategory)) {
           setStatus('');
-          addMessage('assistant', buildUnsupportedMessage(part.mpn, attributes.part.subcategory));
+          addMessage('assistant', buildUnsupportedMessage(part.mpn, attributes.part.subcategory), undefined, 'warning');
           setState((prev) => ({
             ...prev,
             phase: 'unsupported',
@@ -502,6 +512,7 @@ export function useAppState() {
           ...prev,
           phase: 'viewing',
           recommendations: recs,
+          allRecommendations: recs,
         }));
       } catch {
         setStatus('');
@@ -715,7 +726,7 @@ export function useAppState() {
         }
 
         // Always use overrides-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
+        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -849,7 +860,7 @@ export function useAppState() {
         }
 
         // Always use context-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs }));
+        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -886,6 +897,7 @@ export function useAppState() {
 
     conversationRef.current = snapshot.orchestratorMessages;
     recsRef.current = snapshot.recommendations;
+    allRecsRef.current = snapshot.recommendations;
     pendingOverridesRef.current = {};
     queryRef.current = snapshot.sourceMpn ?? '';
     loggedRef.current = true; // don't re-log on hydration
@@ -935,6 +947,7 @@ export function useAppState() {
       sourceAttributes: snapshot.sourceAttributes,
       applicationContext: snapshot.applicationContext,
       recommendations: snapshot.recommendations,
+      allRecommendations: snapshot.recommendations,
       selectedRecommendation: snapshot.selectedRecommendation,
       comparisonAttributes: snapshot.comparisonAttributes,
       llmAvailable: llmWasUsed ? true : null,

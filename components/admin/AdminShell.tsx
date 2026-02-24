@@ -12,6 +12,7 @@ import ParamMappingsPanel from './ParamMappingsPanel';
 import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
+import QcPanel from './QcPanel';
 
 const allTables = getAllLogicTables();
 const allCategories = [...new Set(allTables.map((t) => t.category))];
@@ -19,7 +20,7 @@ const allCategories = [...new Set(allTables.map((t) => t.category))];
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'data-sources' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy';
+  return s === 'data-sources' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'qc';
 }
 
 function AdminShellInner() {
@@ -107,13 +108,19 @@ function AdminShellInner() {
         )}
 
         {/* Content */}
-        <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
-          {activeSection === 'data-sources' && <DataSourcesPanel />}
-          {activeSection === 'param-mappings' && <ParamMappingsPanel table={selectedTable} />}
-          {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
-          {activeSection === 'context' && <ContextPanel table={selectedTable} />}
-          {activeSection === 'taxonomy' && <TaxonomyPanel />}
-        </Box>
+        {activeSection === 'qc' ? (
+          <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            <QcPanel />
+          </Box>
+        ) : (
+          <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
+            {activeSection === 'data-sources' && <DataSourcesPanel />}
+            {activeSection === 'param-mappings' && <ParamMappingsPanel table={selectedTable} />}
+            {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
+            {activeSection === 'context' && <ContextPanel table={selectedTable} />}
+            {activeSection === 'taxonomy' && <TaxonomyPanel />}
+          </Box>
+        )}
       </Box>
     </Box>
   );

@@ -15,18 +15,16 @@ export default function AppShell() {
   const hasAttributes = (appState.sourceAttributes?.parameters.length ?? 0) > 0;
 
   const mfr = useManufacturerProfile();
-  const panels = usePanelVisibility(appState.phase, hasAttributes, mfr.mfrOpen);
+  const panels = usePanelVisibility(appState.phase, hasAttributes);
 
   // Auto-clear manual collapse when leaving 3-panel mode
   useEffect(() => {
     if (!panels.showRightPanel) mfr.clearManualCollapse();
   }, [panels.showRightPanel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Unified reset: clears manufacturer profile + panel dismissed state
   const resetPanelState = useCallback(() => {
     mfr.reset();
-    panels.resetDismissed();
-  }, [mfr.reset, panels.resetDismissed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mfr.reset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persistence = useConversationPersistence(appState, resetPanelState, panels.setRecsRevealed);
   const newList = useNewListWorkflow();
@@ -83,8 +81,6 @@ export default function AppShell() {
         showAttributesPanel={panels.showAttributesPanel}
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
-        showRecsClose={panels.showRecsClose}
-        showAttrsClose={panels.showAttrsClose}
         chatCollapsed={mfr.chatCollapsed}
         mfrOpen={mfr.mfrOpen}
         mfrProfile={mfr.mfrProfile}
@@ -101,8 +97,6 @@ export default function AppShell() {
         onSkipContext={appState.handleSkipContext}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
-        onCloseRecs={panels.handleCloseRecs}
-        onCloseAttrs={panels.handleCloseAttrs}
         onManufacturerClick={mfr.handleManufacturerClick}
         onExpandChat={mfr.handleExpandChat}
         onToggleHistory={() => persistence.setHistoryOpen(!persistence.historyOpen)}

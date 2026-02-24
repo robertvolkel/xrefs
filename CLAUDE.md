@@ -23,6 +23,16 @@ app/                          # Next.js App Router
   api/parts-list/validate/    # Batch validation (streaming NDJSON)
   api/auth/register/          # User registration with invite code
   api/admin/users/            # Admin user management
+  api/admin/qc/               # QC log list (GET with filters, sort, pagination)
+  api/admin/qc/[logId]/      # QC log detail (GET snapshot)
+  api/admin/qc/export/       # QC log export (GET, CSV/JSON download)
+  api/admin/qc/analyze/      # QC AI analysis (POST, SSE streaming via Claude)
+  api/admin/qc/feedback/     # QC feedback list (GET with status/search/sort)
+  api/admin/qc/feedback/[feedbackId]/ # Feedback status update (PATCH)
+  api/admin/qc/settings/     # QC settings (GET/PUT logging toggle)
+  api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase)
+  api/admin/taxonomy/        # Digikey category taxonomy with coverage
+  api/feedback/              # User feedback submission (POST)
   lists/                      # Lists dashboard page
   parts-list/                 # Parts list editor page
   logic/                      # Admin logic table viewer page
@@ -41,6 +51,18 @@ components/                   # React components
     ViewControls.tsx          # View dropdown, kebab menu, default star, delete confirm
     PartsListActionBar.tsx    # Selection count, refresh/delete buttons, search field
   lists/                      # Lists dashboard components
+  admin/                      # Admin panel components
+    AdminShell.tsx            # Admin orchestrator — section selection, family picker state
+    AdminSectionNav.tsx       # Left nav for admin sections
+    FamilyPicker.tsx          # Shared category/family dropdown (used by 3 sections)
+    QcPanel.tsx               # QC shell — settings toggle + Feedback/Logs tabs
+    QcFeedbackTab.tsx         # Feedback list — status filters, search, sort, click-to-detail
+    QcFeedbackDetailView.tsx  # Feedback detail — comparison table reconstruction from snapshot
+    QcLogsTab.tsx             # Log list + detail (existing log review functionality)
+    QcFeedbackCard.tsx        # Individual feedback card (used in logs detail + feedback detail)
+    QcRecommendationSummary.tsx # Recommendation summary card (used in logs detail)
+    QcAnalysisDrawer.tsx      # AI analysis right-side drawer with streaming markdown
+    qcConstants.ts            # Shared dot colors + utility functions for QC components
 
 hooks/
   useAppState.ts              # Main state machine (LLM mode with deterministic fallback)
@@ -63,7 +85,9 @@ lib/
   contextQuestions/            # Per-family application context questions
   supabase/                   # Auth guard, client, server, middleware
   mockData.ts                 # Fallback data (6 MLCCs, 3 resistors, 5 ICs)
-  api.ts                      # Client-side API wrapper
+  api.ts                      # Client-side API wrapper (includes admin feedback/QC functions)
+  services/recommendationLogger.ts # Logs recommendations to Supabase with JSONB snapshots
+  services/qcAnalyzer.ts      # Server-side aggregation of QC log snapshots for AI analysis
   columnDefinitions.ts        # Dynamic column system for parts list table
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
@@ -160,6 +184,32 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
 - **partDataService** tries Digikey first; if unavailable, falls back to mock data
+
+## QC & Feedback System
+
+The admin QC panel (`/admin?section=qc`) is **feedback-first**: the primary view shows user-submitted feedback items for triage, not raw recommendation logs.
+
+### Architecture
+
+- **Feedback Tab** (primary): Lists all `qc_feedback` rows with status filters (Open/Reviewed/Resolved/Dismissed), search, and sort. Clicking a row opens a detail view that reconstructs the comparison table from the JSONB snapshot stored in `recommendation_log`, highlighting the specific rule the user flagged.
+- **Logs Tab** (secondary): Lists raw `recommendation_log` entries with feedback indicators. Has **Export** (CSV/JSON) and **AI Analysis** capabilities.
+- **Recommendation Logger** (`lib/services/recommendationLogger.ts`): Writes snapshots (source attributes, recommendations, context Q&A, overrides) to `recommendation_log` as JSONB. Must always be `await`ed — fire-and-forget silently drops entries.
+- **Feedback types**: `FeedbackStage` = `rule_logic` | `qualifying_questions`. `FeedbackStatus` = `open` | `reviewed` | `resolved` | `dismissed`.
+- **Comparison reconstruction**: The feedback detail view reuses the row-building algorithm from `ComparisonView.tsx` — builds rows from `sourceAttributes.parameters` + `matchDetails`, highlights the flagged rule with a yellow left border.
+
+### Export & AI Analysis (Logs Tab)
+
+- **Export** (`/api/admin/qc/export`): CSV (flat columns + top 3 recs) or JSON (full snapshots) download. Respects current filters, caps at 10K rows. Client uses `window.open(url)` for direct download.
+- **AI Analysis** (`/api/admin/qc/analyze`): Server-side aggregation (`lib/services/qcAnalyzer.ts`) computes per-family/per-rule stats from JSONB snapshots, sends compact summary to Claude Sonnet 4.5 via streaming API. SSE events forward text deltas to `QcAnalysisDrawer` (right-side MUI Drawer with `ReactMarkdown` rendering).
+- **Aggregation approach**: Raw snapshots are too large for Claude (~5-10K tokens each). `aggregateQcStats()` computes rule failure rates, missing attribute frequency, score distributions, and feedback correlations, then includes 3-5 representative examples. Total input ~3-5K tokens regardless of log count.
+
+### QC Component Structure
+
+`QcPanel.tsx` is a thin shell (settings toggle + tabs). All logic lives in:
+- `QcFeedbackTab.tsx` → `QcFeedbackDetailView.tsx` (feedback flow)
+- `QcLogsTab.tsx` → inline DetailView + Export/Analyze buttons (logs flow)
+- `QcAnalysisDrawer.tsx` — AI analysis right-side drawer with streaming markdown
+- Shared: `QcFeedbackCard.tsx`, `QcRecommendationSummary.tsx`, `qcConstants.ts`
 
 ## Digikey Integration
 

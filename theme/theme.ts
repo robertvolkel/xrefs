@@ -2,8 +2,40 @@
 import { createTheme } from '@mui/material/styles';
 
 const theme = createTheme({
-  cssVariables: true,
+  cssVariables: {
+    colorSchemeSelector: 'data-mui-color-scheme',
+  },
   colorSchemes: {
+    light: {
+      palette: {
+        mode: 'light',
+        primary: {
+          main: '#1565C0',
+          contrastText: '#FFFFFF',
+        },
+        secondary: {
+          main: '#E65100',
+          contrastText: '#FFFFFF',
+        },
+        background: {
+          default: '#F5F5F5',
+          paper: '#FFFFFF',
+        },
+        success: {
+          main: '#2E7D32',
+        },
+        warning: {
+          main: '#ED6C02',
+        },
+        error: {
+          main: '#D32F2F',
+        },
+        text: {
+          primary: '#1A1A1A',
+          secondary: '#616161',
+        },
+      },
+    },
     dark: {
       palette: {
         mode: 'dark',
@@ -35,7 +67,7 @@ const theme = createTheme({
       },
     },
   },
-  defaultColorScheme: 'dark',
+  defaultColorScheme: 'light',
   typography: {
     fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
     h5: { fontWeight: 600 },

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { Box } from '@mui/material';
+import { useColorScheme } from '@mui/material/styles';
 
 // ── Animation tuning (from provided HTML) ────────────────────
 const COLS = 90;
@@ -59,15 +60,20 @@ interface ParticleWaveBackgroundProps {
 }
 
 export default function ParticleWaveBackground({ visible }: ParticleWaveBackgroundProps) {
+  const { mode } = useColorScheme();
+  const isDark = mode === 'dark';
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const timeRef = useRef(0);
   const gridRef = useRef<GridPoint[]>([]);
   const sizeRef = useRef({ W: 0, H: 0 });
   const visibleRef = useRef(visible);
+  const dotColorRef = useRef(isDark ? '210,210,210' : '80,80,80');
 
-  // Keep ref in sync so the draw loop can read it without re-mounting
+  // Keep refs in sync so the draw loop can read them without re-mounting
   visibleRef.current = visible;
+  dotColorRef.current = isDark ? '210,210,210' : '80,80,80';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,7 +127,7 @@ export default function ParticleWaveBackground({ visible }: ParticleWaveBackgrou
 
         ctx!.beginPath();
         ctx!.arc(x, y, r, 0, Math.PI * 2);
-        ctx!.fillStyle = `rgba(210,210,210,${alpha.toFixed(3)})`;
+        ctx!.fillStyle = `rgba(${dotColorRef.current},${alpha.toFixed(3)})`;
         ctx!.fill();
       }
 

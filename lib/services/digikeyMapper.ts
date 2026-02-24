@@ -14,7 +14,7 @@ import {
   ComponentCategory,
   PartStatus,
 } from '../types';
-import { DigikeyProduct, DigikeyCategory, DigikeyKeywordResponse } from './digikeyClient';
+import { DigikeyProduct, DigikeyCategory, DigikeyKeywordResponse, DigikeyParameter } from './digikeyClient';
 import { getParamMappings, hasCategoryMapping } from './digikeyParamMap';
 
 /** Traverse Digikey's hierarchical category to find the most specific (deepest) name */
@@ -265,6 +265,20 @@ function transformValue(attributeId: string, valueText: string): string {
   }
 }
 
+/** Extract AEC qualifications from Digikey product parameters (scans all known fields) */
+function extractQualifications(parameters: DigikeyParameter[]): string[] {
+  const qualifications: string[] = [];
+  const qualFields = ['Ratings', 'Features', 'Qualification'];
+  for (const param of parameters) {
+    if (!qualFields.includes(param.ParameterText)) continue;
+    const upper = param.ValueText.toUpperCase();
+    if (upper.includes('AEC-Q200') && !qualifications.includes('AEC-Q200')) qualifications.push('AEC-Q200');
+    if (upper.includes('AEC-Q101') && !qualifications.includes('AEC-Q101')) qualifications.push('AEC-Q101');
+    if (upper.includes('AEC-Q100') && !qualifications.includes('AEC-Q100')) qualifications.push('AEC-Q100');
+  }
+  return qualifications;
+}
+
 // ============================================================
 // MAIN MAPPERS
 // ============================================================
@@ -289,6 +303,7 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
     rohsStatus: product.Classifications?.RohsStatus || undefined,
     moistureSensitivityLevel: product.Classifications?.MoistureSensitivityLevel || undefined,
     digikeyCategoryId: getDeepestCategoryId(product.Category),
+    qualifications: extractQualifications(product.Parameters ?? []),
   };
 }
 
@@ -444,6 +459,7 @@ export function mapDigikeyProductToSummary(product: DigikeyProduct): PartSummary
     description: product.Description?.ProductDescription ?? '',
     category: mapCategory(categoryName),
     status: mapStatus(product.ProductStatus?.Status ?? 'Active'),
+    qualifications: extractQualifications(product.Parameters ?? []),
   };
 }
 

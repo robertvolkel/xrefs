@@ -1,20 +1,16 @@
 'use client';
-import { useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { useTranslation } from 'react-i18next';
-import { Box, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
-import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
-import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
+import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
-import AccountSettingsDialog from './AccountSettingsDialog';
-import OrgSettingsDialog from './OrgSettingsDialog';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -25,17 +21,16 @@ interface AppSidebarProps {
 export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { t } = useTranslation();
   const { isAdmin } = useProfile();
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [orgSettingsOpen, setOrgSettingsOpen] = useState(false);
+  const { mode } = useColorScheme();
+  const logoSrc = mode === 'dark' ? '/xq-logo.png' : '/xq-logo-dark.png';
 
   const isListsActive = pathname === '/lists';
   const isAdminActive = pathname === '/admin';
+  const isOrgActive = pathname === '/organization';
+  const isSettingsActive = pathname === '/settings';
 
   const handleLogout = async () => {
-    setAnchorEl(null);
     try {
       const supabase = createClient();
       await supabase.auth.signOut();
@@ -44,16 +39,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
     }
     router.push('/login');
     router.refresh();
-  };
-
-  const handleOpenSettings = () => {
-    setAnchorEl(null);
-    setSettingsOpen(true);
-  };
-
-  const handleOpenOrgSettings = () => {
-    setAnchorEl(null);
-    setOrgSettingsOpen(true);
   };
 
   return (
@@ -74,17 +59,23 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
       }}
     >
       {/* Top group: Logo + nav icons */}
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: '30px' }}>
-        {/* Logo */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        {/* Logo — matches page header row (py: 2.5 + border) so bottom-aligns with title */}
         <Box
           onClick={onReset}
           sx={{
             cursor: 'pointer',
             opacity: 0.7,
             '&:hover': { opacity: 1 },
+            display: 'flex',
+            alignItems: 'flex-end',
+            py: 2.5,
+            borderBottom: 0,
+            width: '100%',
+            justifyContent: 'center',
           }}
         >
-          <Box component="img" src="/xq-logo.png" alt="XQ" sx={{ width: 28 }} />
+          <Box component="img" src={logoSrc} alt="XQ" sx={{ width: 28 }} />
         </Box>
 
         {/* Navigation icons */}
@@ -92,11 +83,11 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           onClick={onToggleHistory}
           size="small"
           sx={{
-            mt: '22px',
-            opacity: historyOpen ? 1 : 0.7,
+            mt: 1,
+            color: historyOpen ? 'text.primary' : 'text.secondary',
             bgcolor: historyOpen ? 'action.selected' : 'transparent',
             borderRadius: 1,
-            '&:hover': { opacity: 1 },
+            '&:hover': { color: 'text.primary' },
           }}
         >
           <ChatBubbleOutlineIcon fontSize="small" />
@@ -107,17 +98,17 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           size="small"
           sx={{
             mt: 1.5,
-            opacity: isListsActive ? 1 : 0.7,
+            color: isListsActive ? 'text.primary' : 'text.secondary',
             bgcolor: isListsActive ? 'action.selected' : 'transparent',
             borderRadius: 1,
-            '&:hover': { opacity: 1 },
+            '&:hover': { color: 'text.primary' },
           }}
         >
           <DescriptionOutlinedIcon fontSize="small" />
         </IconButton>
       </Box>
 
-      {/* Bottom group: Admin + Settings */}
+      {/* Bottom group: Admin + Settings + Logout */}
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         {isAdmin && (
           <IconButton
@@ -125,53 +116,54 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             size="small"
             sx={{
               mb: 1.5,
-              opacity: isAdminActive ? 1 : 0.7,
+              color: isAdminActive ? 'text.primary' : 'text.secondary',
               bgcolor: isAdminActive ? 'action.selected' : 'transparent',
               borderRadius: 1,
-              '&:hover': { opacity: 1 },
+              '&:hover': { color: 'text.primary' },
             }}
           >
-            <BuildOutlinedIcon fontSize="small" />
+            <BuildOutlinedIcon fontSize="small" sx={{ transform: 'rotate(90deg)' }} />
+          </IconButton>
+        )}
+        {isAdmin && (
+          <IconButton
+            onClick={() => router.push('/organization')}
+            size="small"
+            sx={{
+              mb: 1.5,
+              color: isOrgActive ? 'text.primary' : 'text.secondary',
+              bgcolor: isOrgActive ? 'action.selected' : 'transparent',
+              borderRadius: 1,
+              '&:hover': { color: 'text.primary' },
+            }}
+          >
+            <CorporateFareOutlinedIcon fontSize="small" />
           </IconButton>
         )}
         <IconButton
-          onClick={(e) => setAnchorEl(e.currentTarget)}
-          sx={{ opacity: 0.7, '&:hover': { opacity: 1 } }}
+          onClick={() => router.push('/settings')}
+          size="small"
+          sx={{
+            color: isSettingsActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isSettingsActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
         >
-          <SettingsIcon />
+          <SettingsIcon fontSize="small" />
+        </IconButton>
+        <IconButton
+          onClick={handleLogout}
+          size="small"
+          sx={{
+            mt: 1.5,
+            color: 'text.secondary',
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <LogoutIcon fontSize="small" sx={{ transform: 'scaleX(-1)' }} />
         </IconButton>
       </Box>
-
-      <Menu
-        anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-      >
-        <MenuItem onClick={handleOpenSettings}>
-          <ListItemIcon><ManageAccountsIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>{t('sidebar.accountSettings')}</ListItemText>
-        </MenuItem>
-
-        {isAdmin && <Divider />}
-
-        {isAdmin && (
-          <MenuItem onClick={handleOpenOrgSettings}>
-            <ListItemIcon><CorporateFareOutlinedIcon fontSize="small" /></ListItemIcon>
-            <ListItemText>{t('sidebar.orgSettings')}</ListItemText>
-          </MenuItem>
-        )}
-
-        <Divider />
-        <MenuItem onClick={handleLogout}>
-          <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>{t('sidebar.logout')}</ListItemText>
-        </MenuItem>
-      </Menu>
-
-      <AccountSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <OrgSettingsDialog open={orgSettingsOpen} onClose={() => setOrgSettingsOpen(false)} />
     </Box>
   );
 }

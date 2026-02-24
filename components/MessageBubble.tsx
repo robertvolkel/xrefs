@@ -2,6 +2,7 @@
 import { Box, Typography } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -20,6 +21,8 @@ interface MessageBubbleProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  sourceMpn?: string;
+  sourceManufacturer?: string;
 }
 
 export default function MessageBubble({
@@ -31,6 +34,8 @@ export default function MessageBubble({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  sourceMpn,
+  sourceManufacturer,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
@@ -43,9 +48,9 @@ export default function MessageBubble({
           width: { xs: 32, sm: 28 },
           height: { xs: 32, sm: 28 },
           borderRadius: '50%',
-          bgcolor: isUser ? 'primary.main' : 'background.paper',
+          bgcolor: isUser ? 'primary.main' : message.variant === 'warning' ? '#FF980020' : 'background.paper',
           border: isUser ? 'none' : 1,
-          borderColor: 'divider',
+          borderColor: message.variant === 'warning' ? '#FF9800' : 'divider',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -55,6 +60,8 @@ export default function MessageBubble({
       >
         {isUser ? (
           <PersonIcon sx={{ fontSize: { xs: 18, sm: 16 }, color: 'primary.contrastText' }} />
+        ) : message.variant === 'warning' ? (
+          <WarningAmberIcon sx={{ fontSize: { xs: 18, sm: 16 }, color: '#FF9800' }} />
         ) : (
           <SmartToyIcon sx={{ fontSize: { xs: 18, sm: 16 }, color: 'text.secondary' }} />
         )}
@@ -146,6 +153,8 @@ export default function MessageBubble({
             questions={message.interactiveElement.questions}
             onSubmit={onContextResponse}
             onSkip={onSkipContext}
+            sourceMpn={sourceMpn}
+            sourceManufacturer={sourceManufacturer}
           />
         )}
       </Box>

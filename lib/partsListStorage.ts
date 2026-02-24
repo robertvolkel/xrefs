@@ -6,6 +6,7 @@
  */
 
 import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData } from './types';
+import { classifyListTheme } from './themeClassifier';
 
 const STORAGE_KEY = 'xrefs_parts_lists';
 
@@ -33,6 +34,7 @@ export interface SavedPartsList {
   currency?: string;
   customer?: string;
   defaultViewId?: string;
+  themeIcon?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;
@@ -49,6 +51,7 @@ export interface PartsListSummary {
   currency?: string;
   customer?: string;
   defaultViewId?: string;
+  themeIcon?: string;
   createdAt: string;
   updatedAt: string;
   totalRows: number;
@@ -121,6 +124,7 @@ export function savePartsList(name: string, rows: PartsListRow[]): string {
   lists.push({
     id,
     name,
+    themeIcon: classifyListTheme(name, '', ''),
     createdAt: now,
     updatedAt: now,
     totalRows: rows.length,

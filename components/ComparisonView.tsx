@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import {
   Box,
   Typography,
@@ -10,6 +11,7 @@ import {
   TableRow,
   IconButton,
   Chip,
+  Link,
   Stack,
   Tooltip,
 } from '@mui/material';
@@ -17,6 +19,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
+import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -94,6 +97,7 @@ export default function ComparisonView({
   onManufacturerClick,
 }: ComparisonViewProps) {
   const { t } = useTranslation();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const matchMap = new Map(
     recommendation.matchDetails.map((d) => [d.parameterId, d])
   );
@@ -109,6 +113,7 @@ export default function ComparisonView({
       return {
         parameterId: sourceParam.parameterId,
         parameterName: sourceParam.parameterName,
+        sourceValue: sourceParam.value,
         replacementValue: replParam?.value ?? '—',
         matchStatus: matchDetail?.matchStatus ?? ('different' as MatchStatus),
         ruleResult: matchDetail?.ruleResult,
@@ -247,6 +252,26 @@ export default function ComparisonView({
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Feedback link */}
+      <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+        <Link
+          component="button"
+          variant="body2"
+          onClick={() => setFeedbackOpen(true)}
+          sx={{ fontSize: '0.78rem' }}
+        >
+          {t('feedback.provideFeedback')}
+        </Link>
+      </Box>
+
+      <ComparisonFeedbackDialog
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        sourceAttributes={sourceAttributes}
+        replacementAttributes={replacementAttributes}
+        rows={rows}
+      />
     </Box>
   );
 }

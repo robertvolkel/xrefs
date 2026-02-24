@@ -423,3 +423,161 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 - `lib/services/partDataService.ts` — updated `fetchDigikeyCandidates()` (category filter + limit 50) and `buildCandidateSearchQuery()` (conditional subcategory keyword)
 - `components/RecommendationsPanel.tsx` — replaced auto-filter with `activeOnly` checkbox
 - `locales/en.json`, `locales/de.json`, `locales/zh-CN.json` — added `activeOnly` key, updated `headerFiltered` template
+
+---
+
+## 25. Auto-Classified Theme Icons for Parts Lists
+
+**Decision:** Each parts list card on the dashboard displays a contextual MUI outlined icon (light grey on dark) derived from the list's name, description, and customer fields using keyword classification. No new database column — classification is computed on read.
+
+**How it works:**
+
+1. `classifyListTheme(name, description, customer)` in `lib/themeClassifier.ts` concatenates the three fields and checks 16 themes in priority order (domain → technical → objective → general fallback).
+2. Each theme has long keywords (substring match) and short keywords (word-boundary match to avoid false positives like "ev" in "every").
+3. `THEME_ICON_MAP` maps each theme ID to an MUI outlined icon component.
+4. `ListCard.tsx` renders the icon dynamically based on the classified theme.
+5. `ListsDashboard.tsx` recomputes the icon on settings save for instant optimistic update.
+
+**Theme priority (first match wins):** automotive > medical > aerospace > industrial > telecom > IoT > battery > power > motor > LED > audio > sensor > cost reduction > obsolescence > second source > general.
+
+**Rationale:** The description field already contains rich application context (e.g. "lithium-ion cells for cell balancing" → battery, "AEC-Q200" → automotive). Keyword matching is instant, free, and sufficient for the narrow domain of electronic component lists. Computing on read (not storing in the database) means the taxonomy can evolve without migrations or backfills. An LLM call was considered but rejected — 1-2s latency and API cost for a visual nicety is overkill, and the keyword approach covers 90%+ of cases.
+
+**Files:**
+- `lib/themeClassifier.ts` — taxonomy, classifier function, icon map (new)
+- `__tests__/services/themeClassifier.test.ts` — 27 tests (new)
+- `lib/partsListStorage.ts` — added `themeIcon` to `PartsListSummary` and `SavedPartsList`
+- `lib/supabasePartsListStorage.ts` — computes `themeIcon` via `classifyListTheme()` on read
+- `components/lists/ListCard.tsx` — dynamic icon from `THEME_ICON_MAP`
+- `components/lists/ListsDashboard.tsx` — optimistic `themeIcon` update on settings save
+
+---
+
+## 26. Light Mode + Theme Toggle
+
+**Decision:** Added a full light color scheme alongside the existing dark mode, with light as the default. Theme is toggleable via a Display Settings section in Account Settings, with instant visual apply and persistence via Supabase user_metadata.
+
+**What changed:**
+
+1. **Dual color scheme in theme.** `theme/theme.ts` now defines both `light` and `dark` under `colorSchemes`. Light palette uses deeper, higher-contrast colors (primary `#1565C0`, text `#1A1A1A`, background `#F5F5F5`). `defaultColorScheme` set to `'light'`.
+
+2. **`colorSchemeSelector: 'data-mui-color-scheme'`** replaces `cssVariables: true`. MUI's default `colorSchemeSelector` is `'media'` (OS-level `prefers-color-scheme`), which makes `setMode()` a no-op. Setting it to a `data` attribute enables programmatic mode switching.
+
+3. **Display Settings in AccountPanel.** A `ToggleButtonGroup` (Light/Dark with sun/moon icons) calls `setMode()` for instant visual apply. The pending theme is batched with the language setting into a unified Save button at the bottom of the page. MUI auto-persists mode to localStorage; Supabase `user_metadata.theme` handles cross-device sync.
+
+4. **ThemeSync component.** Follows the existing `LanguageSync` pattern in `I18nProvider.tsx`. On mount, reads `user_metadata.theme` from Supabase and calls `setMode()` if it differs from the current mode. Handles the case where a user set dark mode on device A and logs in on device B.
+
+5. **Sidebar icons use color tokens, not opacity.** Replaced `opacity: 0.7` / `opacity: 1` with `color: 'text.secondary'` / `color: 'text.primary'`. The opacity trick only worked with light-on-dark; semantic tokens provide correct contrast in both modes.
+
+6. **Dual logo.** `xq-logo.png` (light, for dark backgrounds) and `xq-logo-dark.png` (dark, for light backgrounds). `AppSidebar` swaps `src` based on `mode` from `useColorScheme()`.
+
+7. **Particle wave adapts to both modes.** Removed the dark-mode-only gate. Dot color uses a ref (`dotColorRef`) that updates based on `isDark`: light gray `(210,210,210)` on dark backgrounds, charcoal `(80,80,80)` on light backgrounds.
+
+**What didn't need to change:** Most components use MUI theme tokens (`background.default`, `text.primary`, `divider`, `action.selected`) and adapt automatically. Hardcoded status colors (#69F0AE, #FFD54F, #FF5252) are vivid semantic indicators that work on both backgrounds.
+
+**Files modified:**
+- `theme/theme.ts` — light colorScheme, `colorSchemeSelector`, `defaultColorScheme: 'light'`
+- `components/ThemeRegistry.tsx` — `defaultMode="light"`
+- `components/settings/AccountPanel.tsx` — Display Settings section with theme toggle
+- `components/I18nProvider.tsx` — `ThemeSync` component
+- `components/ParticleWaveBackground.tsx` — theme-adaptive dot color, removed dark-only gate
+- `components/AppSidebar.tsx` — color tokens for icons, dual logo swap
+- `locales/en.json`, `de.json`, `zh-CN.json` — i18n keys for Display Settings
+
+**Files added:**
+- `public/xq-logo-dark.png` — dark variant of sidebar logo for light mode
+
+---
+
+## 27. Feedback-First QC Panel Restructure
+
+**Decision:** Restructured the admin QC panel from a log-centric view to a feedback-first triage queue. The primary tab shows user-submitted feedback items; the raw recommendation logs tab is secondary (for future AI analysis/export).
+
+**Rationale:** The admin's job is triaging user-reported issues, not manually scanning thousands of recommendation logs. The original design listed logs as the primary entity with feedback as a secondary badge indicator — this inverted the actual workflow. Humans won't review raw logs at scale; that data is better suited for AI-driven pattern analysis.
+
+**What changed:**
+
+1. **Feedback Tab (primary).** New `GET /api/admin/qc/feedback` endpoint queries `qc_feedback` directly as the primary entity. Enriches with user profiles (name/email via separate `profiles` query — FK points to `auth.users`, not `profiles`) and `family_name` from `recommendation_log` via `log_id`. Status filter chips with live badge counts (Open/Reviewed/Resolved/Dismissed). Search across MPN, user, comment, and rule attribute fields.
+
+2. **Feedback Detail View with comparison reconstruction.** When an admin clicks a feedback row, `QcFeedbackDetailView` loads the full snapshot from `recommendation_log` (via existing `GET /api/admin/qc/[logId]`) and reconstructs the comparison table using the same row-building algorithm as `ComparisonView.tsx`: `sourceAttributes.parameters` sorted by `sortOrder`, cross-referenced with `matchDetails` via `parameterId`. The specific rule the user flagged is highlighted with `bgcolor: 'action.selected'` and a yellow left border (`3px solid #FFD54F`).
+
+3. **Edge cases handled:** No `logId` → shows "no linked log" note, skips comparison table. Replacement not in snapshot (capped at 10 recs) → shows `QcRecommendationSummary` cards as fallback. `qualifying_questions` feedback → no comparison table, shows question text and context answers.
+
+4. **Component extraction.** The monolithic `QcPanel.tsx` (764 lines) was split into 7 files: `QcPanel.tsx` (thin shell with settings + tabs), `QcFeedbackTab.tsx`, `QcFeedbackDetailView.tsx`, `QcLogsTab.tsx`, `QcFeedbackCard.tsx`, `QcRecommendationSummary.tsx`, `qcConstants.ts`.
+
+5. **Batch logging bug fixed.** `logRecommendation()` in `/api/parts-list/validate` was called without `await` (fire-and-forget with `.catch(() => {})`), silently dropping most batch log entries when the request context ended. Fixed by adding `await`.
+
+**Key types added:**
+- `QcFeedbackListItem extends QcFeedbackRecord` — enriched with `familyName`
+- `FeedbackStatusCounts` — `{ open, reviewed, resolved, dismissed }` for filter badge counts
+
+**Tradeoff:** The comparison table reconstruction duplicates the row-building logic from `ComparisonView.tsx` rather than sharing it — acceptable because the contexts differ (live data vs. snapshot, different rendering needs) and a shared abstraction would be premature.
+
+**Files created:** `app/api/admin/qc/feedback/route.ts`, `components/admin/QcFeedbackTab.tsx`, `components/admin/QcFeedbackDetailView.tsx`, `components/admin/QcLogsTab.tsx`, `components/admin/QcFeedbackCard.tsx`, `components/admin/QcRecommendationSummary.tsx`, `components/admin/qcConstants.ts`.
+
+**Files modified:** `app/api/parts-list/validate/route.ts` (await fix), `lib/types.ts` (new types), `lib/api.ts` (new client function), `components/admin/QcPanel.tsx` (rewritten as thin shell), `locales/en.json`, `de.json`, `zh-CN.json` (i18n keys).
+
+---
+
+## 28. QC Log Export + On-Demand AI Analysis
+
+**Decision:** Added CSV/JSON export and on-demand AI analysis to the Logs tab. Export provides raw data download; AI analysis uses server-side aggregation + Claude streaming to produce actionable quality insights.
+
+**Rationale:** Raw recommendation logs are too voluminous for human review but extremely valuable for pattern detection. Two tiers address different needs: export enables offline/spreadsheet analysis, while AI analysis surfaces rule quality issues, parameter mapping gaps, and family-specific patterns directly in the admin UI.
+
+**What changed:**
+
+1. **Export endpoint** (`GET /api/admin/qc/export`). Accepts the same filter params as the log list endpoint plus `format=csv|json`. CSV flattens each log to one row (id, timestamp, user, MPN, family, counts, top 3 recommendation MPNs + match percentages). JSON includes full snapshots. Both use `Content-Disposition: attachment` for browser download. Capped at 10,000 rows. Enriches with profiles and feedback counts using the same batched query pattern as the log list endpoint.
+
+2. **Aggregation service** (`lib/services/qcAnalyzer.ts`). Queries `recommendation_log` with date filter (default 30 days), groups by family, iterates all `recommendations[].matchDetails` to compute per-rule stats: pass/fail/review/upgrade counts, failure rates, missing attribute frequency. Looks up `weight` and `logicType` from the current logic table via `getLogicTable()`. Computes score distributions (5 buckets), feedback correlations, and selects 3-5 representative examples. Returns a compact `QcAnalysisInput` (~3-5K tokens) regardless of underlying log count.
+
+3. **Analysis endpoint** (`POST /api/admin/qc/analyze`). Calls `aggregateQcStats()`, sends the result to Claude Sonnet 4.5 with a QC-specific system prompt, streams the response back as SSE events. The system prompt instructs Claude to analyze: rule quality issues, parameter mapping gaps, family-specific patterns, score distribution anomalies, feedback correlations, and provide 3-5 ranked actionable recommendations.
+
+4. **Analysis Drawer** (`QcAnalysisDrawer.tsx`). MUI right-side Drawer with time range selector (7/30/90/All days), active filter display, "Run Analysis" button, progress messages during aggregation/streaming, and `ReactMarkdown` + `remark-gfm` rendering of Claude's response (same libraries already used by `MessageBubble.tsx`). Auto-scrolls during streaming.
+
+5. **Logs Tab UI** (`QcLogsTab.tsx`). Added Export dropdown (CSV/JSON via `Menu`) and Analyze button (outlined, `AutoFixHighIcon`) between the filter chips and search field. Export builds a URL via `getQcExportUrl()` and opens it with `window.open()`. Analyze opens the drawer.
+
+**Key design decisions:**
+
+- **Server-side aggregation, not raw snapshots to Claude.** A single snapshot can be 5-10K tokens; hundreds would exceed context limits. The aggregator compresses arbitrarily many logs into a fixed-size summary by computing aggregate statistics per family per rule.
+- **Logic table lookup for weights.** `MatchDetail` (stored in snapshots) doesn't include `weight` or `logicType`. The aggregator looks these up from the current logic table via `getLogicTable(familyId)`. If the logic table has changed since the log was created, the weights reflect current rules — acceptable since the analysis is about current system behavior.
+- **SSE streaming (not NDJSON).** The analysis produces a single long-form response, unlike batch validation which produces per-row results. SSE is more natural for this use case and enables incremental markdown rendering in the drawer.
+- **Sonnet 4.5 (not Opus).** Analysis is structured data interpretation, not creative reasoning. Sonnet is faster, cheaper, and sufficient for this task.
+
+**Key types added:**
+- `RuleAggregateStats` — per-rule pass/fail/review/upgrade/missing counts + failure rate
+- `FamilyAggregateStats` — per-family stats including rule stats, score distribution, feedback counts
+- `QcAnalysisInput` — full aggregated dataset sent to Claude
+- `QcAnalysisExample` — representative log example (MPN, family, match %, failing rules)
+- `QcAnalysisEvent` — SSE event union type (progress | chunk | complete | error)
+
+**Analysis drawer empty state.** Instead of a generic "Click Run Analysis" message, the empty state lists the 5 areas the AI will examine: rule failures (logic table issues), Digikey parameter mapping gaps, family-specific patterns, match score distribution anomalies, and data source quality comparison. This sets expectations before running and helps admins understand the tool's capabilities.
+
+**Backfill (explored, tabled).** Considered adding a server-side "Backfill QC Logs" feature to re-run the recommendation pipeline for lists validated before logging was enabled. Designed but not implemented — admin can simply re-upload lists now that logging is active, or refresh existing lists which already triggers logging through the standard validate pipeline.
+
+**Files created:** `app/api/admin/qc/export/route.ts`, `app/api/admin/qc/analyze/route.ts`, `lib/services/qcAnalyzer.ts`, `components/admin/QcAnalysisDrawer.tsx`.
+
+**Files modified:** `lib/types.ts` (analysis types), `lib/api.ts` (`getQcExportUrl()` + `analyzeQcLogs()`), `components/admin/QcLogsTab.tsx` (Export/Analyze buttons + drawer), `locales/en.json`, `de.json`, `zh-CN.json` (i18n keys).
+
+---
+
+## 29. Organization Promoted to Top-Level Navigation
+
+**Decision:** Moved Organization (user management) out of the Settings page and into its own top-level route (`/organization`) with a dedicated sidebar icon, visible to admins only.
+
+**Rationale:** Organization/user management is an admin-only function that was hidden inside Settings as a fourth section. This made it inconsistent with the other admin tool (Data & Logic at `/admin`) which already had its own sidebar icon and route. Promoting Organization to a peer of Data & Logic gives admins direct access and keeps Settings focused on personal preferences (profile, account, notifications).
+
+**What changed:**
+
+1. **New route and shell.** `app/organization/page.tsx` follows the same page pattern as `/admin` and `/settings` (sidebar + history drawer + shell). `OrgShell.tsx` provides the layout: "Organization" header, left nav with a single "Users" section, and the existing `OrgPanel` as content.
+
+2. **Sidebar icon.** `CorporateFareOutlinedIcon` added to `AppSidebar.tsx` between Data & Logic (wrench) and Settings (gear), admin-only via the same `isAdmin` guard. Active state highlighting follows the existing pattern (`isOrgActive` derived from `pathname`).
+
+3. **Wrench rotation.** The Data & Logic `BuildOutlinedIcon` rotated 90° clockwise (`transform: 'rotate(90deg)'`) for visual distinction.
+
+4. **OrgPanel simplified.** Removed the `Tabs` wrapper (which had a single "User Management" tab) since the shell's section nav now provides that context. Added `px: 3, pt: 2` padding to match the parts list table layout.
+
+5. **Settings cleaned up.** Removed `'organization'` from `SettingsSection` type, `isValidSection()`, section nav array, and content rendering. Removed `isAdmin` prop from `SettingsSectionNav` (no admin-only sections remain). Removed `OrgPanel` import and `useProfile` hook from `SettingsShell`.
+
+**Files created:** `app/organization/page.tsx`, `components/settings/OrgShell.tsx`.
+
+**Files modified:** `components/AppSidebar.tsx` (org icon + wrench rotation + active state), `components/settings/OrgPanel.tsx` (removed Tabs, added padding), `components/settings/SettingsShell.tsx` (removed org handling), `components/settings/SettingsSectionNav.tsx` (removed org section + simplified), `locales/en.json` (title → "Organization", added `users` key).

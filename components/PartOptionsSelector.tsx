@@ -30,6 +30,9 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 {part.status && (
                   <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
                 )}
+                {part.qualifications?.map(q => (
+                  <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
+                ))}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {part.manufacturer} &mdash; {part.description}

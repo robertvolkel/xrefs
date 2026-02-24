@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
+import { logRecommendation } from './recommendationLogger';
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
 
@@ -29,7 +30,7 @@ function summarizeRecommendations(recs: XrefRecommendation[]): string {
 
 const filterRecommendationsTool: Anthropic.Tool = {
   name: 'filter_recommendations',
-  description: 'Filter and sort the current replacement recommendations. Use this when the user asks to narrow down by manufacturer, match quality, or other criteria. Returns the filtered list and updates the UI.',
+  description: 'Filter and sort the current replacement recommendations. Use this when the user asks to narrow down by manufacturer, match quality, qualification, attribute values, or other criteria. Returns the filtered list and updates the UI.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -45,6 +46,24 @@ const filterRecommendationsTool: Anthropic.Tool = {
         type: 'boolean',
         description: 'If true, hide obsolete/discontinued parts',
       },
+      exclude_failing_parameters: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Exclude recommendations that have a "fail" result for any of these parameter names. Use the exact parameter names from the recommendation summary (e.g. ["AEC-Q200 Qualification"], ["Resistance", "Tolerance"]). Use this when the user asks for parts with specific qualifications or attributes.',
+      },
+      attribute_filters: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            parameter: { type: 'string', description: 'Parameter name to filter on (e.g. "Resistance", "Package / Case", "Voltage Rated")' },
+            operator: { type: 'string', enum: ['equals', 'contains', 'gte', 'lte'], description: 'Comparison: equals (exact string), contains (substring), gte/lte (numeric ≥/≤)' },
+            value: { type: 'string', description: 'Value to compare against. For gte/lte use plain numbers with optional SI prefix (e.g. "10k", "100u", "50")' },
+          },
+          required: ['parameter', 'operator', 'value'],
+        },
+        description: 'Filter by replacement part attribute values. Use when the user asks to filter by specific parameter values (e.g. "only parts over 10kΩ", "only 0603 packages", "voltage at least 50V").',
+      },
       sort_by: {
         type: 'string',
         enum: ['match_percentage', 'manufacturer', 'price'],
@@ -55,10 +74,48 @@ const filterRecommendationsTool: Anthropic.Tool = {
   },
 };
 
+/** Extract a numeric value from a string, handling SI prefixes (e.g. "1 kOhms" → 1000, "10k" → 10000, "100µF" → 0.0001) */
+function parseNumericFromString(s: string): number | null {
+  const siPrefixes: Record<string, number> = {
+    'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'µ': 1e-6,
+    'm': 1e-3, 'k': 1e3, 'K': 1e3, 'M': 1e6, 'G': 1e9,
+  };
+  // Match number optionally followed by SI prefix (e.g. "10k", "1.5 µF", "100 kOhms")
+  const match = s.match(/([-+]?\d*\.?\d+)\s*([pnuµmkKMG])?/);
+  if (!match) return null;
+  const num = parseFloat(match[1]);
+  if (isNaN(num)) return null;
+  const prefix = match[2];
+  // 'm' is ambiguous (milli vs mm/meters) — treat as milli only when not followed by 'm' (i.e. not "mm")
+  if (prefix && siPrefixes[prefix]) {
+    if (prefix === 'm') {
+      const afterPrefix = s.slice((match.index ?? 0) + match[0].length);
+      if (afterPrefix.startsWith('m')) return num; // "mm" — don't scale
+    }
+    return num * siPrefixes[prefix];
+  }
+  return num;
+}
+
+interface AttributeFilter {
+  parameter: string;
+  operator: 'equals' | 'contains' | 'gte' | 'lte';
+  value: string;
+}
+
+interface FilterInput {
+  manufacturer_filter?: string;
+  min_match_percentage?: number;
+  exclude_obsolete?: boolean;
+  exclude_failing_parameters?: string[];
+  attribute_filters?: AttributeFilter[];
+  sort_by?: string;
+}
+
 /** Apply filter_recommendations tool input to a recommendations array */
 function applyRecommendationFilter(
   recs: XrefRecommendation[],
-  input: { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string },
+  input: FilterInput,
 ): XrefRecommendation[] {
   let filtered = [...recs];
 
@@ -71,6 +128,45 @@ function applyRecommendationFilter(
   }
   if (input.exclude_obsolete) {
     filtered = filtered.filter(r => r.part.status !== 'Obsolete');
+  }
+  if (input.exclude_failing_parameters && input.exclude_failing_parameters.length > 0) {
+    const excludeNames = input.exclude_failing_parameters.map(n => n.toLowerCase());
+    filtered = filtered.filter(r => {
+      const failingNames = r.matchDetails
+        .filter(d => d.ruleResult === 'fail')
+        .map(d => d.parameterName.toLowerCase());
+      return !excludeNames.some(name => failingNames.includes(name));
+    });
+  }
+  if (input.attribute_filters && input.attribute_filters.length > 0) {
+    for (const af of input.attribute_filters) {
+      const paramLower = af.parameter.toLowerCase();
+      filtered = filtered.filter(r => {
+        const detail = r.matchDetails.find(d => d.parameterName.toLowerCase() === paramLower);
+        if (!detail) return false; // no data for this parameter → exclude
+        const repValue = detail.replacementValue;
+        switch (af.operator) {
+          case 'equals':
+            return repValue.toLowerCase() === af.value.toLowerCase();
+          case 'contains':
+            return repValue.toLowerCase().includes(af.value.toLowerCase());
+          case 'gte': {
+            const repNum = parseNumericFromString(repValue);
+            const targetNum = parseNumericFromString(af.value);
+            if (repNum == null || targetNum == null) return false;
+            return repNum >= targetNum;
+          }
+          case 'lte': {
+            const repNum = parseNumericFromString(repValue);
+            const targetNum = parseNumericFromString(af.value);
+            if (repNum == null || targetNum == null) return false;
+            return repNum <= targetNum;
+          }
+          default:
+            return true;
+        }
+      });
+    }
   }
   if (input.sort_by === 'manufacturer') {
     filtered.sort((a, b) => a.part.manufacturer.localeCompare(b.part.manufacturer));
@@ -189,6 +285,7 @@ async function executeTool(
   input: Record<string, unknown>,
   data: ToolResultData,
   currentRecommendations?: XrefRecommendation[],
+  userId?: string,
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
@@ -205,8 +302,28 @@ async function executeTool(
     }
     case 'find_replacements': {
       const mpn = (input as { mpn: string }).mpn;
-      const recs = await getRecommendations(mpn);
+      const result = await getRecommendations(mpn);
+      const recs = result.recommendations;
       data.recommendations[mpn] = recs;
+
+      // QC log (awaited to ensure it completes within request lifecycle)
+      if (userId) {
+        await logRecommendation({
+          userId,
+          sourceMpn: mpn,
+          sourceManufacturer: result.sourceAttributes.part.manufacturer,
+          familyId: result.familyId,
+          familyName: result.familyName,
+          recommendationCount: recs.length,
+          requestSource: 'chat',
+          dataSource: result.dataSource,
+          snapshot: {
+            sourceAttributes: result.sourceAttributes,
+            recommendations: recs,
+          },
+        });
+      }
+
       return JSON.stringify(recs.map(r => ({
         mpn: r.part.mpn,
         manufacturer: r.part.manufacturer,
@@ -220,7 +337,7 @@ async function executeTool(
       })));
     }
     case 'filter_recommendations': {
-      const filterInput = input as { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string };
+      const filterInput = input as FilterInput;
       const sourceRecs = currentRecommendations ?? [];
       const filtered = applyRecommendationFilter(sourceRecs, filterInput);
       // Store the first MPN key we find, or use 'filtered'
@@ -251,6 +368,7 @@ export async function chat(
   messages: OrchestratorMessage[],
   apiKey: string,
   currentRecommendations?: XrefRecommendation[],
+  userId?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -300,6 +418,7 @@ export async function chat(
           toolUse.input as Record<string, unknown>,
           toolData,
           currentRecommendations,
+          userId,
         );
         return {
           type: 'tool_result' as const,
@@ -422,6 +541,7 @@ export async function refinementChat(
   applicationContext: ApplicationContext | undefined,
   apiKey: string,
   currentRecommendations?: XrefRecommendation[],
+  userId?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
   const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations);
@@ -462,7 +582,7 @@ export async function refinementChat(
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
       toolUseBlocks.map(async (toolUse) => {
         if (toolUse.name === 'filter_recommendations') {
-          const filterInput = toolUse.input as { manufacturer_filter?: string; min_match_percentage?: number; exclude_obsolete?: boolean; sort_by?: string };
+          const filterInput = toolUse.input as FilterInput;
           const sourceRecs = currentRecommendations ?? [];
           const filtered = applyRecommendationFilter(sourceRecs, filterInput);
           toolData.recommendations[mpn] = filtered;
@@ -496,8 +616,29 @@ export async function refinementChat(
           };
         }
 
-        const recs = await getRecommendations(mpn, mergedOverrides, mergedContext);
+        const refineResult = await getRecommendations(mpn, mergedOverrides, mergedContext);
+        const recs = refineResult.recommendations;
         toolData.recommendations[mpn] = recs;
+
+        // QC log (awaited to ensure it completes within request lifecycle)
+        if (userId) {
+          await logRecommendation({
+            userId,
+            sourceMpn: mpn,
+            sourceManufacturer: refineResult.sourceAttributes.part.manufacturer,
+            familyId: refineResult.familyId,
+            familyName: refineResult.familyName,
+            recommendationCount: recs.length,
+            requestSource: 'chat',
+            dataSource: refineResult.dataSource,
+            snapshot: {
+              sourceAttributes: refineResult.sourceAttributes,
+              recommendations: recs,
+              contextAnswers: mergedContext,
+              attributeOverrides: mergedOverrides,
+            },
+          });
+        }
 
         return {
           type: 'tool_result' as const,

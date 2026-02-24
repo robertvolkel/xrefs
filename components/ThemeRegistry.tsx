@@ -8,7 +8,7 @@ import theme from '@/theme/theme';
 export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
   return (
     <AppRouterCacheProvider options={{ enableCssLayer: false }}>
-      <ThemeProvider theme={theme} defaultMode="dark">
+      <ThemeProvider theme={theme} defaultMode="light">
         <CssBaseline enableColorScheme />
         {children}
       </ThemeProvider>

@@ -227,6 +227,8 @@ export default function MobileAppLayout({
             onSkipAttributes={onSkipAttributes}
             onContextResponse={onContextResponse}
             onSkipContext={onSkipContext}
+            sourceMpn={sourceAttributes?.part.mpn}
+            sourceManufacturer={sourceAttributes?.part.manufacturer}
           />
         </Box>
 

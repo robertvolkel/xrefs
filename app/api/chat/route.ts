@@ -10,7 +10,7 @@ interface ChatRequestBody {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAuth();
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
     const body: ChatRequestBody = await request.json();
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const response = await chat(body.messages, apiKey, body.recommendations);
+    const response = await chat(body.messages, apiKey, body.recommendations, user?.id);
 
     return NextResponse.json({
       success: true,

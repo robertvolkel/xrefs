@@ -1,5 +1,4 @@
-import { Box, IconButton, Skeleton, Stack, Typography } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
+import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
@@ -77,9 +76,6 @@ export interface DesktopLayoutProps {
   showAttributesPanel: boolean;
   showRightPanel: boolean;
   isLoadingRecs: boolean;
-  showRecsClose: boolean;
-  showAttrsClose: boolean;
-
   // Manufacturer profile
   chatCollapsed: boolean;
   mfrOpen: boolean;
@@ -103,8 +99,6 @@ export interface DesktopLayoutProps {
   onBackToRecommendations: () => void;
 
   // Handlers — panels
-  onCloseRecs: () => void;
-  onCloseAttrs: () => void;
   onManufacturerClick: (manufacturer: string) => void;
   onExpandChat: () => void;
 
@@ -120,13 +114,13 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
     recommendations, selectedRecommendation, conversationId,
-    showAttributesPanel, showRightPanel, isLoadingRecs, showRecsClose, showAttrsClose,
+    showAttributesPanel, showRightPanel, isLoadingRecs,
     chatCollapsed, mfrOpen, mfrProfile,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
     onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext,
     onSelectRecommendation, onBackToRecommendations,
-    onCloseRecs, onCloseAttrs, onManufacturerClick, onExpandChat,
+    onManufacturerClick, onExpandChat,
     onToggleHistory, onCloseHistory,
     onSelectConversation, onNewChat, onDeleteConversation,
   } = props;
@@ -222,6 +216,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onSkipAttributes={onSkipAttributes}
               onContextResponse={onContextResponse}
               onSkipContext={onSkipContext}
+              sourceMpn={sourceAttributes?.part.mpn}
+              sourceManufacturer={sourceAttributes?.part.manufacturer}
             />
           </Box>
         </Box>
@@ -239,23 +235,6 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             bgcolor: 'background.default',
           }}
         >
-          {showAttrsClose && (
-            <IconButton
-              onClick={onCloseAttrs}
-              size="small"
-              sx={{
-                position: 'absolute',
-                top: 8,
-                right: 8,
-                zIndex: 10,
-                opacity: 0.5,
-                '&:hover': { opacity: 1 },
-                transition: 'opacity 0.2s ease',
-              }}
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          )}
           <AttributesPanel
             attributes={sourceAttributes}
             loading={phase === 'loading-attributes'}
@@ -276,23 +255,6 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             bgcolor: 'background.default',
           }}
         >
-          {showRecsClose && (
-            <IconButton
-              onClick={onCloseRecs}
-              size="small"
-              sx={{
-                position: 'absolute',
-                top: 8,
-                right: 8,
-                zIndex: 10,
-                opacity: 0.5,
-                '&:hover': { opacity: 1 },
-                transition: 'opacity 0.2s ease',
-              }}
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          )}
           {isLoadingRecs ? (
             <RecommendationsSkeleton />
           ) : phase === 'comparing' &&

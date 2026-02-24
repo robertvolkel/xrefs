@@ -8,6 +8,7 @@
 import { PartsListRow } from './types';
 import { createClient } from './supabase/client';
 import { StoredRow, PartsListSummary } from './partsListStorage';
+import { classifyListTheme } from './themeClassifier';
 
 /** Strip heavy fields from rows for storage */
 function toStoredRows(rows: PartsListRow[]): StoredRow[] {
@@ -54,6 +55,11 @@ export async function getSavedListsSupabase(): Promise<PartsListSummary[]> {
       currency: (record.currency as string) || 'USD',
       customer: (record.customer as string) || '',
       defaultViewId: (record.default_view_id as string) || '',
+      themeIcon: classifyListTheme(
+        row.name || '',
+        (record.description as string) || '',
+        (record.customer as string) || '',
+      ),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       totalRows: row.total_rows,
@@ -154,6 +160,7 @@ export async function updatePartsListDetailsSupabase(
   defaultViewId?: string,
 ): Promise<void> {
   const supabase = createClient();
+
   await supabase
     .from('parts_lists')
     .update({

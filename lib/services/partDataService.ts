@@ -5,7 +5,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext } from '../types';
+import { SearchResult, PartAttributes, ApplicationContext, RecommendationResult } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -86,10 +86,15 @@ export async function getRecommendations(
   attributeOverrides?: Record<string, string>,
   applicationContext?: ApplicationContext,
   currency?: string,
-): Promise<XrefRecommendation[]> {
+): Promise<RecommendationResult> {
   // Step 1: Get source part attributes
   const sourceAttrs = await getAttributes(mpn, currency);
-  if (!sourceAttrs) return [];
+  if (!sourceAttrs) {
+    const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
+    return { recommendations: [], sourceAttributes: emptyAttrs };
+  }
+
+  const dataSource = sourceAttrs.dataSource ?? 'mock';
 
   // Step 1b: Merge user-supplied attribute overrides
   if (attributeOverrides && Object.keys(attributeOverrides).length > 0) {
@@ -123,8 +128,12 @@ export async function getRecommendations(
 
   // No logic table → fall back to hardcoded mock recommendations
   if (!logicTable) {
-    return mockGetRecommendations(mpn);
+    const recs = mockGetRecommendations(mpn);
+    return { recommendations: recs, sourceAttributes: sourceAttrs, dataSource };
   }
+
+  const familyId = logicTable.familyId;
+  const familyName = logicTable.familyName;
 
   // Step 2b: Apply application context to modify logic table weights/rules
   let effectiveTable = logicTable;
@@ -140,7 +149,8 @@ export async function getRecommendations(
     try {
       const candidates = await fetchDigikeyCandidates(sourceAttrs, currency);
       if (candidates.length > 0) {
-        return findReplacements(effectiveTable, sourceAttrs, candidates);
+        const recs = findReplacements(effectiveTable, sourceAttrs, candidates);
+        return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
       }
     } catch (error) {
       console.warn('Digikey candidate search failed, falling back to mock:', error);
@@ -148,7 +158,8 @@ export async function getRecommendations(
   }
 
   // Step 4: Fall back to mock candidates + matching engine
-  return mockGetRecommendations(mpn);
+  const recs = mockGetRecommendations(mpn);
+  return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
 }
 
 // ============================================================

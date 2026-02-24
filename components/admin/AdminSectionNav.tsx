@@ -6,9 +6,10 @@ import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
+import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy';
+export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'qc';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
   { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
@@ -16,6 +17,7 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
+  { id: 'qc', icon: RateReviewOutlinedIcon, labelKey: 'adminQc.nav' },
 ];
 
 interface AdminSectionNavProps {

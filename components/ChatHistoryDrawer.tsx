@@ -49,6 +49,9 @@ export default function ChatHistoryDrawer({
       open={open}
       onClose={onClose}
       slotProps={{
+        root: {
+          sx: { left: SIDEBAR_WIDTH },
+        },
         paper: {
           sx: {
             width: DRAWER_WIDTH,
@@ -66,16 +69,17 @@ export default function ChatHistoryDrawer({
       }}
     >
       {/* Header */}
-      <Box sx={{ px: 2, pt: 2.5, pb: 1.5 }}>
+      <Box sx={{ px: 2, pt: '62px', pb: 1.5 }}>
         <Button
-          variant="text"
+          variant="outlined"
           startIcon={<AddIcon />}
           onClick={onNewChat}
+          fullWidth
           sx={{
             textTransform: 'none',
             justifyContent: 'flex-start',
-            color: 'text.primary',
-            px: 1,
+            borderRadius: 5,
+            py: 0.75,
           }}
         >
           {t('history.newChat')}

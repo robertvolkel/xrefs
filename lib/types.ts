@@ -16,6 +16,7 @@ export interface Part {
   rohsStatus?: string;
   moistureSensitivityLevel?: string;
   digikeyCategoryId?: number;
+  qualifications?: string[];
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -76,6 +77,7 @@ export interface PartSummary {
   description: string;
   category: ComponentCategory;
   status?: PartStatus;
+  qualifications?: string[];
 }
 
 export interface SearchResult {
@@ -106,6 +108,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  variant?: 'warning';
   interactiveElement?: InteractiveElement;
 }
 
@@ -482,3 +485,175 @@ export interface TaxonomyResponse {
   };
   fetchedAt: string;
 }
+
+// ============================================================
+// PLATFORM SETTINGS
+// ============================================================
+
+export interface PlatformSettings {
+  qcLoggingEnabled: boolean;
+}
+
+// ============================================================
+// QC SYSTEM: RECOMMENDATION LOG + FEEDBACK
+// ============================================================
+
+/** Result from getRecommendations() — includes metadata for logging */
+export interface RecommendationResult {
+  recommendations: XrefRecommendation[];
+  sourceAttributes: PartAttributes;
+  familyId?: string;
+  familyName?: string;
+  dataSource?: 'digikey' | 'mock';
+}
+
+/** The stage of the recommendation pipeline being questioned */
+export type FeedbackStage = 'qualifying_questions' | 'rule_logic';
+
+/** Lifecycle status of a feedback item */
+export type FeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
+
+/** Source of the recommendation request */
+export type RequestSource = 'chat' | 'direct' | 'batch';
+
+/** Snapshot stored in recommendation_log JSONB */
+export interface RecommendationLogSnapshot {
+  sourceAttributes: PartAttributes;
+  recommendations: XrefRecommendation[];
+  contextQuestions?: ContextQuestion[];
+  contextAnswers?: ApplicationContext;
+  attributeOverrides?: Record<string, string>;
+}
+
+/** A recommendation log entry (from the admin API) */
+export interface RecommendationLogEntry {
+  id: string;
+  userId: string;
+  sourceMpn: string;
+  sourceManufacturer?: string;
+  familyId?: string;
+  familyName?: string;
+  recommendationCount: number;
+  requestSource: RequestSource;
+  dataSource?: string;
+  snapshot: RecommendationLogSnapshot;
+  feedbackCount?: number;
+  feedbackStatus?: FeedbackStatus;  // "worst" status across all feedback items
+  createdAt: string;
+  userEmail?: string;
+  userName?: string;
+}
+
+/** Payload for submitting new feedback (client sends this) */
+export interface QcFeedbackSubmission {
+  feedbackStage: FeedbackStage;
+  sourceMpn: string;
+  sourceManufacturer?: string;
+  replacementMpn?: string;
+  ruleAttributeId?: string;
+  ruleAttributeName?: string;
+  ruleResult?: string;
+  sourceValue?: string;
+  replacementValue?: string;
+  ruleNote?: string;
+  questionId?: string;
+  questionText?: string;
+  userComment: string;
+}
+
+/** Full feedback record from the database (admin reads this) */
+export interface QcFeedbackRecord extends QcFeedbackSubmission {
+  id: string;
+  logId?: string;
+  userId: string;
+  status: FeedbackStatus;
+  adminNotes?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  userEmail?: string;
+  userName?: string;
+}
+
+/** Feedback item for admin list view (enriched with log context) */
+export interface QcFeedbackListItem extends QcFeedbackRecord {
+  familyName?: string;
+}
+
+/** Status count summary for feedback filter badges */
+export interface FeedbackStatusCounts {
+  open: number;
+  reviewed: number;
+  resolved: number;
+  dismissed: number;
+}
+
+/** Admin update payload for feedback */
+export interface QcFeedbackUpdate {
+  status?: FeedbackStatus;
+  adminNotes?: string;
+}
+
+// ============================================================
+// QC EXPORT & ANALYSIS TYPES
+// ============================================================
+
+/** Aggregated stats for a single matching rule within a family */
+export interface RuleAggregateStats {
+  attributeId: string;
+  attributeName: string;
+  logicType: string;
+  weight: number;
+  totalEvaluations: number;
+  passCount: number;
+  failCount: number;
+  reviewCount: number;
+  upgradeCount: number;
+  missingCount: number;
+  avgEarnedWeight: number;
+  failRate: number;
+}
+
+/** Aggregated stats per component family */
+export interface FamilyAggregateStats {
+  familyId: string;
+  familyName: string;
+  logCount: number;
+  avgMatchPercentage: number;
+  medianMatchPercentage: number;
+  matchDistribution: { bucket: string; count: number }[];
+  avgRecommendationCount: number;
+  ruleStats: RuleAggregateStats[];
+  feedbackCount: number;
+  feedbackByStatus: Record<FeedbackStatus, number>;
+  topFailingRules: { attributeName: string; failRate: number; failCount: number }[];
+  missingAttributeFrequency: { attributeName: string; missingRate: number; count: number }[];
+}
+
+/** Full aggregated dataset sent to Claude for analysis */
+export interface QcAnalysisInput {
+  dateRange: { from: string; to: string };
+  totalLogs: number;
+  totalFeedback: number;
+  byDataSource: Record<string, number>;
+  byRequestSource: Record<string, number>;
+  families: FamilyAggregateStats[];
+  representativeExamples: QcAnalysisExample[];
+}
+
+/** A representative log example (stripped to essentials) */
+export interface QcAnalysisExample {
+  sourceMpn: string;
+  familyName: string;
+  matchPercentage: number;
+  failingRules: { attributeName: string; sourceValue: string; replacementValue: string; note?: string }[];
+  feedbackComment?: string;
+}
+
+/** SSE event types for streaming analysis */
+export type QcAnalysisEvent =
+  | { type: 'progress'; message: string }
+  | { type: 'chunk'; content: string }
+  | { type: 'complete'; fullContent: string }
+  | { type: 'error'; message: string };

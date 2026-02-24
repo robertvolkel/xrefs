@@ -19,6 +19,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { PartsListSummary } from '@/lib/partsListStorage';
+import { classifyListTheme } from '@/lib/themeClassifier';
 import {
   getSavedListsSupabase,
   deletePartsListSupabase,
@@ -192,8 +193,9 @@ export default function ListsDashboard() {
     if (!settingsList) return;
     const currencyChanged = currency !== (settingsList.currency ?? 'USD');
     await updatePartsListDetailsSupabase(settingsList.id, name, description, currency, customer, defaultViewId);
+    const themeIcon = classifyListTheme(name, description, customer);
     setLists(prev => prev.map(l =>
-      l.id === settingsList.id ? { ...l, name, description, currency, customer, defaultViewId } : l,
+      l.id === settingsList.id ? { ...l, name, description, currency, customer, defaultViewId, themeIcon } : l,
     ));
     setSettingsList(null);
     if (currencyChanged) {
@@ -267,8 +269,8 @@ export default function ListsDashboard() {
 
       {/* Content area */}
       <Box sx={{ flex: 1, overflow: 'auto', px: { xs: 2, md: 4 }, py: 3, display: 'flex', flexDirection: 'column' }}>
-        {/* Search bar */}
-        <Box sx={{ maxWidth: 600, width: '100%', mb: 3, mx: 'auto' }}>
+        {/* Search bar — only show when lists exist */}
+        {!loading && lists.length > 0 && <Box sx={{ maxWidth: 600, width: '100%', mb: 3, mx: 'auto' }}>
           <Paper
             elevation={0}
             sx={{
@@ -297,7 +299,7 @@ export default function ListsDashboard() {
               sx={{ fontSize: '0.95rem', py: 0.75 }}
             />
           </Paper>
-        </Box>
+        </Box>}
 
         {/* Loading skeleton */}
         {loading && (

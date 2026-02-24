@@ -18,13 +18,13 @@ import {
   MenuItem,
   Typography,
 } from '@mui/material';
-import DescriptionIcon from '@mui/icons-material/Description';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { PartsListSummary } from '@/lib/partsListStorage';
+import { THEME_ICON_MAP, type ListThemeId } from '@/lib/themeClassifier';
 import type { TFunction } from 'i18next';
 
 interface ListCardProps {
@@ -104,9 +104,10 @@ export default function ListCard({ list, pinned, onClick, onDelete, onTogglePin,
               />
             )}
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
-              <DescriptionIcon
-                sx={{ fontSize: 24, color: 'primary.main', mt: 0.25, opacity: 0.7 }}
-              />
+              {(() => {
+                const ThemeIcon = THEME_ICON_MAP[(list.themeIcon as ListThemeId) || 'general'];
+                return <ThemeIcon sx={{ fontSize: 24, color: 'grey.400', mt: 0.25, opacity: 0.85 }} />;
+              })()}
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <Typography

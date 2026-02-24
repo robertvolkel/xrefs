@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, Link, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
 import SearchInput from './SearchInput';
@@ -19,6 +19,8 @@ interface ChatInterfaceProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  sourceMpn?: string;
+  sourceManufacturer?: string;
 }
 
 export default function ChatInterface({
@@ -33,6 +35,8 @@ export default function ChatInterface({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  sourceMpn,
+  sourceManufacturer,
 }: ChatInterfaceProps) {
   const { t } = useTranslation();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -67,10 +71,16 @@ export default function ChatInterface({
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ position: 'absolute', bottom: 24, display: { xs: 'none', sm: 'flex' }, alignItems: 'baseline', gap: 0.75 }}
+          sx={{ position: 'absolute', bottom: 24, display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 0.75 }}
         >
+          <span>XQv2 Alpha</span>
+          <span style={{ opacity: 0.4 }}>|</span>
           <span>🇨🇳</span>
           <span>{t('chat.madeInChina')}</span>
+          <span style={{ opacity: 0.4 }}>|</span>
+          <Link href="/about" color="text.secondary" underline="hover" sx={{ fontSize: 'inherit' }}>
+            {t('chat.about')}
+          </Link>
         </Typography>
       </Box>
     );
@@ -132,6 +142,8 @@ export default function ChatInterface({
               onSkipAttributes={onSkipAttributes}
               onContextResponse={onContextResponse}
               onSkipContext={onSkipContext}
+              sourceMpn={sourceMpn}
+              sourceManufacturer={sourceManufacturer}
             />
           ))}
           {showSpinner && (

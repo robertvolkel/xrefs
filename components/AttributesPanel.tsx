@@ -55,6 +55,9 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
                 {attributes.part.mpn}
               </Typography>
               <Chip label={attributes.part.status} size="small" color={attributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              {attributes.part.qualifications?.map(q => (
+                <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
+              ))}
               {attributes.dataSource === 'mock' && (
                 <Chip label="Mock Data" size="small" color="warning" sx={{ height: 18, fontSize: '0.6rem' }} />
               )}

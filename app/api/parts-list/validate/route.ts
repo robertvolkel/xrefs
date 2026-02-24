@@ -3,6 +3,7 @@ import { BatchValidateRequest, BatchValidateItem } from '@/lib/types';
 import { searchParts, getAttributes, getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { buildEnrichedData } from '@/lib/services/enrichedDataBuilder';
+import { logRecommendation } from '@/lib/services/recommendationLogger';
 
 const CONCURRENCY = 3;
 
@@ -10,6 +11,7 @@ const CONCURRENCY = 3;
 async function processItem(
   item: { rowIndex: number; mpn: string; manufacturer?: string; description?: string },
   currency?: string,
+  userId?: string,
 ): Promise<BatchValidateItem> {
   try {
     // Step 1: Search for the part (use MPN if available, otherwise description)
@@ -39,8 +41,27 @@ async function processItem(
     }
 
     // Step 3: Get recommendations
-    const recs = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency);
+    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency);
+    const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
+
+    // Step 3b: Log recommendation (awaited to ensure it completes within request lifecycle)
+    if (userId) {
+      await logRecommendation({
+        userId,
+        sourceMpn: resolvedPart.mpn,
+        sourceManufacturer: resolvedPart.manufacturer,
+        familyId: recResult.familyId,
+        familyName: recResult.familyName,
+        recommendationCount: recs.length,
+        requestSource: 'batch',
+        dataSource: recResult.dataSource,
+        snapshot: {
+          sourceAttributes: recResult.sourceAttributes,
+          recommendations: recs,
+        },
+      });
+    }
 
     // Step 4: Build enriched data for column views
     const enrichedData = sourceAttributes ? buildEnrichedData(sourceAttributes) : undefined;
@@ -65,7 +86,7 @@ async function processItem(
 
 export async function POST(request: NextRequest) {
   try {
-    const { error: authError } = await requireAuth();
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
     const body: BatchValidateRequest = await request.json();
@@ -88,7 +109,7 @@ export async function POST(request: NextRequest) {
         // Process in chunks for concurrency control
         for (let i = 0; i < body.items.length; i += CONCURRENCY) {
           const chunk = body.items.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(chunk.map(item => processItem(item, body.currency)));
+          const results = await Promise.all(chunk.map(item => processItem(item, body.currency, user?.id)));
 
           for (const result of results) {
             await writer.write(encoder.encode(JSON.stringify(result) + '\n'));
