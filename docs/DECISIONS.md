@@ -846,3 +846,23 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files modified:** `components/AppSidebar.tsx` (QC icon), `components/admin/AdminSectionNav.tsx` (removed QC), `components/admin/AdminShell.tsx` (removed QcPanel).
 
 **Files deleted:** `components/admin/QcPanel.tsx`.
+
+---
+
+## 39. Thyristors (B8) — Single Family with Context-Driven Sub-Type Suppression
+
+**Decision:** Thyristors (SCR, TRIAC, DIAC) are encoded as a single family B8 with 22 rules. Sub-type-specific rules (TRIAC-only: quadrant operation, snubberless; SCR-only: tq) are suppressed via context question Q1 using `not_applicable` effects, rather than creating 3 separate families.
+
+**Rationale:** The three sub-types share 16 of 22 rules. Creating 3 families (B8/B9/B10) would triplicate the common rules and complicate the registry. The context question approach uses existing infrastructure (`not_applicable` effect in contextModifier) without requiring changes to the matching engine core. The identity rule on `device_type` (weight 10) ensures sub-type mismatches always fail regardless of whether context questions are answered. Digikey's separate leaf categories ("Thyristors - SCRs", "Thyristors - TRIACs") provide natural candidate filtering at search time via the `digikeyCategoryId` filter.
+
+**Key implementation details:**
+- **"Triac Type" is a compound field** — encodes both gate sensitivity and snubberless status. Values: "Alternistor - Snubberless" (Standard gate, snubberless=Yes), "Logic - Sensitive Gate" (Sensitive, snubberless=No), "Standard" (Standard, snubberless=No). Two transformers: `transformToGateSensitivity()` and `transformToSnubberless()`.
+- **IT(AV) vs IT(RMS)** — SCRs use "Current - On State (It (AV)) (Max)", TRIACs use "Current - On State (It (RMS)) (Max)". Both map to the same `on_state_current` attributeId. Since the identity gate prevents cross-sub-type comparison, the correct metric is always compared.
+- **`device_type` enrichment** — Inferred from Digikey category name in `mapDigikeyProductToAttributes()` (SCR/TRIAC/DIAC), not from a Digikey parametric field.
+- **Snubberless BLOCKING** — Context Q3 "No snubber" escalates snubberless to mandatory with `blockOnMissing: true`, preventing non-snubberless candidates from appearing.
+- **New ComponentCategory** — `'Thyristors'` added to the `ComponentCategory` union type (distinct from 'Transistors' and 'Diodes').
+- **Weight coverage** — SCR param map: ~48% (67/136). TRIAC param map: ~51% (69/136). Major gaps: vdsm, i2t, il, dv_dt, di_dt, tgt, tq, quadrant_operation, rth_jc, tj_max (all datasheet-only).
+
+**Files created:** `lib/logicTables/thyristors.ts`, `lib/contextQuestions/thyristors.ts`.
+
+**Files modified:** `lib/types.ts` (ComponentCategory), `lib/logicTables/index.ts` (registry + subcategory map), `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts` (mapCategory, mapSubcategory, transformers, device_type enrichment), `lib/services/digikeyParamMap.ts` (scrParamMap, triacParamMap, category registrations), `lib/services/partDataService.ts` (vdrm keyword), `__tests__/services/familyClassifier.test.ts`, `__tests__/services/digikeyMapper.test.ts`.

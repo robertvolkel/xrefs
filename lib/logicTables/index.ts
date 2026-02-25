@@ -24,6 +24,7 @@ import { tvsDiodesLogicTable } from './tvsDiodes';
 import { mosfetsLogicTable } from './mosfets';
 import { bjtTransistorsLogicTable } from './bjtTransistors';
 import { igbtsLogicTable } from './igbts';
+import { thyristorsLogicTable } from './thyristors';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -55,6 +56,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B5': mosfetsLogicTable,
   'B6': bjtTransistorsLogicTable,
   'B7': igbtsLogicTable,
+  'B8': thyristorsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -202,6 +204,17 @@ const subcategoryToFamily: Record<string, string> = {
   'IGBT Module': 'B7',
   'Transistors - IGBTs - Single': 'B7',
   'Transistors - IGBTs - Arrays': 'B7',
+  // Thyristors / TRIACs / SCRs (Family B8)
+  'SCR': 'B8',
+  'Silicon Controlled Rectifier': 'B8',
+  'TRIAC': 'B8',
+  'Triode AC Switch': 'B8',
+  'DIAC': 'B8',
+  'SIDAC': 'B8',
+  'Thyristor': 'B8',
+  'Thyristors - SCRs': 'B8',
+  'Thyristors - TRIACs': 'B8',
+  'Thyristors - DIACs, SIDACs': 'B8',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -232,6 +245,7 @@ const familyLastUpdated: Record<string, string> = {
   'B5': '2026-02-24',
   'B6': '2026-02-25',
   'B7': '2026-02-25',
+  'B8': '2026-02-25',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

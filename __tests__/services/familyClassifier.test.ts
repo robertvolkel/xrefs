@@ -263,6 +263,23 @@ describe('familyClassifier', () => {
       expect(classifyFamily('B5', a)).toBe('B5'); // stays B5, not reclassified
     });
 
+    // --- Thyristors (B8) — standalone family, no variant classifier ---
+
+    it('returns B8 unchanged (standalone family, not a variant)', () => {
+      const a = attrs([], { description: 'TRIAC SENS GATE 600V 4A DPAK' });
+      expect(classifyFamily('B8', a)).toBe('B8');
+    });
+
+    it('returns B8 unchanged for SCR description', () => {
+      const a = attrs([], { description: 'SCR 400V 4A TO-225AA' });
+      expect(classifyFamily('B8', a)).toBe('B8');
+    });
+
+    it('does NOT classify thyristor keywords under IGBT base family', () => {
+      const a = attrs([], { description: 'TRIAC Alternistor Snubberless 600V' });
+      expect(classifyFamily('B7', a)).toBe('B7'); // stays B7, not reclassified
+    });
+
     // --- Unknown / unsupported families ---
 
     it('returns base family ID for families with no classifier rules', () => {

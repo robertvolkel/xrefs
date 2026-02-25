@@ -221,7 +221,7 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   // IGBTs, MOSFETs, BJTs, and diodes don't have capacitance/resistance, so without
   // this, the keyword string is empty and the search returns no candidates.
   const voltage = paramMap.get('vds_max') ?? paramMap.get('vces_max') ??
-                  paramMap.get('vrrm') ?? paramMap.get('vceo_max');
+                  paramMap.get('vrrm') ?? paramMap.get('vceo_max') ?? paramMap.get('vdrm');
   if (voltage) {
     const vMatch = voltage.value.match(/(\d+)\s*V/i);
     if (vMatch) parts.push(`${vMatch[1]}V`);

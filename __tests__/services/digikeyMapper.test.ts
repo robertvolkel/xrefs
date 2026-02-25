@@ -59,6 +59,9 @@ describe('digikeyMapper', () => {
       ['Varistors', 'Protection'],
       ['NTC Thermistors', 'Protection'],
       ['PTC Resettable Fuses', 'Protection'],
+      ['Thyristors - SCRs', 'Thyristors'],
+      ['Thyristors - TRIACs', 'Thyristors'],
+      ['Thyristors - DIACs, SIDACs', 'Thyristors'],
       ['Microcontrollers', 'ICs'], // default
     ];
 
@@ -111,6 +114,10 @@ describe('digikeyMapper', () => {
       ['IGBTs - Single', 'IGBT'],
       ['IGBT Modules', 'IGBT'],
       ['Transistors - IGBTs - Single', 'IGBT'],
+      // Thyristors (Family B8)
+      ['Thyristors - SCRs', 'SCR'],
+      ['Thyristors - TRIACs', 'TRIAC'],
+      ['Thyristors - DIACs, SIDACs', 'DIAC'],
     ];
 
     it.each(cases)('"%s" → "%s"', (categoryName, expected) => {

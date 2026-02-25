@@ -2026,6 +2026,165 @@ const igbtParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * SCRs (Silicon Controlled Rectifiers) — Family B8
+ * Digikey category: "SCRs" (leaf: "Thyristors - SCRs")
+ *
+ * Verified against Digikey API (Feb 2026) using C106DG:
+ *   - "SCR Type" → gate_sensitivity (transformer normalizes "Sensitive Gate"→"Sensitive")
+ *   - "Voltage - Off State" → vdrm
+ *   - "Current - On State (It (AV)) (Max)" → on_state_current (SCR uses average current)
+ *   - "Current - On State (It (RMS)) (Max)" → SKIPPED (use AV for SCRs)
+ *   - "Current - Non Rep. Surge 50, 60Hz (Itsm)" → itsm
+ *   - "Current - Gate Trigger (Igt) (Max)" → igt
+ *   - "Voltage - Gate Trigger (Vgt) (Max)" → vgt
+ *   - "Current - Hold (Ih) (Max)" → ih
+ *
+ * Confirmed GAPS (datasheet-only, not in Digikey parametric data):
+ *   - vdsm, i2t, il (latching current), dv_dt, di_dt, tgt, tq
+ *   - quadrant_operation (SCR N/A anyway), snubberless (SCR N/A anyway)
+ *   - rth_jc, tj_max, device_type (inferred from category)
+ *
+ * Weight coverage: ~48% (67/136 total weight mapped)
+ */
+const scrParamMap: Record<string, ParamMapEntry> = {
+  'SCR Type': {
+    attributeId: 'gate_sensitivity',
+    attributeName: 'Gate Sensitivity Class (Standard / Sensitive / Logic-Level)',
+    sortOrder: 2,
+  },
+  'Voltage - Off State': {
+    attributeId: 'vdrm',
+    attributeName: 'Peak Repetitive Off-State Voltage (VDRM / VRRM)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Current - On State (It (AV)) (Max)': {
+    attributeId: 'on_state_current',
+    attributeName: 'On-State Average Current (IT(AV))',
+    unit: 'A',
+    sortOrder: 6,
+  },
+  'Current - Non Rep. Surge 50, 60Hz (Itsm)': {
+    attributeId: 'itsm',
+    attributeName: 'Non-Repetitive Surge Current (ITSM)',
+    unit: 'A',
+    sortOrder: 7,
+  },
+  'Current - Gate Trigger (Igt) (Max)': {
+    attributeId: 'igt',
+    attributeName: 'Gate Trigger Current (IGT)',
+    sortOrder: 9,
+  },
+  'Voltage - Gate Trigger (Vgt) (Max)': {
+    attributeId: 'vgt',
+    attributeName: 'Gate Trigger Voltage (VGT)',
+    sortOrder: 10,
+  },
+  'Current - Hold (Ih) (Max)': {
+    attributeId: 'ih',
+    attributeName: 'Holding Current (IH)',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * TRIACs (Triode AC Switches) — Family B8
+ * Digikey category: "TRIACs" (leaf: "Thyristors - TRIACs")
+ *
+ * Verified against Digikey API (Feb 2026) using T2535-600G, MAC97A6G, T405-600B:
+ *   - "Triac Type" → COMPOUND: encodes gate_sensitivity + snubberless
+ *     Values observed: "Alternistor - Snubberless", "Logic - Sensitive Gate", "Standard"
+ *   - "Voltage - Off State" → vdrm
+ *   - "Current - On State (It (RMS)) (Max)" → on_state_current (TRIAC uses RMS)
+ *   - "Current - Non Rep. Surge 50, 60Hz (Itsm)" → itsm
+ *   - "Current - Gate Trigger (Igt) (Max)" → igt
+ *   - "Voltage - Gate Trigger (Vgt) (Max)" → vgt
+ *   - "Current - Hold (Ih) (Max)" → ih
+ *   - "Qualification" → aec_q101 (when present; often "-")
+ *
+ * Confirmed GAPS (datasheet-only, not in Digikey parametric data):
+ *   - vdsm, i2t, il (latching current), dv_dt, di_dt, tgt
+ *   - quadrant_operation (critical TRIAC spec — datasheet only!)
+ *   - rth_jc, tj_max, device_type (inferred from category)
+ *
+ * Weight coverage: ~51% (69/136 total weight mapped)
+ */
+const triacParamMap: Record<string, ParamMapEntry> = {
+  // COMPOUND: "Triac Type" encodes both gate sensitivity and snubberless status
+  // Values: "Alternistor - Snubberless", "Logic - Sensitive Gate", "Standard"
+  'Triac Type': [
+    {
+      attributeId: 'gate_sensitivity',
+      attributeName: 'Gate Sensitivity Class (Standard / Sensitive / Logic-Level)',
+      sortOrder: 2,
+    },
+    {
+      attributeId: 'snubberless',
+      attributeName: 'Snubberless Rating',
+      sortOrder: 18,
+    },
+  ],
+  'Voltage - Off State': {
+    attributeId: 'vdrm',
+    attributeName: 'Peak Repetitive Off-State Voltage (VDRM / VRRM)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Current - On State (It (RMS)) (Max)': {
+    attributeId: 'on_state_current',
+    attributeName: 'On-State RMS Current (IT(RMS))',
+    unit: 'A',
+    sortOrder: 6,
+  },
+  'Current - Non Rep. Surge 50, 60Hz (Itsm)': {
+    attributeId: 'itsm',
+    attributeName: 'Non-Repetitive Surge Current (ITSM)',
+    unit: 'A',
+    sortOrder: 7,
+  },
+  'Current - Gate Trigger (Igt) (Max)': {
+    attributeId: 'igt',
+    attributeName: 'Gate Trigger Current (IGT)',
+    sortOrder: 9,
+  },
+  'Voltage - Gate Trigger (Vgt) (Max)': {
+    attributeId: 'vgt',
+    attributeName: 'Gate Trigger Voltage (VGT)',
+    sortOrder: 10,
+  },
+  'Current - Hold (Ih) (Max)': {
+    attributeId: 'ih',
+    attributeName: 'Holding Current (IH)',
+    sortOrder: 11,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 23,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -2067,6 +2226,9 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['Bipolar Transistors', bjtParamMap],
   // Block B: IGBTs — Digikey category is "Single IGBTs"
   ['IGBTs', igbtParamMap],
+  // Block B: Thyristors — separate Digikey categories for SCRs and TRIACs
+  ['SCRs', scrParamMap],
+  ['TRIACs', triacParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -2160,6 +2322,7 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B5': ['FETs, MOSFETs'],
   'B6': ['Bipolar Transistors'],
   'B7': ['IGBTs'],
+  'B8': ['SCRs', 'TRIACs'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -2195,6 +2358,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'B6': ['Single Bipolar Transistors', 'Bipolar Transistor Arrays'],
   // B7: param map uses 'IGBTs', Digikey leaf is 'Single IGBTs'
   'B7': ['Single IGBTs'],
+  // B8: param map uses 'SCRs'/'TRIACs', Digikey leaves are 'Thyristors - SCRs'/'Thyristors - TRIACs'
+  'B8': ['Thyristors - SCRs', 'Thyristors - TRIACs', 'Thyristors - DIACs, SIDACs'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

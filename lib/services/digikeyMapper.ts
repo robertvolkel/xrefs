@@ -47,6 +47,7 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('capacitor')) return 'Capacitors';
   if (lower.includes('resistor')) return 'Resistors';
   if (lower.includes('inductor')) return 'Inductors';
+  if (lower.includes('thyristor') || lower.includes('scr') || lower.includes('triac') || lower.includes('diac')) return 'Thyristors';
   if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
@@ -82,6 +83,10 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // Thyristors (Family B8) — must be before transistor/diode fallback checks
+  if (lower.includes('triac')) return 'TRIAC';
+  if (lower.includes('diac') || lower.includes('sidac')) return 'DIAC';
+  if (lower.includes('scr') || lower.includes('thyristor')) return 'SCR';
   // IGBTs (Family B7) — must be before MOSFET check
   if (lower.includes('igbt')) return 'IGBT';
   // MOSFETs (Family B5)
@@ -363,6 +368,34 @@ function transformToTdOff(valueText: string): string {
   return match ? match[1].trim() : '';
 }
 
+/**
+ * Extract gate sensitivity class from TRIAC "Triac Type" or SCR "SCR Type" field.
+ * Digikey values observed:
+ *   TRIAC: "Alternistor - Snubberless", "Logic - Sensitive Gate", "Standard", "-"
+ *   SCR:   "Sensitive Gate", "Standard", "-"
+ * Normalizes to: "Standard", "Sensitive", "Logic-Level"
+ */
+function transformToGateSensitivity(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower === '-' || lower === '') return '';
+  if (lower.includes('logic')) return 'Logic-Level';
+  if (lower.includes('sensitive')) return 'Sensitive';
+  if (lower.includes('standard') || lower.includes('alternistor')) return 'Standard';
+  return valueText;
+}
+
+/**
+ * Extract snubberless flag from TRIAC "Triac Type" field.
+ * "Alternistor - Snubberless" → "Yes"
+ * "Logic - Sensitive Gate" → "No"
+ * "Standard" → "No"
+ */
+function transformToSnubberless(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('snubberless') || lower.includes('alternistor')) return 'Yes';
+  return 'No';
+}
+
 /** Apply value transformations based on attributeId */
 function transformValue(attributeId: string, valueText: string): string {
   switch (attributeId) {
@@ -406,6 +439,10 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformToTdOn(valueText);
     case 'td_off':
       return transformToTdOff(valueText);
+    case 'gate_sensitivity':
+      return transformToGateSensitivity(valueText);
+    case 'snubberless':
+      return transformToSnubberless(valueText);
     default:
       return valueText;
   }
@@ -642,6 +679,25 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
       sortOrder: 3,
     });
     addedIds.add('co_packaged_diode');
+  }
+
+  // Thyristor device_type enrichment — infer SCR/TRIAC/DIAC from Digikey category name.
+  // The identity rule on device_type (weight 10) needs explicit values to compare.
+  if (!addedIds.has('device_type')) {
+    const catLower = categoryName.toLowerCase();
+    let deviceType = '';
+    if (catLower.includes('triac')) deviceType = 'TRIAC';
+    else if (catLower.includes('diac') || catLower.includes('sidac')) deviceType = 'DIAC';
+    else if (catLower.includes('scr') || catLower.includes('thyristor')) deviceType = 'SCR';
+    if (deviceType) {
+      parameters.push({
+        parameterId: 'device_type',
+        parameterName: 'Device Sub-Type (SCR / TRIAC / DIAC)',
+        value: deviceType,
+        sortOrder: 1,
+      });
+      addedIds.add('device_type');
+    }
   }
 
   // Sort by sortOrder

@@ -28,6 +28,7 @@ export type ComponentCategory =
   | 'ICs'
   | 'Diodes'
   | 'Transistors'
+  | 'Thyristors'
   | 'Connectors'
   | 'Protection';
 

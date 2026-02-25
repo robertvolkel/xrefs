@@ -26,6 +26,7 @@ import { tvsDiodesContext } from './tvsDiodes';
 import { mosfetsContext } from './mosfets';
 import { bjtTransistorsContext } from './bjtTransistors';
 import { igbtsContext } from './igbts';
+import { thyristorsContext } from './thyristors';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -55,6 +56,7 @@ const allConfigs: FamilyContextConfig[] = [
   mosfetsContext,
   bjtTransistorsContext,
   igbtsContext,
+  thyristorsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */
