@@ -239,6 +239,18 @@ describe('familyClassifier', () => {
       expect(classifyFamily('B1', a)).toBe('B1'); // MOSFET stays B1 base, not reclassified
     });
 
+    // --- BJTs (B6) — standalone family, no variant classifier ---
+
+    it('returns B6 unchanged (standalone family, not a variant)', () => {
+      const a = attrs([], { description: 'NPN Bipolar Transistor 60V 200mA' });
+      expect(classifyFamily('B6', a)).toBe('B6');
+    });
+
+    it('does NOT classify BJT keywords under diode base family', () => {
+      const a = attrs([], { description: 'NPN Bipolar transistor' });
+      expect(classifyFamily('B1', a)).toBe('B1'); // stays B1, not reclassified
+    });
+
     // --- Unknown / unsupported families ---
 
     it('returns base family ID for families with no classifier rules', () => {

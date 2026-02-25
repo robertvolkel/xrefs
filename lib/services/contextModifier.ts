@@ -38,7 +38,7 @@ export function applyContextToLogicTable(
       const rule = modifiedRules.find(r => r.attributeId === effect.attributeId);
       if (!rule) continue; // Attribute not in this logic table — skip silently
 
-      applyEffect(rule, effect.effect, effect.note);
+      applyEffect(rule, effect.effect, effect.note, effect.blockOnMissing);
     }
   }
 
@@ -51,7 +51,8 @@ export function applyContextToLogicTable(
 function applyEffect(
   rule: MatchingRule,
   effect: ContextEffectType,
-  note?: string
+  note?: string,
+  blockOnMissing?: boolean
 ): void {
   switch (effect) {
     case 'escalate_to_mandatory':
@@ -79,4 +80,7 @@ function applyEffect(
       if (note) rule.engineeringReason = note;
       break;
   }
+
+  // Propagate blockOnMissing — makes missing candidate data a hard fail for threshold rules
+  if (blockOnMissing) rule.blockOnMissing = true;
 }

@@ -138,7 +138,7 @@ Defined in `lib/types.ts` as `LogicType`:
 
 ## Logic Tables & Family Structure
 
-Each component family has a logic table in `lib/logicTables/` defining its matching rules. All 24 families are encoded:
+Each component family has a logic table in `lib/logicTables/` defining its matching rules. All 25 families are encoded:
 
 **Registry:** `lib/logicTables/index.ts` maps family IDs to tables and subcategory strings to family IDs.
 
@@ -168,8 +168,9 @@ Each component family has a logic table in `lib/logicTables/` defining its match
 | B3 | Zener / Voltage Reference Diodes | Discrete Semiconductors |
 | B4 | TVS Diodes — Transient Voltage Suppressors | Discrete Semiconductors |
 | B5 | MOSFETs — N-Channel & P-Channel | Discrete Semiconductors |
+| B6 | BJTs — NPN & PNP | Discrete Semiconductors |
 
-**Variant families** (53, 54, 55, 60, 13, 72, B2, B3, B4) are derived from base families using `deltaBuilder.ts` — the classifier in `familyClassifier.ts` detects them from part attributes. B2 (Schottky) is classified from B1 (Rectifier Diodes) when the part description contains 'Schottky', 'SBD', or 'SiC diode'. B3 (Zener) is classified from B1 when the description contains 'Zener', 'voltage reference diode', or MPN starts with 'BZX', 'BZT', 'MMSZ'. B4 (TVS) is classified from B1 when the description contains 'TVS', 'transient voltage', 'ESD protection', or MPN matches TVS prefixes (SMAJ, SMBJ, P6KE, PESD, TPD, ESDA, etc.). B5 (MOSFETs) is a standalone base family — detected by subcategory mapping ('MOSFET', 'FET', 'N-ch', 'P-ch', 'SiC MOSFET', 'GaN FET' keywords).
+**Variant families** (53, 54, 55, 60, 13, 72, B2, B3, B4) are derived from base families using `deltaBuilder.ts` — the classifier in `familyClassifier.ts` detects them from part attributes. B2 (Schottky) is classified from B1 (Rectifier Diodes) when the part description contains 'Schottky', 'SBD', or 'SiC diode'. B3 (Zener) is classified from B1 when the description contains 'Zener', 'voltage reference diode', or MPN starts with 'BZX', 'BZT', 'MMSZ'. B4 (TVS) is classified from B1 when the description contains 'TVS', 'transient voltage', 'ESD protection', or MPN matches TVS prefixes (SMAJ, SMBJ, P6KE, PESD, TPD, ESDA, etc.). B5 (MOSFETs) is a standalone base family — detected by subcategory mapping ('MOSFET', 'FET', 'N-ch', 'P-ch', 'SiC MOSFET', 'GaN FET' keywords). B6 (BJTs) is a standalone base family — detected by subcategory mapping ('BJT', 'Bipolar Transistor', 'NPN', 'PNP' keywords).
 
 **Context questions** in `lib/contextQuestions/` provide per-family application context that modifies rule weights at evaluation time.
 
@@ -225,7 +226,7 @@ The admin QC panel (`/admin?section=qc`) is **feedback-first**: the primary view
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
 
-Parameter mapping is complete for **all 19 passive + 5 discrete families**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), and MOSFETs (B5, "FETs - MOSFETs" category — placeholder param map, field names pending discovery script verification). See `docs/DECISIONS.md` (#16-19, #30-34) for Digikey API quirks.
+Parameter mapping is complete for **all 19 passive + 6 discrete families**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), and BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026). See `docs/DECISIONS.md` (#16-19, #30-36) for Digikey API quirks.
 
 ## Running
 
@@ -233,7 +234,7 @@ Parameter mapping is complete for **all 19 passive + 5 discrete families**: MLCC
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (209 tests, ~0.3s)
+npm test        # Jest unit tests (224 tests, ~0.3s)
 npm run test:watch  # Jest in watch mode
 ```
 

@@ -261,14 +261,40 @@ function evaluateThreshold(
   const candidateValue = candidateParam?.value ?? 'N/A';
 
   if (!sourceParam || !candidateParam) {
+    // Source missing → can't evaluate, pass
+    if (!sourceParam) {
+      return {
+        attributeId: rule.attributeId,
+        attributeName: rule.attributeName,
+        sourceValue,
+        candidateValue,
+        logicType: rule.logicType,
+        result: 'pass',
+        matchStatus: 'exact',
+      };
+    }
+    // Candidate missing + blockOnMissing → hard fail (e.g., tst at >100kHz, body diode trr at ≥50kHz)
+    if (rule.blockOnMissing) {
+      return {
+        attributeId: rule.attributeId,
+        attributeName: rule.attributeName,
+        sourceValue,
+        candidateValue,
+        logicType: rule.logicType,
+        result: 'fail',
+        matchStatus: 'different',
+        note: `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`,
+      };
+    }
+    // Candidate missing → review (default)
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: !sourceParam ? 'pass' : 'review',
-      matchStatus: !sourceParam ? 'exact' : 'different',
+      result: 'review',
+      matchStatus: 'different',
     };
   }
 

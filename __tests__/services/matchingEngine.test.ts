@@ -703,6 +703,76 @@ describe('matchingEngine', () => {
   });
 
   // ----------------------------------------------------------
+  // THRESHOLD RULES — blockOnMissing
+  // ----------------------------------------------------------
+  describe('threshold rule (blockOnMissing)', () => {
+    it('returns fail when candidate is missing and blockOnMissing is true', () => {
+      const r = rule({
+        attributeId: 'tst',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        blockOnMissing: true,
+      });
+      const src = attrs([param('tst', '200ns', 200)]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].note).toContain('Missing critical specification');
+    });
+
+    it('returns review when candidate is missing and blockOnMissing is false', () => {
+      const r = rule({
+        attributeId: 'tst',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        blockOnMissing: false,
+      });
+      const src = attrs([param('tst', '200ns', 200)]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('review');
+    });
+
+    it('returns review when candidate is missing and blockOnMissing is undefined', () => {
+      const r = rule({
+        attributeId: 'tst',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+      });
+      const src = attrs([param('tst', '200ns', 200)]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('review');
+    });
+
+    it('still passes when source is missing even with blockOnMissing', () => {
+      const r = rule({
+        attributeId: 'tst',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        blockOnMissing: true,
+      });
+      const src = attrs([]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('blockOnMissing has no effect when candidate has a value', () => {
+      const r = rule({
+        attributeId: 'tst',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        blockOnMissing: true,
+      });
+      const src = attrs([param('tst', '200ns', 200)]);
+      const cand = attrs([param('tst', '150ns', 150)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+  });
+
+  // ----------------------------------------------------------
   // MSL threshold (special case)
   // ----------------------------------------------------------
   describe('MSL threshold', () => {

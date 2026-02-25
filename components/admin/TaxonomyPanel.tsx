@@ -169,7 +169,9 @@ function CategoryAccordion({ cat }: { cat: TaxonomyCategory }) {
         )}
         {cat.productCount > 0 && (
           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto', mr: 1 }}>
-            {cat.productCount.toLocaleString()} products
+            {cat.coveredProductCount > 0
+              ? `${cat.coveredProductCount.toLocaleString()} of ${cat.productCount.toLocaleString()} products`
+              : `${cat.productCount.toLocaleString()} products`}
           </Typography>
         )}
       </AccordionSummary>

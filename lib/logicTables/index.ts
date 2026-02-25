@@ -22,6 +22,7 @@ import { schottkyDiodesLogicTable } from './schottkyDiodes';
 import { zenerDiodesLogicTable } from './zenerDiodes';
 import { tvsDiodesLogicTable } from './tvsDiodes';
 import { mosfetsLogicTable } from './mosfets';
+import { bjtTransistorsLogicTable } from './bjtTransistors';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -51,6 +52,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B3': zenerDiodesLogicTable,
   'B4': tvsDiodesLogicTable,
   'B5': mosfetsLogicTable,
+  'B6': bjtTransistorsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -179,6 +181,18 @@ const subcategoryToFamily: Record<string, string> = {
   'GaN MOSFET': 'B5',
   'FETs - MOSFETs - Single': 'B5',
   'FETs - MOSFETs - Arrays': 'B5',
+  // BJTs (Family B6)
+  'BJT': 'B6',
+  'NPN Transistor': 'B6',
+  'PNP Transistor': 'B6',
+  'NPN BJT': 'B6',
+  'PNP BJT': 'B6',
+  'Bipolar Transistor': 'B6',
+  'Bipolar Junction Transistor': 'B6',
+  'Transistors - Bipolar (BJT) - Single': 'B6',
+  'Transistors - Bipolar (BJT) - Array': 'B6',
+  'Small Signal Transistor': 'B6',
+  'General Purpose Transistor': 'B6',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -207,6 +221,7 @@ const familyLastUpdated: Record<string, string> = {
   'B3': '2026-02-24',
   'B4': '2026-02-24',
   'B5': '2026-02-24',
+  'B6': '2026-02-25',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

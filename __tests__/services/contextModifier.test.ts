@@ -34,7 +34,7 @@ function makeTable(rules: MatchingRule[]): LogicTable {
   };
 }
 
-function makeOption(value: string, effects: { attributeId: string; effect: ContextOption['attributeEffects'][0]['effect']; note?: string }[]): ContextOption {
+function makeOption(value: string, effects: { attributeId: string; effect: ContextOption['attributeEffects'][0]['effect']; note?: string; blockOnMissing?: boolean }[]): ContextOption {
   return {
     value,
     label: value,
@@ -42,6 +42,7 @@ function makeOption(value: string, effects: { attributeId: string; effect: Conte
       attributeId: e.attributeId,
       effect: e.effect,
       note: e.note,
+      blockOnMissing: e.blockOnMissing,
     })),
   };
 }
@@ -259,6 +260,44 @@ describe('contextModifier', () => {
       const result = applyContextToLogicTable(lt, ctx, config);
       // q1 sets weight=10, then q2 sets weight=0 → last writer wins
       expect(result.rules[0].weight).toBe(0);
+    });
+
+    // --- Multiple effects from one option ---
+
+    // --- blockOnMissing propagation ---
+
+    it('propagates blockOnMissing from effect to rule', () => {
+      const lt = makeTable([makeRule('tst', { logicType: 'threshold', thresholdDirection: 'lte', weight: 8 })]);
+      const config = makeConfig([
+        makeQuestion('q1', [
+          makeOption('high_freq', [{
+            attributeId: 'tst',
+            effect: 'escalate_to_mandatory',
+            note: 'BLOCKING at >100kHz',
+            blockOnMissing: true,
+          }]),
+        ]),
+      ]);
+      const ctx = makeContext({ q1: 'high_freq' });
+      const result = applyContextToLogicTable(lt, ctx, config);
+      expect(result.rules[0].weight).toBe(10);
+      expect(result.rules[0].blockOnMissing).toBe(true);
+    });
+
+    it('does not set blockOnMissing when effect does not specify it', () => {
+      const lt = makeTable([makeRule('tst', { logicType: 'threshold', thresholdDirection: 'lte', weight: 8 })]);
+      const config = makeConfig([
+        makeQuestion('q1', [
+          makeOption('low_freq', [{
+            attributeId: 'tst',
+            effect: 'escalate_to_primary',
+            note: 'Medium frequency',
+          }]),
+        ]),
+      ]);
+      const ctx = makeContext({ q1: 'low_freq' });
+      const result = applyContextToLogicTable(lt, ctx, config);
+      expect(result.rules[0].blockOnMissing).toBeUndefined();
     });
 
     // --- Multiple effects from one option ---

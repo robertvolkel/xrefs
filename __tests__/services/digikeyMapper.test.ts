@@ -98,6 +98,13 @@ describe('digikeyMapper', () => {
       ['FETs - MOSFETs - P-Channel', 'P-Channel MOSFET'],
       ['FETs - SiC MOSFETs', 'SiC MOSFET'],
       ['FETs - GaN FET (Gallium Nitride)', 'GaN FET'],
+      // BJTs (Family B6)
+      ['Transistors - Bipolar (BJT) - Single', 'BJT'],
+      ['Transistors - Bipolar (BJT) - Single - NPN', 'NPN BJT'],
+      ['Transistors - Bipolar (BJT) - Single - PNP', 'PNP BJT'],
+      ['Transistors - Bipolar (BJT) - Array', 'BJT'],
+      ['Bipolar Transistors - NPN', 'NPN BJT'],
+      ['Bipolar Transistors - PNP', 'PNP BJT'],
     ];
 
     it.each(cases)('"%s" → "%s"', (categoryName, expected) => {

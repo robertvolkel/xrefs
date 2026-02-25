@@ -1831,6 +1831,83 @@ const mosfetParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * BJTs — Bipolar Junction Transistors (Family B6)
+ * Verified against Digikey API (Feb 2026): BC847BLT1G, MMBT2222ALT1G, MMBT3906LT1G, TIP31CG, BC857BLT1G.
+ * Digikey category: "Single Bipolar Transistors" (12-14 params per product).
+ *
+ * Additional available fields NOT mapped (no logic table rule):
+ *   - "Current - Collector Cutoff (Max)" (ICBO leakage) — informational only
+ *   - "Grade" — redundant with Qualification for AEC-Q101
+ *
+ * Confirmed gaps (datasheet-only): vces_max, vbe_sat, tst, ton, toff, rth_jc, tj_max, soa.
+ * Weight coverage: ~55%.
+ */
+const bjtParamMap: Record<string, ParamMapEntry> = {
+  'Transistor Type': {
+    attributeId: 'polarity',
+    attributeName: 'Polarity (NPN / PNP)',
+    sortOrder: 1,
+  },
+  'Voltage - Collector Emitter Breakdown (Max)': {
+    attributeId: 'vceo_max',
+    attributeName: 'Vceo Max (Collector-Emitter Voltage)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Current - Collector (Ic) (Max)': {
+    attributeId: 'ic_max',
+    attributeName: 'Continuous Collector Current (Ic Max)',
+    unit: 'A',
+    sortOrder: 3,
+  },
+  'DC Current Gain (hFE) (Min) @ Ic, Vce': {
+    attributeId: 'hfe',
+    attributeName: 'DC Current Gain (hFE)',
+    sortOrder: 4,
+  },
+  'Vce Saturation (Max) @ Ib, Ic': {
+    attributeId: 'vce_sat',
+    attributeName: 'Vce(sat) Max',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Frequency - Transition': {
+    attributeId: 'ft',
+    attributeName: 'Transition Frequency (ft)',
+    unit: 'Hz',
+    sortOrder: 6,
+  },
+  'Power - Max': {
+    attributeId: 'pd',
+    attributeName: 'Power Dissipation (Pd Max)',
+    unit: 'W',
+    sortOrder: 7,
+  },
+  // Confirmed NOT in Digikey: vces_max, vbe_sat, tst, ton, toff, rth_jc, tj_max, soa
+  // (datasheet-level specs). When both source and candidate are missing, rules pass.
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 8,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 9,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 10,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 11,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -1840,6 +1917,7 @@ const mosfetParamMap: Record<string, ParamMapEntry> = {
  * "Single Zener Diodes" and "Zener Diode Arrays" are direct Digikey categories.
  * "TVS Diodes" is a single Digikey category covering all TVS types.
  * "FETs, MOSFETs" covers all MOSFET types (N-ch, P-ch, Si, SiC, GaN).
+ * "Bipolar Transistors" covers all BJT types (NPN, PNP) — matches "Single Bipolar Transistors".
  */
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
@@ -1867,6 +1945,8 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['TVS Diodes', tvsDiodeParamMap],
   // Block B: MOSFETs
   ['FETs, MOSFETs', mosfetParamMap],
+  // Block B: BJTs — Digikey category is "Single Bipolar Transistors"
+  ['Bipolar Transistors', bjtParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -1958,6 +2038,7 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B3': ['Single Zener Diodes', 'Zener Diode Arrays'],
   'B4': ['TVS Diodes'],
   'B5': ['FETs, MOSFETs'],
+  'B6': ['Bipolar Transistors'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -1989,6 +2070,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'B2': ['Single Diodes', 'Diode Arrays'],
   // B5: param map uses 'FETs, MOSFETs' (plural), but arrays leaf uses singular 'FET, MOSFET Arrays'
   'B5': ['Single FETs, MOSFETs', 'FET, MOSFET Arrays'],
+  // B6: param map uses 'Bipolar Transistors', but Digikey leaf is 'Single Bipolar Transistors'
+  'B6': ['Single Bipolar Transistors', 'Bipolar Transistor Arrays'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

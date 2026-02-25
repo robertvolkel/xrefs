@@ -9,9 +9,9 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 ### ~~Digikey parameter maps incomplete for most families~~ COMPLETED
 **File:** `lib/services/digikeyParamMap.ts`
 
-All 19 passive families + 4 discrete semiconductor families (B1, B2, B3, B4) now have curated parameter maps. See Decisions #16-19, #30-33 for API quirks.
+All 19 passive families + 6 discrete semiconductor families (B1–B6) now have curated parameter maps. See Decisions #16-19, #30-36 for API quirks.
 
-**Completed:** MLCC (12, 14 attrs), Chip Resistors (52-55, 11 attrs), Fixed Inductors (71/72, 15 attrs), Ferrite Beads (70, 10 attrs), Common Mode Chokes (69, 13 attrs), Tantalum (59, 9 attrs + 2 placeholders), Aluminum Electrolytic (58, 15 attrs), Aluminum Polymer (60, 14 attrs + 2 placeholders), Film (64, 13 attrs), Supercapacitors (61, 11 attrs + 2 placeholders), Varistors (65, 8 attrs + 1 placeholder), PTC Resettable Fuses (66, 13 attrs incl. dual height fields), NTC Thermistors (67, 8 attrs + 2 placeholders), PTC Thermistors (68, 4 attrs + 1 placeholder), Rectifier Diodes (B1, 11 attrs single + 9 attrs bridge + 2 placeholders), Schottky Barrier Diodes (B2, 11 attrs single + 11 attrs array, virtual category routing).
+**Completed:** MLCC (12, 14 attrs), Chip Resistors (52-55, 11 attrs), Fixed Inductors (71/72, 15 attrs), Ferrite Beads (70, 10 attrs), Common Mode Chokes (69, 13 attrs), Tantalum (59, 9 attrs + 2 placeholders), Aluminum Electrolytic (58, 15 attrs), Aluminum Polymer (60, 14 attrs + 2 placeholders), Film (64, 13 attrs), Supercapacitors (61, 11 attrs + 2 placeholders), Varistors (65, 8 attrs + 1 placeholder), PTC Resettable Fuses (66, 13 attrs incl. dual height fields), NTC Thermistors (67, 8 attrs + 2 placeholders), PTC Thermistors (68, 4 attrs + 1 placeholder), Rectifier Diodes (B1, 11 attrs single + 9 attrs bridge + 2 placeholders), Schottky Barrier Diodes (B2, 11 attrs single + 11 attrs array, virtual category routing), Zener Diodes (B3, 10 attrs single + 11 attrs array), TVS Diodes (B4, 13 attrs), MOSFETs (B5, 14 attrs, verified Feb 2026), BJTs (B6, 11 attrs, verified Feb 2026).
 
 **Known data gaps (accepted):** PTC thermistors have extremely sparse Digikey data (4 of 15 logic table rules mappable). Varistors missing clamping voltage (w9). NTC B-value only maps B25/50 (bead types with only B25/100 won't match). Rectifier diodes and Schottky diodes have no AEC-Q101 in parametric data. Schottky-specific fields (Ifsm, Rth_jc, Rth_ja, Tj_max, Pd, technology_trench_planar, vf_tempco) not in Digikey parametric data. Zener diodes missing Izt (w8), TC (w7), Izm (w6), Rth_ja (w6), Tj_max (w6), Cj (w4), Zzk (w4), pin_configuration (w10), height (w5) — ~51% weight coverage for singles, ~57% for arrays. Digikey uses "AEC-Q100" (not Q101) for Zener categories. TVS diodes missing ir_leakage (w5), response_time (w6), esd_rating (w7), pin_configuration (w10), height (w5), rth_ja (w5), tj_max (w6), pd (w5), surge_standard (w8) — ~61% weight coverage (108/177). Polarity derived from field name presence, not a standard parameter.
 
@@ -20,12 +20,13 @@ All 19 passive families + 4 discrete semiconductor families (B1, B2, B3, B4) now
 ### ~~No automated tests~~ COMPLETED
 **Location:** `__tests__/services/`
 
-Jest test suite added with 175 tests across 5 suites, covering all priority candidates:
-- `matchingEngine.test.ts` (55 tests) — all 7 rule evaluators, scoring math, fail propagation, partial credit, edge cases
-- `familyClassifier.test.ts` (24 tests) — all variant classifiers (54/55/53/60/13/72), cross-family safety, rectifier enrichment
+Jest test suite added with 224 tests across 6 suites, covering all priority candidates:
+- `matchingEngine.test.ts` (60 tests) — all 7 rule evaluators, scoring math, fail propagation, partial credit, blockOnMissing, edge cases
+- `familyClassifier.test.ts` (26 tests) — all variant classifiers (54/55/53/60/13/72/B2/B3/B4), B5/B6 standalone, cross-family safety, rectifier enrichment
 - `deltaBuilder.test.ts` (14 tests) — REMOVE→OVERRIDE→ADD order, immutability, silent skip, auto-sortOrder
-- `contextModifier.test.ts` (12 tests) — all 5 effect types, last-writer-wins, skip behaviors
-- `digikeyMapper.test.ts` (70 tests) — category/subcategory/status mapping, SI prefixes, value transformers, search result dedup
+- `contextModifier.test.ts` (14 tests) — all 5 effect types, blockOnMissing propagation, last-writer-wins, skip behaviors
+- `digikeyMapper.test.ts` (76 tests) — category/subcategory/status mapping, SI prefixes, value transformers, MOSFET/BJT routing, search result dedup
+- `themeClassifier.test.ts` (34 tests) — theme icon classification
 
 Config: `jest.config.ts` using `next/jest.js` (SWC transforms + path aliases), `testEnvironment: 'node'`. Run: `npm test`.
 

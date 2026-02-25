@@ -149,6 +149,8 @@ export interface AttributeEffect {
   attributeId: string;
   effect: ContextEffectType;
   note?: string;
+  /** If true, missing candidate data on a threshold rule becomes a hard fail (not review). */
+  blockOnMissing?: boolean;
 }
 
 /** A predefined option for a context question */
@@ -215,6 +217,8 @@ export interface MatchingRule {
   weight: number; // Relative importance (0-10) for scoring
   engineeringReason: string;
   sortOrder: number;
+  /** If true, missing candidate value on a threshold rule is a hard fail (not review). Set by context modifier. */
+  blockOnMissing?: boolean;
 }
 
 /** A complete logic table for a component family */
@@ -473,6 +477,7 @@ export interface TaxonomyCategory {
   categoryId: number;
   name: string;
   productCount: number;
+  coveredProductCount: number;
   subcategories: TaxonomySubcategory[];
   coveredCount: number;
 }

@@ -90,6 +90,18 @@ function mapSubcategory(categoryName: string): string {
     if (lower.includes('gan') || lower.includes('gallium nitride')) return 'GaN FET';
     return 'MOSFET';
   }
+  // BJTs (Family B6)
+  if (lower.includes('bjt') || (lower.includes('bipolar') && lower.includes('transistor'))) {
+    if (lower.includes('pnp')) return 'PNP BJT';
+    if (lower.includes('npn')) return 'NPN BJT';
+    return 'BJT';
+  }
+  // General transistor fallback — BJT if not MOSFET/IGBT/JFET
+  if (lower.includes('transistor') && !lower.includes('mosfet') && !lower.includes('fet') && !lower.includes('igbt') && !lower.includes('jfet')) {
+    if (lower.includes('pnp')) return 'PNP BJT';
+    if (lower.includes('npn')) return 'NPN BJT';
+    return 'BJT';
+  }
   return categoryName;
 }
 

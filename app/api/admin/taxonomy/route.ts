@@ -90,11 +90,13 @@ export async function GET() {
 
         // Match against reverse lookup using same approach as findCategoryMap():
         // check if Digikey's subcategory name contains our pattern.
-        // Skip "Kits" categories — they're component bundles, not component categories.
+        // Skip categories that are bundles or fundamentally different device types:
+        // - "Kits" = component bundles, not individual components
+        // - "Pre-Biased" = digital transistors with built-in base resistors (not standard BJTs)
         const childLower = child.Name.toLowerCase();
         let families: FamilyCoverageInfo[] = [];
 
-        if (!childLower.includes('kit')) {
+        if (!childLower.includes('kit') && !childLower.includes('pre-biased')) {
           for (const [pattern, infos] of reverseLookup) {
             if (childLower.includes(pattern)) {
               families = [...families, ...infos];
@@ -133,10 +135,18 @@ export async function GET() {
         return a.name.localeCompare(b.name);
       });
 
+      // Use sum of leaf-level product counts (consistent with summary totals)
+      // instead of topCat.ProductCount which includes intermediate levels
+      const leafProductTotal = subcategories.reduce((sum, s) => sum + s.productCount, 0);
+      const coveredProductTotal = subcategories
+        .filter(s => s.covered)
+        .reduce((sum, s) => sum + s.productCount, 0);
+
       return {
         categoryId: topCat.CategoryId,
         name: topCat.Name,
-        productCount: topCat.ProductCount ?? 0,
+        productCount: leafProductTotal,
+        coveredProductCount: coveredProductTotal,
         subcategories,
         coveredCount: subcategories.filter(s => s.covered).length,
       };

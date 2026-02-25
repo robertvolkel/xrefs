@@ -752,3 +752,41 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `components/admin/logicConstants.ts`.
 
 **Files modified:** `components/admin/ParamMappingsPanel.tsx` (unified table + coverage + ruleMap lookup), `components/admin/LogicPanel.tsx` (import shared constants), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json` (i18n keys for weight, ruleType, unmappedRules, parameterText rename).
+
+---
+
+## 36. BJTs — Family B6 (NPN & PNP)
+
+**Decision:** Added Bipolar Junction Transistors as the sixth Block B discrete semiconductor family (B6), as a standalone base family (like B5 MOSFETs).
+
+**What changed:**
+
+1. **`blockOnMissing` mechanism** — new cross-cutting feature. Added `blockOnMissing?: boolean` to `MatchingRule` and `AttributeEffect` in `lib/types.ts`. When a threshold rule has `blockOnMissing: true` and the candidate is missing the attribute, the matching engine returns 'fail' instead of 'review' (50% credit). This enables BLOCKING behavior for BJT storage time (tst) at >100kHz switching, and also benefits B5's body_diode_trr. The flag is propagated by `contextModifier.ts` from context question effects to rules at evaluation time.
+
+2. **Logic table** (`lib/logicTables/bjtTransistors.ts`). 18 rules derived from `docs/bjt_logic_b6.docx`. Key design choices:
+   - **hFE as `application_review` (w8)** — NOT a simple threshold. hFE varies with Ic, temperature, and manufacturing lot (min/max ratios of 3:1 common). Must verify hFE(min) at the actual operating Ic against base drive overdrive ratio. The engineering reason documents this explicitly.
+   - **Storage time (tst) as `threshold lte` (w8)** — the unique BJT switching liability with no MOSFET equivalent. Context modifier escalates to `blockOnMissing` at >100kHz.
+   - **Polarity (NPN/PNP) as `identity` (w10)** — hard gate, no cross-polarity substitution.
+   - **Package/case as `identity` (w10)** — pin ordering varies by manufacturer even within named packages (TO-92: E-B-C vs C-B-E).
+   - **SOA as `application_review` (w7)** — includes Second Breakdown (S/B), a BJT-specific thermal runaway mode.
+   - **ft as `threshold gte` (w7)** — per the logic document. Context adjusts weight per operating mode.
+   - **Fundamental trade-off documented**: Vce(sat) × Storage Time ≈ constant. Deeper saturation → lower Vce(sat) → longer tst.
+
+3. **Context questions** (`lib/contextQuestions/bjtTransistors.ts`). 4 questions: Q1 Operating mode (saturated switching / linear-analog / class AB pair) — THE critical bifurcation that completely changes which parameters dominate; Q2 Switching frequency (conditional on Q1=saturated_switching — low/medium/high, with `blockOnMissing: true` on tst at >100kHz); Q3 Complementary pair (conditional on Q1=class_ab_pair or linear_analog — context flags only, dual-device engine deferred); Q4 Automotive (AEC-Q101). Context sensitivity: high.
+
+4. **Subcategory mappings** (`lib/logicTables/index.ts`). 11 entries: BJT, NPN Transistor, PNP Transistor, NPN BJT, PNP BJT, Bipolar Transistor, Bipolar Junction Transistor, Transistors - Bipolar (BJT) - Single, Transistors - Bipolar (BJT) - Array, Small Signal Transistor, General Purpose Transistor → all map to B6.
+
+5. **Digikey mapper** (`lib/services/digikeyMapper.ts`). BJT detection in `mapSubcategory()` after the MOSFET block: 'bjt' or 'bipolar transistor' keywords → 'BJT' (with NPN/PNP polarity variants). General 'transistor' fallback excludes MOSFET/IGBT/JFET.
+
+6. **Digikey param map** (`lib/services/digikeyParamMap.ts`). Placeholder `bjtParamMap` with 11 mapped fields: Transistor Type, Vceo, Ic, hFE, Vce(sat), ft, Pd, Operating Temp, Qualification, Mounting Type, Package/Case. Known gaps: vces_max, vbe_sat, tst, ton, toff, rth_jc, tj_max, soa — datasheet-only specs. Weight coverage: ~55%.
+
+**Key design choices:**
+
+- **Standalone base family, not a variant.** BJTs are fundamentally different devices from diodes (B1-B4) and MOSFETs (B5). Detection via subcategory mapping only, no classifier rule needed.
+- **`blockOnMissing` as a cross-cutting mechanism.** Rather than special-casing tst in the engine, the mechanism is generic — any threshold rule can be marked as BLOCKING when candidate data is missing. This is set dynamically by the context modifier based on user answers (e.g., switching frequency >100kHz).
+- **Complementary pair = context flags only.** Full dual-device evaluation (matching NPN + PNP halves together) deferred to a separate feature. Q3 adds review flags for hFE, Vbe(sat), and ft matching awareness.
+- **ft as Threshold >= (per docx), not application_review.** Context questions adjust ft weight per operating mode: not_applicable in DC saturated switching, escalate_to_mandatory in linear/analog.
+
+**Files created:** `lib/logicTables/bjtTransistors.ts`, `lib/contextQuestions/bjtTransistors.ts`.
+
+**Files modified:** `lib/types.ts` (blockOnMissing on MatchingRule + AttributeEffect), `lib/services/matchingEngine.ts` (blockOnMissing check in evaluateThreshold), `lib/services/contextModifier.ts` (propagate blockOnMissing), `lib/logicTables/index.ts` (registry + subcategory map + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (BJT mapSubcategory), `lib/services/digikeyParamMap.ts` (placeholder param map), `__tests__/services/matchingEngine.test.ts` (5 blockOnMissing tests), `__tests__/services/familyClassifier.test.ts` (2 B6 tests), `__tests__/services/digikeyMapper.test.ts` (6 BJT mapping tests), `__tests__/services/contextModifier.test.ts` (2 blockOnMissing propagation tests), `CLAUDE.md` (family count 25 + B6 row + param map status + test count 224).
