@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -28,8 +28,31 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { PartsListRow } from '@/lib/types';
+import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
+import { PartsListRow, XrefRecommendation } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
+
+// Column IDs that display suggestion/replacement data
+const SUGGESTION_COLUMN_IDS = new Set([
+  'sys:top_suggestion',
+  'sys:top_suggestion_mfr',
+  'sys:top_suggestion_price',
+  'sys:top_suggestion_stock',
+]);
+
+/**
+ * Extract up to 2 additional non-failing recommendations for sub-row display.
+ * Uses live allRecommendations when available, falls back to persisted topNonFailingRecs.
+ */
+function getSubSuggestions(row: PartsListRow): XrefRecommendation[] {
+  if (row.allRecommendations && row.allRecommendations.length >= 2) {
+    return row.allRecommendations
+      .filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
+      .slice(1, 3);
+  }
+  // Fallback: persisted top non-failing recs (already positions #2 and #3)
+  return row.topNonFailingRecs ?? [];
+}
 
 interface PartsListTableProps {
   rows: PartsListRow[];
@@ -196,6 +219,8 @@ function CellRenderer({
   onDeleteRow,
   onHideRow,
   currency = 'USD',
+  recommendation,
+  isSubRow,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -204,13 +229,19 @@ function CellRenderer({
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
   currency?: string;
+  recommendation?: XrefRecommendation;
+  isSubRow?: boolean;
 }) {
   const { t } = useTranslation();
 
+  // Sub-rows only render suggestion system columns
+  if (isSubRow && column.source !== 'system') return null;
+  if (isSubRow && !SUGGESTION_COLUMN_IDS.has(column.id)) return null;
+
   // System columns have custom rendering
   if (column.source === 'system') {
-    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
-    const topRec = row.suggestedReplacement;
+    const recCount = row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
+    const topRec = recommendation ?? row.suggestedReplacement;
 
     switch (column.id) {
       case 'sys:row_number':
@@ -239,12 +270,31 @@ function CellRenderer({
       case 'sys:top_suggestion':
         if (topRec) {
           return (
-            <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
-              {topRec.part.mpn}
-            </OverflowTooltip>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+              {isSubRow && (
+                <SubdirectoryArrowRightIcon
+                  sx={{ fontSize: 14, color: 'text.secondary', flexShrink: 0 }}
+                />
+              )}
+              <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
+                {topRec.part.mpn}
+              </OverflowTooltip>
+              <Typography
+                component="span"
+                sx={{
+                  fontSize: '0.68rem',
+                  color: topRec.matchPercentage >= 85 ? 'success.main' : 'warning.main',
+                  fontWeight: 600,
+                  flexShrink: 0,
+                  ml: 'auto',
+                }}
+              >
+                {Math.round(topRec.matchPercentage)}%
+              </Typography>
+            </Box>
           );
         }
-        return row.status === 'resolved' ? (
+        return row.status === 'resolved' && !isSubRow ? (
           <Typography variant="caption" color="text.secondary">
             {t('partsList.noMatch')}
           </Typography>
@@ -346,6 +396,7 @@ export default function PartsListTable({
   const hasSelection = selectedRows !== undefined && onToggleRow !== undefined;
   const allSelected = hasSelection && rows.length > 0 && rows.every(r => selectedRows!.has(r.rowIndex));
   const someSelected = hasSelection && rows.some(r => selectedRows!.has(r.rowIndex));
+  const hasSuggestionColumns = columns.some(col => SUGGESTION_COLUMN_IDS.has(col.id));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', px: 3 }}>
@@ -438,47 +489,100 @@ export default function PartsListTable({
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => (
-              <TableRow
-                key={row.rowIndex}
-                hover
-              >
-                {hasSelection && (
-                  <TableCell sx={{ px: 0.5, width: 40 }}>
-                    <Checkbox
-                      size="small"
-                      checked={selectedRows!.has(row.rowIndex)}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() => onToggleRow!(row.rowIndex)}
-                      sx={{ p: 0.25 }}
-                    />
-                  </TableCell>
-                )}
-                {columns.map(col => (
-                  <TableCell
-                    key={col.id}
-                    sx={{
-                      fontSize: ROW_FONT_SIZE,
-                      px: 1,
-                      textAlign: col.align ?? 'left',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
+            {rows.map((row) => {
+              const subSuggestions = hasSuggestionColumns ? getSubSuggestions(row) : [];
+              const hasSubRows = subSuggestions.length > 0;
+
+              return (
+                <Fragment key={row.rowIndex}>
+                  {/* Parent row */}
+                  <TableRow
+                    hover
+                    sx={hasSubRows ? { '& td': { borderBottom: 'none' } } : undefined}
                   >
-                    <CellRenderer
-                      column={col}
-                      row={row}
-                      onRowClick={onRowClick}
-                      onRefreshRow={onRefreshRow}
-                      onDeleteRow={onDeleteRow}
-                      onHideRow={onHideRow}
-                      currency={currency}
-                    />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
+                    {hasSelection && (
+                      <TableCell sx={{ px: 0.5, width: 40 }}>
+                        <Checkbox
+                          size="small"
+                          checked={selectedRows!.has(row.rowIndex)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onToggleRow!(row.rowIndex)}
+                          sx={{ p: 0.25 }}
+                        />
+                      </TableCell>
+                    )}
+                    {columns.map(col => (
+                      <TableCell
+                        key={col.id}
+                        sx={{
+                          fontSize: ROW_FONT_SIZE,
+                          px: 1,
+                          textAlign: col.align ?? 'left',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <CellRenderer
+                          column={col}
+                          row={row}
+                          onRowClick={onRowClick}
+                          onRefreshRow={onRefreshRow}
+                          onDeleteRow={onDeleteRow}
+                          onHideRow={onHideRow}
+                          currency={currency}
+                        />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+
+                  {/* Suggestion sub-rows */}
+                  {subSuggestions.map((rec, subIdx) => (
+                    <TableRow
+                      key={`${row.rowIndex}-sub-${subIdx}`}
+                      onClick={() => onRowClick(row.rowIndex)}
+                      sx={{
+                        cursor: 'pointer',
+                        bgcolor: 'action.hover',
+                        opacity: 0.88,
+                        '& td': {
+                          py: '4px',
+                          ...(subIdx < subSuggestions.length - 1
+                            ? { borderBottom: 'none' }
+                            : { borderBottom: '2px solid', borderColor: 'divider' }),
+                        },
+                      }}
+                    >
+                      {hasSelection && <TableCell sx={{ px: 0.5, width: 40 }} />}
+                      {columns.map(col => (
+                        <TableCell
+                          key={col.id}
+                          sx={{
+                            fontSize: ROW_FONT_SIZE,
+                            px: 1,
+                            textAlign: col.align ?? 'left',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {SUGGESTION_COLUMN_IDS.has(col.id) ? (
+                            <CellRenderer
+                              column={col}
+                              row={row}
+                              recommendation={rec}
+                              isSubRow
+                              onRowClick={onRowClick}
+                              currency={currency}
+                            />
+                          ) : null}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>

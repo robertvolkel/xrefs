@@ -181,7 +181,7 @@ async function fetchDigikeyCandidates(
 
   const response = await keywordSearch(
     keywords,
-    { limit: 50, categoryId: sourceAttrs.part.digikeyCategoryId },
+    { limit: 30, categoryId: sourceAttrs.part.digikeyCategoryId },
     currency,
   );
 

@@ -389,6 +389,10 @@ export interface PartsListRow {
   sourceAttributes?: PartAttributes;
   suggestedReplacement?: XrefRecommendation;
   allRecommendations?: XrefRecommendation[];
+  /** Top 2 non-failing recs after #1 — persisted for inline sub-row display */
+  topNonFailingRecs?: XrefRecommendation[];
+  /** Total recommendation count — persisted so hits column is accurate on load */
+  recommendationCount?: number;
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;

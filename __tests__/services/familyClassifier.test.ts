@@ -227,6 +227,18 @@ describe('familyClassifier', () => {
       expect(classifyFamily('12', a)).toBe('12');
     });
 
+    // --- MOSFETs (B5) — standalone family, no variant classifier ---
+
+    it('returns B5 unchanged (standalone family, not a variant)', () => {
+      const a = attrs([], { description: 'N-Channel MOSFET 60V 30A' });
+      expect(classifyFamily('B5', a)).toBe('B5');
+    });
+
+    it('does NOT classify MOSFET keywords under diode base family', () => {
+      const a = attrs([], { description: 'N-Channel MOSFET 60V' });
+      expect(classifyFamily('B1', a)).toBe('B1'); // MOSFET stays B1 base, not reclassified
+    });
+
     // --- Unknown / unsupported families ---
 
     it('returns base family ID for families with no classifier rules', () => {

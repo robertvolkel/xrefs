@@ -82,6 +82,14 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // MOSFETs (Family B5)
+  if (lower.includes('mosfet') || (lower.includes('fet') && !lower.includes('fett'))) {
+    if (lower.includes('p-channel') || lower.includes('p-ch')) return 'P-Channel MOSFET';
+    if (lower.includes('n-channel') || lower.includes('n-ch')) return 'N-Channel MOSFET';
+    if (lower.includes('sic') || lower.includes('silicon carbide')) return 'SiC MOSFET';
+    if (lower.includes('gan') || lower.includes('gallium nitride')) return 'GaN FET';
+    return 'MOSFET';
+  }
   return categoryName;
 }
 
@@ -261,6 +269,18 @@ function transformToSemiconductorMaterial(valueText: string): string {
 }
 
 /**
+ * Normalize MOSFET "Technology" field to internal technology names.
+ * Digikey uses: "MOSFET (Metal Oxide)" for Si, "SiCFET (Silicon Carbide)" for SiC,
+ * "GaNFET (Gallium Nitride)" for GaN.
+ */
+function transformToMosfetTechnology(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('sic') || lower.includes('silicon carbide')) return 'SiC';
+  if (lower.includes('gan') || lower.includes('gallium nitride')) return 'GaN';
+  return 'Si';
+}
+
+/**
  * Normalize TVS "Type" field to internal topology names.
  * Digikey uses "Zener" for traditional clamp TVS and "Steering (Rail to Rail)" for steering arrays.
  */
@@ -300,6 +320,8 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformToSchottkyTechnology(valueText);
     case 'semiconductor_material':
       return transformToSemiconductorMaterial(valueText);
+    case 'technology':
+      return transformToMosfetTechnology(valueText);
     case 'configuration':
       return transformToTvsTopology(valueText);
     default:

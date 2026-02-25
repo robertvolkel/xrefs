@@ -698,3 +698,33 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/tvsDiodes.ts`, `lib/contextQuestions/tvsDiodes.ts`.
 
 **Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/logicTables/familyClassifier.ts` (B4 classifier rule before B3), `lib/services/digikeyParamMap.ts` (tvsDiodeParamMap + categoryParamMaps + familyToDigikeyCategories), `lib/services/digikeyMapper.ts` (mapSubcategory + transformToTvsTopology + polarity enrichment), `lib/contextQuestions/index.ts` (import + register), `CLAUDE.md` (family count 23 + B4 row + docs count 17 + param map status 4 discrete).
+
+---
+
+## 34. MOSFETs — N-Channel & P-Channel — Family B5
+
+**Decision:** Added MOSFETs as the fifth Block B discrete semiconductor family (B5). This is a standalone base family — NOT a variant of B1 (Rectifier Diodes) because MOSFETs are fundamentally different components (voltage-controlled switches vs. PN junction rectifiers).
+
+**What changed:**
+
+1. **Logic table** (`lib/logicTables/mosfets.ts`). 27 rules derived from `docs/mosfet_logic_b5.docx`. The most complex family to date. Key differences from all diode families: Channel Type (N/P) as hard Identity gate — determines circuit topology; Technology (Si/SiC/GaN) as identity_flag — different semiconductor physics and gate drive requirements; Rds(on) as Threshold ≤ (weight 9) — THE critical DC performance spec, but only valid when compared at matching Vgs drive voltage; Gate charge parameters (Qg w8, Qgd w7, Qgs w6) all Threshold ≤ — determine switching speed and driver requirements; Coss as Application Review (w7) — cannot be reduced to simple ≤ comparison because it's a resonant tank component in ZVS/LLC topologies; Body diode trr as Threshold ≤ (w8) — BLOCKING in synchronous rectification at ≥50kHz (shoot-through risk); SOA as Application Review (w7) — mandatory graphical comparison for linear-mode applications; 5 Application Review rules (vs 0 for TVS). Total weight: ~199.
+
+2. **Context questions** (`lib/contextQuestions/mosfets.ts`). 5 questions, context sensitivity: high. Q1 Switching topology (hard-switching / soft-switching / linear mode / DC low-frequency) — THE critical question that completely changes which parameters dominate; Q2 Synchronous rectification (yes ≥50kHz / yes <50kHz / no) — triggers BLOCKING escalation for body diode trr; Q3 Parallel operation (yes / no) — Vgs(th) tempco concern for current sharing; Q4 Drive voltage (logic-level / standard / high-voltage SiC) — determines Rds(on) comparison validity; Q5 Automotive (AEC-Q101).
+
+3. **Family registry** (`lib/logicTables/index.ts`). B5 registered as standalone family with 9 subcategory mappings: MOSFET, Power MOSFET, N-Channel MOSFET, P-Channel MOSFET, SiC MOSFET, GaN FET, GaN MOSFET, FETs - MOSFETs - Single, FETs - MOSFETs - Arrays.
+
+4. **Digikey mapper** (`lib/services/digikeyMapper.ts`). Added MOSFET detection in `mapSubcategory()` — distinguishes N-Channel, P-Channel, SiC, and GaN from Digikey category names.
+
+5. **Digikey param map** (`lib/services/digikeyParamMap.ts`). Placeholder `mosfetParamMap` with 18 expected fields (FET Type, Technology, Vdss, Id, Vgs(th), Rds On, Vgs Max, Ciss, Coss, Crss, Qg, Qgd, Qgs, Pd, Operating Temp, Qualification, Mounting Type, Package). Field names are estimated — must be verified by running discovery script against representative MOSFETs.
+
+**Key design choices:**
+
+- **Standalone base family, not a variant of B1.** MOSFETs are voltage-controlled switches with completely different operating principles from diodes. They share AEC-Q101 and some thermal attributes but have entirely different electrical parameters. No delta derivation is appropriate.
+- **Rds(on) at matching Vgs.** The engineering reason explicitly states that Rds(on) comparisons across different Vgs test conditions are invalid. The drive_voltage context question flags when logic-level vs standard drive may cause invalid comparisons. This mirrors the Izt pattern in B3 (Zener) where the test current must match for Vz to be comparable.
+- **Body diode trr BLOCKING.** The synchronous_rectification context question with "yes_above_50khz" escalates body_diode_trr to mandatory (w10) with an explicit engineering sign-off note. This ensures worse trr = hard fail, and even better trr gets a review flag.
+- **Coss as application_review, not threshold.** Unlike Ciss and Crss which are straightforwardly "lower is better", Coss behavior depends entirely on the switching topology. In resonant/ZVS designs, Coss is a deliberate resonant tank component — different Coss changes the resonant frequency and ZVS window.
+- **No variant classifier needed.** B5 is detected via subcategory mapping and mapSubcategory(). N-ch vs P-ch differentiation is handled by the channel_type identity rule, not by separate sub-families.
+
+**Files created:** `lib/logicTables/mosfets.ts`, `lib/contextQuestions/mosfets.ts`.
+
+**Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapSubcategory MOSFET routing), `lib/services/digikeyParamMap.ts` (mosfetParamMap + categoryParamMaps + familyToDigikeyCategories), `CLAUDE.md` (family count 24 + B5 row + docs count 18 + param map status 5 discrete), `__tests__/services/familyClassifier.test.ts` (B5 tests), `__tests__/services/digikeyMapper.test.ts` (MOSFET subcategory tests).

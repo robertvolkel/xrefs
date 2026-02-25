@@ -12,18 +12,27 @@ import { classifyListTheme } from './themeClassifier';
 
 /** Strip heavy fields from rows for storage */
 function toStoredRows(rows: PartsListRow[]): StoredRow[] {
-  return rows.map(r => ({
-    rowIndex: r.rowIndex,
-    rawMpn: r.rawMpn,
-    rawManufacturer: r.rawManufacturer,
-    rawDescription: r.rawDescription,
-    rawCells: r.rawCells ?? [],
-    status: r.status,
-    resolvedPart: r.resolvedPart,
-    suggestedReplacement: r.suggestedReplacement,
-    enrichedData: r.enrichedData,
-    errorMessage: r.errorMessage,
-  }));
+  return rows.map(r => {
+    // Derive top non-failing sub-recs (positions #2 and #3) from live data
+    const nonFailing = r.allRecommendations
+      ?.filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
+      .slice(1, 3);
+
+    return {
+      rowIndex: r.rowIndex,
+      rawMpn: r.rawMpn,
+      rawManufacturer: r.rawManufacturer,
+      rawDescription: r.rawDescription,
+      rawCells: r.rawCells ?? [],
+      status: r.status,
+      resolvedPart: r.resolvedPart,
+      suggestedReplacement: r.suggestedReplacement,
+      topNonFailingRecs: nonFailing?.length ? nonFailing : r.topNonFailingRecs,
+      recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
+      enrichedData: r.enrichedData,
+      errorMessage: r.errorMessage,
+    };
+  });
 }
 
 /** Convert stored rows back to PartsListRow (without heavy fields) */
@@ -33,6 +42,8 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     rawCells: r.rawCells ?? [],
     sourceAttributes: undefined,
     allRecommendations: undefined,
+    topNonFailingRecs: r.topNonFailingRecs,
+    recommendationCount: r.recommendationCount,
   }));
 }
 

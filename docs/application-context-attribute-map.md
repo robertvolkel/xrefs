@@ -14,24 +14,25 @@ This document maps every component family to the application-context questions t
 | 2 | Common Mode Chokes | 69 | **Critical** | Signal-line vs. power-line are different components sharing a name |
 | 3 | Ferrite Beads | 70 | **High** | Power rail vs. signal line changes every priority; DC bias derating invisible without operating current |
 | 4 | Film Capacitors | 64 | **High** | AC vs. DC, continuous vs. pulse, safety-rated vs. general — each activates different dominant attributes |
-| 5 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
-| 6 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
-| 7 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
-| 8 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
-| 9 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
-| 10 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
-| 11 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
-| 12 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 13 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 14 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 15 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 16 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 17 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 18 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 19 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 20 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 21 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 22 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 5 | MOSFETs (N-ch + P-ch) | B5 | **High** | Switching vs. linear mode is a categorical bifurcation — wrong mode = completely wrong matching priorities. Switching frequency determines whether Rds(on) or gate charge dominates. Hard vs. soft switching changes Coss from "minimize" to "must match resonant design." |
+| 6 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
+| 7 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
+| 8 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
+| 9 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
+| 10 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
+| 11 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
+| 12 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
+| 13 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 14 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 15 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 16 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 17 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 18 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 19 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 20 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 21 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 22 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 23 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -246,7 +247,81 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 5. MLCC Capacitors (Family 12)
+### 5. MOSFETs — N-Channel and P-Channel (Family B5)
+
+**Context sensitivity: HIGH**
+
+MOSFETs are the most complex discrete semiconductor family. The single most important bifurcation is operating mode: a MOSFET in linear (partial-conduction) mode has completely different matching priorities than one in switching mode. Within switching mode, frequency and topology determine whether Rds(on) or gate charge parameters are dominant.
+
+#### Question 1: What is the operating mode?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Switching mode (PWM switch, synchronous rectifier, half-bridge, full-bridge)** | Gate charge parameters (Qg, Qgd, Qgs) become primary at higher frequencies. Rds(on) is the dominant conduction-loss spec. SOA curves are not a primary concern — the MOSFET is either fully on or fully off. Body diode behavior becomes critical in bridge/synchronous topologies. Proceed to Q2 for frequency context. |
+| **Linear mode (hot-swap controller, eFuse, soft-start, motor speed via variable resistance, USB current limiter)** | SOA curves become the PRIMARY specification — the MOSFET operates in partial conduction for extended periods. Rθjc becomes critical because sustained partial-conduction dissipates maximum power. Rds(on) and gate charge are secondary. BLOCKING: flag all linear-mode substitutions for mandatory engineering SOA curve review. The SOA curves of original and replacement must be compared graphically at the expected (Vds, Id, pulse width) operating point. |
+
+**Affected attributes:**
+- `SOA Curves` → escalates to mandatory review for linear mode; secondary for switching
+- `Rθjc` → escalates to primary for linear mode (sustained partial conduction = sustained high power)
+- `Qg / Qgd / Qgs` → primary for switching, secondary for linear
+- `Rds(on)` → primary for both modes but for different reasons (conduction loss in switching; power dissipation ceiling in linear)
+
+#### Question 2 (if switching): What is the switching frequency?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Line frequency / low frequency (<10kHz) — e.g., motor drives, load switches, battery management** | Rds(on) DOMINATES — conduction losses far exceed switching losses at low frequency. Gate charge (Qg, Qgd) is nearly irrelevant (the gate driver can take its time). Body diode characteristics matter mainly in bridge topologies. Focus matching on Rds(on) and thermal specs. |
+| **Mid frequency (10kHz–200kHz) — e.g., typical DC-DC converters, synchronous buck/boost** | Rds(on) and gate charge are BOTH significant. The Rds(on) × Qg figure of merit becomes the key selection criterion. Qgd is important for hard-switching topologies. Body diode trr matters in synchronous topologies above ~50kHz. |
+| **High frequency (200kHz–1MHz) — e.g., high-density converters, class D audio** | Gate charge (Qg, Qgd, Qgs) becomes DOMINANT — switching losses are proportional to fsw and scale much faster than conduction losses. Coss losses grow significantly. Rds(on) is still important but secondary to gate charge. Body diode trr is a hard concern in synchronous topologies. |
+| **Very high frequency (>1MHz) — e.g., GaN-based converters, resonant topologies** | Gate charge is CRITICAL. At this frequency range, SiC or GaN is almost always the correct technology — Si MOSFETs are generally too slow for efficient operation. Flag for engineering review if the original is a Si MOSFET at >1MHz. Coss and Crss become primary constraints. |
+
+**Affected attributes:**
+- `Rds(on)` → dominant spec at <10kHz, balanced at 10–200kHz, secondary at >200kHz
+- `Qg / Qgd / Qgs` → secondary at <10kHz, balanced at 10–200kHz, dominant at >200kHz
+- `Coss` → escalates at very high frequencies; critical in resonant topologies
+- `Body Diode trr` → critical concern above 50kHz in synchronous topologies
+- `Technology (Si/SiC/GaN)` → flag for engineering review if Si at >1MHz
+
+#### Question 3 (if switching): Hard switching or soft switching (resonant / ZVS / ZCS)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Hard switching (conventional PWM — buck, boost, flyback, forward)** | Qgd (Miller charge) is the primary switching loss driver — minimize. Coss contributes capacitive switching losses — lower is better (Threshold ≤). During turn-on, full Vds voltage and full Id current overlap — switching losses scale with Qgd × Vds × fsw. |
+| **Soft switching / resonant (ZVS full-bridge, LLC resonant, CRM, quasi-resonant)** | Coss must be verified against the resonant tank design — the circuit depends on Coss to resonate the drain voltage to zero (ZVS) before turn-on. A replacement with different Coss shifts the resonant frequency and ZVS window. Qgd is less critical because the drain voltage is already at zero when the gate turns on. Coss matching becomes an Application Review requirement. |
+| **Unknown** | Default to hard-switching rules. Flag Coss for engineering review. |
+
+**Affected attributes:**
+- `Qgd` → hard Threshold ≤ for hard switching; less critical for soft switching
+- `Coss` → escalates to Application Review for soft/resonant (must match resonant design); Threshold ≤ for hard switching
+- `Crss` → more critical in hard switching (drain-to-gate feedback during transitions)
+
+#### Question 4 (if switching): Does the topology include synchronous rectification or a half/full-bridge with body diode conduction during dead time?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — body diode conducts during dead time (synchronous buck/boost, half-bridge, full-bridge, totem-pole PFC)** | Body diode trr becomes CRITICAL at ≥50kHz. Excessive trr causes shoot-through when the opposing switch turns on while the body diode is still conducting — catastrophic at high frequency. BLOCKING at ≥50kHz: must verify body diode trr before approving substitution. Body diode Vf directly impacts dead-time conduction losses: Pdead = Id × Vf × tdead × fsw. |
+| **No — body diode does not conduct in normal operation (low-side switch only, simple load switch, OR-ing)** | Body diode specs are secondary. trr is not a primary concern. Body diode Vf matters only as a fault-condition characteristic. |
+
+**Affected attributes:**
+- `Body Diode trr` → escalates to BLOCKING specification for synchronous topologies at ≥50kHz
+- `Body Diode Vf` → escalates to Threshold ≤ for synchronous topologies (dead-time loss calculation)
+- `Qgs` → more critical in bridge topologies (dV/dt-induced turn-on risk from Crss coupling)
+
+#### Question 5: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Operating temp range must cover -40°C to +125°C (or +150°C for underhood). Gate oxide reliability and UIS (avalanche) testing must be part of manufacturer qualification. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag), mandatory for automotive
+- `Operating Temp Range` → must cover full automotive temperature range
+- `Avalanche Energy Eas` → AEC-Q101 specifies UIS test conditions; manufacturer must demonstrate compliance
+
+---
+
+### 6. MLCC Capacitors (Family 12)
 
 **Context sensitivity: HIGH**
 
@@ -297,7 +372,7 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 6. Tantalum Capacitors (Family 59)
+### 7. Tantalum Capacitors (Family 59)
 
 **Context sensitivity: HIGH**
 
@@ -337,7 +412,7 @@ This is the family where application context matters most. The same "thermistor"
 
 ---
 
-### 7. RF / Signal Inductors (Family 72)
+### 8. RF / Signal Inductors (Family 72)
 
 **Context sensitivity: HIGH**
 
@@ -383,7 +458,7 @@ This is a variant of Power Inductors (Family 71) but with inverted priorities. Q
 
 ---
 
-### 8. Current Sense Resistors (Family 54)
+### 9. Current Sense Resistors (Family 54)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -429,7 +504,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 9. Varistors / MOVs (Family 65)
+### 10. Varistors / MOVs (Family 65)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -477,7 +552,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 10. PTC Resettable Fuses (Family 66)
+### 11. PTC Resettable Fuses (Family 66)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -519,7 +594,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 11. Power Inductors (Family 71)
+### 12. Power Inductors (Family 71)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -561,7 +636,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 12. Aluminum Electrolytic Capacitors (Family 58)
+### 13. Aluminum Electrolytic Capacitors (Family 58)
 
 **Context sensitivity: MODERATE**
 
@@ -600,7 +675,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 13. Supercapacitors / EDLCs (Family 61)
+### 14. Supercapacitors / EDLCs (Family 61)
 
 **Context sensitivity: MODERATE**
 
@@ -633,7 +708,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 14. Chassis Mount / High Power Resistors (Family 55)
+### 15. Chassis Mount / High Power Resistors (Family 55)
 
 **Context sensitivity: MODERATE**
 
@@ -668,7 +743,7 @@ Same as Chip Resistors (Family 52) Q1 and Q2. If the project context already ans
 
 ---
 
-### 15. Aluminum Polymer Capacitors (Family 60)
+### 16. Aluminum Polymer Capacitors (Family 60)
 
 **Context sensitivity: LOW-MODERATE**
 
@@ -700,7 +775,7 @@ Inherits from Aluminum Electrolytic (Family 58) with modifications. Lifetime/end
 
 ---
 
-### 16. Chip Resistors (Family 52)
+### 17. Chip Resistors (Family 52)
 
 **Context sensitivity: LOW**
 
@@ -732,7 +807,7 @@ Chip resistors are the most straightforward parametric match. Only two context q
 
 ---
 
-### 17. Through-Hole Resistors (Family 53)
+### 18. Through-Hole Resistors (Family 53)
 
 **Context sensitivity: LOW**
 
@@ -747,7 +822,7 @@ No additional questions. The delta attributes (lead spacing, mounting style, bod
 
 ---
 
-### 18. Mica Capacitors (Family 13)
+### 19. Mica Capacitors (Family 13)
 
 **Context sensitivity: LOW**
 
@@ -769,7 +844,7 @@ Mica capacitors are chosen for precision — that decision was already made when
 
 ---
 
-### 19. Rectifier Diodes — Standard, Fast, and Ultrafast Recovery (Family B1)
+### 20. Rectifier Diodes — Standard, Fast, and Ultrafast Recovery (Family B1)
 
 **Context sensitivity: HIGH**
 
@@ -834,7 +909,7 @@ This is the first Block B (discrete semiconductor) family. Context sensitivity i
 
 ---
 
-### 20. Schottky Barrier Diodes (Family B2)
+### 21. Schottky Barrier Diodes (Family B2)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -901,7 +976,7 @@ Schottky diodes are chosen specifically for low Vf and zero reverse recovery tim
 
 ---
 
-### 21. Zener Diodes / Voltage Reference Diodes (Family B3)
+### 22. Zener Diodes / Voltage Reference Diodes (Family B3)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -962,7 +1037,7 @@ Zener diodes serve two fundamentally different purposes — voltage clamping/pro
 
 ---
 
-### 22. TVS Diodes — Transient Voltage Suppressors (Family B4)
+### 23. TVS Diodes — Transient Voltage Suppressors (Family B4)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -1036,6 +1111,7 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **CM Chokes** | 69 | Signal-line or power-line? | If signal: Which interface? | If power: Mains-connected? | — |
 | **Ferrite Beads** | 70 | Power rail or signal line? | Operating DC current? | If signal: Signal frequency? | — |
 | **Film Caps** | 64 | Application? (EMI / DC / snubber / motor-run / precision) | If EMI: Safety class? | If snubber: dV/dt requirement? | — |
+| **MOSFETs** | B5 | Operating mode? (switching / linear) | If switching: Frequency range? | If switching: Hard or soft switching? | Body diode conduction? Automotive? |
 | **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
 | **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
 | **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |

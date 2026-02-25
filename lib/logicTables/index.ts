@@ -21,6 +21,7 @@ import { rectifierDiodesLogicTable } from './rectifierDiodes';
 import { schottkyDiodesLogicTable } from './schottkyDiodes';
 import { zenerDiodesLogicTable } from './zenerDiodes';
 import { tvsDiodesLogicTable } from './tvsDiodes';
+import { mosfetsLogicTable } from './mosfets';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -49,6 +50,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B2': schottkyDiodesLogicTable,
   'B3': zenerDiodesLogicTable,
   'B4': tvsDiodesLogicTable,
+  'B5': mosfetsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -167,6 +169,16 @@ const subcategoryToFamily: Record<string, string> = {
   'ESD Protection Diode': 'B4',
   'ESD Suppressor': 'B4',
   'Surge Suppressor': 'B4',
+  // MOSFETs (Family B5)
+  'MOSFET': 'B5',
+  'Power MOSFET': 'B5',
+  'N-Channel MOSFET': 'B5',
+  'P-Channel MOSFET': 'B5',
+  'SiC MOSFET': 'B5',
+  'GaN FET': 'B5',
+  'GaN MOSFET': 'B5',
+  'FETs - MOSFETs - Single': 'B5',
+  'FETs - MOSFETs - Arrays': 'B5',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -194,6 +206,7 @@ const familyLastUpdated: Record<string, string> = {
   'B2': '2026-02-24',
   'B3': '2026-02-24',
   'B4': '2026-02-24',
+  'B5': '2026-02-24',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

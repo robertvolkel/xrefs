@@ -23,6 +23,7 @@ import { rectifierDiodesContext } from './rectifierDiodes';
 import { schottkyDiodesContext } from './schottkyDiodes';
 import { zenerDiodesContext } from './zenerDiodes';
 import { tvsDiodesContext } from './tvsDiodes';
+import { mosfetsContext } from './mosfets';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -49,6 +50,7 @@ const allConfigs: FamilyContextConfig[] = [
   schottkyDiodesContext,
   zenerDiodesContext,
   tvsDiodesContext,
+  mosfetsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

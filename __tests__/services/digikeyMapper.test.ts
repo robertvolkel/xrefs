@@ -92,6 +92,12 @@ describe('digikeyMapper', () => {
       ['PTC Thermistors', 'PTC Thermistor'],
       ['Diodes - Bridge Rectifiers', 'Diodes - Bridge Rectifiers'],
       ['Single Diodes - Rectifier', 'Rectifier Diode'],
+      // MOSFETs (Family B5)
+      ['FETs - MOSFETs - Single', 'MOSFET'],
+      ['FETs - MOSFETs - N-Channel', 'N-Channel MOSFET'],
+      ['FETs - MOSFETs - P-Channel', 'P-Channel MOSFET'],
+      ['FETs - SiC MOSFETs', 'SiC MOSFET'],
+      ['FETs - GaN FET (Gallium Nitride)', 'GaN FET'],
     ];
 
     it.each(cases)('"%s" → "%s"', (categoryName, expected) => {

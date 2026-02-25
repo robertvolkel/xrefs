@@ -1724,6 +1724,113 @@ const tvsDiodeParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * MOSFET parameter mapping (Family B5).
+ * Digikey category: "FETs - MOSFETs - Single" (covers N-ch, P-ch, Si, SiC, GaN)
+ *
+ * PLACEHOLDER: Field names are based on known Digikey patterns for discrete
+ * semiconductors. Run `scripts/discover-digikey-params.mjs` against representative
+ * MOSFETs (e.g., IRFZ44N, BSC0902NS, SCTW35N65G2V, EPC2045) to verify and
+ * refine field names before production use.
+ *
+ * Expected gaps: body_diode_vf, body_diode_trr, rth_jc, rth_ja, pin_configuration,
+ * height, soa, avalanche_energy — these are datasheet-level specs not typically
+ * in Digikey parametric data.
+ */
+/**
+ * MOSFET parameter mapping (Family B5).
+ * Verified against: IRFZ44NPBF (N-ch TH Si), BSC0902NSIATMA1 (N-ch SMD Si),
+ *   SCTW35N65G2VAG (N-ch SiC), CSD19536KTT (N-ch high-power Si),
+ *   IRF9540NPBF (P-ch Si), EPC2045 (GaN FET)
+ * Digikey category: "Single FETs, MOSFETs"
+ *
+ * All 6 test parts return exactly 18 parameters with identical field names.
+ * Confirmed GAPS (not in Digikey parametric data):
+ *   Qgd (w7), Qgs (w6), Coss (w7), Crss (w7), body_diode_vf (w6),
+ *   body_diode_trr (w8), rth_jc (w7), rth_ja (w5), avalanche_energy (w7),
+ *   id_pulse (w7), pin_configuration (w10), height (w5), soa (w7), packaging (w2)
+ * Weight coverage: 119 / 199 = ~60%
+ */
+const mosfetParamMap: Record<string, ParamMapEntry> = {
+  'FET Type': {
+    attributeId: 'channel_type',
+    attributeName: 'Channel Type (N-Channel / P-Channel)',
+    sortOrder: 1,
+  },
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology (Si / SiC / GaN)',
+    sortOrder: 2,
+  },
+  'Drain to Source Voltage (Vdss)': {
+    attributeId: 'vds_max',
+    attributeName: 'Drain-Source Voltage (Vds Max)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Current - Continuous Drain (Id) @ 25°C': {
+    attributeId: 'id_max',
+    attributeName: 'Continuous Drain Current (Id Max)',
+    unit: 'A',
+    sortOrder: 4,
+  },
+  'Vgs(th) (Max) @ Id': {
+    attributeId: 'vgs_th',
+    attributeName: 'Gate Threshold Voltage (Vgs(th))',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Rds On (Max) @ Id, Vgs': {
+    attributeId: 'rds_on',
+    attributeName: 'On-State Resistance (Rds(on))',
+    sortOrder: 6,
+  },
+  'Vgs (Max)': {
+    attributeId: 'vgs_max',
+    attributeName: 'Gate-Source Voltage (Vgs Max)',
+    unit: 'V',
+    sortOrder: 7,
+  },
+  'Input Capacitance (Ciss) (Max) @ Vds': {
+    attributeId: 'ciss',
+    attributeName: 'Input Capacitance (Ciss)',
+    sortOrder: 8,
+  },
+  // NOTE: Coss, Crss, Qgd, Qgs are NOT in Digikey parametric data (confirmed Feb 2026).
+  // These critical switching parameters must come from datasheets.
+  'Gate Charge (Qg) (Max) @ Vgs': {
+    attributeId: 'qg',
+    attributeName: 'Total Gate Charge (Qg)',
+    sortOrder: 9,
+  },
+  'Power Dissipation (Max)': {
+    attributeId: 'pd',
+    attributeName: 'Power Dissipation (Pd Max)',
+    unit: 'W',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 11,
+  },
+  'Qualification': {
+    attributeId: 'aec_q101',
+    attributeName: 'AEC-Q101 Qualification',
+    sortOrder: 12,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 13,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 14,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -1732,6 +1839,7 @@ const tvsDiodeParamMap: Record<string, ParamMapEntry> = {
  * digikeyMapper.resolveParamMapCategory() from the "Technology" parameter.
  * "Single Zener Diodes" and "Zener Diode Arrays" are direct Digikey categories.
  * "TVS Diodes" is a single Digikey category covering all TVS types.
+ * "FETs, MOSFETs" covers all MOSFET types (N-ch, P-ch, Si, SiC, GaN).
  */
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
@@ -1757,6 +1865,8 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['Bridge Rectifiers', bridgeRectifierParamMap],
   ['Single Diodes', singleDiodeParamMap],
   ['TVS Diodes', tvsDiodeParamMap],
+  // Block B: MOSFETs
+  ['FETs, MOSFETs', mosfetParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -1847,6 +1957,7 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B2': ['Schottky Diodes', 'Schottky Diode Arrays'],
   'B3': ['Single Zener Diodes', 'Zener Diode Arrays'],
   'B4': ['TVS Diodes'],
+  'B5': ['FETs, MOSFETs'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -1876,6 +1987,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   '53': ['Through Hole Resistors'],
   '55': ['Chassis Mount Resistors'],
   'B2': ['Single Diodes', 'Diode Arrays'],
+  // B5: param map uses 'FETs, MOSFETs' (plural), but arrays leaf uses singular 'FET, MOSFET Arrays'
+  'B5': ['Single FETs, MOSFETs', 'FET, MOSFET Arrays'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */
