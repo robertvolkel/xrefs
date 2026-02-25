@@ -728,3 +728,27 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/mosfets.ts`, `lib/contextQuestions/mosfets.ts`.
 
 **Files modified:** `lib/logicTables/index.ts` (registry + subcategory map + last-updated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapSubcategory MOSFET routing), `lib/services/digikeyParamMap.ts` (mosfetParamMap + categoryParamMaps + familyToDigikeyCategories), `CLAUDE.md` (family count 24 + B5 row + docs count 18 + param map status 5 discrete), `__tests__/services/familyClassifier.test.ts` (B5 tests), `__tests__/services/digikeyMapper.test.ts` (MOSFET subcategory tests).
+
+---
+
+## 35. Admin Data & Logic — Parameter Mappings Panel Redesign
+
+**Decision:** Redesigned the Parameter Mappings admin panel (`/admin?section=param-mappings`) to show a single unified table of all attributes in a family's logic table schema, with Digikey-mapped parameters at the top and unmapped (datasheet-only) rules below, separated by a thicker horizontal divider.
+
+**What changed:**
+
+1. **Unified table.** Previously two separate tables (mapped parameters, then unmapped rules). Now one continuous table with consecutive row numbers. Mapped rows show the Digikey ParameterText; unmapped rows show an em-dash and are rendered at 60% opacity.
+
+2. **Coverage percentage.** Added `computeFamilyParamCoverage()` output at the top — e.g., "Digikey parameter coverage: **72%** (80 / 111 weight)". Color-coded: green ≥70%, amber 40–69%, red <40%.
+
+3. **Weight and Rule Type on mapped rows.** Both tables now share the same 6 columns: #, Digikey Parameter, Attribute ID, Attribute Name, Rule Type (color-coded chip), Weight. Weight/logicType looked up from `table.rules` via `ruleMap` (Map keyed by attributeId). Dropped Unit and Sort Order columns (internal plumbing).
+
+4. **Shared constants.** Extracted `typeColors` and `typeLabels` into `components/admin/logicConstants.ts`, shared by both `LogicPanel.tsx` and `ParamMappingsPanel.tsx`.
+
+5. **Vertical divider.** A `borderLeft` on the Attribute ID column creates a visual boundary between Digikey fields and internal fields.
+
+**Rationale:** The previous layout made it hard to do weight accounting — you couldn't see at a glance which high-weight rules lacked Digikey data. The unified table makes coverage gaps immediately visible, sorted by weight descending in the unmapped section.
+
+**Files created:** `components/admin/logicConstants.ts`.
+
+**Files modified:** `components/admin/ParamMappingsPanel.tsx` (unified table + coverage + ruleMap lookup), `components/admin/LogicPanel.tsx` (import shared constants), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json` (i18n keys for weight, ruleType, unmappedRules, parameterText rename).

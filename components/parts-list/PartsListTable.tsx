@@ -28,7 +28,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
+import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import { PartsListRow, XrefRecommendation } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
@@ -269,13 +269,11 @@ function CellRenderer({
 
       case 'sys:top_suggestion':
         if (topRec) {
+          const hasFails = topRec.matchDetails.some(d => d.ruleResult === 'fail');
+          const dotColor = hasFails ? '#FF5252' : topRec.matchPercentage >= 85 ? '#69F0AE' : '#FFD54F';
           return (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-              {isSubRow && (
-                <SubdirectoryArrowRightIcon
-                  sx={{ fontSize: 14, color: 'text.secondary', flexShrink: 0 }}
-                />
-              )}
+              <FiberManualRecordIcon sx={{ fontSize: 8, color: dotColor, flexShrink: 0 }} />
               <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
                 {topRec.part.mpn}
               </OverflowTooltip>
@@ -543,8 +541,6 @@ export default function PartsListTable({
                       onClick={() => onRowClick(row.rowIndex)}
                       sx={{
                         cursor: 'pointer',
-                        bgcolor: 'action.hover',
-                        opacity: 0.88,
                         '& td': {
                           py: '4px',
                           ...(subIdx < subSuggestions.length - 1

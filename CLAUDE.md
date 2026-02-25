@@ -63,6 +63,9 @@ components/                   # React components
     QcRecommendationSummary.tsx # Recommendation summary card (used in logs detail)
     QcAnalysisDrawer.tsx      # AI analysis right-side drawer with streaming markdown
     qcConstants.ts            # Shared dot colors + utility functions for QC components
+    LogicPanel.tsx            # Logic table rules viewer (per-family)
+    ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
+    logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
 
 hooks/
   useAppState.ts              # Main state machine (LLM mode with deterministic fallback)
@@ -230,7 +233,7 @@ Parameter mapping is complete for **all 19 passive + 5 discrete families**: MLCC
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (202 tests, ~0.3s)
+npm test        # Jest unit tests (209 tests, ~0.3s)
 npm run test:watch  # Jest in watch mode
 ```
 

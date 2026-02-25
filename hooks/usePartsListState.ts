@@ -436,9 +436,22 @@ export function usePartsListState() {
         newRows[idx] = {
           ...newRows[idx],
           ...(attrs ? { sourceAttributes: attrs } : {}),
-          ...(recs ? { allRecommendations: recs } : {}),
+          ...(recs ? {
+            allRecommendations: recs,
+            suggestedReplacement: recs[0] ?? newRows[idx].suggestedReplacement,
+            recommendationCount: recs.length,
+          } : {}),
         };
       }
+
+      // Persist updated row data so inline recs survive page reload
+      const listId = activeListIdRef.current;
+      if (listId) {
+        updatePartsListSupabase(listId, newRows).catch((err) => {
+          console.error('[PartsListState] Save after modal fetch failed:', err);
+        });
+      }
+
       return { ...prev, rows: newRows };
     });
   }, [state.rows]);

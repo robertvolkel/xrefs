@@ -9,7 +9,7 @@
 
 import { PartsListRow, BatchValidateItem } from './types';
 import { validatePartsList } from './api';
-import { updatePartsListSupabase, getSavedListsSupabase } from './supabasePartsListStorage';
+import { updatePartsListSupabase } from './supabasePartsListStorage';
 
 export type ValidationSubscriber = (
   rows: PartsListRow[],
@@ -128,7 +128,9 @@ export async function startBackgroundValidation(
           // Save to Supabase every 5 items
           if (processed - lastSaveAt >= 5) {
             lastSaveAt = processed;
-            updatePartsListSupabase(listId, active.rows).catch(() => {});
+            updatePartsListSupabase(listId, active.rows).catch((err) => {
+              console.error('[ValidationManager] Periodic save failed:', err);
+            });
           }
         } catch {
           // Skip malformed NDJSON lines
@@ -140,14 +142,20 @@ export async function startBackgroundValidation(
     active.done = true;
     active.progress = 1;
     notify();
-    await updatePartsListSupabase(listId, active.rows).catch(() => {});
+    try {
+      await updatePartsListSupabase(listId, active.rows);
+    } catch (err) {
+      console.error('[ValidationManager] Final save failed:', err);
+    }
   } catch (error) {
     if (active && active.listId === listId) {
       active.done = true;
       active.error = error instanceof Error ? error.message : 'Validation failed';
       notify();
       // Save partial results
-      updatePartsListSupabase(listId, active.rows).catch(() => {});
+      updatePartsListSupabase(listId, active.rows).catch((err) => {
+        console.error('[ValidationManager] Partial save failed:', err);
+      });
     }
   }
 }
