@@ -790,3 +790,59 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/bjtTransistors.ts`, `lib/contextQuestions/bjtTransistors.ts`.
 
 **Files modified:** `lib/types.ts` (blockOnMissing on MatchingRule + AttributeEffect), `lib/services/matchingEngine.ts` (blockOnMissing check in evaluateThreshold), `lib/services/contextModifier.ts` (propagate blockOnMissing), `lib/logicTables/index.ts` (registry + subcategory map + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (BJT mapSubcategory), `lib/services/digikeyParamMap.ts` (placeholder param map), `__tests__/services/matchingEngine.test.ts` (5 blockOnMissing tests), `__tests__/services/familyClassifier.test.ts` (2 B6 tests), `__tests__/services/digikeyMapper.test.ts` (6 BJT mapping tests), `__tests__/services/contextModifier.test.ts` (2 blockOnMissing propagation tests), `CLAUDE.md` (family count 25 + B6 row + param map status + test count 224).
+
+---
+
+## 37. IGBTs — Insulated Gate Bipolar Transistors — Family B7
+
+**Decision:** Added IGBTs as the seventh Block B discrete semiconductor family (B7), as a standalone base family (like B5 MOSFETs and B6 BJTs). IGBTs bridge MOSFETs and BJTs: voltage-driven gate (like MOSFET) but bipolar conduction (like BJT). They dominate high-voltage, high-current applications (motor drives, traction inverters, welders, UPS) at 600V-6500V.
+
+**What changed:**
+
+1. **Logic table** (`lib/logicTables/igbts.ts`). 25 rules derived from `docs/igbt_logic_b7.docx`. Key design choices:
+   - **Vce(sat) as `threshold lte` (w9)** — THE primary on-state spec. Conduction loss is Ic × Vce(sat) (linear), NOT Rds(on) × Id² (quadratic) as in MOSFETs. Every 0.1V reduction saves watts directly.
+   - **Eoff as `threshold lte` (w9)** — THE dominant switching loss. Includes IGBT-specific tail current energy. Psw = Eoff × fsw must fit thermal budget.
+   - **Co-packaged diode as `identity_flag` (w10)** — hard gate. IGBTs have NO usable intrinsic body diode (unlike MOSFETs). A bare IGBT cannot replace an IGBT+diode in bridge topologies.
+   - **tsc as `threshold gte` (w9)** — BLOCKING for motor drive/traction via context modifier `blockOnMissing`. The gate driver needs tsc microseconds to detect faults and turn off.
+   - **IGBT technology as `identity_upgrade` (w9)** — hierarchy: FS > NPT > PT. FS (Field Stop) partially breaks the Vce(sat) vs Eoff trade-off. Context modifier escalates to hard identity for parallel operation (mixing technologies with different Vce(sat) tempco signs causes thermal runaway).
+   - **Fundamental trade-off documented**: Vce(sat) vs Eoff ≈ constant within a technology.
+
+2. **Context questions** (`lib/contextQuestions/igbts.ts`). 5 questions: Q1 Switching frequency (THE critical question — low ≤20kHz conduction-dominated vs high 50-100kHz switching-dominated; >100kHz flags SiC MOSFET as likely better technology); Q2 Switching topology (hard vs soft — soft eliminates Eon via ZVS); Q3 Parallel operation (escalates technology to mandatory identity, prevents mixing PT/FS/NPT); Q4 Short-circuit protection (escalates tsc to mandatory with `blockOnMissing: true`); Q5 Automotive/traction (AEC-Q101 + tsc + Tj_max 175°C). Context sensitivity: high.
+
+3. **Digikey parameter map** (`lib/services/digikeyParamMap.ts`). Verified against 6 real IGBTs from 4 manufacturers (Infineon, onsemi, ST, Rohm). Digikey category: "Single IGBTs" — 15-16 params per product with consistent field names. **Two compound fields** requiring transformers: "Switching Energy" → eon + eoff (e.g., "600µJ (on), 580µJ (off)"), "Td (on/off) @ 25°C" → td_on + td_off (e.g., "60ns/160ns"). Co-packaged diode inferred from "Reverse Recovery Time (trr)" presence. Notable gap: **no Qualification/AEC-Q101 field** (unlike MOSFETs/BJTs).
+
+4. **Value transformers** (`lib/services/digikeyMapper.ts`). 5 new transformers: `transformToIgbtTechnology()` (normalizes "Trench Field Stop" → "FS", "NPT and Trench" → "NPT"), `transformToEon()`/`transformToEoff()` (extract from compound Switching Energy), `transformToTdOn()`/`transformToTdOff()` (extract from compound Td field). Plus co-packaged diode enrichment from trr presence.
+
+5. **Candidate search improvement** (`lib/services/partDataService.ts`). Extended `buildCandidateSearchQuery()` with discrete semiconductor voltage keyword extraction (`vds_max`, `vces_max`, `vrrm`, `vceo_max` → "600V"). Benefits all discrete families B1-B7, not just IGBTs.
+
+**Key design choices:**
+
+- **Standalone base family, not a variant.** IGBTs are fundamentally different from both MOSFETs (bipolar conduction, tail current) and BJTs (voltage-driven gate, no base current). Detection via subcategory mapping only.
+- **Compound field transformers for Digikey data.** Unlike MOSFETs and BJTs where each Digikey parameter maps to one internal attribute, IGBTs have compound fields ("Switching Energy", "Td") that pack two values into one string. The multi-map array pattern (same as Film Capacitors' "Ratings") handles this cleanly.
+- **Co-packaged diode inferred from trr.** Digikey has no explicit "co-packaged diode" parameter. Instead, IGBTs with a co-packaged diode list "Reverse Recovery Time (trr)" while bare IGBTs don't. This is enriched in `mapDigikeyProductToAttributes()`.
+
+**Files created:** `lib/logicTables/igbts.ts`, `lib/contextQuestions/igbts.ts`.
+
+**Files modified:** `lib/logicTables/index.ts` (registry + 6 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + 5 transformers + placeholders + co-packaged diode enrichment), `lib/services/digikeyParamMap.ts` (igbtParamMap with 14 fields incl. 2 compound + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (voltage keyword for discrete candidate search), `__tests__/services/familyClassifier.test.ts` (2 B7 tests), `__tests__/services/digikeyMapper.test.ts` (5 IGBT mapping tests), `CLAUDE.md`, `docs/BACKLOG.md`.
+
+---
+
+## 38. QC Promoted to Top-Level Page
+
+**Decision:** Extracted the QC section from the Admin panel (`/admin?section=qc`) into its own top-level route (`/qc`) with a dedicated sidebar icon. Feedback and Logs, previously MUI Tabs within `QcPanel`, become section-nav items in a left sidebar (matching the SettingsShell/OrgShell pattern).
+
+**Rationale:** QC/Feedback is a high-frequency admin workflow that deserves its own navigation entry rather than being buried two levels deep inside the Admin panel. The Organization extraction (Decision #24) set the precedent for promoting admin sub-sections to top-level pages.
+
+**What changed:**
+
+1. **New components**: `components/qc/QcShell.tsx` (Suspense-wrapped shell with header + section nav + content), `components/qc/QcSectionNav.tsx` (Feedback/Logs section list). Follows the SettingsShell/SettingsSectionNav pattern exactly.
+2. **New route**: `app/qc/page.tsx` — AppSidebar + ChatHistoryDrawer + QcShell. Default section: `feedback` (feedback-first). URL: `/qc?section=feedback|logs`.
+3. **Sidebar icon**: `RateReviewOutlinedIcon` added to `AppSidebar.tsx`, admin-only, positioned above the wrench icon.
+4. **Settings toggle**: Moved from the old QcPanel tab header into QcShell's page header (right-aligned). Visible from both sections.
+5. **Admin cleanup**: Removed `'qc'` from `AdminSection` type, removed QC from `AdminSectionNav` sections array, removed QcPanel import/rendering from `AdminShell`, deleted `QcPanel.tsx`.
+
+**Files created:** `components/qc/QcShell.tsx`, `components/qc/QcSectionNav.tsx`, `app/qc/page.tsx`.
+
+**Files modified:** `components/AppSidebar.tsx` (QC icon), `components/admin/AdminSectionNav.tsx` (removed QC), `components/admin/AdminShell.tsx` (removed QcPanel).
+
+**Files deleted:** `components/admin/QcPanel.tsx`.

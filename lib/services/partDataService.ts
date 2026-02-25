@@ -217,6 +217,16 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   if (cap) parts.push(cap.value);
   else if (res) parts.push(res.value);
 
+  // Discrete semiconductors: use voltage class as keyword for category-filtered search.
+  // IGBTs, MOSFETs, BJTs, and diodes don't have capacitance/resistance, so without
+  // this, the keyword string is empty and the search returns no candidates.
+  const voltage = paramMap.get('vds_max') ?? paramMap.get('vces_max') ??
+                  paramMap.get('vrrm') ?? paramMap.get('vceo_max');
+  if (voltage) {
+    const vMatch = voltage.value.match(/(\d+)\s*V/i);
+    if (vMatch) parts.push(`${vMatch[1]}V`);
+  }
+
   // Package
   const pkg = paramMap.get('package_case');
   if (pkg) {

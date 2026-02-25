@@ -48,7 +48,7 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('resistor')) return 'Resistors';
   if (lower.includes('inductor')) return 'Inductors';
   if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
-  if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt')) return 'Transistors';
+  if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
   if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
   // Default: ICs covers a huge range
@@ -82,6 +82,8 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // IGBTs (Family B7) — must be before MOSFET check
+  if (lower.includes('igbt')) return 'IGBT';
   // MOSFETs (Family B5)
   if (lower.includes('mosfet') || (lower.includes('fet') && !lower.includes('fett'))) {
     if (lower.includes('p-channel') || lower.includes('p-ch')) return 'P-Channel MOSFET';
@@ -303,6 +305,64 @@ function transformToTvsTopology(valueText: string): string {
   return valueText;
 }
 
+/**
+ * Normalize IGBT "IGBT Type" field to internal technology abbreviations.
+ * Digikey uses: "Trench Field Stop" → FS, "NPT and Trench" → NPT,
+ * "PT" or "Punch-Through" → PT, "-" → empty string.
+ */
+function transformToIgbtTechnology(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower === '-' || lower === '') return '';
+  if (lower.includes('field stop') || lower === 'fs') return 'FS';
+  if (lower.includes('npt') || lower.includes('non-punch') || lower.includes('non punch')) return 'NPT';
+  if (lower.includes('pt') || lower.includes('punch-through') || lower.includes('punch through')) return 'PT';
+  // "Trench" alone (without Field Stop) is typically a FS variant
+  if (lower === 'trench') return 'FS';
+  return valueText;
+}
+
+/**
+ * Extract Eon (turn-on energy) from Digikey compound "Switching Energy" field.
+ * Pattern: "600µJ (on), 580µJ (off)" → "600µJ"
+ *          "4.1mJ (on), 960µJ (off)" → "4.1mJ"
+ *          "1.4mJ (off)" → "" (no Eon present)
+ */
+function transformToEon(valueText: string): string {
+  const match = valueText.match(/([\d.]+\s*[µumk]?J)\s*\(on\)/i);
+  return match ? match[1].trim() : '';
+}
+
+/**
+ * Extract Eoff (turn-off energy) from Digikey compound "Switching Energy" field.
+ * Pattern: "600µJ (on), 580µJ (off)" → "580µJ"
+ *          "1.4mJ (off)" → "1.4mJ"
+ */
+function transformToEoff(valueText: string): string {
+  const match = valueText.match(/([\d.]+\s*[µumk]?J)\s*\(off\)/i);
+  return match ? match[1].trim() : '';
+}
+
+/**
+ * Extract td(on) from Digikey compound "Td (on/off) @ 25°C" field.
+ * Pattern: "60ns/160ns" → "60ns"
+ *          "19.5ns/103ns" → "19.5ns"
+ *          "-/360ns" → "" (no td_on present)
+ */
+function transformToTdOn(valueText: string): string {
+  const match = valueText.match(/^([\d.]+\s*[nµum]?s)\s*\//i);
+  return match ? match[1].trim() : '';
+}
+
+/**
+ * Extract td(off) from Digikey compound "Td (on/off) @ 25°C" field.
+ * Pattern: "60ns/160ns" → "160ns"
+ *          "-/360ns" → "360ns"
+ */
+function transformToTdOff(valueText: string): string {
+  const match = valueText.match(/\/\s*([\d.]+\s*[nµum]?s)/i);
+  return match ? match[1].trim() : '';
+}
+
 /** Apply value transformations based on attributeId */
 function transformValue(attributeId: string, valueText: string): string {
   switch (attributeId) {
@@ -336,6 +396,16 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformToMosfetTechnology(valueText);
     case 'configuration':
       return transformToTvsTopology(valueText);
+    case 'igbt_technology':
+      return transformToIgbtTechnology(valueText);
+    case 'eon':
+      return transformToEon(valueText);
+    case 'eoff':
+      return transformToEoff(valueText);
+    case 'td_on':
+      return transformToTdOn(valueText);
+    case 'td_off':
+      return transformToTdOff(valueText);
     default:
       return valueText;
   }
@@ -426,6 +496,9 @@ const categoryPlaceholders: Record<string, ParametricAttribute[]> = {
   ],
   'Bridge Rectifiers': [
     { parameterId: 'recovery_behavior', parameterName: 'Recovery Behavior (Soft vs. Snappy)', value: 'Consult datasheet', sortOrder: 10 },
+  ],
+  'IGBTs': [
+    { parameterId: 'tsc', parameterName: 'Short-Circuit Withstand Time (tsc)', value: 'Consult datasheet', sortOrder: 20 },
   ],
 };
 
@@ -553,6 +626,22 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
       });
       addedIds.add('polarity');
     }
+  }
+
+  // IGBT co-packaged diode enrichment — infer from Reverse Recovery Time (trr) presence.
+  // IGBTs do NOT have a usable intrinsic body diode. If Digikey lists trr with a
+  // non-dash value, the part has a co-packaged antiparallel diode.
+  if (product.Parameters && !addedIds.has('co_packaged_diode') &&
+      categoryName.toLowerCase().includes('igbt')) {
+    const trrParam = product.Parameters.find(p => p.ParameterText === 'Reverse Recovery Time (trr)');
+    const hasDiode = trrParam && trrParam.ValueText && trrParam.ValueText !== '-';
+    parameters.push({
+      parameterId: 'co_packaged_diode',
+      parameterName: 'Co-Packaged Antiparallel Diode',
+      value: hasDiode ? 'Yes' : 'No',
+      sortOrder: 3,
+    });
+    addedIds.add('co_packaged_diode');
   }
 
   // Sort by sortOrder

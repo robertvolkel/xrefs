@@ -1908,6 +1908,124 @@ const bjtParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * IGBTs — Insulated Gate Bipolar Transistors (Family B7)
+ * Verified against Digikey API (Feb 2026): IRG4BC30KDPBF, FGA25N120ANTDTU,
+ *   STGF10H60DF, NGTB40N120FL2WG, RGT60TS65DGC11, STGB10H60DF.
+ * Digikey category: "Single IGBTs" (15-16 params per product).
+ *
+ * All 6 test parts return consistent field names across Infineon, onsemi, ST, Rohm.
+ *
+ * COMPOUND FIELDS requiring transformers:
+ *   - "Switching Energy" → eon + eoff (e.g., "600µJ (on), 580µJ (off)")
+ *   - "Td (on/off) @ 25°C" → td_on + td_off (e.g., "60ns/160ns")
+ *
+ * ENRICHED from context:
+ *   - co_packaged_diode: inferred from "Reverse Recovery Time (trr)" presence
+ *     (IGBTs with co-packaged diode have trr; bare IGBTs don't)
+ *
+ * Additional available fields NOT mapped (no logic table rule):
+ *   - "Input Type" (always "Standard") — not useful
+ *   - "Test Condition" (e.g., "480V, 16A, 23Ohm, 15V") — informational
+ *   - "Supplier Device Package" — fallback for package_case
+ *
+ * Confirmed GAPS (datasheet-only, not in Digikey parametric data):
+ *   - Qualification / AEC-Q101 — completely absent (unlike MOSFETs/BJTs!)
+ *   - tsc (short-circuit withstand time) — via placeholder
+ *   - rth_jc, tj_max, vge_max, vge_th, tf, soa, height, packaging, channel_type (N/P)
+ *   Note: "IGBT Type" provides technology (PT/NPT/FS), not channel type.
+ *
+ * Weight coverage: estimated ~55% (similar to B6 pattern).
+ */
+const igbtParamMap: Record<string, ParamMapEntry> = {
+  'IGBT Type': {
+    attributeId: 'igbt_technology',
+    attributeName: 'IGBT Technology (PT / NPT / FS)',
+    sortOrder: 1,
+  },
+  'Voltage - Collector Emitter Breakdown (Max)': {
+    attributeId: 'vces_max',
+    attributeName: 'Collector-Emitter Voltage (Vces Max)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Current - Collector (Ic) (Max)': {
+    attributeId: 'ic_max',
+    attributeName: 'Continuous Collector Current (Ic Max)',
+    unit: 'A',
+    sortOrder: 3,
+  },
+  'Current - Collector Pulsed (Icm)': {
+    attributeId: 'ic_pulse',
+    attributeName: 'Peak Pulsed Collector Current (Ic Pulse)',
+    unit: 'A',
+    sortOrder: 4,
+  },
+  'Vce(on) (Max) @ Vge, Ic': {
+    attributeId: 'vce_sat',
+    attributeName: 'Vce(sat) (Collector-Emitter Saturation Voltage)',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Power - Max': {
+    attributeId: 'pd',
+    attributeName: 'Power Dissipation (Pd Max)',
+    unit: 'W',
+    sortOrder: 6,
+  },
+  // COMPOUND: "600µJ (on), 580µJ (off)" → split into eon + eoff via transformers
+  'Switching Energy': [
+    {
+      attributeId: 'eon',
+      attributeName: 'Turn-On Energy Loss (Eon)',
+      sortOrder: 7,
+    },
+    {
+      attributeId: 'eoff',
+      attributeName: 'Turn-Off Energy Loss (Eoff)',
+      sortOrder: 8,
+    },
+  ],
+  'Gate Charge': {
+    attributeId: 'qg',
+    attributeName: 'Total Gate Charge (Qg)',
+    sortOrder: 9,
+  },
+  // COMPOUND: "60ns/160ns" → split into td_on + td_off via transformers
+  'Td (on/off) @ 25°C': [
+    {
+      attributeId: 'td_on',
+      attributeName: 'Turn-On Delay Time (td(on))',
+      sortOrder: 10,
+    },
+    {
+      attributeId: 'td_off',
+      attributeName: 'Turn-Off Delay Time (td(off))',
+      sortOrder: 11,
+    },
+  ],
+  'Reverse Recovery Time (trr)': {
+    attributeId: 'diode_trr',
+    attributeName: 'Co-Packaged Diode Reverse Recovery Time (trr)',
+    sortOrder: 12,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 13,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 14,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 15,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -1947,6 +2065,8 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['FETs, MOSFETs', mosfetParamMap],
   // Block B: BJTs — Digikey category is "Single Bipolar Transistors"
   ['Bipolar Transistors', bjtParamMap],
+  // Block B: IGBTs — Digikey category is "Single IGBTs"
+  ['IGBTs', igbtParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -2039,6 +2159,7 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B4': ['TVS Diodes'],
   'B5': ['FETs, MOSFETs'],
   'B6': ['Bipolar Transistors'],
+  'B7': ['IGBTs'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -2072,6 +2193,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'B5': ['Single FETs, MOSFETs', 'FET, MOSFET Arrays'],
   // B6: param map uses 'Bipolar Transistors', but Digikey leaf is 'Single Bipolar Transistors'
   'B6': ['Single Bipolar Transistors', 'Bipolar Transistor Arrays'],
+  // B7: param map uses 'IGBTs', Digikey leaf is 'Single IGBTs'
+  'B7': ['Single IGBTs'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

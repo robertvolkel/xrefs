@@ -16,24 +16,26 @@ This document maps every component family to the application-context questions t
 | 4 | Film Capacitors | 64 | **High** | AC vs. DC, continuous vs. pulse, safety-rated vs. general — each activates different dominant attributes |
 | 5 | MOSFETs (N-ch + P-ch) | B5 | **High** | Switching vs. linear mode is a categorical bifurcation — wrong mode = completely wrong matching priorities. Switching frequency determines whether Rds(on) or gate charge dominates. Hard vs. soft switching changes Coss from "minimize" to "must match resonant design." |
 | 6 | BJTs (NPN + PNP) | B6 | **Moderate-High** | Saturated switching vs. linear/analog mode bifurcation — storage time is irrelevant in analog, dominant in fast switching. hFE is a curve not a number; must verify at actual Ic. Complementary pair matching creates dual-device constraints. |
-| 7 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
-| 8 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
-| 9 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
-| 10 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
-| 11 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
-| 12 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
-| 13 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
-| 14 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 15 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 16 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 17 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 18 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 19 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 20 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 21 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 22 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 23 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 24 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 7 | IGBTs | B7 | **High** | Switching frequency determines tail-current viability and Eoff budget. PT/NPT/FS technology is an Identity constraint for parallel designs. Co-packaged diode presence is a hard gate. Short-circuit withstand time interfaces directly with gate driver protection design. |
+| 8 | Thyristors / TRIACs / SCRs | B8 | **Moderate** | Device sub-type (SCR/TRIAC/DIAC) is a hard gate. Gate sensitivity class must match gate drive capability. TRIAC quadrant operation determines which half-cycles trigger reliably. Snubberless flag is a hard Identity constraint. dV/dt rating interfaces with snubber design. |
+| 9 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
+| 10 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
+| 11 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
+| 12 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
+| 13 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
+| 14 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
+| 15 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
+| 16 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 17 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 18 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 19 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 20 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 21 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 22 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 23 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 24 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 25 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 26 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -385,7 +387,155 @@ The most important bifurcation for BJTs is operating mode — saturated switchin
 
 ---
 
-### 7. MLCC Capacitors (Family 12)
+---
+
+### 7. IGBTs — Insulated Gate Bipolar Transistors (Family B7)
+
+**Context sensitivity: HIGH**
+
+The single most important bifurcation is switching frequency — it determines whether the tail current and Eoff budget are viable, and whether the application even belongs in IGBT territory (above ~100kHz, SiC MOSFETs are generally the correct technology). IGBT technology type (PT/NPT/FS) becomes a hard Identity constraint in parallel multi-device designs.
+
+#### Question 1: What is the switching frequency?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Low frequency (≤20kHz) — motor drives, UPS, welders, induction heating** | Tail current and Eoff are less critical as a frequency multiplier. Vce(sat) and conduction loss dominate total device losses. Standard PT or NPT IGBTs are viable. Eoff threshold still applies but the Eoff × fsw product is manageable. |
+| **Medium frequency (20kHz–50kHz) — high-performance servo drives, high-efficiency inverters** | Tail current becomes a meaningful constraint. Field-Stop (FS) IGBTs are strongly preferred — their faster, controlled tails have lower Eoff at these frequencies. Verify Eoff × fsw fits within the thermal budget. |
+| **High frequency (50kHz–100kHz) — high-density power supplies, high-speed servo** | Field-Stop IGBTs required. Eoff is now a primary selection criterion alongside Vce(sat). Gate charge (Qg, Qgc) matters more at higher fsw. Engineering review recommended — at this frequency, SiC MOSFETs may be a better long-term solution. |
+| **>100kHz** | Standard silicon IGBTs are not viable — tail current makes efficiency unacceptable. Flag for engineering review: the original design may have used a specialized fast IGBT, or the frequency specification may be incorrect. SiC MOSFET is almost certainly the correct technology at these frequencies. |
+
+**Affected attributes:**
+- `Tail Current / Tail Time` → primary concern at ≥20kHz; manageable at <20kHz
+- `Eoff` → threshold tightens with frequency (Psw = Eoff × fsw must fit thermal budget)
+- `IGBT Technology (PT/NPT/FS)` → FS required above ~20kHz for acceptable tail performance
+- `Qg / Qgc` → weight increases with frequency
+
+#### Question 2: Hard switching or soft switching (resonant / ZVS)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Hard switching (conventional PWM)** | Eon and Eoff are both primary loss drivers — both scale with Vbus and current. Qgc (Miller charge) determines switching transition speed. Diode reverse recovery directly contributes to Eon — co-packaged diode trr must be verified. |
+| **Soft switching / resonant (ZVS LLC, resonant induction heating)** | Eon is dramatically reduced (drain voltage is near zero at turn-on under ZVS). Eoff is still relevant (current is not zero at turn-off in most resonant topologies). The IGBT's output capacitance and body characteristics interact with the resonant tank — flag for engineering review if the replacement has significantly different Coes. |
+
+**Affected attributes:**
+- `Eon` → primary for hard switching; reduced concern for soft switching (ZVS)
+- `Eoff` → primary for both (current is rarely zero at turn-off in resonant topologies)
+- `Co-Packaged Diode trr` → critical for hard switching; less so for soft switching
+- `Qgc` → primary for hard switching transition speed
+
+#### Question 3: Are multiple IGBTs operated in parallel?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — parallel IGBTs (common in high-current motor drives, traction inverters)** | IGBT Technology (PT/NPT/FS) becomes an Identity constraint — do not mix PT with NPT/FS in parallel. Field-Stop is strongly preferred for its positive Vce(sat) TC at high currents. Vce(sat) spread between individual devices must be minimized — narrow-tolerance or matched-lot selection may be required. Individual gate resistors are required for each parallel device to prevent high-speed current sharing oscillation. |
+| **No — single device** | Technology type is still an Identity match per the logic table but parallel-specific constraints (TC matching) do not apply. Standard substitution rules govern. |
+
+**Affected attributes:**
+- `IGBT Technology` → escalates to hard Identity gate — no cross-technology mixing in parallel
+- `Vce(sat)` → device-to-device spread becomes a concern; narrow tolerance selection may be required
+- `Vge(th)` → matching between parallel devices reduces turn-on time spread
+
+#### Question 4: Does the application require short-circuit protection (motor drive, traction, servo)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — short-circuit protection is part of the gate driver design** | Short-circuit withstand time (tsc) becomes CRITICAL. Replacement tsc must ≥ original AND ≥ the gate driver's response time. Short-circuit current Isc affects the desaturation detection threshold — flag for recalibration review if Isc differs significantly. AEC-Q101 mandatory for automotive. |
+| **No — application does not require short-circuit survivability (simple DC chopper, resistive load)** | tsc is secondary. Standard switching performance matching governs. |
+
+**Affected attributes:**
+- `Short-Circuit Withstand Time tsc` → escalates to BLOCKING specification for motor drive / traction applications
+- `Short-Circuit Current Isc` → Application Review; affects protection threshold calibration
+- `AEC-Q101` → mandatory for automotive traction
+
+#### Question 5: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. Operating temp range must cover -40°C to +175°C (junction) for underhood traction applications. Vce(sat) stability over lifetime and temperature cycling are scrutinized in automotive qualification. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag), mandatory for automotive
+- `Tj Max` → must cover automotive temperature range (often 175°C for traction)
+- `Operating Temp Range` → must cover full automotive ambient range
+
+---
+
+---
+
+### 8. Thyristors / TRIACs / SCRs (Family B8)
+
+**Context sensitivity: MODERATE**
+
+The most critical question is always device sub-type — SCR, TRIAC, and DIAC are not substitutable for each other without circuit redesign. Within TRIACs, the triggering quadrant used by the gate drive circuit and snubberless rating are hard Identity constraints. Gate sensitivity class is also an Identity match, not a threshold — it must be evaluated against the gate drive's actual current capability.
+
+#### Question 1: What is the device sub-type?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **SCR (Silicon Controlled Rectifier)** | Unidirectional device — conducts only anode-to-cathode. Gate trigger parameters (IGT, VGT), holding current (IH), latching current (IL), and circuit-commutated turn-off time (tq) are all relevant. Current rating is IT(AV) (average). TRIAC-specific attributes (quadrant operation, snubberless flag, IT(RMS)) are not applicable. |
+| **TRIAC** | Bidirectional device — conducts in both directions. Quadrant operation becomes a critical evaluation dimension. Snubberless flag becomes relevant. Current rating is IT(RMS) (RMS). tq (circuit-commutated turn-off time) is not applicable — TRIACs rely on natural AC commutation. |
+| **DIAC** | Two-terminal, no gate, triggers symmetrically at breakover voltage. Gate parameters (IGT, VGT, IH, IL) are not applicable. Key specs are breakover voltage (VBO) symmetry and switching current. Almost always used as a TRIAC trigger device — match VBO to the original for consistent phase-control behavior. |
+
+**Affected attributes:**
+- `Device Sub-Type` → Identity, gates all other attribute relevance
+- `IT(AV) vs IT(RMS)` → use AV for SCRs, RMS for TRIACs
+- `tq (turn-off time)` → only applicable for SCRs in forced-commutation DC circuits
+- `Quadrant Operation, Snubberless Rating` → TRIAC-only, not evaluated for SCRs/DIACs
+
+#### Question 2: What is the application type?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **AC phase control (light dimmer, heater controller, motor speed control via phase angle)** | Firing angle range determines whether IH and IL are critical — at minimum phase angles (small conduction pulses near zero crossing), current may not rise above IL fast enough to latch, or may dip below IH during the pulse. dV/dt at commutation (when the device turns off naturally at the AC zero crossing) must be within the device's rating. Gate sensitivity class must match the phase-shift network's output current. |
+| **Zero-cross switching (solid-state relay, AC contactor replacement)** | IH and IL matter less — full AC half-cycles are conducted, so current easily exceeds both thresholds. dV/dt at initial turn-on (from full line voltage) is the primary concern. Snubberless types are highly preferred for clean switching without transient injection onto the mains. |
+| **Crowbar / overvoltage protection (SCR only)** | Once triggered, the SCR must stay latched until the protecting fuse clears or the supply is removed. IH must be low enough that the fault current (potentially limited by a fusible resistor) keeps the SCR latched. Recovery after reset must be clean — tq is irrelevant (DC crowbar relies on fuse clearing, not commutation). |
+| **Motor soft-start / AC motor control** | High inrush current at start-up is the primary concern — ITSM and I²t must accommodate motor locked-rotor current for the soft-start duration. Thermal management of sustained conduction at rated motor current. dV/dt during phase control firing. |
+
+**Affected attributes:**
+- `IH (Holding Current)` → critical for phase control at low firing angles; less critical for zero-cross
+- `IL (Latching Current)` → critical for inductive load phase control; less critical for resistive or zero-cross
+- `dV/dt` → primary concern for zero-cross (full line voltage step) and phase-control commutation
+- `ITSM / I²t` → primary for motor soft-start and fault-withstand applications
+
+#### Question 3 (if TRIAC): Does the gate drive circuit require Quadrant IV operation (negative MT2, positive gate current)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — gate drive sources positive current during negative MT2 half-cycles (common with single optocoupler driving both half-cycles)** | Quadrant IV (Q4) sensitivity must be verified. Many standard TRIACs have significantly higher IGT in Q4 (2–3× other quadrants) or do not support Q4 at all. The replacement must explicitly support Q4 at the gate drive's available current. Sensitive-gate or logic-level types typically have better Q4 symmetry. |
+| **No — gate circuit senses MT2 polarity and uses negative gate current on negative half-cycles (dual-polarity drive)** | Q4 is not required. Standard quadrant sensitivity matching is sufficient. |
+| **Unknown / single-sided optocoupler** | Assume Q4 is required. Verify explicitly in replacement datasheet. |
+
+**Affected attributes:**
+- `Quadrant Operation` → Identity, Q4 capability becomes a hard gate if required
+- `IGT` → must verify at Q4 (worst-case quadrant), not just Q1
+
+#### Question 4: Is a snubber present on the PCB?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — RC snubber is populated** | Standard (non-snubberless) TRIACs are acceptable. Verify the replacement's dV/dt rating ≥ the dV/dt that the existing snubber provides (calculated from snubber R and C values and peak line voltage). |
+| **No — no snubber footprint or snubber is not populated** | Replacement MUST be snubberless-rated. A standard TRIAC without snubber will false-trigger from line transients. This is a BLOCKING constraint — do not approve a non-snubberless replacement for a snubberless PCB design. |
+| **Unknown** | Flag for engineering review. Inspect the PCB for the presence of an RC network across the TRIAC. |
+
+**Affected attributes:**
+- `Snubberless Rating` → BLOCKING for no-snubber designs; not required for snubber-equipped designs
+- `dV/dt` → threshold must be ≥ the dV/dt level the snubber (if present) provides, or ≥ line dV/dt for snubberless designs
+
+#### Question 5: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 becomes mandatory. IGT must be verified at -40°C (cold-start triggering reliability). Operating temperature range must cover automotive range. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag), mandatory for automotive
+- `IGT` → must verify at -40°C for automotive cold-start
+
+---
+
+### 9. MLCC Capacitors (Family 12)
 
 **Context sensitivity: HIGH**
 
@@ -436,7 +586,7 @@ The most important bifurcation for BJTs is operating mode — saturated switchin
 
 ---
 
-### 8. Tantalum Capacitors (Family 59)
+### 10. Tantalum Capacitors (Family 59)
 
 **Context sensitivity: HIGH**
 
@@ -476,7 +626,7 @@ The most important bifurcation for BJTs is operating mode — saturated switchin
 
 ---
 
-### 9. RF / Signal Inductors (Family 72)
+### 11. RF / Signal Inductors (Family 72)
 
 **Context sensitivity: HIGH**
 
@@ -522,7 +672,7 @@ This is a variant of Power Inductors (Family 71) but with inverted priorities. Q
 
 ---
 
-### 10. Current Sense Resistors (Family 54)
+### 12. Current Sense Resistors (Family 54)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -568,7 +718,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 11. Varistors / MOVs (Family 65)
+### 13. Varistors / MOVs (Family 65)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -616,7 +766,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 12. PTC Resettable Fuses (Family 66)
+### 14. PTC Resettable Fuses (Family 66)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -658,7 +808,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 13. Power Inductors (Family 71)
+### 15. Power Inductors (Family 71)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -700,7 +850,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 14. Aluminum Electrolytic Capacitors (Family 58)
+### 16. Aluminum Electrolytic Capacitors (Family 58)
 
 **Context sensitivity: MODERATE**
 
@@ -739,7 +889,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 15. Supercapacitors / EDLCs (Family 61)
+### 17. Supercapacitors / EDLCs (Family 61)
 
 **Context sensitivity: MODERATE**
 
@@ -772,7 +922,7 @@ This is a variant of Chip Resistors (Family 52) with tightened thresholds and ad
 
 ---
 
-### 16. Chassis Mount / High Power Resistors (Family 55)
+### 18. Chassis Mount / High Power Resistors (Family 55)
 
 **Context sensitivity: MODERATE**
 
@@ -807,7 +957,7 @@ Same as Chip Resistors (Family 52) Q1 and Q2. If the project context already ans
 
 ---
 
-### 17. Aluminum Polymer Capacitors (Family 60)
+### 19. Aluminum Polymer Capacitors (Family 60)
 
 **Context sensitivity: LOW-MODERATE**
 
@@ -839,7 +989,7 @@ Inherits from Aluminum Electrolytic (Family 58) with modifications. Lifetime/end
 
 ---
 
-### 18. Chip Resistors (Family 52)
+### 20. Chip Resistors (Family 52)
 
 **Context sensitivity: LOW**
 
@@ -871,7 +1021,7 @@ Chip resistors are the most straightforward parametric match. Only two context q
 
 ---
 
-### 19. Through-Hole Resistors (Family 53)
+### 21. Through-Hole Resistors (Family 53)
 
 **Context sensitivity: LOW**
 
@@ -886,7 +1036,7 @@ No additional questions. The delta attributes (lead spacing, mounting style, bod
 
 ---
 
-### 20. Mica Capacitors (Family 13)
+### 22. Mica Capacitors (Family 13)
 
 **Context sensitivity: LOW**
 
@@ -908,7 +1058,7 @@ Mica capacitors are chosen for precision — that decision was already made when
 
 ---
 
-### 21. Rectifier Diodes — Standard, Fast, and Ultrafast Recovery (Family B1)
+### 23. Rectifier Diodes — Standard, Fast, and Ultrafast Recovery (Family B1)
 
 **Context sensitivity: HIGH**
 
@@ -973,7 +1123,7 @@ This is the first Block B (discrete semiconductor) family. Context sensitivity i
 
 ---
 
-### 22. Schottky Barrier Diodes (Family B2)
+### 24. Schottky Barrier Diodes (Family B2)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -1040,7 +1190,7 @@ Schottky diodes are chosen specifically for low Vf and zero reverse recovery tim
 
 ---
 
-### 23. Zener Diodes / Voltage Reference Diodes (Family B3)
+### 25. Zener Diodes / Voltage Reference Diodes (Family B3)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -1101,7 +1251,7 @@ Zener diodes serve two fundamentally different purposes — voltage clamping/pro
 
 ---
 
-### 24. TVS Diodes — Transient Voltage Suppressors (Family B4)
+### 26. TVS Diodes — Transient Voltage Suppressors (Family B4)
 
 **Context sensitivity: MODERATE-HIGH**
 
@@ -1177,6 +1327,8 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **Film Caps** | 64 | Application? (EMI / DC / snubber / motor-run / precision) | If EMI: Safety class? | If snubber: dV/dt requirement? | — |
 | **MOSFETs** | B5 | Operating mode? (switching / linear) | If switching: Frequency range? | If switching: Hard or soft switching? | Body diode conduction? Automotive? |
 | **BJTs** | B6 | Operating mode? (switching / linear / class AB pair) | If switching: Frequency? | Complementary pair? | Automotive? |
+| **IGBTs** | B7 | Switching frequency? (<20kHz / 20–50kHz / 50–100kHz / >100kHz) | Hard or soft switching? | Parallel operation? | Short-circuit protection required? Automotive? |
+| **Thyristors / TRIACs / SCRs** | B8 | Device sub-type? (SCR / TRIAC / DIAC) | Application type? (phase control / zero-cross / crowbar / motor soft-start) | If TRIAC: Q4 operation required? | Snubber present? Automotive? |
 | **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
 | **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
 | **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |

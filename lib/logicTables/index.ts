@@ -23,6 +23,7 @@ import { zenerDiodesLogicTable } from './zenerDiodes';
 import { tvsDiodesLogicTable } from './tvsDiodes';
 import { mosfetsLogicTable } from './mosfets';
 import { bjtTransistorsLogicTable } from './bjtTransistors';
+import { igbtsLogicTable } from './igbts';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -53,6 +54,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B4': tvsDiodesLogicTable,
   'B5': mosfetsLogicTable,
   'B6': bjtTransistorsLogicTable,
+  'B7': igbtsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -193,6 +195,13 @@ const subcategoryToFamily: Record<string, string> = {
   'Transistors - Bipolar (BJT) - Array': 'B6',
   'Small Signal Transistor': 'B6',
   'General Purpose Transistor': 'B6',
+  // IGBTs (Family B7)
+  'IGBT': 'B7',
+  'Insulated Gate Bipolar Transistor': 'B7',
+  'IGBTs - Single': 'B7',
+  'IGBT Module': 'B7',
+  'Transistors - IGBTs - Single': 'B7',
+  'Transistors - IGBTs - Arrays': 'B7',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -222,6 +231,7 @@ const familyLastUpdated: Record<string, string> = {
   'B4': '2026-02-24',
   'B5': '2026-02-24',
   'B6': '2026-02-25',
+  'B7': '2026-02-25',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

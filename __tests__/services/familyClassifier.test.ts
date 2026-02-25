@@ -251,6 +251,18 @@ describe('familyClassifier', () => {
       expect(classifyFamily('B1', a)).toBe('B1'); // stays B1, not reclassified
     });
 
+    // --- IGBTs (B7) — standalone family, no variant classifier ---
+
+    it('returns B7 unchanged (standalone family, not a variant)', () => {
+      const a = attrs([], { description: 'IGBT 600V 28A TO-220AB' });
+      expect(classifyFamily('B7', a)).toBe('B7');
+    });
+
+    it('does NOT classify IGBT keywords under MOSFET base family', () => {
+      const a = attrs([], { description: 'IGBT Trench Field Stop 1200V' });
+      expect(classifyFamily('B5', a)).toBe('B5'); // stays B5, not reclassified
+    });
+
     // --- Unknown / unsupported families ---
 
     it('returns base family ID for families with no classifier rules', () => {

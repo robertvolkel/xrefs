@@ -357,7 +357,7 @@
 
   "adminQc": {
     "nav": "QC Log",
-    "title": "QC Log & Feedback",
+    "title": "Quality Control",
     "collecting": "Collecting",
     "paused": "Paused",
     "toggleLabel": "Data Collection",

@@ -54,6 +54,7 @@ describe('digikeyMapper', () => {
       ['Diodes - Rectifiers - Single', 'Diodes'],
       ['Bridge Rectifiers', 'Diodes'],
       ['Transistors - MOSFETs', 'Transistors'],
+      ['Single IGBTs', 'Transistors'],
       ['Connectors - Headers', 'Connectors'],
       ['Varistors', 'Protection'],
       ['NTC Thermistors', 'Protection'],
@@ -105,6 +106,11 @@ describe('digikeyMapper', () => {
       ['Transistors - Bipolar (BJT) - Array', 'BJT'],
       ['Bipolar Transistors - NPN', 'NPN BJT'],
       ['Bipolar Transistors - PNP', 'PNP BJT'],
+      // IGBTs (Family B7)
+      ['Single IGBTs', 'IGBT'],
+      ['IGBTs - Single', 'IGBT'],
+      ['IGBT Modules', 'IGBT'],
+      ['Transistors - IGBTs - Single', 'IGBT'],
     ];
 
     it.each(cases)('"%s" → "%s"', (categoryName, expected) => {
