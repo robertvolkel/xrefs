@@ -17,7 +17,6 @@ import {
   Button,
   Card,
   CardContent,
-  Divider,
   CircularProgress,
   Tooltip,
 } from '@mui/material';
@@ -257,6 +256,51 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
               </Box>
             </Box>
 
+            {/* Admin notes + actions — placed early so admin doesn't have to scroll */}
+            <Box sx={{ pb: 2, borderBottom: 1, borderColor: 'divider' }}>
+              <TextField
+                size="small"
+                fullWidth
+                multiline
+                minRows={2}
+                maxRows={6}
+                placeholder={t('adminQc.adminNotesPlaceholder')}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                sx={{ mb: 1, '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+              />
+              <Stack direction="row" spacing={1}>
+                {feedback.status === 'open' && (
+                  <>
+                    <Button size="small" variant="outlined" onClick={() => handleAction('reviewed')} disabled={saving}>
+                      {t('adminQc.markReviewed')}
+                    </Button>
+                    <Button size="small" variant="contained" onClick={() => handleAction('resolved')} disabled={saving}>
+                      {t('adminQc.markResolved')}
+                    </Button>
+                    <Button size="small" color="inherit" onClick={() => handleAction('dismissed')} disabled={saving}>
+                      {t('adminQc.dismiss')}
+                    </Button>
+                  </>
+                )}
+                {feedback.status === 'reviewed' && (
+                  <>
+                    <Button size="small" variant="contained" onClick={() => handleAction('resolved')} disabled={saving}>
+                      {t('adminQc.markResolved')}
+                    </Button>
+                    <Button size="small" color="inherit" onClick={() => handleAction('dismissed')} disabled={saving}>
+                      {t('adminQc.dismiss')}
+                    </Button>
+                  </>
+                )}
+                {(feedback.status === 'resolved' || feedback.status === 'dismissed') && (
+                  <Button size="small" variant="outlined" onClick={() => handleAction('open')} disabled={saving}>
+                    {t('adminQc.reopen')}
+                  </Button>
+                )}
+              </Stack>
+            </Box>
+
             {/* Feedback context */}
             {feedback.feedbackStage === 'rule_logic' && feedback.ruleAttributeName && (
               <Box>
@@ -402,27 +446,33 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                               {row.weight}
                             </TableCell>
                             <TableCell>
-                              <Stack direction="row" alignItems="center" spacing={0.5}>
-                                <Box
-                                  sx={{
-                                    width: 10,
-                                    height: 10,
-                                    borderRadius: '50%',
-                                    bgcolor: getDotColor(row.ruleResult),
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem' }}>
-                                  {getDotLabel(row.ruleResult) || row.ruleResult || row.matchStatus}
+                              {row.isMissing ? (
+                                <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.68rem' }}>
+                                  —
                                 </Typography>
-                                {row.note && (
-                                  <Tooltip title={row.note} placement="top" arrow>
-                                    <Typography variant="caption" sx={{ fontSize: '0.65rem', opacity: 0.5, cursor: 'help' }}>
-                                      ?
-                                    </Typography>
-                                  </Tooltip>
-                                )}
-                              </Stack>
+                              ) : (
+                                <Stack direction="row" alignItems="center" spacing={0.5}>
+                                  <Box
+                                    sx={{
+                                      width: 10,
+                                      height: 10,
+                                      borderRadius: '50%',
+                                      bgcolor: getDotColor(row.ruleResult),
+                                      flexShrink: 0,
+                                    }}
+                                  />
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem' }}>
+                                    {getDotLabel(row.ruleResult) || row.ruleResult || row.matchStatus}
+                                  </Typography>
+                                  {row.note && (
+                                    <Tooltip title={row.note} placement="top" arrow>
+                                      <Typography variant="caption" sx={{ fontSize: '0.65rem', opacity: 0.5, cursor: 'help' }}>
+                                        ?
+                                      </Typography>
+                                    </Tooltip>
+                                  )}
+                                </Stack>
+                              )}
                             </TableCell>
                           </TableRow>
                         );
@@ -480,51 +530,6 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
               </Box>
             )}
 
-            {/* Admin notes + actions */}
-            <Box>
-              <Divider sx={{ mb: 1.5 }} />
-              <TextField
-                size="small"
-                fullWidth
-                multiline
-                minRows={2}
-                maxRows={6}
-                placeholder={t('adminQc.adminNotesPlaceholder')}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                sx={{ mb: 1.5, '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
-              />
-              <Stack direction="row" spacing={1}>
-                {feedback.status === 'open' && (
-                  <>
-                    <Button size="small" variant="outlined" onClick={() => handleAction('reviewed')} disabled={saving}>
-                      {t('adminQc.markReviewed')}
-                    </Button>
-                    <Button size="small" variant="contained" onClick={() => handleAction('resolved')} disabled={saving}>
-                      {t('adminQc.markResolved')}
-                    </Button>
-                    <Button size="small" color="inherit" onClick={() => handleAction('dismissed')} disabled={saving}>
-                      {t('adminQc.dismiss')}
-                    </Button>
-                  </>
-                )}
-                {feedback.status === 'reviewed' && (
-                  <>
-                    <Button size="small" variant="contained" onClick={() => handleAction('resolved')} disabled={saving}>
-                      {t('adminQc.markResolved')}
-                    </Button>
-                    <Button size="small" color="inherit" onClick={() => handleAction('dismissed')} disabled={saving}>
-                      {t('adminQc.dismiss')}
-                    </Button>
-                  </>
-                )}
-                {(feedback.status === 'resolved' || feedback.status === 'dismissed') && (
-                  <Button size="small" variant="outlined" onClick={() => handleAction('open')} disabled={saving}>
-                    {t('adminQc.reopen')}
-                  </Button>
-                )}
-              </Stack>
-            </Box>
           </Stack>
         )}
       </Box>

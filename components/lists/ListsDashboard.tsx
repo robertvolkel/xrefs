@@ -29,6 +29,7 @@ import {
 import { setPendingFile, setPendingParsedData } from '@/lib/pendingFile';
 import { ParsedSpreadsheet } from '@/lib/types';
 import { useViewConfig } from '@/hooks/useViewConfig';
+import ParticleWaveBackground from '../ParticleWaveBackground';
 import ListCard from './ListCard';
 import NewListDialog from './NewListDialog';
 import InputMethodDialog from './InputMethodDialog';
@@ -217,6 +218,9 @@ export default function ListsDashboard() {
         position: 'relative',
       }}
     >
+      {/* Animated particle background */}
+      <ParticleWaveBackground visible />
+
       {/* Drag overlay */}
       {isDragging && (
         <Box
@@ -251,6 +255,9 @@ export default function ListsDashboard() {
           borderBottom: 1,
           borderColor: 'divider',
           flexShrink: 0,
+          position: 'relative',
+          zIndex: 1,
+          bgcolor: 'background.default',
         }}
       >
         <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
@@ -269,7 +276,7 @@ export default function ListsDashboard() {
       </Box>
 
       {/* Content area */}
-      <Box sx={{ flex: 1, overflow: 'auto', px: { xs: 2, md: 4 }, py: 3, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ flex: 1, overflow: 'auto', px: { xs: 2, md: 4 }, py: 3, display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
         {/* Search bar — only show when lists exist */}
         {!loading && lists.length > 0 && <Box sx={{ maxWidth: 600, width: '100%', mb: 3, mx: 'auto' }}>
           <Paper

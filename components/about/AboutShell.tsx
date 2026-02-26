@@ -14,7 +14,7 @@ const FAMILY_GROUPS: { label: string; familyIds: string[] }[] = [
   { label: 'Resistors', familyIds: ['52', '53', '54', '55'] },
   { label: 'Inductors & EMI Suppression', familyIds: ['71', '72', '70', '69'] },
   { label: 'Circuit Protection', familyIds: ['65', '66', '67', '68'] },
-  { label: 'Discrete Semiconductors', familyIds: ['B1'] },
+  { label: 'Discrete Semiconductors', familyIds: ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9'] },
 ];
 
 const allTables = getAllLogicTables();
@@ -55,13 +55,12 @@ export default function AboutShell() {
             What is in this XQv2 Alpha?
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 4, lineHeight: 1.7 }}>
-            We&apos;ve built a cross-reference recommendation engine. The focus
-            will be on Chinese components. Go ahead and enter a description or
-            part number and the app will find you equivalent replacements
-            utilizing Digikey&apos;s catalog, and then score every candidate
-            using deterministic engineering rules. The result is a ranked list
-            of replacements with a transparent breakdown of why each part does
-            or doesn&apos;t meet your requirements.
+            This is a cross-reference recommendation engine with a focus on
+            Chinese components. You enter or describe a product and the app will
+            ask you questions (if necessary) and provide replacement
+            recommendations. It will score every candidate using deterministic
+            engineering rules and rank the suggestion with a breakdown of why
+            each part does or doesn&apos;t meet your requirements.
           </Typography>
 
           <Divider sx={{ mb: 4 }} />
@@ -125,57 +124,7 @@ export default function AboutShell() {
           <Divider sx={{ mb: 4 }} />
 
           {/* -------------------------------------------------------- */}
-          {/* 3. Two Ways to Work                                       */}
-          {/* -------------------------------------------------------- */}
-          <Typography variant="body1" fontWeight={600} sx={{ mb: 2 }}>
-            Two Ways to Work
-          </Typography>
-
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-              gap: 1.5,
-              mb: 4,
-            }}
-          >
-            <Paper
-              elevation={0}
-              sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1.5 }}
-            >
-              <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-                Individual Part Exploration
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                Enter a single MPN in the chat-style interface. Confirm the part,
-                answer optional context questions, and see scored recommendations
-                instantly. Click any recommendation to open a detailed side-by-side
-                comparison showing every rule&apos;s pass, fail, or review status
-                with color-coded indicators.
-              </Typography>
-            </Paper>
-
-            <Paper
-              elevation={0}
-              sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1.5 }}
-            >
-              <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-                Batch Parts Lists
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                Upload a CSV or Excel file with a list of part numbers. XQ
-                validates and cross-references each part automatically, streaming
-                results as they arrive. View everything in a sortable, filterable
-                table. Drill into any row for the same detailed comparison. Lists
-                are saved and can be revisited anytime.
-              </Typography>
-            </Paper>
-          </Box>
-
-          <Divider sx={{ mb: 4 }} />
-
-          {/* -------------------------------------------------------- */}
-          {/* 4. Supported Component Families                           */}
+          {/* 3. Supported Component Families                           */}
           {/* -------------------------------------------------------- */}
           <Typography variant="body1" fontWeight={600} sx={{ mb: 0.5 }}>
             Supported Component Families
@@ -217,7 +166,7 @@ export default function AboutShell() {
           <Divider sx={{ mb: 4 }} />
 
           {/* -------------------------------------------------------- */}
-          {/* 5. What the Rules Check                                   */}
+          {/* 4. What the Rules Check                                   */}
           {/* -------------------------------------------------------- */}
           <Typography variant="body1" fontWeight={600} sx={{ mb: 0.5 }}>
             What the Rules Check
@@ -268,7 +217,7 @@ export default function AboutShell() {
           <Divider sx={{ mb: 4 }} />
 
           {/* -------------------------------------------------------- */}
-          {/* 6. Known Limitations                                      */}
+          {/* 5. Known Limitations                                      */}
           {/* -------------------------------------------------------- */}
           <Typography variant="body1" fontWeight={600} sx={{ mb: 0.5 }}>
             Known Limitations
@@ -290,9 +239,9 @@ export default function AboutShell() {
           >
             <LimitationItem>
               <strong>Limited family coverage.</strong> XQ currently supports{' '}
-              {totalFamilies} component families &mdash; primarily passive
-              components and rectifier diodes. ICs, connectors, transistors, LEDs,
-              and many other component types are not yet supported.
+              {totalFamilies} component families covering passive components and
+              discrete semiconductors. ICs, connectors, LEDs, and many other
+              component types are not yet supported.
             </LimitationItem>
             <LimitationItem>
               <strong>Single data source.</strong> All part data comes from
