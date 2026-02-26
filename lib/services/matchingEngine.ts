@@ -56,6 +56,55 @@ function normalize(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
+/**
+ * Parse a parametric value into a numeric range { min, max }.
+ * Handles formats:
+ *   "-0.5V to -6V", "1mA ~ 5mA", "2...8V", "-3V" (single → degenerate range)
+ * Strips unit suffixes (V, mV, A, mA, µA, pA, Hz, etc.) and applies SI prefixes.
+ * Returns null if unparsable. Guarantees min <= max.
+ */
+function parseRange(value: string): { min: number; max: number } | null {
+  const s = value.trim();
+
+  // Try two-value range: "X to Y", "X ~ Y", "X...Y", "X - Y" (with optional units)
+  const rangeMatch = s.match(
+    /([-+]?\d*\.?\d+)\s*([munpfkMGT]?[A-Za-z/°%]*)\s*(?:to|~|\.{2,3}|–|—)\s*([-+]?\d*\.?\d+)\s*([munpfkMGT]?[A-Za-z/°%]*)/i
+  );
+  if (rangeMatch) {
+    const a = applyPrefix(parseFloat(rangeMatch[1]), rangeMatch[2]);
+    const b = applyPrefix(parseFloat(rangeMatch[3]), rangeMatch[4]);
+    if (a === null || b === null) return null;
+    return { min: Math.min(a, b), max: Math.max(a, b) };
+  }
+
+  // Single numeric value → degenerate range
+  const singleMatch = s.match(/([-+]?\d*\.?\d+)\s*([munpfkMGT]?[A-Za-z/°%]*)/);
+  if (singleMatch) {
+    const v = applyPrefix(parseFloat(singleMatch[1]), singleMatch[2]);
+    if (v === null) return null;
+    return { min: v, max: v };
+  }
+
+  return null;
+}
+
+/** Apply SI prefix from unit string to a raw numeric value */
+function applyPrefix(value: number, unit: string): number | null {
+  if (isNaN(value)) return null;
+  const prefix = unit.charAt(0);
+  switch (prefix) {
+    case 'p': return value * 1e-12;
+    case 'n': return value * 1e-9;
+    case 'u': case 'µ': return value * 1e-6;
+    case 'm': return value * 1e-3;
+    case 'k': return value * 1e3;
+    case 'M': return value * 1e6;
+    case 'G': return value * 1e9;
+    case 'T': return value * 1e12;
+    default: return value; // No prefix or unrecognized — return as-is
+  }
+}
+
 // ============================================================
 // RULE EVALUATORS
 // ============================================================
@@ -98,6 +147,66 @@ function evaluateIdentity(
     logicType: rule.logicType,
     result: match ? 'pass' : 'fail',
     matchStatus: match ? 'exact' : 'different',
+  };
+}
+
+/**
+ * Identity range evaluator: checks whether source and candidate ranges overlap.
+ * Used for specs with wide manufacturing spread (JFET Vp, Idss) where a
+ * replacement is valid only if its specified range intersects the original's.
+ */
+function evaluateIdentityRange(
+  rule: MatchingRule,
+  sourceParam: ParametricAttribute | undefined,
+  candidateParam: ParametricAttribute | undefined
+): RuleEvaluationResult {
+  const sourceValue = sourceParam?.value ?? 'N/A';
+  const candidateValue = candidateParam?.value ?? 'N/A';
+
+  // Missing-value handling (same as identity)
+  if (!sourceParam || !candidateParam) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: !sourceParam ? 'pass' : 'fail',
+      matchStatus: !sourceParam ? 'exact' : 'different',
+    };
+  }
+
+  // Parse both as ranges
+  const srcRange = parseRange(sourceValue);
+  const candRange = parseRange(candidateValue);
+
+  // If either fails to parse, fall back to exact string comparison
+  if (!srcRange || !candRange) {
+    const match = normalize(sourceValue) === normalize(candidateValue);
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: match ? 'pass' : 'fail',
+      matchStatus: match ? 'exact' : 'different',
+      note: !srcRange || !candRange ? 'Could not parse range — fell back to exact comparison' : undefined,
+    };
+  }
+
+  // Overlap check: ranges overlap iff srcMax >= candMin AND candMax >= srcMin
+  const overlaps = srcRange.max >= candRange.min && candRange.max >= srcRange.min;
+  const isExact = srcRange.min === candRange.min && srcRange.max === candRange.max;
+
+  return {
+    attributeId: rule.attributeId,
+    attributeName: rule.attributeName,
+    sourceValue,
+    candidateValue,
+    logicType: rule.logicType,
+    result: overlaps ? 'pass' : 'fail',
+    matchStatus: isExact ? 'exact' : overlaps ? 'compatible' : 'different',
   };
 }
 
@@ -528,6 +637,8 @@ function evaluateRule(
   switch (rule.logicType) {
     case 'identity':
       return evaluateIdentity(rule, sourceParam, candidateParam);
+    case 'identity_range':
+      return evaluateIdentityRange(rule, sourceParam, candidateParam);
     case 'identity_upgrade':
       return evaluateIdentityUpgrade(rule, sourceParam, candidateParam);
     case 'identity_flag':

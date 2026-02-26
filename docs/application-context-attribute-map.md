@@ -18,24 +18,25 @@ This document maps every component family to the application-context questions t
 | 6 | BJTs (NPN + PNP) | B6 | **Moderate-High** | Saturated switching vs. linear/analog mode bifurcation — storage time is irrelevant in analog, dominant in fast switching. hFE is a curve not a number; must verify at actual Ic. Complementary pair matching creates dual-device constraints. |
 | 7 | IGBTs | B7 | **High** | Switching frequency determines tail-current viability and Eoff budget. PT/NPT/FS technology is an Identity constraint for parallel designs. Co-packaged diode presence is a hard gate. Short-circuit withstand time interfaces directly with gate driver protection design. |
 | 8 | Thyristors / TRIACs / SCRs | B8 | **Moderate** | Device sub-type (SCR/TRIAC/DIAC) is a hard gate. Gate sensitivity class must match gate drive capability. TRIAC quadrant operation determines which half-cycles trigger reliably. Snubberless flag is a hard Identity constraint. dV/dt rating interfaces with snubber design. |
-| 9 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
-| 10 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
-| 11 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
-| 12 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
-| 13 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
-| 14 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
-| 15 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
-| 16 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 17 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 18 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 19 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 20 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 21 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 22 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 23 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 24 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 25 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 26 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 9 | JFETs | B9 | **High** | Audio vs RF vs ultra-high-Z are three fundamentally different application domains with completely different binding specs. Audio: 1/f noise corner is THE differentiator. RF: ft, Ciss, Crss dominate. Ultra-high-Z: Igss is BLOCKING (10pA across 100G-ohm = 1V error). Matched-pair requirement for differential circuits changes evaluation from single-device to engineering review. |
+| 10 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
+| 11 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
+| 12 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
+| 13 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
+| 14 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
+| 15 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
+| 16 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
+| 17 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 18 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 19 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 20 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 21 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 22 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 23 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 24 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 25 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 26 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 27 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -1036,7 +1037,58 @@ No additional questions. The delta attributes (lead spacing, mounting style, bod
 
 ---
 
-### 22. Mica Capacitors (Family 13)
+---
+
+### 26. JFETs — Junction Field-Effect Transistors (Family B9)
+
+**Context sensitivity: MODERATE**
+
+The application mode determines which attributes dominate. Low-noise amplifier applications make noise figure and 1/f corner the primary specs. Ultra-high-impedance applications make Igss the binding constraint. RF applications add ft and capacitance requirements. Matched-pair applications require both devices to be evaluated together. Vp and Idss are Identity specs — the bias circuit is designed around their range and a replacement outside that range will shift the operating point.
+
+#### Question 1: What is the primary application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Low-noise amplifier / microphone preamplifier / audio front end** | Noise Figure (NF) and 1/f corner frequency (fc) are PRIMARY. Must verify NF at the operating frequency and bias point — not just headline datasheet figure. fc must be below the lowest signal frequency (for audio, fc < 100Hz is ideal). gfs (transconductance) is secondary — higher gfs improves noise but must be compatible with the bias circuit. Vp and Idss Identity check is essential to confirm the bias point is preserved. |
+| **Ultra-high-impedance input (pH electrode, ionization detector, electret capsule, electrometer)** | Igss (gate leakage) is PRIMARY and often BLOCKING — verify at operating temperature, not just 25°C. Even a 10× increase in Igss can introduce unacceptable offset error across gigaohm source impedances. Noise figure is secondary. Vp/Idss Identity check required for bias preservation. |
+| **RF low-noise amplifier (HF, VHF, UHF front end)** | ft (transition frequency) and NF at the operating frequency are PRIMARY. Ciss and Crss (gate and reverse transfer capacitances) must match for input matching network compatibility — a replacement with significantly different capacitances will detune the input matching and degrade NF and gain. gfs affects both gain and NF. Vp/Idss Identity for bias point. |
+| **Analog switch / VVR (voltage-variable resistor) / AGC element** | On-resistance (rds(on) at Vgs = 0, which is ≈ 1/gfs×Vp) and pinch-off behavior dominate. NF and Igss are less critical. Vp Identity is essential — it directly sets the control voltage range. Idss Identity ensures the on-state resistance matches. |
+| **Legacy switching / chopper circuit** | Switching speed is relevant; Vds(max) and Id ratings matter. NF, Igss, ft secondary. Vp/Idss for bias compatibility. Note: modern designs have largely replaced JFET choppers with CMOS switches — this is typically a legacy maintenance scenario. |
+
+**Affected attributes:**
+- `NF / en` → primary for audio/low-noise; secondary for ultra-high-Z; critical for RF
+- `Igss` → primary (potentially BLOCKING) for ultra-high-Z; secondary for all other modes
+- `ft / Ciss / Crss` → primary for RF; irrelevant for audio and ultra-high-Z below 1MHz
+- `1/f Corner Frequency` → primary for audio; irrelevant for RF
+- `Vp / Idss` → Identity for all modes — bias circuit is always affected
+
+#### Question 2: Is this a matched-pair application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — differential pair, balanced preamplifier, long-tailed pair (two JFETs must track each other)** | Both devices must be evaluated as a matched pair. Standard parametric matching is insufficient — Vp and Idss must match device-to-device (typically ΔVp < 10mV, ΔIdss < 5%). If the original was a matched-pair type (2SK389, IF9030, SSM2212), replace with the same or equivalent matched-pair type. Replacing only one device of a matched pair is a known precision degradation source — both should be replaced together. |
+| **No — single device** | Standard single-device substitution rules apply. |
+
+**Affected attributes:**
+- `Vp` → tighter matching requirement between the two devices in a pair
+- `Idss` → tighter matching requirement between the two devices in a pair
+- `gfs` → matching affects differential gain symmetry
+
+#### Question 3: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q101 mandatory. Igss must be verified at 125°C (automotive max junction temperature). Vp temperature coefficient behavior across -40°C to +125°C must be compatible with the bias circuit's tracking. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q101` → Identity (Flag), mandatory for automotive
+- `Igss` → verify at automotive temperature extremes
+- `Vp` → temperature coefficient across automotive range must be within bias circuit tolerance
+
+---
+
+### 27. Mica Capacitors (Family 13)
 
 **Context sensitivity: LOW**
 
@@ -1329,6 +1381,7 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **BJTs** | B6 | Operating mode? (switching / linear / class AB pair) | If switching: Frequency? | Complementary pair? | Automotive? |
 | **IGBTs** | B7 | Switching frequency? (<20kHz / 20–50kHz / 50–100kHz / >100kHz) | Hard or soft switching? | Parallel operation? | Short-circuit protection required? Automotive? |
 | **Thyristors / TRIACs / SCRs** | B8 | Device sub-type? (SCR / TRIAC / DIAC) | Application type? (phase control / zero-cross / crowbar / motor soft-start) | If TRIAC: Q4 operation required? | Snubber present? Automotive? |
+| **JFETs** | B9 | Application mode? (low-noise amp / ultra-high-Z / RF / analog switch / legacy switching) | Matched-pair? | Automotive? |
 | **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
 | **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
 | **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |

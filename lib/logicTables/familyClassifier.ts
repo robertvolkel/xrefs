@@ -88,6 +88,31 @@ const classifierRules: ClassifierRule[] = [
 
   // --- Discrete semiconductor variants ---
 
+  // JFETs (B9, base: B5): JFET keywords or classic JFET MPN prefixes
+  // Must be checked BEFORE any generic FET rules so JFETs don't match as MOSFETs.
+  {
+    variantFamilyId: 'B9',
+    baseFamilyId: 'B5',
+    matches: (attrs) => {
+      const desc = attrs.part.description.toLowerCase();
+      const mpn = attrs.part.mpn.toUpperCase();
+      const sub = attrs.part.subcategory.toLowerCase();
+
+      // Subcategory indicators
+      if (sub.includes('jfet') || sub.includes('j-fet')) return true;
+
+      // Description indicators
+      if (desc.includes('jfet') || desc.includes('j-fet') ||
+          desc.includes('junction field effect') ||
+          desc.includes('depletion mode fet')) return true;
+
+      // MPN prefix patterns — classic JFET families
+      if (/^(2N54|2SK|2SJ|J11[2-3]|J17[4]|MPF102|BF245|IF\d)/i.test(mpn)) return true;
+
+      return false;
+    },
+  },
+
   // Schottky Barrier Diodes (B2, base: B1): Schottky/SBD/SiC keywords in description
   {
     variantFamilyId: 'B2',

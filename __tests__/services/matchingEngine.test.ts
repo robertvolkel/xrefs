@@ -773,6 +773,95 @@ describe('matchingEngine', () => {
   });
 
   // ----------------------------------------------------------
+  // identity_range (range overlap matching — JFET Vp, Idss)
+  // ----------------------------------------------------------
+  describe('identity_range', () => {
+    const r = rule({ attributeId: 'vp', logicType: 'identity_range', weight: 10 });
+
+    it('passes when ranges overlap', () => {
+      const src = attrs([param('vp', '-0.5V to -6V')]);
+      const cand = attrs([param('vp', '-1V to -5V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('fails when ranges do not overlap', () => {
+      const src = attrs([param('vp', '-0.5V to -3V')]);
+      const cand = attrs([param('vp', '-4V to -8V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('passes on exact range match', () => {
+      const src = attrs([param('vp', '-2V to -6V')]);
+      const cand = attrs([param('vp', '-2V to -6V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('exact');
+    });
+
+    it('passes when single value falls within source range', () => {
+      const src = attrs([param('vp', '-1V to -5V')]);
+      const cand = attrs([param('vp', '-3V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('fails when single value is outside source range', () => {
+      const src = attrs([param('vp', '-1V to -3V')]);
+      const cand = attrs([param('vp', '-5V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('passes with mA range (Idss)', () => {
+      const idssRule = rule({ attributeId: 'idss', logicType: 'identity_range', weight: 9 });
+      const src = attrs([param('idss', '1mA to 5mA')]);
+      const cand = attrs([param('idss', '2mA to 8mA')], 'CAND-001');
+      const result = evaluateCandidate(table([idssRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('handles tilde separator', () => {
+      const src = attrs([param('vp', '-1V ~ -4V')]);
+      const cand = attrs([param('vp', '-2V ~ -6V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('passes when source is missing (no spec to violate)', () => {
+      const src = attrs([]);
+      const cand = attrs([param('vp', '-2V to -6V')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('fails when candidate is missing (lacks critical spec)', () => {
+      const src = attrs([param('vp', '-2V to -6V')]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('falls back to string comparison when unparsable', () => {
+      const src = attrs([param('vp', 'custom-spec')]);
+      const cand = attrs([param('vp', 'custom-spec')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('causes hard failure in scoring (same as identity)', () => {
+      const r2 = rule({ attributeId: 'vp', logicType: 'identity_range', weight: 10 });
+      const r3 = rule({ attributeId: 'package', logicType: 'identity', weight: 10 });
+      const src = attrs([param('vp', '-1V to -3V'), param('package', 'TO-92')]);
+      const cand = attrs([param('vp', '-5V to -8V'), param('package', 'TO-92')], 'CAND-001');
+      const result = evaluateCandidate(table([r2, r3]), src, cand);
+      expect(result.matchPercentage).toBeLessThan(100);
+      expect(result.passed).toBe(false);
+    });
+  });
+
+  // ----------------------------------------------------------
   // MSL threshold (special case)
   // ----------------------------------------------------------
   describe('MSL threshold', () => {

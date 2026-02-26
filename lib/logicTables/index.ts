@@ -25,6 +25,7 @@ import { mosfetsLogicTable } from './mosfets';
 import { bjtTransistorsLogicTable } from './bjtTransistors';
 import { igbtsLogicTable } from './igbts';
 import { thyristorsLogicTable } from './thyristors';
+import { jfetsLogicTable } from './jfets';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -57,6 +58,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B6': bjtTransistorsLogicTable,
   'B7': igbtsLogicTable,
   'B8': thyristorsLogicTable,
+  'B9': jfetsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -215,6 +217,13 @@ const subcategoryToFamily: Record<string, string> = {
   'Thyristors - SCRs': 'B8',
   'Thyristors - TRIACs': 'B8',
   'Thyristors - DIACs, SIDACs': 'B8',
+  // JFETs (Family B9)
+  'JFET': 'B9',
+  'J-FET': 'B9',
+  'Junction FET': 'B9',
+  'Junction Field-Effect Transistor': 'B9',
+  'Transistors - JFETs': 'B9',
+  'JFETs': 'B9',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -246,6 +255,7 @@ const familyLastUpdated: Record<string, string> = {
   'B6': '2026-02-25',
   'B7': '2026-02-25',
   'B8': '2026-02-25',
+  'B9': '2026-02-25',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

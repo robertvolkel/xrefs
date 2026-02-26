@@ -2185,6 +2185,86 @@ const triacParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * JFET parameter mapping (Family B9).
+ * Verified against: J113 (onsemi), 2N5457 (Central Semiconductor), MMBFJ177 (onsemi)
+ * Digikey category: "JFETs"
+ *
+ * Coverage: ~7 of 17 rules mapped (~45% weight coverage)
+ * Digikey JFET parametric data is sparse — noise specs (NF, fc, Igss),
+ * transconductance (gfs), ft, and Crss are all datasheet-only.
+ *
+ * COMPOUND FIELDS:
+ *   - "Current - Drain (Idss) @ Vds (Vgs=0)": "2 mA @ 15 V" → extract current before "@"
+ *   - "Voltage - Cutoff (VGS off) @ Id": "500 mV @ 1 µA" → extract voltage before "@"
+ *   - "Input Capacitance (Ciss) (Max) @ Vds": "7pF @ 15V" → extract capacitance before "@"
+ *
+ * KNOWN GAPS (not in Digikey parametric data):
+ *   - noise_figure (NF) — datasheet-only
+ *   - fc_1f_corner (1/f corner) — datasheet-only, rarely specified explicitly
+ *   - igss (gate leakage) — datasheet-only
+ *   - gfs / gm (transconductance) — datasheet-only
+ *   - ft (unity-gain frequency) — datasheet-only
+ *   - crss (Cgd) — datasheet-only
+ *   - aec_q101 — no Qualification field for JFETs in Digikey
+ *   - matched_pair_review — not a parametric attribute
+ */
+const jfetParamMap: Record<string, ParamMapEntry> = {
+  'FET Type': {
+    attributeId: 'channel_type',
+    attributeName: 'Channel Type (N/P)',
+    sortOrder: 1,
+  },
+  'Voltage - Breakdown (V(BR)GSS)': {
+    attributeId: 'vgs_max',
+    attributeName: 'Gate-Source Breakdown Voltage Vgs',
+    unit: 'V',
+    sortOrder: 9,
+  },
+  'Drain to Source Voltage (Vdss)': {
+    attributeId: 'vds_max',
+    attributeName: 'Drain-Source Breakdown Voltage Vds',
+    unit: 'V',
+    sortOrder: 8,
+  },
+  'Current - Drain (Idss) @ Vds (Vgs=0)': {
+    attributeId: 'idss',
+    attributeName: 'Drain Saturation Current Idss',
+    sortOrder: 4,
+  },
+  'Voltage - Cutoff (VGS off) @ Id': {
+    attributeId: 'vp',
+    attributeName: 'Pinch-Off Voltage Vp / Vgs(off)',
+    sortOrder: 3,
+  },
+  'Input Capacitance (Ciss) (Max) @ Vds': {
+    attributeId: 'ciss',
+    attributeName: 'Input Capacitance Ciss',
+    sortOrder: 12,
+  },
+  'Power - Max': {
+    attributeId: 'pd_max',
+    attributeName: 'Maximum Power Dissipation',
+    unit: 'mW',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 15,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 2,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 17,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -2195,6 +2275,7 @@ const triacParamMap: Record<string, ParamMapEntry> = {
  * "TVS Diodes" is a single Digikey category covering all TVS types.
  * "FETs, MOSFETs" covers all MOSFET types (N-ch, P-ch, Si, SiC, GaN).
  * "Bipolar Transistors" covers all BJT types (NPN, PNP) — matches "Single Bipolar Transistors".
+ * "JFETs" covers all JFET types (N-ch, P-ch) — Digikey leaf category name is "JFETs".
  */
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
@@ -2229,6 +2310,8 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Block B: Thyristors — separate Digikey categories for SCRs and TRIACs
   ['SCRs', scrParamMap],
   ['TRIACs', triacParamMap],
+  // Block B: JFETs — Digikey category is "JFETs"
+  ['JFETs', jfetParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -2323,6 +2406,7 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B6': ['Bipolar Transistors'],
   'B7': ['IGBTs'],
   'B8': ['SCRs', 'TRIACs'],
+  'B9': ['JFETs'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -2358,8 +2442,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'B6': ['Single Bipolar Transistors', 'Bipolar Transistor Arrays'],
   // B7: param map uses 'IGBTs', Digikey leaf is 'Single IGBTs'
   'B7': ['Single IGBTs'],
-  // B8: param map uses 'SCRs'/'TRIACs', Digikey leaves are 'Thyristors - SCRs'/'Thyristors - TRIACs'
-  'B8': ['Thyristors - SCRs', 'Thyristors - TRIACs', 'Thyristors - DIACs, SIDACs'],
+  // B8: Digikey leaves are just 'SCRs', 'TRIACs', 'DIACs, SIDACs' (under parent 'Thyristors')
+  'B8': ['SCRs', 'TRIACs', 'DIACs, SIDACs'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

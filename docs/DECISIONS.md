@@ -866,3 +866,23 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/thyristors.ts`, `lib/contextQuestions/thyristors.ts`.
 
 **Files modified:** `lib/types.ts` (ComponentCategory), `lib/logicTables/index.ts` (registry + subcategory map), `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts` (mapCategory, mapSubcategory, transformers, device_type enrichment), `lib/services/digikeyParamMap.ts` (scrParamMap, triacParamMap, category registrations), `lib/services/partDataService.ts` (vdrm keyword), `__tests__/services/familyClassifier.test.ts`, `__tests__/services/digikeyMapper.test.ts`.
+
+---
+
+## 40. JFETs (B9) — New `identity_range` LogicType for Range Overlap Matching
+
+**Decision:** JFETs are encoded as Family B9 with 17 rules including a new `identity_range` LogicType for Vp (pinch-off voltage) and Idss (drain saturation current). B9 is classified as a variant of B5 (MOSFETs) when JFET-specific keywords or MPN prefixes are detected.
+
+**Rationale:** JFETs have 3-4:1 manufacturing spread on Vp and Idss. A replacement is valid only if its specified range overlaps the original's — meaning there exist devices in both populations that could operate at the same bias point. Existing LogicTypes couldn't handle this: `identity` requires exact match, `threshold` compares single values, and `range_superset` checks containment (not overlap). The `identity_range` evaluator parses range strings (e.g., "-0.5V to -6V"), ensures min <= max, and checks overlap: `srcMax >= candMin && candMax >= srcMin`. Falls back to exact string comparison when ranges can't be parsed.
+
+**Key implementation details:**
+- **`identity_range` is a new LogicType** added to the `LogicType` union in `lib/types.ts`. It scores identically to `identity` (pass=full credit, fail=hard failure). No additional fields needed on `MatchingRule`.
+- **`parseRange()` utility** handles formats: "X to Y", "X ~ Y", "X...Y", en-dash/em-dash separators, and single values (degenerate range {min: val, max: val}). Applies SI prefixes (m, µ, n, p, k, M, G, T).
+- **Context questions (3):** Q1 Application domain (audio/RF/ultra-high-Z/general) — drives major rule weight changes. Audio escalates 1/f corner + NF, suppresses ft/Ciss/Crss. RF escalates ft/Ciss/Crss/NF, suppresses 1/f. Ultra-high-Z makes Igss BLOCKING with `blockOnMissing: true`. Q2 Matched pair — escalates `matched_pair_review` (weight 0→8). Q3 Automotive — escalates AEC-Q101 to mandatory.
+- **Classifier uses baseFamilyId B5** — JFETs arriving with generic "FET" subcategory are redirected to B9 by description keywords ('JFET', 'J-FET', 'junction field effect', 'depletion mode FET') or MPN prefixes (2N54xx, 2SK, 2SJ, J112-J113, J174, MPF102, BF245, IFxxx).
+- **Digikey category is "JFETs"** — 10 mapped fields, ~45% weight coverage. Major gaps: NF, fc (1/f corner), Igss, gfs, ft, Crss all datasheet-only. No Qualification/AEC-Q101 field for JFETs in Digikey.
+- **Completes Block B** — all 9 discrete semiconductor families (B1-B9) are now encoded.
+
+**Files created:** `lib/logicTables/jfets.ts`, `lib/contextQuestions/jfets.ts`.
+
+**Files modified:** `lib/types.ts` (LogicType union), `lib/services/matchingEngine.ts` (parseRange, evaluateIdentityRange, dispatch), `lib/logicTables/index.ts` (registry + subcategory map), `lib/logicTables/familyClassifier.ts` (B9 variant rule), `lib/contextQuestions/index.ts`, `lib/services/digikeyParamMap.ts` (jfetParamMap, category registrations), `__tests__/services/matchingEngine.test.ts` (identity_range tests), `__tests__/services/familyClassifier.test.ts` (B9 detection tests).

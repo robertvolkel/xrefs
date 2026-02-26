@@ -384,4 +384,78 @@ describe('familyClassifier', () => {
       expect(a.parameters.find(p => p.parameterId === 'recovery_category')).toBeUndefined();
     });
   });
+
+  // --- JFET detection (B9, base: B5) ---
+
+  describe('JFET classifier (B9 from B5)', () => {
+    it('classifies JFET by description keyword "JFET"', () => {
+      const a = attrs([], { description: 'JFET N-CH 35V TO92-3', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by description keyword "J-FET"', () => {
+      const a = attrs([], { description: 'N-Channel J-FET Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by description "junction field effect"', () => {
+      const a = attrs([], { description: 'Junction field effect transistor, N-channel', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by description "depletion mode fet"', () => {
+      const a = attrs([], { description: 'Depletion mode FET, 25V', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by subcategory containing "jfet"', () => {
+      const a = attrs([], { description: 'N-CH 25V', subcategory: 'Transistors - JFETs' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "2SK170"', () => {
+      const a = attrs([], { mpn: '2SK170BL', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "2SJ"', () => {
+      const a = attrs([], { mpn: '2SJ74', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "2N5457"', () => {
+      const a = attrs([], { mpn: '2N5457', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "J113"', () => {
+      const a = attrs([], { mpn: 'J113', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "MPF102"', () => {
+      const a = attrs([], { mpn: 'MPF102', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "BF245"', () => {
+      const a = attrs([], { mpn: 'BF245A', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('classifies JFET by MPN prefix "IF"', () => {
+      const a = attrs([], { mpn: 'IF3602', description: 'Transistor', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B9');
+    });
+
+    it('does NOT classify MOSFET as JFET', () => {
+      const a = attrs([], { mpn: 'IRFZ44N', description: 'N-Channel MOSFET 55V 49A', subcategory: 'FET' });
+      expect(classifyFamily('B5', a)).toBe('B5');
+    });
+
+    it('does NOT fire when base family is not B5', () => {
+      const a = attrs([], { mpn: '2SK170BL', description: 'JFET N-CH', subcategory: 'BJT' });
+      expect(classifyFamily('B6', a)).toBe('B6');
+    });
+  });
 });

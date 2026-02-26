@@ -9,7 +9,7 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 ### ~~Digikey parameter maps incomplete for most families~~ COMPLETED
 **File:** `lib/services/digikeyParamMap.ts`
 
-All 19 passive families + 8 discrete semiconductor families (B1–B8) now have curated parameter maps. See Decisions #16-19, #30-39 for API quirks.
+All 19 passive families + 9 discrete semiconductor families (B1–B9) now have curated parameter maps. See Decisions #16-19, #30-40 for API quirks.
 
 **Completed:** MLCC (12, 14 attrs), Chip Resistors (52-55, 11 attrs), Fixed Inductors (71/72, 15 attrs), Ferrite Beads (70, 10 attrs), Common Mode Chokes (69, 13 attrs), Tantalum (59, 9 attrs + 2 placeholders), Aluminum Electrolytic (58, 15 attrs), Aluminum Polymer (60, 14 attrs + 2 placeholders), Film (64, 13 attrs), Supercapacitors (61, 11 attrs + 2 placeholders), Varistors (65, 8 attrs + 1 placeholder), PTC Resettable Fuses (66, 13 attrs incl. dual height fields), NTC Thermistors (67, 8 attrs + 2 placeholders), PTC Thermistors (68, 4 attrs + 1 placeholder), Rectifier Diodes (B1, 11 attrs single + 9 attrs bridge + 2 placeholders), Schottky Barrier Diodes (B2, 11 attrs single + 11 attrs array, virtual category routing), Zener Diodes (B3, 10 attrs single + 11 attrs array), TVS Diodes (B4, 13 attrs), MOSFETs (B5, 14 attrs, verified Feb 2026), BJTs (B6, 11 attrs, verified Feb 2026), IGBTs (B7, 14 attrs incl. 2 compound fields, verified Feb 2026), Thyristors/SCRs (B8-SCR, 8 attrs, ~48% weight coverage, verified Feb 2026), Thyristors/TRIACs (B8-TRIAC, 9 attrs incl. compound "Triac Type" field, ~51% weight coverage, verified Feb 2026).
 
@@ -22,7 +22,7 @@ All 19 passive families + 8 discrete semiconductor families (B1–B8) now have c
 
 Jest test suite added with 240 tests across 6 suites, covering all priority candidates:
 - `matchingEngine.test.ts` (60 tests) — all 7 rule evaluators, scoring math, fail propagation, partial credit, blockOnMissing, edge cases
-- `familyClassifier.test.ts` (31 tests) — all variant classifiers (54/55/53/60/13/72/B2/B3/B4), B5/B6/B7/B8 standalone, cross-family safety, rectifier enrichment
+- `familyClassifier.test.ts` (45 tests) — all variant classifiers (54/55/53/60/13/72/B2/B3/B4/B9), B5/B6/B7/B8 standalone, cross-family safety, rectifier enrichment, JFET detection
 - `deltaBuilder.test.ts` (14 tests) — REMOVE→OVERRIDE→ADD order, immutability, silent skip, auto-sortOrder
 - `contextModifier.test.ts` (14 tests) — all 5 effect types, blockOnMissing propagation, last-writer-wins, skip behaviors
 - `digikeyMapper.test.ts` (87 tests) — category/subcategory/status mapping, SI prefixes, value transformers, MOSFET/BJT/IGBT/thyristor routing, search result dedup

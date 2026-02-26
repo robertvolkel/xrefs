@@ -195,6 +195,7 @@ export interface ApplicationContext {
 /** Logic type for each attribute rule in a logic table */
 export type LogicType =
   | 'identity'          // Exact match required
+  | 'identity_range'    // Range overlap required (e.g., JFET Vp, Idss — replacement range must overlap source range)
   | 'identity_upgrade'  // Match or strictly superior variant (has hierarchy)
   | 'identity_flag'     // Boolean: if original requires it, replacement must too
   | 'threshold'         // Numeric comparison (≥ or ≤ boundary)

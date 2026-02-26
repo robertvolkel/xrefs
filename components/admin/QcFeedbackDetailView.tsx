@@ -29,8 +29,11 @@ import {
   RecommendationLogEntry,
   XrefRecommendation,
   MatchStatus,
+  MatchingRule,
+  LogicType,
 } from '@/lib/types';
 import { getAdminQcLogDetail } from '@/lib/api';
+import { getLogicTable } from '@/lib/logicTables';
 import { DOT_GREEN, DOT_YELLOW, DOT_RED, DOT_GREY, resultDotColor, statusColor } from './qcConstants';
 import QcRecommendationSummary from './QcRecommendationSummary';
 
@@ -42,6 +45,17 @@ interface ComparisonRow {
   matchStatus: MatchStatus;
   ruleResult?: string;
   note?: string;
+  weight: number;
+  logicType?: LogicType;
+  isMissing: boolean;
+}
+
+interface WeightSummary {
+  totalWeight: number;
+  evaluatedWeight: number;
+  missingWeight: number;
+  matchPercentage: number;
+  coveragePct: number;
 }
 
 interface QcFeedbackDetailViewProps {
@@ -58,6 +72,7 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
   const [saving, setSaving] = useState(false);
   const [comparisonRows, setComparisonRows] = useState<ComparisonRow[]>([]);
   const [recommendation, setRecommendation] = useState<XrefRecommendation | null>(null);
+  const [weightSummary, setWeightSummary] = useState<WeightSummary | null>(null);
 
   // Load log detail for snapshot
   useEffect(() => {
@@ -75,25 +90,73 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
           setRecommendation(rec ?? null);
 
           if (rec && detail.log.snapshot.sourceAttributes) {
-            const matchMap = new Map(
-              rec.matchDetails.map((d) => [d.parameterId, d])
+            const sourceAttributes = detail.log.snapshot.sourceAttributes;
+
+            // Build set of parameterIds that Digikey provided data for
+            const digikeyParamIds = new Set(
+              sourceAttributes.parameters.map(p => p.parameterId)
             );
-            const rows = detail.log.snapshot.sourceAttributes.parameters
-              .sort((a, b) => a.sortOrder - b.sortOrder)
-              .map((sourceParam) => {
-                const matchDetail = matchMap.get(sourceParam.parameterId);
-                return {
-                  parameterId: sourceParam.parameterId,
-                  parameterName: sourceParam.parameterName,
-                  sourceValue: sourceParam.value,
-                  replacementValue: matchDetail?.replacementValue ?? '—',
-                  matchStatus: (matchDetail?.matchStatus ?? 'different') as MatchStatus,
-                  ruleResult: matchDetail?.ruleResult,
-                  note: matchDetail?.note,
-                };
-              })
-              .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
-            setComparisonRows(rows);
+
+            // Load logic table for weight/type lookup
+            const logicTable = detail.log.familyId
+              ? getLogicTable(detail.log.familyId)
+              : null;
+            const ruleMap = new Map<string, MatchingRule>(
+              logicTable?.rules.map(r => [r.attributeId, r]) ?? []
+            );
+
+            // Build rows from matchDetails (covers ALL rules evaluated by the engine)
+            const evaluatedRows: ComparisonRow[] = [];
+            const missingRows: ComparisonRow[] = [];
+
+            for (const md of rec.matchDetails) {
+              const rule = ruleMap.get(md.parameterId);
+              const isMissing = !digikeyParamIds.has(md.parameterId);
+
+              const row: ComparisonRow = {
+                parameterId: md.parameterId,
+                parameterName: md.parameterName,
+                sourceValue: md.sourceValue,
+                replacementValue: md.replacementValue,
+                matchStatus: md.matchStatus as MatchStatus,
+                ruleResult: md.ruleResult,
+                note: md.note,
+                weight: rule?.weight ?? 0,
+                logicType: rule?.logicType,
+                isMissing,
+              };
+
+              if (isMissing) {
+                missingRows.push(row);
+              } else {
+                evaluatedRows.push(row);
+              }
+            }
+
+            // Sort: evaluated by sortOrder, missing by weight descending
+            evaluatedRows.sort((a, b) => {
+              const aOrder = ruleMap.get(a.parameterId)?.sortOrder ?? 99;
+              const bOrder = ruleMap.get(b.parameterId)?.sortOrder ?? 99;
+              return aOrder - bOrder;
+            });
+            missingRows.sort((a, b) => b.weight - a.weight);
+
+            setComparisonRows([...evaluatedRows, ...missingRows]);
+
+            // Compute weight summary
+            const totalWeight = logicTable?.rules.reduce((s, r) => s + r.weight, 0) ?? 0;
+            const evaluatedWeight = evaluatedRows.reduce((s, r) => s + r.weight, 0);
+            const missingWeight = missingRows.reduce((s, r) => s + r.weight, 0);
+
+            setWeightSummary({
+              totalWeight,
+              evaluatedWeight,
+              missingWeight,
+              matchPercentage: rec.matchPercentage,
+              coveragePct: totalWeight > 0
+                ? Math.round((evaluatedWeight / totalWeight) * 100)
+                : 0,
+            });
           }
         }
       })
@@ -244,7 +307,48 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                 <Typography variant="subtitle2" sx={{ fontSize: '0.78rem', fontWeight: 600, mb: 0.5 }}>
                   {t('adminQc.comparisonTable')}
                 </Typography>
-                <TableContainer sx={{ maxHeight: 400 }}>
+
+                {/* Weight summary bar */}
+                {weightSummary && weightSummary.totalWeight > 0 && (
+                  <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1, py: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                      Score:{' '}
+                      <Typography component="span" variant="body2" sx={{ fontWeight: 700, fontSize: '0.75rem' }}>
+                        {weightSummary.matchPercentage}%
+                      </Typography>
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                      Data coverage:{' '}
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{
+                          fontWeight: 700,
+                          fontSize: '0.75rem',
+                          color: weightSummary.coveragePct >= 70
+                            ? 'success.main'
+                            : weightSummary.coveragePct >= 40
+                              ? 'warning.main'
+                              : 'error.main',
+                        }}
+                      >
+                        {weightSummary.coveragePct}%
+                      </Typography>
+                      {' '}({weightSummary.evaluatedWeight} / {weightSummary.totalWeight} weight)
+                    </Typography>
+                    {weightSummary.missingWeight > 0 && (
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                        Missing:{' '}
+                        <Typography component="span" variant="body2" sx={{ fontWeight: 600, fontSize: '0.75rem', color: 'warning.main' }}>
+                          {weightSummary.missingWeight}
+                        </Typography>
+                        {' '}weight
+                      </Typography>
+                    )}
+                  </Stack>
+                )}
+
+                <TableContainer sx={{ maxHeight: 500 }}>
                   <Table size="small" stickyHeader>
                     <TableHead>
                       <TableRow>
@@ -257,14 +361,19 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary' }}>
                           {t('adminQc.replacementColumn')}
                         </TableCell>
+                        <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: 50, textAlign: 'center' }}>
+                          Wt
+                        </TableCell>
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: 80 }}>
                           Result
                         </TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {comparisonRows.map((row) => {
+                      {comparisonRows.map((row, idx) => {
                         const isFlagged = row.parameterId === feedback.ruleAttributeId;
+                        const isFirstMissing = row.isMissing &&
+                          (idx === 0 || !comparisonRows[idx - 1].isMissing);
                         return (
                           <TableRow
                             key={row.parameterId}
@@ -272,6 +381,10 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                               ...(isFlagged && {
                                 bgcolor: 'action.selected',
                                 borderLeft: `3px solid ${DOT_YELLOW}`,
+                              }),
+                              ...(row.isMissing && { opacity: 0.6 }),
+                              ...(isFirstMissing && {
+                                '& td': { borderTop: '3px solid', borderTopColor: 'divider' },
                               }),
                               '&:last-child td': { borderBottom: 0 },
                             }}
@@ -284,6 +397,9 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                             </TableCell>
                             <TableCell sx={{ fontSize: '0.75rem', fontFamily: 'monospace' }}>
                               {row.replacementValue}
+                            </TableCell>
+                            <TableCell sx={{ textAlign: 'center', fontSize: '0.72rem', fontWeight: 600 }}>
+                              {row.weight}
                             </TableCell>
                             <TableCell>
                               <Stack direction="row" alignItems="center" spacing={0.5}>
