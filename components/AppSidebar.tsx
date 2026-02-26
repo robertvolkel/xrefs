@@ -8,6 +8,7 @@ import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
@@ -30,6 +31,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const isQcActive = pathname === '/qc';
   const isAdminActive = pathname === '/admin';
   const isOrgActive = pathname === '/organization';
+  const isAboutActive = pathname === '/about';
   const isSettingsActive = pathname === '/settings';
 
   const handleLogout = async () => {
@@ -156,6 +158,19 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             <CorporateFareOutlinedIcon fontSize="small" />
           </IconButton>
         )}
+        <IconButton
+          onClick={() => router.push('/about')}
+          size="small"
+          sx={{
+            mb: 1.5,
+            color: isAboutActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isAboutActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <HelpOutlineIcon fontSize="small" />
+        </IconButton>
         <IconButton
           onClick={() => router.push('/settings')}
           size="small"
