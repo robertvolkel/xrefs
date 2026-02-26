@@ -26,6 +26,7 @@ import { bjtTransistorsLogicTable } from './bjtTransistors';
 import { igbtsLogicTable } from './igbts';
 import { thyristorsLogicTable } from './thyristors';
 import { jfetsLogicTable } from './jfets';
+import { ldoLogicTable } from './ldo';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -59,6 +60,8 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B7': igbtsLogicTable,
   'B8': thyristorsLogicTable,
   'B9': jfetsLogicTable,
+  // Block C: Power Management ICs
+  'C1': ldoLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -224,6 +227,15 @@ const subcategoryToFamily: Record<string, string> = {
   'Junction Field-Effect Transistor': 'B9',
   'Transistors - JFETs': 'B9',
   'JFETs': 'B9',
+  // --- Block C: Power Management ICs ---
+  // Linear Voltage Regulators / LDOs (Family C1)
+  'Linear Voltage Regulator': 'C1',
+  'LDO': 'C1',
+  'Low-Dropout Regulator': 'C1',
+  'Voltage Regulator - Linear': 'C1',
+  'Voltage Regulators - Linear': 'C1',
+  'Voltage Regulators - Linear Regulator': 'C1',
+  'Linear Regulator': 'C1',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -256,6 +268,8 @@ const familyLastUpdated: Record<string, string> = {
   'B7': '2026-02-25',
   'B8': '2026-02-25',
   'B9': '2026-02-25',
+  // Block C: Power Management ICs
+  'C1': '2026-02-26',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

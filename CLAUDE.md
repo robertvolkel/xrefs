@@ -1,6 +1,10 @@
 # XRefs App
 
-Cross-reference recommendation engine for electronic components. Users enter a part number, the app finds equivalent replacements from Digikey's catalog, and a deterministic rule engine scores each candidate.
+An AI-powered component intelligence platform for the electronics industry. Users enter a part number (or upload a BOM), and the system finds equivalent replacements, scores them with a deterministic rule engine, and adapts its recommendations based on the user's role, objectives, and business constraints.
+
+**Current MVP:** Cross-reference recommendation engine covering 28 passive and discrete semiconductor families, with Digikey as the primary data source.
+
+**Vision:** A platform that helps engineers, buyers, and supply chain professionals make better component decisions by combining deep technical matching with commercial intelligence, compliance and lifecycle awareness, and supply chain insights — personalized to each user's context. See `docs/PRODUCT_ROADMAP.md` for the full vision and phased implementation plan.
 
 ## Tech Stack
 
@@ -176,6 +180,7 @@ Each component family has a logic table in `lib/logicTables/` defining its match
 | B7 | IGBTs — Insulated Gate Bipolar Transistors | Discrete Semiconductors |
 | B8 | Thyristors / TRIACs / SCRs | Discrete Semiconductors |
 | B9 | JFETs — Junction Field-Effect Transistors | Discrete Semiconductors |
+| C1 | Linear Voltage Regulators (LDOs) | Voltage Regulators |
 
 **Variant families** (53, 54, 55, 60, 13, 72, B2, B3, B4) are derived from base families using `deltaBuilder.ts` — the classifier in `familyClassifier.ts` detects them from part attributes. B2 (Schottky) is classified from B1 (Rectifier Diodes) when the part description contains 'Schottky', 'SBD', or 'SiC diode'. B3 (Zener) is classified from B1 when the description contains 'Zener', 'voltage reference diode', or MPN starts with 'BZX', 'BZT', 'MMSZ'. B4 (TVS) is classified from B1 when the description contains 'TVS', 'transient voltage', 'ESD protection', or MPN matches TVS prefixes (SMAJ, SMBJ, P6KE, PESD, TPD, ESDA, etc.). B5 (MOSFETs) is a standalone base family — detected by subcategory mapping ('MOSFET', 'FET', 'N-ch', 'P-ch', 'SiC MOSFET', 'GaN FET' keywords). B6 (BJTs) is a standalone base family — detected by subcategory mapping ('BJT', 'Bipolar Transistor', 'NPN', 'PNP' keywords). B7 (IGBTs) is a standalone base family — detected by subcategory mapping ('IGBT', 'Insulated Gate Bipolar Transistor' keywords). B8 (Thyristors) is a standalone base family — detected by subcategory mapping ('SCR', 'TRIAC', 'DIAC', 'Thyristor', 'SIDAC' keywords). Three sub-types (SCR/TRIAC/DIAC) share one logic table; context question Q1 suppresses irrelevant rules per sub-type via `not_applicable` effects. B9 (JFETs) is classified as a variant of B5 (MOSFETs) when detected by description keywords ('JFET', 'J-FET', 'junction field effect', 'depletion mode FET') or MPN prefixes (2N54xx, 2SK, 2SJ, J112, J113, MPF102, BF245, IFxxx). Uses the new `identity_range` LogicType for Vp and Idss range overlap matching.
 
@@ -233,7 +238,41 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
 
-Parameter mapping is complete for **all 19 passive + 9 discrete families**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026), IGBTs (B7, "Single IGBTs" category, 14 fields incl. 2 compound, ~55% weight coverage — verified Feb 2026), Thyristors (B8, "SCRs" + "TRIACs" categories, 8-9 fields per sub-type, 1 compound ("Triac Type"→gate_sensitivity+snubberless), ~48-51% weight coverage — verified Feb 2026), and JFETs (B9, "JFETs" category, 10 fields, ~45% weight coverage — verified Feb 2026). See `docs/DECISIONS.md` (#16-19, #30-40) for Digikey API quirks.
+Parameter mapping is complete for **all 19 passive + 9 discrete + 1 Block C IC family**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026), IGBTs (B7, "Single IGBTs" category, 14 fields incl. 2 compound, ~55% weight coverage — verified Feb 2026), Thyristors (B8, "SCRs" + "TRIACs" categories, 8-9 fields per sub-type, 1 compound ("Triac Type"→gate_sensitivity+snubberless), ~48-51% weight coverage — verified Feb 2026), JFETs (B9, "JFETs" category, 10 fields, ~45% weight coverage — verified Feb 2026), and LDOs (C1, "Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" category, 12 fields, ~52% weight coverage — verified Feb 2026). See `docs/DECISIONS.md` (#16-19, #30-40, #46) for Digikey API quirks.
+
+## Product Direction
+
+The app is evolving from a cross-reference tool into a component intelligence platform built on five pillars:
+
+1. **Technical Matching** (built) — Deterministic rule engine across 28+ families
+2. **Commercial Intelligence** (planned) — Multi-supplier pricing, availability, lead times
+3. **Compliance & Lifecycle** (planned) — EOL tracking, environmental/trade compliance, qualifications
+4. **Data Integration** (planned) — Unifying distributor APIs, Atlas (Chinese MFR dataset), customer data, and market feeds
+5. **Supply Chain Intelligence** (future) — Geopolitical risk, market monitoring, proactive alerts
+
+### Data Sources
+
+The platform will pull from multiple data sources:
+- **Digikey** (built) — Primary source for technical parametric data, pricing, availability
+- **Atlas** (planned) — Proprietary Chinese component manufacturer dataset: products, company profiles, sponsored crosses
+- **Distributor APIs** (planned) — Mouser, Arrow, Nexar/Octopart for multi-supplier pricing
+- **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering
+
+Chinese manufacturer options are highlighted with a subtle icon in recommendations (non-promotional, informative only). Rich company profiles for Chinese manufacturers are fed by the Atlas API.
+
+### User Context Model
+
+Context flows at three levels, where more specific overrides more general:
+
+- **User Profile** — Role, industry, compliance defaults, manufacturer preferences (`profiles.preferences` JSONB)
+- **List Context** — Per-BOM objectives, constraints, urgency, compliance overrides (`parts_lists.context` JSONB)
+- **Per-Search Context** — Family-specific application context questions (existing system, unchanged)
+
+Global preferences produce `AttributeEffect[]` via `contextResolver.ts`, reusing the existing context modifier system. The matching engine itself doesn't change — only the effects applied to logic tables change.
+
+The LLM adapts its conversation style and assessment focus based on user context (appended to system prompt). The UI is the same for all roles.
+
+See `docs/PRODUCT_ROADMAP.md` for the full roadmap and `docs/DECISIONS.md` (#41-45) for architectural decisions.
 
 ## Running
 

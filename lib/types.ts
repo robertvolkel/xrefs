@@ -30,7 +30,8 @@ export type ComponentCategory =
   | 'Transistors'
   | 'Thyristors'
   | 'Connectors'
-  | 'Protection';
+  | 'Protection'
+  | 'Voltage Regulators';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {

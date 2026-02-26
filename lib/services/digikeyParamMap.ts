@@ -2264,6 +2264,131 @@ const jfetParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// Block C: Power Management ICs
+// ============================================================
+
+/**
+ * Linear Voltage Regulators / LDOs (Family C1)
+ * Digikey category: "Voltage Regulators - Linear, Low Drop Out (LDO) Regulators"
+ *
+ * Verified Feb 2026 against: AP2112K-3.3TRG1, TLV75533PDBVR, LM1117MP-3.3/NOPB
+ * All 3 parts show consistent 16-17 parameter fields.
+ *
+ * Coverage: 10 of 22 rules have direct Digikey mappings (~52% weight coverage).
+ * Datasheet-only (no Digikey parametric data):
+ *   vout_accuracy, output_cap_compatibility (ceramic stable), vin_min,
+ *   load_regulation, line_regulation, power_good, soft_start, rth_ja,
+ *   tj_max, aec_q100, packaging.
+ *
+ * Digikey field gotchas:
+ * - "Output Configuration" = polarity (Positive/Negative), NOT "Polarity"
+ * - "Voltage Dropout (Max)" is compound: "0.4V @ 600mA" — transformer extracts
+ *   voltage value only (extractNumericValue handles "0.4V" portion)
+ * - "PSRR" is compound: "65dB (100Hz ~ 1kHz)" — includes frequency context
+ * - "Control Features" = enable info ("Enable", "-") — NOT "Features"
+ * - "Protection Features" = OCP/OTP info ("Over Current, Over Temperature") —
+ *   transformer extracts thermal_shutdown flag
+ * - No "Qualification" or AEC-Q100 field in parametric data (same gap as IGBTs)
+ * - No "Output Voltage Tolerance" field — vout_accuracy is datasheet-only
+ * - "Current - Supply (Max)" appears on some parts (LM1117) — not mapped (Iq covers it)
+ */
+const ldoParamMap: Record<string, ParamMapEntry> = {
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type (Fixed / Adjustable)',
+    sortOrder: 1,
+  },
+  // "Output Configuration" = Positive/Negative polarity (not "Polarity")
+  'Output Configuration': {
+    attributeId: 'polarity',
+    attributeName: 'Polarity (Positive / Negative)',
+    sortOrder: 2,
+  },
+  'Voltage - Output (Min/Fixed)': {
+    attributeId: 'output_voltage',
+    attributeName: 'Output Voltage Vout',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Voltage - Output (Max)': {
+    attributeId: 'output_voltage_max',
+    attributeName: 'Output Voltage Max (Adjustable Range)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Voltage - Input (Max)': {
+    attributeId: 'vin_max',
+    attributeName: 'Maximum Input Voltage',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  // Compound field: "0.4V @ 600mA" — extractNumericValue gets "0.4" from "0.4V" prefix
+  'Voltage Dropout (Max)': {
+    attributeId: 'vdropout',
+    attributeName: 'Dropout Voltage',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  'Current - Output': {
+    attributeId: 'iout_max',
+    attributeName: 'Maximum Output Current',
+    unit: 'A',
+    sortOrder: 7,
+  },
+  'Current - Quiescent (Iq)': {
+    attributeId: 'iq',
+    attributeName: 'Quiescent Current',
+    unit: 'A',
+    sortOrder: 8,
+  },
+  // Compound field: "65dB (100Hz ~ 1kHz)" — extractNumericValue gets dB portion
+  'PSRR': {
+    attributeId: 'psrr',
+    attributeName: 'Power Supply Rejection Ratio',
+    unit: 'dB',
+    sortOrder: 9,
+  },
+  // "Control Features" contains enable info: "Enable" or "-" (absent)
+  'Control Features': {
+    attributeId: 'enable_pin',
+    attributeName: 'Enable Pin',
+    sortOrder: 10,
+  },
+  // "Protection Features" contains thermal shutdown info:
+  // "Over Current, Over Temperature" → transformer extracts thermal_shutdown flag
+  'Protection Features': {
+    attributeId: 'thermal_shutdown',
+    attributeName: 'Thermal Shutdown',
+    sortOrder: 11,
+  },
+  'Number of Regulators': {
+    attributeId: 'num_regulators',
+    attributeName: 'Number of Regulators',
+    sortOrder: 12,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 13,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 15,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_style',
+    attributeName: 'Mounting Style',
+    sortOrder: 16,
+  },
+};
+
 /**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
@@ -2312,6 +2437,9 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['TRIACs', triacParamMap],
   // Block B: JFETs — Digikey category is "JFETs"
   ['JFETs', jfetParamMap],
+  // Block C: Power Management ICs
+  // LDOs — Digikey category is "Voltage Regulators - Linear" (expected)
+  ['Voltage Regulators - Linear', ldoParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -2407,6 +2535,8 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B7': ['IGBTs'],
   'B8': ['SCRs', 'TRIACs'],
   'B9': ['JFETs'],
+  // Block C: Power Management ICs
+  'C1': ['Voltage Regulators - Linear'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -2444,6 +2574,9 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'B7': ['Single IGBTs'],
   // B8: Digikey leaves are just 'SCRs', 'TRIACs', 'DIACs, SIDACs' (under parent 'Thyristors')
   'B8': ['SCRs', 'TRIACs', 'DIACs, SIDACs'],
+  // C1: param map uses 'Voltage Regulators - Linear' but that substring also matches
+  // 'Linear + Switching' and 'Linear Regulator Controllers'. Use exact leaf name.
+  'C1': ['Voltage Regulators - Linear, Low Drop Out (LDO) Regulators'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

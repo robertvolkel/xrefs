@@ -52,6 +52,7 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
   if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
+  if (lower.includes('voltage regulator') || lower.includes('ldo')) return 'Voltage Regulators';
   // Default: ICs covers a huge range
   return 'ICs';
 }
@@ -83,6 +84,9 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // Linear Voltage Regulators / LDOs (Family C1)
+  if (lower.includes('voltage regulator') && lower.includes('linear')) return 'Linear Voltage Regulator';
+  if (lower.includes('ldo')) return 'LDO';
   // Thyristors (Family B8) — must be before transistor/diode fallback checks
   if (lower.includes('triac')) return 'TRIAC';
   if (lower.includes('diac') || lower.includes('sidac')) return 'DIAC';
@@ -396,6 +400,69 @@ function transformToSnubberless(valueText: string): string {
   return 'No';
 }
 
+// ============================================================
+// LDO (Family C1) TRANSFORMERS
+// ============================================================
+
+/**
+ * Extract output capacitor ESR compatibility from LDO Features or description.
+ * Ceramic-stable LDOs: "Ceramic Cap Stable", "Any Capacitor", "Internal Compensation"
+ * ESR-stabilized: explicit ESR requirement or tantalum recommendation
+ */
+function transformToOutputCapCompatibility(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('ceramic') && (lower.includes('stable') || lower.includes('compatible'))) return 'Yes';
+  if (lower.includes('any cap') || lower.includes('any capacitor') || lower.includes('any-cap')) return 'Yes';
+  if (lower.includes('internal compensation') || lower.includes('internally compensated')) return 'Yes';
+  if (lower.includes('cmos ldo') || lower.includes('cmos regulator')) return 'Yes';
+  if (lower.includes('esr') && (lower.includes('require') || lower.includes('minimum'))) return 'No';
+  if (lower.includes('tantalum') && lower.includes('require')) return 'No';
+  return valueText;
+}
+
+/**
+ * Normalize enable pin from LDO "Control Features" field.
+ * Digikey values: "Enable", "Enable, Output Discharge", "-"
+ * Returns: "Active High" (default for modern LDOs with Enable), "Active Low",
+ * or "Absent" (no enable pin — always-on 3-terminal device).
+ *
+ * NOTE: Digikey "Control Features" only tells us IF an enable pin exists,
+ * not its polarity. Polarity (active-high vs active-low) is datasheet-only.
+ * When "Enable" is present, we return "Active High" as the dominant default
+ * for modern LDOs, but this should be verified from datasheets.
+ */
+function transformToEnablePin(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower === '-' || lower.trim() === '') return 'Absent';
+  if (lower.includes('active low') || lower.includes('/en') || lower.includes('shutdown') || lower.includes('shdn')) return 'Active Low';
+  if (lower.includes('enable')) return 'Active High';
+  if (lower.includes('no enable') || lower.includes('always on') || lower.includes('3-terminal')) return 'Absent';
+  return valueText;
+}
+
+/**
+ * Extract thermal shutdown presence from LDO "Protection Features" field.
+ * Digikey values: "Over Current, Over Temperature", "Over Current", "-"
+ * Returns: "Yes" if over temperature is mentioned, "No" otherwise.
+ */
+function transformToThermalShutdown(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('over temperature') || lower.includes('thermal')) return 'Yes';
+  if (lower === '-' || lower.trim() === '') return 'No';
+  return 'No';
+}
+
+/**
+ * Extract AEC-Q100 qualification from LDO Qualification field.
+ * Similar to AEC-Q101/Q200 transformers but for IC standard.
+ */
+function transformToAecQ100(valueText: string): string {
+  const upper = valueText.toUpperCase();
+  if (upper.includes('AEC-Q100')) return 'Yes';
+  if (upper.includes('AUTOMOTIVE')) return 'Yes';
+  return 'No';
+}
+
 /** Apply value transformations based on attributeId */
 function transformValue(attributeId: string, valueText: string): string {
   switch (attributeId) {
@@ -443,6 +510,15 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformToGateSensitivity(valueText);
     case 'snubberless':
       return transformToSnubberless(valueText);
+    // LDO (Family C1) transformers
+    case 'output_cap_compatibility':
+      return transformToOutputCapCompatibility(valueText);
+    case 'enable_pin':
+      return transformToEnablePin(valueText);
+    case 'aec_q100':
+      return transformToAecQ100(valueText);
+    case 'thermal_shutdown':
+      return transformToThermalShutdown(valueText);
     default:
       return valueText;
   }

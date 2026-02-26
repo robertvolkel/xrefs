@@ -227,6 +227,13 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
     if (vMatch) parts.push(`${vMatch[1]}V`);
   }
 
+  // LDOs / Voltage Regulators: use output voltage as keyword
+  const vout = paramMap.get('output_voltage');
+  if (vout) {
+    const vMatch = vout.value.match(/(\d+\.?\d*)\s*V/i);
+    if (vMatch) parts.push(`${vMatch[1]}V`);
+  }
+
   // Package
   const pkg = paramMap.get('package_case');
   if (pkg) {

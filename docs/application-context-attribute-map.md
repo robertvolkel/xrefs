@@ -18,25 +18,27 @@ This document maps every component family to the application-context questions t
 | 6 | BJTs (NPN + PNP) | B6 | **Moderate-High** | Saturated switching vs. linear/analog mode bifurcation — storage time is irrelevant in analog, dominant in fast switching. hFE is a curve not a number; must verify at actual Ic. Complementary pair matching creates dual-device constraints. |
 | 7 | IGBTs | B7 | **High** | Switching frequency determines tail-current viability and Eoff budget. PT/NPT/FS technology is an Identity constraint for parallel designs. Co-packaged diode presence is a hard gate. Short-circuit withstand time interfaces directly with gate driver protection design. |
 | 8 | Thyristors / TRIACs / SCRs | B8 | **Moderate** | Device sub-type (SCR/TRIAC/DIAC) is a hard gate. Gate sensitivity class must match gate drive capability. TRIAC quadrant operation determines which half-cycles trigger reliably. Snubberless flag is a hard Identity constraint. dV/dt rating interfaces with snubber design. |
-| 9 | JFETs | B9 | **High** | Audio vs RF vs ultra-high-Z are three fundamentally different application domains with completely different binding specs. Audio: 1/f noise corner is THE differentiator. RF: ft, Ciss, Crss dominate. Ultra-high-Z: Igss is BLOCKING (10pA across 100G-ohm = 1V error). Matched-pair requirement for differential circuits changes evaluation from single-device to engineering review. |
-| 10 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
-| 11 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
-| 12 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
-| 13 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
-| 14 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
-| 15 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
-| 16 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
-| 17 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
-| 18 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
-| 19 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
-| 20 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
-| 21 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
-| 22 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
-| 23 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
-| 24 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
-| 25 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
-| 26 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
-| 27 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 9 | MLCCs | 12 | **High** | DC bias derating, flex PCB, audio/piezoelectric noise all require context |
+| 10 | Tantalum Capacitors | 59 | **High** | Failure mode safety implications, voltage derating practice, inrush conditions |
+| 11 | RF / Signal Inductors | 72 | **High** | Operating frequency and Q requirements replace the switcher concerns from power inductors; core material priority inverts |
+| 12 | Rectifier Diodes | B1 | **High** | Switching frequency determines whether trr or Vf dominates; circuit topology changes which specs are primary; low-voltage apps make Vf critical |
+| 13 | Schottky Diodes | B2 | **Moderate-High** | Vf is almost always dominant; leakage/thermal runaway risk depends on voltage and temperature; Si vs SiC is a hard gate |
+| 14 | Zener / Voltage Reference Diodes | B3 | **Moderate-High** | Clamping vs. reference application completely changes priorities — reference cares about TC, Zzt, noise; clamping only cares about Vz and power |
+| 15 | TVS Diodes | B4 | **Moderate-High** | Signal-line vs. power-line changes Cj priority entirely; surge standard compliance determines test waveform; steering vs. clamp topology is a hard gate |
+| 16 | Current Sense Resistors | 54 | **Moderate-High** | Kelvin sensing, precision class, and switching frequency change matching priorities significantly |
+| 17 | Power Inductors | 71 | **Moderate-High** | Converter topology affects saturation behavior requirements; actual current determines derating |
+| 18 | Varistors / MOVs | 65 | **Moderate-High** | Mains vs. DC changes safety requirements entirely; transient source type shifts energy vs. response time priority |
+| 19 | PTC Resettable Fuses | 66 | **Moderate-High** | Circuit voltage is a hard safety question; ambient temperature causes severe hold current derating |
+| 20 | Aluminum Electrolytics | 58 | **Moderate** | Switching frequency affects ripple current; actual temp determines lifetime |
+| 21 | Supercapacitors / EDLCs | 61 | **Moderate** | Backup vs. pulse buffering changes priorities; cold-start needs require ESR context |
+| 22 | Chassis Mount Resistors | 55 | **Moderate** | Thermal setup (heatsink type, airflow) directly determines effective power rating |
+| 23 | Aluminum Polymer Caps | 60 | **Low-Moderate** | Inherits aluminum electrolytic context minus lifetime concerns; ripple frequency still matters |
+| 24 | Chip Resistors | 52 | **Low** | Mostly parametric — only harsh environment and precision applications need context |
+| 25 | Through-Hole Resistors | 53 | **Low** | Inherits chip resistor context; lead spacing is physical, not application-dependent |
+| 26 | JFETs | B9 | **Moderate** | Application mode (low-noise amp / ultra-high-Z / RF / legacy switching) determines whether NF, Igss, ft, or switching specs dominate. Vp and Idss are Identity specs — circuit bias depends on their range. Matched-pair applications require dual-device evaluation. |
+| 27 | Linear Voltage Regulators (LDOs) | C1 | **Moderate** | Output capacitor ESR compatibility is the most common substitution failure — ceramic vs. tantalum stability requirement is a hard Identity constraint. Fixed vs. adjustable, enable polarity, and power-good presence are Identity flags. PSRR must be verified at the upstream switching frequency, not DC. |
+| 28 | Switching Regulators | C2 | **High** | Topology is a hard Identity gate before any other evaluation. Control mode determines whether existing compensation network is valid — different control modes require different compensation. Switching frequency interfaces directly with inductor and capacitor values. Vref determines whether existing feedback resistors set the correct output. Integrated-switch vs. controller-only is an architectural Identity constraint. |
+| 29 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -1088,7 +1090,186 @@ The application mode determines which attributes dominate. Low-noise amplifier a
 
 ---
 
-### 27. Mica Capacitors (Family 13)
+---
+
+### 27. Linear Voltage Regulators — LDOs (Family C1)
+
+**Context sensitivity: MODERATE**
+
+The most important bifurcations are output voltage (exact Identity match for fixed types), output capacitor ESR compatibility (hard Identity — determines whether the LDO is stable with the PCB's existing capacitor), and the presence and polarity of feature pins (Enable, Power-Good). PSRR context depends on what's upstream of the LDO.
+
+#### Question 1: What is the output type and target voltage?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Fixed output — single voltage (e.g., 3.3V, 5V, 1.8V)** | Output voltage is a hard Identity match — replacement must be the exact same nominal output voltage. Even ±1% difference may violate downstream rail tolerance. Fixed-to-adjustable substitution requires adding external resistor divider and is a PCB modification, not a drop-in swap. |
+| **Adjustable output** | Replacement must support the same target output voltage within its adjustable range. Verify the feedback reference voltage (Vref) and input bias current — these determine the external resistor values required and whether the existing resistor divider sets the correct output. |
+| **Negative output** | Replacement must also be a negative-output LDO. Hard Identity — cannot substitute positive for negative. |
+| **Tracking / dual-output** | Replacement must support the same tracking and sequencing behavior. Verify tracking accuracy and soft-start compatibility. Engineering review recommended. |
+
+**Affected attributes:**
+- `Output Type` → hard Identity gate before any other evaluation
+- `Output Voltage Vout` → hard Identity for fixed; range check for adjustable
+- `Iq` → weight increases for battery applications; irrelevant for high-load always-on
+
+#### Question 2: What is the output capacitor type on the PCB?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Ceramic (MLCC) — X5R, X7R, C0G** | Replacement MUST be explicitly rated stable with ceramic capacitors. Look for "ceramic-stable," "any-cap LDO," or "CMOS LDO" in the datasheet. An ESR-stabilized LDO substituted here will oscillate. This is a BLOCKING constraint. |
+| **Tantalum or aluminum electrolytic** | Both ESR-stabilized and ceramic-stable LDOs are acceptable (ESR from tantalum/electrolytic satisfies ESR-stabilized types; ceramic-stable types work with any cap). Verify minimum ESR is not below the LDO's minimum requirement. |
+| **Unknown** | Flag for engineering review. Inspect PCB BOM for output capacitor type. Do not approve substitution until capacitor type is confirmed. |
+
+**Affected attributes:**
+- `Output Capacitor Requirement` → BLOCKING for ceramic-cap designs if replacement is ESR-stabilized
+- `Vout Accuracy` → tighter if downstream load has narrow voltage window
+
+#### Question 3: Is this a battery-powered or energy-harvested application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — battery, energy harvesting, coin cell** | Iq becomes a PRIMARY constraint. Even a 10µA difference in Iq matters at the system level. Vdropout becomes PRIMARY — lower dropout extends battery life. Verify Iq at the actual sleep-mode load current (often near zero load). |
+| **No — mains-powered, always-on, high-load** | Iq is LOW priority — a few hundred µA against a 100mA+ load is negligible. Vdropout still matters for thermal reasons but not for battery life. |
+
+**Affected attributes:**
+- `Iq` → escalates to primary constraint for battery applications
+- `Vdropout Max` → escalates for battery applications (extends usable range)
+- `Vin Min` → must reach regulation before battery is depleted
+
+#### Question 4: Is there an upstream switching regulator feeding this LDO?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — LDO post-regulates a switcher output** | PSRR at the switching frequency becomes a PRIMARY constraint. Must verify PSRR at the actual upstream switching frequency (not DC PSRR). A replacement with lower PSRR at the switching frequency will pass through more switching ripple to the downstream load. |
+| **No — LDO is fed from a battery or transformer/linear supply** | PSRR at DC and low frequencies (50/60Hz) is the relevant spec. Generally much less demanding. |
+
+**Affected attributes:**
+- `PSRR` → primary concern for post-switcher applications; frequency context is critical
+- `Load Regulation` → secondary concern for supplies with high-frequency load variation
+
+#### Question 5: Does the circuit use Enable, Power-Good, or Soft-Start pins?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Enable pin used for power sequencing or sleep control** | Replacement must have Enable pin with MATCHING polarity (active-high vs. active-low). Mismatched polarity inverts control behavior. Verify float behavior (what does the LDO do when EN is undriven?). |
+| **Power-Good used for MCU reset or sequencing** | Replacement must have Power-Good with compatible output structure (open-drain) and threshold. Verify PG pull-up resistor is on the PCB. |
+| **Soft-start relied upon for inrush current limiting** | Replacement must have soft-start if large output capacitance or inrush-sensitive upstream supply is present. |
+| **None of the above — basic 3-terminal application** | Feature pin constraints are not applicable. Any replacement with matching Identity and performance specs is acceptable. |
+
+**Affected attributes:**
+- `Enable Pin` → Identity (Flag) if used; polarity must match
+- `Power-Good Pin` → Identity (Flag) if used; open-drain structure required
+- `Soft-Start` → Identity (Flag) if relied upon for inrush limiting
+
+#### Question 6: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q100 mandatory. Verify Grade (0/1/2/3) matches or exceeds original. Load-dump survivability (40V on 12V systems) must be explicitly rated. Operating temp range must cover automotive ambient extremes. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q100` → Identity (Flag), mandatory for automotive; Grade must match or exceed
+- `Vin Max` → load-dump survivability becomes critical (40V for 12V automotive systems)
+- `Tj Max` → must cover Grade 0/1 temperature range for automotive
+
+---
+
+---
+
+### 28. Switching Regulators (Family C2)
+
+**Context sensitivity: HIGH**
+
+Topology is the first and hardest gate — it determines the entire circuit structure and no other evaluation is meaningful until it's confirmed. Control mode determines compensation compatibility. Switching frequency interfaces with the passive components already on the PCB. Vref determines whether the existing feedback resistors set the correct output voltage. Architecture (integrated vs. controller-only) is a hard structural constraint.
+
+#### Question 1: What is the topology?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Buck (step-down)** | Vout < Vin always. High-side switch + low-side switch/diode + output inductor. Synchronous vs. non-synchronous is a sub-Identity question — see Q2. |
+| **Boost (step-up)** | Vout > Vin always. Low-side switch + output diode + input inductor. |
+| **Buck-Boost / SEPIC / Inverting** | Vout can be above or below Vin, or negative. Each requires different inductor configuration and feedback topology — not interchangeable with each other. |
+| **Flyback / Forward (isolated)** | Transformer-based isolated topologies. Turns ratio, magnetizing inductance, and snubber design are transformer-dependent. Not interchangeable with non-isolated topologies under any circumstances. Engineering review required for any substitution. |
+
+**Affected attributes:** All — topology must match before any other attribute is evaluated.
+
+#### Question 2: Is this an integrated-switch converter or a controller-only IC?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Integrated switch (converter IC)** | No external MOSFETs on the PCB power path. Replacement must also be an integrated-switch type with compatible pin assignment for SW, Vin, GND, and all auxiliary pins. Current rating is fixed by the on-chip switch. |
+| **Controller-only (drives external MOSFETs)** | PCB has external MOSFETs with separate HG/LG gate drive connections. Replacement must be controller-only. Gate drive voltage and current must be compatible with the existing external FETs' gate charge. |
+
+**Affected attributes:**
+- `Architecture` → hard Identity gate
+- `Gate Drive Voltage/Current` → only applicable for controller-only designs
+
+#### Question 3: What is the control mode?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Peak current mode (PCM)** | Inner current loop senses peak inductor current. Replacement must also be PCM for existing compensation to be valid. PCM-to-PCM substitution: verify gm is within ±30% or flag for compensation re-evaluation. |
+| **Voltage mode (VM)** | Output voltage feedback only, typically requires Type III compensation. VM-to-VM substitution: verify gm compatibility. |
+| **Hysteretic / COT (Constant On-Time)** | No COMP pin — no compensation network. Switching frequency varies with load and Vin. Replacement must also be COT/hysteretic. COT devices often have specific output capacitor requirements (similar to LDO ESR stability) — verify with the PCB's output capacitor type. |
+| **Average current mode** | Used in chargers, LED drivers, PFC. Replacement must also be average current mode. |
+
+**Affected attributes:**
+- `Control Mode` → Identity gate; wrong mode = wrong compensation
+- `Compensation Type` → if externally compensated, gm of replacement must be assessed
+- `Output Capacitor Requirement` → critical for COT/hysteretic (similar to LDO ESR issue)
+
+#### Question 4: What is the switching frequency, and is it fixed or adjustable?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Fixed frequency — must match exactly** | Replacement must operate at the same frequency. Verify the replacement's fixed frequency matches within ±10%. Any deviation requires evaluating inductor ripple current and output ripple with the existing passives. |
+| **Adjustable via Rt resistor — existing resistor sets frequency** | Replacement must have a frequency-setting resistor pin with a compatible Rt-to-fsw relationship. Calculate what frequency the existing Rt sets on the replacement — it may be different if the Rt transfer function differs between manufacturers. |
+| **Synchronizable to external clock** | Replacement must support sync input at the system clock frequency. Verify sync range and input threshold compatibility. |
+
+**Affected attributes:**
+- `Switching Frequency fsw` → must match within ±10% with existing passives; flag for inductor/cap re-evaluation if larger deviation
+- `ton_min / toff_min` → verify at the operating frequency, Vin, and Vout combination
+
+#### Question 5: What is the feedback reference voltage (Vref) of the original?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Known (from original datasheet)** | Calculate: Vout_with_replacement = Vref_new × (1 + Rtop/Rbot). If this does not equal the target Vout within ±2%, calculate the new Rbot and flag for BOM resistor change. |
+| **Unknown** | Measure the voltage at the FB pin of the original device in circuit (= Vref at regulation). Then proceed as above. |
+
+**Affected attributes:**
+- `Feedback Reference Voltage Vref` → silent output voltage killer if mismatched; always calculate before approving
+
+#### Question 6: Are Enable/UVLO, Power-Good, Soft-Start, or Sync pins used?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Enable/UVLO used with external voltage divider** | Replacement UVLO threshold must be known — recalculate turn-on voltage with replacement threshold and existing divider. If turn-on voltage shifts, flag for resistor change. |
+| **Power-Good used for sequencing or reset** | Replacement must have PG with compatible output structure and threshold. |
+| **Soft-Start capacitor (Css) present on PCB** | Replacement must have Css pin. Verify the Css-to-ramp-time relationship — a different internal multiplier will change the soft-start duration with the same Css value. |
+| **Sync input used** | Replacement must support synchronization. Verify sync range covers the system clock frequency. |
+| **None — simple standalone application** | Feature pin constraints not applicable. |
+
+**Affected attributes:**
+- `Enable/UVLO` → UVLO threshold change affects turn-on voltage with existing divider
+- `Soft-Start` → Css pin required if Css capacitor is on PCB
+- `Overcurrent Protection Mode` → verify hiccup/latch/foldback matches system fault handling expectation
+
+#### Question 7: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q100 mandatory with matching grade. Load-dump survivability must be explicitly rated (40V/400ms for 12V systems). EMI compliance per CISPR 25 must be considered. |
+| **No** | Standard environmental matching. |
+
+**Affected attributes:**
+- `AEC-Q100` → Identity (Flag), mandatory for automotive
+- `Vin Max` → load-dump survivability becomes a hard constraint
+
+---
+
+### 29. Mica Capacitors (Family 13)
 
 **Context sensitivity: LOW**
 
@@ -1382,6 +1563,8 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **IGBTs** | B7 | Switching frequency? (<20kHz / 20–50kHz / 50–100kHz / >100kHz) | Hard or soft switching? | Parallel operation? | Short-circuit protection required? Automotive? |
 | **Thyristors / TRIACs / SCRs** | B8 | Device sub-type? (SCR / TRIAC / DIAC) | Application type? (phase control / zero-cross / crowbar / motor soft-start) | If TRIAC: Q4 operation required? | Snubber present? Automotive? |
 | **JFETs** | B9 | Application mode? (low-noise amp / ultra-high-Z / RF / analog switch / legacy switching) | Matched-pair? | Automotive? |
+| **Linear Voltage Regulators (LDOs)** | C1 | Output type? (fixed / adjustable / negative) | Output capacitor type? (ceramic vs. tantalum — BLOCKING) | Battery-powered? | Upstream switcher? Feature pins used? Automotive? |
+| **Switching Regulators** | C2 | Topology? (buck/boost/buck-boost/flyback) | Integrated switch or controller-only? | Control mode? (PCM/VM/COT) | Switching frequency match? Vref match with existing feedback resistors? Feature pins? Automotive? |
 | **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
 | **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
 | **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |

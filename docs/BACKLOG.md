@@ -9,7 +9,7 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 ### ~~Digikey parameter maps incomplete for most families~~ COMPLETED
 **File:** `lib/services/digikeyParamMap.ts`
 
-All 19 passive families + 9 discrete semiconductor families (B1–B9) now have curated parameter maps. See Decisions #16-19, #30-40 for API quirks.
+All 19 passive families + 9 discrete semiconductor families (B1–B9) + 1 Block C IC family (C1 LDOs) now have curated parameter maps. See Decisions #16-19, #30-40, #46 for API quirks.
 
 **Completed:** MLCC (12, 14 attrs), Chip Resistors (52-55, 11 attrs), Fixed Inductors (71/72, 15 attrs), Ferrite Beads (70, 10 attrs), Common Mode Chokes (69, 13 attrs), Tantalum (59, 9 attrs + 2 placeholders), Aluminum Electrolytic (58, 15 attrs), Aluminum Polymer (60, 14 attrs + 2 placeholders), Film (64, 13 attrs), Supercapacitors (61, 11 attrs + 2 placeholders), Varistors (65, 8 attrs + 1 placeholder), PTC Resettable Fuses (66, 13 attrs incl. dual height fields), NTC Thermistors (67, 8 attrs + 2 placeholders), PTC Thermistors (68, 4 attrs + 1 placeholder), Rectifier Diodes (B1, 11 attrs single + 9 attrs bridge + 2 placeholders), Schottky Barrier Diodes (B2, 11 attrs single + 11 attrs array, virtual category routing), Zener Diodes (B3, 10 attrs single + 11 attrs array), TVS Diodes (B4, 13 attrs), MOSFETs (B5, 14 attrs, verified Feb 2026), BJTs (B6, 11 attrs, verified Feb 2026), IGBTs (B7, 14 attrs incl. 2 compound fields, verified Feb 2026), Thyristors/SCRs (B8-SCR, 8 attrs, ~48% weight coverage, verified Feb 2026), Thyristors/TRIACs (B8-TRIAC, 9 attrs incl. compound "Triac Type" field, ~51% weight coverage, verified Feb 2026).
 
@@ -85,10 +85,12 @@ Extracted to `MODEL` constant reading from `ANTHROPIC_MODEL` env var (defaults t
 
 ---
 
-### Account settings mostly incomplete
+### ~~Account settings mostly incomplete~~ SUBSUMED
 **File:** `components/AccountSettingsDialog.tsx`
 
 3 of 4 tabs are disabled with "Coming Soon": Profile, Data Sources, Notifications. Only Global Settings (language selector) works. Currency selector is also disabled.
+
+**Note:** The Profile tab is now tracked as Phase 1 of the Product Roadmap (user preferences foundation). Data Sources and Notifications will be addressed in later phases. See `docs/PRODUCT_ROADMAP.md`.
 
 ---
 
@@ -114,6 +116,22 @@ Status text in `PartsListTable` (e.g., "Validated", "Error", "Searching") and lo
 ---
 
 ## P2 — Low Priority
+
+### C1 LDO — datasheet-only fields have no Digikey parametric data
+**Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/ldo.ts`
+
+12 of 22 logic table rules have no Digikey parametric mapping (~48% weight unmapped): `vout_accuracy`, `output_cap_compatibility` (ceramic stability), `vin_min`, `load_regulation`, `line_regulation`, `power_good`, `soft_start`, `rth_ja`, `tj_max`, `aec_q100`, `packaging`. These are datasheet-only specs. PSRR is available but only as a headline dB number, not at specific frequencies.
+
+Also: `enable_pin` polarity (active-high vs active-low) cannot be determined from Digikey "Control Features" — it only says "Enable" or "-". The transformer defaults to "Active High" which is correct for most modern LDOs but should be verified from datasheets.
+
+---
+
+### C1 LDO — no Jest test coverage yet
+**Files:** `__tests__/services/`
+
+Family C1 logic table, context questions, and Digikey mapper transformers have no dedicated tests. Should add tests for: LDO-specific transformers (`transformToEnablePin`, `transformToThermalShutdown`, `transformToOutputCapCompatibility`, `transformToAecQ100`), subcategory routing ("Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" → C1), context question effects (ceramic cap → blockOnMissing, battery → Iq escalation).
+
+---
 
 ### SI prefix parsing collision in digikeyMapper
 **File:** `lib/services/digikeyMapper.ts`
@@ -191,3 +209,101 @@ LLM tool calls are not logged (beyond console). No visibility into what the orch
 **File:** `scripts/supabase-schema.sql`
 
 No migration tool (like Prisma Migrate or Supabase CLI migrations). Schema changes require manually editing the SQL file and applying to the database.
+
+---
+
+## Product Roadmap Items
+
+The following items track the phased evolution from cross-reference engine to component intelligence platform. See `docs/PRODUCT_ROADMAP.md` for full details.
+
+### Phase 1: User Preferences Foundation
+**Status:** Not started
+**Priority:** P1
+
+Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Build Profile panel UI (replace "Coming Soon" placeholder). Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.
+
+**Key files:** `lib/types.ts`, `scripts/supabase-schema.sql`, `components/settings/ProfilePanel.tsx`, `app/api/profile/preferences/route.ts`
+
+---
+
+### Phase 2: LLM Context Injection
+**Status:** Not started
+**Priority:** P1
+
+Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.
+
+**Key files:** `lib/services/llmOrchestrator.ts`, `app/api/chat/route.ts`, `app/api/modal-chat/route.ts`
+
+---
+
+### Phase 3: Global Effects on Matching Engine
+**Status:** Not started
+**Priority:** P1
+
+Create `contextResolver.ts` — resolves user/list preferences into `AttributeEffect[]`. Thread global context through `partDataService.getRecommendations()` and all API routes.
+
+**Key files:** `lib/services/contextResolver.ts` (new), `lib/services/contextModifier.ts`, `lib/services/partDataService.ts`
+
+---
+
+### Phase 4: List-Level Context
+**Status:** Not started
+**Priority:** P2
+
+Add `context` JSONB column to `parts_lists` table. Define `ListContext` type. Build list context UI (dialog/drawer in parts list). Merge list context with user preferences in `contextResolver`.
+
+**Key files:** `lib/types.ts`, `scripts/supabase-schema.sql`, parts list UI, `hooks/usePartsListState.ts`
+
+---
+
+### Phase 5: Manufacturer Filtering & Ranking
+**Status:** Not started
+**Priority:** P2
+
+Apply preferred/excluded manufacturer filters to candidate search results. Optionally boost match scores for preferred manufacturers.
+
+**Key files:** `lib/services/partDataService.ts`, `lib/services/matchingEngine.ts`
+
+---
+
+### Phase 6: Chinese Manufacturer Highlighting
+**Status:** Not started
+**Priority:** P2
+
+Add manufacturer→country resolution and display a subtle icon/badge on Chinese manufacturer options in `RecommendationCard` and `PartsListTable`. Non-intrusive — icon only, no ranking changes.
+
+**Key files:** `components/RecommendationCard.tsx`, `components/parts-list/PartsListTable.tsx`, `lib/mockManufacturerData.ts`
+
+---
+
+### Phase 7: Atlas Integration & Manufacturer Profile API
+**Status:** Not started
+**Priority:** P2
+
+Build Atlas API client + mapper. Replace static `mockManufacturerData.ts` with API-fed profiles from Atlas. Extend `ManufacturerProfile` with Chinese-manufacturer-specific fields (verification, factory audit, export compliance). Integrate Atlas products as candidate source.
+
+**Key files:** `lib/services/atlasClient.ts` (new), `lib/services/atlasMapper.ts` (new), `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`
+
+---
+
+### Phase 8: Commercial Data Enrichment (Multi-Supplier)
+**Status:** Not started
+**Priority:** P3
+
+Integrate pricing enrichment API (Octopart/Nexar or similar). Extend `Part` type with `supplierPricing`. Build pricing comparison UI. Add lifecycle status tracking. Customer negotiated pricing overlays.
+
+---
+
+### Phase 9: Customer Data Integration
+**Status:** Not started
+**Priority:** P3
+
+Customer data imports (BOMs, pricing files, AVLs). Negotiated pricing overlays. AVL-restricted recommendations. Per-organization data isolation.
+
+---
+
+### Phase 10: Market Monitoring & Proactive Alerts
+**Status:** Not started
+**Priority:** P3
+
+Watchlists, event detection, proactive alerts, portfolio risk dashboard. Requires background job system beyond current Next.js architecture.

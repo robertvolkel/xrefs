@@ -28,6 +28,8 @@ import { bjtTransistorsContext } from './bjtTransistors';
 import { igbtsContext } from './igbts';
 import { thyristorsContext } from './thyristors';
 import { jfetsContext } from './jfets';
+// Block C: Power Management ICs
+import { ldoContext } from './ldo';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -59,6 +61,8 @@ const allConfigs: FamilyContextConfig[] = [
   igbtsContext,
   thyristorsContext,
   jfetsContext,
+  // Block C: Power Management ICs
+  ldoContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

@@ -886,3 +886,79 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/jfets.ts`, `lib/contextQuestions/jfets.ts`.
 
 **Files modified:** `lib/types.ts` (LogicType union), `lib/services/matchingEngine.ts` (parseRange, evaluateIdentityRange, dispatch), `lib/logicTables/index.ts` (registry + subcategory map), `lib/logicTables/familyClassifier.ts` (B9 variant rule), `lib/contextQuestions/index.ts`, `lib/services/digikeyParamMap.ts` (jfetParamMap, category registrations), `__tests__/services/matchingEngine.test.ts` (identity_range tests), `__tests__/services/familyClassifier.test.ts` (B9 detection tests).
+
+---
+
+## 41. Product Vision — Component Intelligence Platform
+
+**Decision:** XRefs is evolving from a cross-reference recommendation engine into a component intelligence platform. The platform serves multiple roles (engineers, buyers, supply chain managers) and adapts its behavior based on user context. The product is built on four pillars: Technical Matching (built), Commercial Intelligence (planned), Compliance & Lifecycle Awareness (planned), and Supply Chain Intelligence (future).
+
+**Rationale:** Cross-reference is the foundation and our biggest differentiator, but it's not the complete value proposition. Choosing a component involves technical fit, pricing, availability, compliance, lifecycle risk, and supply chain factors. Different stakeholders (engineer vs. buyer vs. executive) need the same data but with different emphasis. Building context-awareness from the start avoids costly architectural retrofits later.
+
+**See:** `docs/PRODUCT_ROADMAP.md` for the full vision and phased implementation plan.
+
+---
+
+## 42. JSONB for User Preferences and List Context
+
+**Decision:** User preferences are stored as a `preferences` JSONB column on the existing `profiles` table. List-level context is stored as a `context` JSONB column on the existing `parts_lists` table. No new normalized tables.
+
+**Rationale:** Both data sets are read-whole, written-whole, and change infrequently. A JSONB column is simpler than a separate table (no joins, no additional RLS policies, atomic read/write). The data is small (< 5 KB per user/list). If we later need to query across users by preference (e.g., "all automotive users"), we can add GIN indexes on the JSONB column without schema changes.
+
+**Tradeoff:** No referential integrity within the JSONB blob. TypeScript types enforce structure at the application layer, not at the database layer. Migrations to restructure preferences require application-level data transformation.
+
+---
+
+## 43. Three-Level Context Hierarchy (User → List → Search)
+
+**Decision:** Context flows at three levels, where more specific overrides more general: User Profile (global defaults) → List Context (per-BOM overrides) → Per-Search Context (family-specific questions, existing system).
+
+**Rationale:** This mirrors how real component decisions work. A company has global policies (e.g., "all products must be RoHS compliant"), a specific project has constraints (e.g., "this is a consumer product, no automotive grade needed"), and a specific part decision may have further nuance (e.g., "this MOSFET is in a safety-critical path, re-escalate automotive"). The override semantics are implemented by the order of application — global effects first, then per-family context effects overwrite.
+
+**Tradeoff:** Three levels add complexity. Users might be confused about why a recommendation differs between two lists. The UI will need to surface active context so users understand what constraints are in effect.
+
+---
+
+## 44. Same UI for All Roles — AI Adapts Behavior Only
+
+**Decision:** All user roles see the same interface. The LLM adapts its conversation style, question priorities, and assessment focus based on the user's role and context. No role-specific UI layouts, dashboards, or feature gating (beyond admin/user).
+
+**Rationale:** Maintaining multiple UIs per role is expensive and creates artificial boundaries. A procurement manager might occasionally need to understand parametric details; an engineer might need to check pricing. The AI naturally emphasizes what matters — highlighting pricing and availability for procurement roles, parametric depth for engineers, compliance for quality roles — without hiding anything. Users discover capabilities they didn't expect to need.
+
+**Tradeoff:** The UI can't be optimized for any single role. Some roles may feel the interface has too many features that aren't relevant to them. We may reconsider this if user research shows strong demand for role-specific views.
+
+---
+
+## 45. Global Effects Reuse Existing `AttributeEffect` System
+
+**Decision:** Global user/list preferences (e.g., "always require automotive grade") produce `AttributeEffect[]` objects — the same type that per-family context questions already produce. A new `contextResolver.ts` service resolves the three-level hierarchy into effects. The matching engine itself needs zero changes.
+
+**Rationale:** The existing `contextModifier.ts` already has a well-tested mechanism for modifying logic table rules via effects (escalate weight, suppress rule, add review flag, block on missing). By reusing this system, global preferences "just work" with every family's logic table without family-specific code. New effect types added for per-family context automatically become available for global preferences too.
+
+**Tradeoff:** The effect system was designed for per-family context with 3-5 questions per family, not for global preferences that could produce dozens of effects. If the global effect list grows large, the resolution logic may need optimization (unlikely in practice — most users will have < 10 global effects).
+
+---
+
+## 46. C1 Linear Voltage Regulators (LDOs) — First Block C Family
+
+**Decision:** Encode LDOs as Family C1 (Block C: Power Management ICs) with 22 matching rules and 5 context questions. Five user-specified implementation constraints drive key design choices.
+
+**Rationale:** LDOs are the most parametric and substitution-friendly of all IC families — a natural first entry into Block C. The .docx document (`docs/ldo_logic_c1.docx`) defines comprehensive cross-reference logic with 22 attributes. Five critical constraints shape the implementation:
+
+1. **Output capacitor ESR = BLOCKING Identity:** `output_cap_compatibility` is `identity_flag` at w8, escalated to w10 + `blockOnMissing: true` by context Q1 when PCB uses ceramic caps. This is the #1 LDO substitution failure mode — an ESR-stabilized LDO oscillates with ceramic output caps.
+2. **Output voltage = hard Identity:** `output_voltage` is `identity` at w10 for fixed devices. No tolerance beyond accuracy band — even 1% mismatch violates downstream rail budgets (DDR ±5%, FPGA ±3%).
+3. **Enable pin polarity = exact match:** `enable_pin` is `identity` at w8 (not identity_flag). Both polarity and presence must match — active-high and active-low are not interchangeable.
+4. **PSRR = frequency-contexted application_review:** `psrr` is `application_review` at w6 because Digikey parametric data only provides a headline dB number, not frequency-specific PSRR curves. Must be verified at upstream switching frequency from datasheets.
+5. **Iq = context-dependent:** `iq` is `threshold ≤` at w5 baseline, escalated to w9 + `blockOnMissing` by context Q2 for battery/energy-harvest applications where Iq dominates sleep-mode current.
+
+**What changed:**
+1. New `LogicTable` with 22 rules: 4 identity (output type, voltage, package, polarity), 3 identity_flag (output cap, AEC-Q100, thermal shutdown + enable flags), 8 threshold (vin max/min, iout, vdropout, iq, accuracy, rθja, tj_max), 1 application_review (PSRR), 1 operational (packaging).
+2. New `FamilyContextConfig` with 5 questions: output cap type (CRITICAL), battery/energy-harvest, noise-sensitive analog, automotive, upstream switching frequency (conditional on Q3).
+3. Added `'Voltage Regulators'` to `ComponentCategory` type — new category for Block C families.
+4. Digikey param map verified against 3 real LDO parts (AP2112K, TLV75533, LM1117). Category name is `"Voltage Regulators - Linear, Low Drop Out (LDO) Regulators"` — 16 parametric fields available. Key Digikey gotchas: "Output Configuration" (not "Polarity"), "Voltage Dropout (Max)" compound field ("0.4V @ 600mA"), "Control Features" for enable pin, "Protection Features" for thermal shutdown, no AEC-Q100 or output voltage tolerance fields.
+5. Three new transformers: `transformToOutputCapCompatibility`, `transformToEnablePin`, `transformToThermalShutdown`, plus `transformToAecQ100`.
+6. Candidate search query updated to include output voltage as keyword for LDO category-filtered search.
+
+**Files created:** `lib/logicTables/ldo.ts`, `lib/contextQuestions/ldo.ts`
+
+**Files modified:** `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/types.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`
