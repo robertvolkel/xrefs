@@ -11,11 +11,11 @@ import { useTranslation } from 'react-i18next';
 export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
-  { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
+  { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
 ];
 
 interface AdminSectionNavProps {

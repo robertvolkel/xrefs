@@ -2390,6 +2390,565 @@ const ldoParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * Switching Regulators — Integrated Switch parameter mapping (Family C2).
+ * Verified against: TPS54360DDAR, LM2596S-5.0/NOPB, LT8645SEV#PBF, TPS54360BQDDARQ1
+ * Digikey category: "Voltage Regulators - DC DC Switching Regulators"
+ *
+ * 10 mapped fields, ~53% weight coverage (integrated switch).
+ *
+ * Key gotchas:
+ * - "Topology" field includes variants like "Buck, Split Rail" — transformer normalizes
+ * - "Function" is redundant with Topology ("Step-Down" = Buck) but more reliable
+ * - "Voltage - Output (Min/Fixed)" for adjustable parts = Vref (the reference voltage)
+ * - NO control_mode field — control mode is datasheet-only
+ * - NO compensation_type, ton_min, gate_drive_current, ocp_mode in parametric data
+ * - "Qualification" field appears on automotive parts as "AEC-Q100"
+ * - Architecture inferred from category name (Regulators = Integrated Switch)
+ */
+const switchingRegIntegratedParamMap: Record<string, ParamMapEntry> = {
+  'Topology': {
+    attributeId: 'topology',
+    attributeName: 'Topology (Buck / Boost / Buck-Boost / etc.)',
+    sortOrder: 1,
+  },
+  'Output Configuration': {
+    attributeId: 'output_polarity',
+    attributeName: 'Output Polarity (Positive / Negative / Isolated)',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type (Fixed / Adjustable)',
+    sortOrder: 3,
+  },
+  'Voltage - Input (Min)': {
+    attributeId: 'vin_min',
+    attributeName: 'Minimum Input Voltage',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Voltage - Input (Max)': {
+    attributeId: 'vin_max',
+    attributeName: 'Maximum Input Voltage',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  // For adjustable parts: Vout Min/Fixed = Vref (the internal reference voltage)
+  // For fixed parts: this is the output voltage itself
+  'Voltage - Output (Min/Fixed)': {
+    attributeId: 'vref',
+    attributeName: 'Feedback Reference Voltage / Output Voltage',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  'Voltage - Output (Max)': {
+    attributeId: 'vout_max',
+    attributeName: 'Maximum Output Voltage',
+    unit: 'V',
+    sortOrder: 7,
+  },
+  'Current - Output': {
+    attributeId: 'iout_max',
+    attributeName: 'Maximum Output Current',
+    unit: 'A',
+    sortOrder: 8,
+  },
+  'Frequency - Switching': {
+    attributeId: 'fsw',
+    attributeName: 'Switching Frequency',
+    unit: 'Hz',
+    sortOrder: 9,
+  },
+  'Synchronous Rectifier': {
+    attributeId: 'sync_rectifier',
+    attributeName: 'Synchronous Rectifier',
+    sortOrder: 10,
+  },
+  'Qualification': {
+    attributeId: 'aec_q100',
+    attributeName: 'AEC-Q100 Qualification',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 12,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 13,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 14,
+  },
+};
+
+/**
+ * Switching Controllers parameter mapping (Family C2, controller-only).
+ * Verified against: LM5116MHX/NOPB
+ * Digikey category: "DC DC Switching Controllers"
+ *
+ * 7 mapped fields, ~38% weight coverage (controller-only).
+ * Controller-only parts have fewer parametric fields — no Vout/Iout ratings
+ * (these depend on external components).
+ *
+ * Key gotchas:
+ * - Category name is "DC DC Switching Controllers" (NO "Voltage Regulators -" prefix)
+ * - Uses "Voltage - Supply (Vcc/Vdd)" instead of "Voltage - Input (Min/Max)"
+ * - NO Current - Output field (current set by external FETs)
+ * - NO Voltage - Output fields (output set by external components)
+ * - "Control Features" lists Enable, Soft Start, etc. — multi-value compound field
+ * - "Duty Cycle (Max)" available but rarely the binding specification
+ */
+const switchingControllerParamMap: Record<string, ParamMapEntry> = {
+  'Topology': {
+    attributeId: 'topology',
+    attributeName: 'Topology (Buck / Boost / Buck-Boost / etc.)',
+    sortOrder: 1,
+  },
+  'Output Configuration': {
+    attributeId: 'output_polarity',
+    attributeName: 'Output Polarity (Positive / Negative / Isolated)',
+    sortOrder: 2,
+  },
+  // Controller-only: "Voltage - Supply (Vcc/Vdd)" is the IC supply range
+  // which effectively sets the input voltage range
+  'Voltage - Supply (Vcc/Vdd)': {
+    attributeId: 'vin_range',
+    attributeName: 'IC Supply Voltage Range (Vin)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Frequency - Switching': {
+    attributeId: 'fsw',
+    attributeName: 'Switching Frequency',
+    unit: 'Hz',
+    sortOrder: 4,
+  },
+  'Duty Cycle (Max)': {
+    attributeId: 'duty_cycle_max',
+    attributeName: 'Maximum Duty Cycle',
+    sortOrder: 5,
+  },
+  'Synchronous Rectifier': {
+    attributeId: 'sync_rectifier',
+    attributeName: 'Synchronous Rectifier',
+    sortOrder: 6,
+  },
+  'Qualification': {
+    attributeId: 'aec_q100',
+    attributeName: 'AEC-Q100 Qualification',
+    sortOrder: 7,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 8,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Non-isolated gate driver parameter mapping (Family C3).
+ * Verified against: IR2104 (Infineon), UCC27211DR (TI)
+ * Digikey category: "Gate Drivers"
+ *
+ * 10 mapped fields, ~54% weight coverage.
+ *
+ * Key gotchas:
+ * - "Driven Configuration" (not "Configuration" or "Channel Type") → driver_configuration
+ * - "Current - Peak Output (Source, Sink)" is a COMPOUND field: "210mA, 360mA"
+ *   → needs transformToPeakSource() / transformToPeakSink() to split
+ * - "Input Type" maps to output_polarity (Non-Inverting / Inverting) — field name is misleading
+ * - "Logic Voltage - VIL, VIH" compound field: "0.8V, 3V" → extract VIH for threshold matching
+ * - "Rise / Fall Time (Typ)" compound: "100ns, 50ns" → take max for matching
+ * - "High Side Voltage - Max (Bootstrap)" indicates non-isolated bootstrap type
+ * - NO propagation delay field for non-isolated drivers
+ * - NO dead_time, dead_time_control, shutdown_enable, bootstrap_diode, fault_reporting,
+ *   rth_ja, tj_max, aec_q100 fields
+ * - isolation_type inferred from category name ("Gate Drivers" → Non-Isolated)
+ */
+const gateDriverParamMap: Record<string, ParamMapEntry> = {
+  'Driven Configuration': {
+    attributeId: 'driver_configuration',
+    attributeName: 'Driver Configuration (Single / Dual / Half-Bridge / Full-Bridge)',
+    sortOrder: 1,
+  },
+  'Voltage - Supply': {
+    attributeId: 'vdd_range',
+    attributeName: 'Gate Drive Supply VDD Range',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  // Compound field: "0.8V, 3V" → VIL, VIH — extract VIH for threshold matching
+  'Logic Voltage - VIL, VIH': {
+    attributeId: 'input_logic_threshold',
+    attributeName: 'Input Logic Threshold (VIH)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  // Compound field: "210mA, 360mA" → split into source and sink via transformers
+  'Current - Peak Output (Source, Sink)': [
+    {
+      attributeId: 'peak_source_current',
+      attributeName: 'Peak Source Current (Turn-On)',
+      unit: 'A',
+      sortOrder: 4,
+    },
+    {
+      attributeId: 'peak_sink_current',
+      attributeName: 'Peak Sink Current (Turn-Off)',
+      unit: 'A',
+      sortOrder: 5,
+    },
+  ],
+  // "Non-Inverting" / "Inverting" — maps to output polarity
+  'Input Type': {
+    attributeId: 'output_polarity',
+    attributeName: 'Output Polarity (Non-Inverting / Inverting)',
+    sortOrder: 6,
+  },
+  // Compound field: "100ns, 50ns" → rise, fall — take max for threshold comparison
+  'Rise / Fall Time (Typ)': {
+    attributeId: 'rise_fall_time',
+    attributeName: 'Rise / Fall Time',
+    unit: 's',
+    sortOrder: 7,
+  },
+  // Bootstrap voltage indicates this is a non-isolated half-bridge driver
+  'High Side Voltage - Max (Bootstrap)': {
+    attributeId: 'bootstrap_voltage',
+    attributeName: 'High Side Voltage Max (Bootstrap)',
+    unit: 'V',
+    sortOrder: 8,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 9,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Isolated gate driver parameter mapping (Family C3, isolated).
+ * Verified against: ADUM4120BRIZ (Analog Devices)
+ * Digikey category: "Isolators - Gate Drivers"
+ *
+ * 10 mapped fields, ~51% weight coverage.
+ *
+ * Key gotchas:
+ * - DIFFERENT category name: "Isolators - Gate Drivers" (not "Gate Drivers")
+ * - "Technology" → isolation_type: "Magnetic Coupling", "Optocoupler", etc.
+ * - "Number of Channels" (not "Number of Drivers") — used for enrichment
+ * - "Voltage - Output Supply" (not "Voltage - Supply") → vdd_range
+ * - "Current - Peak Output" is a SINGLE value (not Source/Sink split): "2.3A"
+ * - "Propagation Delay tpLH / tpHL (Max)" compound: "69ns, 79ns" → take max
+ * - "Voltage - Isolation" available (not in non-isolated)
+ * - "Common Mode Transient Immunity (Min)" = dV/dt immunity
+ * - "Qualification" field available (unlike non-isolated)
+ * - NO Driven Configuration field — single-channel isolated drivers are most common
+ * - NO Input Type field — isolated drivers typically only non-inverting
+ * - "Approval Agency" has safety certifications (CSA, UR, VDE)
+ */
+const isolatedGateDriverParamMap: Record<string, ParamMapEntry> = {
+  // "Magnetic Coupling" / "Optocoupler" / "Capacitive Coupling" → isolation type
+  'Technology': {
+    attributeId: 'isolation_type',
+    attributeName: 'Isolation Type (Transformer / Optocoupler / Digital Isolator)',
+    sortOrder: 1,
+  },
+  'Voltage - Output Supply': {
+    attributeId: 'vdd_range',
+    attributeName: 'Gate Drive Supply VDD Range',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  // Single value (not source/sink split) — map to peak_source_current
+  'Current - Peak Output': {
+    attributeId: 'peak_source_current',
+    attributeName: 'Peak Output Current',
+    unit: 'A',
+    sortOrder: 3,
+  },
+  // Compound field: "69ns, 79ns" → tpLH, tpHL — take max for threshold comparison
+  'Propagation Delay tpLH / tpHL (Max)': {
+    attributeId: 'propagation_delay',
+    attributeName: 'Propagation Delay (Max of tpLH, tpHL)',
+    unit: 's',
+    sortOrder: 4,
+  },
+  'Rise / Fall Time (Typ)': {
+    attributeId: 'rise_fall_time',
+    attributeName: 'Rise / Fall Time',
+    unit: 's',
+    sortOrder: 5,
+  },
+  'Voltage - Isolation': {
+    attributeId: 'isolation_voltage',
+    attributeName: 'Isolation Voltage',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  // dV/dt immunity — maps to CMTI
+  'Common Mode Transient Immunity (Min)': {
+    attributeId: 'cmti',
+    attributeName: 'Common Mode Transient Immunity (CMTI)',
+    sortOrder: 7,
+  },
+  'Qualification': {
+    attributeId: 'aec_q100',
+    attributeName: 'AEC-Q100 Qualification',
+    sortOrder: 8,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 9,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 11,
+  },
+};
+
+// ============================================================
+// C4: OP-AMPS / COMPARATORS / INSTRUMENTATION AMPLIFIERS
+// ============================================================
+
+/**
+ * Op-Amp param map — Digikey category "Instrumentation, Op Amps, Buffer Amps"
+ *
+ * 12 mapped fields. Key differences from comparator param map:
+ * - Uses "Gain Bandwidth Product" (not Propagation Delay)
+ * - Uses "Number of Circuits" (not "Number of Elements")
+ * - Uses "Amplifier Type" (not "Type") — also maps to input_type via transformer
+ * - Supply voltage is split into two fields: "Voltage - Supply Span (Min/Max)"
+ *
+ * Missing from Digikey parametric data (datasheet-only):
+ * - VICM range (vicm_range), Avol, min_stable_gain, input_noise_voltage,
+ *   rail_to_rail_input (cannot distinguish reliably), AEC-Q100 (no Qualification field)
+ */
+const opampParamMap: Record<string, ParamMapEntry> = {
+  'Amplifier Type': [
+    {
+      attributeId: 'input_type',
+      attributeName: 'Input Stage Technology (CMOS / JFET / Bipolar)',
+      sortOrder: 4,
+    },
+    {
+      attributeId: 'amplifier_type',
+      attributeName: 'Amplifier Type',
+      sortOrder: 5,
+    },
+  ],
+  'Number of Circuits': {
+    attributeId: 'channels',
+    attributeName: 'Number of Channels (Single / Dual / Quad)',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'rail_to_rail_output',
+    attributeName: 'Rail-to-Rail Output (RRO)',
+    sortOrder: 7,
+  },
+  'Slew Rate': {
+    attributeId: 'slew_rate',
+    attributeName: 'Slew Rate',
+    unit: 'V/µs',
+    sortOrder: 11,
+  },
+  'Gain Bandwidth Product': {
+    attributeId: 'gain_bandwidth',
+    attributeName: 'Gain Bandwidth Product (GBW)',
+    unit: 'Hz',
+    sortOrder: 10,
+  },
+  '-3db Bandwidth': {
+    attributeId: 'gain_bandwidth',
+    attributeName: 'Gain Bandwidth Product (GBW)',
+    unit: 'Hz',
+    sortOrder: 10,
+  },
+  'Current - Input Bias': {
+    attributeId: 'input_bias_current',
+    attributeName: 'Input Bias Current Ib',
+    unit: 'A',
+    sortOrder: 13,
+  },
+  'Voltage - Input Offset': {
+    attributeId: 'input_offset_voltage',
+    attributeName: 'Input Offset Voltage Vos',
+    unit: 'V',
+    sortOrder: 12,
+  },
+  'Current - Supply': {
+    attributeId: 'iq',
+    attributeName: 'Quiescent Current per Channel',
+    unit: 'A',
+    sortOrder: 19,
+  },
+  'Current - Output / Channel': {
+    attributeId: 'output_current',
+    attributeName: 'Output Current Drive',
+    unit: 'A',
+    sortOrder: 21,
+  },
+  'Voltage - Supply Span (Min)': {
+    attributeId: 'supply_voltage_min',
+    attributeName: 'Supply Voltage (Min)',
+    unit: 'V',
+    sortOrder: 8,
+  },
+  'Voltage - Supply Span (Max)': {
+    attributeId: 'supply_voltage_max',
+    attributeName: 'Supply Voltage (Max)',
+    unit: 'V',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 22,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * Comparator param map — Digikey category "Comparators"
+ *
+ * 13 mapped fields. Key differences from op-amp param map:
+ * - Uses "Type" (not "Amplifier Type")
+ * - Uses "Number of Elements" (not "Number of Circuits")
+ * - Has "Propagation Delay (Max)" for response_time
+ * - Has "Hysteresis"
+ * - Uses single compound "Voltage - Supply, Single/Dual (±)" field
+ * - Uses "CMRR, PSRR (Typ)" compound field
+ * - Uses "(Max)" suffixed field names for Vos and Ib
+ *
+ * Missing: VICM range, Avol, min_stable_gain, input_noise_voltage,
+ *          input_type, rail_to_rail_input/output, AEC-Q100
+ */
+const comparatorParamMap: Record<string, ParamMapEntry> = {
+  'Number of Elements': {
+    attributeId: 'channels',
+    attributeName: 'Number of Channels (Single / Dual / Quad)',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type (Push-Pull / Open-Drain / Open-Collector)',
+    sortOrder: 5,
+  },
+  'Voltage - Supply, Single/Dual (±)': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Single/Dual)',
+    sortOrder: 8,
+  },
+  'Voltage - Input Offset (Max)': {
+    attributeId: 'input_offset_voltage',
+    attributeName: 'Input Offset Voltage Vos (Max)',
+    unit: 'V',
+    sortOrder: 12,
+  },
+  'Current - Input Bias (Max)': {
+    attributeId: 'input_bias_current',
+    attributeName: 'Input Bias Current Ib (Max)',
+    unit: 'A',
+    sortOrder: 13,
+  },
+  'Current - Output (Typ)': {
+    attributeId: 'output_current',
+    attributeName: 'Output Current Drive',
+    unit: 'A',
+    sortOrder: 21,
+  },
+  'Current - Quiescent (Max)': {
+    attributeId: 'iq',
+    attributeName: 'Quiescent Current',
+    unit: 'A',
+    sortOrder: 19,
+  },
+  'CMRR, PSRR (Typ)': [
+    {
+      attributeId: 'cmrr',
+      attributeName: 'Common-Mode Rejection Ratio CMRR',
+      unit: 'dB',
+      sortOrder: 16,
+    },
+    {
+      attributeId: 'psrr',
+      attributeName: 'Power Supply Rejection Ratio PSRR',
+      unit: 'dB',
+      sortOrder: 17,
+    },
+  ],
+  'Propagation Delay (Max)': {
+    attributeId: 'response_time',
+    attributeName: 'Response Time / Propagation Delay',
+    unit: 's',
+    sortOrder: 20,
+  },
+  'Hysteresis': {
+    attributeId: 'hysteresis',
+    attributeName: 'Hysteresis',
+    unit: 'V',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 22,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -2440,6 +2999,19 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Block C: Power Management ICs
   // LDOs — Digikey category is "Voltage Regulators - Linear" (expected)
   ['Voltage Regulators - Linear', ldoParamMap],
+  // C2: Switching Regulators — TWO Digikey categories with different param maps
+  // Integrated: "Voltage Regulators - DC DC Switching Regulators"
+  // Controller: "DC DC Switching Controllers" (no "Voltage Regulators" prefix!)
+  ['DC DC Switching Regulators', switchingRegIntegratedParamMap],
+  ['DC DC Switching Controllers', switchingControllerParamMap],
+  // C3: Gate Drivers — TWO Digikey categories (non-isolated and isolated)
+  // "Isolators - Gate Drivers" MUST come before "Gate Drivers" for correct substring matching
+  ['Isolators - Gate Drivers', isolatedGateDriverParamMap],
+  ['Gate Drivers', gateDriverParamMap],
+  // C4: Op-Amps / Comparators — separate Digikey categories with different field names
+  // "Comparators" must come before "Op Amps" for correct substring matching
+  ['Comparators', comparatorParamMap],
+  ['Instrumentation, Op Amps, Buffer Amps', opampParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -2537,6 +3109,9 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'B9': ['JFETs'],
   // Block C: Power Management ICs
   'C1': ['Voltage Regulators - Linear'],
+  'C2': ['DC DC Switching Regulators', 'DC DC Switching Controllers'],
+  'C3': ['Gate Drivers', 'Isolators - Gate Drivers'],
+  'C4': ['Instrumentation, Op Amps, Buffer Amps', 'Comparators'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -2577,6 +3152,12 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   // C1: param map uses 'Voltage Regulators - Linear' but that substring also matches
   // 'Linear + Switching' and 'Linear Regulator Controllers'. Use exact leaf name.
   'C1': ['Voltage Regulators - Linear, Low Drop Out (LDO) Regulators'],
+  // C2: TWO separate Digikey categories — integrated switch and controller-only
+  'C2': ['Voltage Regulators - DC DC Switching Regulators', 'DC DC Switching Controllers'],
+  // C3: Gate Drivers — non-isolated = "Gate Drivers", isolated = "Isolators - Gate Drivers"
+  'C3': ['Gate Drivers', 'Isolators - Gate Drivers'],
+  // C4: Op-Amps under "Instrumentation, Op Amps, Buffer Amps", Comparators separate
+  'C4': ['Instrumentation, Op Amps, Buffer Amps', 'Comparators'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

@@ -30,6 +30,9 @@ import { thyristorsContext } from './thyristors';
 import { jfetsContext } from './jfets';
 // Block C: Power Management ICs
 import { ldoContext } from './ldo';
+import { switchingRegulatorContext } from './switchingRegulator';
+import { gateDriverContext } from './gateDriver';
+import { opampComparatorContext } from './opampComparator';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -63,6 +66,9 @@ const allConfigs: FamilyContextConfig[] = [
   jfetsContext,
   // Block C: Power Management ICs
   ldoContext,
+  switchingRegulatorContext,
+  gateDriverContext,
+  opampComparatorContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

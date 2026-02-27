@@ -31,7 +31,9 @@ export type ComponentCategory =
   | 'Thyristors'
   | 'Connectors'
   | 'Protection'
-  | 'Voltage Regulators';
+  | 'Voltage Regulators'
+  | 'Gate Drivers'
+  | 'Amplifiers';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {
@@ -202,7 +204,8 @@ export type LogicType =
   | 'threshold'         // Numeric comparison (≥ or ≤ boundary)
   | 'fit'               // Physical/dimensional constraint (≤)
   | 'application_review' // Cannot be automated, requires manual review
-  | 'operational';       // Non-electrical (manufacturing/supply chain)
+  | 'operational'        // Non-electrical (manufacturing/supply chain)
+  | 'vref_check';        // Vref mismatch → automatic Vout recalculation with ±2% tolerance
 
 /** Direction for threshold comparisons */
 export type ThresholdDirection =
@@ -222,6 +225,8 @@ export interface MatchingRule {
   sortOrder: number;
   /** If true, missing candidate value on a threshold rule is a hard fail (not review). Set by context modifier. */
   blockOnMissing?: boolean;
+  /** For identity rules: allow ±% tolerance band before failing (e.g., 10 = ±10% for fsw). */
+  tolerancePercent?: number;
 }
 
 /** A complete logic table for a component family */

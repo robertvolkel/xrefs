@@ -9,6 +9,9 @@ import {
   MatchingRule,
   LogicTable,
 } from '@/lib/types';
+import { switchingRegulatorLogicTable } from '@/lib/logicTables/switchingRegulator';
+import { gateDriverLogicTable } from '@/lib/logicTables/gateDriver';
+import { opampComparatorLogicTable } from '@/lib/logicTables/opampComparator';
 
 // ============================================================
 // HELPERS
@@ -891,6 +894,445 @@ describe('matchingEngine', () => {
       const cand = attrs([param('msl', 'MSL 3')], 'CAND-001');
       const result = evaluateCandidate(table([r]), src, cand);
       expect(result.results[0].result).toBe('fail');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // identity with tolerancePercent (C2 switching frequency ±10%)
+  // ----------------------------------------------------------
+  describe('identity with tolerancePercent', () => {
+    const r = rule({ attributeId: 'fsw', logicType: 'identity', tolerancePercent: 10 });
+
+    it('passes on exact numeric match', () => {
+      const src = attrs([param('fsw', '500 kHz', 500000)]);
+      const cand = attrs([param('fsw', '500 kHz', 500000)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('exact');
+    });
+
+    it('passes within ±10% tolerance (5% deviation)', () => {
+      const src = attrs([param('fsw', '500 kHz', 500000)]);
+      const cand = attrs([param('fsw', '525 kHz', 525000)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('compatible');
+      expect(result.results[0].note).toContain('tolerance');
+    });
+
+    it('passes at exactly ±10% boundary', () => {
+      const src = attrs([param('fsw', '500 kHz', 500000)]);
+      const cand = attrs([param('fsw', '550 kHz', 550000)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('fails beyond ±10% tolerance (15% deviation)', () => {
+      const src = attrs([param('fsw', '500 kHz', 500000)]);
+      const cand = attrs([param('fsw', '575 kHz', 575000)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('falls through to string comparison when non-numeric', () => {
+      const src = attrs([param('fsw', 'Variable')]);
+      const cand = attrs([param('fsw', 'Variable')], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('no tolerance applied when tolerancePercent is absent (standard identity)', () => {
+      const strictRule = rule({ attributeId: 'fsw', logicType: 'identity' });
+      const src = attrs([param('fsw', '500 kHz', 500000)]);
+      const cand = attrs([param('fsw', '525 kHz', 525000)], 'CAND-001');
+      const result = evaluateCandidate(table([strictRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // vref_check (cross-attribute Vref → Vout recalculation)
+  // ----------------------------------------------------------
+  describe('vref_check', () => {
+    const r = rule({ attributeId: 'vref', logicType: 'vref_check', weight: 9 });
+
+    it('passes when Vref matches exactly', () => {
+      const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([param('vref', '0.8V', 0.8)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('exact');
+    });
+
+    it('passes when Vref matches within ±1%', () => {
+      const src = attrs([param('vref', '0.800V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([param('vref', '0.805V', 0.805)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('passes when Vref differs but Vout within ±2%', () => {
+      // 3.3V design: Vref=0.8V, ratio = 3.3/0.8 - 1 = 3.125
+      // Candidate Vref=0.81V → Vout_new = 0.81 × 4.125 = 3.34125 → 1.25% deviation
+      const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([param('vref', '0.81V', 0.81)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].note).toContain('within');
+    });
+
+    it('returns review when Vref differs and Vout deviates >2%', () => {
+      // 3.3V design: Vref=0.8V, ratio = 3.125
+      // Candidate Vref=1.25V → Vout_new = 1.25 × 4.125 = 5.156V → 56% deviation
+      const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([param('vref', '1.25V', 1.25)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('review');
+      expect(result.results[0].note).toContain('Rbot');
+    });
+
+    it('passes when source has no Vref (no constraint)', () => {
+      const src = attrs([param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([param('vref', '0.8V', 0.8)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('returns review when candidate Vref is missing', () => {
+      const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('review');
+    });
+
+    it('fails when candidate Vref missing and blockOnMissing', () => {
+      const blockRule = rule({ attributeId: 'vref', logicType: 'vref_check', weight: 9, blockOnMissing: true });
+      const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(table([blockRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('returns review when source output_voltage is missing (cannot compute)', () => {
+      const src = attrs([param('vref', '0.8V', 0.8)]);
+      const cand = attrs([param('vref', '1.25V', 1.25)], 'CAND-001');
+      const result = evaluateCandidate(table([r]), src, cand);
+      expect(result.results[0].result).toBe('review');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // C2 SWITCHING REGULATOR LOGIC TABLE STRUCTURE
+  // ----------------------------------------------------------
+  describe('C2 switching regulator logic table', () => {
+
+    it('has correct family metadata', () => {
+      expect(switchingRegulatorLogicTable.familyId).toBe('C2');
+      expect(switchingRegulatorLogicTable.category).toBe('Voltage Regulators');
+    });
+
+    it('has 22 rules', () => {
+      expect(switchingRegulatorLogicTable.rules).toHaveLength(22);
+    });
+
+    it('topology is identity w10 with blockOnMissing', () => {
+      const topology = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'topology');
+      expect(topology).toBeDefined();
+      expect(topology.logicType).toBe('identity');
+      expect(topology.weight).toBe(10);
+      expect(topology.blockOnMissing).toBe(true);
+    });
+
+    it('architecture is identity w10 with blockOnMissing', () => {
+      const arch = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'architecture');
+      expect(arch).toBeDefined();
+      expect(arch.logicType).toBe('identity');
+      expect(arch.weight).toBe(10);
+      expect(arch.blockOnMissing).toBe(true);
+    });
+
+    it('vref uses vref_check logicType', () => {
+      const vref = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'vref');
+      expect(vref).toBeDefined();
+      expect(vref.logicType).toBe('vref_check');
+      expect(vref.weight).toBe(9);
+    });
+
+    it('fsw uses identity with tolerancePercent: 10', () => {
+      const fsw = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'fsw');
+      expect(fsw).toBeDefined();
+      expect(fsw.logicType).toBe('identity');
+      expect(fsw.tolerancePercent).toBe(10);
+      expect(fsw.weight).toBe(8);
+    });
+
+    it('control_mode is identity w9 (softened by context Q2)', () => {
+      const cm = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'control_mode');
+      expect(cm).toBeDefined();
+      expect(cm.logicType).toBe('identity');
+      expect(cm.weight).toBe(9);
+    });
+
+    it('iout_max is threshold gte w9', () => {
+      const iout = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'iout_max');
+      expect(iout).toBeDefined();
+      expect(iout.logicType).toBe('threshold');
+      expect(iout.thresholdDirection).toBe('gte');
+      expect(iout.weight).toBe(9);
+    });
+
+    it('rth_ja is threshold lte', () => {
+      const rth = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'rth_ja');
+      expect(rth).toBeDefined();
+      expect(rth.thresholdDirection).toBe('lte');
+    });
+
+    it('packaging is operational w1', () => {
+      const pkg = switchingRegulatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'packaging');
+      expect(pkg).toBeDefined();
+      expect(pkg.logicType).toBe('operational');
+      expect(pkg.weight).toBe(1);
+    });
+  });
+
+  // ----------------------------------------------------------
+  // C3 GATE DRIVER LOGIC TABLE STRUCTURE
+  // ----------------------------------------------------------
+  describe('C3 gate driver logic table', () => {
+    it('has correct family metadata', () => {
+      expect(gateDriverLogicTable.familyId).toBe('C3');
+      expect(gateDriverLogicTable.category).toBe('Gate Drivers');
+    });
+
+    it('has 20 rules', () => {
+      expect(gateDriverLogicTable.rules).toHaveLength(20);
+    });
+
+    it('driver_configuration is identity w10 with blockOnMissing', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'driver_configuration');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('identity');
+      expect(rule.weight).toBe(10);
+      expect(rule.blockOnMissing).toBe(true);
+      expect(rule.sortOrder).toBe(1);
+    });
+
+    it('isolation_type is identity w10 with blockOnMissing', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'isolation_type');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('identity');
+      expect(rule.weight).toBe(10);
+      expect(rule.blockOnMissing).toBe(true);
+    });
+
+    it('output_polarity is identity_flag w9', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'output_polarity');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('identity_flag');
+      expect(rule.weight).toBe(9);
+    });
+
+    it('peak_source_current is threshold gte w8', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'peak_source_current');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('threshold');
+      expect(rule.thresholdDirection).toBe('gte');
+      expect(rule.weight).toBe(8);
+    });
+
+    it('propagation_delay is threshold lte w7', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'propagation_delay');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('threshold');
+      expect(rule.thresholdDirection).toBe('lte');
+      expect(rule.weight).toBe(7);
+    });
+
+    it('dead_time_control is identity_flag w7', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'dead_time_control');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('identity_flag');
+      expect(rule.weight).toBe(7);
+    });
+
+    it('dead_time is threshold gte w7', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'dead_time');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('threshold');
+      expect(rule.thresholdDirection).toBe('gte');
+      expect(rule.weight).toBe(7);
+    });
+
+    it('vdd_range is threshold range_superset w8', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'vdd_range');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('threshold');
+      expect(rule.thresholdDirection).toBe('range_superset');
+      expect(rule.weight).toBe(8);
+    });
+
+    it('aec_q100 is identity_flag w8', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'aec_q100');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('identity_flag');
+      expect(rule.weight).toBe(8);
+    });
+
+    it('packaging is operational w1', () => {
+      const rule = gateDriverLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'packaging');
+      expect(rule).toBeDefined();
+      expect(rule.logicType).toBe('operational');
+      expect(rule.weight).toBe(1);
+    });
+  });
+
+  // ============================================================
+  // C4: OP-AMPS / COMPARATORS
+  // ============================================================
+  describe('C4 Op-Amps / Comparators', () => {
+    it('has 24 rules', () => {
+      expect(opampComparatorLogicTable.rules).toHaveLength(24);
+    });
+
+    it('device_type is identity w10 blockOnMissing', () => {
+      const r = opampComparatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'device_type');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity');
+      expect(r.weight).toBe(10);
+      expect(r.blockOnMissing).toBe(true);
+    });
+
+    it('device_type identity — op-amp vs comparator fails', () => {
+      const t = table([rule({ attributeId: 'device_type', logicType: 'identity', weight: 10, blockOnMissing: true })]);
+      const source = attrs([param('device_type', 'Op-Amp')]);
+      const cand = attrs([param('device_type', 'Comparator')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'device_type');
+      expect(r?.result).toBe('fail');
+      expect(result.passed).toBe(false);
+    });
+
+    it('device_type identity — op-amp vs op-amp passes', () => {
+      const t = table([rule({ attributeId: 'device_type', logicType: 'identity', weight: 10 })]);
+      const source = attrs([param('device_type', 'Op-Amp')]);
+      const cand = attrs([param('device_type', 'Op-Amp')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'device_type');
+      expect(r?.result).toBe('pass');
+    });
+
+    it('input_type identity_upgrade — CMOS replacing JFET is upgrade', () => {
+      const t = table([rule({
+        attributeId: 'input_type',
+        logicType: 'identity_upgrade',
+        upgradeHierarchy: ['CMOS', 'JFET', 'Bipolar'],
+        weight: 9,
+      })]);
+      const source = attrs([param('input_type', 'JFET')]);
+      const cand = attrs([param('input_type', 'CMOS')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'input_type');
+      expect(r?.result).toBe('upgrade');
+    });
+
+    it('input_type identity_upgrade — bipolar replacing CMOS fails', () => {
+      const t = table([rule({
+        attributeId: 'input_type',
+        logicType: 'identity_upgrade',
+        upgradeHierarchy: ['CMOS', 'JFET', 'Bipolar'],
+        weight: 9,
+      })]);
+      const source = attrs([param('input_type', 'CMOS')]);
+      const cand = attrs([param('input_type', 'Bipolar')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'input_type');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('min_stable_gain threshold lte — decompensated replacing compensated fails', () => {
+      const t = table([rule({
+        attributeId: 'min_stable_gain',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        weight: 8,
+      })]);
+      const source = attrs([param('min_stable_gain', '1', 1)]);
+      const cand = attrs([param('min_stable_gain', '10', 10)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'min_stable_gain');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('min_stable_gain threshold lte — compensated replacing decompensated passes', () => {
+      const t = table([rule({
+        attributeId: 'min_stable_gain',
+        logicType: 'threshold',
+        thresholdDirection: 'lte',
+        weight: 8,
+      })]);
+      const source = attrs([param('min_stable_gain', '10', 10)]);
+      const cand = attrs([param('min_stable_gain', '1', 1)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'min_stable_gain');
+      expect(r?.result).toBe('pass');
+    });
+
+    it('output_type identity — open-drain vs push-pull fails', () => {
+      const t = table([rule({ attributeId: 'output_type', logicType: 'identity', weight: 8 })]);
+      const source = attrs([param('output_type', 'Push-Pull')]);
+      const cand = attrs([param('output_type', 'Open-Drain')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'output_type');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('rail_to_rail_input identity_flag — source has RRI, candidate lacks → fail', () => {
+      const t = table([rule({ attributeId: 'rail_to_rail_input', logicType: 'identity_flag', weight: 8 })]);
+      const source = attrs([param('rail_to_rail_input', 'Yes')]);
+      const cand = attrs([param('rail_to_rail_input', 'No')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'rail_to_rail_input');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('rail_to_rail_output identity_flag — candidate has RRO when source does not → better', () => {
+      const t = table([rule({ attributeId: 'rail_to_rail_output', logicType: 'identity_flag', weight: 8 })]);
+      const source = attrs([param('rail_to_rail_output', 'No')]);
+      const cand = attrs([param('rail_to_rail_output', 'Yes')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'rail_to_rail_output');
+      expect(r?.result).toBe('pass');
+    });
+
+    it('vicm_range is threshold range_superset w9 blockOnMissing', () => {
+      const r = opampComparatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'vicm_range');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('threshold');
+      expect(r.thresholdDirection).toBe('range_superset');
+      expect(r.weight).toBe(9);
+      expect(r.blockOnMissing).toBe(true);
+    });
+
+    it('channels is identity w10 blockOnMissing', () => {
+      const r = opampComparatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'channels');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity');
+      expect(r.weight).toBe(10);
+      expect(r.blockOnMissing).toBe(true);
+    });
+
+    it('aec_q100 is identity_flag w8', () => {
+      const r = opampComparatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'aec_q100');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity_flag');
+      expect(r.weight).toBe(8);
+    });
+
+    it('packaging is operational w1', () => {
+      const r = opampComparatorLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'packaging');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('operational');
+      expect(r.weight).toBe(1);
     });
   });
 });

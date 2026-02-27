@@ -2,7 +2,7 @@
 
 An AI-powered component intelligence platform for the electronics industry. Users enter a part number (or upload a BOM), and the system finds equivalent replacements, scores them with a deterministic rule engine, and adapts its recommendations based on the user's role, objectives, and business constraints.
 
-**Current MVP:** Cross-reference recommendation engine covering 28 passive and discrete semiconductor families, with Digikey as the primary data source.
+**Current MVP:** Cross-reference recommendation engine covering 32 passive, discrete semiconductor, and IC families, with Digikey as the primary data source.
 
 **Vision:** A platform that helps engineers, buyers, and supply chain professionals make better component decisions by combining deep technical matching with commercial intelligence, compliance and lifecycle awareness, and supply chain insights — personalized to each user's context. See `docs/PRODUCT_ROADMAP.md` for the full vision and phased implementation plan.
 
@@ -135,18 +135,19 @@ Defined in `lib/types.ts` as `LogicType`:
 
 | Type | Behavior | Example |
 |------|----------|---------|
-| `identity` | Exact match required | Capacitance, package/case |
+| `identity` | Exact match required (supports optional `tolerancePercent` band) | Capacitance, package/case, fsw ±10% |
 | `identity_range` | Range overlap required (replacement range must intersect source range) | JFET Vp, Idss |
 | `identity_upgrade` | Match or superior per hierarchy (best→worst array) | Dielectric: C0G > X7R > X5R |
 | `identity_flag` | Boolean gate — if original requires it, replacement must too | AEC-Q200, flexible termination |
 | `threshold` | Numeric comparison: `gte`, `lte`, or `range_superset` | Voltage ≥, ESR ≤, temp range ⊇ |
 | `fit` | Physical constraint ≤ | Component height |
+| `vref_check` | Cross-attribute Vref → Vout recalculation with ±2% tolerance | Switching regulator Vref |
 | `application_review` | Cannot be automated, flagged for human review | DC bias derating |
 | `operational` | Non-electrical info | Packaging type |
 
 ## Logic Tables & Family Structure
 
-Each component family has a logic table in `lib/logicTables/` defining its matching rules. All 28 families are encoded:
+Each component family has a logic table in `lib/logicTables/` defining its matching rules. All 31 families are encoded:
 
 **Registry:** `lib/logicTables/index.ts` maps family IDs to tables and subcategory strings to family IDs.
 
@@ -181,6 +182,13 @@ Each component family has a logic table in `lib/logicTables/` defining its match
 | B8 | Thyristors / TRIACs / SCRs | Discrete Semiconductors |
 | B9 | JFETs — Junction Field-Effect Transistors | Discrete Semiconductors |
 | C1 | Linear Voltage Regulators (LDOs) | Voltage Regulators |
+| C2 | Switching Regulators (DC-DC Converters & Controllers) | Voltage Regulators |
+| C3 | Gate Drivers (MOSFET / IGBT / SiC / GaN) | Gate Drivers |
+| C4 | Op-Amps / Comparators / Instrumentation Amplifiers | Amplifiers |
+
+C3 (Gate Drivers) is a standalone base family — detected by subcategory mapping ('Gate Driver', 'MOSFET Driver', 'IGBT Driver', 'Half-Bridge Driver' keywords). TWO Digikey categories ("Gate Drivers" for non-isolated + "Isolators - Gate Drivers" for isolated). 20 matching rules including shoot-through safety: context Q1 (half-bridge) makes output_polarity + dead_time_control + dead_time all BLOCKING — three-check validation ensures any single failure rejects the part.
+
+C4 (Op-Amps / Comparators / Instrumentation Amplifiers) is a single family covering three sub-types (like B8 Thyristors). TWO Digikey categories ("Instrumentation, Op Amps, Buffer Amps" + "Comparators"). 24 matching rules, 5 context questions. Context Q1 (device_function) suppresses sub-type-irrelevant rules: comparators suppress gain_bandwidth/min_stable_gain, op-amps/INA suppress output_type/response_time. device_type (w10 blockOnMissing) is the BLOCKING categorical gate. input_type uses identity_upgrade hierarchy ['CMOS', 'JFET', 'Bipolar']. vicm_range (w9 blockOnMissing) is always BLOCKING (phase reversal risk). min_stable_gain detects decompensated op-amps (BLOCKED in unity-gain via context Q4). MPN prefix enrichment for device_type from 34 patterns.
 
 **Variant families** (53, 54, 55, 60, 13, 72, B2, B3, B4) are derived from base families using `deltaBuilder.ts` — the classifier in `familyClassifier.ts` detects them from part attributes. B2 (Schottky) is classified from B1 (Rectifier Diodes) when the part description contains 'Schottky', 'SBD', or 'SiC diode'. B3 (Zener) is classified from B1 when the description contains 'Zener', 'voltage reference diode', or MPN starts with 'BZX', 'BZT', 'MMSZ'. B4 (TVS) is classified from B1 when the description contains 'TVS', 'transient voltage', 'ESD protection', or MPN matches TVS prefixes (SMAJ, SMBJ, P6KE, PESD, TPD, ESDA, etc.). B5 (MOSFETs) is a standalone base family — detected by subcategory mapping ('MOSFET', 'FET', 'N-ch', 'P-ch', 'SiC MOSFET', 'GaN FET' keywords). B6 (BJTs) is a standalone base family — detected by subcategory mapping ('BJT', 'Bipolar Transistor', 'NPN', 'PNP' keywords). B7 (IGBTs) is a standalone base family — detected by subcategory mapping ('IGBT', 'Insulated Gate Bipolar Transistor' keywords). B8 (Thyristors) is a standalone base family — detected by subcategory mapping ('SCR', 'TRIAC', 'DIAC', 'Thyristor', 'SIDAC' keywords). Three sub-types (SCR/TRIAC/DIAC) share one logic table; context question Q1 suppresses irrelevant rules per sub-type via `not_applicable` effects. B9 (JFETs) is classified as a variant of B5 (MOSFETs) when detected by description keywords ('JFET', 'J-FET', 'junction field effect', 'depletion mode FET') or MPN prefixes (2N54xx, 2SK, 2SJ, J112, J113, MPF102, BF245, IFxxx). Uses the new `identity_range` LogicType for Vp and Idss range overlap matching.
 
@@ -188,7 +196,7 @@ Each component family has a logic table in `lib/logicTables/` defining its match
 
 ## The docs/ Folder
 
-Contains 19 `.docx` files — one per base component family — defining the cross-reference logic rules that were encoded into the TypeScript logic tables. These are the authoritative source documents. The `passive_variants_delta.docx` covers the 6 variant families.
+Contains 20 `.docx` files — one per base component family — defining the cross-reference logic rules that were encoded into the TypeScript logic tables. These are the authoritative source documents. The `passive_variants_delta.docx` covers the 6 variant families.
 
 Also: `application-context-attribute-map.md` — comprehensive guide mapping families to context questions with effects.
 
@@ -238,13 +246,13 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
 
-Parameter mapping is complete for **all 19 passive + 9 discrete + 1 Block C IC family**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026), IGBTs (B7, "Single IGBTs" category, 14 fields incl. 2 compound, ~55% weight coverage — verified Feb 2026), Thyristors (B8, "SCRs" + "TRIACs" categories, 8-9 fields per sub-type, 1 compound ("Triac Type"→gate_sensitivity+snubberless), ~48-51% weight coverage — verified Feb 2026), JFETs (B9, "JFETs" category, 10 fields, ~45% weight coverage — verified Feb 2026), and LDOs (C1, "Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" category, 12 fields, ~52% weight coverage — verified Feb 2026). See `docs/DECISIONS.md` (#16-19, #30-40, #46) for Digikey API quirks.
+Parameter mapping is complete for **all 19 passive + 9 discrete + 4 Block C IC families**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026), IGBTs (B7, "Single IGBTs" category, 14 fields incl. 2 compound, ~55% weight coverage — verified Feb 2026), Thyristors (B8, "SCRs" + "TRIACs" categories, 8-9 fields per sub-type, 1 compound ("Triac Type"→gate_sensitivity+snubberless), ~48-51% weight coverage — verified Feb 2026), JFETs (B9, "JFETs" category, 10 fields, ~45% weight coverage — verified Feb 2026), LDOs (C1, "Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" category, 12 fields, ~52% weight coverage — verified Feb 2026), Switching Regulators (C2, TWO categories: "Voltage Regulators - DC DC Switching Regulators" (integrated, 14 fields) + "DC DC Switching Controllers" (controller-only, 10 fields), ~40-50% weight coverage — verified Feb 2026), Gate Drivers (C3, TWO categories: "Gate Drivers" (non-isolated, 10 fields) + "Isolators - Gate Drivers" (isolated, 10 fields), 5 compound field transformers, ~45-50% weight coverage — verified Feb 2026), and Op-Amps/Comparators (C4, TWO categories: "Instrumentation, Op Amps, Buffer Amps" (15 fields) + "Comparators" (13 fields), compound "CMRR, PSRR (Typ)" transformer, ~45-50% weight coverage — verified Feb 2026). See `docs/DECISIONS.md` (#16-19, #30-40, #46-49) for Digikey API quirks.
 
 ## Product Direction
 
 The app is evolving from a cross-reference tool into a component intelligence platform built on five pillars:
 
-1. **Technical Matching** (built) — Deterministic rule engine across 28+ families
+1. **Technical Matching** (built) — Deterministic rule engine across 31 families
 2. **Commercial Intelligence** (planned) — Multi-supplier pricing, availability, lead times
 3. **Compliance & Lifecycle** (planned) — EOL tracking, environmental/trade compliance, qualifications
 4. **Data Integration** (planned) — Unifying distributor APIs, Atlas (Chinese MFR dataset), customer data, and market feeds
@@ -280,7 +288,7 @@ See `docs/PRODUCT_ROADMAP.md` for the full roadmap and `docs/DECISIONS.md` (#41-
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (240 tests, ~0.3s)
+npm test        # Jest unit tests (345 tests, ~0.4s)
 npm run test:watch  # Jest in watch mode
 ```
 

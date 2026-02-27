@@ -29,7 +29,7 @@ function AdminShellInner() {
 
   const sectionParam = searchParams.get('section');
   const [activeSection, setActiveSection] = useState<AdminSection>(
-    isValidSection(sectionParam) ? sectionParam : 'data-sources',
+    isValidSection(sectionParam) ? sectionParam : 'taxonomy',
   );
 
   const [selectedCategory, setSelectedCategory] = useState(allCategories[0] ?? '');

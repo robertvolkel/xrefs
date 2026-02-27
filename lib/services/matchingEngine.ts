@@ -139,6 +139,23 @@ function evaluateIdentity(
     match = normalize(sourceValue) === normalize(candidateValue);
   }
 
+  // Tolerance band: if exact match fails but values are within ±tolerancePercent, pass with note
+  if (!match && rule.tolerancePercent && srcNum !== null && candNum !== null && srcNum !== 0) {
+    const deviation = Math.abs(candNum - srcNum) / Math.abs(srcNum);
+    if (deviation <= rule.tolerancePercent / 100) {
+      return {
+        attributeId: rule.attributeId,
+        attributeName: rule.attributeName,
+        sourceValue,
+        candidateValue,
+        logicType: rule.logicType,
+        result: 'pass',
+        matchStatus: 'compatible',
+        note: `Within ±${rule.tolerancePercent}% tolerance (${(deviation * 100).toFixed(1)}% deviation) — verify passive components are still optimal for this value`,
+      };
+    }
+  }
+
   return {
     attributeId: rule.attributeId,
     attributeName: rule.attributeName,
@@ -624,15 +641,149 @@ function evaluateOperational(
   };
 }
 
+/**
+ * Vref check evaluator: when Vref differs between source and candidate,
+ * automatically recalculates the output voltage using the existing feedback
+ * resistor divider ratio. Passes if the recalculated Vout is within ±2%,
+ * otherwise returns 'review' with corrected Rbot value.
+ *
+ * Used by switching regulators (C2) where Vout = Vref × (1 + Rtop/Rbot).
+ */
+function evaluateVrefCheck(
+  rule: MatchingRule,
+  sourceParam: ParametricAttribute | undefined,
+  candidateParam: ParametricAttribute | undefined,
+  sourceAttrs: PartAttributes,
+): RuleEvaluationResult {
+  const sourceValue = sourceParam?.value ?? 'N/A';
+  const candidateValue = candidateParam?.value ?? 'N/A';
+
+  // Missing source Vref — no constraint to enforce
+  if (!sourceParam) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: 'pass',
+      matchStatus: 'exact',
+    };
+  }
+
+  // Missing candidate Vref
+  if (!candidateParam) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: rule.blockOnMissing ? 'fail' : 'review',
+      matchStatus: 'different',
+      note: rule.blockOnMissing
+        ? 'Missing critical specification — Vref not specified, cannot verify output voltage achievability'
+        : 'Vref not specified — verify output voltage is achievable with existing feedback network',
+    };
+  }
+
+  const srcVref = getNumeric(sourceParam);
+  const candVref = getNumeric(candidateParam);
+
+  if (srcVref === null || candVref === null || srcVref === 0) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: 'review',
+      matchStatus: 'different',
+      note: 'Cannot parse Vref values — verify output voltage achievability manually',
+    };
+  }
+
+  // Vref matches within ±1% — exact match, no recalculation needed
+  const vrefDeviation = Math.abs(candVref - srcVref) / Math.abs(srcVref);
+  if (vrefDeviation <= 0.01) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: 'pass',
+      matchStatus: 'exact',
+    };
+  }
+
+  // Vref differs — compute Vout achievability with existing feedback resistors
+  const voutParam = sourceAttrs.parameters.find(p => p.parameterId === 'output_voltage');
+  const vout = voutParam ? getNumeric(voutParam) : null;
+
+  if (!vout || vout === 0) {
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: 'review',
+      matchStatus: 'different',
+      note: `Vref differs (${sourceValue} → ${candidateValue}) but output voltage unknown — verify feedback resistor network produces correct output`,
+    };
+  }
+
+  // Compute: ratio = Rtop/Rbot = (Vout/Vref_source) - 1
+  const ratio = (vout / srcVref) - 1;
+  // Vout with replacement Vref using existing resistors
+  const voutNew = candVref * (1 + ratio);
+  const voutError = Math.abs(voutNew - vout) / vout;
+
+  if (voutError <= 0.02) {
+    // Within ±2% — acceptable with existing feedback network
+    return {
+      attributeId: rule.attributeId,
+      attributeName: rule.attributeName,
+      sourceValue,
+      candidateValue,
+      logicType: rule.logicType,
+      result: 'pass',
+      matchStatus: 'compatible',
+      note: `Vref differs (${sourceValue} → ${candidateValue}) but output voltage within ±2% (${voutNew.toFixed(3)}V vs ${vout}V target, ${(voutError * 100).toFixed(1)}% deviation)`,
+    };
+  }
+
+  // Vout deviation > ±2% — flag for review with corrected Rbot value
+  // Corrected Rbot = Rtop / ((Vout_target / Vref_new) - 1)
+  // Assume Rtop = 100kΩ as reference: original Rbot = 100k / ratio
+  const rtopRef = 100; // kΩ reference
+  const rbotOriginal = rtopRef / ratio;
+  const newRatio = (vout / candVref) - 1;
+  const rbotCorrected = rtopRef / newRatio;
+
+  return {
+    attributeId: rule.attributeId,
+    attributeName: rule.attributeName,
+    sourceValue,
+    candidateValue,
+    logicType: rule.logicType,
+    result: 'review',
+    matchStatus: 'different',
+    note: `Vref mismatch: ${sourceValue} → ${candidateValue}. With existing feedback resistors, output would be ${voutNew.toFixed(3)}V (${(voutError * 100).toFixed(1)}% from ${vout}V target). To correct: change Rbot from ${rbotOriginal.toFixed(1)}kΩ to ${rbotCorrected.toFixed(1)}kΩ (assuming Rtop = ${rtopRef}kΩ)`,
+  };
+}
+
 // ============================================================
 // MAIN EVALUATION ENGINE
 // ============================================================
 
-/** Evaluate a single rule */
+/** Evaluate a single rule (optionally with full source/candidate attributes for cross-attribute evaluators) */
 function evaluateRule(
   rule: MatchingRule,
   sourceParam: ParametricAttribute | undefined,
-  candidateParam: ParametricAttribute | undefined
+  candidateParam: ParametricAttribute | undefined,
+  sourceAttrs?: PartAttributes,
 ): RuleEvaluationResult {
   switch (rule.logicType) {
     case 'identity':
@@ -649,6 +800,8 @@ function evaluateRule(
       return evaluateFit(rule, sourceParam, candidateParam);
     case 'application_review':
       return evaluateApplicationReview(rule, sourceParam, candidateParam);
+    case 'vref_check':
+      return evaluateVrefCheck(rule, sourceParam, candidateParam, sourceAttrs!);
     case 'operational':
       return evaluateOperational(rule, sourceParam, candidateParam);
   }
@@ -680,7 +833,7 @@ export function evaluateCandidate(
     const sourceParam = sourceMap.get(rule.attributeId);
     const candidateParam = candidateMap.get(rule.attributeId);
 
-    const result = evaluateRule(rule, sourceParam, candidateParam);
+    const result = evaluateRule(rule, sourceParam, candidateParam, source);
     results.push(result);
 
     // Scoring logic

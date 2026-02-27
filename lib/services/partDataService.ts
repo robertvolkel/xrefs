@@ -5,7 +5,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, ApplicationContext, RecommendationResult } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -123,6 +123,21 @@ export async function getRecommendations(
     enrichRectifierAttributes(sourceAttrs);
   }
 
+  // Step 1d: Enrich switching regulators with topology/architecture from MPN prefix
+  if (logicTablePrecheck?.familyId === 'C2') {
+    enrichSwitchingRegulatorAttributes(sourceAttrs);
+  }
+
+  // Step 1e: Enrich gate drivers with driver_configuration/isolation_type from MPN prefix
+  if (logicTablePrecheck?.familyId === 'C3') {
+    enrichGateDriverAttributes(sourceAttrs);
+  }
+
+  // Step 1f: Enrich op-amps/comparators with device_type from MPN prefix
+  if (logicTablePrecheck?.familyId === 'C4') {
+    enrichOpampComparatorAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -149,7 +164,21 @@ export async function getRecommendations(
     try {
       const candidates = await fetchDigikeyCandidates(sourceAttrs, currency);
       if (candidates.length > 0) {
-        const recs = findReplacements(effectiveTable, sourceAttrs, candidates);
+        let recs = findReplacements(effectiveTable, sourceAttrs, candidates);
+
+        // Step 3b: Post-scoring filter for C2 switching regulators —
+        // topology and architecture are BLOCKING identity gates. Remove any
+        // candidate with a confirmed mismatch so they never appear in results.
+        if (familyId === 'C2') {
+          recs = filterSwitchingRegulatorMismatches(recs, sourceAttrs);
+        }
+
+        // Step 3c: Post-scoring filter for C4 op-amps/comparators —
+        // device_type (op-amp vs comparator) is a BLOCKING identity gate.
+        if (familyId === 'C4') {
+          recs = filterOpampComparatorMismatches(recs, sourceAttrs);
+        }
+
         return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
       }
     } catch (error) {
@@ -205,6 +234,41 @@ async function fetchDigikeyCandidates(
   return candidates;
 }
 
+// ============================================================
+// SWITCHING REGULATOR POST-SCORING FILTER (C2)
+// ============================================================
+
+/**
+ * Remove candidates with confirmed topology or architecture mismatches.
+ * These are BLOCKING identity gates — a buck converter can never substitute
+ * for a boost converter, and a controller-only IC can never replace an
+ * integrated-switch converter (or vice versa). Candidates with *missing*
+ * topology/architecture are kept — the identity rules already flag them
+ * as failures in the match details.
+ */
+function filterSwitchingRegulatorMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcTopology = sourceAttrs.parameters.find(p => p.parameterId === 'topology')?.value?.toLowerCase();
+  const srcArch = sourceAttrs.parameters.find(p => p.parameterId === 'architecture')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Candidate values are in matchDetails (rec.part is a Part, not PartAttributes)
+    const candTopology = rec.matchDetails.find(d => d.parameterId === 'topology')?.replacementValue?.toLowerCase();
+    const candArch = rec.matchDetails.find(d => d.parameterId === 'architecture')?.replacementValue?.toLowerCase();
+
+    // If source or candidate is missing the value, keep the candidate (rules handle missing data)
+    if (srcTopology && candTopology && candTopology !== srcTopology) return false;
+    if (srcArch && candArch && candArch !== srcArch) return false;
+    return true;
+  });
+}
+
+// ============================================================
+// DIGIKEY CANDIDATE FETCHER
+// ============================================================
+
 /** Build a keyword search string from source part attributes.
  *  When a category filter is applied, the subcategory keyword is unnecessary. */
 function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
@@ -234,6 +298,18 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
     if (vMatch) parts.push(`${vMatch[1]}V`);
   }
 
+  // Switching Regulators (C2): use topology as keyword to filter candidates
+  const topology = paramMap.get('topology');
+  if (topology) parts.push(topology.value);
+
+  // Gate Drivers (C3): use driver configuration as keyword to filter candidates
+  const driverConfig = paramMap.get('driver_configuration');
+  if (driverConfig) parts.push(driverConfig.value);
+
+  // Op-Amps/Comparators (C4): use channels as keyword
+  const channels = paramMap.get('channels');
+  if (channels) parts.push(channels.value);
+
   // Package
   const pkg = paramMap.get('package_case');
   if (pkg) {
@@ -248,4 +324,258 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   }
 
   return parts.join(' ');
+}
+
+// ============================================================
+// SWITCHING REGULATOR MPN ENRICHMENT (C2)
+// ============================================================
+
+interface MpnTopologyHint {
+  pattern: RegExp;
+  topology?: string;
+  manufacturer?: string;
+}
+
+/**
+ * MPN prefix patterns for switching regulator classification.
+ * Used to infer topology when Digikey parametric data is missing it.
+ * Patterns are checked in order; first match wins.
+ */
+const switchingRegMpnPatterns: MpnTopologyHint[] = [
+  // TI buck converters/controllers
+  { pattern: /^TPS5[4-6]\d/i, topology: 'Buck', manufacturer: 'Texas Instruments' },
+  { pattern: /^TPS62\d/i, topology: 'Buck', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM5\d{3,4}/i, topology: 'Buck', manufacturer: 'Texas Instruments' },
+  { pattern: /^LMR\d/i, topology: 'Buck', manufacturer: 'Texas Instruments' },
+  // TI boost converters
+  { pattern: /^TPS61\d/i, topology: 'Boost', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM267\d/i, topology: 'Boost', manufacturer: 'Texas Instruments' },
+  { pattern: /^TPS55\d/i, topology: 'Buck-Boost', manufacturer: 'Texas Instruments' },
+  // Maxim (Analog Devices) switching
+  { pattern: /^MAX17\d/i, manufacturer: 'Analog Devices' },
+  { pattern: /^MAX20\d/i, manufacturer: 'Analog Devices' },
+  // Renesas switching
+  { pattern: /^ISL85\d/i, manufacturer: 'Renesas' },
+  { pattern: /^ISL80\d/i, manufacturer: 'Renesas' },
+  // MPS (Monolithic Power Systems)
+  { pattern: /^MPQ\d/i, manufacturer: 'Monolithic Power Systems' },
+  { pattern: /^MP[1-6]\d/i, manufacturer: 'Monolithic Power Systems' },
+  // XLSEMI
+  { pattern: /^XL42\d/i, topology: 'Buck', manufacturer: 'XLSEMI' },
+  // ON Semi switching
+  { pattern: /^MC34\d/i, manufacturer: 'ON Semiconductor' },
+  { pattern: /^NCV\d/i, manufacturer: 'ON Semiconductor' },
+  // ADI (Linear Technology) switching
+  { pattern: /^LT87\d/i, manufacturer: 'Analog Devices' },
+  { pattern: /^LT380\d/i, manufacturer: 'Analog Devices' },
+  { pattern: /^LT86\d/i, manufacturer: 'Analog Devices' },
+  { pattern: /^LTC3\d/i, manufacturer: 'Analog Devices' },
+  // Microchip
+  { pattern: /^MIC2\d/i, topology: 'Buck', manufacturer: 'Microchip' },
+  // ROHM
+  { pattern: /^BD9\d/i, manufacturer: 'ROHM' },
+];
+
+/**
+ * Enrich C2 switching regulator attributes with topology inferred from MPN prefix.
+ * Only fills in missing attributes — never overwrites Digikey parametric data.
+ * Mutates `attrs.parameters` in place.
+ */
+function enrichSwitchingRegulatorAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const hasTopology = attrs.parameters.some(p => p.parameterId === 'topology');
+
+  // If topology is already present, no enrichment needed
+  if (hasTopology) return;
+
+  for (const hint of switchingRegMpnPatterns) {
+    if (hint.pattern.test(mpn) && hint.topology) {
+      attrs.parameters.push({
+        parameterId: 'topology',
+        parameterName: 'Topology',
+        value: hint.topology,
+        sortOrder: 0,
+      });
+      break;
+    }
+  }
+}
+
+// ============================================================
+// GATE DRIVER MPN ENRICHMENT (C3)
+// ============================================================
+
+interface GateDriverMpnHint {
+  pattern: RegExp;
+  driverConfiguration?: string;
+  isolationType?: string;
+  manufacturer?: string;
+}
+
+/**
+ * MPN prefix patterns for gate driver classification.
+ * Used to infer driver_configuration and isolation_type when Digikey
+ * parametric data is missing. Patterns are checked in order; first match wins.
+ */
+const gateDriverMpnPatterns: GateDriverMpnHint[] = [
+  // Infineon half-bridge drivers (IR21xx series)
+  { pattern: /^IR21\d/i, driverConfiguration: 'Half-Bridge', isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Infineon' },
+  // Infineon isolated gate drivers (IRS2xxx series)
+  { pattern: /^IRS2\d/i, driverConfiguration: 'Half-Bridge', isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Infineon' },
+  // TI gate drivers (UCC27xxx series)
+  { pattern: /^UCC271\d/i, driverConfiguration: 'Half-Bridge', isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Texas Instruments' },
+  { pattern: /^UCC272\d/i, driverConfiguration: 'Dual', isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Texas Instruments' },
+  { pattern: /^UCC27\d/i, isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Texas Instruments' },
+  // TI LM51xx half-bridge drivers
+  { pattern: /^LM510[0-6]/i, driverConfiguration: 'Half-Bridge', isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Texas Instruments' },
+  // Microchip gate drivers (MCP14xx series)
+  { pattern: /^MCP14[0-9]/i, isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'Microchip' },
+  // Skyworks/Silicon Labs isolated gate drivers (Si827x series)
+  { pattern: /^Si827\d/i, isolationType: 'Digital Isolator (Capacitive)', manufacturer: 'Skyworks' },
+  // ADI isolated gate drivers (ADUM4xxx series)
+  { pattern: /^ADUM\d/i, isolationType: 'Digital Isolator (Magnetic)', manufacturer: 'Analog Devices' },
+  // ON Semi gate drivers (NCP51xx series)
+  { pattern: /^NCP51\d/i, isolationType: 'Non-Isolated (Bootstrap)', manufacturer: 'ON Semiconductor' },
+];
+
+/**
+ * Enrich C3 gate driver attributes with driver_configuration and isolation_type
+ * inferred from MPN prefix. Only fills in missing attributes — never overwrites
+ * Digikey parametric data. Mutates `attrs.parameters` in place.
+ */
+function enrichGateDriverAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const hasConfig = attrs.parameters.some(p => p.parameterId === 'driver_configuration');
+  const hasIsolation = attrs.parameters.some(p => p.parameterId === 'isolation_type');
+
+  // If both are already present, no enrichment needed
+  if (hasConfig && hasIsolation) return;
+
+  for (const hint of gateDriverMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    if (!hasConfig && hint.driverConfiguration) {
+      attrs.parameters.push({
+        parameterId: 'driver_configuration',
+        parameterName: 'Driver Configuration',
+        value: hint.driverConfiguration,
+        sortOrder: 0,
+      });
+    }
+    if (!hasIsolation && hint.isolationType) {
+      attrs.parameters.push({
+        parameterId: 'isolation_type',
+        parameterName: 'Isolation Type',
+        value: hint.isolationType,
+        sortOrder: 0,
+      });
+    }
+    break;
+  }
+}
+
+// ============================================================
+// OP-AMP / COMPARATOR POST-SCORING FILTER (C4)
+// ============================================================
+
+/**
+ * Remove candidates with confirmed device_type mismatches.
+ * Device type (op-amp vs comparator vs instrumentation amplifier) is a BLOCKING
+ * identity gate — a comparator can never substitute for an op-amp in a feedback
+ * loop (no phase compensation → oscillation). Candidates with *missing*
+ * device_type are kept — the identity rule already flags them as failures.
+ */
+function filterOpampComparatorMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcDeviceType = sourceAttrs.parameters.find(p => p.parameterId === 'device_type')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    const candDeviceType = rec.matchDetails.find(d => d.parameterId === 'device_type')?.replacementValue?.toLowerCase();
+    // If source or candidate is missing, keep (rules handle missing data)
+    if (srcDeviceType && candDeviceType && candDeviceType !== srcDeviceType) return false;
+    return true;
+  });
+}
+
+// ============================================================
+// OP-AMP / COMPARATOR MPN ENRICHMENT (C4)
+// ============================================================
+
+interface OpampMpnHint {
+  pattern: RegExp;
+  deviceType?: string;
+  manufacturer?: string;
+}
+
+/**
+ * MPN prefix patterns for op-amp/comparator classification.
+ * Used to infer device_type when Digikey parametric data doesn't provide it.
+ * Patterns are checked in order; first match wins.
+ */
+const opampMpnPatterns: OpampMpnHint[] = [
+  // Comparator-specific prefixes (must come before op-amp prefixes that overlap)
+  { pattern: /^LM393/i, deviceType: 'Comparator', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM339/i, deviceType: 'Comparator', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM311/i, deviceType: 'Comparator', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM3302/i, deviceType: 'Comparator', manufacturer: 'Texas Instruments' },
+  { pattern: /^MAX9[0-9]{2,3}/i, deviceType: 'Comparator', manufacturer: 'Analog Devices' },
+  { pattern: /^ADCMP/i, deviceType: 'Comparator', manufacturer: 'Analog Devices' },
+  { pattern: /^TLV3\d/i, deviceType: 'Comparator', manufacturer: 'Texas Instruments' },
+
+  // Instrumentation amplifier prefixes
+  { pattern: /^INA\d/i, deviceType: 'Instrumentation Amplifier', manufacturer: 'Texas Instruments' },
+  { pattern: /^AD62\d/i, deviceType: 'Instrumentation Amplifier', manufacturer: 'Analog Devices' },
+
+  // Op-amp prefixes
+  { pattern: /^LM741/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM324/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM358/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^TL0[678]\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^NE5532/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^OPA\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^AD82[02]\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^AD8\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^LT1\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^LT6\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^MCP6\d/i, deviceType: 'Op-Amp', manufacturer: 'Microchip' },
+  { pattern: /^MCP3\d/i, deviceType: 'Op-Amp', manufacturer: 'Microchip' },
+  { pattern: /^MCP601/i, deviceType: 'Op-Amp', manufacturer: 'Microchip' },
+  { pattern: /^TSV\d/i, deviceType: 'Op-Amp', manufacturer: 'STMicroelectronics' },
+  { pattern: /^TSX\d/i, deviceType: 'Op-Amp', manufacturer: 'STMicroelectronics' },
+  { pattern: /^TS27\d/i, deviceType: 'Op-Amp', manufacturer: 'STMicroelectronics' },
+  { pattern: /^MAX40\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX44\d/i, deviceType: 'Op-Amp', manufacturer: 'Analog Devices' },
+  { pattern: /^LMV\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^LMC\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^TLV27\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^TLV171\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^TLC27\d/i, deviceType: 'Op-Amp', manufacturer: 'Texas Instruments' },
+  { pattern: /^MC33\d/i, deviceType: 'Op-Amp', manufacturer: 'ON Semiconductor' },
+  { pattern: /^ISL28\d/i, deviceType: 'Op-Amp', manufacturer: 'Renesas' },
+];
+
+/**
+ * Enrich C4 op-amp/comparator attributes with device_type inferred from MPN prefix.
+ * Only fills in missing attributes — never overwrites Digikey parametric data.
+ * Mutates `attrs.parameters` in place.
+ */
+function enrichOpampComparatorAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const hasDeviceType = attrs.parameters.some(p => p.parameterId === 'device_type');
+
+  if (hasDeviceType) return;
+
+  for (const hint of opampMpnPatterns) {
+    if (hint.pattern.test(mpn) && hint.deviceType) {
+      attrs.parameters.push({
+        parameterId: 'device_type',
+        parameterName: 'Device Type (Op-Amp / Comparator / Instrumentation Amplifier)',
+        value: hint.deviceType,
+        sortOrder: 0,
+      });
+      break;
+    }
+  }
 }

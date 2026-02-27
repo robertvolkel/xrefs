@@ -962,3 +962,115 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/ldo.ts`, `lib/contextQuestions/ldo.ts`
 
 **Files modified:** `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/types.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`
+
+---
+
+## 47. C2 Switching Regulators — Most Complex IC Family with Engine Extensions
+
+**Decision:** Encode Switching Regulators as Family C2 (Block C: Power Management ICs) with 22 matching rules, 5 context questions, and two matching engine extensions (`vref_check` LogicType and `tolerancePercent` on identity rules). Six user-specified requirements drove key design choices requiring new engine capabilities.
+
+**Rationale:** Switching regulators span 1W USB chargers to 1kW server PSUs — the most complex IC family to substitute because stability depends on the combination of IC, passive components, layout, and operating conditions. The .docx document (`docs/switching_reg_logic_c2.docx`) defines 22 attributes across 7 sections. Six critical requirements shape the implementation:
+
+1. **Topology = BLOCKING Identity gate (Req #1):** `topology` is `identity` at w10 with `blockOnMissing: true`. Buck, boost, buck-boost, flyback, forward, SEPIC are not interchangeable — each topology defines the fundamental circuit structure. A post-scoring filter in `partDataService.ts` removes any candidate with a confirmed topology mismatch so they never appear in results.
+2. **Architecture = hard structural Identity (Req #5):** `architecture` is `identity` at w10 with `blockOnMissing: true`. Integrated-switch ICs include on-chip MOSFETs; controller-only ICs drive external FETs. Not interchangeable. Same post-scoring filter enforces this.
+3. **Control mode mismatch = engineering review (Req #2):** `control_mode` starts as `identity` at w9, softened to `application_review` via context Q2 (`comp_redesign: can_redesign`) when compensation network can be redesigned. Without context, control mode mismatch is a hard identity failure.
+4. **Vref mismatch → automatic Vout recalculation (Req #3):** New `vref_check` LogicType added to matching engine. Computes `Vout_new = Vref_candidate × (1 + Rtop/Rbot)` using existing feedback ratio. If Vout deviation ≤ ±2% → pass with note. If > ±2% → review with corrected Rbot values (assumes Rtop = 100kΩ). This required extending `evaluateRule()` signature to pass full `sourceAttrs` for cross-attribute access.
+5. **Switching frequency ±10% tolerance (Req #4):** New `tolerancePercent` field on `MatchingRule`. Within ±10%, existing passives are generally acceptable but flagged. Beyond ±10%, hard fail. Context Q4 escalates to BLOCKING when passives cannot be changed.
+6. **MPN prefix enrichment (Req #6):** `partDataService.ts` infers topology from MPN prefix patterns (TPS54x→Buck, TPS61x→Boost, LM267x→Boost, etc.) when Digikey parametric data is missing.
+
+**Engine Extensions:**
+- `vref_check` added to `LogicType` union in `types.ts`
+- `tolerancePercent?: number` added to `MatchingRule` interface
+- `evaluateIdentity()` extended: after exact match fails, checks if within ±tolerancePercent band → returns `pass` with `compatible` status
+- `evaluateVrefCheck()` (~120 lines): cross-attribute evaluator accessing source's `output_voltage` to compute feedback ratio and Vout achievability
+- `evaluateRule()` signature extended with optional `sourceAttrs` parameter; `evaluateCandidate()` passes through
+
+**Digikey Integration:**
+- TWO Digikey categories: "Voltage Regulators - DC DC Switching Regulators" (integrated) and "DC DC Switching Controllers" (controller-only). Note: controller category has NO "Voltage Regulators" prefix.
+- TWO param maps: `switchingRegIntegratedParamMap` (14 fields) and `switchingControllerParamMap` (10 fields)
+- Architecture enriched from Digikey category name (not parametric data): "Regulators" → Integrated Switch, "Controllers" → Controller-Only
+- `transformTopology()`: normalizes "Buck, Split Rail" → "Buck", "Step-Down" → "Buck", etc.
+- "Voltage - Output (Min/Fixed)" mapped to `vref` for C2 (in C1 this maps to `output_voltage`)
+- Key gaps: no control_mode, compensation_type, ton_min, gate_drive_current, ocp_mode in Digikey parametric data
+- AEC-Q100 available via "Qualification" field (unlike IGBTs)
+
+**Tests:** 34 new tests (265 → 299 total): vref_check evaluator (8 tests), identity with tolerancePercent (6 tests), C2 logic table structure (9 tests), C2 context effects (5 tests), C2 registry mapping (5 tests), standalone classifier (1 test).
+
+**Files created:** `lib/logicTables/switchingRegulator.ts`, `lib/contextQuestions/switchingRegulator.ts`
+
+**Files modified:** `lib/types.ts`, `lib/services/matchingEngine.ts`, `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/digikeyMapper.ts`, `lib/services/partDataService.ts`, `__tests__/services/matchingEngine.test.ts`, `__tests__/services/contextModifier.test.ts`, `__tests__/services/familyClassifier.test.ts`
+
+---
+
+## 48. C3 Gate Drivers — Shoot-Through Safety via Context Escalation
+
+**Decision:** Encode Gate Drivers as Family C3 (Block C: Power Management ICs) with 20 matching rules, 5 context questions, and no new engine extensions. Shoot-through safety for half-bridge applications is enforced via context escalation making three critical rules (output polarity, dead-time control, dead-time duration) BLOCKING when half-bridge/full-bridge topology is selected.
+
+**Rationale:** Gate drivers are the interface between logic-level control signals and power semiconductor gates (MOSFETs, IGBTs, SiC MOSFETs, GaN HEMTs). The source document (`docs/gate_driver_logic_c3.docx`) defines 18 attributes. Six user-specified requirements drove key design choices:
+
+1. **Driver configuration = first BLOCKING Identity gate (Req #1):** `driver_configuration` is `identity` at w10 with `blockOnMissing: true` and `sortOrder: 1`. Single/Dual/Half-Bridge/Full-Bridge are not interchangeable.
+2. **Output polarity mismatch = BLOCKING safety flag for half-bridge (Req #2):** `output_polarity` starts as `identity_flag` at w9. Context Q1 (half_bridge) escalates to `blockOnMissing: true`. Polarity inversion in half-bridge causes simultaneous conduction — instant shoot-through.
+3. **Dead-time ≥ original for half-bridge (Req #3):** Added `dead_time` as `threshold gte` rule (w7, not in original doc). Context Q1 escalates to BLOCKING for half-bridge. Shorter dead-time with slow power devices = shoot-through risk at temperature extremes.
+4. **Shoot-through three-check validation (Req #4):** Handled via Q1 context effects — polarity, dead-time control, and dead-time duration all become BLOCKING for half-bridge/full-bridge. Propagation delay escalated to primary (w9). Any single failure → part fails.
+5. **Isolation type BLOCKING for safety-rated equipment (Req #5):** `isolation_type` is `identity` at w10 with `blockOnMissing: true` by default. Non-isolated bootstrap cannot substitute for isolated (transformer/optocoupler/digital isolator).
+6. **SiC/GaN negative gate voltage engineering review (Req #6):** Context Q2 (sic_mosfet) escalates `vdd_range` to `blockOnMissing: true` with review note about bipolar supply (-5V/+18V) requirement.
+7. **MPN prefix classification (Req #7):** `partDataService.ts` enriches driver_configuration and isolation_type from MPN prefixes: IR21 (Infineon half-bridge), UCC27 (TI), IRS2 (Infineon isolated), LM510 (TI), MCP140 (Microchip), Si827 (Skyworks isolated), ADUM (ADI isolated), NCP51 (ON Semi).
+
+**Key Design Choices:**
+- **New `'Gate Drivers'` ComponentCategory:** Gate drivers are not voltage regulators — distinct category for accurate UI grouping.
+- **Peak source/sink current split:** Document treats as one rule, but they're asymmetric and separate Digikey fields → two rules for finer matching.
+- **Input logic threshold as `identity`:** Document summary lists as identity_flag, but the rule describes categorical compatibility (3.3V/5V/VDD-ref/Differential) — semantically `identity`.
+- **No new engine extensions:** All rule types (identity, identity_flag, threshold gte/lte/range_superset, operational) already exist from previous families.
+
+**Digikey Integration:**
+- TWO Digikey categories: "Gate Drivers" (non-isolated) and "Isolators - Gate Drivers" (isolated)
+- TWO param maps: `gateDriverParamMap` (10 fields) and `isolatedGateDriverParamMap` (10 fields)
+- Compound field transformers: `transformToPeakSource/Sink()` splits "210mA, 360mA", `transformToLogicThreshold()` extracts VIH from "0.8V, 3V", `transformToPropDelayMax()` takes max of "69ns, 79ns", `transformToRiseFallMax()` takes max of rise/fall
+- `isolation_type` enriched from category name: "Gate Drivers" → Non-Isolated (Bootstrap); from "Technology" field for isolated
+- `driver_configuration` enriched from "Driven Configuration" (non-isolated) or "Number of Channels" (isolated)
+- Key gaps: no propagation delay for non-isolated, no dead_time/dead_time_control, no shutdown_enable, no bootstrap_diode, no fault_reporting, no rth_ja, no tj_max from Digikey parametric data
+
+**Tests:** 25 new tests (299 → 324 total): C3 logic table structure (11 tests), C3 context effects (7 tests), C3 registry mapping (7 tests).
+
+**Files created:** `lib/logicTables/gateDriver.ts`, `lib/contextQuestions/gateDriver.ts`
+
+**Files modified:** `lib/types.ts`, `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/digikeyMapper.ts`, `lib/services/partDataService.ts`, `__tests__/services/matchingEngine.test.ts`, `__tests__/services/contextModifier.test.ts`, `__tests__/services/familyClassifier.test.ts`
+
+---
+
+## 49. C4 Op-Amps / Comparators / Instrumentation Amplifiers — Single Family with Sub-Type Suppression
+
+**Decision:** Encode Op-Amps, Comparators, and Instrumentation Amplifiers as a single Family C4 with 24 matching rules and 5 context questions. Sub-type-specific rules are suppressed via context question Q1 using `not_applicable` effects, following the same pattern as B8 Thyristors (SCR/TRIAC/DIAC). No new engine extensions needed.
+
+**Rationale:** The three sub-types share 18 of 24 rules. Op-amps suppress `output_type` and `response_time`; comparators suppress `gain_bandwidth` and `min_stable_gain`; instrumentation amps suppress `output_type` and `response_time` (like op-amps) but escalate `cmrr`. The `device_type` identity rule (weight 10, blockOnMissing) ensures cross-sub-type mismatches always fail. Eight user-specified requirements drove key design choices:
+
+1. **Op-amp vs comparator = BLOCKING categorical gate (Req #1):** `device_type` is `identity` at w10 with `blockOnMissing: true`. Safety-level block — using a comparator where an op-amp is required (or vice versa) causes functional failure (no linear feedback in comparator, output ringing/latch-up in op-amp used open-loop).
+2. **Decompensated op-amps BLOCKED in unity-gain circuits (Req #2):** `min_stable_gain` is `threshold lte` at w8. Context Q4 (unity gain) escalates to `blockOnMissing: true`. A decompensated op-amp (min stable gain > 1 V/V) oscillates at unity gain.
+3. **Input stage technology three-check validation (Req #3):** `input_type` is `identity_upgrade` at w9 with hierarchy `['CMOS', 'JFET', 'Bipolar']` (lowest Ib → highest). Context Q2 (high impedance, > 100kΩ) escalates to mandatory with `blockOnMissing: true`, blocking bipolar replacements for CMOS/JFET originals.
+4. **Comparator output type mismatch = circuit modification flag (Req #4):** `output_type` is `identity` at w8. Engineering reason documents pull-up resistor add/remove implications. N/A for op-amps (context Q1).
+5. **Phase reversal risk (VICM) is BLOCKING (Req #5):** `vicm_range` is `threshold range_superset` at w9 with `blockOnMissing: true` always. Narrower VICM in replacement → inputs can exceed common-mode range → phase reversal (op-amp output snaps to opposite rail) → functional failure, not just degradation.
+6. **RRI and RRO are independent attributes (Req #6):** `rail_to_rail_input` and `rail_to_rail_output` are separate `identity_flag` rules at w8. If source has RRI, replacement must have RRI regardless of RRO status, and vice versa.
+7. **Precision applications escalate Avol (Req #7):** Context Q3 (precision) escalates `avol` to primary, `input_offset_voltage` to mandatory with `blockOnMissing`, plus `cmrr` and `psrr` to primary.
+8. **AEC-Q100 grade hierarchy = hard gate for automotive (Req #8):** `aec_q100` is `identity_flag` at w8, escalated to mandatory with `blockOnMissing` by context Q5 (automotive).
+
+**Key Implementation Details:**
+- **New `'Amplifiers'` ComponentCategory** added to `ComponentCategory` union type — distinct from 'Voltage Regulators' and 'Gate Drivers'.
+- **TWO Digikey categories:** "Instrumentation, Op Amps, Buffer Amps" (op-amps + INA) and "Comparators" (separate). Field names differ significantly between categories (e.g., "Number of Circuits" vs "Number of Elements", "Gain Bandwidth Product" vs "Propagation Delay (Max)").
+- **Compound field handling:** Comparators have "CMRR, PSRR (Typ)" compound field → two transformers (`transformToCmrr`, `transformToPsrr`). Op-amps have "Amplifier Type" compound → two attributes (`input_type` via `transformToInputStageType`, `amplifier_type`).
+- **device_type enrichment** from Digikey category name AND MPN prefixes. Category: "Comparators" → Comparator, "Instrumentation, Op Amps, Buffer Amps" → checks "Amplifier Type" param for "Instrumentation" → Instrumentation Amplifier, else → Op-Amp. MPN: LM393/LM339/MAX9xx/ADCMP → Comparator, INAxxx → Instrumentation Amplifier, OPAxxxx/LM741/LM324/etc. → Op-Amp.
+- **Post-scoring filter** (`filterOpampComparatorMismatches`) removes candidates with confirmed device_type mismatch (same pattern as C2's topology/architecture filter).
+- **Rail-to-rail transformers:** `transformToRailToRailInput` parses "Input and Output" → "Yes", "Input" → "Yes", "-" → "Unknown". `transformToRailToRailOutput` parses "Rail-to-Rail" → "Yes", "-" → "No".
+- **Weight coverage:** Op-amp param map ~50% (15 fields mapped of 24 rules). Comparator param map ~45% (13 fields mapped of 24 rules). Major gaps: vicm_range, avol, min_stable_gain, input_noise_voltage, rail_to_rail_input (reliably), aec_q100 — all datasheet-only.
+
+**Context Questions (5):**
+- Q1 `device_function` (CRITICAL): op_amp / comparator / instrumentation_amp — drives sub-type suppression
+- Q2 `source_impedance`: low / medium / high — high escalates input_type + input_bias_current to mandatory
+- Q3 `precision_application`: yes / no — escalates avol, Vos, CMRR, PSRR
+- Q4 `circuit_gain` (CONDITIONAL on Q1 ∈ [op_amp, instrumentation_amp]): unity / low / high — unity escalates min_stable_gain to mandatory (decompensated BLOCKED)
+- Q5 `automotive`: yes / no — escalates aec_q100 to mandatory
+
+**Tests:** 21 new tests (324 → 345 total): C4 logic table structure (5 tests), C4 rule evaluation (9 tests: device_type, input_type upgrade/downgrade, min_stable_gain, output_type, RRI, RRO), C4 context effects (6 tests: comparator/op_amp suppression, high impedance, precision, unity gain, automotive).
+
+**Files created:** `lib/logicTables/opampComparator.ts`, `lib/contextQuestions/opampComparator.ts`
+
+**Files modified:** `lib/types.ts` (Amplifiers category), `lib/logicTables/index.ts` (registry + 11 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + 5 transformers + device_type enrichment), `lib/services/digikeyParamMap.ts` (opampParamMap + comparatorParamMap + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + MPN patterns + candidate search keywords), `__tests__/services/matchingEngine.test.ts` (14 C4 tests), `__tests__/services/contextModifier.test.ts` (6 C4 tests)

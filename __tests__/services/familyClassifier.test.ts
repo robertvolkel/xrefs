@@ -1,4 +1,5 @@
 import { classifyFamily, enrichRectifierAttributes } from '@/lib/logicTables/familyClassifier';
+import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { PartAttributes, ParametricAttribute } from '@/lib/types';
 
 // ============================================================
@@ -456,6 +457,90 @@ describe('familyClassifier', () => {
     it('does NOT fire when base family is not B5', () => {
       const a = attrs([], { mpn: '2SK170BL', description: 'JFET N-CH', subcategory: 'BJT' });
       expect(classifyFamily('B6', a)).toBe('B6');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // Switching Regulators (C2) — standalone, no variant classifier
+  // ----------------------------------------------------------
+  describe('Switching Regulators (C2) — registry mapping', () => {
+    it('returns C2 unchanged (standalone family)', () => {
+      const a = attrs([], { mpn: 'TPS54360DDAR', description: 'Buck converter 60V 3.5A' });
+      expect(classifyFamily('C2', a)).toBe('C2');
+    });
+
+    it('maps "Switching Regulator" subcategory to C2', () => {
+      const a = attrs([], { subcategory: 'Switching Regulator' });
+      const lt = getLogicTableForSubcategory('Switching Regulator', a);
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C2');
+    });
+
+    it('maps "DC DC Switching Regulator" to C2', () => {
+      const a = attrs([], { subcategory: 'DC DC Switching Regulator' });
+      const lt = getLogicTableForSubcategory('DC DC Switching Regulator', a);
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C2');
+    });
+
+    it('maps "Buck Converter" to C2', () => {
+      const a = attrs([], { subcategory: 'Buck Converter' });
+      const lt = getLogicTableForSubcategory('Buck Converter', a);
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C2');
+    });
+
+    it('maps "Voltage Regulators - DC DC Switching Controllers" to C2', () => {
+      const a = attrs([], { subcategory: 'Voltage Regulators - DC DC Switching Controllers' });
+      const lt = getLogicTableForSubcategory('Voltage Regulators - DC DC Switching Controllers', a);
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C2');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // GATE DRIVERS (C3) — Standalone family, no variant detection needed
+  // ----------------------------------------------------------
+  describe('Gate Drivers (C3) — registry mapping', () => {
+    it('returns C3 unchanged (standalone family)', () => {
+      const a = attrs([], { mpn: 'IR2104', description: 'IC GATE DRVR HALF-BRIDGE 8DIP' });
+      expect(classifyFamily('C3', a)).toBe('C3');
+    });
+
+    it('maps "Gate Driver" to C3', () => {
+      const lt = getLogicTableForSubcategory('Gate Driver');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
+    });
+
+    it('maps "MOSFET Driver" to C3', () => {
+      const lt = getLogicTableForSubcategory('MOSFET Driver');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
+    });
+
+    it('maps "Half-Bridge Driver" to C3', () => {
+      const lt = getLogicTableForSubcategory('Half-Bridge Driver');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
+    });
+
+    it('maps "Isolated Gate Driver" to C3', () => {
+      const lt = getLogicTableForSubcategory('Isolated Gate Driver');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
+    });
+
+    it('maps "Isolators - Gate Drivers" to C3', () => {
+      const lt = getLogicTableForSubcategory('Isolators - Gate Drivers');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
+    });
+
+    it('maps "Gate Drivers" (Digikey category name) to C3', () => {
+      const lt = getLogicTableForSubcategory('Gate Drivers');
+      expect(lt).toBeDefined();
+      expect(lt!.familyId).toBe('C3');
     });
   });
 });

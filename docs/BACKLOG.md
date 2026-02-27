@@ -9,7 +9,7 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 ### ~~Digikey parameter maps incomplete for most families~~ COMPLETED
 **File:** `lib/services/digikeyParamMap.ts`
 
-All 19 passive families + 9 discrete semiconductor families (B1–B9) + 1 Block C IC family (C1 LDOs) now have curated parameter maps. See Decisions #16-19, #30-40, #46 for API quirks.
+All 19 passive families + 9 discrete semiconductor families (B1–B9) + 4 Block C IC families (C1 LDOs, C2 Switching Regulators, C3 Gate Drivers, C4 Op-Amps/Comparators) now have curated parameter maps. See Decisions #16-19, #30-40, #46-49 for API quirks.
 
 **Completed:** MLCC (12, 14 attrs), Chip Resistors (52-55, 11 attrs), Fixed Inductors (71/72, 15 attrs), Ferrite Beads (70, 10 attrs), Common Mode Chokes (69, 13 attrs), Tantalum (59, 9 attrs + 2 placeholders), Aluminum Electrolytic (58, 15 attrs), Aluminum Polymer (60, 14 attrs + 2 placeholders), Film (64, 13 attrs), Supercapacitors (61, 11 attrs + 2 placeholders), Varistors (65, 8 attrs + 1 placeholder), PTC Resettable Fuses (66, 13 attrs incl. dual height fields), NTC Thermistors (67, 8 attrs + 2 placeholders), PTC Thermistors (68, 4 attrs + 1 placeholder), Rectifier Diodes (B1, 11 attrs single + 9 attrs bridge + 2 placeholders), Schottky Barrier Diodes (B2, 11 attrs single + 11 attrs array, virtual category routing), Zener Diodes (B3, 10 attrs single + 11 attrs array), TVS Diodes (B4, 13 attrs), MOSFETs (B5, 14 attrs, verified Feb 2026), BJTs (B6, 11 attrs, verified Feb 2026), IGBTs (B7, 14 attrs incl. 2 compound fields, verified Feb 2026), Thyristors/SCRs (B8-SCR, 8 attrs, ~48% weight coverage, verified Feb 2026), Thyristors/TRIACs (B8-TRIAC, 9 attrs incl. compound "Triac Type" field, ~51% weight coverage, verified Feb 2026).
 
@@ -20,11 +20,11 @@ All 19 passive families + 9 discrete semiconductor families (B1–B9) + 1 Block 
 ### ~~No automated tests~~ COMPLETED
 **Location:** `__tests__/services/`
 
-Jest test suite added with 240 tests across 6 suites, covering all priority candidates:
-- `matchingEngine.test.ts` (60 tests) — all 7 rule evaluators, scoring math, fail propagation, partial credit, blockOnMissing, edge cases
-- `familyClassifier.test.ts` (45 tests) — all variant classifiers (54/55/53/60/13/72/B2/B3/B4/B9), B5/B6/B7/B8 standalone, cross-family safety, rectifier enrichment, JFET detection
+Jest test suite added with 345 tests across 6 suites, covering all priority candidates:
+- `matchingEngine.test.ts` (108 tests) — all 9 rule evaluators (incl. vref_check, identity+tolerancePercent), scoring math, fail propagation, partial credit, blockOnMissing, C2/C3/C4 logic table structure, edge cases
+- `familyClassifier.test.ts` (50 tests) — all variant classifiers (54/55/53/60/13/72/B2/B3/B4/B9), B5/B6/B7/B8 standalone, C2 registry mapping, cross-family safety, rectifier enrichment, JFET detection
 - `deltaBuilder.test.ts` (14 tests) — REMOVE→OVERRIDE→ADD order, immutability, silent skip, auto-sortOrder
-- `contextModifier.test.ts` (14 tests) — all 5 effect types, blockOnMissing propagation, last-writer-wins, skip behaviors
+- `contextModifier.test.ts` (25 tests) — all 5 effect types, blockOnMissing propagation, last-writer-wins, skip behaviors, C2/C3/C4 context effects
 - `digikeyMapper.test.ts` (87 tests) — category/subcategory/status mapping, SI prefixes, value transformers, MOSFET/BJT/IGBT/thyristor routing, search result dedup
 - `themeClassifier.test.ts` (34 tests) — theme icon classification
 
@@ -116,6 +116,31 @@ Status text in `PartsListTable` (e.g., "Validated", "Error", "Searching") and lo
 ---
 
 ## P2 — Low Priority
+
+### C2 Switching Regulators — datasheet-only fields have no Digikey parametric data
+**Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/switchingRegulator.ts`
+
+Of 22 logic table rules, the following have no Digikey parametric mapping: `control_mode`, `compensation_type`, `ton_min`, `gate_drive_current`, `ocp_mode`, `soft_start`, `enable_uvlo`, `rth_ja`, `tj_max`, `aec_q100` (controllers only — integrated has "Qualification"). These are typically datasheet-only specs. Integrated-switch parts have ~50% weight coverage; controller-only parts have ~40%.
+
+Key data gaps: No way to distinguish control modes (PCM vs VM vs hysteretic) from Digikey parametric data. No COMP pin presence/type field. No gate drive current for controller-only designs. "Voltage - Output (Min/Fixed)" is mapped to `vref` but is actually the minimum adjustable output voltage for adjustable parts — not exactly the reference voltage (close but not identical for parts with non-unity gain internal dividers).
+
+---
+
+### C3 Gate Drivers — datasheet-only fields have no Digikey parametric data
+**Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/gateDriver.ts`
+
+Of 20 logic table rules, the following have no Digikey parametric mapping: `dead_time_control`, `dead_time`, `shutdown_enable` (polarity), `fault_reporting`, `rth_ja`, `tj_max`. Non-isolated "Gate Drivers" category has no propagation delay field; isolated "Isolators - Gate Drivers" has no bootstrap-related fields. Compound fields require 5 transformers (peak source/sink, logic threshold, propagation delay, rise/fall time). `isolation_type` enriched from Digikey category name (non-isolated → "Non-Isolated (Bootstrap)"). `driver_configuration` enriched from "Number of Channels"/"Number of Drivers" for isolated drivers. AEC-Q100 available via "Qualification" for isolated drivers only (not for non-isolated "Gate Drivers" category). ~45-50% weight coverage overall.
+
+---
+
+### C4 Op-Amps / Comparators — datasheet-only fields have no Digikey parametric data
+**Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/opampComparator.ts`
+
+Of 24 logic table rules, the following have no Digikey parametric mapping: `vicm_range` (w9, BLOCKING — phase reversal risk), `avol` (w5), `min_stable_gain` (w8 — decompensated detection), `input_noise_voltage` (w6), `rail_to_rail_input` (w8 — partially available via "Amplifier Type" but unreliable as a standalone indicator), `aec_q100` (w8), `packaging` (w1). Op-amp category ("Instrumentation, Op Amps, Buffer Amps") has ~50% weight coverage. Comparator category has ~45% weight coverage. Two separate Digikey categories with different field names require two param maps.
+
+Key data gaps: VICM range (the BLOCKING phase reversal check) is entirely datasheet-only — this is the biggest safety gap. Min stable gain (decompensated detection) is datasheet-only. Input noise voltage not in parametric data. AEC-Q100 not in Digikey parametric data for either category.
+
+---
 
 ### C1 LDO — datasheet-only fields have no Digikey parametric data
 **Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/ldo.ts`

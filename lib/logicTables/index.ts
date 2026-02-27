@@ -27,6 +27,9 @@ import { igbtsLogicTable } from './igbts';
 import { thyristorsLogicTable } from './thyristors';
 import { jfetsLogicTable } from './jfets';
 import { ldoLogicTable } from './ldo';
+import { switchingRegulatorLogicTable } from './switchingRegulator';
+import { gateDriverLogicTable } from './gateDriver';
+import { opampComparatorLogicTable } from './opampComparator';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -62,6 +65,9 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'B9': jfetsLogicTable,
   // Block C: Power Management ICs
   'C1': ldoLogicTable,
+  'C2': switchingRegulatorLogicTable,
+  'C3': gateDriverLogicTable,
+  'C4': opampComparatorLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -236,6 +242,44 @@ const subcategoryToFamily: Record<string, string> = {
   'Voltage Regulators - Linear': 'C1',
   'Voltage Regulators - Linear Regulator': 'C1',
   'Linear Regulator': 'C1',
+  // Switching Regulators / DC-DC Converters & Controllers (Family C2)
+  'Switching Regulator': 'C2',
+  'DC DC Switching Regulator': 'C2',
+  'DC DC Switching Controller': 'C2',
+  'DC-DC Converter': 'C2',
+  'Switching Controller': 'C2',
+  'Buck Converter': 'C2',
+  'Boost Converter': 'C2',
+  'Buck-Boost Converter': 'C2',
+  'SEPIC Converter': 'C2',
+  'Flyback Converter': 'C2',
+  'Forward Converter': 'C2',
+  'Voltage Regulators - DC DC Switching Regulators': 'C2',
+  'Voltage Regulators - DC DC Switching Controllers': 'C2',
+  // Gate Drivers (Family C3)
+  'Gate Driver': 'C3',
+  'MOSFET Driver': 'C3',
+  'IGBT Driver': 'C3',
+  'Half-Bridge Driver': 'C3',
+  'Half Bridge Driver': 'C3',
+  'High-Side Low-Side Driver': 'C3',
+  'High-Side/Low-Side Gate Driver': 'C3',
+  'Gate Drivers': 'C3',
+  'Isolated Gate Driver': 'C3',
+  'Non-Isolated Gate Driver': 'C3',
+  'Isolators - Gate Drivers': 'C3',
+  // Op-Amps / Comparators / Instrumentation Amplifiers (Family C4)
+  'Operational Amplifier': 'C4',
+  'Op-Amp': 'C4',
+  'Op Amp': 'C4',
+  'Comparator': 'C4',
+  'Voltage Comparator': 'C4',
+  'Instrumentation Amplifier': 'C4',
+  'Buffer Amplifier': 'C4',
+  'Amplifiers - Op Amps': 'C4',
+  'Operational Amplifiers': 'C4',
+  'Comparators': 'C4',
+  'Instrumentation, OP Amp, Buffer Amps': 'C4',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -270,6 +314,9 @@ const familyLastUpdated: Record<string, string> = {
   'B9': '2026-02-25',
   // Block C: Power Management ICs
   'C1': '2026-02-26',
+  'C2': '2026-02-26',
+  'C3': '2026-02-26',
+  'C4': '2026-02-26',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

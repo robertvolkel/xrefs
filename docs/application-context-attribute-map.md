@@ -38,7 +38,8 @@ This document maps every component family to the application-context questions t
 | 26 | JFETs | B9 | **Moderate** | Application mode (low-noise amp / ultra-high-Z / RF / legacy switching) determines whether NF, Igss, ft, or switching specs dominate. Vp and Idss are Identity specs — circuit bias depends on their range. Matched-pair applications require dual-device evaluation. |
 | 27 | Linear Voltage Regulators (LDOs) | C1 | **Moderate** | Output capacitor ESR compatibility is the most common substitution failure — ceramic vs. tantalum stability requirement is a hard Identity constraint. Fixed vs. adjustable, enable polarity, and power-good presence are Identity flags. PSRR must be verified at the upstream switching frequency, not DC. |
 | 28 | Switching Regulators | C2 | **High** | Topology is a hard Identity gate before any other evaluation. Control mode determines whether existing compensation network is valid — different control modes require different compensation. Switching frequency interfaces directly with inductor and capacitor values. Vref determines whether existing feedback resistors set the correct output. Integrated-switch vs. controller-only is an architectural Identity constraint. |
-| 29 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
+| 29 | Gate Drivers | C3 | **Moderate-High** | Driver configuration (single/dual/half-bridge) is a hard Identity gate. Output polarity inversion causes instant shoot-through in half-bridge circuits — most dangerous substitution failure mode. Dead-time, bootstrap diode presence, and shutdown polarity are Identity Flags. Peak drive current interfaces with power device switching loss budget. |
+| 30 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 
 ---
 
@@ -1269,7 +1270,81 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 
 ---
 
-### 29. Mica Capacitors (Family 13)
+---
+
+### 29. Gate Drivers (Family C3)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity gate. For half-bridge drivers, output polarity and dead-time are safety-critical — wrong polarity or absent dead-time causes immediate shoot-through and power device destruction. Isolation type is mandatory in safety-rated equipment. Peak drive current interfaces directly with the power stage's switching loss budget.
+
+#### Question 1: What is the driver configuration?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Single or Dual (non-bridge)** | Simpler substitution — main concerns are input logic threshold, output current, and supply voltage compatibility. Dead-time is not applicable. |
+| **Half-Bridge (floating high-side + low-side)** | Dead-time, bootstrap diode, VS/VB pin assignment, and output polarity become critical. Shoot-through risk from polarity inversion or dead-time mismatch. dV/dt immunity of VS pin must be verified for high-voltage applications. |
+| **Full-Bridge** | Four-switch control — same constraints as half-bridge, applied twice. Engineering review recommended for any substitution. |
+
+**Affected attributes:** All — configuration is the first gate before any other evaluation.
+
+#### Question 2 (half-bridge): Is there a galvanic isolation requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — safety-rated equipment (IEC 62368, UL 508A, medical)** | Isolation type is a BLOCKING Identity constraint. Non-isolated bootstrap cannot replace isolated type. Verify isolation voltage, creepage, and clearance meet the safety standard. |
+| **No — non-isolated bootstrap acceptable** | Isolation type not a safety constraint. Standard bootstrap driver acceptable if Vin range and duty cycle are compatible. |
+
+**Affected attributes:**
+- `Isolation Type` → BLOCKING for safety-rated applications
+- `Gate Drive Supply VDD` → bootstrap voltage must be verified for high-voltage applications (VB = VS + VDD)
+
+#### Question 3: What is the driving logic signal voltage?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **3.3V MCU/FPGA GPIO** | Replacement must have logic-level compatible inputs (VIH ≤ 2.0V). VDD-referenced CMOS inputs with VDD=12V will not reliably trigger. |
+| **5V logic** | Replacement must tolerate 5V inputs — verify VIH max is not exceeded. Most modern gate drivers with 5V logic compatibility are fine. |
+| **Differential (LVDS or similar)** | Replacement must also accept differential input. Single-ended replacement requires an input adapter — not a drop-in substitution. |
+
+**Affected attributes:**
+- `Input Logic Threshold` → must be compatible with driving logic voltage
+
+#### Question 4: What is the peak current requirement, and what power device is being driven?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Silicon MOSFET, moderate Qg (<50nC)** | Standard gate driver (1-2A peak) adequate. Verify at operating fsw. |
+| **IGBT or large MOSFET (Qg >100nC)** | Higher peak current (≥2A) required for adequate switching speed. Compute transition time = Qg / Ipeak and verify against switching loss budget. |
+| **SiC MOSFET (requires negative turn-off voltage)** | Bipolar gate supply required (e.g., -5V / +18V). Standard unipolar drivers cannot provide negative off-state gate voltage — parasitic turn-on risk from Miller coupling. Engineering review required. |
+
+**Affected attributes:**
+- `Peak Source/Sink Current` → primary performance spec; lower current = slower switching = more loss
+- `Gate Drive Supply VDD` → SiC/GaN requires specific voltage levels; verify range
+
+#### Question 5: Are Shutdown, Fault, Dead-Time, or Soft-Start pins used in the circuit?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Shutdown/Enable used for fault protection** | Polarity must match exactly. Verify float state (default enabled or disabled when undriven). |
+| **FAULT output used for monitoring/interlocking** | Replacement must have FAULT pin with open-drain output. Absent FAULT silently removes protection capability. |
+| **Dead-time set by external Rdt resistor** | Replacement must have Rdt pin with compatible resistance-to-time relationship. Recalculate dead-time with replacement's Rdt transfer function. |
+
+**Affected attributes:**
+- `Shutdown/Enable Pin` → Identity Flag; polarity must match
+- `Fault Reporting Pin` → Identity Flag if used for protection
+- `Dead-Time Control` → Rdt pin required if externally adjusted dead-time is on PCB
+
+#### Question 6: Is this automotive?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes** | AEC-Q100 mandatory. ISO 26262 ASIL requirements may mandate FAULT pin and diagnostic features. Load-dump survivability on VDD supply must be verified. |
+| **No** | Standard environmental matching. |
+
+---
+
+### 30. Mica Capacitors (Family 13)
 
 **Context sensitivity: LOW**
 
@@ -1565,6 +1640,7 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **JFETs** | B9 | Application mode? (low-noise amp / ultra-high-Z / RF / analog switch / legacy switching) | Matched-pair? | Automotive? |
 | **Linear Voltage Regulators (LDOs)** | C1 | Output type? (fixed / adjustable / negative) | Output capacitor type? (ceramic vs. tantalum — BLOCKING) | Battery-powered? | Upstream switcher? Feature pins used? Automotive? |
 | **Switching Regulators** | C2 | Topology? (buck/boost/buck-boost/flyback) | Integrated switch or controller-only? | Control mode? (PCM/VM/COT) | Switching frequency match? Vref match with existing feedback resistors? Feature pins? Automotive? |
+| **Gate Drivers** | C3 | Driver configuration? (single/dual/half-bridge/full-bridge) | Isolation required? | Input logic voltage? | Power device type / Qg? Feature pins (SD/FAULT/Rdt)? Automotive? | Topology? (buck/boost/buck-boost/flyback) | Integrated switch or controller-only? | Control mode? (PCM/VM/COT) | Switching frequency match? Vref match with existing feedback resistors? Feature pins? Automotive? |
 | **MLCCs** | 12 | Operating voltage vs. rated? | Flex/flex-rigid PCB? | Audio/analog signal path? | Environment? |
 | **Tantalums** | 59 | Safety-critical failure mode? | Voltage derating practice? | Inrush/surge protection? | — |
 | **RF/Signal Inductors** | 72 | Operating frequency? | Q factor requirement? | Shielding required? | — |

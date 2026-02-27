@@ -53,6 +53,9 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
   if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
   if (lower.includes('voltage regulator') || lower.includes('ldo')) return 'Voltage Regulators';
+  if (lower.includes('switching regulator') || lower.includes('switching controller') || lower.includes('dc dc')) return 'Voltage Regulators';
+  if (lower.includes('gate driver')) return 'Gate Drivers';
+  if (lower.includes('op amp') || lower.includes('buffer amp') || lower.includes('comparator') || lower.includes('instrumentation')) return 'Amplifiers';
   // Default: ICs covers a huge range
   return 'ICs';
 }
@@ -87,6 +90,16 @@ function mapSubcategory(categoryName: string): string {
   // Linear Voltage Regulators / LDOs (Family C1)
   if (lower.includes('voltage regulator') && lower.includes('linear')) return 'Linear Voltage Regulator';
   if (lower.includes('ldo')) return 'LDO';
+  // Switching Regulators / DC-DC Converters & Controllers (Family C2)
+  if (lower.includes('dc dc switching regulator') || (lower.includes('switching regulator') && !lower.includes('linear'))) return 'Switching Regulator';
+  if (lower.includes('dc dc switching controller') || lower.includes('switching controller')) return 'DC DC Switching Controller';
+  // Op-Amps / Comparators / Instrumentation Amps (Family C4)
+  if (lower.includes('comparator')) return 'Comparator';
+  if (lower.includes('instrumentation') && (lower.includes('amp') || lower.includes('op amp'))) return 'Instrumentation Amplifier';
+  if (lower.includes('op amp') || lower.includes('buffer amp')) return 'Operational Amplifier';
+  // Gate Drivers (Family C3) — must be before MOSFET/IGBT checks
+  if (lower.includes('isolator') && lower.includes('gate driver')) return 'Isolated Gate Driver';
+  if (lower.includes('gate driver')) return 'Gate Driver';
   // Thyristors (Family B8) — must be before transistor/diode fallback checks
   if (lower.includes('triac')) return 'TRIAC';
   if (lower.includes('diac') || lower.includes('sidac')) return 'DIAC';
@@ -463,6 +476,193 @@ function transformToAecQ100(valueText: string): string {
   return 'No';
 }
 
+// ============================================================
+// SWITCHING REGULATOR (Family C2) TRANSFORMERS
+// ============================================================
+
+/**
+ * Normalize topology from Digikey "Topology" field.
+ * Digikey values: "Buck", "Buck, Split Rail", "Boost", "Buck-Boost",
+ * "Flyback", "Forward", "SEPIC", "Inverting", "Push-Pull"
+ * Normalizes to canonical topology names used in the logic table.
+ */
+function transformTopology(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  // Handle compound entries like "Buck, Split Rail" — take the primary topology
+  if (lower.startsWith('buck') && !lower.includes('boost')) return 'Buck';
+  if (lower.includes('buck-boost') || lower.includes('buck boost')) return 'Buck-Boost';
+  if (lower.startsWith('boost')) return 'Boost';
+  if (lower.includes('sepic')) return 'SEPIC';
+  if (lower.includes('flyback')) return 'Flyback';
+  if (lower.includes('forward')) return 'Forward';
+  if (lower.includes('inverting')) return 'Inverting';
+  if (lower.includes('push-pull') || lower.includes('push pull')) return 'Push-Pull';
+  if (lower.includes('resonant') || lower.includes('llc')) return 'Resonant';
+  if (lower.includes('half-bridge') || lower.includes('half bridge')) return 'Half-Bridge';
+  if (lower.includes('full-bridge') || lower.includes('full bridge')) return 'Full-Bridge';
+  return valueText;
+}
+
+// ============================================================
+// GATE DRIVER (Family C3) TRANSFORMERS
+// ============================================================
+
+/**
+ * Extract peak source current from compound "Current - Peak Output (Source, Sink)" field.
+ * Digikey format: "210mA, 360mA" or "4A, 4A" — source is the first value.
+ */
+function transformToPeakSource(valueText: string): string {
+  const parts = valueText.split(',').map(s => s.trim());
+  return parts[0] ?? valueText;
+}
+
+/**
+ * Extract peak sink current from compound "Current - Peak Output (Source, Sink)" field.
+ * Digikey format: "210mA, 360mA" or "4A, 4A" — sink is the second value.
+ */
+function transformToPeakSink(valueText: string): string {
+  const parts = valueText.split(',').map(s => s.trim());
+  return parts[1] ?? parts[0] ?? valueText;
+}
+
+/**
+ * Extract VIH from compound "Logic Voltage - VIL, VIH" field.
+ * Digikey format: "0.8V, 3V" — VIH is the second value (input high threshold).
+ * For matching, we care about the threshold the logic signal must exceed.
+ */
+function transformToLogicThreshold(valueText: string): string {
+  const parts = valueText.split(',').map(s => s.trim());
+  return parts[1] ?? parts[0] ?? valueText;
+}
+
+/**
+ * Extract max propagation delay from compound "Propagation Delay tpLH / tpHL (Max)" field.
+ * Digikey format: "69ns, 79ns" — take the larger (worst-case) value.
+ */
+function transformToPropDelayMax(valueText: string): string {
+  const parts = valueText.split(',').map(s => s.trim());
+  if (parts.length < 2) return valueText;
+  const v1 = parseFloat(parts[0]);
+  const v2 = parseFloat(parts[1]);
+  if (isNaN(v1) || isNaN(v2)) return valueText;
+  // Return the part with the larger numeric value (preserves unit suffix)
+  return v1 >= v2 ? parts[0] : parts[1];
+}
+
+/**
+ * Extract max rise/fall time from compound "Rise / Fall Time (Typ)" field.
+ * Digikey format: "100ns, 50ns" or "7.2ns, 5.5ns" — take the larger (worst-case) value.
+ */
+function transformToRiseFallMax(valueText: string): string {
+  const parts = valueText.split(',').map(s => s.trim());
+  if (parts.length < 2) return valueText;
+  const v1 = parseFloat(parts[0]);
+  const v2 = parseFloat(parts[1]);
+  if (isNaN(v1) || isNaN(v2)) return valueText;
+  return v1 >= v2 ? parts[0] : parts[1];
+}
+
+/**
+ * Normalize isolation technology from Digikey "Technology" field.
+ * Maps: "Magnetic Coupling" → "Digital Isolator (Magnetic)",
+ *        "Capacitive Coupling" → "Digital Isolator (Capacitive)",
+ *        "Optocoupler" → "Optocoupler"
+ */
+function transformToIsolationType(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('magnetic')) return 'Digital Isolator (Magnetic)';
+  if (lower.includes('capacitive')) return 'Digital Isolator (Capacitive)';
+  if (lower.includes('optocoupler') || lower.includes('opto')) return 'Optocoupler';
+  if (lower.includes('transformer')) return 'Transformer';
+  return valueText;
+}
+
+// ============================================================
+// OP-AMP / COMPARATOR (Family C4) TRANSFORMERS
+// ============================================================
+
+/**
+ * Extract Rail-to-Rail Input from Digikey "Output Type" field.
+ * Op-amp Output Type can be "Rail-to-Rail" (means RRO), or "-" (not RRO).
+ * There is no separate RRI field — RRI is typically indicated in the description
+ * or "Amplifier Type" but not consistently in parametric data.
+ * We set "Unknown" as default since Digikey doesn't reliably distinguish RRI.
+ */
+function transformToRailToRailInput(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('input') && lower.includes('output')) return 'Yes';
+  if (lower.includes('input')) return 'Yes';
+  // "Rail-to-Rail" alone typically means output only
+  return 'Unknown';
+}
+
+/**
+ * Extract Rail-to-Rail Output from Digikey "Output Type" field.
+ * "Rail-to-Rail" → Yes, "-" → No
+ */
+function transformToRailToRailOutput(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('rail-to-rail') || lower.includes('rail to rail') || lower === 'rro' || lower === 'rri/rro') return 'Yes';
+  if (lower === '-' || lower.trim() === '') return 'No';
+  return 'No';
+}
+
+/**
+ * Normalize Digikey "Amplifier Type" to our input_type classification.
+ * "CMOS" → "CMOS", "JFET" → "JFET", "Bipolar" → "Bipolar",
+ * "Zero-Drift" → "CMOS" (chopper-stabilized devices use CMOS input stages),
+ * "Standard (General Purpose)" → depends on device, typically Bipolar.
+ */
+function transformToInputStageType(valueText: string): string {
+  const lower = valueText.toLowerCase();
+  if (lower.includes('cmos')) return 'CMOS';
+  if (lower.includes('jfet') || lower.includes('j-fet') || lower.includes('bifet')) return 'JFET';
+  if (lower.includes('bipolar') || lower.includes('bjt')) return 'Bipolar';
+  if (lower.includes('zero-drift') || lower.includes('zero drift') || lower.includes('chopper') || lower.includes('auto-zero')) return 'CMOS';
+  // "Standard (General Purpose)" — historically bipolar (LM358, LM741)
+  if (lower.includes('general purpose') || lower.includes('standard')) return 'Bipolar';
+  if (lower.includes('instrumentation')) return 'Bipolar';
+  return valueText;
+}
+
+/**
+ * Extract CMRR from compound "CMRR, PSRR (Typ)" field.
+ * Input: "50dB CMRR, 50dB PSRR" → "50dB"
+ */
+function transformToCmrr(valueText: string): string {
+  if (valueText === '-' || valueText.trim() === '') return valueText;
+  const parts = valueText.split(',');
+  const cmrrPart = parts.find(p => p.toLowerCase().includes('cmrr'));
+  if (cmrrPart) {
+    const match = cmrrPart.match(/([\d.]+)\s*dB/i);
+    if (match) return `${match[1]} dB`;
+  }
+  // Fallback: first numeric value
+  const match = valueText.match(/([\d.]+)\s*dB/i);
+  if (match) return `${match[1]} dB`;
+  return valueText;
+}
+
+/**
+ * Extract PSRR from compound "CMRR, PSRR (Typ)" field.
+ * Input: "50dB CMRR, 50dB PSRR" → "50dB"
+ */
+function transformToPsrr(valueText: string): string {
+  if (valueText === '-' || valueText.trim() === '') return valueText;
+  const parts = valueText.split(',');
+  const psrrPart = parts.find(p => p.toLowerCase().includes('psrr'));
+  if (psrrPart) {
+    const match = psrrPart.match(/([\d.]+)\s*dB/i);
+    if (match) return `${match[1]} dB`;
+  }
+  // If only one value, use it for both
+  if (parts.length === 1) {
+    const match = valueText.match(/([\d.]+)\s*dB/i);
+    if (match) return `${match[1]} dB`;
+  }
+  return valueText;
+}
+
 /** Apply value transformations based on attributeId */
 function transformValue(attributeId: string, valueText: string): string {
   switch (attributeId) {
@@ -519,6 +719,33 @@ function transformValue(attributeId: string, valueText: string): string {
       return transformToAecQ100(valueText);
     case 'thermal_shutdown':
       return transformToThermalShutdown(valueText);
+    // Switching Regulator (Family C2) transformers
+    case 'topology':
+      return transformTopology(valueText);
+    // Gate Driver (Family C3) transformers
+    case 'peak_source_current':
+      return transformToPeakSource(valueText);
+    case 'peak_sink_current':
+      return transformToPeakSink(valueText);
+    case 'input_logic_threshold':
+      return transformToLogicThreshold(valueText);
+    case 'propagation_delay':
+      return transformToPropDelayMax(valueText);
+    case 'rise_fall_time':
+      return transformToRiseFallMax(valueText);
+    case 'isolation_type':
+      return transformToIsolationType(valueText);
+    // Op-Amp / Comparator (Family C4) transformers
+    case 'rail_to_rail_input':
+      return transformToRailToRailInput(valueText);
+    case 'rail_to_rail_output':
+      return transformToRailToRailOutput(valueText);
+    case 'input_type':
+      return transformToInputStageType(valueText);
+    case 'cmrr':
+      return transformToCmrr(valueText);
+    case 'psrr':
+      return transformToPsrr(valueText);
     default:
       return valueText;
   }
@@ -770,6 +997,114 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
         parameterId: 'device_type',
         parameterName: 'Device Sub-Type (SCR / TRIAC / DIAC)',
         value: deviceType,
+        sortOrder: 1,
+      });
+      addedIds.add('device_type');
+    }
+  }
+
+  // Switching regulator architecture enrichment — infer from Digikey category name.
+  // "Voltage Regulators - DC DC Switching Regulators" = Integrated Switch
+  // "DC DC Switching Controllers" = Controller-Only
+  if (!addedIds.has('architecture')) {
+    const catLower = categoryName.toLowerCase();
+    let architecture = '';
+    if (catLower.includes('switching regulator') && !catLower.includes('controller')) architecture = 'Integrated Switch';
+    else if (catLower.includes('switching controller')) architecture = 'Controller-Only';
+    if (architecture) {
+      parameters.push({
+        parameterId: 'architecture',
+        parameterName: 'Architecture (Integrated Switch / Controller-Only)',
+        value: architecture,
+        sortOrder: 2,
+      });
+      addedIds.add('architecture');
+    }
+  }
+
+  // For C2 adjustable parts: also add output_voltage from Vout Min/Fixed
+  // so the vref_check evaluator can compute Vout achievability.
+  // For fixed-output parts, Vout Min/Fixed IS the output voltage.
+  if (addedIds.has('vref') && !addedIds.has('output_voltage')) {
+    const vrefParam = parameters.find(p => p.parameterId === 'vref');
+    const outputTypeParam = parameters.find(p => p.parameterId === 'output_type');
+    const isFixed = outputTypeParam?.value?.toLowerCase() === 'fixed';
+    if (isFixed && vrefParam) {
+      // For fixed-output: Vout Min/Fixed is the actual output voltage
+      parameters.push({
+        parameterId: 'output_voltage',
+        parameterName: 'Output Voltage',
+        value: vrefParam.value,
+        numericValue: vrefParam.numericValue,
+        unit: 'V',
+        sortOrder: 6,
+      });
+      addedIds.add('output_voltage');
+    }
+  }
+
+  // Gate driver isolation_type enrichment — infer from Digikey category name.
+  // Non-isolated: "Gate Drivers" category → isolation_type = "Non-Isolated (Bootstrap)"
+  // Isolated: "Isolators - Gate Drivers" → isolation_type comes from "Technology" param map
+  if (!addedIds.has('isolation_type')) {
+    const catLower = categoryName.toLowerCase();
+    if (catLower.includes('gate driver') && !catLower.includes('isolator')) {
+      parameters.push({
+        parameterId: 'isolation_type',
+        parameterName: 'Isolation Type',
+        value: 'Non-Isolated (Bootstrap)',
+        sortOrder: 2,
+      });
+      addedIds.add('isolation_type');
+    }
+  }
+
+  // Gate driver driver_configuration enrichment for isolated drivers.
+  // Isolated gate drivers (ADUM4120, Si8271) don't have "Driven Configuration" field.
+  // Infer from "Number of Channels" — 1 = Single, 2 = Dual.
+  if (!addedIds.has('driver_configuration') && categoryName.toLowerCase().includes('gate driver')) {
+    const numChannels = product.Parameters?.find(p => p.ParameterText === 'Number of Channels');
+    const numDrivers = product.Parameters?.find(p => p.ParameterText === 'Number of Drivers');
+    const countStr = numChannels?.ValueText ?? numDrivers?.ValueText;
+    if (countStr) {
+      const count = parseInt(countStr, 10);
+      let config = 'Single';
+      if (count === 2) config = 'Dual';
+      else if (count === 4) config = 'Full-Bridge';
+      parameters.push({
+        parameterId: 'driver_configuration',
+        parameterName: 'Driver Configuration (Single / Dual / Half-Bridge / Full-Bridge)',
+        value: config,
+        sortOrder: 1,
+      });
+      addedIds.add('driver_configuration');
+    }
+  }
+
+  // Op-amp / Comparator device_type enrichment — infer from Digikey category name.
+  // "Instrumentation, Op Amps, Buffer Amps" → look at Amplifier Type param.
+  // "Comparators" → device_type = "Comparator".
+  // The identity rule on device_type (weight 10, blockOnMissing) needs explicit values.
+  if (!addedIds.has('device_type')) {
+    const catLower = categoryName.toLowerCase();
+    let devType = '';
+    if (catLower.includes('comparator')) {
+      devType = 'Comparator';
+    } else if (catLower.includes('op amp') || catLower.includes('buffer amp') || catLower.includes('instrumentation')) {
+      // Check Amplifier Type param to distinguish instrumentation amps
+      const ampTypeParam = product.Parameters?.find(p => p.ParameterText === 'Amplifier Type');
+      const ampType = ampTypeParam?.ValueText?.toLowerCase() ?? '';
+      if (ampType.includes('instrumentation')) {
+        devType = 'Instrumentation Amplifier';
+      } else {
+        devType = 'Op-Amp';
+      }
+    }
+    if (devType) {
+      parameters.push({
+        parameterId: 'device_type',
+        parameterName: 'Device Type (Op-Amp / Comparator / Instrumentation Amplifier)',
+        value: devType,
         sortOrder: 1,
       });
       addedIds.add('device_type');
