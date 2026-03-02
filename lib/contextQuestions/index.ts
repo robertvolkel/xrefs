@@ -33,6 +33,7 @@ import { ldoContext } from './ldo';
 import { switchingRegulatorContext } from './switchingRegulator';
 import { gateDriverContext } from './gateDriver';
 import { opampComparatorContext } from './opampComparator';
+import { c5LogicICsContext } from './c5LogicICs';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -69,6 +70,8 @@ const allConfigs: FamilyContextConfig[] = [
   switchingRegulatorContext,
   gateDriverContext,
   opampComparatorContext,
+  // Block C: Standard ICs
+  c5LogicICsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

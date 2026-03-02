@@ -33,7 +33,8 @@ export type ComponentCategory =
   | 'Protection'
   | 'Voltage Regulators'
   | 'Gate Drivers'
-  | 'Amplifiers';
+  | 'Amplifiers'
+  | 'Logic ICs';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {

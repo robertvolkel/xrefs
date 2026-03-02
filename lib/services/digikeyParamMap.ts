@@ -2948,6 +2948,511 @@ const comparatorParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// C5: Logic ICs — 74-Series Standard Logic
+// ============================================================
+
+/**
+ * C5 Logic ICs — "Gates and Inverters" category param map.
+ * Verified against: SN74HC04DR, SN74AHC1G04DBVR
+ * Digikey category: "Gates and Inverters"
+ *
+ * Notes:
+ * - "Logic Type" gives us device type (Inverter, NAND, NOR, etc.)
+ * - "Number of Circuits" = gate count (6 for hex, 4 for quad, etc.)
+ * - "Number of Inputs" = inputs per gate (1 for inverter, 2 for NAND, etc.)
+ * - "Current - Output High, Low" compound: "5.2mA, 5.2mA" → source/sink
+ * - "Max Propagation Delay @ V, Max CL" compound: "16ns @ 6V, 50pF"
+ * - "Input Logic Level - Low/High" give VIL/VIH ranges
+ * - NO output type, Schmitt trigger, OE polarity, setup/hold time, AEC-Q100
+ */
+const logicGatesParamMap: Record<string, ParamMapEntry> = {
+  'Logic Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Number of Circuits': {
+    attributeId: 'gate_count',
+    attributeName: 'Number of Gates / Sections',
+    sortOrder: 2,
+  },
+  'Number of Inputs': {
+    attributeId: 'inputs_per_gate',
+    attributeName: 'Number of Inputs per Gate',
+    sortOrder: 3,
+  },
+  'Features': {
+    attributeId: 'features',
+    attributeName: 'Features',
+    sortOrder: 4,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Current - Quiescent (Max)': {
+    attributeId: 'iq',
+    attributeName: 'Quiescent Current',
+    unit: 'A',
+    sortOrder: 24,
+  },
+  'Current - Output High, Low': {
+    attributeId: 'drive_current',
+    attributeName: 'Output Drive Current (IOH / IOL)',
+    sortOrder: 8,
+  },
+  'Input Logic Level - Low': {
+    attributeId: 'vil',
+    attributeName: 'Input Low Threshold (VIL)',
+    sortOrder: 11,
+  },
+  'Input Logic Level - High': {
+    attributeId: 'vih',
+    attributeName: 'Input High Threshold (VIH)',
+    sortOrder: 10,
+  },
+  'Max Propagation Delay @ V, Max CL': {
+    attributeId: 'tpd',
+    attributeName: 'Propagation Delay (tpd)',
+    sortOrder: 17,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Buffers, Drivers, Receivers, Transceivers" category param map.
+ * Verified against: SN74HCT245PW
+ * Digikey category: "Buffers, Drivers, Receivers, Transceivers"
+ *
+ * Notes:
+ * - "Logic Type" gives device function (Transceiver, Non-Inverting, etc.)
+ * - "Number of Elements" + "Number of Bits per Element" encode gate/bit count
+ * - "Output Type" available: "3-State", "Open Drain", etc.
+ * - "Input Type" available but often "-"
+ * - NO VIH/VIL, propagation delay, AEC-Q100
+ */
+const logicBuffersParamMap: Record<string, ParamMapEntry> = {
+  'Logic Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Number of Elements': {
+    attributeId: 'element_count',
+    attributeName: 'Number of Elements',
+    sortOrder: 2,
+  },
+  'Number of Bits per Element': {
+    attributeId: 'gate_count',
+    attributeName: 'Number of Bits per Element',
+    sortOrder: 3,
+  },
+  'Input Type': {
+    attributeId: 'input_type',
+    attributeName: 'Input Type',
+    sortOrder: 4,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 5,
+  },
+  'Current - Output High, Low': {
+    attributeId: 'drive_current',
+    attributeName: 'Output Drive Current (IOH / IOL)',
+    sortOrder: 8,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Flip Flops" category param map.
+ * Verified against: SN74HC574DWR
+ * Digikey category: "Flip Flops"
+ *
+ * Notes:
+ * - "Type" gives flip-flop type (D-Type, JK-Type, etc.)
+ * - "Function" = Standard, Preset, Clear, etc.
+ * - "Output Type" = Tri-State, Non-Inverted, etc.
+ * - "Clock Frequency" → fmax
+ * - "Max Propagation Delay @ V, Max CL" → tpd (CLK-to-Q)
+ * - "Trigger Type" = Positive Edge, Negative Edge, etc.
+ * - "Current - Quiescent (Iq)" different field name from Gates category
+ * - NO VIH/VIL, setup/hold time, AEC-Q100
+ */
+const logicFlipFlopsParamMap: Record<string, ParamMapEntry> = {
+  'Function': {
+    attributeId: 'function',
+    attributeName: 'Function',
+    sortOrder: 1,
+  },
+  'Type': {
+    attributeId: 'ff_type',
+    attributeName: 'Flip-Flop Type',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 5,
+  },
+  'Number of Elements': {
+    attributeId: 'element_count',
+    attributeName: 'Number of Elements',
+    sortOrder: 3,
+  },
+  'Number of Bits per Element': {
+    attributeId: 'gate_count',
+    attributeName: 'Number of Bits per Element',
+    sortOrder: 4,
+  },
+  'Clock Frequency': {
+    attributeId: 'fmax',
+    attributeName: 'Maximum Operating Frequency',
+    unit: 'Hz',
+    sortOrder: 18,
+  },
+  'Max Propagation Delay @ V, Max CL': {
+    attributeId: 'tpd',
+    attributeName: 'Propagation Delay (tpd)',
+    sortOrder: 17,
+  },
+  'Trigger Type': {
+    attributeId: 'trigger_type',
+    attributeName: 'Trigger Type',
+    sortOrder: 6,
+  },
+  'Current - Output High, Low': {
+    attributeId: 'drive_current',
+    attributeName: 'Output Drive Current (IOH / IOL)',
+    sortOrder: 8,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Current - Quiescent (Iq)': {
+    attributeId: 'iq',
+    attributeName: 'Quiescent Current',
+    unit: 'A',
+    sortOrder: 24,
+  },
+  'Input Capacitance': {
+    attributeId: 'input_capacitance',
+    attributeName: 'Input Capacitance',
+    unit: 'F',
+    sortOrder: 25,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Latches" category param map.
+ * Verified against: SN74HC373DWR
+ * Digikey category: "Latches"
+ *
+ * Notes:
+ * - "Logic Type" = D-Type Transparent Latch, etc.
+ * - "Circuit" = 8:8, 4:4 (I/O configuration)
+ * - "Delay Time - Propagation" = simple tpd (not compound like Gates)
+ * - "Independent Circuits" = number of independent latch blocks
+ * - NO VIH/VIL, Clock Frequency, setup/hold time, AEC-Q100
+ */
+const logicLatchesParamMap: Record<string, ParamMapEntry> = {
+  'Logic Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit Configuration',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 5,
+  },
+  'Independent Circuits': {
+    attributeId: 'element_count',
+    attributeName: 'Independent Circuits',
+    sortOrder: 3,
+  },
+  'Delay Time - Propagation': {
+    attributeId: 'tpd',
+    attributeName: 'Propagation Delay (tpd)',
+    sortOrder: 17,
+  },
+  'Current - Output High, Low': {
+    attributeId: 'drive_current',
+    attributeName: 'Output Drive Current (IOH / IOL)',
+    sortOrder: 8,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Counters, Dividers" category param map.
+ * Verified against: SN74HC590ADR
+ * Digikey category: "Counters, Dividers"
+ *
+ * Notes:
+ * - "Logic Type" = Binary Counter, Decade Counter, etc.
+ * - "Direction" = Up, Down, Up/Down
+ * - "Count Rate" → fmax equivalent for counters
+ * - "Trigger Type" = Positive Edge, etc.
+ * - "Reset" = Asynchronous, Synchronous, etc.
+ * - "Voltage - Supply" uses different field name than Gates category
+ * - NO VIH/VIL, propagation delay, output type, AEC-Q100
+ */
+const logicCountersParamMap: Record<string, ParamMapEntry> = {
+  'Logic Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Direction': {
+    attributeId: 'direction',
+    attributeName: 'Count Direction',
+    sortOrder: 2,
+  },
+  'Number of Elements': {
+    attributeId: 'element_count',
+    attributeName: 'Number of Elements',
+    sortOrder: 3,
+  },
+  'Number of Bits per Element': {
+    attributeId: 'gate_count',
+    attributeName: 'Number of Bits per Element',
+    sortOrder: 4,
+  },
+  'Reset': {
+    attributeId: 'reset_type',
+    attributeName: 'Reset Type',
+    sortOrder: 5,
+  },
+  'Count Rate': {
+    attributeId: 'fmax',
+    attributeName: 'Maximum Count Rate',
+    unit: 'Hz',
+    sortOrder: 18,
+  },
+  'Trigger Type': {
+    attributeId: 'trigger_type',
+    attributeName: 'Trigger Type',
+    sortOrder: 6,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Shift Registers" category param map.
+ * Verified against: SN74HC595DR
+ * Digikey category: "Shift Registers"
+ *
+ * Notes:
+ * - "Logic Type" = Shift Register
+ * - "Function" = Serial to Parallel, Parallel to Serial, etc.
+ * - "Output Type" = Tri-State, Open Drain, etc.
+ * - NO VIH/VIL, propagation delay, Clock Frequency, AEC-Q100
+ */
+const logicShiftRegistersParamMap: Record<string, ParamMapEntry> = {
+  'Logic Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 5,
+  },
+  'Number of Elements': {
+    attributeId: 'element_count',
+    attributeName: 'Number of Elements',
+    sortOrder: 3,
+  },
+  'Number of Bits per Element': {
+    attributeId: 'gate_count',
+    attributeName: 'Number of Bits per Element',
+    sortOrder: 4,
+  },
+  'Function': {
+    attributeId: 'function',
+    attributeName: 'Function',
+    sortOrder: 2,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
+/**
+ * C5 Logic ICs — "Signal Switches, Multiplexers, Decoders" category param map.
+ * Verified against: SN74HC138DR
+ * Digikey category: "Signal Switches, Multiplexers, Decoders"
+ *
+ * Notes:
+ * - "Type" = Decoder/Demultiplexer, Multiplexer, Analog Switch, etc.
+ * - "Circuit" = 1 x 3:8, 2 x 4:1 (functional configuration)
+ * - "Independent Circuits" = number of independent MUX/decoder blocks
+ * - "Voltage Supply Source" = Single Supply, Dual Supply
+ * - NO VIH/VIL, propagation delay, output type, AEC-Q100
+ */
+const logicMuxDecoderParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'logic_type',
+    attributeName: 'Logic Type',
+    sortOrder: 1,
+  },
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit Configuration',
+    sortOrder: 2,
+  },
+  'Independent Circuits': {
+    attributeId: 'element_count',
+    attributeName: 'Independent Circuits',
+    sortOrder: 3,
+  },
+  'Current - Output High, Low': {
+    attributeId: 'drive_current',
+    attributeName: 'Output Drive Current (IOH / IOL)',
+    sortOrder: 8,
+  },
+  'Voltage Supply Source': {
+    attributeId: 'supply_source',
+    attributeName: 'Voltage Supply Source',
+    sortOrder: 15,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range (Vcc)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 21,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 3,
+  },
+  'Supplier Device Package': {
+    attributeId: 'supplier_package',
+    attributeName: 'Supplier Device Package',
+    sortOrder: 23,
+  },
+};
+
 /**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
@@ -3012,6 +3517,15 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // "Comparators" must come before "Op Amps" for correct substring matching
   ['Comparators', comparatorParamMap],
   ['Instrumentation, Op Amps, Buffer Amps', opampParamMap],
+  // C5: Logic ICs — 7 Digikey leaf categories with distinct field names
+  // More specific substrings first to avoid false matches
+  ['Buffers, Drivers, Receivers, Transceivers', logicBuffersParamMap],
+  ['Signal Switches, Multiplexers, Decoders', logicMuxDecoderParamMap],
+  ['Counters, Dividers', logicCountersParamMap],
+  ['Shift Registers', logicShiftRegistersParamMap],
+  ['Gates and Inverters', logicGatesParamMap],
+  ['Flip Flops', logicFlipFlopsParamMap],
+  ['Latches', logicLatchesParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -3112,6 +3626,15 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'C2': ['DC DC Switching Regulators', 'DC DC Switching Controllers'],
   'C3': ['Gate Drivers', 'Isolators - Gate Drivers'],
   'C4': ['Instrumentation, Op Amps, Buffer Amps', 'Comparators'],
+  'C5': [
+    'Gates and Inverters',
+    'Buffers, Drivers, Receivers, Transceivers',
+    'Flip Flops',
+    'Latches',
+    'Counters, Dividers',
+    'Shift Registers',
+    'Signal Switches, Multiplexers, Decoders',
+  ],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -3158,6 +3681,16 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'C3': ['Gate Drivers', 'Isolators - Gate Drivers'],
   // C4: Op-Amps under "Instrumentation, Op Amps, Buffer Amps", Comparators separate
   'C4': ['Instrumentation, Op Amps, Buffer Amps', 'Comparators'],
+  // C5: Logic ICs — 7 leaf categories under "Logic" parent
+  'C5': [
+    'Gates and Inverters',
+    'Buffers, Drivers, Receivers, Transceivers',
+    'Flip Flops',
+    'Latches',
+    'Counters, Dividers',
+    'Shift Registers',
+    'Signal Switches, Multiplexers, Decoders',
+  ],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

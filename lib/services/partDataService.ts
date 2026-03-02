@@ -138,6 +138,11 @@ export async function getRecommendations(
     enrichOpampComparatorAttributes(sourceAttrs);
   }
 
+  // Step 1g: Enrich logic ICs with logic_family and logic_function from MPN
+  if (logicTablePrecheck?.familyId === 'C5') {
+    enrichLogicICAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -177,6 +182,13 @@ export async function getRecommendations(
         // device_type (op-amp vs comparator) is a BLOCKING identity gate.
         if (familyId === 'C4') {
           recs = filterOpampComparatorMismatches(recs, sourceAttrs);
+        }
+
+        // Step 3d: Post-scoring filter for C5 logic ICs —
+        // logic_function (part number suffix) is a BLOCKING identity gate.
+        // '04 ≠ '14 even though both are inverters.
+        if (familyId === 'C5') {
+          recs = filterLogicICFunctionMismatches(recs, sourceAttrs);
         }
 
         return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
@@ -309,6 +321,10 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   // Op-Amps/Comparators (C4): use channels as keyword
   const channels = paramMap.get('channels');
   if (channels) parts.push(channels.value);
+
+  // Logic ICs (C5): use logic function suffix as keyword
+  const logicFunction = paramMap.get('logic_function');
+  if (logicFunction) parts.push(logicFunction.value);
 
   // Package
   const pkg = paramMap.get('package_case');
@@ -577,5 +593,136 @@ function enrichOpampComparatorAttributes(attrs: PartAttributes): void {
       });
       break;
     }
+  }
+}
+
+// ============================================================
+// LOGIC IC (C5) POST-SCORING FILTER
+// ============================================================
+
+/**
+ * Remove candidates with confirmed logic_function mismatches.
+ * Logic function (part number suffix like '04, '245, '574) is a BLOCKING
+ * identity gate — no cross-function substitution is ever valid. '04 ≠ '14
+ * even though both are hex inverters ('14 adds Schmitt trigger inputs).
+ * Candidates with *missing* logic_function are kept — the identity rule
+ * already flags them as failures in the match details.
+ */
+function filterLogicICFunctionMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcFunction = sourceAttrs.parameters.find(p => p.parameterId === 'logic_function')?.value;
+
+  return recs.filter(rec => {
+    const candFunction = rec.matchDetails.find(d => d.parameterId === 'logic_function')?.replacementValue;
+    // If source or candidate is missing, keep (rules handle missing data)
+    if (srcFunction && candFunction && candFunction !== srcFunction) return false;
+    return true;
+  });
+}
+
+// ============================================================
+// LOGIC IC (C5) MPN ENRICHMENT
+// ============================================================
+
+/**
+ * 74-series MPN format: [Manufacturer Prefix]74[Family][Function Suffix][Package/Temp]
+ *
+ * Examples:
+ *   SN74HC04DR      → family=HC,   function=04
+ *   74HCT245PW      → family=HCT,  function=245
+ *   SN74LVC1G04DBVR → family=LVC,  function=04  (1G = single gate)
+ *   NC7SZ04P5X      → family=LVC,  function=04  (NC7SZ series)
+ *   SN74AHC1G04DBVR → family=AHC,  function=04  (1G = single gate)
+ *   MC74HC04ADR2G   → family=HC,   function=04
+ *   CD4049UBE       → family=CD4000, function=4049
+ *   CD74HC4049M96   → family=HC,   function=4049
+ *   SN7404N         → family=TTL,  function=04  (original 7400 series)
+ *   74LS04          → family=LS,   function=04
+ */
+
+/**
+ * Parse a 74-series MPN to extract logic family and function code.
+ * Returns null if the MPN is not a recognized 74-series part.
+ */
+function parse74SeriesMPN(mpn: string): { family: string; functionCode: string } | null {
+  const upper = mpn.toUpperCase();
+
+  // Pattern 1: Standard 74-series — [prefix]74[family][1G|2G]?[function][suffix]
+  // Manufacturer prefixes: SN, MC, MM, IDT, NLV, CD, (none)
+  const stdMatch = upper.match(
+    /(?:SN|MC|MM|IDT|NLV|CD)?74(AHCT|ALVC|VHCT|AHC|ACT|AUP|HCT|LVC|VHC|ALS|ABT|FCT|BCT|HC|AC|LS|AS|F)(?:1G|2G)?(\d{2,5})/
+  );
+  if (stdMatch) {
+    return { family: stdMatch[1], functionCode: stdMatch[2] };
+  }
+
+  // Pattern 2: Original TTL — SN74xx or 74xx (no family prefix)
+  const ttlMatch = upper.match(/(?:SN)?74(\d{2,5})/);
+  if (ttlMatch) {
+    // Check it's not already caught by Pattern 1 (i.e., no family letters before digits)
+    const beforeDigits = upper.match(/(?:SN)?74([A-Z]*?)(\d{2,5})/);
+    if (beforeDigits && beforeDigits[1] === '') {
+      return { family: 'TTL', functionCode: ttlMatch[1] };
+    }
+  }
+
+  // Pattern 3: NC7S / NC7SZ single-gate series (Fairchild/ON Semi)
+  // NC7SZ04, NC7S04 → function=04, family=LVC equivalent
+  const ncMatch = upper.match(/NC7SZ?(\d{2,4})/);
+  if (ncMatch) {
+    return { family: 'LVC', functionCode: ncMatch[1] };
+  }
+
+  // Pattern 4: CD4000 series (CMOS)
+  const cd4Match = upper.match(/CD(4\d{3})/);
+  if (cd4Match) {
+    return { family: 'CD4000', functionCode: cd4Match[1] };
+  }
+
+  return null;
+}
+
+/**
+ * Enrich C5 logic IC attributes with logic_family and logic_function
+ * inferred from MPN. Only fills in missing attributes — never overwrites
+ * Digikey parametric data. Mutates `attrs.parameters` in place.
+ */
+function enrichLogicICAttributes(attrs: PartAttributes): void {
+  const parsed = parse74SeriesMPN(attrs.part.mpn);
+  if (!parsed) return;
+
+  const hasFamily = attrs.parameters.some(p => p.parameterId === 'logic_family');
+  const hasFunction = attrs.parameters.some(p => p.parameterId === 'logic_function');
+
+  if (!hasFamily) {
+    attrs.parameters.push({
+      parameterId: 'logic_family',
+      parameterName: 'Logic Family',
+      value: parsed.family,
+      sortOrder: 0,
+    });
+  }
+
+  if (!hasFunction) {
+    attrs.parameters.push({
+      parameterId: 'logic_function',
+      parameterName: 'Logic Function (Part Number Suffix)',
+      value: parsed.functionCode,
+      sortOrder: 0,
+    });
+  }
+
+  // Infer schmitt_trigger from function code — '14, '132, '7414 are Schmitt types
+  const schmittFunctions = ['14', '132', '7414', '19'];
+  const hasSchmitt = attrs.parameters.some(p => p.parameterId === 'schmitt_trigger');
+  if (!hasSchmitt && parsed.functionCode && schmittFunctions.includes(parsed.functionCode)) {
+    attrs.parameters.push({
+      parameterId: 'schmitt_trigger',
+      parameterName: 'Schmitt Trigger Input',
+      value: 'Yes',
+      sortOrder: 0,
+    });
   }
 }

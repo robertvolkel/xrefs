@@ -59,7 +59,7 @@ import { LogicTable } from '../types';
 export const opampComparatorLogicTable: LogicTable = {
   familyId: 'C4',
   familyName: 'Op-Amps / Comparators / Instrumentation Amplifiers',
-  category: 'Amplifiers',
+  category: 'Integrated Circuits',
   description: 'Hard logic filters for op-amp, comparator, and instrumentation amplifier replacement validation — device type and VICM are BLOCKING gates, decompensated check enforced via context',
   rules: [
     // ============================================================

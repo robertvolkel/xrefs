@@ -41,7 +41,7 @@ import { LogicTable } from '../types';
 export const switchingRegulatorLogicTable: LogicTable = {
   familyId: 'C2',
   familyName: 'Switching Regulators (DC-DC Converters & Controllers)',
-  category: 'Voltage Regulators',
+  category: 'Integrated Circuits',
   description: 'Hard logic filters for switching regulator replacement validation — topology and architecture are BLOCKING gates',
   rules: [
     // ============================================================

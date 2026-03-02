@@ -36,7 +36,7 @@ import { LogicTable } from '../types';
 export const ldoLogicTable: LogicTable = {
   familyId: 'C1',
   familyName: 'Linear Voltage Regulators (LDOs)',
-  category: 'Voltage Regulators',
+  category: 'Integrated Circuits',
   description: 'Hard logic filters for LDO replacement part validation',
   rules: [
     // ============================================================

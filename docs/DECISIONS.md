@@ -1074,3 +1074,37 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/opampComparator.ts`, `lib/contextQuestions/opampComparator.ts`
 
 **Files modified:** `lib/types.ts` (Amplifiers category), `lib/logicTables/index.ts` (registry + 11 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + 5 transformers + device_type enrichment), `lib/services/digikeyParamMap.ts` (opampParamMap + comparatorParamMap + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + MPN patterns + candidate search keywords), `__tests__/services/matchingEngine.test.ts` (14 C4 tests), `__tests__/services/contextModifier.test.ts` (6 C4 tests)
+
+---
+
+## 50. C5 Logic ICs — 74-Series Standard Logic
+
+**Decision:** Encode 74-series standard logic ICs as Family C5 with 23 matching rules and 5 context questions. Covers combinational logic (gates, buffers, inverters, MUX, decoders, encoders) and sequential logic (flip-flops, latches, counters, shift registers) across all active logic families (HC, HCT, AC, ACT, LVC, AHC, AHCT, ALVC, AUP, VHC, VHCT) and legacy TTL (LS, ALS, AS, F). New `'Logic ICs'` ComponentCategory added.
+
+**Rationale:** Logic ICs are the most subcategory-diverse family (7 Digikey leaf categories). The function code (part number suffix) is the absolute hard gate — '04 ≠ '14, '373 ≠ '374. The HC/HCT substitution trap (TTL VOH_min=2.4V < HC VIH_min=3.5V at 5V) is the single most common substitution error in the industry. Six user-specified requirements drove key design choices:
+
+1. **Logic function = HARD GATE (Req #1):** `logic_function` is `identity` at w10 with `blockOnMissing: true` and sortOrder 1. Post-scoring filter (`filterLogicICFunctionMismatches`) removes confirmed mismatches. Never cross function codes.
+2. **HC vs HCT BLOCKING compatibility (Req #2):** `vih` is `threshold lte` at w7. Context Q1 (TTL driving source) escalates to mandatory with `blockOnMissing: true`. TTL VOH_min=2.4V < HC VIH_min=3.5V → undefined region. Only HCT/ACT inputs safe when driven by TTL.
+3. **Mixed 3.3V/5V interface verification (Req #3):** Context Q2 (mixed_3v3_5v) escalates `input_clamp_diodes` and `voh` to mandatory with `blockOnMissing: true`. Input side: LVC required for 5V-tolerant. Output side: 3.3V CMOS VOH driving 5V HC VIH=3.5V fails.
+4. **Output type and OE polarity BLOCKING for bus (Req #4):** `output_type` is `identity_flag` w8, `oe_polarity` is `identity_flag` w9. Context Q3 (shared_bus) escalates both to mandatory with `blockOnMissing: true`.
+5. **Schmitt trigger flag (Req #5):** `schmitt_trigger` is `identity_flag` w7. Context Q4 (slow_noisy inputs) escalates to mandatory with `blockOnMissing: true`. Schmitt trigger inferred from MPN function codes ('14', '132', '7414', '19').
+6. **Setup/hold time as Application Review (Req #6, user override):** `setup_hold_time` is `application_review` w6 (docx says threshold lte, but user explicitly specified Application Review since hold-time violations cannot be fixed by slowing clock).
+
+**Key Implementation Details:**
+- **7 Digikey leaf categories** (most of any family): "Gates and Inverters", "Buffers, Drivers, Receivers, Transceivers", "Flip Flops", "Latches", "Counters, Dividers", "Shift Registers", "Signal Switches, Multiplexers, Decoders". Each has its own param map.
+- **MPN parsing** (`parse74SeriesMPN`): 4 patterns — standard 74-series (`SN74HC04DR`), original TTL (`SN7404N`), NC7S/NC7SZ single-gate (`NC7SZ04P5X`), CD4000 series (`CD4049UBE`). Manufacturer prefixes: SN, MC, MM, IDT, NLV, CD. Extracts logic family and function code.
+- **Enrichment** (`enrichLogicICAttributes`): Fills `logic_family`, `logic_function`, and `schmitt_trigger` from MPN parsing. Only fills missing attributes — never overwrites Digikey parametric data.
+- **Weight coverage:** ~40-45% across subcategories (most timing/threshold specs are datasheet-only: vih, vil, voh, vol, input_leakage, bus_hold, setup_hold_time, fmax, transition_time).
+
+**Context Questions (5):**
+- Q1 `driving_source` (CRITICAL): ttl / cmos / mixed — TTL escalates vih to BLOCKING
+- Q2 `voltage_interface`: mixed_3v3_5v / single_domain — mixed escalates input_clamp_diodes + voh to BLOCKING
+- Q3 `bus_application`: shared_bus / point_to_point — shared_bus escalates output_type + oe_polarity to BLOCKING, bus_hold to primary
+- Q4 `input_signal_quality`: slow_noisy / clean_digital — slow_noisy escalates schmitt_trigger to BLOCKING
+- Q5 `automotive`: yes / no — escalates aec_q100 to mandatory, operating_temp to primary
+
+**Tests:** 29 new tests (345 → 374 total): C5 logic table structure (12 tests), C5 rule evaluation (17 tests: logic_function identity/blocking, output_type identity_flag, schmitt_trigger identity_flag, vih threshold lte, drive_current threshold gte, composite scoring, function code mismatch hard fail).
+
+**Files created:** `lib/logicTables/c5LogicICs.ts`, `lib/contextQuestions/c5LogicICs.ts`
+
+**Files modified:** `lib/types.ts` (Logic ICs category), `lib/logicTables/index.ts` (registry + 20+ subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory for 7 subcategories), `lib/services/digikeyParamMap.ts` (7 param maps + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + MPN parser + candidate search keywords), `__tests__/services/matchingEngine.test.ts` (29 C5 tests)

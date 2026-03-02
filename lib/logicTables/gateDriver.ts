@@ -46,7 +46,7 @@ import { LogicTable } from '../types';
 export const gateDriverLogicTable: LogicTable = {
   familyId: 'C3',
   familyName: 'Gate Drivers (MOSFET / IGBT / SiC / GaN)',
-  category: 'Gate Drivers',
+  category: 'Integrated Circuits',
   description: 'Hard logic filters for gate driver replacement validation — driver configuration and isolation type are BLOCKING gates, shoot-through safety enforced for half-bridge via context',
   rules: [
     // ============================================================

@@ -12,6 +12,7 @@ import {
 import { switchingRegulatorLogicTable } from '@/lib/logicTables/switchingRegulator';
 import { gateDriverLogicTable } from '@/lib/logicTables/gateDriver';
 import { opampComparatorLogicTable } from '@/lib/logicTables/opampComparator';
+import { c5LogicICsLogicTable } from '@/lib/logicTables/c5LogicICs';
 
 // ============================================================
 // HELPERS
@@ -1028,7 +1029,7 @@ describe('matchingEngine', () => {
 
     it('has correct family metadata', () => {
       expect(switchingRegulatorLogicTable.familyId).toBe('C2');
-      expect(switchingRegulatorLogicTable.category).toBe('Voltage Regulators');
+      expect(switchingRegulatorLogicTable.category).toBe('Integrated Circuits');
     });
 
     it('has 22 rules', () => {
@@ -1101,7 +1102,7 @@ describe('matchingEngine', () => {
   describe('C3 gate driver logic table', () => {
     it('has correct family metadata', () => {
       expect(gateDriverLogicTable.familyId).toBe('C3');
-      expect(gateDriverLogicTable.category).toBe('Gate Drivers');
+      expect(gateDriverLogicTable.category).toBe('Integrated Circuits');
     });
 
     it('has 20 rules', () => {
@@ -1333,6 +1334,298 @@ describe('matchingEngine', () => {
       expect(r).toBeDefined();
       expect(r.logicType).toBe('operational');
       expect(r.weight).toBe(1);
+    });
+  });
+
+  // ============================================================
+  // C5: LOGIC ICs — 74-SERIES STANDARD LOGIC
+  // ============================================================
+  describe('C5 Logic ICs — 74-Series', () => {
+
+    // ----------------------------------------------------------
+    // LOGIC TABLE STRUCTURE
+    // ----------------------------------------------------------
+    it('has correct family metadata', () => {
+      expect(c5LogicICsLogicTable.familyId).toBe('C5');
+      expect(c5LogicICsLogicTable.category).toBe('Integrated Circuits');
+    });
+
+    it('has 23 rules', () => {
+      expect(c5LogicICsLogicTable.rules).toHaveLength(23);
+    });
+
+    it('logic_function is identity w10 blockOnMissing (HARD GATE)', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'logic_function');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity');
+      expect(r.weight).toBe(10);
+      expect(r.blockOnMissing).toBe(true);
+      expect(r.sortOrder).toBe(1);
+    });
+
+    it('gate_count is identity w10 blockOnMissing', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'gate_count');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity');
+      expect(r.weight).toBe(10);
+      expect(r.blockOnMissing).toBe(true);
+    });
+
+    it('output_type is identity_flag w8', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'output_type');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity_flag');
+      expect(r.weight).toBe(8);
+    });
+
+    it('oe_polarity is identity_flag w9', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'oe_polarity');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity_flag');
+      expect(r.weight).toBe(9);
+    });
+
+    it('schmitt_trigger is identity_flag w7', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'schmitt_trigger');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity_flag');
+      expect(r.weight).toBe(7);
+    });
+
+    it('vih is threshold lte w7', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'vih');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('threshold');
+      expect(r.thresholdDirection).toBe('lte');
+      expect(r.weight).toBe(7);
+    });
+
+    it('supply_voltage is threshold range_superset w8', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'supply_voltage');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('threshold');
+      expect(r.thresholdDirection).toBe('range_superset');
+      expect(r.weight).toBe(8);
+    });
+
+    it('tpd is threshold lte w7', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'tpd');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('threshold');
+      expect(r.thresholdDirection).toBe('lte');
+      expect(r.weight).toBe(7);
+    });
+
+    it('setup_hold_time is application_review w6 (user instruction override)', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'setup_hold_time');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('application_review');
+      expect(r.weight).toBe(6);
+    });
+
+    it('logic_family is application_review w7', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'logic_family');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('application_review');
+      expect(r.weight).toBe(7);
+    });
+
+    it('aec_q100 is identity_flag w8', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'aec_q100');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('identity_flag');
+      expect(r.weight).toBe(8);
+    });
+
+    it('packaging is operational w1', () => {
+      const r = c5LogicICsLogicTable.rules.find((r: MatchingRule) => r.attributeId === 'packaging');
+      expect(r).toBeDefined();
+      expect(r.logicType).toBe('operational');
+      expect(r.weight).toBe(1);
+    });
+
+    // ----------------------------------------------------------
+    // LOGIC_FUNCTION IDENTITY — the HARD GATE
+    // ----------------------------------------------------------
+    it('logic_function identity — same function code passes', () => {
+      const t = table([rule({ attributeId: 'logic_function', logicType: 'identity', weight: 10, blockOnMissing: true })]);
+      const source = attrs([param('logic_function', '04')]);
+      const cand = attrs([param('logic_function', '04')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'logic_function');
+      expect(r?.result).toBe('pass');
+      expect(result.passed).toBe(true);
+    });
+
+    it('logic_function identity — 04 vs 14 fails (inverter vs Schmitt inverter)', () => {
+      const t = table([rule({ attributeId: 'logic_function', logicType: 'identity', weight: 10, blockOnMissing: true })]);
+      const source = attrs([param('logic_function', '04')]);
+      const cand = attrs([param('logic_function', '14')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'logic_function');
+      expect(r?.result).toBe('fail');
+      expect(result.passed).toBe(false);
+    });
+
+    it('logic_function identity — 373 vs 374 fails (latch vs flip-flop)', () => {
+      const t = table([rule({ attributeId: 'logic_function', logicType: 'identity', weight: 10, blockOnMissing: true })]);
+      const source = attrs([param('logic_function', '373')]);
+      const cand = attrs([param('logic_function', '374')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      expect(result.passed).toBe(false);
+    });
+
+    it('logic_function blockOnMissing — candidate missing logic_function fails', () => {
+      const t = table([rule({ attributeId: 'logic_function', logicType: 'identity', weight: 10, blockOnMissing: true })]);
+      const source = attrs([param('logic_function', '04')]);
+      const cand = attrs([], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'logic_function');
+      expect(r?.result).toBe('fail');
+    });
+
+    // ----------------------------------------------------------
+    // OUTPUT_TYPE IDENTITY_FLAG — bus contention safety
+    // ----------------------------------------------------------
+    it('output_type identity_flag — source requires (Yes), candidate lacks (No) → fail', () => {
+      const t = table([rule({ attributeId: 'output_type', logicType: 'identity_flag', weight: 8 })]);
+      const source = attrs([param('output_type', 'Yes')]);
+      const cand = attrs([param('output_type', 'No')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'output_type');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('output_type identity_flag — neither has flag → pass (exact)', () => {
+      const t = table([rule({ attributeId: 'output_type', logicType: 'identity_flag', weight: 8 })]);
+      const source = attrs([param('output_type', 'No')]);
+      const cand = attrs([param('output_type', 'No')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'output_type');
+      expect(r?.result).toBe('pass');
+      expect(r?.matchStatus).toBe('exact');
+    });
+
+    it('output_type identity_flag — source lacks, candidate has → pass (better)', () => {
+      const t = table([rule({ attributeId: 'output_type', logicType: 'identity_flag', weight: 8 })]);
+      const source = attrs([param('output_type', 'No')]);
+      const cand = attrs([param('output_type', 'Yes')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'output_type');
+      expect(r?.result).toBe('pass');
+      expect(r?.matchStatus).toBe('better');
+    });
+
+    // ----------------------------------------------------------
+    // SCHMITT TRIGGER IDENTITY_FLAG
+    // ----------------------------------------------------------
+    it('schmitt_trigger identity_flag — source requires, candidate lacks → fail', () => {
+      const t = table([rule({ attributeId: 'schmitt_trigger', logicType: 'identity_flag', weight: 7 })]);
+      const source = attrs([param('schmitt_trigger', 'Yes')]);
+      const cand = attrs([param('schmitt_trigger', 'No')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'schmitt_trigger');
+      expect(r?.result).toBe('fail');
+    });
+
+    it('schmitt_trigger identity_flag — candidate has extra Schmitt → pass (better)', () => {
+      const t = table([rule({ attributeId: 'schmitt_trigger', logicType: 'identity_flag', weight: 7 })]);
+      const source = attrs([param('schmitt_trigger', 'No')]);
+      const cand = attrs([param('schmitt_trigger', 'Yes')], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'schmitt_trigger');
+      expect(r?.result).toBe('pass');
+      expect(r?.matchStatus).toBe('better');
+    });
+
+    // ----------------------------------------------------------
+    // VIH THRESHOLD LTE — the HC/HCT substitution trap
+    // ----------------------------------------------------------
+    it('vih threshold lte — HC VIH (3.5V) vs HCT VIH (2.0V) → HCT passes as lower', () => {
+      const t = table([rule({ attributeId: 'vih', logicType: 'threshold', thresholdDirection: 'lte', weight: 7 })]);
+      const source = attrs([param('vih', '3.5V', 3.5)]);
+      const cand = attrs([param('vih', '2.0V', 2.0)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'vih');
+      expect(r?.result).toBe('pass');
+      expect(r?.matchStatus).toBe('better');
+    });
+
+    it('vih threshold lte — HCT VIH (2.0V) → HC VIH (3.5V) fails (higher threshold)', () => {
+      const t = table([rule({ attributeId: 'vih', logicType: 'threshold', thresholdDirection: 'lte', weight: 7 })]);
+      const source = attrs([param('vih', '2.0V', 2.0)]);
+      const cand = attrs([param('vih', '3.5V', 3.5)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'vih');
+      expect(r?.result).toBe('fail');
+    });
+
+    // ----------------------------------------------------------
+    // DRIVE_CURRENT THRESHOLD GTE
+    // ----------------------------------------------------------
+    it('drive_current threshold gte — 24mA replacing 4mA passes', () => {
+      const t = table([rule({ attributeId: 'drive_current', logicType: 'threshold', thresholdDirection: 'gte', weight: 7 })]);
+      const source = attrs([param('drive_current', '4mA', 0.004)]);
+      const cand = attrs([param('drive_current', '24mA', 0.024)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'drive_current');
+      expect(r?.result).toBe('pass');
+      expect(r?.matchStatus).toBe('better');
+    });
+
+    it('drive_current threshold gte — 4mA replacing 24mA fails', () => {
+      const t = table([rule({ attributeId: 'drive_current', logicType: 'threshold', thresholdDirection: 'gte', weight: 7 })]);
+      const source = attrs([param('drive_current', '24mA', 0.024)]);
+      const cand = attrs([param('drive_current', '4mA', 0.004)], 'CAND-001');
+      const result = evaluateCandidate(t, source, cand);
+      const r = result.results.find(r => r.attributeId === 'drive_current');
+      expect(r?.result).toBe('fail');
+    });
+
+    // ----------------------------------------------------------
+    // COMPOSITE SCORING — all C5 rules together
+    // ----------------------------------------------------------
+    it('perfect match across key C5 rules scores 100%', () => {
+      const source = attrs([
+        param('logic_function', '04'),
+        param('gate_count', '6'),
+        param('package_case', 'SOIC-14'),
+        param('output_type', 'Totem-Pole'),
+        param('schmitt_trigger', 'No'),
+        param('vih', '3.5V', 3.5),
+        param('supply_voltage', '2V to 6V'),
+        param('tpd', '15ns', 15e-9),
+        param('aec_q100', 'No'),
+      ]);
+      const cand = attrs([
+        param('logic_function', '04'),
+        param('gate_count', '6'),
+        param('package_case', 'SOIC-14'),
+        param('output_type', 'Totem-Pole'),
+        param('schmitt_trigger', 'No'),
+        param('vih', '3.5V', 3.5),
+        param('supply_voltage', '2V to 6V'),
+        param('tpd', '15ns', 15e-9),
+        param('aec_q100', 'No'),
+      ], 'CAND-001');
+      const result = evaluateCandidate(c5LogicICsLogicTable, source, cand);
+      expect(result.passed).toBe(true);
+      expect(result.matchPercentage).toBeGreaterThanOrEqual(90);
+    });
+
+    it('function code mismatch causes hard fail regardless of other matches', () => {
+      const source = attrs([
+        param('logic_function', '04'),
+        param('gate_count', '6'),
+        param('package_case', 'SOIC-14'),
+      ]);
+      const cand = attrs([
+        param('logic_function', '14'),  // Schmitt inverter, not standard inverter
+        param('gate_count', '6'),
+        param('package_case', 'SOIC-14'),
+      ], 'CAND-001');
+      const result = evaluateCandidate(c5LogicICsLogicTable, source, cand);
+      expect(result.passed).toBe(false);
     });
   });
 });

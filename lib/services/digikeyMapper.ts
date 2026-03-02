@@ -56,6 +56,11 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('switching regulator') || lower.includes('switching controller') || lower.includes('dc dc')) return 'Voltage Regulators';
   if (lower.includes('gate driver')) return 'Gate Drivers';
   if (lower.includes('op amp') || lower.includes('buffer amp') || lower.includes('comparator') || lower.includes('instrumentation')) return 'Amplifiers';
+  // Logic ICs (Family C5) — 7 Digikey leaf categories
+  if (lower.includes('gates and inverters') || lower.includes('flip flop') ||
+      lower.includes('latch') || lower.includes('counter') || lower.includes('divider') ||
+      lower.includes('shift register') || lower.includes('multiplexer') ||
+      lower.includes('decoder') || lower.includes('transceiver')) return 'Logic ICs';
   // Default: ICs covers a huge range
   return 'ICs';
 }
@@ -97,6 +102,14 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('comparator')) return 'Comparator';
   if (lower.includes('instrumentation') && (lower.includes('amp') || lower.includes('op amp'))) return 'Instrumentation Amplifier';
   if (lower.includes('op amp') || lower.includes('buffer amp')) return 'Operational Amplifier';
+  // Logic ICs (Family C5) — 7 Digikey leaf categories
+  if (lower.includes('gates and inverters')) return 'Gates and Inverters';
+  if (lower.includes('buffers') && lower.includes('transceivers')) return 'Buffers, Drivers, Receivers, Transceivers';
+  if (lower.includes('flip flop')) return 'Flip Flops';
+  if (lower.includes('latch') && !lower.includes('latch-up')) return 'Latches';
+  if (lower.includes('counter') || lower.includes('divider')) return 'Counters, Dividers';
+  if (lower.includes('shift register')) return 'Shift Registers';
+  if (lower.includes('multiplexer') || lower.includes('decoder')) return 'Signal Switches, Multiplexers, Decoders';
   // Gate Drivers (Family C3) — must be before MOSFET/IGBT checks
   if (lower.includes('isolator') && lower.includes('gate driver')) return 'Isolated Gate Driver';
   if (lower.includes('gate driver')) return 'Gate Driver';

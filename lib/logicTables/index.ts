@@ -30,6 +30,7 @@ import { ldoLogicTable } from './ldo';
 import { switchingRegulatorLogicTable } from './switchingRegulator';
 import { gateDriverLogicTable } from './gateDriver';
 import { opampComparatorLogicTable } from './opampComparator';
+import { c5LogicICsLogicTable } from './c5LogicICs';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -68,6 +69,7 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C2': switchingRegulatorLogicTable,
   'C3': gateDriverLogicTable,
   'C4': opampComparatorLogicTable,
+  'C5': c5LogicICsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -280,6 +282,34 @@ const subcategoryToFamily: Record<string, string> = {
   'Operational Amplifiers': 'C4',
   'Comparators': 'C4',
   'Instrumentation, OP Amp, Buffer Amps': 'C4',
+  // Logic ICs — 74-Series Standard Logic (Family C5)
+  'Logic Gate': 'C5',
+  'Logic IC': 'C5',
+  'Logic': 'C5',
+  'Buffer': 'C5',
+  'Inverter': 'C5',
+  'Flip-Flop': 'C5',
+  'Flip Flop': 'C5',
+  'Latch': 'C5',
+  'Counter': 'C5',
+  'Shift Register': 'C5',
+  'Decoder': 'C5',
+  'Multiplexer': 'C5',
+  'Bus Transceiver': 'C5',
+  'Gates and Inverters': 'C5',
+  'Buffers, Drivers, Receivers, Transceivers': 'C5',
+  'Flip Flops': 'C5',
+  'Latches': 'C5',
+  'Counters, Dividers': 'C5',
+  'Shift Registers': 'C5',
+  'Signal Switches, Multiplexers, Decoders': 'C5',
+  'Logic - Gates and Inverters': 'C5',
+  'Logic - Buffers, Drivers, Receivers, Transceivers': 'C5',
+  'Logic - Flip Flops': 'C5',
+  'Logic - Latches': 'C5',
+  'Logic - Counters, Dividers': 'C5',
+  'Logic - Shift Registers': 'C5',
+  'Logic - Signal Switches, Multiplexers, Decoders': 'C5',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -317,6 +347,7 @@ const familyLastUpdated: Record<string, string> = {
   'C2': '2026-02-26',
   'C3': '2026-02-26',
   'C4': '2026-02-26',
+  'C5': '2026-02-28',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {
