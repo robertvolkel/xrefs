@@ -7,6 +7,7 @@ export const typeColors: Record<LogicType, string> = {
   identity_flag: '#FFB74D',
   threshold: '#81C784',
   fit: '#4DB6AC',
+  vref_check: '#7986CB',
   application_review: '#FFD54F',
   operational: '#90A4AE',
 };
@@ -18,6 +19,7 @@ export const typeLabels: Record<LogicType, string> = {
   identity_flag: 'Flag (if required)',
   threshold: 'Threshold',
   fit: 'Physical Fit',
+  vref_check: 'Vref Check',
   application_review: 'Manual Review',
   operational: 'Operational',
 };
