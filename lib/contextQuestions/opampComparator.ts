@@ -4,12 +4,15 @@ import { FamilyContextConfig } from '../types';
  * Context questions for Family C4: Op-Amps / Comparators / Instrumentation Amplifiers
  *
  * contextSensitivity: 'critical' — op-amp vs. comparator sub-type drives
- * fundamental rule suppression, and source impedance / precision / stability
- * context can escalate multiple parameters to BLOCKING.
+ * fundamental rule suppression, and source impedance / supply config /
+ * precision-vs-noise / stability context can escalate multiple parameters
+ * to BLOCKING.
  *
  * Q1 (device_function) determines sub-type: op-amp rules are suppressed for
  * comparators and vice versa, following the B8 Thyristor pattern.
- * Q4 (circuit_gain) is CONDITIONAL on Q1 = op_amp or instrumentation_amp.
+ * Q3 (supply_configuration) single vs dual — affects VICM, RRI, RRO.
+ * Q4 (precision_application) now has 3 paths: precision_dc, low_noise_ac, general.
+ * Q5 (circuit_gain) is CONDITIONAL on Q1 = op_amp or instrumentation_amp.
  */
 export const opampComparatorContext: FamilyContextConfig = {
   familyIds: ['C4'],
@@ -120,7 +123,7 @@ export const opampComparatorContext: FamilyContextConfig = {
         },
         {
           value: 'high',
-          label: 'High impedance (> 100kΩ)',
+          label: 'High impedance (100kΩ – 10MΩ)',
           description: 'Piezo sensors, pH probes, photodiodes, high-impedance dividers — current noise and bias current dominate',
           attributeEffects: [
             {
@@ -137,21 +140,91 @@ export const opampComparatorContext: FamilyContextConfig = {
             },
           ],
         },
+        {
+          value: 'very_high',
+          label: 'Very high impedance (> 10MΩ)',
+          description: 'Electrometers, charge amplifiers, glass-electrode pH — even pA-level JFET bias current may be too high; CMOS required',
+          attributeEffects: [
+            {
+              attributeId: 'input_type',
+              effect: 'escalate_to_mandatory',
+              blockOnMissing: true,
+              note: 'BLOCKING — at source impedance > 10MΩ, both bipolar AND JFET input stages are incompatible. JFET Ib (50–200 pA typical) × 10MΩ = 0.5–2mV offset, unacceptable for electrometer-class measurements. Only CMOS inputs (Ib < 1pA) are acceptable.',
+            },
+            {
+              attributeId: 'input_bias_current',
+              effect: 'escalate_to_mandatory',
+              blockOnMissing: true,
+              note: 'BLOCKING — at very high source impedance, only sub-pA bias current is acceptable. Verify Ib × Rs < system offset budget. Guard ring PCB layout also required.',
+            },
+            {
+              attributeId: 'input_noise_voltage',
+              effect: 'escalate_to_primary',
+              note: 'Current noise (in × Rs) dominates total noise at very high impedance. CMOS input noise is typically higher than JFET, so verify total noise budget is met.',
+            },
+          ],
+        },
       ],
     },
 
     // ================================================================
-    // Q3: Precision Application — drives Avol, Vos, CMRR, PSRR escalation
+    // Q3: Supply Configuration — single-supply vs dual-supply topology
     // ================================================================
     {
-      questionId: 'precision_application',
-      questionText: 'Is this a precision application (offset voltage < 500µV or gain > 100)?',
+      questionId: 'supply_configuration',
+      questionText: 'Is this a single-supply or dual-supply circuit?',
       priority: 3,
       options: [
         {
-          value: 'yes',
-          label: 'Yes — precision measurement',
-          description: 'High-gain amplification, instrumentation, precision DAC output buffering, sensor signal conditioning requiring < 0.1% gain accuracy',
+          value: 'single_supply',
+          label: 'Single-supply (e.g., 3.3V or 5V, ground-referenced)',
+          description: 'Positive supply only, ground-referenced — VICM must include ground, output must swing near ground rail, RRO often required',
+          attributeEffects: [
+            {
+              attributeId: 'vicm_range',
+              effect: 'escalate_to_mandatory',
+              blockOnMissing: true,
+              note: 'BLOCKING — in single-supply circuits, VICM must extend to ground (or below) for ground-referenced signals. Non-single-supply op-amps with VICM starting at V- + 1V cannot process signals near ground.',
+            },
+            {
+              attributeId: 'rail_to_rail_output',
+              effect: 'escalate_to_primary',
+              note: 'RRO becomes primary for single-supply — output must swing near ground and supply rails. Non-RRO op-amps typically saturate 1-2V from each rail, losing usable dynamic range.',
+            },
+            {
+              attributeId: 'rail_to_rail_input',
+              effect: 'escalate_to_primary',
+              note: 'RRI becomes primary for single-supply — input signals near ground or supply rail must be within VICM. Without RRI, input signals near the rails cause phase reversal or CMRR degradation.',
+            },
+          ],
+        },
+        {
+          value: 'dual_supply',
+          label: 'Dual-supply (e.g., ±5V, ±12V, ±15V)',
+          description: 'Symmetric positive/negative supplies — standard VICM centered on ground, RR typically not needed',
+          attributeEffects: [
+            {
+              attributeId: 'supply_voltage',
+              effect: 'escalate_to_primary',
+              note: 'Verify total supply span (Vs = V+ minus V-) is within the replacement\'s absolute maximum. Single-supply CMOS devices are often rated for ≤5.5V total span — blocked for ±12V (24V span).',
+            },
+          ],
+        },
+      ],
+    },
+
+    // ================================================================
+    // Q4: Precision / Noise Application — drives Avol, Vos, CMRR, PSRR, en/in escalation
+    // ================================================================
+    {
+      questionId: 'precision_application',
+      questionText: 'What is the accuracy or noise requirement for this circuit?',
+      priority: 4,
+      options: [
+        {
+          value: 'precision_dc',
+          label: 'Precision DC (instrumentation, 16-24 bit ADC, weighing)',
+          description: 'DC accuracy is paramount — Vos, Ib, Avol, and TCV are the dominant error sources. Autozero or chopper-stabilized types may be required.',
           attributeEffects: [
             {
               attributeId: 'avol',
@@ -177,22 +250,45 @@ export const opampComparatorContext: FamilyContextConfig = {
           ],
         },
         {
-          value: 'no',
-          label: 'No — general purpose',
-          description: 'General-purpose amplification, buffering, filtering where standard accuracy is sufficient',
+          value: 'low_noise_ac',
+          label: 'Low-noise AC (audio, RF front end, sensor conditioning)',
+          description: 'Signal-frequency noise is paramount — en and in at the actual signal frequency determine SNR. 1/f corner frequency is critical for audio (below 1kHz).',
+          attributeEffects: [
+            {
+              attributeId: 'input_noise_voltage',
+              effect: 'escalate_to_mandatory',
+              blockOnMissing: true,
+              note: 'BLOCKING — voltage noise density (en) at the signal frequency determines SNR. Verify en at actual frequency, not just the headline spec. For audio: 1/f corner must be below signal band.',
+            },
+            {
+              attributeId: 'input_bias_current',
+              effect: 'escalate_to_primary',
+              note: 'Current noise (in × Rs) may dominate total noise at moderate-to-high source impedance. Evaluate total noise: √(en² + (in × Rs)²).',
+            },
+            {
+              attributeId: 'gain_bandwidth',
+              effect: 'escalate_to_primary',
+              note: 'GBW must provide sufficient closed-loop bandwidth at the signal frequency — verify noise gain × signal bandwidth < GBW.',
+            },
+          ],
+        },
+        {
+          value: 'general_purpose',
+          label: 'General purpose (buffering, filtering, non-critical)',
+          description: 'Standard parametric matching — no special precision or noise escalation needed.',
           attributeEffects: [],
         },
       ],
     },
 
     // ================================================================
-    // Q4: Circuit Gain — conditional on Q1 = op_amp or instrumentation_amp
+    // Q5: Circuit Gain — conditional on Q1 = op_amp or instrumentation_amp
     // Drives decompensated op-amp blocking
     // ================================================================
     {
       questionId: 'circuit_gain',
       questionText: 'What is the minimum closed-loop gain in your circuit?',
-      priority: 4,
+      priority: 5,
       condition: { questionId: 'device_function', values: ['op_amp', 'instrumentation_amp'] },
       options: [
         {
@@ -230,12 +326,12 @@ export const opampComparatorContext: FamilyContextConfig = {
     },
 
     // ================================================================
-    // Q5: Automotive Application — drives AEC-Q100 and temp escalation
+    // Q6: Automotive Application — drives AEC-Q100 and temp escalation
     // ================================================================
     {
       questionId: 'automotive',
       questionText: 'Is this an automotive application?',
-      priority: 5,
+      priority: 6,
       options: [
         {
           value: 'yes',

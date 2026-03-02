@@ -42,6 +42,10 @@ This document maps every component family to the application-context questions t
 | 30 | Mica Capacitors | 13 | **Low** | Precision is assumed (that's why mica was chosen); minimal context needed |
 | 31 | Op-Amps / Comparators | C4 | **High** | Op-amp vs. comparator is a categorical hard gate — closed-loop vs. open-loop use determines the entire matching framework. Input stage technology (bipolar/JFET/CMOS) must match source impedance profile. Decompensated vs. unity-gain-stable types are not interchangeable. Comparator output type (push-pull vs. open-drain) determines circuit topology. |
 | 32 | Logic ICs (74-Series) | C5 | **Moderate** | Logic function (part number suffix) is a hard gate before any family evaluation. Logic family cross-substitution (HC vs. HCT vs. LVC vs. AC) requires a four-way interface compatibility check — the HC/HCT TTL-threshold mismatch is the most common logic substitution failure. Output type (totem-pole vs. open-drain vs. 3-state) and OE polarity are Identity Flags. Mixed 3.3V/5V interfaces require explicit 5V-tolerance verification. |
+| 33 | Voltage References | C6 | **Moderate** | Configuration (series vs. shunt) is a hard Identity gate — the most common categorical substitution error. Output voltage is always Identity. TC curve shape matters beyond headline ppm/°C for precision applications. Architecture (band-gap vs. buried Zener) determines noise floor and long-term stability. Shunt references require external series resistor; series references actively drive output. |
+| 34 | Interface ICs (RS-485, CAN, I2C, USB) | C7 | **Moderate-High** | Protocol is a hard categorical gate — RS-485, CAN, I2C, and USB are not cross-substitutable. Within protocol: operating mode (half/full-duplex, isolated/non-isolated) and CAN FD vs. classical are Identity gates. Bus fault protection, ESD, and slew rate change significantly by environment. Automotive vs. industrial vs. consumer splits AEC-Q100 requirement. |
+| C7 | Interface ICs (RS-485, CAN, I2C, USB) | RS-485 Interface IC | CAN Interface IC |
+| C7 | Interface ICs (RS-485, CAN, I2C, USB) | I2C/SMBus Interface | USB Interface IC |
 ---
 
 ## Digikey Subcategory Coverage Map
@@ -86,6 +90,7 @@ This table maps component families to their corresponding Digikey leaf categorie
 | C5 | Logic ICs (74-Series) | Flip Flops | Latches |
 | C5 | Logic ICs (74-Series) | Counters, Dividers | Shift Registers |
 | C5 | Logic ICs (74-Series) | Signal Switches, Multiplexers, Decoders | — |
+| C6 | Voltage References | Voltage Reference | — (single category covers series + shunt; distinguished by "Reference Type" field) |
 
 ---
 
@@ -1428,6 +1433,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 
 #### Question 1: What is the output type and target voltage?
 
+> **Impl:** Not a context question — handled as `output_type` identity rule (w10) and `output_voltage` identity rule (w10) in the logic table. Defensible: output type/voltage is parametric data available from Digikey, not application context. However, fixed-to-adjustable PCB modification warning is lost without a context question.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Fixed output — single voltage (e.g., 3.3V, 5V, 1.8V)** | Output voltage is a hard Identity match — replacement must be the exact same nominal output voltage. Even ±1% difference may violate downstream rail tolerance. Fixed-to-adjustable substitution requires adding external resistor divider and is a PCB modification, not a drop-in swap. |
@@ -1442,6 +1449,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 
 #### Question 2: What is the output capacitor type on the PCB?
 
+> **Impl:** `output_cap_type` (Q1 in `lib/contextQuestions/ldo.ts`) — aligned. Ceramic → `output_cap_compatibility` escalated to mandatory + `blockOnMissing: true`.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Ceramic (MLCC) — X5R, X7R, C0G** | Replacement MUST be explicitly rated stable with ceramic capacitors. Look for "ceramic-stable," "any-cap LDO," or "CMOS LDO" in the datasheet. An ESR-stabilized LDO substituted here will oscillate. This is a BLOCKING constraint. |
@@ -1453,6 +1462,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 - `Vout Accuracy` → tighter if downstream load has narrow voltage window
 
 #### Question 3: Is this a battery-powered or energy-harvested application?
+
+> **Impl:** `battery_application` (Q2 in `lib/contextQuestions/ldo.ts`) — aligned. Yes → `iq` primary + `blockOnMissing`, `vdropout` primary. Note: map also lists `Vin Min` escalation which is not in the implementation.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1466,6 +1477,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 
 #### Question 4: Is there an upstream switching regulator feeding this LDO?
 
+> **Impl:** Reframed as `upstream_switching_freq` (Q5 in `lib/contextQuestions/ldo.ts`) — conditional on Q3 (`noise_sensitive`) = yes. Implementation adds three frequency tiers (none/low/high) with graduated PSRR escalation up to BLOCKING at ≥500kHz. Map's binary yes/no is less granular.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes — LDO post-regulates a switcher output** | PSRR at the switching frequency becomes a PRIMARY constraint. Must verify PSRR at the actual upstream switching frequency (not DC PSRR). A replacement with lower PSRR at the switching frequency will pass through more switching ripple to the downstream load. |
@@ -1476,6 +1489,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 - `Load Regulation` → secondary concern for supplies with high-frequency load variation
 
 #### Question 5: Does the circuit use Enable, Power-Good, or Soft-Start pins?
+
+> **Impl:** Not a context question — handled as `enable_pin` identity rule (w8) in the logic table. **GAP:** Pin *usage* is application context (whether the pin is wired on the PCB), not just parametric data (whether the pin exists on the part). The map's rationale about polarity match and float behavior is valid context the engine doesn't capture.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1491,6 +1506,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 
 #### Question 6: Is this automotive?
 
+> **Impl:** `automotive` (Q4 in `lib/contextQuestions/ldo.ts`) — aligned. Yes → `aec_q100` mandatory, `tj_max` primary, `vin_max` primary.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes** | AEC-Q100 mandatory. Verify Grade (0/1/2/3) matches or exceeds original. Load-dump survivability (40V on 12V systems) must be explicitly rated. Operating temp range must cover automotive ambient extremes. |
@@ -1501,6 +1518,20 @@ The most important bifurcations are output voltage (exact Identity match for fix
 - `Vin Max` → load-dump survivability becomes critical (40V for 12V automotive systems)
 - `Tj Max` → must cover Grade 0/1 temperature range for automotive
 
+#### Question 7: Does the output supply a noise-sensitive analog circuit?
+
+> **Impl:** `noise_sensitive` (Q3 in `lib/contextQuestions/ldo.ts`) — implementation addition, not in original map. Gates Q5 (`upstream_switching_freq`).
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — ADC, DAC, RF, precision amplifier downstream** | PSRR, output voltage accuracy, and load regulation become PRIMARY constraints. Even small output ripple or voltage deviation degrades analog signal integrity. This question gates the upstream switching frequency question (Q4 above) — if the load is noise-sensitive AND upstream is a switcher, PSRR at the switching frequency becomes critical. |
+| **No — digital load, motor driver, LED, non-sensitive** | Standard matching. PSRR remains application_review at baseline weight. |
+
+**Affected attributes:**
+- `PSRR` → escalates to primary for noise-sensitive loads
+- `Vout Accuracy` → escalates to primary (tighter tolerance needed)
+- `Load Regulation` → escalates to primary (transient response matters)
+
 ---
 
 ### 29. Switching Regulators (Family C2)
@@ -1510,6 +1541,8 @@ The most important bifurcations are output voltage (exact Identity match for fix
 Topology is the first and hardest gate — it determines the entire circuit structure and no other evaluation is meaningful until it's confirmed. Control mode determines compensation compatibility. Switching frequency interfaces with the passive components already on the PCB. Vref determines whether the existing feedback resistors set the correct output voltage. Architecture (integrated vs. controller-only) is a hard structural constraint.
 
 #### Question 1: What is the topology?
+
+> **Impl:** Not a context question — handled as `topology` identity rule (w10, blockOnMissing) + post-scoring filter in logic table. Defensible: topology is parametric data available from Digikey and MPN enrichment, not application context.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1522,6 +1555,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 
 #### Question 2: Is this an integrated-switch converter or a controller-only IC?
 
+> **Impl:** `architecture_type` (Q1 in `lib/contextQuestions/switchingRegulator.ts`) — aligned on question, different effects. Map says architecture is a hard Identity gate; implementation suppresses `gate_drive_current` as `not_applicable` for integrated-switch (architecture identity is already a w10 blockOnMissing rule).
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Integrated switch (converter IC)** | No external MOSFETs on the PCB power path. Replacement must also be an integrated-switch type with compatible pin assignment for SW, Vin, GND, and all auxiliary pins. Current rating is fixed by the on-chip switch. |
@@ -1532,6 +1567,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 - `Gate Drive Voltage/Current` → only applicable for controller-only designs
 
 #### Question 3: What is the control mode?
+
+> **Impl:** Reframed as `comp_redesign` (Q2 in `lib/contextQuestions/switchingRegulator.ts`) — asks "Can the compensation network be redesigned?" rather than identifying the control mode directly. If can_redesign → `control_mode` softened to `add_review_flag`; if cannot_change → control mode remains hard identity. The map's direct mode identification is more informative; the implementation captures the actionable consequence (is mismatch tolerable?).
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1547,6 +1584,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 
 #### Question 4: What is the switching frequency, and is it fixed or adjustable?
 
+> **Impl:** Reframed as `passive_flexibility` (Q4 in `lib/contextQuestions/switchingRegulator.ts`) — asks "Can the power inductor and output capacitors be changed?" rather than about frequency directly. If passives_fixed → `fsw` escalated to mandatory + `blockOnMissing`. The ±10% tolerance is handled by `tolerancePercent` on the identity rule. Map's Rt resistor and sync sub-questions are not captured.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Fixed frequency — must match exactly** | Replacement must operate at the same frequency. Verify the replacement's fixed frequency matches within ±10%. Any deviation requires evaluating inductor ripple current and output ripple with the existing passives. |
@@ -1559,6 +1598,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 
 #### Question 5: What is the feedback reference voltage (Vref) of the original?
 
+> **Impl:** Not a context question — handled by `vref_check` engine extension that automatically computes Vout deviation using `Vref_candidate × (1 + Rtop/Rbot)`. Arguably better than a context question: the engine calculates the answer rather than asking the user.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Known (from original datasheet)** | Calculate: Vout_with_replacement = Vref_new × (1 + Rtop/Rbot). If this does not equal the target Vout within ±2%, calculate the new Rbot and flag for BOM resistor change. |
@@ -1568,6 +1609,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 - `Feedback Reference Voltage Vref` → silent output voltage killer if mismatched; always calculate before approving
 
 #### Question 6: Are Enable/UVLO, Power-Good, Soft-Start, or Sync pins used?
+
+> **Impl:** Not a context question — pin presence handled as logic table rules. **GAP:** Same as C1 Q5. UVLO threshold recalculation with replacement threshold and existing divider is a genuine substitution concern that parametric rules cannot capture. Css-to-ramp-time relationship differences are also lost.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1584,6 +1627,8 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 
 #### Question 7: Is this automotive?
 
+> **Impl:** `automotive` (Q3 in `lib/contextQuestions/switchingRegulator.ts`) — aligned. Yes → `aec_q100` mandatory, `tj_max` primary, `vin_max` primary.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes** | AEC-Q100 mandatory with matching grade. Load-dump survivability must be explicitly rated (40V/400ms for 12V systems). EMI compliance per CISPR 25 must be considered. |
@@ -1592,6 +1637,20 @@ Topology is the first and hardest gate — it determines the entire circuit stru
 **Affected attributes:**
 - `AEC-Q100` → Identity (Flag), mandatory for automotive
 - `Vin Max` → load-dump survivability becomes a hard constraint
+
+#### Question 8: Does this design have a high voltage conversion ratio?
+
+> **Impl:** `high_conversion_ratio` (Q5 in `lib/contextQuestions/switchingRegulator.ts`) — implementation addition, not in original map. Conditional on Q1 (`architecture_type`) being answered.
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — e.g., 12V→1V buck (D=8.3%, ton=83ns) or 3.3V→24V boost** | `ton_min` becomes a BLOCKING constraint. At extreme duty cycles, the minimum on-time or off-time of the replacement IC may be physically longer than required, causing the converter to skip pulses, lose regulation, or enter forced continuous conduction. Verify ton_min < (Vout/Vin) × (1/fsw) with margin. |
+| **No — moderate conversion ratio (e.g., 5V→3.3V, 12V→5V)** | Standard matching. ton_min remains at baseline weight. |
+| **Unknown** | Standard matching. No escalation. |
+
+**Affected attributes:**
+- `ton_min` → escalates to mandatory + blockOnMissing for high conversion ratios
+- `toff_min` → should also be verified for boost converters at high ratios
 
 ---
 
@@ -1603,6 +1662,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 
 #### Question 1: What is the driver configuration?
 
+> **Impl:** `driver_topology` (Q1 in `lib/contextQuestions/gateDriver.ts`) — aligned. Half-bridge/full-bridge → `output_polarity`, `dead_time_control`, `dead_time` all escalated to mandatory + `blockOnMissing` (shoot-through three-check validation). Single/dual → dead-time rules suppressed as `not_applicable`. Also escalates `propagation_delay` and `bootstrap_diode` to primary for bridge topologies.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Single or Dual (non-bridge)** | Simpler substitution — main concerns are input logic threshold, output current, and supply voltage compatibility. Dead-time is not applicable. |
@@ -1612,6 +1673,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 **Affected attributes:** All — configuration is the first gate before any other evaluation.
 
 #### Question 2 (half-bridge): Is there a galvanic isolation requirement?
+
+> **Impl:** `safety_isolation` (Q4 in `lib/contextQuestions/gateDriver.ts`) — reordered (Q4 in impl vs Q2 in map) and made unconditional (impl asks for all topologies, not just half-bridge). Yes → `add_review_flag` on `isolation_type` for voltage/creepage verification.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1624,6 +1687,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 
 #### Question 3: What is the driving logic signal voltage?
 
+> **Impl:** Not a context question — handled as `input_logic_threshold` identity rule (w7) in the logic table. **GAP:** 3.3V MCU GPIO driving a gate driver with VDD-referenced CMOS inputs at VDD=12V is a real failure mode (VIH = 0.7×12V = 8.4V, far above 3.3V). The parametric rule matches threshold values but doesn't capture the driving voltage context that determines whether the threshold is met.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **3.3V MCU/FPGA GPIO** | Replacement must have logic-level compatible inputs (VIH ≤ 2.0V). VDD-referenced CMOS inputs with VDD=12V will not reliably trigger. |
@@ -1634,6 +1699,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 - `Input Logic Threshold` → must be compatible with driving logic voltage
 
 #### Question 4: What is the peak current requirement, and what power device is being driven?
+
+> **Impl:** Split into `power_device_type` (Q2 in `lib/contextQuestions/gateDriver.ts`) — focuses on device type, with peak current escalation as an effect. SiC → `vdd_range` mandatory + `blockOnMissing` (bipolar supply required). IGBT → `peak_source_current` and `peak_sink_current` escalated to primary. GaN → `vdd_range` escalated to primary. Map's Qg-based current calculation guidance is not in the implementation effects.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1646,6 +1713,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 - `Gate Drive Supply VDD` → SiC/GaN requires specific voltage levels; verify range
 
 #### Question 5: Are Shutdown, Fault, Dead-Time, or Soft-Start pins used in the circuit?
+
+> **Impl:** Not a context question — pin presence handled as logic table rules. **GAP:** Same pattern as C1 Q5 and C2 Q6. External Rdt resistor recalculation is particularly important — different ICs have different Rdt-to-dead-time transfer functions, so the same Rdt gives different dead-time on a replacement.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1660,10 +1729,27 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 
 #### Question 6: Is this automotive?
 
+> **Impl:** `automotive` (Q3 in `lib/contextQuestions/gateDriver.ts`) — aligned. Yes → `aec_q100` mandatory, `tj_max` primary, `fault_reporting` primary.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes** | AEC-Q100 mandatory. ISO 26262 ASIL requirements may mandate FAULT pin and diagnostic features. Load-dump survivability on VDD supply must be verified. |
 | **No** | Standard environmental matching. |
+
+#### Question 7: Is the switching frequency greater than 200kHz?
+
+> **Impl:** `high_frequency` (Q5 in `lib/contextQuestions/gateDriver.ts`) — implementation addition, not in original map.
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — fsw > 200kHz** | Thermal dissipation (`rth_ja`), signal integrity (`rise_fall_time`), and timing accuracy (`propagation_delay`) all become PRIMARY constraints. At high switching frequencies, gate driver power dissipation scales linearly with fsw × Qg, making Rth_ja critical for SOT-23 and similar small packages. Rise/fall time directly impacts EMI and dead-time margin. Propagation delay mismatch between high/low side affects dead-time symmetry. |
+| **No — fsw ≤ 200kHz** | Standard matching. Thermal and timing specs remain at baseline weight. |
+| **Unknown** | Standard matching. No escalation. |
+
+**Affected attributes:**
+- `Rth_ja` → escalates to primary (power dissipation critical at high fsw)
+- `Rise/Fall Time` → escalates to primary (EMI and dead-time margin)
+- `Propagation Delay` → escalates to primary (timing accuracy for dead-time control)
 
 ---
 
@@ -1674,6 +1760,8 @@ Driver configuration (single/dual/half-bridge/full-bridge) is the first Identity
 The categorical distinction between op-amp and comparator applications is the most important branching point in this family — it determines the entire matching framework before any parametric evaluation. Input stage technology is the second critical axis: bipolar, JFET, and CMOS input stages span four decades of input bias current and have opposing noise trade-offs that depend entirely on source impedance.
 
 #### Question 1 (BLOCKING): Is this device used in a closed-loop or open-loop configuration?
+
+> **Impl:** `device_function` (Q1 in `lib/contextQuestions/opampComparator.ts`) — aligned, with enhancement. Implementation adds Instrumentation Amplifier as a third option beyond the map's binary closed/open-loop framing. Op-amp → suppresses `output_type`, `response_time`. Comparator → suppresses `gain_bandwidth`, `min_stable_gain`; escalates `output_type`, `response_time` to primary. INA → suppresses `output_type`, `response_time`; escalates `cmrr` to primary.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1688,6 +1776,8 @@ The categorical distinction between op-amp and comparator applications is the mo
 - `Input Hysteresis` → Identity Flag for comparators
 
 #### Question 2: What is the source impedance of the signal being processed?
+
+> **Impl:** `source_impedance` (Q2 in `lib/contextQuestions/opampComparator.ts`) — aligned. 4 tiers: low/medium/high/very_high. Low → `input_noise_voltage` primary. High (100kΩ–10MΩ) → `input_type` and `input_bias_current` mandatory + blockOnMissing (bipolar blocked). Very high (>10MΩ) → same plus JFET also blocked (CMOS only), `input_noise_voltage` primary for current noise verification.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1704,6 +1794,8 @@ The categorical distinction between op-amp and comparator applications is the mo
 
 #### Question 3: Single-supply or dual-supply circuit?
 
+> **Impl:** `supply_configuration` (Q3 in `lib/contextQuestions/opampComparator.ts`) — now aligned. Single-supply → `vicm_range` mandatory + blockOnMissing, `rail_to_rail_output` and `rail_to_rail_input` primary. Dual-supply → `supply_voltage` primary (verify total span within Vs_max).
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Single-supply (e.g., 3.3V or 5V, ground-referenced)** | Supply Configuration becomes Identity. Must verify Input Common-Mode Range extends to ground (or below). Rail-to-rail output required if output must swing near ground or supply rails. Non-single-supply devices are BLOCKED. |
@@ -1715,6 +1807,8 @@ The categorical distinction between op-amp and comparator applications is the mo
 - `Output Voltage Swing` → RRO required if ground-referenced output
 
 #### Question 4: Is this a precision or noise-critical application?
+
+> **Impl:** `precision_application` (Q4 in `lib/contextQuestions/opampComparator.ts`) — now aligned with 3 options. `precision_dc` → escalates `avol` primary, `input_offset_voltage` mandatory + blockOnMissing, `cmrr` and `psrr` primary. `low_noise_ac` → escalates `input_noise_voltage` mandatory + blockOnMissing, `input_bias_current` primary (in × Rs), `gain_bandwidth` primary. `general_purpose` → no effects.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1731,10 +1825,26 @@ The categorical distinction between op-amp and comparator applications is the mo
 
 #### Question 5 (if automotive): AEC-Q100 grade required?
 
+> **Impl:** `automotive` (Q6 in `lib/contextQuestions/opampComparator.ts`) — aligned. Yes → `aec_q100` mandatory + blockOnMissing, `operating_temp` primary.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes, Grade 1 (125°C) or Grade 0 (150°C)** | AEC-Q100 attribute becomes Identity (hard gate). Non-AEC parts are BLOCKED regardless of electrical match. Temperature range must cover automotive operating range. |
 | **No / commercial / industrial** | AEC-Q100 is Operational (nice-to-have, not required). |
+
+#### Question 6: What is the minimum closed-loop gain in the circuit?
+
+> **Impl:** `circuit_gain` (Q5 in `lib/contextQuestions/opampComparator.ts`) — implementation addition, not in original map. Conditional on Q1 = op_amp or instrumentation_amp. Critical for detecting decompensated op-amps.
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Unity gain (gain = 1 V/V, voltage follower)** | `min_stable_gain` becomes a BLOCKING constraint. Decompensated op-amps (min stable gain > 1 V/V, e.g., OPA2277 stable at gain ≥5) will oscillate at unity gain — the phase margin is insufficient without the gain-of-bandwidth reduction that higher closed-loop gain provides. Only unity-gain-stable (fully compensated) op-amps are acceptable. |
+| **Low gain (2–10 V/V)** | `min_stable_gain` escalates to PRIMARY. Verify the replacement's minimum stable gain is ≤ the circuit gain. Decompensated types may be acceptable if their min stable gain is below the circuit gain with margin. |
+| **High gain (>10 V/V)** | Standard matching. Most decompensated op-amps are stable at high gains. No escalation needed. |
+
+**Affected attributes:**
+- `Minimum Stable Gain` → BLOCKING for unity gain, PRIMARY for low gain
+- `Gain Bandwidth Product` → verify closed-loop bandwidth at circuit gain is adequate
 
 ---
 
@@ -1745,6 +1855,8 @@ The categorical distinction between op-amp and comparator applications is the mo
 The logic function encoded in the part number suffix is always the first gate — no amount of context changes whether a '04 can substitute for a '08. Within the same function, context determines which family compatibility issues are blocking and which are acceptable trade-offs.
 
 #### Question 1 (BLOCKING): What logic family is driving this device's inputs?
+
+> **Impl:** `driving_source` (Q1 in `lib/contextQuestions/c5LogicICs.ts`) — aligned. TTL → `vih` mandatory + `blockOnMissing`, `logic_family` primary. Mixed → `vih` and `vil` primary.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1760,6 +1872,8 @@ The logic function encoded in the part number suffix is always the first gate �
 
 #### Question 2: What is the supply voltage of the circuit?
 
+> **Impl:** Reframed as `voltage_interface` (Q2 in `lib/contextQuestions/c5LogicICs.ts`) — now 3 options: `mixed_3v3_5v` / `3v3_only` / `single_domain`. Mixed → `input_clamp_diodes` and `voh` mandatory + blockOnMissing, `supply_voltage` primary. 3.3V only → `supply_voltage` mandatory + blockOnMissing (TTL families blocked). Single domain (5V) → no escalation.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **5V only** | HC, HCT, AC, ACT, AHC, AHCT all valid (within Vcc range). LVC valid (supports up to 5.5V). TTL families (LS, ALS, AS) valid but discouraged for new designs. |
@@ -1772,6 +1886,8 @@ The logic function encoded in the part number suffix is always the first gate �
 - `Output High Voltage (VOH)` → 3.3V output driving 5V CMOS inputs — check VIH margin
 
 #### Question 3: What is the output type required?
+
+> **Impl:** Reframed as `bus_application` (Q3 in `lib/contextQuestions/c5LogicICs.ts`) — asks "Is this device used in a shared bus or multi-driver application?" rather than identifying output type directly. shared_bus → `output_type` and `oe_polarity` mandatory + blockOnMissing, `bus_hold` primary. **Trade-off:** Map's approach identifies the required output TYPE (totem-pole/open-drain/3-state); implementation identifies the APPLICATION CONTEXT that makes output type critical. Map is more precise for non-bus scenarios where open-drain is needed for wired-AND without a "shared bus." Implementation adds bus_hold escalation not in the map.
 
 | Answer | Effect on Matching |
 |--------|-------------------|
@@ -1786,12 +1902,272 @@ The logic function encoded in the part number suffix is always the first gate �
 
 #### Question 4: Is this an automotive design?
 
+> **Impl:** `automotive` (Q5 in `lib/contextQuestions/c5LogicICs.ts`) — aligned. Yes → `aec_q100` mandatory + blockOnMissing, `operating_temp` primary.
+
 | Answer | Effect on Matching |
 |--------|-------------------|
 | **Yes** | AEC-Q100 becomes Identity (hard gate). Non-AEC parts BLOCKED. Temperature range must cover automotive operating range (-40°C to +125°C minimum Grade 1). |
 | **No** | AEC-Q100 is Operational. Standard commercial or industrial temperature grade per application environment. |
 
+#### Question 5: Are the input signals slow-edged, noisy, or from analog/mechanical sources?
+
+> **Impl:** `input_signal_quality` (Q4 in `lib/contextQuestions/c5LogicICs.ts`) — implementation addition, not in original map.
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — slow edges, noisy signals, switch debounce, long PCB traces, RC timing circuits** | `schmitt_trigger` becomes a BLOCKING constraint. Without Schmitt trigger hysteresis, slow-rising or noisy edges passing through the linear region of a standard CMOS input produce multiple output transitions (chatter/bounce). This causes double-clocking in sequential logic, false triggers in interrupt lines, and corrupted count/shift register values. Standard-input replacements for Schmitt-trigger originals are BLOCKED in this context. |
+| **No — clean digital signals from other logic gates or MCU/FPGA outputs** | Standard matching. Schmitt trigger remains at baseline `identity_flag` weight. A Schmitt trigger replacement for a standard input is always acceptable (superset). |
+
+**Affected attributes:**
+- `Schmitt Trigger` → BLOCKING Identity Flag for slow/noisy input applications
+- `Input Hysteresis Voltage` → informational for noise margin calculation
+
 ---
+
+### 33. Voltage References (Family C6)
+
+**Context sensitivity: MODERATE**
+
+Configuration (series vs. shunt) is a hard Identity gate before any parametric evaluation — the most common categorical substitution error. Series references (REF50xx, ADR3x, LT6654) actively drive the output pin from an internal error amplifier. Shunt references (TL431, LM4040, LM385) clamp in parallel with the load via an external series resistor — they cannot drive the output. These topologies are architecturally incompatible without circuit modification.
+
+Within the series category, precision grade and TC are the primary matching axes. Shunt references require the external series resistor circuit to be evaluated as part of the substitution. Architecture (band-gap vs. buried Zener vs. XFET) determines noise floor and long-term stability class.
+
+**Digikey:** Single category "Voltage Reference" covers both series and shunt types. Distinguished by the `Reference Type` parametric field ("Series" or "Shunt"). 13 parametric fields mapped, ~63% weight coverage (78/123). Missing from Digikey: architecture, long_term_stability, dropout_voltage, tc_accuracy_grade, enable_shutdown_polarity, nr_pin, aec_q100, packaging.
+
+**19 matching rules** (total weight: 123):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `configuration` | identity | 10 | yes | HARD GATE. Series vs Shunt. Post-scoring filter removes mismatches |
+| 2 | `output_voltage` | identity | 10 | yes | Exact match. 2.500V ≠ 2.048V. Parsed from MPN where encoded |
+| 3 | `architecture` | identity | 7 | no | Band-gap / Buried Zener / XFET. Escalated to w10 for precision (Q3) |
+| 4 | `adjustability` | identity | 8 | no | Fixed / Adjustable / Trimmable. Losing trim = losing calibration |
+| 5 | `tc_accuracy_grade` | identity_flag | 7 | no | Suffix encodes both TC + accuracy (REF5025A=0.05%/3ppm) |
+| 6 | `aec_q100` | identity_flag | 3 | no | Escalated to w10+blockOnMissing for automotive (Q4) |
+| 7 | `enable_shutdown_polarity` | identity | 8 | no | Active-low shutdown vs active-high enable. Mismatch = permanently off. Uses `identity` not `identity_flag` — both directions fatal |
+| 8 | `initial_accuracy` | threshold lte | 8 | no | 0.02%–0.5%. Gain error = accuracy × 2^N |
+| 9 | `tc` | threshold lte | 8 | no | <1 to 100 ppm/°C. Escalated to w10 for precision (Q3) |
+| 10 | `output_noise` | threshold lte | 6 | no | 0.1–10Hz band. 24-bit: 1 LSB=149nV at 2.5V. Escalated to w9 (Q3) |
+| 11 | `long_term_stability` | threshold lte | 4 | no | Band-gap: 25–100 ppm/1000h. Escalated to w8 for metrology (Q3) |
+| 12 | `dropout_voltage` | threshold lte | 7 | no | Vin_min = Vout + Vdropout. Headroom check |
+| 13 | `quiescent_current` | threshold lte | 5 | no | Escalated for battery/shunt (Q1 shunt → Ika_min primary) |
+| 14 | `output_current` | threshold gte | 5 | no | References not power sources. 5–15mA typical |
+| 15 | `input_voltage_range` | threshold range_superset | 7 | no | Replacement must contain circuit supply voltage |
+| 16 | `operating_temp` | threshold range_superset | 6 | no | Must fully cover application range |
+| 17 | `nr_pin` | application_review | 4 | no | NR pin w/ cap → noise reverts to unfiltered if replacement lacks NR |
+| 18 | `package_case` | application_review | 5 | no | SOT-23-3 ≠ SOT-23-5 ≠ SC70-5 |
+| 19 | `packaging` | operational | 1 | no | Tape-and-reel / cut tape / bulk |
+
+**MPN enrichment** (~30 prefix patterns): Infers `configuration` (series/shunt), `architecture` (band-gap/buried Zener/XFET), and `output_voltage` (parsed from encoded digits — REF5025→2.5V, ADR4550→5.0V, LM4040A25→2.5V). Post-scoring filter removes confirmed configuration mismatches.
+
+#### Question 1 (BLOCKING): Is this device configured as a series reference or a shunt reference?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Series reference (dedicated Vout pin drives the load directly)** | Shunt references are BLOCKED — they cannot drive the output and require an external resistor circuit that does not exist in a series topology. `configuration` → escalate_to_mandatory + blockOnMissing. |
+| **Shunt reference (TL431 / LM4040 / LM385 — parallel with load, external series resistor)** | Series references are BLOCKED — installing a series reference into a TL431 feedback divider topology completely changes the regulation voltage and destroys the feedback loop. `configuration` → escalate_to_mandatory + blockOnMissing. `quiescent_current` → escalate_to_primary (Ika_min sets series resistor current). `adjustability` → escalate_to_primary (resistor-programmable compatibility). |
+
+**Affected attributes (all 19 rules):**
+
+| Attribute | Default | Q1=Series | Q1=Shunt |
+|-----------|---------|-----------|----------|
+| `configuration` | identity w10 block | w10 BLOCKING (confirmed) | w10 BLOCKING (confirmed) |
+| `output_voltage` | identity w10 block | unchanged | unchanged |
+| `architecture` | identity w7 | unchanged | unchanged |
+| `adjustability` | identity w8 | unchanged | escalate_to_primary — resistor-programmable compatibility |
+| `tc_accuracy_grade` | identity_flag w7 | unchanged | unchanged |
+| `aec_q100` | identity_flag w3 | unchanged | unchanged |
+| `enable_shutdown_polarity` | identity w8 | unchanged | unchanged |
+| `initial_accuracy` | threshold lte w8 | unchanged | unchanged |
+| `tc` | threshold lte w8 | unchanged | unchanged |
+| `output_noise` | threshold lte w6 | unchanged | unchanged |
+| `long_term_stability` | threshold lte w4 | unchanged | unchanged |
+| `dropout_voltage` | threshold lte w7 | unchanged | unchanged |
+| `quiescent_current` | threshold lte w5 | unchanged | escalate_to_primary — Ika_min determines series resistor sizing |
+| `output_current` | threshold gte w5 | unchanged | unchanged |
+| `input_voltage_range` | threshold range_superset w7 | unchanged | unchanged |
+| `operating_temp` | threshold range_superset w6 | unchanged | unchanged |
+| `nr_pin` | application_review w4 | unchanged | unchanged |
+| `package_case` | application_review w5 | unchanged | unchanged |
+| `packaging` | operational w1 | unchanged | unchanged |
+
+#### Question 2: What type of output voltage is required?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Fixed voltage (1.2V, 2.048V, 2.500V, 3.000V, 4.096V, 5.000V, 10.000V)** | `output_voltage` → escalate_to_mandatory + blockOnMissing. A 2.500V reference cannot substitute for 2.048V regardless of accuracy class. Standard reference voltages: 1.2V (band-gap), 2.048V and 4.096V (ADC-optimal — powers of 2), 2.500V (most common), 3.000V, 5.000V, 10.000V (metrology). |
+| **Adjustable — resistor-programmable (TL431 type) or trim-pin adjustable** | `adjustability` → escalate_to_primary. Verify the replacement's adjustment range and Vref covers the required output voltage. For shunt types with external programming resistors, replacement Vref and trim range must be compatible with existing resistor network. |
+
+**Affected attributes:**
+
+| Attribute | Q2=Fixed | Q2=Adjustable |
+|-----------|----------|---------------|
+| `output_voltage` | escalate_to_mandatory + blockOnMissing | unchanged |
+| `adjustability` | unchanged | escalate_to_primary |
+
+#### Question 3: What is the precision requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **High precision (16+ bit ADC reference, metrology, calibration)** | Initial accuracy <0.05% required. TC <5 ppm/°C required (BLOCKING). Architecture (band-gap vs buried Zener) determines noise floor and long-term stability — architectures have fundamentally different TC curve shapes. 0.1–10 Hz noise adds directly to ADC noise floor and cannot be averaged away. NR pin usage must be preserved for noise filtering. |
+| **Moderate precision (12–16 bit ADC, sensor conditioning)** | Standard parametric matching. TC becomes primary concern. Initial accuracy 0.1–0.2% acceptable. TC 10–25 ppm/°C acceptable. |
+| **General purpose (comparator threshold, simple bias, non-precision)** | Relaxed matching. Primary concerns are Vout, dropout, and Iq. Architecture is informational only. |
+
+**Affected attributes (all 19 rules):**
+
+| Attribute | Default | Q3=High Precision | Q3=Moderate | Q3=General |
+|-----------|---------|-------------------|-------------|------------|
+| `configuration` | identity w10 block | unchanged | unchanged | unchanged |
+| `output_voltage` | identity w10 block | unchanged | unchanged | unchanged |
+| `architecture` | identity w7 | escalate_to_mandatory — band-gap vs buried Zener TC curve shapes + noise floors are fundamentally different | unchanged | add_review_flag — informational only |
+| `adjustability` | identity w8 | unchanged | unchanged | unchanged |
+| `tc_accuracy_grade` | identity_flag w7 | escalate_to_primary — grade suffix encodes both TC and accuracy simultaneously | unchanged | unchanged |
+| `aec_q100` | identity_flag w3 | unchanged | unchanged | unchanged |
+| `enable_shutdown_polarity` | identity w8 | unchanged | unchanged | unchanged |
+| `initial_accuracy` | threshold lte w8 | escalate_to_primary + blockOnMissing — gain error = accuracy × 2^N. At 16-bit: 0.05% = 32.8 LSBs | unchanged | unchanged |
+| `tc` | threshold lte w8 | escalate_to_mandatory + blockOnMissing — dominant error source across temperature | escalate_to_primary | unchanged |
+| `output_noise` | threshold lte w6 | escalate_to_primary + blockOnMissing — reference noise adds directly to ADC noise floor | unchanged | unchanged |
+| `long_term_stability` | threshold lte w4 | escalate_to_primary — determines calibration interval | unchanged | unchanged |
+| `dropout_voltage` | threshold lte w7 | unchanged | unchanged | unchanged |
+| `quiescent_current` | threshold lte w5 | unchanged | unchanged | unchanged |
+| `output_current` | threshold gte w5 | unchanged | unchanged | unchanged |
+| `input_voltage_range` | threshold range_superset w7 | unchanged | unchanged | unchanged |
+| `operating_temp` | threshold range_superset w6 | unchanged | unchanged | unchanged |
+| `nr_pin` | application_review w4 | escalate_to_primary — losing NR cap reverts noise to unfiltered specification | unchanged | unchanged |
+| `package_case` | application_review w5 | unchanged | unchanged | unchanged |
+| `packaging` | operational w1 | unchanged | unchanged | unchanged |
+
+#### Question 4: Is this an automotive design?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — automotive (AEC-Q100 required)** | AEC-Q100 becomes mandatory (BLOCKING). Non-automotive-qualified parts cannot substitute regardless of electrical match. Temperature range must cover −40°C to +125°C minimum (Grade 1). |
+| **No** | Standard environmental matching. AEC-Q100 is operational — informational but not required. |
+
+**Affected attributes:**
+
+| Attribute | Q4=Yes | Q4=No |
+|-----------|--------|-------|
+| `aec_q100` | escalate_to_mandatory + blockOnMissing | unchanged |
+| `operating_temp` | escalate_to_primary — must cover −40°C to +125°C minimum | unchanged |
+
+
+
+### 34. Interface ICs — RS-485, CAN, I2C, USB (Family C7)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Protocol is the first and hardest gate in this family. RS-485, CAN, I2C, and USB use fundamentally different signaling standards, bus arbitration mechanisms, and termination strategies — no cross-protocol substitution is possible without circuit redesign. Within each protocol, the bifurcation between isolated and non-isolated and between automotive and industrial grade drives the most critical safety and qualification constraints.
+
+Context questions are protocol-specific and branch immediately after Q1. The isolated/non-isolated question is the most dangerous substitution error after protocol mismatch: a non-isolated device cannot replace an isolated one without violating the safety certification of the system.
+
+**Digikey:** Four subcategories span the C7 family: "RS-485 Interface IC", "CAN Interface IC", "I2C/SMBus Interface", "USB Interface IC". Most parametric fields (protocol, data rate, supply voltage, operating temperature, AEC-Q100) are present in Digikey. Missing from Digikey: isolation working voltage, bus fault protection voltage, unit loads, failsafe receiver flag, TXD dominant timeout, slew rate class, propagation delay.
+
+**22 matching rules** (total weight: ~145):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `protocol` | identity | 10 | yes | HARD GATE. RS-485 / CAN / I2C / USB — no cross-protocol substitution |
+| 2 | `data_rate` | threshold gte | 9 | yes | Replacement max data rate ≥ original. CAN FD data phase rate separate from arbitration phase rate |
+| 3 | `operating_mode` | identity | 9 | yes | Half-duplex / Full-duplex / Isolated vs Non-isolated. Half ≠ Full for RS-485 |
+| 4 | `isolation_type` | identity_flag | 8 | no | Non-isolated / Capacitive / Transformer. Escalated to w10+blockOnMissing if isolated (Q2) |
+| 5 | `isolation_working_voltage` | threshold gte | 7 | no | VIORM must cover fault-condition CM voltage. Escalated for safety-rated equipment (Q2) |
+| 6 | `can_variant` | identity_flag | 8 | no | Classical CAN / CAN FD. CAN FD transceivers required for data-phase rates >1 Mbit/s |
+| 7 | `de_polarity` | identity | 8 | yes | Active-high DE / Active-low DE / Combined DE+RE. Polarity inversion = inverted direction control |
+| 8 | `failsafe_receiver` | identity_flag | 6 | no | With or without failsafe biasing. Required for RS-485 UART-based systems with bus-idle detection |
+| 9 | `txd_dominant_timeout` | identity_flag | 7 | no | CAN only. Absence = bus-jamming fault risk. All ISO 11898-2 compliant parts include it |
+| 10 | `bus_fault_protection` | threshold gte | 8 | no | ±15 V / ±60 V / ±70 V (auto CAN). Escalated to primary for industrial/harsh (Q3) |
+| 11 | `esd_bus_pins` | threshold gte | 7 | no | IEC 61000-4-2 contact discharge rating. ±8 kV minimum industrial; escalated for exposed connectors |
+| 12 | `vod_differential` | threshold gte | 6 | no | Minimum VOD into specified load. Threshold ≥ 1.5 V (RS-485/CAN). Escalated for long cable (Q3) |
+| 13 | `receiver_threshold_cm` | threshold superset | 7 | no | Differential threshold + CM range. Standard −7 V to +12 V RS-485; extended range for multi-panel |
+| 14 | `slew_rate_class` | application_review | 6 | no | Limited (≤250 kbps) vs Unlimited. Substituting unlimited for limited → EMI compliance violation |
+| 15 | `propagation_delay` | threshold lte | 6 | no | One-way tpd. CAN FD <140 ns; classical CAN <255 ns. Escalated for CAN FD (Q1) |
+| 16 | `unit_loads` | threshold lte | 5 | no | RS-485 only. 1 UL / ½ UL / ¼ UL / ⅛ UL. Escalated for dense multi-drop networks |
+| 17 | `common_mode_range` | threshold superset | 6 | no | Replacement CM range must contain actual bus CM range. Extended range for multi-panel systems |
+| 18 | `supply_voltage` | threshold superset | 7 | yes | 3.3 V / 5 V / wide-supply. Must contain actual VCC. Escalated for mixed-voltage boards |
+| 19 | `standby_current` | threshold lte | 5 | no | Automotive CAN quiescent budget. Escalated to primary for automotive ECU (Q4) |
+| 20 | `operating_temp` | threshold superset | 7 | yes | Must cover full application range. −40°C to +125°C minimum for automotive |
+| 21 | `aec_q100` | identity_flag | 4 | no | Escalated to w10+blockOnMissing for automotive (Q4) |
+| 22 | `package_case` | application_review | 5 | no | SOIC-8 is de facto standard for RS-485/CAN — most vendors pin-compatible. Isolated packages incompatible with SOIC-8 footprint |
+
+**MPN enrichment** (~40 prefix patterns): Infers `protocol` (RS-485 / CAN / I2C / USB from part prefix — MAX485/ADM485/SN75176=RS-485; TJA1042/MCP2561/SN65HVD230=CAN; PCA9600/P82B96=I2C buffer; ISO1042/ADM3053=isolated CAN), `isolation_type` (ISO*/ADuM*/IL3*/ADM2*=isolated), `can_variant` (TJA1441/MCP2558FD/TCAN1042*=CAN FD capable). Post-scoring filter blocks protocol mismatches before scoring.
+
+#### Question 1 (BLOCKING): What is the interface protocol?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **RS-485 / RS-422** | All CAN, I2C, and USB candidates blocked. `protocol` → HARD GATE. Activates RS-485-specific attributes: DE polarity, failsafe receiver, unit loads, slew rate class, half-duplex vs. full-duplex, common-mode range. |
+| **CAN / CAN FD** | All RS-485, I2C, and USB candidates blocked. Activates CAN-specific attributes: CAN standard variant (classical vs. FD), TXD dominant timeout, bus fault protection ≥±70 V for automotive. |
+| **I2C / SMBus** | All RS-485, CAN, and USB candidates blocked. Activates I2C-specific: speed grade (Standard/Fast/Fm+/Hs), buffer vs. isolator type, mixed-supply operation, capacitance isolation capability. |
+| **USB** | All RS-485, CAN, and I2C candidates blocked. Activates USB-specific: speed grade (FS/HS/SS), USB-IF ESD requirements, differential impedance compliance, signal conditioning vs. transceiver type. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q1=RS-485 | Q1=CAN | Q1=I2C | Q1=USB |
+|-----------|---------|-----------|--------|--------|--------|
+| `protocol` | identity w10 block | BLOCKING confirmed | BLOCKING confirmed | BLOCKING confirmed | BLOCKING confirmed |
+| `can_variant` | identity_flag w8 | not applicable | active | not applicable | not applicable |
+| `txd_dominant_timeout` | identity_flag w7 | not applicable | active | not applicable | not applicable |
+| `de_polarity` | identity w8 | active | not applicable | not applicable | not applicable |
+| `failsafe_receiver` | identity_flag w6 | active | not applicable | not applicable | not applicable |
+| `unit_loads` | threshold lte w5 | active | not applicable | not applicable | not applicable |
+| `slew_rate_class` | application_review w6 | active | add_review_flag | not applicable | not applicable |
+| `vod_differential` | threshold gte w6 | active | active | not applicable | not applicable |
+| `receiver_threshold_cm` | threshold superset w7 | active | active | not applicable | not applicable |
+| `propagation_delay` | threshold lte w6 | active | escalate_to_primary for CAN FD | active | active |
+| `common_mode_range` | threshold superset w6 | active | not applicable | not applicable | not applicable |
+
+#### Question 2: Is galvanic isolation required?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — isolated transceiver required (safety-rated system, ground-fault protection, high-voltage common-mode)** | `isolation_type` → BLOCKING. Non-isolated candidates removed from results. `isolation_working_voltage` → escalate_to_mandatory + threshold ≥ actual fault-condition CM voltage. Both supply domains (host-side VCC1 and bus-side VCC2) must be verified. Isolation class (basic, reinforced, functional) must match safety standard. |
+| **No — non-isolated acceptable** | `isolation_type` → unchanged. Isolated replacements are acceptable as upgrades (superset capability) but verify dual-supply requirement doesn't conflict with single-supply PCB design. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q2=Isolated | Q2=Non-Isolated |
+|-----------|---------|-------------|-----------------|
+| `isolation_type` | identity_flag w8 | escalate_to_mandatory + blockOnMissing — non-isolated BLOCKED | unchanged |
+| `isolation_working_voltage` | threshold gte w7 | escalate_to_mandatory — must cover fault CM voltage | not applicable |
+| `supply_voltage` | threshold superset w7 | verify both VCC1 and VCC2 domains | unchanged |
+| `package_case` | application_review w5 | escalate_to_primary — isolated packages incompatible with SOIC-8 footprint | unchanged |
+
+#### Question 3: What is the operating environment / application severity?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Industrial field wiring (RS-485 in conduit, CAN in control panels, exposed connectors, long cable runs >100 m)** | `bus_fault_protection` → escalate_to_primary with threshold ≥±60 V. `esd_bus_pins` → escalate_to_primary with threshold ≥±8 kV (IEC 61000-4-2 Level 4). `common_mode_range` → escalate_to_primary, extended range (−25 V to +25 V) preferred. `slew_rate_class` → escalate_to_primary for RS-485 at moderate speed (EMI compliance). `vod_differential` → escalate_to_primary for long cable (higher margin needed). |
+| **Automotive (ECU, BCM, gateway, underhood)** | See Q4 (automotive). `bus_fault_protection` → CAN ±70 V / ±80 V required for ISO 7637 compliance. `standby_current` → escalate_to_primary (quiescent budget). |
+| **Consumer / light industrial (protected environment, short cable runs <10 m, no field wiring)** | Standard parametric matching. `bus_fault_protection` → threshold ≥±15 V (minimum). `esd_bus_pins` → threshold ≥±4 kV acceptable. `slew_rate_class` → Application Review only. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q3=Industrial | Q3=Automotive (→Q4) | Q3=Consumer |
+|-----------|---------|---------------|---------------------|-------------|
+| `bus_fault_protection` | threshold gte w8 | escalate_to_primary ≥±60 V | escalate_to_primary ≥±70 V CAN | threshold ≥±15 V minimum |
+| `esd_bus_pins` | threshold gte w7 | escalate_to_primary ≥±8 kV | escalate_to_primary ≥±8 kV | ≥±4 kV acceptable |
+| `common_mode_range` | threshold superset w6 | escalate_to_primary, extended range preferred | unchanged | unchanged |
+| `slew_rate_class` | application_review w6 | escalate_to_primary for RS-485 ≤1 Mbit/s | unchanged | unchanged |
+| `vod_differential` | threshold gte w6 | escalate_to_primary | unchanged | unchanged |
+| `standby_current` | threshold lte w5 | unchanged | escalate_to_primary | unchanged |
+
+#### Question 4: Is this an automotive design (AEC-Q100 required)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — automotive ECU, BCM, gateway, ADAS (AEC-Q100 required)** | `aec_q100` → BLOCKING. Non-automotive parts removed from results. `operating_temp` → escalate_to_mandatory with range ≥ −40°C to +125°C (Grade 1). `standby_current` → escalate_to_primary (ECU quiescent budget). CAN-specific: `can_variant` → verify CAN FD support if network uses CAN FD. `bus_fault_protection` → ≥±70 V for ISO 7637 load dump compliance. |
+| **No** | `aec_q100` → unchanged (Operational). Standard environmental matching. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q4=Yes (Automotive) | Q4=No |
+|-----------|---------|---------------------|-------|
+| `aec_q100` | identity_flag w4 | escalate_to_mandatory + blockOnMissing | unchanged |
+| `operating_temp` | threshold superset w7 | escalate_to_mandatory — must cover −40°C to +125°C minimum | unchanged |
+| `standby_current` | threshold lte w5 | escalate_to_primary | unchanged |
+| `bus_fault_protection` | threshold gte w8 | CAN: escalate threshold to ≥±70 V | unchanged |
+
 
 ## Summary: Application Context Questions by Family
 
@@ -1836,6 +2212,8 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **Gate Drivers** | C3 | Driver configuration? (single/dual/half-bridge/full-bridge) | Isolation required? | Input logic voltage? | Power device type / Qg? Feature pins (SD/FAULT/Rdt)? Automotive? |
 | **Op-Amps / Comparators** | C4 | Op-amp or comparator application? (closed-loop / open-loop — BLOCKING) | Input stage type needed? (bipolar / JFET / CMOS) | Single-supply or dual-supply? | Precision / noise-critical application? Automotive? |
 | **Logic ICs (74-Series)** | C5 | What is driving this device's inputs? (TTL / CMOS-5V / CMOS-3.3V — BLOCKING for HC/HCT selection) | Supply voltage? (5V / 3.3V / mixed — BLOCKING for 5V-tolerance) | Output type required? (totem-pole / open-drain / 3-state) | Automotive? |
+| **Voltage References** | C6 | Series or shunt configuration? (BLOCKING) | Output voltage required? | Precision level? (16-bit / 12-16-bit / general purpose) | Automotive? |
+| **Interface ICs (RS-485, CAN, I2C, USB)** | C7 | What is the protocol? (RS-485/CAN/I2C/USB — BLOCKING) | Isolation required? | Industrial / Automotive / Consumer environment? | Automotive? (AEC-Q100 — BLOCKING) |
 
 ---
 

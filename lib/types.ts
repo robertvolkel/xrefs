@@ -34,7 +34,9 @@ export type ComponentCategory =
   | 'Voltage Regulators'
   | 'Gate Drivers'
   | 'Amplifiers'
-  | 'Logic ICs';
+  | 'Logic ICs'
+  | 'Voltage References'
+  | 'Interface ICs';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {

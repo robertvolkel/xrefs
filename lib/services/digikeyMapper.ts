@@ -52,10 +52,16 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
   if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
+  if (lower.includes('voltage reference')) return 'Voltage References';
   if (lower.includes('voltage regulator') || lower.includes('ldo')) return 'Voltage Regulators';
   if (lower.includes('switching regulator') || lower.includes('switching controller') || lower.includes('dc dc')) return 'Voltage Regulators';
   if (lower.includes('gate driver')) return 'Gate Drivers';
   if (lower.includes('op amp') || lower.includes('buffer amp') || lower.includes('comparator') || lower.includes('instrumentation')) return 'Amplifiers';
+  // Interface ICs (Family C7) — MUST come BEFORE Logic ICs 'transceiver' check
+  // RS-485/CAN transceivers live in "Drivers, Receivers, Transceivers" with Protocol field
+  // I2C isolators live in "Digital Isolators" with Type=I2C
+  if (lower.includes('drivers, receivers, transceivers')) return 'Interface ICs';
+  if (lower.includes('digital isolator') && !lower.includes('gate driver')) return 'Interface ICs';
   // Logic ICs (Family C5) — 7 Digikey leaf categories
   if (lower.includes('gates and inverters') || lower.includes('flip flop') ||
       lower.includes('latch') || lower.includes('counter') || lower.includes('divider') ||
@@ -92,6 +98,8 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('tvs diode') || lower.includes('tvs -')) return 'TVS Diode';
   if (lower.includes('bridge rectifier')) return 'Diodes - Bridge Rectifiers';
   if (lower.includes('single diode')) return 'Rectifier Diode';
+  // Voltage References (Family C6) — must come before voltage regulator checks
+  if (lower.includes('voltage reference')) return 'Voltage Reference';
   // Linear Voltage Regulators / LDOs (Family C1)
   if (lower.includes('voltage regulator') && lower.includes('linear')) return 'Linear Voltage Regulator';
   if (lower.includes('ldo')) return 'LDO';
@@ -110,6 +118,13 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('counter') || lower.includes('divider')) return 'Counters, Dividers';
   if (lower.includes('shift register')) return 'Shift Registers';
   if (lower.includes('multiplexer') || lower.includes('decoder')) return 'Signal Switches, Multiplexers, Decoders';
+  // Interface ICs (Family C7) — RS-485/CAN transceivers and I2C isolators
+  if (lower.includes('drivers, receivers, transceivers')) {
+    return 'Interface Transceiver';  // Protocol-specific routing handled by param data
+  }
+  if (lower.includes('digital isolator') && !lower.includes('gate driver')) {
+    return 'I2C/SMBus Interface';
+  }
   // Gate Drivers (Family C3) — must be before MOSFET/IGBT checks
   if (lower.includes('isolator') && lower.includes('gate driver')) return 'Isolated Gate Driver';
   if (lower.includes('gate driver')) return 'Gate Driver';
@@ -1121,6 +1136,63 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
         sortOrder: 1,
       });
       addedIds.add('device_type');
+    }
+  }
+
+  // Interface IC protocol enrichment — infer from Digikey category + Protocol param.
+  // "Drivers, Receivers, Transceivers" has Protocol field (RS422, RS485 / CANbus).
+  // "Digital Isolators" with Type=I2C → I2C protocol.
+  if (!addedIds.has('protocol')) {
+    const catLower = categoryName.toLowerCase();
+    if (catLower.includes('drivers, receivers, transceivers')) {
+      const protocolParam = product.Parameters?.find(p => p.ParameterText === 'Protocol');
+      if (protocolParam) {
+        const proto = protocolParam.ValueText.toLowerCase();
+        let protocol = '';
+        if (proto.includes('rs485') || proto.includes('rs422') || proto.includes('rs-485') || proto.includes('rs-422')) protocol = 'RS-485';
+        else if (proto.includes('can')) protocol = 'CAN';
+        if (protocol) {
+          // Protocol is already mapped via param map, but ensure normalized value
+          const existing = parameters.find(p => p.parameterId === 'protocol');
+          if (existing) {
+            existing.value = protocol;
+          }
+        }
+      }
+    } else if (catLower.includes('digital isolator')) {
+      const typeParam = product.Parameters?.find(p => p.ParameterText === 'Type');
+      if (typeParam?.ValueText?.toLowerCase().includes('i2c')) {
+        parameters.push({
+          parameterId: 'protocol',
+          parameterName: 'Protocol / Interface Standard',
+          value: 'I2C',
+          sortOrder: 1,
+        });
+        addedIds.add('protocol');
+      }
+    }
+  }
+
+  // Interface IC isolation_type enrichment for "Digital Isolators" category.
+  // "Technology" field provides isolation technology: "Capacitive Coupling" / "Magnetic Coupling".
+  // Normalize to our expected values.
+  if (addedIds.has('isolation_type') && categoryName.toLowerCase().includes('digital isolator')) {
+    const isoParam = parameters.find(p => p.parameterId === 'isolation_type');
+    if (isoParam) {
+      const tech = isoParam.value.toLowerCase();
+      if (tech.includes('capacitive')) isoParam.value = 'Capacitive';
+      else if (tech.includes('magnetic')) isoParam.value = 'Transformer';
+    }
+  }
+
+  // Interface IC operating_mode normalization for "Drivers, Receivers, Transceivers".
+  // Digikey "Duplex" field: "Half" → "Half-Duplex", "Full" → "Full-Duplex"
+  if (addedIds.has('operating_mode') && categoryName.toLowerCase().includes('drivers, receivers, transceivers')) {
+    const modeParam = parameters.find(p => p.parameterId === 'operating_mode');
+    if (modeParam) {
+      const mode = modeParam.value.toLowerCase();
+      if (mode === 'half') modeParam.value = 'Half-Duplex';
+      else if (mode === 'full') modeParam.value = 'Full-Duplex';
     }
   }
 

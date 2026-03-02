@@ -102,9 +102,22 @@ export const c5LogicICsContext: FamilyContextConfig = {
           ],
         },
         {
+          value: '3v3_only',
+          label: '3.3V only — all devices at 3.3V supply',
+          description: 'LVC, AHC, AHCT families required. TTL families (LS, ALS, AS, F) are BLOCKED — they require 5V minimum supply.',
+          attributeEffects: [
+            {
+              attributeId: 'supply_voltage',
+              effect: 'escalate_to_mandatory',
+              blockOnMissing: true,
+              note: 'BLOCKING — TTL families (LS, ALS, AS, F) require Vcc ≥ 4.75V and are incompatible with 3.3V supply. HC/HCT/AC/ACT technically support 3.3V (within range) but may have elevated Icc. LVC, AHC, AHCT are optimal for 3.3V operation.',
+            },
+          ],
+        },
+        {
           value: 'single_domain',
-          label: 'No — single voltage domain',
-          description: 'All devices operate from the same supply voltage — standard compatibility rules apply.',
+          label: '5V or other single voltage domain',
+          description: 'All devices operate from the same supply voltage (5V or other) — standard compatibility rules apply.',
           attributeEffects: [],
         },
       ],

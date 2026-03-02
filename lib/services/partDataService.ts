@@ -143,6 +143,16 @@ export async function getRecommendations(
     enrichLogicICAttributes(sourceAttrs);
   }
 
+  // Step 1h: Enrich voltage references with configuration/architecture/output_voltage from MPN
+  if (logicTablePrecheck?.familyId === 'C6') {
+    enrichVoltageReferenceAttributes(sourceAttrs);
+  }
+
+  // Step 1i: Enrich interface ICs with protocol/isolation_type/can_variant from MPN
+  if (logicTablePrecheck?.familyId === 'C7') {
+    enrichInterfaceICAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -189,6 +199,20 @@ export async function getRecommendations(
         // '04 ≠ '14 even though both are inverters.
         if (familyId === 'C5') {
           recs = filterLogicICFunctionMismatches(recs, sourceAttrs);
+        }
+
+        // Step 3e: Post-scoring filter for C6 voltage references —
+        // configuration (series vs shunt) is a BLOCKING identity gate.
+        // Series and shunt are architecturally incompatible topologies.
+        if (familyId === 'C6') {
+          recs = filterVoltageReferenceConfigMismatches(recs, sourceAttrs);
+        }
+
+        // Step 3f: Post-scoring filter for C7 interface ICs —
+        // protocol (RS-485/CAN/I2C/USB) is a BLOCKING identity gate.
+        // No cross-protocol substitution is possible without circuit redesign.
+        if (familyId === 'C7') {
+          recs = filterInterfaceICProtocolMismatches(recs, sourceAttrs);
         }
 
         return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
@@ -325,6 +349,14 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   // Logic ICs (C5): use logic function suffix as keyword
   const logicFunction = paramMap.get('logic_function');
   if (logicFunction) parts.push(logicFunction.value);
+
+  // Voltage References (C6): use configuration as keyword
+  const vrefConfig = paramMap.get('configuration');
+  if (vrefConfig) parts.push(vrefConfig.value);
+
+  // Interface ICs (C7): use protocol as keyword
+  const ifProtocol = paramMap.get('protocol');
+  if (ifProtocol) parts.push(ifProtocol.value);
 
   // Package
   const pkg = paramMap.get('package_case');
@@ -725,4 +757,349 @@ function enrichLogicICAttributes(attrs: PartAttributes): void {
       sortOrder: 0,
     });
   }
+}
+
+// ============================================================
+// VOLTAGE REFERENCE (C6) POST-SCORING FILTER
+// ============================================================
+
+/**
+ * Remove candidates with confirmed configuration (series vs shunt) mismatches.
+ * Configuration is a BLOCKING identity gate — a series reference actively drives
+ * the output pin from an internal error amplifier; a shunt reference clamps in
+ * parallel with the load via an external series resistor. These topologies are
+ * architecturally incompatible without circuit redesign. Candidates with
+ * *missing* configuration are kept — the identity rule already flags them.
+ */
+function filterVoltageReferenceConfigMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcConfig = sourceAttrs.parameters.find(p => p.parameterId === 'configuration')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    const candConfig = rec.matchDetails.find(d => d.parameterId === 'configuration')?.replacementValue?.toLowerCase();
+    // If source or candidate is missing, keep (rules handle missing data)
+    if (srcConfig && candConfig && candConfig !== srcConfig) return false;
+    return true;
+  });
+}
+
+// ============================================================
+// VOLTAGE REFERENCE (C6) MPN ENRICHMENT
+// ============================================================
+
+interface VrefMpnHint {
+  pattern: RegExp;
+  configuration?: string;
+  architecture?: string;
+  manufacturer?: string;
+}
+
+/**
+ * MPN prefix patterns for voltage reference classification.
+ * Used to infer configuration (series/shunt) and architecture (band-gap/buried Zener)
+ * when Digikey parametric data is missing. Patterns are checked in order; first match wins.
+ */
+const vrefMpnPatterns: VrefMpnHint[] = [
+  // Shunt references — TL431 family (most common shunt reference)
+  { pattern: /^TL431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^TL432/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^TLV431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^KA431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'ON Semiconductor' },
+  { pattern: /^NCP431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'ON Semiconductor' },
+  { pattern: /^AZ431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Diodes Inc' },
+  { pattern: /^AP431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Diodes Inc' },
+  { pattern: /^TS431/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'STMicroelectronics' },
+  // Shunt references — LM4040/LM4041 (2-terminal precision shunt)
+  { pattern: /^LM4040/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM4041/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  // Shunt references — LM385/LM336 (older 2-terminal)
+  { pattern: /^LM385/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM336/i, configuration: 'Shunt', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+
+  // Buried Zener references (precision metrology)
+  { pattern: /^LTZ1000/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Analog Devices' },
+  { pattern: /^REF102/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Texas Instruments' },
+  { pattern: /^AD587/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Analog Devices' },
+  { pattern: /^AD588/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Analog Devices' },
+  { pattern: /^AD584/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Analog Devices' },
+  { pattern: /^AD580/i, configuration: 'Series', architecture: 'Buried Zener', manufacturer: 'Analog Devices' },
+
+  // Series band-gap references — TI REF30xx/REF50xx/REF60xx
+  { pattern: /^REF30\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^REF50\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^REF60\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  // Series band-gap references — ADI ADR3xx/ADR4xx/ADR5xx
+  { pattern: /^ADR3\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  { pattern: /^ADR4\d/i, configuration: 'Series', architecture: 'XFET', manufacturer: 'Analog Devices' },
+  { pattern: /^ADR5\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  // Series references — ADI LT6654/LT6650
+  { pattern: /^LT6654/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  { pattern: /^LT6650/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  // Series references — Maxim MAX60xx/MAX63xx/MAX64xx/MAX67xx
+  { pattern: /^MAX60\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX63\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX64\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX67\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Analog Devices' },
+  // Series references — TI LM4132/LM4140
+  { pattern: /^LM4132/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  { pattern: /^LM4140/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Texas Instruments' },
+  // Series references — Renesas ISL21xx
+  { pattern: /^ISL21\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Renesas' },
+  // Series references — Microchip MCP15xx
+  { pattern: /^MCP15\d/i, configuration: 'Series', architecture: 'Band-Gap', manufacturer: 'Microchip' },
+];
+
+/**
+ * Parse output voltage from voltage reference MPN.
+ * Returns voltage in volts (e.g., 2.5) or null if not parseable.
+ *
+ * Patterns:
+ *   REF3033  → 3.3V  (last 2 digits ÷ 10)
+ *   REF5025  → 2.5V  (last 2 digits ÷ 10)
+ *   REF3312  → 1.2V  (last 2 digits ÷ 10)
+ *   ADR4550  → 5.0V  (last 3 digits ÷ 100)
+ *   ADR3425  → 2.5V  (last 3 digits ÷ 100: 425 → 4.25V)
+ *   LM4040A25 / LM4040C20 → extract decimal from suffix
+ */
+function parseVrefOutputVoltage(mpn: string): number | null {
+  const upper = mpn.toUpperCase();
+
+  // REF30xx / REF50xx / REF60xx — last 2 digits after REF30/50/60 ÷ 10
+  const refMatch = upper.match(/^REF[356]0(\d{2})/);
+  if (refMatch) {
+    const v = parseInt(refMatch[1], 10) / 10;
+    if (v > 0 && v <= 15) return v;
+  }
+
+  // ADR3xxx / ADR4xxx / ADR5xxx — last 3 digits ÷ 100
+  const adrMatch = upper.match(/^ADR[345](\d{3})/);
+  if (adrMatch) {
+    const v = parseInt(adrMatch[1], 10) / 100;
+    if (v > 0 && v <= 15) return v;
+  }
+
+  // MAX60xx — last 2 digits ÷ 10
+  const maxMatch = upper.match(/^MAX60(\d{2})/);
+  if (maxMatch) {
+    const v = parseInt(maxMatch[1], 10) / 10;
+    if (v > 0 && v <= 15) return v;
+  }
+
+  // LM4040 / LM4041 — suffix like A25, B10, C20, D50 → voltage
+  const lm4040Match = upper.match(/^LM404[01][A-Z]?(\d{1,2})\.?(\d)?/);
+  if (lm4040Match) {
+    const whole = lm4040Match[1];
+    const frac = lm4040Match[2] ?? '';
+    const v = parseFloat(`${whole}.${frac}`);
+    if (v > 0 && v <= 15) return v;
+  }
+
+  return null;
+}
+
+/**
+ * Enrich C6 voltage reference attributes with configuration, architecture,
+ * and output_voltage inferred from MPN prefix. Only fills in missing
+ * attributes — never overwrites Digikey parametric data.
+ * Mutates `attrs.parameters` in place.
+ */
+function enrichVoltageReferenceAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const hasConfig = attrs.parameters.some(p => p.parameterId === 'configuration');
+  const hasArch = attrs.parameters.some(p => p.parameterId === 'architecture');
+  const hasVout = attrs.parameters.some(p => p.parameterId === 'output_voltage');
+
+  // MPN pattern enrichment for configuration and architecture
+  if (!hasConfig || !hasArch) {
+    for (const hint of vrefMpnPatterns) {
+      if (!hint.pattern.test(mpn)) continue;
+
+      if (!hasConfig && hint.configuration) {
+        attrs.parameters.push({
+          parameterId: 'configuration',
+          parameterName: 'Reference Type (Series / Shunt)',
+          value: hint.configuration,
+          sortOrder: 0,
+        });
+      }
+      if (!hasArch && hint.architecture) {
+        attrs.parameters.push({
+          parameterId: 'architecture',
+          parameterName: 'Architecture',
+          value: hint.architecture,
+          sortOrder: 0,
+        });
+      }
+      break;
+    }
+  }
+
+  // Output voltage parsing from MPN
+  if (!hasVout) {
+    const voltage = parseVrefOutputVoltage(mpn);
+    if (voltage !== null) {
+      attrs.parameters.push({
+        parameterId: 'output_voltage',
+        parameterName: 'Output Voltage',
+        value: `${voltage}V`,
+        numericValue: voltage,
+        sortOrder: 0,
+      });
+    }
+  }
+}
+
+// ============================================================
+// INTERFACE IC MPN ENRICHMENT (C7)
+// ============================================================
+
+interface InterfaceICMpnHint {
+  pattern: RegExp;
+  protocol?: string;        // RS-485 | CAN | I2C | USB
+  isolationType?: string;   // Isolated
+  canVariant?: string;      // CAN FD
+  manufacturer?: string;
+}
+
+/**
+ * MPN prefix patterns for interface IC classification.
+ * Infers protocol (RS-485/CAN/I2C/USB), isolation_type, and can_variant
+ * when Digikey parametric data is missing. First match wins.
+ *
+ * CRITICAL: SN65HVD collision — SN65HVD0xx/1xx = RS-485, SN65HVD2xx = CAN.
+ */
+const interfaceICMpnPatterns: InterfaceICMpnHint[] = [
+  // === RS-485 Transceivers ===
+  // Maxim RS-485 family
+  { pattern: /^MAX48[5-9]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX49[0-1]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX308[2-8]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX309[0-5]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^MAX347[0-1]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  // ADI RS-485
+  { pattern: /^ADM485/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^ADM1485/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^ADM3485/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^ADM4857/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  // ADI RS-485 isolated
+  { pattern: /^ADM258[2-7]/i, protocol: 'RS-485', isolationType: 'Isolated', manufacturer: 'Analog Devices' },
+  // TI RS-485 — SN65HVD0xx/1xx (NOT 2xx — that's CAN!)
+  { pattern: /^SN65HVD[01]\d/i, protocol: 'RS-485', manufacturer: 'Texas Instruments' },
+  { pattern: /^SN75HVD/i, protocol: 'RS-485', manufacturer: 'Texas Instruments' },
+  { pattern: /^SN75176/i, protocol: 'RS-485', manufacturer: 'Texas Instruments' },
+  { pattern: /^SN75ALS/i, protocol: 'RS-485', manufacturer: 'Texas Instruments' },
+  { pattern: /^THVD/i, protocol: 'RS-485', manufacturer: 'Texas Instruments' },
+  // TI RS-485 isolated
+  { pattern: /^ISO308[2-6]/i, protocol: 'RS-485', isolationType: 'Isolated', manufacturer: 'Texas Instruments' },
+  // MaxLinear RS-485
+  { pattern: /^SP485/i, protocol: 'RS-485', manufacturer: 'MaxLinear' },
+  { pattern: /^SP3485/i, protocol: 'RS-485', manufacturer: 'MaxLinear' },
+  // ADI/LTC RS-485
+  { pattern: /^LTC285[0-2]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  { pattern: /^LTC286[2-4]/i, protocol: 'RS-485', manufacturer: 'Analog Devices' },
+  // NVE RS-485 isolated
+  { pattern: /^IL308[6]/i, protocol: 'RS-485', isolationType: 'Isolated', manufacturer: 'NVE' },
+  { pattern: /^IL368[5]/i, protocol: 'RS-485', isolationType: 'Isolated', manufacturer: 'NVE' },
+
+  // === CAN Transceivers ===
+  // NXP CAN classical
+  { pattern: /^TJA104[0-9]/i, protocol: 'CAN', manufacturer: 'NXP' },
+  { pattern: /^TJA105[0-2]/i, protocol: 'CAN', manufacturer: 'NXP' },
+  // NXP CAN FD
+  { pattern: /^TJA144[1-3]/i, protocol: 'CAN', canVariant: 'CAN FD', manufacturer: 'NXP' },
+  { pattern: /^TJA146[2]/i, protocol: 'CAN', canVariant: 'CAN FD', manufacturer: 'NXP' },
+  // Microchip CAN classical
+  { pattern: /^MCP255[1-7]/i, protocol: 'CAN', manufacturer: 'Microchip' },
+  { pattern: /^MCP256[1-2]/i, protocol: 'CAN', manufacturer: 'Microchip' },
+  // Microchip CAN FD
+  { pattern: /^MCP2558FD/i, protocol: 'CAN', canVariant: 'CAN FD', manufacturer: 'Microchip' },
+  { pattern: /^MCP2561FD/i, protocol: 'CAN', canVariant: 'CAN FD', manufacturer: 'Microchip' },
+  // TI CAN — SN65HVD2xx (NOT 0xx/1xx — those are RS-485!)
+  { pattern: /^SN65HVD2[3-5]\d/i, protocol: 'CAN', manufacturer: 'Texas Instruments' },
+  // TI CAN isolated
+  { pattern: /^ISO1042/i, protocol: 'CAN', isolationType: 'Isolated', manufacturer: 'Texas Instruments' },
+  // TI TCAN — classical and FD variants
+  { pattern: /^TCAN104[2-4]/i, protocol: 'CAN', manufacturer: 'Texas Instruments' },
+  { pattern: /^TCAN105[1]/i, protocol: 'CAN', manufacturer: 'Texas Instruments' },
+  // ADI CAN isolated
+  { pattern: /^ADM305[3-5]/i, protocol: 'CAN', isolationType: 'Isolated', manufacturer: 'Analog Devices' },
+  // Silicon Labs CAN isolated
+  { pattern: /^Si844[1-4]/i, protocol: 'CAN', isolationType: 'Isolated', manufacturer: 'Silicon Labs' },
+
+  // === I2C Bus Buffers / Isolators ===
+  { pattern: /^PCA9600/i, protocol: 'I2C', manufacturer: 'NXP' },
+  { pattern: /^P82B96/i, protocol: 'I2C', manufacturer: 'NXP' },
+  { pattern: /^LTC431[1-6]/i, protocol: 'I2C', manufacturer: 'Analog Devices' },
+  // TI I2C isolated
+  { pattern: /^ISO154[0-1]/i, protocol: 'I2C', isolationType: 'Isolated', manufacturer: 'Texas Instruments' },
+  // ADI I2C isolated
+  { pattern: /^ADUM125[0-1]/i, protocol: 'I2C', isolationType: 'Isolated', manufacturer: 'Analog Devices' },
+
+  // === USB ESD / Signal Conditioning ===
+  { pattern: /^TPD4S012/i, protocol: 'USB', manufacturer: 'Texas Instruments' },
+  { pattern: /^PRTR5V0U/i, protocol: 'USB', manufacturer: 'Nexperia' },
+  { pattern: /^USBLC6/i, protocol: 'USB', manufacturer: 'STMicroelectronics' },
+];
+
+/**
+ * Enrich C7 interface IC attributes with protocol, isolation_type, and
+ * can_variant inferred from MPN prefix. Only fills in missing attributes —
+ * never overwrites Digikey parametric data.
+ */
+function enrichInterfaceICAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const hasProtocol = attrs.parameters.some(p => p.parameterId === 'protocol');
+  const hasIsolation = attrs.parameters.some(p => p.parameterId === 'isolation_type');
+  const hasCanVariant = attrs.parameters.some(p => p.parameterId === 'can_variant');
+
+  for (const hint of interfaceICMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    if (!hasProtocol && hint.protocol) {
+      attrs.parameters.push({
+        parameterId: 'protocol',
+        parameterName: 'Protocol / Interface Standard',
+        value: hint.protocol,
+        sortOrder: 0,
+      });
+    }
+    if (!hasIsolation && hint.isolationType) {
+      attrs.parameters.push({
+        parameterId: 'isolation_type',
+        parameterName: 'Galvanic Isolation Type',
+        value: hint.isolationType,
+        sortOrder: 0,
+      });
+    }
+    if (!hasCanVariant && hint.canVariant) {
+      attrs.parameters.push({
+        parameterId: 'can_variant',
+        parameterName: 'CAN Standard Variant',
+        value: hint.canVariant,
+        sortOrder: 0,
+      });
+    }
+    break; // First match wins
+  }
+}
+
+/**
+ * Post-scoring filter for C7 interface ICs — removes confirmed protocol mismatches.
+ * Protocol is a BLOCKING identity gate. RS-485, CAN, I2C, and USB are fundamentally
+ * incompatible. Candidates with missing protocol are kept (identity rule handles them).
+ */
+function filterInterfaceICProtocolMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcProtocol = sourceAttrs.parameters.find(p => p.parameterId === 'protocol')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    const candProtocol = rec.matchDetails.find(d => d.parameterId === 'protocol')?.replacementValue?.toLowerCase();
+    // If source or candidate is missing protocol, keep (rules handle missing data)
+    if (srcProtocol && candProtocol && candProtocol !== srcProtocol) return false;
+    return true;
+  });
 }

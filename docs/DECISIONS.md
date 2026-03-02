@@ -1108,3 +1108,71 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/c5LogicICs.ts`, `lib/contextQuestions/c5LogicICs.ts`
 
 **Files modified:** `lib/types.ts` (Logic ICs category), `lib/logicTables/index.ts` (registry + 20+ subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory for 7 subcategories), `lib/services/digikeyParamMap.ts` (7 param maps + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + MPN parser + candidate search keywords), `__tests__/services/matchingEngine.test.ts` (29 C5 tests)
+
+---
+
+## 51. C6 Voltage References
+
+**Decision:** Encode precision voltage references as Family C6 with 19 matching rules and 4 context questions. Covers series references (REF50xx, ADR3x, LT6654, MAX60xx), buried Zener references (LTZ1000, REF102, AD587), XFET references (ADR4xxx), and shunt/adjustable types (TL431, LM4040, LM385). New `'Voltage References'` ComponentCategory added — distinct from `'Voltage Regulators'` (C1/C2).
+
+**Rationale:** Configuration (series vs shunt) is the #1 voltage reference substitution error in the industry. Series references actively drive the output pin from an internal error amplifier; shunt references clamp in parallel with the load via an external series resistor. These topologies are architecturally incompatible without circuit modification. The user provided 7 key implementation notes covering: (1) series vs shunt as HARD GATE, (2) output voltage as Identity with MPN parsing, (3) dropout voltage for supply headroom, (4) TC/accuracy grade pairing via suffix letters, (5) output noise as dominant hidden failure for high-res ADCs, (6) output bypass capacitor compatibility, (7) enable/shutdown pin polarity as functional hard gate.
+
+**Key Design Decisions:**
+
+1. **`configuration` = HARD GATE (w10, blockOnMissing):** Post-scoring filter (`filterVoltageReferenceConfigMismatches`) removes confirmed mismatches. Same pattern as C4 device_type, C2 topology.
+2. **`enable_shutdown_polarity` uses `identity` not `identity_flag`:** Polarity mismatch in either direction is fatal (not just "if original has it, replacement must too"). Active-low shutdown on active-high enable = device permanently off.
+3. **Single Digikey category "Voltage Reference"** — discovery script revealed that Digikey uses ONE category (not two as assumed from docs). Both series and shunt are distinguished by the `Reference Type` parametric field.
+4. **`Current - Supply` and `Current - Cathode` both map to `quiescent_current`:** These are mutually exclusive fields — series refs use Supply, shunt refs use Cathode. Whichever is populated maps to the same internal attribute.
+5. **MPN voltage parsing:** REF5025→2.5V (last 2 digits ÷ 10), ADR4550→5.0V (last 3 digits ÷ 100), LM4040A25→2.5V (voltage after suffix letter). ~30 prefix patterns for configuration/architecture enrichment.
+6. **Architecture hierarchy:** Band-gap vs Buried Zener vs XFET are fundamentally different — different TC curve shapes, noise floors, and long-term stability. At high precision (Q3), architecture escalates to BLOCKING because system TC compensation tuned to one architecture produces systematic error with another.
+
+**Logic Table:** 19 rules, total weight 123. Key rules: configuration (identity w10 block), output_voltage (identity w10 block), enable_shutdown_polarity (identity w8), adjustability (identity w8), tc (threshold lte w8), initial_accuracy (threshold lte w8), architecture (identity w7), dropout_voltage (threshold lte w7), input_voltage_range (threshold range_superset w7), tc_accuracy_grade (identity_flag w7).
+
+**Context Questions (4):**
+- Q1 `configuration_type` (BLOCKING): series / shunt — escalates configuration to mandatory+block; shunt also escalates quiescent_current and adjustability to primary
+- Q2 `output_voltage_type`: fixed / adjustable — fixed escalates output_voltage to mandatory+block
+- Q3 `precision_level`: high_precision / moderate / general_purpose — high escalates 7 attributes (initial_accuracy, tc, output_noise, long_term_stability, architecture, nr_pin, tc_accuracy_grade)
+- Q4 `automotive`: yes / no — escalates aec_q100 to mandatory+block, operating_temp to primary
+
+**Digikey Integration:** Single param map with 13 field mappings. ~63% weight coverage (78/123). Fields NOT in Digikey: architecture, long_term_stability, dropout_voltage, tc_accuracy_grade, enable_shutdown_polarity, nr_pin, aec_q100, packaging.
+
+**Files created:** `lib/logicTables/voltageReference.ts`, `lib/contextQuestions/voltageReference.ts`
+
+**Files modified:** `lib/types.ts` (Voltage References category), `lib/logicTables/index.ts` (registry + 9 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory), `lib/services/digikeyParamMap.ts` (1 param map + categoryParamMaps + familyToDigikeyCategories), `lib/services/partDataService.ts` (enrichment + post-scoring filter + MPN parser + candidate search keywords), `docs/application-context-attribute-map.md` (expanded C6 attribute effects + corrected Digikey category table)
+
+---
+
+### 52. C7 Interface ICs (RS-485, CAN, I2C, USB)
+
+**Decision:** Encode interface ICs as Family C7 with 22 matching rules and 4 context questions. Covers RS-485/RS-422 transceivers (MAX485, ADM485, SN65HVD0xx/1xx, SN75176, THVD), CAN/CAN FD transceivers (TJA1042, MCP2551, SN65HVD2xx, ISO1042), I2C bus buffers and isolators (PCA9600, P82B96, ISO1540, ADUM1250), and USB signal-conditioning ICs (TPD4S012, USBLC6). New `'Interface ICs'` ComponentCategory added.
+
+**Rationale:** Protocol is the HARD GATE for interface IC substitution. RS-485 differential voltage signaling, CAN dominant/recessive arbitration, I2C open-drain with pull-ups, and USB differential pairs are fundamentally incompatible — no cross-protocol substitution is possible without circuit redesign. The second-most dangerous error is isolation mismatch: a non-isolated device cannot replace an isolated one in a safety-rated system. Single family with context-driven protocol suppression (like B8 Thyristors).
+
+**Key Design Decisions:**
+1. **Protocol is HARD GATE (w10 blockOnMissing)** — post-scoring filter removes confirmed cross-protocol candidates. Same pattern as C4 device_type, C5 logic_function, C6 configuration.
+2. **`de_polarity` uses `identity` (not `identity_flag`)** — polarity mismatch fatal in both directions (same reasoning as C6's `enable_shutdown_polarity`).
+3. **SN65HVD regex precision** — `/^SN65HVD[01]\d/i` = RS-485, `/^SN65HVD2[3-5]\d/i` = CAN. Most dangerous MPN collision in the family.
+4. **`mapCategory()` ordering critical** — C7 protocol-specific checks MUST come BEFORE the Logic ICs block which matches on `'transceiver'`.
+5. **Digikey discovery surprise**: RS-485 and CAN share ONE Digikey category "Drivers, Receivers, Transceivers" (distinguished by `Protocol` field). I2C isolators are in "Digital Isolators". USB ESD devices (TPD4S012) classified as "TVS Diodes" by Digikey — not in any interface IC category.
+
+**Logic Table (22 rules, total weight ~151):**
+- 3 identity: protocol (w10 block), operating_mode (w9 block), de_polarity (w8 block)
+- 5 identity_flag: isolation_type (w8), can_variant (w8), txd_dominant_timeout (w7), failsafe_receiver (w6), aec_q100 (w4)
+- 5 threshold gte: data_rate (w9 block), bus_fault_protection (w8), esd_bus_pins (w7), isolation_working_voltage (w7), vod_differential (w6)
+- 3 threshold lte: propagation_delay (w6), unit_loads (w5), standby_current (w5)
+- 4 threshold range_superset: supply_voltage (w7 block), operating_temp (w7 block), receiver_threshold_cm (w7), common_mode_range (w6)
+- 2 application_review: slew_rate_class (w6), package_case (w5)
+
+**Context Questions (4):**
+- Q1 `interface_protocol` (BLOCKING): rs485 / can / i2c / usb — escalates protocol to mandatory+block; suppresses protocol-irrelevant attributes via not_applicable (~9 for I2C/USB, ~5 for CAN, ~2 for RS-485)
+- Q2 `isolation_required`: isolated / non_isolated — isolated escalates isolation_type to mandatory+block, isolation_working_voltage to mandatory, package_case to primary
+- Q3 `operating_environment`: industrial / automotive / consumer — industrial escalates 5 attributes; automotive escalates 2
+- Q4 `automotive`: yes / no — escalates aec_q100 to mandatory+block, operating_temp to mandatory, standby_current + bus_fault_protection to primary
+
+**Digikey Integration:** TWO param maps — "Drivers, Receivers, Transceivers" (7 fields, RS-485+CAN combined, ~34% weight coverage) and "Digital Isolators" (7 fields, I2C isolators, ~39% weight coverage). Protocol enrichment from `Protocol` parametric field + category name. Operating mode normalization ("Half"→"Half-Duplex"). Isolation type normalization ("Capacitive Coupling"→"Capacitive", "Magnetic Coupling"→"Transformer"). Fields NOT in Digikey: bus_fault_protection, esd_bus_pins, vod_differential, unit_loads, failsafe_receiver, txd_dominant_timeout, de_polarity, can_variant, slew_rate_class, propagation_delay (transceivers), common_mode_range, receiver_threshold_cm, standby_current.
+
+**MPN Enrichment:** ~45 patterns organized by protocol (RS-485 ~22, CAN ~14, I2C ~5, USB ~3). Infers protocol, isolation_type, and can_variant. Critical collision: SN65HVD — regex must distinguish RS-485 (`SN65HVD[01]\d`) from CAN (`SN65HVD2[3-5]\d`).
+
+**Files created:** `lib/logicTables/interfaceICs.ts`, `lib/contextQuestions/interfaceICs.ts`
+
+**Files modified:** `lib/types.ts` (Interface ICs category), `lib/logicTables/index.ts` (registry + 18 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + protocol/isolation/operating_mode enrichment), `lib/services/digikeyParamMap.ts` (2 param maps + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~45 MPN patterns + candidate search keywords)

@@ -31,6 +31,8 @@ import { switchingRegulatorLogicTable } from './switchingRegulator';
 import { gateDriverLogicTable } from './gateDriver';
 import { opampComparatorLogicTable } from './opampComparator';
 import { c5LogicICsLogicTable } from './c5LogicICs';
+import { voltageReferenceLogicTable } from './voltageReference';
+import { interfaceICsLogicTable } from './interfaceICs';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -70,6 +72,8 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C3': gateDriverLogicTable,
   'C4': opampComparatorLogicTable,
   'C5': c5LogicICsLogicTable,
+  'C6': voltageReferenceLogicTable,
+  'C7': interfaceICsLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -310,6 +314,36 @@ const subcategoryToFamily: Record<string, string> = {
   'Logic - Counters, Dividers': 'C5',
   'Logic - Shift Registers': 'C5',
   'Logic - Signal Switches, Multiplexers, Decoders': 'C5',
+  // Voltage References (Family C6)
+  'Voltage Reference': 'C6',
+  'Voltage References': 'C6',
+  'Precision Reference': 'C6',
+  'Shunt Reference': 'C6',
+  'Series Reference': 'C6',
+  'Band-Gap Reference': 'C6',
+  'Buried Zener Reference': 'C6',
+  'Voltage Reference - Adjustable': 'C6',
+  'VREF': 'C6',
+  // Interface ICs (Family C7)
+  'RS-485 Transceiver': 'C7',
+  'RS-485 Interface': 'C7',
+  'RS-422 Transceiver': 'C7',
+  'RS-485': 'C7',
+  'CAN Transceiver': 'C7',
+  'CAN Interface': 'C7',
+  'CAN Bus Transceiver': 'C7',
+  'CAN FD Transceiver': 'C7',
+  'I2C Bus Buffer': 'C7',
+  'I2C Interface': 'C7',
+  'I2C/SMBus Interface': 'C7',
+  'SMBus Interface': 'C7',
+  'USB Interface': 'C7',
+  'USB Transceiver': 'C7',
+  'Interface IC': 'C7',
+  // Digikey leaf category names (verified Mar 2026)
+  'Drivers, Receivers, Transceivers': 'C7',
+  'Interface Transceiver': 'C7',
+  'Digital Isolators': 'C7',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -348,6 +382,8 @@ const familyLastUpdated: Record<string, string> = {
   'C3': '2026-02-26',
   'C4': '2026-02-26',
   'C5': '2026-02-28',
+  'C6': '2026-03-01',
+  'C7': '2026-03-02',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

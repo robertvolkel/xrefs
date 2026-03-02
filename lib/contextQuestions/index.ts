@@ -34,6 +34,8 @@ import { switchingRegulatorContext } from './switchingRegulator';
 import { gateDriverContext } from './gateDriver';
 import { opampComparatorContext } from './opampComparator';
 import { c5LogicICsContext } from './c5LogicICs';
+import { voltageReferenceContext } from './voltageReference';
+import { interfaceICsContext } from './interfaceICs';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -72,6 +74,8 @@ const allConfigs: FamilyContextConfig[] = [
   opampComparatorContext,
   // Block C: Standard ICs
   c5LogicICsContext,
+  voltageReferenceContext,
+  interfaceICsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

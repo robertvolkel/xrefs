@@ -3453,6 +3453,212 @@ const logicMuxDecoderParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// C6: VOLTAGE REFERENCES — Single Digikey category "Voltage Reference"
+// ============================================================
+
+/**
+ * C6 Voltage References — "Voltage Reference" category param map.
+ * Verified against: REF5025AIDR (series/fixed), TL431AIDR (shunt/adjustable),
+ *                   LM4040AIM3-2.5 (shunt/fixed), ADR4550BRZ (series/fixed)
+ * Digikey category: "Voltage Reference" (singular — covers both series and shunt)
+ *
+ * 11 mapped fields, ~63% weight coverage (78/123 total weight).
+ *
+ * Notes:
+ * - "Reference Type" = Series | Shunt — THE critical configuration gate
+ * - "Output Type" = Fixed | Adjustable — determines voltage setting mode
+ * - "Voltage - Output (Min/Fixed)" = output voltage (Vref for adjustable types)
+ * - "Voltage - Output (Max)" = only populated for adjustable types (e.g., TL431: 36V)
+ * - "Current - Supply" = Iq for series references (empty for shunt types)
+ * - "Current - Cathode" = Ika_min for shunt references (empty for series types)
+ *   Both map to quiescent_current — whichever is populated for the part type.
+ * - "Tolerance" = initial accuracy (0.02% to 1%)
+ * - "Temperature Coefficient" = TC (ppm/°C) — empty ("-") for many shunt refs
+ * - "Noise - 0.1Hz to 10Hz" = critical 0.1–10 Hz band noise — empty for most shunt refs
+ * - "Noise - 10Hz to 10kHz" = wideband noise — NOT mapped (separate spec)
+ * - "Voltage - Input" = Vin range (only for series references)
+ *
+ * NOT in Digikey parametric data (datasheet-only):
+ * - architecture (band-gap vs buried Zener vs XFET)
+ * - long_term_stability (ppm/1000h)
+ * - dropout_voltage
+ * - tc_accuracy_grade (suffix letter)
+ * - enable_shutdown_polarity
+ * - nr_pin (noise reduction pin)
+ * - aec_q100 / Qualification
+ * - packaging (tape-and-reel vs bulk)
+ */
+const voltageReferenceParamMap: Record<string, ParamMapEntry> = {
+  'Reference Type': {
+    attributeId: 'configuration',
+    attributeName: 'Configuration (Series / Shunt)',
+    sortOrder: 1,
+  },
+  'Output Type': {
+    attributeId: 'adjustability',
+    attributeName: 'Output Voltage Adjustability (Fixed / Adjustable)',
+    sortOrder: 2,
+  },
+  'Voltage - Output (Min/Fixed)': {
+    attributeId: 'output_voltage',
+    attributeName: 'Output Voltage (Vout)',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Voltage - Output (Max)': {
+    attributeId: 'output_voltage_max',
+    attributeName: 'Output Voltage Max (Adjustable Range)',
+    unit: 'V',
+    sortOrder: 4,
+  },
+  'Current - Output': {
+    attributeId: 'output_current',
+    attributeName: 'Output Current / Load Current',
+    unit: 'A',
+    sortOrder: 5,
+  },
+  'Tolerance': {
+    attributeId: 'initial_accuracy',
+    attributeName: 'Initial Accuracy (%)',
+    sortOrder: 6,
+  },
+  'Temperature Coefficient': {
+    attributeId: 'tc',
+    attributeName: 'Temperature Coefficient (ppm/°C)',
+    unit: 'ppm/°C',
+    sortOrder: 7,
+  },
+  'Noise - 0.1Hz to 10Hz': {
+    attributeId: 'output_noise',
+    attributeName: 'Output Voltage Noise (0.1–10 Hz)',
+    unit: 'V',
+    sortOrder: 8,
+  },
+  'Voltage - Input': {
+    attributeId: 'input_voltage_range',
+    attributeName: 'Input Voltage Range',
+    sortOrder: 9,
+  },
+  'Current - Supply': {
+    attributeId: 'quiescent_current',
+    attributeName: 'Quiescent Current (Iq)',
+    unit: 'A',
+    sortOrder: 10,
+  },
+  'Current - Cathode': {
+    attributeId: 'quiescent_current',
+    attributeName: 'Quiescent Current (Iq / Ika_min)',
+    unit: 'A',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * C7: Interface ICs — RS-485/CAN transceivers (Family C7)
+ * Digikey category: "Drivers, Receivers, Transceivers"
+ * Verified against: MAX485ESA+ (RS-485), SN65HVD230DR (CAN), ISO1042BQDWRQ1 (isolated CAN)
+ *
+ * Both RS-485 and CAN transceivers share this single Digikey category.
+ * Protocol is distinguished by the "Protocol" parametric field.
+ * Only ~34% weight coverage — most bus-level specs are datasheet-only.
+ */
+const interfaceTransceiverParamMap: Record<string, ParamMapEntry> = {
+  'Protocol': {
+    attributeId: 'protocol',
+    attributeName: 'Protocol / Interface Standard',
+    sortOrder: 1,
+  },
+  'Duplex': {
+    attributeId: 'operating_mode',
+    attributeName: 'Operating Mode / Driver Topology',
+    sortOrder: 2,
+  },
+  'Data Rate': {
+    attributeId: 'data_rate',
+    attributeName: 'Data Rate / Speed Grade',
+    sortOrder: 3,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range',
+    sortOrder: 4,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 5,
+  },
+  'Qualification': {
+    attributeId: 'aec_q100',
+    attributeName: 'AEC-Q100 / Automotive Qualification',
+    sortOrder: 6,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 7,
+  },
+};
+
+/**
+ * C7: Interface ICs — I2C bus buffers and isolators (Family C7)
+ * Digikey category: "Digital Isolators"
+ * Verified against: ISO1540DR (TI, capacitive), ADUM1250ARZ (ADI, magnetic)
+ *
+ * I2C isolators live in the "Digital Isolators" category, not with transceivers.
+ * "Technology" field provides isolation type (Capacitive Coupling / Magnetic Coupling).
+ * "Voltage - Isolation" provides isolation working voltage.
+ * ~39% weight coverage.
+ */
+const interfaceDigitalIsolatorParamMap: Record<string, ParamMapEntry> = {
+  'Technology': {
+    attributeId: 'isolation_type',
+    attributeName: 'Galvanic Isolation Type',
+    sortOrder: 1,
+  },
+  'Voltage - Isolation': {
+    attributeId: 'isolation_working_voltage',
+    attributeName: 'Isolation Working Voltage (VIORM)',
+    sortOrder: 2,
+  },
+  'Data Rate': {
+    attributeId: 'data_rate',
+    attributeName: 'Data Rate / Speed Grade',
+    sortOrder: 3,
+  },
+  'Propagation Delay tpLH / tpHL (Max)': {
+    attributeId: 'propagation_delay',
+    attributeName: 'Propagation Delay / Loop Delay',
+    sortOrder: 4,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage Range',
+    sortOrder: 5,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 6,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 7,
+  },
+};
+
 /**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
@@ -3526,6 +3732,14 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['Gates and Inverters', logicGatesParamMap],
   ['Flip Flops', logicFlipFlopsParamMap],
   ['Latches', logicLatchesParamMap],
+  // C6: Voltage References — single Digikey category "Voltage Reference"
+  // Must come AFTER "Voltage Regulators - Linear" to avoid false match on "Voltage"
+  ['Voltage Reference', voltageReferenceParamMap],
+  // C7: Interface ICs — TWO Digikey categories (transceivers + digital isolators)
+  // "Digital Isolators" MUST come before "Drivers, Receivers, Transceivers"
+  // because C5 Logic ICs also matches on "Transceivers" substring
+  ['Digital Isolators', interfaceDigitalIsolatorParamMap],
+  ['Drivers, Receivers, Transceivers', interfaceTransceiverParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -3635,6 +3849,8 @@ const familyToDigikeyCategories: Record<string, string[]> = {
     'Shift Registers',
     'Signal Switches, Multiplexers, Decoders',
   ],
+  'C6': ['Voltage Reference'],
+  'C7': ['Drivers, Receivers, Transceivers', 'Digital Isolators'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -3691,6 +3907,10 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
     'Shift Registers',
     'Signal Switches, Multiplexers, Decoders',
   ],
+  // C7: Interface ICs — RS-485/CAN transceivers + I2C digital isolators
+  // Digikey category "Drivers, Receivers, Transceivers" (RS-485 + CAN)
+  // and "Digital Isolators" (I2C bus buffers/isolators)
+  'C7': ['Drivers, Receivers, Transceivers', 'Digital Isolators'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */
