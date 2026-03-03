@@ -57,6 +57,14 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('switching regulator') || lower.includes('switching controller') || lower.includes('dc dc')) return 'Voltage Regulators';
   if (lower.includes('gate driver')) return 'Gate Drivers';
   if (lower.includes('op amp') || lower.includes('buffer amp') || lower.includes('comparator') || lower.includes('instrumentation')) return 'Amplifiers';
+  // DACs (Family C10) — voltage-output, current-output, and audio DACs
+  if (lower.includes('digital to analog') || (lower.includes('dac') && !lower.includes('diac'))) return 'DACs';
+  // ADCs (Family C9) — all architectures in one Digikey category
+  if (lower.includes('analog to digital') || (lower.includes('adc') && !lower.includes('ladder'))) return 'ADCs';
+  // Timers and Oscillators (Family C8) — 555 timers + packaged oscillators
+  if (lower.includes('programmable timer')) return 'Timers and Oscillators';
+  if (lower.includes('555 timer')) return 'Timers and Oscillators';
+  if (lower.includes('oscillator') && !lower.includes('local oscillator')) return 'Timers and Oscillators';
   // Interface ICs (Family C7) — MUST come BEFORE Logic ICs 'transceiver' check
   // RS-485/CAN transceivers live in "Drivers, Receivers, Transceivers" with Protocol field
   // I2C isolators live in "Digital Isolators" with Type=I2C
@@ -118,6 +126,16 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('counter') || lower.includes('divider')) return 'Counters, Dividers';
   if (lower.includes('shift register')) return 'Shift Registers';
   if (lower.includes('multiplexer') || lower.includes('decoder')) return 'Signal Switches, Multiplexers, Decoders';
+  // DACs (Family C10) — single Digikey category covers all DAC types
+  if (lower.includes('digital to analog') || (lower.includes('dac') && !lower.includes('diac'))) return 'DAC';
+  // ADCs (Family C9) — single Digikey category
+  if (lower.includes('analog to digital') || (lower.includes('adc') && !lower.includes('ladder'))) return 'ADC';
+  // Timers and Oscillators (Family C8) — two Digikey categories
+  if (lower.includes('programmable timer') || lower.includes('555 timer')) return '555 Timer';
+  if (lower.includes('tcxo') || lower.includes('temperature compensated')) return 'TCXO';
+  if (lower.includes('vcxo') || lower.includes('voltage controlled oscillator')) return 'VCXO';
+  if (lower.includes('ocxo') || lower.includes('oven controlled')) return 'OCXO';
+  if (lower.includes('oscillator')) return 'Oscillator';
   // Interface ICs (Family C7) — RS-485/CAN transceivers and I2C isolators
   if (lower.includes('drivers, receivers, transceivers')) {
     return 'Interface Transceiver';  // Protocol-specific routing handled by param data
@@ -1193,6 +1211,182 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
       const mode = modeParam.value.toLowerCase();
       if (mode === 'half') modeParam.value = 'Half-Duplex';
       else if (mode === 'full') modeParam.value = 'Full-Duplex';
+    }
+  }
+
+  // Timer/Oscillator device_category enrichment — infer from Digikey category + Type/Base Resonator params.
+  // "Programmable Timers and Oscillators" → 555 Timer.
+  // "Oscillators" → check "Type" param: "TCXO", "VCXO", "OCXO", "XO (Standard)".
+  // For "XO (Standard)", check "Base Resonator": "MEMS" → MEMS Oscillator, "Crystal" → XO.
+  if (!addedIds.has('device_category')) {
+    const catLower = categoryName.toLowerCase();
+    if (catLower.includes('programmable timer') || catLower.includes('555 timer')) {
+      // Enrich timer_variant from "Type" field: "555 Type, Timer/Oscillator (Single)"
+      const typeParam = product.Parameters?.find(p => p.ParameterText === 'Type');
+      parameters.push({
+        parameterId: 'device_category',
+        parameterName: 'Device Category / Stability Class',
+        value: '555 Timer',
+        sortOrder: 1,
+      });
+      addedIds.add('device_category');
+      // Timer variant: check if CMOS based on supply voltage range (2V min = CMOS)
+      if (!addedIds.has('timer_variant') && typeParam) {
+        const supplyParam = product.Parameters?.find(p => p.ParameterText === 'Voltage - Supply');
+        if (supplyParam) {
+          const supplyLower = supplyParam.ValueText.toLowerCase();
+          // CMOS 555 variants start at 2V; bipolar start at 4.5V
+          const variant = supplyLower.includes('2v') || supplyLower.includes('1.') ? 'CMOS' : 'Bipolar';
+          parameters.push({
+            parameterId: 'timer_variant',
+            parameterName: 'Timer Variant (CMOS vs Bipolar)',
+            value: variant,
+            sortOrder: 5,
+          });
+          addedIds.add('timer_variant');
+        }
+      }
+    } else if (catLower.includes('oscillator')) {
+      const typeParam = product.Parameters?.find(p => p.ParameterText === 'Type');
+      const baseResonator = product.Parameters?.find(p => p.ParameterText === 'Base Resonator');
+      let deviceCategory = 'XO';
+      if (typeParam) {
+        const typeValue = typeParam.ValueText;
+        if (typeValue.includes('TCXO')) deviceCategory = 'TCXO';
+        else if (typeValue.includes('VCXO')) deviceCategory = 'VCXO';
+        else if (typeValue.includes('OCXO')) deviceCategory = 'OCXO';
+        else if (typeValue.includes('XO') && baseResonator?.ValueText === 'MEMS') deviceCategory = 'MEMS';
+      }
+      parameters.push({
+        parameterId: 'device_category',
+        parameterName: 'Device Category / Stability Class',
+        value: deviceCategory,
+        sortOrder: 1,
+      });
+      addedIds.add('device_category');
+    }
+  }
+
+  // Oscillator OE polarity enrichment from "Function" field.
+  // "Enable/Disable" → "Active-Low" (most common convention), "Standby (Power Down)" → "Active-Low",
+  // "-" or missing → "No Enable" (output always on, no OE pin).
+  if (!addedIds.has('oe_polarity') && categoryName.toLowerCase().includes('oscillator')) {
+    const funcParam = product.Parameters?.find(p => p.ParameterText === 'Function');
+    if (funcParam) {
+      const funcValue = funcParam.ValueText;
+      if (funcValue === '-' || !funcValue) {
+        parameters.push({
+          parameterId: 'oe_polarity',
+          parameterName: 'Output Enable Polarity',
+          value: 'No Enable',
+          sortOrder: 4,
+        });
+      } else {
+        // "Enable/Disable" or "Standby (Power Down)" — OE pin exists
+        // Polarity (active-high vs active-low) is not determinable from this field alone
+        // Mark as present; MPN enrichment or datasheet review needed for polarity
+        parameters.push({
+          parameterId: 'oe_polarity',
+          parameterName: 'Output Enable Polarity',
+          value: 'Has Enable',
+          sortOrder: 4,
+        });
+      }
+      addedIds.add('oe_polarity');
+    }
+  }
+
+  // ADC enrichment — normalize architecture, reference_type, channel_count, input_configuration
+  if (categoryName.toLowerCase().includes('analog to digital')) {
+    // Architecture: Digikey "Sigma-Delta"→"Delta-Sigma", "Pipelined"→"Pipeline"
+    const archParam = parameters.find(p => p.parameterId === 'architecture');
+    if (archParam) {
+      const val = archParam.value;
+      if (/sigma.delta/i.test(val)) archParam.value = 'Delta-Sigma';
+      else if (/pipeline/i.test(val)) archParam.value = 'Pipeline';
+      else if (/flash|folding/i.test(val)) archParam.value = 'Flash';
+      else if (/sar|successive/i.test(val)) archParam.value = 'SAR';
+    }
+    // Reference type: "External, Internal"→"Both"
+    const refParam = parameters.find(p => p.parameterId === 'reference_type');
+    if (refParam) {
+      const lower = refParam.value.toLowerCase();
+      if (lower.includes('external') && lower.includes('internal')) refParam.value = 'Both';
+      else if (lower.includes('external')) refParam.value = 'External';
+      else if (lower.includes('internal')) refParam.value = 'Internal';
+    }
+    // Channel count: Digikey "2, 4"→"4" (take max — most channels in single-ended mode)
+    const chParam = parameters.find(p => p.parameterId === 'channel_count');
+    if (chParam) {
+      const nums = chParam.value.match(/\d+/g);
+      if (nums && nums.length > 1) {
+        chParam.value = String(Math.max(...nums.map(Number)));
+      }
+    }
+    // Input configuration: "Differential, Single Ended"→normalize
+    const inputParam = parameters.find(p => p.parameterId === 'input_configuration');
+    if (inputParam) {
+      const lower = inputParam.value.toLowerCase();
+      if (lower.includes('pseudo')) inputParam.value = 'Pseudo-Differential';
+      else if (lower.includes('differential') && lower.includes('single')) inputParam.value = 'Differential, Single-Ended';
+      else if (lower.includes('differential')) inputParam.value = 'Differential';
+      else if (lower.includes('single')) inputParam.value = 'Single-Ended';
+    }
+  }
+
+  // DAC enrichment — normalize output_type, output_buffered, INL/DNL, reference_type, channel_count
+  if (categoryName.toLowerCase().includes('digital to analog')) {
+    // Output Type compound: "Voltage - Buffered" → output_type + output_buffered
+    // Digikey values: "Voltage - Buffered", "Voltage - Unbuffered", "Current - Buffered"
+    const outputTypeParam = parameters.find(p => p.parameterId === 'output_type');
+    if (outputTypeParam) {
+      const val = outputTypeParam.value.toLowerCase();
+      if (val.includes('current')) outputTypeParam.value = 'Current Output';
+      else outputTypeParam.value = 'Voltage Output';
+    }
+    const bufferedParam = parameters.find(p => p.parameterId === 'output_buffered');
+    if (bufferedParam) {
+      const val = bufferedParam.value.toLowerCase();
+      if (val.includes('unbuffered')) bufferedParam.value = 'No';
+      else if (val.includes('buffered')) bufferedParam.value = 'Yes';
+    }
+    // INL/DNL compound: "±4, ±0.2" → inl = "±4", dnl = "±0.2"
+    // "-, ±1 (Max)" → inl = missing, dnl = "±1"
+    const inlParam = parameters.find(p => p.parameterId === 'inl_lsb');
+    const dnlParam = parameters.find(p => p.parameterId === 'dnl_lsb');
+    if (inlParam && dnlParam && inlParam.value === dnlParam.value) {
+      // Both were set to the same raw compound value — need to split
+      const raw = inlParam.value;
+      const parts = raw.split(',').map(s => s.trim());
+      if (parts.length >= 2) {
+        inlParam.value = parts[0] === '-' ? '' : parts[0].replace(/\s*\(.*\)/, '');
+        dnlParam.value = parts[1] === '-' ? '' : parts[1].replace(/\s*\(.*\)/, '');
+      }
+      // Remove empty params (INL or DNL not reported)
+      if (!inlParam.value) {
+        const idx = parameters.indexOf(inlParam);
+        if (idx >= 0) parameters.splice(idx, 1);
+      }
+      if (!dnlParam.value) {
+        const idx = parameters.indexOf(dnlParam);
+        if (idx >= 0) parameters.splice(idx, 1);
+      }
+    }
+    // Reference type: "External, Internal"→"Both" (same pattern as ADC)
+    const refParam = parameters.find(p => p.parameterId === 'reference_type');
+    if (refParam) {
+      const lower = refParam.value.toLowerCase();
+      if (lower.includes('external') && lower.includes('internal')) refParam.value = 'Both';
+      else if (lower.includes('external')) refParam.value = 'External';
+      else if (lower.includes('internal')) refParam.value = 'Internal';
+    }
+    // Channel count: Digikey "2, 4"→"4" (take max — most channels available)
+    const chParam = parameters.find(p => p.parameterId === 'channel_count');
+    if (chParam) {
+      const nums = chParam.value.match(/\d+/g);
+      if (nums && nums.length > 1) {
+        chParam.value = String(Math.max(...nums.map(Number)));
+      }
     }
   }
 

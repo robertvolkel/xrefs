@@ -36,6 +36,9 @@ import { opampComparatorContext } from './opampComparator';
 import { c5LogicICsContext } from './c5LogicICs';
 import { voltageReferenceContext } from './voltageReference';
 import { interfaceICsContext } from './interfaceICs';
+import { timersOscillatorsContext } from './timersOscillators';
+import { adcContext } from './adc';
+import { dacContext } from './dac';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -76,6 +79,9 @@ const allConfigs: FamilyContextConfig[] = [
   c5LogicICsContext,
   voltageReferenceContext,
   interfaceICsContext,
+  timersOscillatorsContext,
+  adcContext,
+  dacContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

@@ -3660,6 +3660,321 @@ const interfaceDigitalIsolatorParamMap: Record<string, ParamMapEntry> = {
 };
 
 /**
+ * C8: Timers and Oscillators — 555 Timer ICs (Family C8)
+ * Digikey category: "Programmable Timers and Oscillators"
+ * Verified against: NE555P (bipolar), TLC555CDR (CMOS)
+ *
+ * 555 timers have minimal parametric data in Digikey — only 9 fields.
+ * device_category and timer_variant are enriched from category name and
+ * supply voltage in digikeyMapper.ts.
+ * ~20% weight coverage — most 555-specific specs are datasheet-only.
+ */
+const timer555ParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'device_category',
+    attributeName: 'Device Category / Stability Class',
+    sortOrder: 1,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage_range',
+    attributeName: 'Supply Voltage Range',
+    sortOrder: 2,
+  },
+  'Current - Supply': {
+    attributeId: 'icc_active_ma',
+    attributeName: 'Active Supply Current (mA)',
+    sortOrder: 3,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 4,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 5,
+  },
+};
+
+/**
+ * C8: Timers and Oscillators — Packaged Oscillators (Family C8)
+ * Digikey category: "Oscillators"
+ * Verified against: ASTX-H11-25.000MHZ-T (TCXO), DSC1001DI5-025.0000T (MEMS XO),
+ *                   ECS-3225MV-250-BN-TR (Crystal XO), ABLNO-V-100.000MHz (VCXO)
+ *
+ * ALL oscillator types (XO, MEMS, TCXO, VCXO, OCXO) live in ONE Digikey category.
+ * Type field distinguishes: "XO (Standard)", "TCXO", "VCXO", "OCXO".
+ * MEMS vs Crystal distinguished by "Base Resonator" field ("MEMS" vs "Crystal").
+ * device_category enrichment combines Type + Base Resonator in digikeyMapper.ts.
+ *
+ * ~45% weight coverage. Missing from Digikey: aging/drift rate, phase jitter
+ * (most entries), VCXO pull range (APR shows "-" for most), startup time,
+ * OE polarity (Function field says "Enable/Disable" but not polarity direction).
+ */
+const oscillatorParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'device_category',
+    attributeName: 'Device Category / Stability Class',
+    sortOrder: 1,
+  },
+  'Frequency': {
+    attributeId: 'output_frequency_hz',
+    attributeName: 'Output Frequency',
+    sortOrder: 2,
+  },
+  'Output': {
+    attributeId: 'output_signal_type',
+    attributeName: 'Output Signal Type',
+    sortOrder: 3,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage_range',
+    attributeName: 'Supply Voltage Range',
+    sortOrder: 4,
+  },
+  'Frequency Stability': {
+    attributeId: 'temp_stability_ppm',
+    attributeName: 'Temperature Stability (ppm over range)',
+    sortOrder: 5,
+  },
+  'Absolute Pull Range (APR)': {
+    attributeId: 'vcxo_pull_range_ppm',
+    attributeName: 'VCXO Pull Range (±ppm)',
+    sortOrder: 6,
+  },
+  'Current - Supply (Max)': {
+    attributeId: 'icc_active_ma',
+    attributeName: 'Active Supply Current (mA)',
+    sortOrder: 7,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 8,
+  },
+  'Ratings': {
+    attributeId: 'aec_q100',
+    attributeName: 'AEC-Q100 / Automotive Qualification',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Footprint',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * C9: ADCs — Analog-to-Digital Converters (Family C9)
+ * Digikey category: "Analog to Digital Converters (ADC)"
+ * Single category covers all architectures (SAR, Delta-Sigma, Pipeline, Flash).
+ * Verified against: ADS1115IDGSR (16-bit Delta-Sigma, I2C),
+ *   ADS8688IDBT (16-bit SAR, SPI, 8-channel),
+ *   AD7124-4BRUZ (24-bit Delta-Sigma, SPI),
+ *   AD9226ARSZ (12-bit Pipeline, Parallel),
+ *   MCP3208-CI/SL (12-bit SAR, SPI, 8-channel)
+ *
+ * 11 mapped fields out of 20 logic table rules = ~48% weight coverage.
+ * Missing from Digikey parametric data: ENOB, INL, DNL, THD,
+ *   simultaneous_sampling, conversion_latency_cycles, power_consumption_mw,
+ *   input_voltage_range, reference_voltage, aec_q100.
+ * These must be enriched from MPN patterns or datasheet review.
+ */
+const adcParamMap: Record<string, ParamMapEntry> = {
+  // Architecture — HARD GATE, values from Digikey: "SAR", "Sigma-Delta", "Pipelined", "Flash"
+  // Value normalization handled in digikeyMapper.ts enrichment
+  'Architecture': {
+    attributeId: 'architecture',
+    attributeName: 'ADC Architecture',
+    sortOrder: 1,
+  },
+  // Resolution — exact match required
+  'Number of Bits': {
+    attributeId: 'resolution_bits',
+    attributeName: 'Resolution (bits)',
+    sortOrder: 2,
+  },
+  // Interface — identity match (SPI/I2C/Parallel)
+  'Data Interface': {
+    attributeId: 'interface_type',
+    attributeName: 'Interface Type',
+    sortOrder: 3,
+  },
+  // Input configuration — single-ended, differential, pseudo-differential
+  // Digikey lists multiple: "Differential, Single Ended" — value normalization in mapper
+  'Input Type': {
+    attributeId: 'input_configuration',
+    attributeName: 'Input Configuration',
+    sortOrder: 4,
+  },
+  // Channel count — "Number of Inputs" includes differential pairs
+  // Digikey "2, 4" for ADS1115 = 2 differential or 4 single-ended
+  // Value normalization (take max) handled in mapper enrichment
+  'Number of Inputs': {
+    attributeId: 'channel_count',
+    attributeName: 'Number of Channels',
+    sortOrder: 5,
+  },
+  // Sample rate — values like "860", "500k", "65M", "19.2k"
+  'Sampling Rate (Per Second)': {
+    attributeId: 'sample_rate_sps',
+    attributeName: 'Sample Rate (SPS)',
+    sortOrder: 6,
+  },
+  // Reference type — Internal, External, or "External, Internal" (both)
+  // Value normalization handled in mapper enrichment
+  'Reference Type': {
+    attributeId: 'reference_type',
+    attributeName: 'Reference Type',
+    sortOrder: 7,
+  },
+  // Supply voltage — analog supply (AVDD)
+  'Voltage - Supply, Analog': {
+    attributeId: 'supply_voltage_range',
+    attributeName: 'Supply Voltage Range (V)',
+    sortOrder: 8,
+  },
+  // Supply voltage — digital supply (DVDD), mapped as secondary
+  // Both are needed for verification; analog supply is primary
+  'Voltage - Supply, Digital': {
+    attributeId: 'supply_voltage_digital',
+    attributeName: 'Digital Supply Voltage (V)',
+    sortOrder: 9,
+  },
+  // Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range (°C)',
+    sortOrder: 10,
+  },
+  // Package / footprint
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * C10: DACs — Digital-to-Analog Converters (Family C10)
+ * Digikey category: "Digital to Analog Converters (DAC)"
+ * Single category covers voltage-output, current-output, and precision DACs.
+ * Audio DACs are in a DIFFERENT category ("ADCs/DACs - Special Purpose") — NOT mapped here.
+ *
+ * Verified against Digikey API (Mar 2026) using:
+ *   DAC8568ICPW (16-bit, 8-ch, SPI, String DAC, Voltage - Buffered)
+ *   MCP4921-E/P (12-bit, 1-ch, SPI, String DAC, Voltage - Buffered)
+ *   AD5791BRUZ (20-bit, 1-ch, SPI, R-2R, Voltage - Unbuffered)
+ *   AD5420AREZ (16-bit, 1-ch, SPI, R-2R, Current - Buffered)
+ *
+ * 13 mapped fields out of 22 logic table rules = ~50% weight coverage.
+ *
+ * COMPOUND FIELDS:
+ *   - "Output Type" → output_type + output_buffered (e.g., "Voltage - Buffered")
+ *   - "INL/DNL (LSB)" → inl_lsb + dnl_lsb (e.g., "±4, ±0.2" or "-, ±1 (Max)")
+ *
+ * Missing from Digikey parametric data: glitch_energy_nVs, update_rate_sps,
+ *   power_on_reset_state, output_noise_density_nvhz, output_voltage_range,
+ *   output_current_source_ma, power_consumption_mw, aec_q100.
+ * These must be enriched from MPN patterns or datasheet review.
+ */
+const dacParamMap: Record<string, ParamMapEntry> = {
+  // COMPOUND: "Voltage - Buffered" / "Voltage - Unbuffered" / "Current - Buffered"
+  // → split into output_type + output_buffered
+  // Value normalization handled in digikeyMapper.ts enrichment
+  'Output Type': [
+    {
+      attributeId: 'output_type',
+      attributeName: 'Output Type',
+      sortOrder: 1,
+    },
+    {
+      attributeId: 'output_buffered',
+      attributeName: 'Output Buffered',
+      sortOrder: 5,
+    },
+  ],
+  // Resolution — exact match required
+  'Number of Bits': {
+    attributeId: 'resolution_bits',
+    attributeName: 'Resolution (bits)',
+    sortOrder: 2,
+  },
+  // Interface — identity match (SPI/I2C/Parallel/Async)
+  // Values include "SPI, DSP" — normalization strips secondary protocols
+  'Data Interface': {
+    attributeId: 'interface_type',
+    attributeName: 'Interface Type',
+    sortOrder: 3,
+  },
+  // Architecture — String DAC, R-2R, Current-Steering, etc.
+  'Architecture': {
+    attributeId: 'architecture',
+    attributeName: 'DAC Architecture',
+    sortOrder: 4,
+  },
+  // Channel count — "Number of D/A Converters"
+  'Number of D/A Converters': {
+    attributeId: 'channel_count',
+    attributeName: 'Number of DAC Channels',
+    sortOrder: 6,
+  },
+  // Settling time — "10µs", "4.5µs (Typ)", "1µs (Typ)"
+  'Settling Time': {
+    attributeId: 'settling_time_us',
+    attributeName: 'Settling Time (µs)',
+    sortOrder: 7,
+  },
+  // COMPOUND: "±4, ±0.2" → first value = INL, second = DNL
+  // "-, ±1 (Max)" → INL missing, DNL = ±1
+  // Value splitting handled in digikeyMapper.ts enrichment
+  'INL/DNL (LSB)': [
+    {
+      attributeId: 'inl_lsb',
+      attributeName: 'Integral Non-Linearity (LSB)',
+      sortOrder: 8,
+    },
+    {
+      attributeId: 'dnl_lsb',
+      attributeName: 'Differential Non-Linearity (LSB)',
+      sortOrder: 9,
+    },
+  ],
+  // Reference type — Internal, External, or "External, Internal" (both)
+  // Value normalization handled in mapper enrichment (same pattern as ADC)
+  'Reference Type': {
+    attributeId: 'reference_type',
+    attributeName: 'Reference Type',
+    sortOrder: 10,
+  },
+  // Supply voltage — analog supply (AVDD)
+  'Voltage - Supply, Analog': {
+    attributeId: 'supply_voltage_range',
+    attributeName: 'Supply Voltage Range (V)',
+    sortOrder: 11,
+  },
+  // Supply voltage — digital supply (DVDD), mapped as secondary
+  'Voltage - Supply, Digital': {
+    attributeId: 'supply_voltage_digital',
+    attributeName: 'Digital Supply Voltage (V)',
+    sortOrder: 12,
+  },
+  // Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range (°C)',
+    sortOrder: 13,
+  },
+  // Package / footprint
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 14,
+  },
+};
+
+/**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
  * Order matters: more specific patterns must come before general ones
@@ -3740,6 +4055,15 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // because C5 Logic ICs also matches on "Transceivers" substring
   ['Digital Isolators', interfaceDigitalIsolatorParamMap],
   ['Drivers, Receivers, Transceivers', interfaceTransceiverParamMap],
+  // C8: Timers and Oscillators — TWO Digikey categories
+  // "Programmable Timers and Oscillators" for 555 timers
+  // "Oscillators" for all packaged oscillator types (XO, MEMS, TCXO, VCXO, OCXO)
+  ['Programmable Timers', timer555ParamMap],
+  ['Oscillators', oscillatorParamMap],
+  // C9: ADCs — single Digikey category covers all architectures
+  ['Analog to Digital Converters', adcParamMap],
+  // C10: DACs — single Digikey category covers all DAC types
+  ['Digital to Analog Converters', dacParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -3851,6 +4175,9 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   ],
   'C6': ['Voltage Reference'],
   'C7': ['Drivers, Receivers, Transceivers', 'Digital Isolators'],
+  'C8': ['Programmable Timers', 'Oscillators'],
+  'C9': ['Analog to Digital Converters'],
+  'C10': ['Digital to Analog Converters'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -3911,6 +4238,15 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   // Digikey category "Drivers, Receivers, Transceivers" (RS-485 + CAN)
   // and "Digital Isolators" (I2C bus buffers/isolators)
   'C7': ['Drivers, Receivers, Transceivers', 'Digital Isolators'],
+  // C8: Timers and Oscillators — 555 timers + all packaged oscillator types
+  // Digikey leaf names: "Programmable Timers and Oscillators" and "Oscillators"
+  'C8': ['Programmable Timers and Oscillators', 'Oscillators'],
+  // C9: ADCs — single Digikey category covers all architectures
+  // Digikey leaf name: "Analog to Digital Converters (ADCs)"
+  'C9': ['Analog to Digital Converters (ADCs)'],
+  // C10: DACs — single Digikey category
+  // Digikey leaf name: "Digital to Analog Converters (DACs)"
+  'C10': ['Digital to Analog Converters (DACs)'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

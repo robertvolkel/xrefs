@@ -33,6 +33,9 @@ import { opampComparatorLogicTable } from './opampComparator';
 import { c5LogicICsLogicTable } from './c5LogicICs';
 import { voltageReferenceLogicTable } from './voltageReference';
 import { interfaceICsLogicTable } from './interfaceICs';
+import { timersOscillatorsLogicTable } from './timersOscillators';
+import { adcLogicTable } from './adc';
+import { dacLogicTable } from './dac';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -74,6 +77,9 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C5': c5LogicICsLogicTable,
   'C6': voltageReferenceLogicTable,
   'C7': interfaceICsLogicTable,
+  'C8': timersOscillatorsLogicTable,
+  'C9': adcLogicTable,
+  'C10': dacLogicTable,
 };
 
 /** Map subcategory strings to family IDs */
@@ -344,6 +350,51 @@ const subcategoryToFamily: Record<string, string> = {
   'Drivers, Receivers, Transceivers': 'C7',
   'Interface Transceiver': 'C7',
   'Digital Isolators': 'C7',
+  // Timers and Oscillators (Family C8)
+  '555 Timer': 'C8',
+  '556 Timer': 'C8',
+  'NE555': 'C8',
+  'Timer IC': 'C8',
+  'Programmable Timer': 'C8',
+  'Crystal Oscillator': 'C8',
+  'Oscillator': 'C8',
+  'Clock Oscillator': 'C8',
+  'MEMS Oscillator': 'C8',
+  'Silicon Oscillator': 'C8',
+  'Programmable Oscillator': 'C8',
+  'TCXO': 'C8',
+  'VCXO': 'C8',
+  'OCXO': 'C8',
+  'Frequency Reference': 'C8',
+  // Digikey leaf category names (verified Mar 2026)
+  'Programmable Timers and Oscillators': 'C8',
+  'Oscillators': 'C8',
+  // ADCs — Analog-to-Digital Converters (Family C9)
+  'ADC': 'C9',
+  'Analog to Digital Converter': 'C9',
+  'A/D Converter': 'C9',
+  'SAR ADC': 'C9',
+  'Delta-Sigma ADC': 'C9',
+  'Sigma-Delta ADC': 'C9',
+  'Pipeline ADC': 'C9',
+  'Flash ADC': 'C9',
+  'Data Acquisition': 'C9',
+  'Successive Approximation': 'C9',
+  // Digikey leaf category name (verified Mar 2026)
+  'Analog to Digital Converters (ADCs)': 'C9',
+  // --- DACs — Digital-to-Analog Converters (Family C10) ---
+  'DAC': 'C10',
+  'Digital to Analog Converter': 'C10',
+  'D/A Converter': 'C10',
+  'Voltage Output DAC': 'C10',
+  'Current Output DAC': 'C10',
+  'Audio DAC': 'C10',
+  'Waveform Generator': 'C10',
+  'Digital-to-Analog Converter': 'C10',
+  'Data Conversion - DAC': 'C10',
+  'Data Conversion - Digital to Analog': 'C10',
+  // Digikey leaf category name (verified Mar 2026)
+  'Digital to Analog Converters (DACs)': 'C10',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -384,6 +435,9 @@ const familyLastUpdated: Record<string, string> = {
   'C5': '2026-02-28',
   'C6': '2026-03-01',
   'C7': '2026-03-02',
+  'C8': '2026-03-02',
+  'C9': '2026-03-02',
+  'C10': '2026-03-02',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

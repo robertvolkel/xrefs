@@ -1176,3 +1176,117 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/interfaceICs.ts`, `lib/contextQuestions/interfaceICs.ts`
 
 **Files modified:** `lib/types.ts` (Interface ICs category), `lib/logicTables/index.ts` (registry + 18 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + protocol/isolation/operating_mode enrichment), `lib/services/digikeyParamMap.ts` (2 param maps + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~45 MPN patterns + candidate search keywords)
+
+---
+
+### 53. C8 Timers and Oscillators — Single Family with Device Category Hard Gate
+
+**Decision:** Encode timers and oscillators as Family C8 with 22 matching rules and 4 context questions. Covers 555/556 timer ICs (NE555, TLC555, ICM7555) and packaged oscillators: XO (crystal), MEMS (SiT8008, DSC1001), TCXO (ASTX, TG5032), VCXO (SiT3807, ASVMX, ABLNO-V), and OCXO (OCHD). New `'Timers and Oscillators'` ComponentCategory added.
+
+**Rationale:** Device category is the HARD GATE — 555 timers and packaged oscillators are architecturally unrelated (analog timing vs frequency reference). Within oscillators, stability class (XO ±50 ppm, TCXO ±2.5 ppm, OCXO ±0.01 ppm) represents qualitatively different engineering. The sole cross-category exception is XO↔MEMS: both are ±50 ppm general-purpose oscillators, but resonator technology differs (quartz crystal vs silicon MEMS), warranting Application Review rather than hard rejection.
+
+**Key Design Decisions:**
+1. **`device_category` = HARD GATE (w10, blockOnMissing):** Post-scoring filter (`filterTimerOscillatorCategoryMismatches`) removes confirmed cross-category candidates. XO↔MEMS exception adds review flag instead of filtering.
+2. **`timer_variant` (CMOS vs bipolar 555) as identity_flag w7:** Bipolar 555 minimum supply = 4.5V; CMOS variant works from 2V. A CMOS→bipolar swap in a 3.3V system is a hard failure. Digikey has no explicit CMOS/Bipolar field — inferred from supply voltage minimum (≤2V = CMOS).
+3. **Digikey discovery surprise:** Only TWO categories exist — "Programmable Timers and Oscillators" (555s) and "Oscillators" (ALL oscillator types: XO, MEMS, TCXO, VCXO, OCXO). Oscillator sub-type determined by "Type" parametric field. MEMS distinguished from crystal XO by "Base Resonator" field ("MEMS" vs "Crystal").
+4. **`output_frequency_hz` = identity w10 blockOnMissing:** Frequency is a hard specification — 25.000 MHz ≠ 24.576 MHz. A frequency mismatch will cause complete system failure (PLL won't lock, baud rates wrong, SerDes link down).
+5. **`vcxo_pull_range_ppm` = identity_flag w8:** For VCXO, the pull range defines PLL capture range. If the replacement has narrower APR, the PLL cannot track the same frequency offset and will lose lock. Escalated to mandatory+block by context Q1=VCXO.
+6. **OE polarity limitation:** Digikey's "Function" field shows "Enable/Disable" or "Standby (Power Down)" but doesn't indicate active-high vs active-low polarity — enrichment marks "Has Enable" only.
+
+**Logic Table (22 rules, total weight ~140):**
+- 3 identity: device_category (w10 block), output_frequency_hz (w10 block), output_signal_type (w9 block)
+- 3 identity_flag: oe_polarity (w8), timer_variant (w7), vcxo_pull_range_ppm (w8)
+- 11 threshold: initial_tolerance_ppm (lte w8), temp_stability_ppm (lte w8), aging_ppm_per_year (lte w5), output_voh_vol (range_superset w7), output_drive_cl_pf (gte w6), duty_cycle_pct (range_superset w5), phase_jitter_ps_rms (lte w7), startup_time_ms (lte w5), supply_voltage_range (range_superset w8 block), icc_active_ma (lte w6), icc_standby_ua (lte w5)
+- 2 threshold range_superset: operating_temp_range (w7 block)
+- 2 application_review: package_case (w5), crystal_load_cap_pf (w3)
+- 1 operational: packaging_format (w1)
+
+**Context Questions (4):**
+- Q1 `device_category_type` (BLOCKING, priority 1): 555_timer / xo / mems / tcxo / vcxo / ocxo — each suppresses irrelevant attributes via not_applicable (~10 for 555, ~3 for oscillator types); MEMS adds review flag for XO↔MEMS cross-substitution; OCXO escalates icc_active_ma + startup_time_ms to primary
+- Q2 `frequency_requirement` (priority 2): comms / precision / serdes / general — comms escalates initial_tolerance + temp_stability to mandatory+block; serdes escalates phase_jitter to mandatory+block
+- Q3 `battery_application` (priority 3): yes / no — yes escalates icc_active_ma, icc_standby_ua, startup_time_ms to primary
+- Q4 `automotive` (priority 4): yes / no — escalates aec_q100 to mandatory+block, operating_temp to mandatory
+
+**Digikey Integration:** TWO param maps — "Programmable Timers" (5 fields, ~30% weight coverage) and "Oscillators" (10 fields, ~50% weight coverage). Device category enriched from "Type" + "Base Resonator" parametric fields + Digikey category name. OE polarity from "Function" field. Timer variant (CMOS/bipolar) inferred from supply voltage minimum. Fields NOT in Digikey: initial_tolerance_ppm (separate from temp stability), aging_ppm_per_year, output_voh_vol, output_drive_cl_pf, duty_cycle_pct, phase_jitter_ps_rms, startup_time_ms, icc_standby_ua, crystal_load_cap_pf, packaging_format.
+
+**MPN Enrichment:** ~50 patterns organized by device category (bipolar 555 ~4, CMOS 555 ~4, dual 556 ~3, MEMS ~8, XO ~12, TCXO ~6, VCXO ~8, OCXO ~2). Suffix-based output signal type enrichment (-L=LVDS, -E=LVPECL, -C=CMOS). Key correction from Digikey data: ABLNO-V is VCXO (not OCXO as initially expected from user prompt).
+
+**Files created:** `lib/logicTables/timersOscillators.ts`, `lib/contextQuestions/timersOscillators.ts`
+
+**Files modified:** `lib/types.ts` (Timers and Oscillators category), `lib/logicTables/index.ts` (registry + 17 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + device_category/timer_variant/oe_polarity enrichment), `lib/services/digikeyParamMap.ts` (2 param maps + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~50 MPN patterns + candidate search keywords)
+
+### 54. C9 ADCs — Analog-to-Digital Converters
+
+**Decision:** Encode ADCs as Family C9 with 20 matching rules and 4 context questions. Covers all ADC architectures: SAR (ADS8688, MCP3208, AD7606), Delta-Sigma (ADS1115, ADS1256, AD7124), Pipeline (AD9226, AD9250), and Flash. New `'ADCs'` ComponentCategory added. Single Digikey category "Analog to Digital Converters (ADC)" covers all architectures.
+
+**Rationale:** Architecture is the HARD GATE — SAR, Delta-Sigma, Pipeline, and Flash converters have fundamentally different latency, noise floor, speed, and power characteristics. Cross-architecture substitution requires firmware changes and may destabilize control loops. Delta-Sigma conversion latency (decimation filter group delay, 10s–100s ms) makes them fatal in fast control loops designed for SAR's 1-cycle latency.
+
+**Key Design Decisions:**
+1. **`architecture` = HARD GATE (w10, blockOnMissing):** Post-scoring filter (`filterAdcArchitectureMismatches`) removes all cross-architecture candidates. No exceptions — unlike C8's XO↔MEMS exception.
+2. **`resolution_bits` = identity w10 blockOnMissing:** 12-bit ≠ 16-bit — LSB size changes, firmware data register width may differ. Higher resolution acceptable with Application Review; lower resolution is BLOCKED.
+3. **`simultaneous_sampling` = identity_flag w9:** BLOCKING when original is simultaneous — multiplexed ADC cannot substitute in motor control or power quality metering. Context Q3 escalates to mandatory+blockOnMissing for phase-sensitive applications.
+4. **ENOB as honest performance metric:** threshold gte w7 by default, escalated to mandatory+blockOnMissing for 16–24-bit high precision (Q2). ENOB = (SNR − 1.76 dB) / 6.02. Not in Digikey parametric data — must be enriched from datasheet.
+5. **Conversion latency for control loops:** threshold lte w6 by default, escalated to mandatory+blockOnMissing by Q3=control_loop. Delta-Sigma latency ≈ (filter_order × decimation_ratio) / ODR — a sinc3 filter at ODR=100 SPS has ~30 ms group delay.
+6. **Digikey field "Architecture":** Confirmed present with values "SAR", "Sigma-Delta", "Pipelined". Normalized in mapper enrichment: "Sigma-Delta"→"Delta-Sigma", "Pipelined"→"Pipeline".
+7. **Channel count from "Number of Inputs":** Digikey lists multiple values (e.g., "2, 4" for differential/single-ended). Mapper takes max value (most channels in single-ended mode).
+8. **Reference type normalization:** "External, Internal"→"Both", "External"→"External", "Internal"→"Internal".
+
+**Logic Table (20 rules, total weight ~139):**
+- 4 identity: architecture (w10 block), resolution_bits (w10 block), interface_type (w9 block), input_configuration (w9 block)
+- 3 identity_flag: simultaneous_sampling (w9), reference_type (w7), aec_q100 (w4)
+- 3 threshold gte: channel_count (w8 block), sample_rate_sps (w8 block), enob (w7)
+- 5 threshold lte: inl_lsb (w7), dnl_lsb (w6), thd_db (w6), conversion_latency_cycles (w6), power_consumption_mw (w5)
+- 3 threshold range_superset: input_voltage_range (w7), supply_voltage_range (w7 block), operating_temp_range (w7 block)
+- 2 application_review: reference_voltage (w5), package_case (w5)
+
+**Context Questions (4):**
+- Q1 `adc_architecture` (BLOCKING, priority 1): sar / delta_sigma / pipeline / flash — each blocks all other architectures; delta_sigma escalates conversion_latency to primary; pipeline escalates sample_rate + thd to primary; flash escalates sample_rate to mandatory+block
+- Q2 `precision_class` (priority 2): general_12bit / precision_16bit / high_precision_24bit — most impactful escalation question; 16–24-bit escalates enob/inl/dnl to mandatory+block, reference_type to mandatory
+- Q3 `sampling_topology` (priority 3): single_or_multiplexed / simultaneous / control_loop / battery_powered — simultaneous escalates simultaneous_sampling to mandatory+block; control_loop escalates conversion_latency to mandatory+block
+- Q4 `automotive` (priority 4): yes / no — escalates aec_q100 to mandatory+block, operating_temp_range to mandatory
+
+**Digikey Integration:** Single param map — "Analog to Digital Converters" (11 fields, ~48% weight coverage). Key fields: Architecture, Number of Bits, Data Interface, Input Type, Number of Inputs, Sampling Rate, Reference Type, Voltage - Supply Analog/Digital, Operating Temperature, Package/Case. Fields NOT in Digikey: enob, inl_lsb, dnl_lsb, thd_db, simultaneous_sampling, conversion_latency_cycles, power_consumption_mw, input_voltage_range, reference_voltage, aec_q100.
+
+**MPN Enrichment:** ~55 patterns covering TI (ADS1xxx Delta-Sigma, ADS7xxx/ADS8xxx SAR), Analog Devices (AD71xx Delta-Sigma, AD76xx SAR, AD92xx Pipeline), Maxim (MAX11xxx), Linear Technology (LTC1xxx/LTC2xxx SAR), Microchip (MCP32xx SAR, MCP34xx Delta-Sigma), Cirrus Logic (CS55xx Delta-Sigma). Enriches architecture, resolution_bits, and interface_type.
+
+**Files created:** `lib/logicTables/adc.ts`, `lib/contextQuestions/adc.ts`
+
+**Files modified:** `lib/types.ts` (ADCs category), `lib/logicTables/index.ts` (registry + 11 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + architecture/reference_type/channel_count/input_configuration enrichment), `lib/services/digikeyParamMap.ts` (adcParamMap + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~55 MPN patterns + candidate search keywords)
+
+### 55. C10 DACs — Digital-to-Analog Converters
+
+**Decision:** Encode DACs as Family C10 with 22 matching rules and 4 context questions. Covers voltage-output DACs (DAC8568, AD5791, MCP4921), current-output DACs (AD5420, DAC8760), and audio DACs (PCM5102A, CS4344, TAS5756M). New `'DACs'` ComponentCategory added. Single Digikey category "Digital to Analog Converters (DAC)" covers all output types. Audio DACs classified by Digikey under "ADCs/DACs - Special Purpose" — different category with different fields, NOT mapped.
+
+**Rationale:** Output type (voltage vs current) is the HARD GATE — voltage-output and current-output DACs are architecturally incompatible topologies. A voltage-output DAC cannot substitute for a current-output 4–20 mA loop transmitter; a current-output DAC cannot directly drive a voltage-controlled actuator. Unlike ADCs where architecture affects latency/resolution tradeoffs, DAC output type determines the fundamental circuit topology and load interface.
+
+**Key Design Decisions:**
+1. **`output_type` = HARD GATE (w10, blockOnMissing):** Post-scoring filter (`filterDacOutputTypeMismatches`) removes all cross-type candidates. No exceptions.
+2. **`resolution_bits` = identity w10 blockOnMissing:** 12-bit ≠ 16-bit — LSB step size changes, firmware data register width differs. Higher resolution acceptable with Application Review; lower is BLOCKED.
+3. **`output_buffered` = identity_flag w8:** Unbuffered output requires external buffer for load driving. Context Q1=current_output marks as not_applicable.
+4. **`power_on_reset_state` = identity_flag w8:** Critical for actuators and valves — uncontrolled output at power-up can cause mechanical damage. Context Q3=industrial_control escalates to mandatory.
+5. **`glitch_energy_nVs` = threshold lte w7:** Hidden audio spec — charge injection glitch energy during code transitions causes audible artifacts. Context Q3=audio escalates to mandatory+blockOnMissing.
+6. **Compound Digikey fields:** "Output Type" encodes both `output_type` AND `output_buffered` ("Voltage - Buffered", "Voltage - Unbuffered", "Current - Buffered"). "INL/DNL (LSB)" encodes both `inl_lsb` AND `dnl_lsb` ("±4, ±0.2"). Both use array ParamMapEntry with enrichment splitting in digikeyMapper.ts.
+7. **`diac` guard:** mapCategory/mapSubcategory DAC check uses `!lower.includes('diac')` to prevent collision with Thyristors DIACs (B8).
+8. **Audio DACs in different category:** PCM5102A categorized as "ADCs/DACs - Special Purpose" by Digikey — completely different field names. Not mapped; MPN enrichment covers audio DAC identification.
+
+**Logic Table (22 rules, total weight ~149):**
+- 3 identity: output_type (w10 block), resolution_bits (w10 block), interface_type (w9 block)
+- 1 identity_flag: output_buffered (w8), power_on_reset_state (w8), reference_type (w7), architecture (w7), aec_q100 (w4)
+- 4 threshold gte: channel_count (w7 block), update_rate_sps (w7 block), output_current_source_ma (w6)
+- 5 threshold lte: inl_lsb (w7), dnl_lsb (w7), glitch_energy_nVs (w7), settling_time_us (w7), output_noise_density_nvhz (w6), power_consumption_mw (w5)
+- 3 threshold range_superset: output_voltage_range (w8 block), supply_voltage_range (w7 block), operating_temp_range (w7 block)
+- 2 application_review: reference_voltage (w5), package_case (w5)
+
+**Context Questions (4):**
+- Q1 `dac_output_type` (BLOCKING, priority 1): voltage_output / current_output — voltage blocks current candidates, escalates output_voltage_range to mandatory+block; current blocks voltage candidates, escalates output_current_source_ma to mandatory+block, marks output_voltage_range + output_buffered as not_applicable
+- Q2 `precision_class` (priority 2): general_12bit / precision_16bit / high_precision_20bit — progressive escalation of inl/dnl/glitch/settling/noise/reference attributes
+- Q3 `application_type` (priority 3): audio / precision_dc / industrial_control / battery_powered — audio escalates glitch_energy to mandatory+block; industrial escalates power_on_reset_state to mandatory
+- Q4 `automotive` (priority 4): yes / no — escalates aec_q100 to mandatory+block, operating_temp_range to mandatory
+
+**Digikey Integration:** Single param map — "Digital to Analog Converters" (13 fields incl. 2 compound, ~50% weight coverage). Key compound fields: "Output Type" → output_type + output_buffered, "INL/DNL (LSB)" → inl_lsb + dnl_lsb. Fields NOT in Digikey: update_rate_sps, glitch_energy_nVs, output_noise_density_nvhz, output_current_source_ma, output_voltage_range, power_consumption_mw, power_on_reset_state, reference_voltage, aec_q100.
+
+**MPN Enrichment:** ~55 patterns covering TI (DAC85xx voltage, DAC87xx current), Analog Devices (AD50xx-AD57xx voltage, AD54xx current), Linear Technology (LTC26xx voltage), Maxim (MAX5xxx voltage), Microchip (MCP47xx-49xx voltage), Audio (PCM51xx, TAS57xx, CS43xx — voltage output, Delta-Sigma architecture, I2S interface). Enriches output_type, resolution_bits, and interface_type.
+
+**Files created:** `lib/logicTables/dac.ts`, `lib/contextQuestions/dac.ts`
+
+**Files modified:** `lib/types.ts` (DACs category), `lib/logicTables/index.ts` (registry + 12 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + output_type/output_buffered/inl_dnl/reference_type/channel_count enrichment), `lib/services/digikeyParamMap.ts` (dacParamMap with 2 compound array entries + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~55 MPN patterns + candidate search keywords)

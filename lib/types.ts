@@ -36,7 +36,10 @@ export type ComponentCategory =
   | 'Amplifiers'
   | 'Logic ICs'
   | 'Voltage References'
-  | 'Interface ICs';
+  | 'Interface ICs'
+  | 'Timers and Oscillators'
+  | 'ADCs'
+  | 'DACs';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {
