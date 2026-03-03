@@ -1623,7 +1623,7 @@ const dacMpnPatterns: DacMpnHint[] = [
 
   // === MAXIM (ANALOG DEVICES) — VOLTAGE OUTPUT ===
   { pattern: /^MAX521[5-8]/i, outputType: 'Voltage Output', resolutionBits: '16', interfaceType: 'I2C', manufacturer: 'Maxim' },
-  { pattern: /^MAX571[9-21]/i, outputType: 'Voltage Output', resolutionBits: '20', interfaceType: 'SPI', manufacturer: 'Maxim' },
+  { pattern: /^MAX57(19|20|21)/i, outputType: 'Voltage Output', resolutionBits: '20', interfaceType: 'SPI', manufacturer: 'Maxim' },
   { pattern: /^MAX576[2-3]/i, outputType: 'Voltage Output', resolutionBits: '16', interfaceType: 'SPI', manufacturer: 'Maxim' },
   { pattern: /^MAX513[5-7]/i, outputType: 'Voltage Output', resolutionBits: '12', interfaceType: 'SPI', manufacturer: 'Maxim' },
 
