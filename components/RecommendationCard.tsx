@@ -1,14 +1,16 @@
 'use client';
-import { Card, CardActionArea, CardContent, Chip, Divider, Typography, Stack, Box } from '@mui/material';
+import { Card, CardActionArea, CardContent, Chip, Divider, IconButton, Typography, Stack, Box } from '@mui/material';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { XrefRecommendation } from '@/lib/types';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
   onClick: () => void;
   onManufacturerClick?: (manufacturer: string) => void;
+  showCommercial?: boolean;
 }
 
-export default function RecommendationCard({ recommendation, onClick, onManufacturerClick }: RecommendationCardProps) {
+export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial }: RecommendationCardProps) {
   const { part, matchDetails } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
@@ -63,9 +65,29 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   part.manufacturer
                 )}
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap component="div">
                 {part.description}
+                {part.datasheetUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
+                    sx={{ p: 0.25, ml: 0.5, verticalAlign: 'middle', '&:hover': { opacity: 0.8 } }}
+                  >
+                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
+                  </IconButton>
+                )}
               </Typography>
+              {showCommercial && (
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
+                    {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', opacity: 0.5 }}>·</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
+                    {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
+                  </Typography>
+                </Stack>
+              )}
               {showSummary && (
                 <>
                   <Divider sx={{ my: 1, opacity: 0.4 }} />

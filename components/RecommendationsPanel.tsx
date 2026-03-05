@@ -18,6 +18,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
+  const [showCommercial, setShowCommercial] = useState(false);
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
 
@@ -113,6 +114,19 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             <MenuItem key={mfr} value={mfr} sx={{ fontSize: '0.78rem' }}>{mfr}</MenuItem>
           ))}
         </Select>
+        <Box sx={{ flex: 1 }} />
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={showCommercial}
+              onChange={(e) => setShowCommercial(e.target.checked)}
+              size="small"
+              sx={{ p: 0.5 }}
+            />
+          }
+          label={t('recommendations.showPriceStock', 'Show price & stock')}
+          sx={{ mr: 0, flexShrink: 0, '& .MuiFormControlLabel-label': { fontSize: '0.72rem' } }}
+        />
       </Box>
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
@@ -134,6 +148,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                 recommendation={rec}
                 onClick={() => onSelect(rec)}
                 onManufacturerClick={onManufacturerClick}
+                showCommercial={showCommercial}
               />
             </Box>
           );
