@@ -15,7 +15,7 @@ export const currentSenseResistorsContext: FamilyContextConfig = {
           description: 'Separate force/sense pads are required for lead resistance elimination',
           attributeEffects: [
             { attributeId: 'kelvin_sensing', effect: 'escalate_to_mandatory', note: 'Kelvin sensing layout — 4-terminal footprint is required, 2-terminal cannot substitute' },
-            { attributeId: 'package', effect: 'escalate_to_mandatory', note: 'Kelvin layout — 4-terminal parts have a different pad layout than 2-terminal' },
+            { attributeId: 'package_case', effect: 'escalate_to_mandatory', note: 'Kelvin layout — 4-terminal parts have a different pad layout than 2-terminal' },
           ],
         },
         {
@@ -39,7 +39,6 @@ export const currentSenseResistorsContext: FamilyContextConfig = {
             { attributeId: 'tolerance', effect: 'escalate_to_mandatory', note: 'High precision — tolerance ≤1% required for accurate current measurement' },
             { attributeId: 'tcr', effect: 'escalate_to_mandatory', note: 'High precision — low TCR (≤50 ppm/°C) required to maintain accuracy over temperature' },
             { attributeId: 'parasitic_inductance', effect: 'escalate_to_primary', note: 'High precision — parasitic inductance introduces measurement error at higher frequencies' },
-            { attributeId: 'long_term_stability', effect: 'escalate_to_primary', note: 'High precision — long-term resistance drift degrades measurement accuracy over time' },
           ],
         },
         {

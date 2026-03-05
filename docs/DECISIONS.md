@@ -1290,3 +1290,86 @@ The classifier (`familyClassifier.ts`) examines part attributes to detect which 
 **Files created:** `lib/logicTables/dac.ts`, `lib/contextQuestions/dac.ts`
 
 **Files modified:** `lib/types.ts` (DACs category), `lib/logicTables/index.ts` (registry + 12 subcategory mappings + lastUpdated), `lib/contextQuestions/index.ts` (import + register), `lib/services/digikeyMapper.ts` (mapCategory + mapSubcategory + output_type/output_buffered/inl_dnl/reference_type/channel_count enrichment), `lib/services/digikeyParamMap.ts` (dacParamMap with 2 compound array entries + categoryParamMaps + familyToDigikeyCategories + familyTaxonomyOverrides), `lib/services/partDataService.ts` (enrichment + post-scoring filter + ~55 MPN patterns + candidate search keywords)
+
+---
+
+### 56. Structural Consistency Test Suite for Logic Tables & Context Questions
+
+**Date:** 2026-03-04
+**Status:** Implemented
+
+Added automated structural consistency tests (`__tests__/services/logicTableConsistency.test.ts`) that validate all 38 logic tables and context question configs for mechanical correctness. 573 tests across 3 tiers:
+
+1. **Tier 1 — Silent bug finders:** Orphaned context effects (attributeId references that don't exist in the logic table), logicType-specific required fields (identity_upgrade → upgradeHierarchy, threshold → thresholdDirection), duplicate attributeIds, registry completeness.
+2. **Tier 2 — Data quality:** Weight range [0-10], duplicate sortOrder/questionId, conditional question references, spurious fields (e.g., thresholdDirection on non-threshold rules), identity_upgrade hierarchy ≥2 elements, familyId consistency, required string field non-empty, context option value uniqueness.
+3. **Tier 3 — Cross-registry:** Exact 38 families in both logic table and context registries.
+
+**Bugs found on first run (8 total):**
+- `package` → `package_case` typo in context questions for families 54 (Current Sense Resistors) and 68 (PTC Thermistors) — escalation effects were silently doing nothing
+- Orphaned `mil_spec` effect in family 13 (Mica Capacitors) — no rule exists
+- Orphaned `long_term_stability` effects in families 54 and 67 (NTC Thermistors, 4 places total) — no rule exists
+- Orphaned `max_steady_state_current` effect in family 67 — no rule exists
+- Spurious `upgradeHierarchy` on `identity` rules in families 13 and 72, caused by deltaBuilder not cleaning up when logicType is overridden
+
+**deltaBuilder cleanup:** Added a post-override step (step 5) to `lib/logicTables/deltaBuilder.ts` that strips fields not belonging to the rule's final logicType (upgradeHierarchy on non-identity_upgrade, thresholdDirection on non-threshold, tolerancePercent on non-identity). Prevents field leakage when variant families change a rule's logicType.
+
+**Key insight:** Cross-checking with Gemini (LLM review) produced ~12/15 false positives for LDO C1 — most findings were things already handled in the code that Gemini failed to read carefully. Automated structural tests have zero false positives and caught real silent bugs that no amount of reading would efficiently find.
+
+---
+
+### 57. Automatic Browser Language Detection
+
+**Date:** 2026-03-04
+**Status:** Implemented
+
+Added automatic language detection from the browser's `navigator.languages` preference list. The fallback chain is now: **Supabase user_metadata.language → browser language → English default**.
+
+**Implementation:** `detectBrowserLanguage()` in `lib/i18n.ts` iterates `navigator.languages`, tries exact match then prefix match against the 3 supported locales (`en`, `zh-CN`, `de`). Prefix matching handles regional variants: `zh-TW` → `zh-CN`, `de-AT` → `de`, `en-GB` → `en`. SSR-safe with `typeof window` guard.
+
+**Integration:** `LanguageSync` in `components/I18nProvider.tsx` calls `detectBrowserLanguage()` as its fallback instead of hardcoded `DEFAULT_LANGUAGE`. Once a user explicitly saves a language preference in Settings, that Supabase-stored preference takes priority over browser detection.
+
+**Files modified:** `lib/i18n.ts` (new `detectBrowserLanguage()` export), `components/I18nProvider.tsx` (fallback change)
+
+---
+
+### 58. i18n Content Translation — LLM Locale + Context Questions
+
+**Date:** 2026-03-04
+**Status:** Implemented (partial translation coverage)
+
+Extended i18n from UI-only (~25% of visible text) to content and interactions. Two phases implemented:
+
+**Phase 1 — LLM Language Awareness:** The LLM orchestrator now responds in the user's preferred language. Server-side API routes (`app/api/chat/route.ts`, `app/api/modal-chat/route.ts`) extract `user_metadata.language` from the authenticated Supabase user and pass it to `chat()` / `refinementChat()`. The orchestrator appends a language instruction to the system prompt when locale is not English. Technical abbreviations (MLCC, ESR, MOSFET, etc.) are kept unchanged — only descriptive text is translated.
+
+**Phase 3 — Context Question Translation:** `ApplicationContextForm.tsx` now accepts a `familyId` prop and uses it to construct i18n translation keys (`contextQ.{familyId}.{questionId}.text`, `.opt.{value}.label`, `.opt.{value}.desc`). Falls back to hardcoded English strings when a translation key is missing (standard i18next behavior with default value). 842 English keys added to `locales/en.json` under `contextQ` namespace. German: 28% coverage (passives families fully translated). Chinese: 18% coverage (common patterns).
+
+**Design decisions:**
+- Server-side locale extraction (from Supabase user metadata) rather than client-side passing — more reliable, no API signature changes needed on client
+- Translation keys colocated in locale JSON files rather than in TypeScript source files — standard i18n pattern, single source of truth for translations
+- Graceful fallback to English for missing translations — no broken UI when translations are incomplete
+- Digikey-sourced data stays English — industry-standard terms recognized worldwide
+
+**Files modified:** `lib/services/llmOrchestrator.ts`, `app/api/chat/route.ts`, `app/api/modal-chat/route.ts`, `components/ApplicationContextForm.tsx`, `components/MessageBubble.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+---
+
+### 59. Engineering Reason Translations (Chinese)
+
+**Date:** 2026-03-05
+**Status:** Implemented (Chinese 100%, German not started)
+
+Translated all 719 engineering reason strings (`logicTable.*.reason`) to Simplified Chinese. These are the `engineeringReason` fields displayed in ComparisonView, LogicPanel, and QC feedback detail — the explanations of *why* each matching rule exists.
+
+**Approach:** Text-keyed lookup for de-duplication. 719 total reason entries across 38 families map to 611 unique English texts (many families share identical reasons for common rules like `package_case`, `aec_q100`, `operating_temp`). A lookup JSON file `{ "English text": "Chinese translation" }` is applied by `scripts/translate-reasons.mjs` to write translated reason entries into `locales/zh-CN.json`.
+
+**Translation quality:** AI-generated using Claude with domain-specific prompting for electronics engineering terminology. Translations preserve technical precision — e.g., "DC bias derating" → "直流偏置降额", "thermal runaway" → "热失控", "phase reversal" → "相位反转". Universal abbreviations (ESR, PSRR, MOSFET, etc.) kept in English per industry convention.
+
+**Script pipeline:**
+1. `scripts/list-reasons.mjs` — extracts all reason entries from `locales/en.json` to JSON
+2. `scripts/zh-translations.json` — 611 unique English→Chinese text lookup (persistent, re-usable)
+3. `scripts/translate-reasons.mjs` — applies lookup to write `logicTable.*.reason` entries in zh-CN.json, with English fallback for any missing translations
+
+**Coverage:** 719/719 (100%) Chinese. German translations can follow the same pipeline — generate a `de-translations.json` lookup file and update the script.
+
+**Files modified:** `locales/zh-CN.json` (719 reason entries added)
+**Files created:** `scripts/translate-reasons.mjs`, `scripts/zh-translations.json`

@@ -30,7 +30,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const response = await chat(body.messages, apiKey, body.recommendations, user?.id);
+    const locale = (user?.user_metadata?.language as string) ?? 'en';
+    const response = await chat(body.messages, apiKey, body.recommendations, user?.id, locale);
 
     return NextResponse.json({
       success: true,

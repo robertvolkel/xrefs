@@ -9,6 +9,7 @@ export interface AdminUser {
   disabled: boolean;
   created_at: string;
   search_count: number;
+  list_count: number;
   last_active: string | null;
 }
 

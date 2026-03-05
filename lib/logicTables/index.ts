@@ -82,6 +82,8 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C10': dacLogicTable,
 };
 
+export { logicTableRegistry };
+
 /** Map subcategory strings to family IDs */
 const subcategoryToFamily: Record<string, string> = {
   // MLCC (Family 12)

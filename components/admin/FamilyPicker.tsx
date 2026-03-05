@@ -8,6 +8,7 @@ import {
   MenuItem,
   Select,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { LogicTable } from '@/lib/types';
 
 interface FamilyPickerProps {
@@ -27,7 +28,8 @@ export default function FamilyPicker({
   selectedFamilyId,
   onFamilyChange,
 }: FamilyPickerProps) {
-  const filtered = tables.filter((t) => t.category === selectedCategory);
+  const { t } = useTranslation();
+  const filtered = tables.filter((tb) => tb.category === selectedCategory);
 
   return (
     <Box
@@ -51,7 +53,7 @@ export default function FamilyPicker({
         >
           {categories.map((cat) => (
             <MenuItem key={cat} value={cat}>
-              {cat}
+              {t(`admin.cat.${cat}`, cat)}
             </MenuItem>
           ))}
         </Select>
@@ -69,7 +71,7 @@ export default function FamilyPicker({
             }}
           >
             <ListItemText
-              primary={table.familyName}
+              primary={t(`logicTable.${table.familyId}.name`, table.familyName)}
               primaryTypographyProps={{
                 variant: 'body2',
                 fontWeight: table.familyId === selectedFamilyId ? 600 : 400,

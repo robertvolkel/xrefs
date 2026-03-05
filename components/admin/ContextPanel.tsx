@@ -47,7 +47,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
     return (
       <Box>
         <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {table.familyName}
+          {t(`logicTable.${table.familyId}.name`, table.familyName)}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           {t('admin.noContextConfig')}
@@ -59,7 +59,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {table.familyName}
+        {t(`logicTable.${table.familyId}.name`, table.familyName)}
       </Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 3 }}>
         <Typography variant="body2" color="text.secondary">
@@ -102,7 +102,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
                     }}
                   />
                   <Typography variant="subtitle2">
-                    {question.questionText}
+                    {t(`contextQ.${table.familyId}.${question.questionId}.text`, question.questionText)}
                   </Typography>
                 </Box>
 
@@ -118,11 +118,11 @@ export default function ContextPanel({ table }: ContextPanelProps) {
                       }}
                     >
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {option.label}
+                        {t(`contextQ.${table.familyId}.${question.questionId}.opt.${option.value}.label`, option.label)}
                       </Typography>
                       {option.description && (
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-                          {option.description}
+                          {t(`contextQ.${table.familyId}.${question.questionId}.opt.${option.value}.desc`, option.description)}
                         </Typography>
                       )}
 

@@ -38,7 +38,7 @@ export default async function RootLayout({
         <InitColorSchemeScript attribute="data-mui-color-scheme" />
         <ThemeRegistry>
           <AuthProvider initialUser={user}>
-            <I18nProvider>
+            <I18nProvider initialLocale={(user?.user_metadata?.language as string) || undefined}>
               {children}
             </I18nProvider>
           </AuthProvider>

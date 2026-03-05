@@ -76,6 +76,21 @@ export function buildDerivedLogicTable(
     }
   }
 
+  // 5. CLEANUP: strip fields that don't belong to the rule's logicType
+  //    (e.g., when an override changes logicType from identity_upgrade to identity,
+  //     the base rule's upgradeHierarchy would otherwise carry over as a spurious field)
+  for (const rule of rules) {
+    if (rule.logicType !== 'identity_upgrade') {
+      delete (rule as Partial<MatchingRule>).upgradeHierarchy;
+    }
+    if (rule.logicType !== 'threshold') {
+      delete (rule as Partial<MatchingRule>).thresholdDirection;
+    }
+    if (rule.logicType !== 'identity') {
+      delete (rule as Partial<MatchingRule>).tolerancePercent;
+    }
+  }
+
   return {
     familyId: delta.familyId,
     familyName: delta.familyName,

@@ -11,44 +11,28 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import { LogicTable, MatchingRule } from '@/lib/types';
-import { typeColors, typeLabels } from './logicConstants';
-
-function getConditionText(rule: MatchingRule): string {
-  if (rule.logicType === 'threshold' || rule.logicType === 'fit') {
-    switch (rule.thresholdDirection) {
-      case 'gte': return 'Replacement \u2265 Original';
-      case 'lte': return 'Replacement \u2264 Original';
-      case 'range_superset': return 'Replacement range \u2287 Original';
-      default: return rule.logicType === 'fit' ? 'Replacement \u2264 Original' : '\u2014';
-    }
-  }
-  if (rule.logicType === 'identity_upgrade' && rule.upgradeHierarchy) {
-    return rule.upgradeHierarchy.join(' > ');
-  }
-  if (rule.logicType === 'identity_flag') {
-    return 'If required by original';
-  }
-  if (rule.logicType === 'application_review') {
-    return 'Requires engineer review';
-  }
-  return '\u2014';
-}
+import { typeColors, typeTranslationKeys, typeLabels } from './logicConstants';
 
 interface LogicPanelProps {
   table: LogicTable | null;
 }
 
 export default function LogicPanel({ table }: LogicPanelProps) {
+  const { t } = useTranslation();
+
   if (!table) return null;
+
+  const fKey = `logicTable.${table.familyId}`;
 
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {table.familyName}
+        {t(`${fKey}.name`, table.familyName)}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {table.description} &mdash; {table.rules.length} rules
+        {t(`${fKey}.desc`, table.description)} &mdash; {t('admin.rulesCount', { count: table.rules.length })}
       </Typography>
 
       <TableContainer>
@@ -56,11 +40,11 @@ export default function LogicPanel({ table }: LogicPanelProps) {
           <TableHead>
             <TableRow>
               <TableCell sx={{ fontWeight: 600, width: 40 }}>#</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 180 }}>Attribute</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 140 }}>Rule Type</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 200 }}>Condition</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>Weight</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Engineering Reason</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 180 }}>{t('admin.colAttribute', 'Attribute')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 140 }}>{t('admin.colRuleType', 'Rule Type')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 200 }}>{t('admin.colCondition', 'Condition')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>{t('admin.colWeight', 'Weight')}</TableCell>
+              <TableCell sx={{ fontWeight: 600 }}>{t('admin.colEngineering', 'Engineering Reason')}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -73,12 +57,12 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {rule.attributeName}
+                    {t(`${fKey}.attr.${rule.attributeId}`, rule.attributeName)}
                   </Typography>
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={typeLabels[rule.logicType]}
+                    label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
                     size="small"
                     sx={{
                       bgcolor: typeColors[rule.logicType] + '22',
@@ -91,7 +75,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                 </TableCell>
                 <TableCell>
                   <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    {getConditionText(rule)}
+                    {getConditionText(rule, t)}
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ textAlign: 'center' }}>
@@ -101,7 +85,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                 </TableCell>
                 <TableCell>
                   <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.5 }}>
-                    {rule.engineeringReason}
+                    {t(`${fKey}.reason.${rule.attributeId}`, rule.engineeringReason)}
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -111,4 +95,26 @@ export default function LogicPanel({ table }: LogicPanelProps) {
       </TableContainer>
     </Box>
   );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getConditionText(rule: MatchingRule, t: any): string {
+  if (rule.logicType === 'threshold' || rule.logicType === 'fit') {
+    switch (rule.thresholdDirection) {
+      case 'gte': return t('admin.condGte', 'Replacement \u2265 Original');
+      case 'lte': return t('admin.condLte', 'Replacement \u2264 Original');
+      case 'range_superset': return t('admin.condRangeSuperset', 'Replacement range \u2287 Original');
+      default: return rule.logicType === 'fit' ? t('admin.condLte', 'Replacement \u2264 Original') : '\u2014';
+    }
+  }
+  if (rule.logicType === 'identity_upgrade' && rule.upgradeHierarchy) {
+    return rule.upgradeHierarchy.join(' > ');
+  }
+  if (rule.logicType === 'identity_flag') {
+    return t('admin.condIfRequired', 'If required by original');
+  }
+  if (rule.logicType === 'application_review') {
+    return t('admin.condEngineerReview', 'Requires engineer review');
+  }
+  return '\u2014';
 }

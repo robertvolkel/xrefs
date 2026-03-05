@@ -48,6 +48,48 @@ Created `.env.example` with all required variables, placeholder values, and comm
 
 ## P1 — Medium Priority
 
+### i18n: German translations incomplete for context questions and engineering reasons
+**Status:** Partial — Chinese complete, German partial
+**Priority:** P1
+
+Chinese i18n coverage is now comprehensive: context questions (842/842), engineering reasons (719/719), and LLM responses all translate. German lags behind:
+- **Context questions:** German 238/842 (28%) — passives translated, discrete + IC families missing
+- **Engineering reasons:** German 0/719 (0%) — not started
+- Untranslated strings fall back to English at runtime (i18next default behavior)
+
+Remaining work: translate ~600 German context question strings and ~611 unique German engineering reason strings. The `scripts/translate-reasons.mjs` pipeline can be reused — generate a `de-translations.json` lookup and update the script to support German output.
+
+**Key files:** `locales/de.json`, `scripts/translate-reasons.mjs`, `scripts/zh-translations.json` (pattern for German).
+
+---
+
+### i18n: Logic table attribute names and match engine notes not translated
+**Status:** Not started — future Phases 2 and 4
+**Priority:** P1
+
+~900 logic table attribute names (displayed in ComparisonView, LogicPanel, QC feedback) and ~200 match engine generated notes (displayed in comparison detail) are hardcoded English. Translation keys need to be added per `familyId.attributeId` pattern, similar to context questions.
+
+**Note:** Engineering reason translations (Phase 2 partial) are COMPLETE for Chinese (719/719). The remaining Phase 2 work is attribute *names* only. Phase 4 (match engine notes) is untouched.
+
+**Key files:** `lib/logicTables/*.ts` (attribute names), `lib/services/matchingEngine.ts` (generated notes), `components/ComparisonView.tsx`, `components/admin/LogicPanel.tsx`.
+
+---
+
+### Missing logic table rules for attributes referenced in context questions
+**Status:** Open — orphaned effects removed in consistency test fix (Decision #56)
+**Priority:** P1
+
+Several context questions reference attributes that should have matching rules but don't. The orphaned effects were removed so tests pass, but the underlying rules should be added when a domain expert can validate them:
+
+1. **Family 13 (Mica Capacitors):** `mil_spec` — MIL-spec compliance flag for military/aerospace applications. Mica capacitors are heavily used in mil/aero; a rule for MIL qualification makes sense.
+2. **Family 54 (Current Sense Resistors):** `long_term_stability` — long-term resistance drift, important for high-precision measurement applications.
+3. **Family 67 (NTC Thermistors):** `long_term_stability` — long-term resistance drift, critical for sensing and compensation applications. Was referenced in 3 context options (sensing, compensation, precision).
+4. **Family 67 (NTC Thermistors):** `max_steady_state_current` — maximum steady-state current for inrush limiter applications. Distinct from `max_power`.
+
+**Key files:** `lib/logicTables/micaCapacitors.ts`, `lib/logicTables/currentSenseResistors.ts`, `lib/logicTables/thermistors.ts`, corresponding context question files.
+
+---
+
 ### ~~Hardcoded model version in orchestrator~~ COMPLETED
 **File:** `lib/services/llmOrchestrator.ts`
 

@@ -15,6 +15,11 @@ const FAMILY_GROUPS: { label: string; familyIds: string[] }[] = [
   { label: 'Inductors & EMI Suppression', familyIds: ['71', '72', '70', '69'] },
   { label: 'Circuit Protection', familyIds: ['65', '66', '67', '68'] },
   { label: 'Discrete Semiconductors', familyIds: ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9'] },
+  { label: 'Power Management ICs', familyIds: ['C1', 'C2', 'C3'] },
+  { label: 'Analog ICs', familyIds: ['C4', 'C6'] },
+  { label: 'Digital & Interface ICs', familyIds: ['C5', 'C7'] },
+  { label: 'Data Converters', familyIds: ['C9', 'C10'] },
+  { label: 'Timing', familyIds: ['C8'] },
 ];
 
 const allTables = getAllLogicTables();
@@ -91,7 +96,7 @@ export default function AboutShell() {
 
             <StepCard number={3} title="Review Scored Recommendations">
               The scoring engine evaluates every candidate replacement against the
-              family&apos;s engineering rules (typically 13&ndash;23 rules per
+              family&apos;s engineering rules (typically 13&ndash;27 rules per
               family). Each rule carries a weight reflecting its criticality. The
               match percentage is the ratio of earned weight to total weight. A
               candidate that fails any critical rule &mdash; wrong capacitance,
@@ -173,7 +178,7 @@ export default function AboutShell() {
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block', lineHeight: 1.6 }}>
             Each family&apos;s logic table is built from component engineering
-            specification documents. Rules fall into seven types:
+            specification documents. Rules fall into nine types:
           </Typography>
 
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 4 }}>
@@ -181,6 +186,11 @@ export default function AboutShell() {
               name="Exact Match"
               description="The replacement must have the same value."
               example="Capacitance: 100 nF must be replaced by exactly 100 nF."
+            />
+            <RuleRow
+              name="Range Overlap"
+              description="The replacement's specified range must overlap with the original's range."
+              example="JFET pinch-off voltage: a -1V to -4V range overlaps with -0.5V to -3V."
             />
             <RuleRow
               name="Upgrade Allowed"
@@ -196,6 +206,11 @@ export default function AboutShell() {
               name="Threshold"
               description="A numeric value must meet or exceed (or stay below) a limit."
               example="Voltage rating must be equal to or higher than the original."
+            />
+            <RuleRow
+              name="Cross-Attribute Check"
+              description="Validates a derived parameter by recalculating from multiple attributes."
+              example="Switching regulator Vout recalculated from Vref and feedback resistors."
             />
             <RuleRow
               name="Physical Fit"
@@ -239,9 +254,10 @@ export default function AboutShell() {
           >
             <LimitationItem>
               <strong>Limited family coverage.</strong> XQ currently supports{' '}
-              {totalFamilies} component families covering passive components and
-              discrete semiconductors. ICs, connectors, LEDs, and many other
-              component types are not yet supported.
+              {totalFamilies} component families covering passive components,
+              discrete semiconductors, and ICs (power management, analog, logic,
+              interface, data converters, and timing). Connectors, LEDs, sensors,
+              and many other component types are not yet supported.
             </LimitationItem>
             <LimitationItem>
               <strong>Single data source.</strong> All part data comes from
@@ -251,15 +267,17 @@ export default function AboutShell() {
             <LimitationItem>
               <strong>Incomplete parametric data for some families.</strong> Digikey
               does not provide every parameter needed for full evaluation in all
-              categories. PTC thermistors, supercapacitors, and varistors have
-              notably sparse data coverage, which means some rules cannot be
-              evaluated and are skipped.
+              categories. Datasheet-only parameters (e.g., ENOB for ADCs, glitch
+              energy for DACs, CMRR for op-amps) cannot be checked automatically.
+              Coverage ranges from ~30% to ~63% of rule weight depending on the
+              family.
             </LimitationItem>
             <LimitationItem>
-              <strong>Automotive qualification gaps.</strong> AEC-Q200 and AEC-Q101
-              qualification status is unreliable in Digikey&apos;s data for certain
-              categories (e.g., tantalum capacitors, rectifier diodes). XQ flags
-              these for review rather than making incorrect assertions.
+              <strong>Automotive qualification gaps.</strong> AEC-Q200, AEC-Q101,
+              and AEC-Q100 qualification status is unreliable or absent in
+              Digikey&apos;s data for certain categories (e.g., tantalum
+              capacitors, IGBTs, ADCs/DACs). XQ flags these for review rather
+              than making incorrect assertions.
             </LimitationItem>
             <LimitationItem>
               <strong>Static rules.</strong> The matching rules are derived from

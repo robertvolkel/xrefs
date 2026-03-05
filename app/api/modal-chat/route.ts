@@ -39,6 +39,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    const locale = (user?.user_metadata?.language as string) ?? 'en';
     const response = await refinementChat(
       body.messages,
       body.mpn,
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       apiKey,
       body.recommendations,
       user?.id,
+      locale,
     );
 
     return NextResponse.json({

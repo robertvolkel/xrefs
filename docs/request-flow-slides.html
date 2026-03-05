@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XRefs App — Request Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0f1117;
+      color: #e0e0e0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    .slide {
+      width: 100%;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 64px;
+      page-break-after: always;
+      position: relative;
+    }
+
+    .slide::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #333, transparent);
+    }
+
+    .slide:last-child::after { display: none; }
+
+    .slide-number {
+      position: absolute;
+      top: 32px;
+      right: 48px;
+      font-size: 14px;
+      color: #555;
+      font-weight: 600;
+    }
+
+    h1 {
+      font-size: 42px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-align: center;
+    }
+
+    h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #93c5fd;
+      text-align: center;
+    }
+
+    .subtitle {
+      font-size: 18px;
+      color: #888;
+      margin-bottom: 40px;
+      text-align: center;
+      max-width: 700px;
+    }
+
+    .diagram-container {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+
+    .mermaid {
+      width: 100%;
+    }
+
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .legend {
+      display: flex;
+      gap: 24px;
+      margin-top: 32px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #aaa;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    .cover-detail {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 24px;
+      max-width: 800px;
+      width: 100%;
+    }
+
+    .cover-card {
+      background: #1a1d27;
+      border: 1px solid #2a2d3a;
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+
+    .cover-card h3 {
+      font-size: 15px;
+      color: #93c5fd;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .cover-card p {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.5;
+    }
+
+    .note {
+      margin-top: 28px;
+      padding: 16px 24px;
+      background: #1a1d27;
+      border-left: 3px solid #a78bfa;
+      border-radius: 0 8px 8px 0;
+      font-size: 14px;
+      color: #aaa;
+      max-width: 900px;
+      line-height: 1.6;
+    }
+
+    .note strong { color: #c4b5fd; }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      max-width: 1100px;
+      width: 100%;
+      align-items: start;
+    }
+
+    .col-label {
+      font-size: 16px;
+      font-weight: 600;
+      color: #93c5fd;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+
+    /* Pipeline diagram (Slide 5) */
+    .pipeline-diagram {
+      max-width: 1100px;
+      width: 100%;
+    }
+
+    .pipeline-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+    }
+
+    .pipeline-node {
+      padding: 16px 20px;
+      border-radius: 10px;
+      border: 2px solid;
+      min-width: 150px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .node-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 4px;
+      color: #f0f0f0;
+    }
+
+    .node-desc {
+      font-size: 11px;
+      color: #aaa;
+      line-height: 1.4;
+    }
+
+    .node-ux { background: #1a3333; border-color: #34d399; }
+    .node-data { background: #1e3a5f; border-color: #60a5fa; }
+    .node-logic { background: #2d1b4e; border-color: #a78bfa; }
+    .node-context { background: #1a3333; border-color: #34d399; }
+    .node-engine { background: #3b1d1d; border-color: #f87171; }
+    .node-result { background: #1a3320; border-color: #4ade80; }
+
+    .pipeline-arrow {
+      font-size: 24px;
+      color: #555;
+      padding: 0 10px;
+      flex-shrink: 0;
+    }
+
+    .pipeline-connector-right {
+      text-align: right;
+      padding-right: 70px;
+      font-size: 28px;
+      color: #555;
+      line-height: 1.8;
+    }
+
+    .pipeline-connector-left {
+      text-align: left;
+      padding-left: 70px;
+      font-size: 28px;
+      color: #555;
+      line-height: 1.8;
+    }
+
+    .connector-label {
+      font-size: 12px;
+      color: #4ade80;
+      vertical-align: middle;
+      margin-left: 8px;
+    }
+
+    @media print {
+      body { background: #0f1117; }
+      .slide {
+        min-height: 100vh;
+        page-break-after: always;
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- SLIDE 1: High-Level Overview                                  -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">1 / 7</span>
+  <h1>XRefs App — Request Flow</h1>
+  <p class="subtitle">How a part number becomes scored replacement recommendations</p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'secondaryColor': '#2d1b4e', 'tertiaryColor': '#1a3333', 'fontSize': '15px'}}}%%
+flowchart LR
+    A["<b>User Input</b><br/>Part number or query"]
+    B["<b>LLM Orchestrator</b><br/>Claude Sonnet 4.5<br/>with tool calling"]
+    C["<b>Data Retrieval</b><br/>Digikey API<br/>+ MPN enrichment"]
+    D["<b>Matching Engine</b><br/>38 family rule tables<br/>+ context modifiers"]
+    E["<b>Scored Results</b><br/>Ranked replacements<br/>with match details"]
+
+    A --> B --> C --> D --> E
+
+    style A fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style B fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style C fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style D fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style E fill:#1a3320,stroke:#4ade80,stroke-width:2px,color:#e0e0e0
+    </pre>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div>User Interface</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>AI Orchestration</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#60a5fa"></div>External Data</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f87171"></div>Rule Engine</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4ade80"></div>Output</div>
+  </div>
+
+  <div class="cover-detail">
+    <div class="cover-card">
+      <h3>38 Component Families</h3>
+      <p>19 passives, 9 discrete semiconductors, 10 ICs — each with dedicated matching rules and Digikey parameter mappings.</p>
+    </div>
+    <div class="cover-card">
+      <h3>Dual-Mode Architecture</h3>
+      <p>LLM orchestrator (primary) with deterministic fallback. Digikey API with mock data fallback.</p>
+    </div>
+    <div class="cover-card">
+      <h3>Context-Aware Scoring</h3>
+      <p>Application context questions dynamically adjust rule weights — automotive, high-precision, and more.</p>
+    </div>
+    <div class="cover-card">
+      <h3>Transparent Results</h3>
+      <p>Every parameter scored individually with pass/fail/review status. Full audit trail via QC logging.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 2: Architecture Overview                                -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">2 / 7</span>
+  <h2>Architecture Overview</h2>
+  <p class="subtitle">Layered module structure — from UI to external services</p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'fontSize': '13px', 'clusterBkg': '#13151d', 'clusterBorder': '#333'}}}%%
+flowchart TD
+    subgraph FE["Frontend — React Components"]
+        direction LR
+        FE1["ChatInterface"]
+        FE2["AttributesPanel"]
+        FE3["RecommendationsPanel"]
+        FE4["ComparisonView"]
+        FE5["PartsListShell"]
+        FE6["AdminShell"]
+    end
+
+    subgraph HOOKS["State Management — React Hooks"]
+        direction LR
+        H1["useAppState<br/><i>main state machine</i>"]
+        H2["useConversation<br/>Persistence"]
+        H3["usePanelVisibility"]
+        H4["usePartsListState"]
+        H5["useModalChat"]
+    end
+
+    subgraph API["API Routes — Next.js App Router"]
+        direction LR
+        A1["/api/chat"]
+        A2["/api/search"]
+        A3["/api/attributes"]
+        A4["/api/xref"]
+        A5["/api/modal-chat"]
+        A6["/api/parts-list"]
+        A7["/api/admin/*"]
+    end
+
+    subgraph SVC["Service Layer"]
+        direction LR
+        S1["LLM Orchestrator<br/><i>Claude tool calling</i>"]
+        S2["partDataService<br/><i>unified data layer</i>"]
+        S3["matchingEngine<br/><i>rule evaluator</i>"]
+        S4["contextModifier<br/><i>weight adjustment</i>"]
+        S5["recommendation<br/>Logger"]
+    end
+
+    subgraph LOGIC["Data & Logic Layer"]
+        direction LR
+        L1["logicTables/<br/><i>38 family rules</i>"]
+        L2["contextQuestions/<br/><i>per-family Q&A</i>"]
+        L3["familyClassifier<br/><i>subcategory → family</i>"]
+        L4["digikeyParamMap<br/><i>field → attributeId</i>"]
+        L5["digikeyMapper<br/><i>API → internal types</i>"]
+    end
+
+    subgraph EXT["External Services"]
+        direction LR
+        E1["Digikey API<br/><i>OAuth2, product data</i>"]
+        E2["Claude API<br/><i>Sonnet 4.5, tools</i>"]
+        E3["Supabase<br/><i>auth, persistence</i>"]
+    end
+
+    FE --> HOOKS
+    HOOKS --> API
+    API --> SVC
+    SVC --> LOGIC
+    SVC --> EXT
+    LOGIC --> EXT
+
+    style FE fill:#0d2818,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style HOOKS fill:#1a2332,stroke:#38bdf8,stroke-width:2px,color:#e0e0e0
+    style API fill:#1a1a2e,stroke:#818cf8,stroke-width:2px,color:#e0e0e0
+    style SVC fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style LOGIC fill:#2a1a1a,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style EXT fill:#1a2a2a,stroke:#2dd4bf,stroke-width:2px,color:#e0e0e0
+
+    style FE1 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+    style FE2 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+    style FE3 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+    style FE4 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+    style FE5 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+    style FE6 fill:#0d2818,stroke:#34d399,color:#e0e0e0
+
+    style H1 fill:#1a2332,stroke:#38bdf8,color:#e0e0e0
+    style H2 fill:#1a2332,stroke:#38bdf8,color:#e0e0e0
+    style H3 fill:#1a2332,stroke:#38bdf8,color:#e0e0e0
+    style H4 fill:#1a2332,stroke:#38bdf8,color:#e0e0e0
+    style H5 fill:#1a2332,stroke:#38bdf8,color:#e0e0e0
+
+    style A1 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A2 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A3 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A4 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A5 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A6 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+    style A7 fill:#1a1a2e,stroke:#818cf8,color:#e0e0e0
+
+    style S1 fill:#2d1b4e,stroke:#a78bfa,color:#e0e0e0
+    style S2 fill:#2d1b4e,stroke:#a78bfa,color:#e0e0e0
+    style S3 fill:#2d1b4e,stroke:#a78bfa,color:#e0e0e0
+    style S4 fill:#2d1b4e,stroke:#a78bfa,color:#e0e0e0
+    style S5 fill:#2d1b4e,stroke:#a78bfa,color:#e0e0e0
+
+    style L1 fill:#2a1a1a,stroke:#f87171,color:#e0e0e0
+    style L2 fill:#2a1a1a,stroke:#f87171,color:#e0e0e0
+    style L3 fill:#2a1a1a,stroke:#f87171,color:#e0e0e0
+    style L4 fill:#2a1a1a,stroke:#f87171,color:#e0e0e0
+    style L5 fill:#2a1a1a,stroke:#f87171,color:#e0e0e0
+
+    style E1 fill:#1a2a2a,stroke:#2dd4bf,color:#e0e0e0
+    style E2 fill:#1a2a2a,stroke:#2dd4bf,color:#e0e0e0
+    style E3 fill:#1a2a2a,stroke:#2dd4bf,color:#e0e0e0
+    </pre>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div>Frontend</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>State Mgmt</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#818cf8"></div>API Routes</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>Services</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f87171"></div>Logic & Data</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2dd4bf"></div>External</div>
+  </div>
+
+  <div class="note">
+    <strong>Key principle:</strong> Each layer only calls the layer directly below it. The <strong>Service Layer</strong> is the core — it contains the LLM orchestrator, matching engine, and data access logic. The <strong>Logic Layer</strong> holds the 38 family-specific rule tables and Digikey field mappings. External services (Digikey, Claude, Supabase) are accessed only through the service layer.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3: Data Flow Diagram                                    -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">3 / 7</span>
+  <h2>Data Flow</h2>
+  <p class="subtitle">How data transforms from raw query to scored recommendations — with TypeScript types</p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'fontSize': '13px'}}}%%
+flowchart TD
+    A["<b>User Query</b><br/><code>string</code><br/><i>'GRM188R71C104KA01D'</i>"]
+    B["<b>SearchResult</b><br/><code>type: single | multiple | none</code><br/><code>matches: PartSummary[ ]</code>"]
+    C["<b>DigikeyProduct</b><br/><i>Raw API response</i><br/><code>Parameters[ ], ManufacturerProductNumber</code>"]
+    D["<b>PartAttributes</b><br/><code>part: Part</code><br/><code>parameters: ParametricAttribute[ ]</code><br/><i>+ MPN-enriched fields</i>"]
+    E["<b>Family Classification</b><br/><code>familyId: '12'</code> (MLCC)<br/><code>subcategory → variant detection</code>"]
+    F["<b>LogicTable</b><br/><code>rules: MatchingRule[ ]</code><br/><i>17–27 rules per family</i><br/><i>weight, type, threshold</i>"]
+    G["<b>Effective Logic Table</b><br/><code>rules: MatchingRule[ ]</code><br/><i>Weights adjusted by<br/>application context answers</i>"]
+    H["<b>Candidates</b><br/><code>PartAttributes[ ]</code><br/><i>Up to 30 Digikey results<br/>mapped to internal types</i>"]
+    I["<b>XrefRecommendation[ ]</b><br/><code>matchPercentage: number</code><br/><code>matchDetails: MatchDetail[ ]</code><br/><i>pass/fail per rule</i>"]
+    J["<b>OrchestratorResponse</b><br/><code>message: string</code><br/><code>recommendations: Record&lt;mpn, Xref[ ]&gt;</code><br/><code>attributes: Record&lt;mpn, PartAttrs&gt;</code>"]
+
+    A -- "searchParts()" --> B
+    B -- "getProductDetails()" --> C
+    C -- "mapDigikeyProduct<br/>ToAttributes()<br/>+ enrichment" --> D
+    D -- "mapSubcategory<br/>ToFamilyId()" --> E
+    E -- "getLogicTable()" --> F
+    F -- "applyContext<br/>ToLogicTable()" --> G
+    D -- "buildCandidateSearch<br/>Query() → keywordSearch()" --> H
+    G -- "findReplacements(<br/>table, source,<br/>candidates)" --> I
+    H --> I
+    I -- "post-scoring filters<br/>+ Claude assessment" --> J
+
+    style A fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style B fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style C fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style D fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style E fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style F fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style G fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style H fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style I fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style J fill:#1a3320,stroke:#4ade80,stroke-width:2px,color:#e0e0e0
+    </pre>
+  </div>
+
+  <div class="note">
+    <strong>Type safety throughout:</strong> Every stage produces a well-defined TypeScript type (all in <code>lib/types.ts</code>). The <b>PartAttributes</b> type is the lingua franca — it flows into both the source analysis and candidate scoring paths. The <b>MatchDetail[ ]</b> array provides per-parameter transparency: every rule evaluation is traceable, enabling the QC feedback system to pinpoint exactly which rule a user disagrees with.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4: Detailed Sequence Diagram                            -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">4 / 7</span>
+  <h2>Detailed Request Flow</h2>
+  <p class="subtitle">Full call chain from user input to scored recommendations</p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'actorTextColor': '#e0e0e0', 'actorBkg': '#1e3a5f', 'actorBorder': '#3b82f6', 'signalColor': '#888', 'signalTextColor': '#e0e0e0', 'labelBoxBkgColor': '#1a1d27', 'labelBoxBorderColor': '#333', 'labelTextColor': '#e0e0e0', 'loopTextColor': '#c4b5fd', 'noteBkgColor': '#2d1b4e', 'noteTextColor': '#e0e0e0', 'noteBorderColor': '#7c3aed', 'activationBkgColor': '#1e293b', 'activationBorderColor': '#475569', 'fontSize': '14px'}, 'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant U as User
+    participant UI as ChatInterface<br/>+ useAppState
+    participant API as /api/chat
+    participant LLM as LLM Orchestrator<br/>Claude Sonnet 4.5
+    participant PDS as partDataService
+    participant DK as Digikey API
+    participant ME as Matching Engine
+
+    U->>UI: Types part number
+    UI->>API: POST /api/chat<br/>{messages, history}
+    API->>LLM: chat(messages, apiKey)
+
+    rect rgba(109, 40, 217, 0.15)
+    Note over LLM,ME: Tool-Calling Loop (may iterate)
+    LLM->>PDS: search_parts(query)
+    PDS->>DK: keywordSearch(query)
+    DK-->>PDS: DigikeyKeywordResponse
+    PDS-->>LLM: SearchResult
+
+    LLM->>PDS: get_part_attributes(mpn)
+    PDS->>DK: getProductDetails(mpn)
+    DK-->>PDS: DigikeyProduct
+    Note over PDS: mapDigikeyProductToAttributes()<br/>+ MPN enrichment
+    PDS-->>LLM: PartAttributes
+
+    LLM->>PDS: find_replacements(mpn)
+    Note over PDS: classifyFamily()<br/>loadLogicTable()<br/>applyContext()
+    PDS->>DK: keywordSearch(candidates)
+    DK-->>PDS: Candidate products
+    PDS->>ME: findReplacements(table,<br/>source, candidates)
+    Note over ME: Score all rules<br/>per candidate
+    ME-->>PDS: XrefRecommendation[]
+    Note over PDS: Post-scoring filters<br/>(family-specific)
+    PDS-->>LLM: RecommendationResult
+    end
+
+    LLM-->>API: OrchestratorResponse
+    Note over API: Log to QC system
+    API-->>UI: {message, recommendations}
+    UI-->>U: Render panels:<br/>attributes + scored list
+    </pre>
+  </div>
+
+  <div class="note">
+    <strong>Key insight:</strong> Claude decides which tools to call and in what order. It may search, inspect attributes, ask the user clarifying questions, then find replacements — all within a single conversation turn. The tool loop continues until Claude has enough information to provide an assessment.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3: Matching Engine Pipeline                             -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">5 / 7</span>
+  <h2>Matching Engine Pipeline</h2>
+  <p class="subtitle">Inside getRecommendations() — from source part to ranked results</p>
+
+  <div class="pipeline-diagram">
+    <!-- Row 1: Data Preparation (left to right) -->
+    <div class="pipeline-row">
+      <div class="pipeline-node node-ux">
+        <div class="node-title">UX</div>
+        <div class="node-desc">Chat Interface<br/>Parts List</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-node node-data">
+        <div class="node-title">Fetch & Enrich Source Part</div>
+        <div class="node-desc">Digikey API + ~300 MPN patterns</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-node node-logic">
+        <div class="node-title">Classify Family & Load Rules</div>
+        <div class="node-desc">subcategory → familyId<br/>17–27 rules per family</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-node node-context">
+        <div class="node-title">Apply Context Modifier</div>
+        <div class="node-desc">Adjust rule weights<br/>from user answers</div>
+      </div>
+      <div class="pipeline-arrow">&#x2192;</div>
+      <div class="pipeline-node node-data">
+        <div class="node-title">Fetch Candidates</div>
+        <div class="node-desc">Digikey keyword search<br/>up to 30 results</div>
+      </div>
+    </div>
+
+    <!-- Connector: down on right side -->
+    <div class="pipeline-connector-right">&#x2193;</div>
+
+    <!-- Row 2: Candidate Evaluation (right to left) -->
+    <div class="pipeline-row">
+      <div class="pipeline-node node-result">
+        <div class="node-title">Ranked Results</div>
+        <div class="node-desc">Passed first<br/>then by match %</div>
+      </div>
+      <div class="pipeline-arrow">&#x2190;</div>
+      <div class="pipeline-node node-engine">
+        <div class="node-title">Post-Scoring Filters</div>
+        <div class="node-desc">Family-specific hard gates<br/>remove mismatches</div>
+      </div>
+      <div class="pipeline-arrow">&#x2190;</div>
+      <div class="pipeline-node node-engine">
+        <div class="node-title">Score Each Candidate</div>
+        <div class="node-desc">Evaluate every rule<br/>calculate matchPercentage</div>
+      </div>
+    </div>
+
+    <!-- Connector: up on left side back to UX -->
+    <div class="pipeline-connector-left">&#x2191; <span class="connector-label">XrefRecommendation[]</span></div>
+  </div>
+
+  <div class="note">
+    <strong>Scoring formula:</strong> matchPercentage = (earnedWeight / totalWeight) &times; 100. A candidate <strong>fails</strong> if any rule returns <code>fail</code>. Application review rules earn 50% credit; operational mismatches earn 80% credit. Post-scoring filters remove hard-gate mismatches (e.g., wrong architecture, wrong protocol) that can't be caught by weight-based scoring alone.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4: LLM Tool-Calling Loop                                -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">6 / 7</span>
+  <h2>LLM Tool-Calling Loop</h2>
+  <p class="subtitle">How the Claude orchestrator drives the conversation with agentic tool use</p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'fontSize': '14px'}}}%%
+flowchart TD
+    A["Receive User Message<br/>+ Conversation History"]
+    B["Claude Processes Input<br/><i>System prompt includes<br/>family docs + scoring rules</i>"]
+    C{"Needs more<br/>information?"}
+    D["Select Tool(s) to Call<br/><i>Can call multiple in parallel</i>"]
+
+    E["<b>search_parts</b><br/>Keyword search<br/>→ SearchResult"]
+    F["<b>get_part_attributes</b><br/>Fetch parametric data<br/>→ PartAttributes"]
+    G["<b>find_replacements</b><br/>Run matching engine<br/>→ XrefRecommendation[ ]"]
+    H["<b>filter_recommendations</b><br/>Narrow existing results<br/>→ filtered list"]
+
+    I["Receive Tool Results<br/><i>JSON data appended<br/>to conversation</i>"]
+    J["Generate Assessment<br/><i>Technical analysis of<br/>replacement suitability</i>"]
+    K["Return to User<br/><i>message + structured data<br/>for UI panels</i>"]
+
+    A --> B --> C
+    C -- Yes --> D
+    D --> E & F & G & H
+    E & F & G & H --> I
+    I --> B
+    C -- No --> J --> K
+
+    style A fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style B fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style C fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style D fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style E fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style F fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style G fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style H fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style I fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style J fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style K fill:#1a3320,stroke:#4ade80,stroke-width:2px,color:#e0e0e0
+    </pre>
+  </div>
+
+  <div class="note">
+    <strong>Agentic behavior:</strong> Claude autonomously decides the tool-calling sequence. A typical flow: <code>search_parts</code> → find the right MPN → <code>get_part_attributes</code> → review specs → <code>find_replacements</code> → analyze scored results → respond with assessment. The loop may iterate 2-4 times per query. If the user asks a follow-up, <code>filter_recommendations</code> narrows the existing results without re-running the full pipeline.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 5: Fallback Chains                                      -->
+<!-- ============================================================ -->
+<section class="slide">
+  <span class="slide-number">7 / 7</span>
+  <h2>Fallback Architecture</h2>
+  <p class="subtitle">Dual-mode resilience — every layer has a fallback path</p>
+
+  <div class="two-col">
+    <div>
+      <div class="col-label">Orchestration Mode</div>
+      <div class="diagram-container">
+        <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'fontSize': '14px'}}}%%
+flowchart TD
+    A["User Query"]
+    B{"API Key<br/>available?"}
+    C["<b>LLM Mode</b><br/>Claude orchestrator<br/>with tool calling<br/><i>Conversational, adaptive</i>"]
+    D["<b>Deterministic Mode</b><br/>Direct API calls<br/>via useAppState<br/><i>Step-by-step, fixed flow</i>"]
+    E["Same Matching Engine<br/><i>Identical scoring regardless<br/>of orchestration mode</i>"]
+
+    A --> B
+    B -- Yes --> C --> E
+    B -- No --> D --> E
+
+    style A fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style B fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style C fill:#2d1b4e,stroke:#a78bfa,stroke-width:2px,color:#e0e0e0
+    style D fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style E fill:#1a3320,stroke:#4ade80,stroke-width:2px,color:#e0e0e0
+        </pre>
+      </div>
+    </div>
+
+    <div>
+      <div class="col-label">Data Source</div>
+      <div class="diagram-container">
+        <pre class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1e3a5f', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#3b82f6', 'lineColor': '#555', 'fontSize': '14px'}}}%%
+flowchart TD
+    A["Data Request"]
+    B{"Digikey API<br/>reachable?"}
+    C["<b>Digikey API</b><br/>Live parametric data<br/>OAuth2 + keyword search<br/><i>38 families mapped</i>"]
+    D["<b>Mock Data</b><br/>6 MLCCs, 3 resistors, 5 ICs<br/>Hardcoded in mockData.ts<br/><i>Development + demo</i>"]
+    E["Same Data Types<br/><i>PartAttributes + SearchResult<br/>identical regardless of source</i>"]
+
+    A --> B
+    B -- Yes --> C --> E
+    B -- No --> D --> E
+
+    style A fill:#1a3333,stroke:#34d399,stroke-width:2px,color:#e0e0e0
+    style B fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style C fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#e0e0e0
+    style D fill:#3b1d1d,stroke:#f87171,stroke-width:2px,color:#e0e0e0
+    style E fill:#1a3320,stroke:#4ade80,stroke-width:2px,color:#e0e0e0
+        </pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>Key design principle:</strong> The matching engine and scoring logic are <strong>identical</strong> in both modes. The LLM orchestrator adds conversational intelligence (clarifying questions, technical assessments, follow-up refinement) but the deterministic core — family classification, rule evaluation, weighted scoring — runs the same code path regardless of how the request was initiated.
+  </div>
+</section>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+  });
+</script>
+
+</body>
+</html>

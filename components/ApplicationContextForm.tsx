@@ -18,6 +18,7 @@ import FeedbackButton from './FeedbackButton';
 
 interface ApplicationContextFormProps {
   questions: ContextQuestion[];
+  familyId?: string;
   onSubmit: (answers: Record<string, string>) => void;
   onSkip: () => void;
   sourceMpn?: string;
@@ -26,6 +27,7 @@ interface ApplicationContextFormProps {
 
 function QuestionField({
   question,
+  familyId,
   value,
   onChange,
   enterValuePlaceholder,
@@ -33,16 +35,21 @@ function QuestionField({
   sourceManufacturer,
 }: {
   question: ContextQuestion;
+  familyId?: string;
   value: string;
   onChange: (value: string) => void;
   enterValuePlaceholder: string;
   sourceMpn?: string;
   sourceManufacturer?: string;
 }) {
+  const { t } = useTranslation();
   const isFreeText = question.allowFreeText;
   // For free-text questions, track whether user is typing a custom value
   const [customText, setCustomText] = useState('');
   const isCustom = isFreeText && value !== '' && !question.options.some(o => o.value === value);
+
+  // Translation key prefix for this question (falls back to hardcoded English)
+  const qKey = familyId ? `contextQ.${familyId}.${question.questionId}` : '';
 
   return (
     <Box>
@@ -51,14 +58,14 @@ function QuestionField({
           variant="body2"
           sx={{ fontWeight: 600, fontSize: '0.82rem', mb: 0.5 }}
         >
-          {question.questionText}
+          {familyId ? t(`${qKey}.text`, question.questionText) : question.questionText}
           {question.required && (
             <Typography
               component="span"
               variant="caption"
               sx={{ ml: 1, color: 'warning.main', fontWeight: 700, fontSize: '0.7rem' }}
             >
-              Required
+              {t('common.required', 'Required')}
             </Typography>
           )}
         </Typography>
@@ -85,26 +92,32 @@ function QuestionField({
           }
         }}
       >
-        {question.options.map((option) => (
-          <FormControlLabel
-            key={option.value}
-            value={option.value}
-            control={<Radio size="small" sx={{ py: 0.25, px: 0.5 }} />}
-            label={
-              <Box>
-                <Typography variant="body2" sx={{ fontSize: '0.82rem', lineHeight: 1.3 }}>
-                  {option.label}
-                </Typography>
-                {option.description && (
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', lineHeight: 1.2 }}>
-                    {option.description}
+        {question.options.map((option) => {
+          const optLabel = familyId ? t(`${qKey}.opt.${option.value}.label`, option.label) : option.label;
+          const optDesc = option.description
+            ? (familyId ? t(`${qKey}.opt.${option.value}.desc`, option.description) : option.description)
+            : undefined;
+          return (
+            <FormControlLabel
+              key={option.value}
+              value={option.value}
+              control={<Radio size="small" sx={{ py: 0.25, px: 0.5 }} />}
+              label={
+                <Box>
+                  <Typography variant="body2" sx={{ fontSize: '0.82rem', lineHeight: 1.3 }}>
+                    {optLabel}
                   </Typography>
-                )}
-              </Box>
-            }
-            sx={{ alignItems: 'flex-start', ml: 0, mr: 0, mb: 0.25 }}
-          />
-        ))}
+                  {optDesc && (
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', lineHeight: 1.2 }}>
+                      {optDesc}
+                    </Typography>
+                  )}
+                </Box>
+              }
+              sx={{ alignItems: 'flex-start', ml: 0, mr: 0, mb: 0.25 }}
+            />
+          );
+        })}
 
         {isFreeText && (
           <FormControlLabel
@@ -141,6 +154,7 @@ function QuestionField({
 
 export default function ApplicationContextForm({
   questions,
+  familyId,
   onSubmit,
   onSkip,
   sourceMpn,
@@ -200,6 +214,7 @@ export default function ApplicationContextForm({
           <QuestionField
             key={question.questionId}
             question={question}
+            familyId={familyId}
             value={answers[question.questionId] ?? ''}
             onChange={(v) => handleChange(question.questionId, v)}
             enterValuePlaceholder={t('chat.enterValue')}

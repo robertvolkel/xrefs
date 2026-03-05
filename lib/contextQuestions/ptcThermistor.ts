@@ -29,7 +29,7 @@ export const ptcThermistorContext: FamilyContextConfig = {
           attributeEffects: [
             { attributeId: 'curie_temp', effect: 'escalate_to_mandatory', note: 'Self-regulating heater — Curie temperature sets the heater equilibrium temperature' },
             { attributeId: 'max_power', effect: 'escalate_to_primary', note: 'Heater — power rating determines heating capability' },
-            { attributeId: 'package', effect: 'escalate_to_primary', note: 'Heater — physical form factor determines heat distribution and mounting' },
+            { attributeId: 'package_case', effect: 'escalate_to_primary', note: 'Heater — physical form factor determines heat distribution and mounting' },
             { attributeId: 'trip_current', effect: 'not_applicable', note: 'Heater — trip/hold current specs are irrelevant' },
             { attributeId: 'hold_current', effect: 'not_applicable', note: 'Heater — trip/hold current specs are irrelevant' },
           ],

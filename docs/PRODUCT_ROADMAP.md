@@ -8,7 +8,7 @@
 
 ### Current State
 
-XRefs is a cross-reference recommendation engine. A user enters a part number, the system finds the original part's parametric data, fetches candidate replacements from Digikey, and a deterministic rule engine scores each candidate on technical equivalence. Twenty-eight component families are supported, each with curated matching rules derived from engineering specification documents.
+XRefs is a cross-reference recommendation engine. A user enters a part number, the system finds the original part's parametric data, fetches candidate replacements from Digikey, and a deterministic rule engine scores each candidate on technical equivalence. dozens of component families are supported, each with curated matching rules derived from engineering specification documents.
 
 This is valuable — and it's our starting point — but it's not the destination.
 
@@ -23,7 +23,7 @@ The platform serves all of these users — not by giving them different tools, b
 ### The Five Pillars
 
 **1. Technical Matching** (MVP — built today)
-The foundation. Deterministic rule evaluation across 28+ component families ensures replacement candidates are electrically and physically compatible. Application context questions adjust rule weights based on how the part will be used. This pillar is the differentiator — no one else has this depth of automated technical cross-referencing.
+The foundation. Search for technical data and documents on the part + Deterministic rule evaluation across 28+ component families ensures replacement candidates are electrically and physically compatible. Application context questions adjust rule weights based on how the part will be used. This pillar is the differentiator — no one else has this depth of automated technical cross-referencing.
 
 **2. Commercial Intelligence** (next)
 Pricing and availability across multiple distributors. Lead times. Price trends over time. Volume pricing tiers. Supplier diversity scoring. The goal is to answer not just "does this part work?" but "can I actually get it, at what cost, and is that cost stable?"
@@ -54,6 +54,7 @@ The platform knows:
 - **What you're building** — the industry, the application, the compliance requirements
 - **What you need right now** — cost savings, second-source qualification, EOL migration, new design
 - **Where your products are manufactured** — which affects trade compliance, supplier options, logistics
+- **Where your products are headed/final destination** — which affects trade compliance, supplier options, logistics
 
 It adapts its behavior based on this context. The same search for "GRM188R71H104KA93" surfaces different insights for a design engineer (DC bias derating, dielectric aging, temperature coefficient) versus a buyer (price per unit across 5 distributors, lead time trends, alternative manufacturers with lower MOQ). The UI stays the same for everyone — the AI adapts what it emphasizes.
 
@@ -65,7 +66,7 @@ Context flows through the platform at three levels, forming a hierarchy where mo
 
 ### Layer 1: User Profile (set once, evolves over time)
 
-Collected gradually — not all at registration. The profile page lets users fill in details as they see value.
+Collected gradually — not all at registration. The profile page lets users fill in details as they see value. It also learns about user's behaviors such as searches and BOMs and choices. We also want to eventually have an agent that also asks questions to the user, proactively to learn about them nd their immediate needs
 
 **At registration (minimal — don't gate the experience):**
 - Name, email, password (existing)
@@ -74,18 +75,22 @@ Collected gradually — not all at registration. The profile page lets users fil
 
 **In the profile (filled in over time):**
 - Company name
-- Manufacturing regions (multi-select): where their products are built
+- Company Headquarters
+- Role (affects AI communication style): Engineer, Procurement, General
+- Manufacturing regions (multi-select): where their products are built. This can be one or multiple locations that will eventually need to be assigned to each list/BOM that is created
 - Compliance defaults: which regulations always apply to their work
   - Automotive grade (AEC-Q200/Q101)
   - Military grade (MIL-STD)
   - RoHS / REACH / Halogen-free
-- Manufacturer preferences: preferred and excluded manufacturers
-- Expertise level (affects AI communication style): Engineer, Procurement, General
+- Component Manufacturer preferences: preferred and excluded manufacturers
+- Distributor preferences: preferred Distributors and custom pricing API keys to those Distributors for auomated custom pricing
+
 
 **How it's used:**
 - The LLM adapts its conversation style, question priorities, and assessment focus based on role and expertise
 - Compliance defaults automatically escalate relevant matching rules across all families (e.g., "always require AEC-Q200" sets that rule to mandatory weight for every passive search)
 - Manufacturer preferences filter and rank candidates
+- Distributot preferences filter and rank candidates based on stock and price 
 - Manufacturing regions inform future trade/compliance checks
 
 **UX principle:** The AI should infer from conversation and gently prompt to complete the profile when it notices gaps. "I see you're working on automotive parts — would you like me to always prioritize AEC-Q200 qualified components? You can set this in your profile."
@@ -95,19 +100,24 @@ Collected gradually — not all at registration. The profile page lets users fil
 Each parts list can carry structured metadata that affects all recommendations within it.
 
 **Fields:**
-- Objective (select): What's the purpose of this list?
-  - Cross-reference (find replacements) — default
+- Application: what industry will this parts list be designed for / what is being built with it?
+- Manufacturing location: where is this BOM/list being assembled. Specify if in multiple locations. This list of options could come from the profile entries.
+- User Objective for the list (select all that apply): What's the purpose of this list?
+  - Part matching (to arrive at orderable part numbers) - default
+  - Cross-reference (find replacements)
   - Cost reduction (find cheaper alternatives)
-  - Second-source (qualify additional suppliers)
-  - EOL migration (replace end-of-life parts)
-  - Redesign (find better parts for a new revision)
-  - Qualification (validate parts for a specific standard)
+  - Risk/Second-sources (qualify additional suppliers)
+  - Risk/EOL mitigation (replace end-of-life parts)
+  - Qualification (validate parts for a specific standard, e.g. Automotive)
+  - Compliance (make sure parts are trade or environmentally compliant)
 - Objective notes (free text): additional context the AI can interpret
   - e.g., "Find cost saving opportunities from Asia suppliers outside of China for this commodity class"
   - e.g., "Customer requires full traceability to non-conflict mineral sources"
+- List destination (where the components will be sent): EU, USA, Greater China, Middle East, SEA
 - Urgency: Standard, Urgent, Critical
 - Compliance overrides: can tighten or relax user-level defaults for this specific list
-- Region constraints: limit candidate sourcing to specific regions
+- AVL cnostraints: apply a specific approved vendor list to the sourcing options (e.g. a specific list of distributors or manufacturers)
+- Region sourcing constraints: limit candidate sourcing to specific regions
 - Budget constraints: max price multiplier, target savings percentage
 
 **How it's used:**
@@ -116,7 +126,7 @@ Each parts list can carry structured metadata that affects all recommendations w
 - Compliance overrides layer on top of user defaults — a user who normally requires automotive grade can relax it for a consumer product list
 - Budget constraints feed into candidate filtering and ranking
 
-**UX principle:** Show a "List Settings" option when creating or editing a list. Most fields are optional. The free-text objective notes field is the most powerful — the AI can interpret natural language constraints.
+**UX principle:** Show a "List Settings" option when creating or editing a list (already there in the current design). Most fields (except name, and currency) are optional. The free-text objective notes field is the most powerful — the AI can interpret natural language constraints.
 
 ### Layer 3: Per-Search Context (existing system — unchanged)
 
@@ -237,7 +247,7 @@ The platform will eventually pull from multiple data sources, each serving a dif
 - Approved vendor lists (AVLs) and qualification records
 - Internal part numbering and cross-reference tables
 
-**Aggregator/Enrichment APIs** (Octopart/Nexar, SiliconExpert, Z2Data)
+**Aggregator/Enrichment APIs** (Findchips)
 - Multi-supplier pricing comparison (without integrating each distributor directly)
 - Lifecycle and PCN (product change notification) data
 - Compliance databases (RoHS, REACH, conflict minerals)
@@ -248,11 +258,11 @@ The platform will eventually pull from multiple data sources, each serving a dif
 Digikey API  ──┐
 Atlas API    ──┤
 Customer DB  ──┼──→ DataSourceProvider interface ──→ Part / PartAttributes ──→ Matching Engine
-Nexar API    ──┤
+Findchips API──┤
 SiliconExpert──┘
 ```
 
-**Near-term approach:** Rather than abstracting Digikey immediately (high effort — 3 tightly-coupled files, 28+ category-specific param maps), add Atlas and Nexar as enrichment layers that decorate results with additional data. Digikey remains the primary source for technical parametric data.
+**Near-term approach:** Rather than abstracting Digikey immediately (high effort — 3 tightly-coupled files, 35+ category-specific param maps), add Atlas as enrichment layers that decorate results with additional data. Digikey remains the primary source for technical parametric data.
 
 ### 3.6 Manufacturer Profiles (API-Fed)
 

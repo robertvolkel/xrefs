@@ -44,12 +44,23 @@ export async function GET() {
       }
     }
 
+    // Get list counts per user from parts_lists
+    const { data: lists } = await supabase
+      .from('parts_lists')
+      .select('user_id');
+
+    const listsMap = new Map<string, number>();
+    for (const row of lists ?? []) {
+      listsMap.set(row.user_id, (listsMap.get(row.user_id) ?? 0) + 1);
+    }
+
     // Merge profiles with activity stats
     const users = (profiles ?? []).map((p) => {
       const activity = activityMap.get(p.id);
       return {
         ...p,
         search_count: activity?.search_count ?? 0,
+        list_count: listsMap.get(p.id) ?? 0,
         last_active: activity?.last_active ?? null,
       };
     });

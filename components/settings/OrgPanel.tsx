@@ -119,6 +119,7 @@ export default function OrgPanel() {
                   <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.status')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.lastActive')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }} align="right">{t('orgSettings.searches')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }} align="right">{t('orgSettings.lists')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.joined')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.actions')}</TableCell>
                 </TableRow>
@@ -127,7 +128,7 @@ export default function OrgPanel() {
                 {loading
                   ? Array.from({ length: 4 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 8 }).map((__, j) => (
+                        {Array.from({ length: 9 }).map((__, j) => (
                           <TableCell key={j}>
                             <Skeleton variant="text" width={j === 0 ? 120 : 80} />
                           </TableCell>
@@ -177,6 +178,9 @@ export default function OrgPanel() {
                         </TableCell>
                         <TableCell sx={{ fontSize: '0.78rem', color: 'text.secondary' }} align="right">
                           {u.search_count}
+                        </TableCell>
+                        <TableCell sx={{ fontSize: '0.78rem', color: 'text.secondary' }} align="right">
+                          {u.list_count}
                         </TableCell>
                         <TableCell sx={{ fontSize: '0.78rem', color: 'text.secondary', whiteSpace: 'nowrap' }}>
                           {formatDate(u.created_at)}

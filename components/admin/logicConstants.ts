@@ -12,6 +12,20 @@ export const typeColors: Record<LogicType, string> = {
   operational: '#90A4AE',
 };
 
+/** i18n translation keys for each rule type (looked up via t()) */
+export const typeTranslationKeys: Record<LogicType, string> = {
+  identity: 'admin.typeIdentity',
+  identity_range: 'admin.typeIdentityRange',
+  identity_upgrade: 'admin.typeIdentityUpgrade',
+  identity_flag: 'admin.typeIdentityFlag',
+  threshold: 'admin.typeThreshold',
+  fit: 'admin.typeFit',
+  vref_check: 'admin.typeVrefCheck',
+  application_review: 'admin.typeApplicationReview',
+  operational: 'admin.typeOperational',
+};
+
+/** English fallback labels (used when t() is not available) */
 export const typeLabels: Record<LogicType, string> = {
   identity: 'Exact Match',
   identity_range: 'Range Overlap',

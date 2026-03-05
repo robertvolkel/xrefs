@@ -84,34 +84,34 @@ export default function DataSourcesPanel() {
         {t('admin.dataSources')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        External services and data providers powering the cross-reference engine.
+        {t('admin.dataSourcesDesc', 'External services and data providers powering the cross-reference engine.')}
       </Typography>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 560 }}>
-        <SourceCard title="Digikey Product Information API">
-          <InfoRow label="Status" value={<StatusChip configured={data.digikey.configured} />} />
-          <InfoRow label="Client ID" value={data.digikey.clientIdPrefix || '\u2014'} />
-          <InfoRow label="Base URL" value={data.digikey.baseUrl} />
-          <InfoRow label="Auth" value="OAuth2 Client Credentials" />
-          <InfoRow label="Cache TTL" value="30 minutes" />
+        <SourceCard title={t('admin.dsDigikey', 'Digikey Product Information API')}>
+          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.digikey.configured} />} />
+          <InfoRow label={t('admin.dsClientId', 'Client ID')} value={data.digikey.clientIdPrefix || '\u2014'} />
+          <InfoRow label={t('admin.dsBaseUrl', 'Base URL')} value={data.digikey.baseUrl} />
+          <InfoRow label={t('admin.dsAuth', 'Auth')} value={t('admin.dsAuthMethod', 'OAuth2 Client Credentials')} />
+          <InfoRow label={t('admin.dsCacheTtl', 'Cache TTL')} value={t('admin.dsCacheTtlValue', '30 minutes')} />
         </SourceCard>
 
-        <SourceCard title="Anthropic Claude API">
-          <InfoRow label="Status" value={<StatusChip configured={data.anthropic.configured} />} />
-          <InfoRow label="Model" value={data.anthropic.model} />
-          <InfoRow label="Usage" value="LLM Orchestrator (tool calling)" />
+        <SourceCard title={t('admin.dsAnthropic', 'Anthropic Claude API')}>
+          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.anthropic.configured} />} />
+          <InfoRow label={t('admin.dsModel', 'Model')} value={data.anthropic.model} />
+          <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsLlmUsage', 'LLM Orchestrator (tool calling)')} />
         </SourceCard>
 
-        <SourceCard title="Supabase">
-          <InfoRow label="Status" value={<StatusChip configured={data.supabase.configured} />} />
-          <InfoRow label="URL" value={data.supabase.url ?? '\u2014'} />
-          <InfoRow label="Usage" value="Auth, profiles, conversations" />
+        <SourceCard title={t('admin.dsSupabase', 'Supabase')}>
+          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.supabase.configured} />} />
+          <InfoRow label={t('admin.dsUrl', 'URL')} value={data.supabase.url ?? '\u2014'} />
+          <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsSupabaseUsage', 'Auth, profiles, conversations')} />
         </SourceCard>
 
-        <SourceCard title="Coverage">
+        <SourceCard title={t('admin.dsCoverage', 'Coverage')}>
           <InfoRow label={t('admin.supportedFamilies')} value={String(data.supportedFamilies)} />
           <InfoRow label={t('admin.paramMapsConfigured')} value={String(data.paramMapsConfigured)} />
-          <InfoRow label="Fallback" value="Mock data (9 parts)" />
+          <InfoRow label={t('admin.dsFallback', 'Fallback')} value={t('admin.dsMockData', 'Mock data (9 parts)')} />
         </SourceCard>
       </Box>
     </Box>

@@ -34,7 +34,6 @@ export const rfSignalInductorsLogicTable = buildDerivedLogicTable(
       {
         attributeId: 'core_material',
         logicType: 'identity',
-        upgradeHierarchy: [],
         engineeringReason: 'Air core, ceramic core, or thin-film only. NOT ferrite — ferrite has excessive losses at RF frequencies. Must match exactly.',
       },
       {

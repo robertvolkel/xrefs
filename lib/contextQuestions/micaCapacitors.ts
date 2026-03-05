@@ -22,7 +22,6 @@ export const micaCapacitorsContext: FamilyContextConfig = {
           label: 'Military / aerospace',
           description: 'MIL-spec compliance becomes mandatory',
           attributeEffects: [
-            { attributeId: 'mil_spec', effect: 'escalate_to_mandatory', note: 'Military/aerospace application — MIL-spec compliance is required' },
           ],
         },
         {

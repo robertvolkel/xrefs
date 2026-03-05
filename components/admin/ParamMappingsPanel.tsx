@@ -24,7 +24,7 @@ import {
   ParamMapEntry,
   ParamMapping,
 } from '@/lib/services/digikeyParamMap';
-import { typeColors, typeLabels } from './logicConstants';
+import { typeColors, typeTranslationKeys, typeLabels } from './logicConstants';
 
 interface ParamMappingsPanelProps {
   table: LogicTable | null;
@@ -107,7 +107,7 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
     return (
       <Box>
         <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {table.familyName}
+          {t(`logicTable.${table.familyId}.name`, table.familyName)}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           {t('admin.noParamMap')}
@@ -119,7 +119,7 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {table.familyName}
+        {t(`logicTable.${table.familyId}.name`, table.familyName)}
       </Typography>
       {coverage && (() => {
         const pct = coverage.totalWeight > 0
@@ -128,12 +128,12 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
         const color = pct >= 70 ? 'success.main' : pct >= 40 ? 'warning.main' : 'error.main';
         return (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            Digikey parameter coverage:{' '}
+            {t('admin.paramCoverageLabel', 'Digikey parameter coverage:')}{' '}
             <Typography component="span" variant="body2" sx={{ fontWeight: 700, color }}>
               {pct}%
             </Typography>
             {' '}({coverage.matchableWeight} / {coverage.totalWeight} weight)
-            {' '}&mdash; {rows.length} parameters mapped
+            {' '}&mdash; {t('admin.paramsMapped', { count: rows.length })}
           </Typography>
         );
       })()}
@@ -221,7 +221,7 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
                     <TableCell>
                       {rule && (
                         <Chip
-                          label={typeLabels[rule.logicType]}
+                          label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
                           size="small"
                           sx={{
                             bgcolor: typeColors[rule.logicType] + '22',
@@ -275,7 +275,7 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={typeLabels[rule.logicType]}
+                    label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
                     size="small"
                     sx={{
                       bgcolor: typeColors[rule.logicType] + '22',

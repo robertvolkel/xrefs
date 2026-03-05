@@ -151,6 +151,7 @@ export default function MessageBubble({
         {message.interactiveElement?.type === 'context-questions' && onContextResponse && onSkipContext && (
           <ApplicationContextForm
             questions={message.interactiveElement.questions}
+            familyId={message.interactiveElement.familyId}
             onSubmit={onContextResponse}
             onSkip={onSkipContext}
             sourceMpn={sourceMpn}

@@ -180,6 +180,23 @@ function applyRecommendationFilter(
 }
 
 // ==============================================================
+// Locale → language name mapping for system prompt
+// ==============================================================
+
+const LOCALE_NAMES: Record<string, string> = {
+  de: 'German',
+  'zh-CN': 'Simplified Chinese',
+};
+
+/** Build a locale instruction to append to the system prompt */
+function buildLocaleInstruction(locale?: string): string {
+  if (!locale || locale === 'en') return '';
+  const langName = LOCALE_NAMES[locale];
+  if (!langName) return '';
+  return `\n\nIMPORTANT — Language preference: The user's preferred language is ${langName} (${locale}). Respond entirely in ${langName}. Use standard ${langName} electronics engineering terminology. Keep universal technical abbreviations (MLCC, ESR, PSRR, MOSFET, LDO, BJT, IGBT, etc.) unchanged — do not translate acronyms or part numbers.`;
+}
+
+// ==============================================================
 // Main chat
 // ==============================================================
 
@@ -369,6 +386,7 @@ export async function chat(
   apiKey: string,
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
+  locale?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -383,8 +401,8 @@ export async function chat(
     recommendations: {},
   };
 
-  // Build system prompt — append recommendation context if available
-  let systemPrompt = SYSTEM_PROMPT;
+  // Build system prompt — append recommendation context + locale if available
+  let systemPrompt = SYSTEM_PROMPT + buildLocaleInstruction(locale);
   const activeTools = [...tools];
   if (currentRecommendations && currentRecommendations.length > 0) {
     systemPrompt += summarizeRecommendations(currentRecommendations);
@@ -542,9 +560,10 @@ export async function refinementChat(
   apiKey: string,
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
+  locale?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
-  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations);
+  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations) + buildLocaleInstruction(locale);
 
   const activeTools: Anthropic.Tool[] = [...refinementTools];
   if (currentRecommendations && currentRecommendations.length > 0) {

@@ -14,6 +14,34 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]['code'];
 
 export const DEFAULT_LANGUAGE: SupportedLanguage = 'en';
 
+/**
+ * Detects the best matching supported language from the browser's language preferences.
+ * Tries exact match first, then prefix match (e.g., de-DE → de, zh-TW → zh-CN).
+ * Returns DEFAULT_LANGUAGE if no match or if running server-side.
+ */
+export function detectBrowserLanguage(): SupportedLanguage {
+  if (typeof window === 'undefined') return DEFAULT_LANGUAGE;
+
+  const browserLangs = navigator.languages?.length
+    ? navigator.languages
+    : [navigator.language];
+
+  const codes = SUPPORTED_LANGUAGES.map((l) => l.code);
+
+  for (const browserLang of browserLangs) {
+    // Exact match (e.g., zh-CN)
+    if (codes.includes(browserLang as SupportedLanguage)) {
+      return browserLang as SupportedLanguage;
+    }
+    // Prefix match (e.g., de-DE → de, zh-TW → zh-CN)
+    const prefix = browserLang.split('-')[0].toLowerCase();
+    const match = codes.find((c) => c.toLowerCase().startsWith(prefix));
+    if (match) return match;
+  }
+
+  return DEFAULT_LANGUAGE;
+}
+
 i18n
   .use(initReactI18next)
   .init({

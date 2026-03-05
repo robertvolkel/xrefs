@@ -32,7 +32,6 @@ export const micaCapacitorsLogicTable = buildDerivedLogicTable(
         attributeId: 'dielectric',
         attributeName: 'Dielectric Material',
         logicType: 'identity',
-        upgradeHierarchy: [],
         engineeringReason: 'Silver Mica dielectric must match exactly. No Class I/II hierarchy applies — mica is a distinct material class.',
       },
       {
