@@ -241,7 +241,8 @@ Formatting rules:
 Important rules:
 - Always use tools — never guess part numbers or specs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
-- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.`;
+- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
+- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.`;
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
@@ -275,13 +276,18 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: 'find_replacements',
-    description: 'Find cross-reference replacement candidates for a specific part. Uses the deterministic matching engine with logic table rules to evaluate candidates. Returns ranked recommendations with match percentages and detailed per-parameter comparison.',
+    description: 'Find cross-reference replacement candidates for a specific part. Uses the deterministic matching engine with logic table rules to evaluate candidates. Returns ranked recommendations with match percentages and detailed per-parameter comparison. If the user mentioned preferred manufacturers, pass them to boost those manufacturers in the ranking.',
     input_schema: {
       type: 'object' as const,
       properties: {
         mpn: {
           type: 'string',
           description: 'The MPN of the source part to find replacements for',
+        },
+        preferred_manufacturers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of preferred manufacturer names extracted from the user query (e.g. ["ON Semiconductor", "Vishay", "Nexperia"]). Parts from these manufacturers will be boosted in ranking.',
         },
       },
       required: ['mpn'],
@@ -318,8 +324,9 @@ async function executeTool(
       return JSON.stringify(attrs);
     }
     case 'find_replacements': {
-      const mpn = (input as { mpn: string }).mpn;
-      const result = await getRecommendations(mpn);
+      const findInput = input as { mpn: string; preferred_manufacturers?: string[] };
+      const mpn = findInput.mpn;
+      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers);
       const recs = result.recommendations;
       data.recommendations[mpn] = recs;
 
@@ -411,6 +418,11 @@ export async function chat(
   }
 
   // Tool-use loop: keep going until Claude gives a final text response
+  const chatStart = performance.now();
+  let llmCallCount = 0;
+
+  llmCallCount++;
+  console.time(`[perf] LLM call #${llmCallCount}`);
   let response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
@@ -418,6 +430,7 @@ export async function chat(
     tools: activeTools,
     messages: anthropicMessages,
   });
+  console.timeEnd(`[perf] LLM call #${llmCallCount}`);
 
   while (response.stop_reason === 'tool_use') {
     const toolUseBlocks = response.content.filter(
@@ -431,6 +444,7 @@ export async function chat(
 
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
       toolUseBlocks.map(async (toolUse) => {
+        console.time(`[perf] tool:${toolUse.name}`);
         const result = await executeTool(
           toolUse.name,
           toolUse.input as Record<string, unknown>,
@@ -438,6 +452,7 @@ export async function chat(
           currentRecommendations,
           userId,
         );
+        console.timeEnd(`[perf] tool:${toolUse.name}`);
         return {
           type: 'tool_result' as const,
           tool_use_id: toolUse.id,
@@ -451,6 +466,8 @@ export async function chat(
       content: toolResults,
     });
 
+    llmCallCount++;
+    console.time(`[perf] LLM call #${llmCallCount}`);
     response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
@@ -458,7 +475,10 @@ export async function chat(
       tools: activeTools,
       messages: anthropicMessages,
     });
+    console.timeEnd(`[perf] LLM call #${llmCallCount}`);
   }
+
+  console.log(`[perf] chat() total: ${(performance.now() - chatStart).toFixed(0)}ms (${llmCallCount} LLM calls)`);
 
   // Extract the final text response
   const textBlocks = response.content.filter(

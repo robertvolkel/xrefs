@@ -195,7 +195,7 @@
   "recommendations": {
     "header": "Recommended Replacements",
     "headerFiltered": "{{activeCount}} active {{matchWord}} · {{hiddenCount}} hidden",
-    "headerUnfiltered": "{{count}} {{matchWord}} found — click to compare",
+    "headerUnfiltered": "{{count}} {{matchWord}} found",
     "match": "match",
     "matches": "matches",
     "activeOnly": "Active only"

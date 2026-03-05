@@ -177,7 +177,7 @@
   "recommendations": {
     "header": "推荐替代品",
     "headerFiltered": "{{activeCount}} 个活跃匹配 · {{hiddenCount}} 个已隐藏",
-    "headerUnfiltered": "找到 {{count}} 个匹配 — 点击比较",
+    "headerUnfiltered": "找到 {{count}} 个匹配",
     "match": "个匹配",
     "matches": "个匹配",
     "activeOnly": "仅活跃"

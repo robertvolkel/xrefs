@@ -51,7 +51,7 @@ interface ComparisonFeedbackDialogProps {
   open: boolean;
   onClose: () => void;
   sourceAttributes: PartAttributes;
-  replacementAttributes: PartAttributes;
+  replacementAttributes: PartAttributes | null;
   rows: ComparisonRow[];
 }
 
@@ -78,7 +78,7 @@ export default function ComparisonFeedbackDialog({
         feedbackStage: 'rule_logic',
         sourceMpn: sourceAttributes.part.mpn,
         sourceManufacturer: sourceAttributes.part.manufacturer,
-        replacementMpn: replacementAttributes.part.mpn,
+        replacementMpn: replacementAttributes?.part.mpn ?? '',
         userComment: comment.trim(),
       });
       setSubmitted(true);
@@ -124,7 +124,7 @@ export default function ComparisonFeedbackDialog({
                   vs
                 </Typography>
                 <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                  {replacementAttributes.part.mpn}
+                  {replacementAttributes?.part.mpn ?? '—'}
                 </Typography>
               </Stack>
             </Box>
@@ -141,7 +141,7 @@ export default function ComparisonFeedbackDialog({
                       {sourceAttributes.part.mpn}
                     </TableCell>
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: '30%' }}>
-                      {replacementAttributes.part.mpn}
+                      {replacementAttributes?.part.mpn ?? '—'}
                     </TableCell>
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: '15%' }}>
                       {t('comparison.resultHeader')}

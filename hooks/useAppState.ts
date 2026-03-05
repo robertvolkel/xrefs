@@ -587,7 +587,8 @@ export function useAppState() {
         selectedRecommendation: rec,
         comparisonAttributes: attributes,
       }));
-    } catch {
+    } catch (err) {
+      console.error('[handleSelectRecommendation] Failed to fetch attributes for', rec.part.mpn, err);
       setStatus('');
       setState((prev) => ({
         ...prev,

@@ -23,7 +23,7 @@ import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
-  replacementAttributes: PartAttributes;
+  replacementAttributes: PartAttributes | null;
   recommendation: XrefRecommendation;
   onBack: () => void;
   onManufacturerClick?: (manufacturer: string) => void;
@@ -102,10 +102,12 @@ export default function ComparisonView({
     recommendation.matchDetails.map((d) => [d.parameterId, d])
   );
 
-  const rows = sourceAttributes.parameters
+  const sourceParamIds = new Set(sourceAttributes.parameters.map((p) => p.parameterId));
+
+  const rowsFromSource = sourceAttributes.parameters
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((sourceParam) => {
-      const replParam = replacementAttributes.parameters.find(
+      const replParam = replacementAttributes?.parameters.find(
         (p) => p.parameterId === sourceParam.parameterId
       );
       const matchDetail = matchMap.get(sourceParam.parameterId);
@@ -121,6 +123,23 @@ export default function ComparisonView({
       };
     })
     .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
+
+  // Add matchDetails not already covered by source parameters (e.g. application_review
+  // rules for datasheet-only specs like SOA, or threshold rules like Vbe(sat) when
+  // the parametric data doesn't include them)
+  const extraRows = recommendation.matchDetails
+    .filter((d) => !sourceParamIds.has(d.parameterId) && d.ruleResult && d.ruleResult !== 'pass')
+    .map((d) => ({
+      parameterId: d.parameterId,
+      parameterName: d.parameterName,
+      sourceValue: d.sourceValue,
+      replacementValue: d.replacementValue,
+      matchStatus: d.matchStatus,
+      ruleResult: d.ruleResult,
+      note: d.note,
+    }));
+
+  const rows = [...rowsFromSource, ...extraRows];
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -147,9 +166,9 @@ export default function ComparisonView({
             </Typography>
             <Stack direction="row" alignItems="center" spacing={0.75}>
               <Typography variant="h6" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-                {replacementAttributes.part.mpn}
+                {(replacementAttributes ?? recommendation).part.mpn}
               </Typography>
-              <Chip label={replacementAttributes.part.status} size="small" color={replacementAttributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              <Chip label={(replacementAttributes ?? recommendation).part.status} size="small" color={(replacementAttributes ?? recommendation).part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
             </Stack>
             <Typography
               variant="body2"
@@ -163,95 +182,149 @@ export default function ComparisonView({
                 }),
               }}
               noWrap
-              onClick={onManufacturerClick ? () => onManufacturerClick(replacementAttributes.part.manufacturer) : undefined}
+              onClick={onManufacturerClick ? () => onManufacturerClick((replacementAttributes ?? recommendation).part.manufacturer) : undefined}
             >
-              {replacementAttributes.part.manufacturer}
+              {(replacementAttributes ?? recommendation).part.manufacturer}
             </Typography>
           </Box>
         </Stack>
       </Box>
 
-      {/* Comparison table — rows aligned with left panel */}
-      <TableContainer sx={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
-        <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
-          <TableHead>
-            <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                {t('comparison.parameterHeader')}
-              </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                {t('comparison.valueHeader')}
-              </TableCell>
-              <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                {t('comparison.resultHeader')}
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map((row) => {
-              const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
-              const resultContent = (
-                <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: row.note ? 'help' : 'default' }}>
-                  <Box
-                    sx={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: '50%',
-                      bgcolor: dot.color,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
-                  >
-                    {dot.label}
-                  </Typography>
-                </Stack>
-              );
-              return (
-                <TableRow key={row.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell
-                    sx={{
-                      color: 'text.secondary',
-                      fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-                      borderColor: 'divider',
-                      width: '40%',
-                      py: { xs: ROW_PY_MOBILE, md: ROW_PY },
-                    }}
-                  >
-                    {row.parameterName}
-                  </TableCell>
-                  <TableCell
-                    sx={{
-                      fontFamily: 'monospace',
-                      fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-                      borderColor: 'divider',
-                      color: getValueColor(row.matchStatus),
-                      py: { xs: ROW_PY_MOBILE, md: ROW_PY },
-                      width: '45%',
-                    }}
-                  >
-                    {row.replacementValue}
-                  </TableCell>
-                  <TableCell
-                    sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '15%' }}
-                  >
-                    {row.note ? (
-                      <Tooltip title={row.note} placement="left" arrow>
-                        {resultContent}
-                      </Tooltip>
-                    ) : (
-                      resultContent
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      {/* Scrollable area: comparison table + issue summary */}
+      <Box sx={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+        <TableContainer>
+          <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
+            <TableHead>
+              <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                  {t('comparison.parameterHeader')}
+                </TableCell>
+                <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                  {t('comparison.valueHeader')}
+                </TableCell>
+                <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                  {t('comparison.resultHeader')}
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((row) => {
+                const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
+                const resultContent = (
+                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: row.note ? 'help' : 'default' }}>
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        bgcolor: dot.color,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
+                    >
+                      {dot.label}
+                    </Typography>
+                  </Stack>
+                );
+                return (
+                  <TableRow key={row.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                    <TableCell
+                      sx={{
+                        color: 'text.secondary',
+                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                        borderColor: 'divider',
+                        width: '40%',
+                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                      }}
+                    >
+                      {row.parameterName}
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        fontFamily: 'monospace',
+                        fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                        borderColor: 'divider',
+                        color: getValueColor(row.matchStatus),
+                        py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                        width: '45%',
+                      }}
+                    >
+                      {row.replacementValue}
+                    </TableCell>
+                    <TableCell
+                      sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '15%' }}
+                    >
+                      {row.note ? (
+                        <Tooltip title={row.note} placement="left" arrow>
+                          {resultContent}
+                        </Tooltip>
+                      ) : (
+                        resultContent
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {/* Issue Summary */}
+        {(() => {
+          const failures = rows.filter((r) => r.ruleResult === 'fail');
+          const reviews = rows.filter((r) => r.ruleResult === 'review');
+          if (failures.length === 0 && reviews.length === 0) return null;
+          return (
+            <Box sx={{ px: 2, py: 1.5, mt: 0.5 }}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1 }}>
+                {t('comparison.issueSummary', 'Issue Summary')}
+              </Typography>
+
+              {failures.length > 0 && (
+                <Box sx={{ mb: reviews.length > 0 ? 1.5 : 0 }}>
+                  <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: DOT_RED, flexShrink: 0 }} />
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontWeight: 600, color: DOT_RED }}>
+                      {t('comparison.failuresHeading', { count: failures.length, defaultValue: `${failures.length} Failing` })}
+                    </Typography>
+                  </Stack>
+                  {failures.map((row) => (
+                    <Box key={row.parameterId} sx={{ pl: 2, mb: 0.25 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
+                        <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>{row.parameterName}</Box>
+                        {row.note ? ` — ${row.note}` : ''}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+
+              {reviews.length > 0 && (
+                <Box>
+                  <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: DOT_YELLOW, flexShrink: 0 }} />
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontWeight: 600, color: DOT_YELLOW }}>
+                      {t('comparison.reviewsHeading', { count: reviews.length, defaultValue: `${reviews.length} Needs Review` })}
+                    </Typography>
+                  </Stack>
+                  {reviews.map((row) => (
+                    <Box key={row.parameterId} sx={{ pl: 2, mb: 0.25 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', lineHeight: 1.5 }}>
+                        <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>{row.parameterName}</Box>
+                        {row.note ? ` — ${row.note}` : ''}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          );
+        })()}
+      </Box>
 
       {/* Feedback link */}
       <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>

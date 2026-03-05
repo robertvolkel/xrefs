@@ -1,10 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { Box, Checkbox, CircularProgress, FormControlLabel, Typography } from '@mui/material';
+import { Box, Checkbox, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
-import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/layoutConstants';
+import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
@@ -17,9 +17,22 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const { t } = useTranslation();
   const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
   const [activeOnly, setActiveOnly] = useState(true);
+  const [selectedMfr, setSelectedMfr] = useState('');
+
+  const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
 
   const activeCount = sorted.filter(r => r.part.status === 'Active').length;
   const hiddenCount = sorted.length - activeCount;
+
+  const filtered = selectedMfr
+    ? sorted.filter(r => r.part.manufacturer === selectedMfr)
+    : sorted;
+
+  // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
+  const firstMatch = sorted[0]?.matchDetails;
+  const coverage = firstMatch && firstMatch.length > 0
+    ? Math.round((firstMatch.filter(d => d.sourceValue !== 'N/A' && d.replacementValue !== 'N/A').length / firstMatch.length) * 100)
+    : null;
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -59,10 +72,51 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
             : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
+          {coverage !== null && (
+            <Typography component="span" sx={{ fontSize: '0.95rem' }}>
+              {' / '}{coverage}% {t('recommendations.paramCoverage', 'param coverage')}
+            </Typography>
+          )}
         </Typography>
       </Box>
+
+      {/* Filter strip — matches AttributesPanel table header height/background */}
+      <Box
+        sx={{
+          height: 45,
+          minHeight: 45,
+          bgcolor: 'background.paper',
+          borderBottom: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          px: 2,
+        }}
+      >
+        <Select
+          value={selectedMfr}
+          onChange={(e) => setSelectedMfr(e.target.value)}
+          displayEmpty
+          variant="outlined"
+          size="small"
+          sx={{
+            fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+            height: 22,
+            minHeight: 22,
+            '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+            '& .MuiSelect-select': { py: '1px', px: '8px' },
+          }}
+        >
+          <MenuItem value="" sx={{ fontSize: '0.78rem' }}>{t('recommendations.allManufacturers', 'All Manufacturers')}</MenuItem>
+          {manufacturers.map((mfr) => (
+            <MenuItem key={mfr} value={mfr} sx={{ fontSize: '0.78rem' }}>{mfr}</MenuItem>
+          ))}
+        </Select>
+      </Box>
+
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
-        {sorted.map((rec) => {
+        {filtered.map((rec) => {
           const isNonActive = rec.part.status !== 'Active';
           const shouldHide = activeOnly && isNonActive;
           return (

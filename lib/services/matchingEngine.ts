@@ -126,6 +126,7 @@ function evaluateIdentity(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'fail',
       matchStatus: !sourceParam ? 'exact' : 'different',
+      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
     };
   }
 
@@ -164,6 +165,7 @@ function evaluateIdentity(
     logicType: rule.logicType,
     result: match ? 'pass' : 'fail',
     matchStatus: match ? 'exact' : 'different',
+    note: !match ? `Does not match — ${sourceValue} vs ${candidateValue}` : undefined,
   };
 }
 
@@ -190,6 +192,7 @@ function evaluateIdentityRange(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'fail',
       matchStatus: !sourceParam ? 'exact' : 'different',
+      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
     };
   }
 
@@ -224,6 +227,7 @@ function evaluateIdentityRange(
     logicType: rule.logicType,
     result: overlaps ? 'pass' : 'fail',
     matchStatus: isExact ? 'exact' : overlaps ? 'compatible' : 'different',
+    note: !overlaps ? `Ranges do not overlap — ${sourceValue} vs ${candidateValue}` : undefined,
   };
 }
 
@@ -245,6 +249,7 @@ function evaluateIdentityUpgrade(
       logicType: rule.logicType,
       result: !sourceParam ? 'pass' : 'fail',
       matchStatus: !sourceParam ? 'exact' : 'different',
+      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
     };
   }
 
@@ -271,6 +276,7 @@ function evaluateIdentityUpgrade(
       logicType: rule.logicType,
       result: match ? 'pass' : 'fail',
       matchStatus: match ? 'exact' : 'different',
+      note: !match ? `Does not match — ${sourceValue} vs ${candidateValue}` : undefined,
     };
   }
 
@@ -421,6 +427,7 @@ function evaluateThreshold(
       logicType: rule.logicType,
       result: 'review',
       matchStatus: 'different',
+      note: `${rule.attributeName} not specified in replacement — verify from datasheet`,
     };
   }
 
@@ -452,6 +459,7 @@ function evaluateThreshold(
       logicType: rule.logicType,
       result: isSuperset ? 'pass' : 'fail',
       matchStatus: isExact ? 'exact' : isSuperset ? 'better' : 'worse',
+      note: !isSuperset ? `Range ${candidateValue} does not fully cover ${sourceValue}` : undefined,
     };
   }
 
@@ -485,14 +493,16 @@ function evaluateThreshold(
     }
 
     // For tolerance: lower is better (tighter)
+    const tolPass = candTol <= srcTol;
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: candTol <= srcTol ? 'pass' : 'fail',
+      result: tolPass ? 'pass' : 'fail',
       matchStatus: candTol < srcTol ? 'better' : 'worse',
+      note: !tolPass ? `Tolerance ${candidateValue} is wider than required ${sourceValue}` : undefined,
     };
   }
 
@@ -509,6 +519,7 @@ function evaluateThreshold(
         logicType: rule.logicType,
         result: 'review',
         matchStatus: 'compatible',
+        note: 'Could not parse MSL values for comparison',
       };
     }
 
@@ -524,14 +535,16 @@ function evaluateThreshold(
       };
     }
 
+    const mslPass = candMSL <= srcMSL;
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: candMSL <= srcMSL ? 'pass' : 'fail',
+      result: mslPass ? 'pass' : 'fail',
       matchStatus: candMSL < srcMSL ? 'better' : 'worse',
+      note: !mslPass ? `MSL ${candidateValue} exceeds source MSL ${sourceValue}` : undefined,
     };
   }
 
@@ -587,6 +600,11 @@ function evaluateThreshold(
     logicType: rule.logicType,
     result: passes ? 'pass' : 'fail',
     matchStatus: passes ? (isBetter ? 'better' : 'exact') : 'worse',
+    note: !passes
+      ? direction === 'gte'
+        ? `${candidateValue} is below the minimum ${sourceValue}`
+        : `${candidateValue} exceeds the maximum ${sourceValue}`
+      : undefined,
   };
 }
 
@@ -886,11 +904,18 @@ export function evaluateCandidate(
   };
 }
 
+/** Check if a manufacturer name matches any preferred manufacturer (case-insensitive partial match) */
+function isPreferredManufacturer(manufacturer: string, preferred: string[]): boolean {
+  const mfrLower = manufacturer.toLowerCase();
+  return preferred.some(p => mfrLower.includes(p.toLowerCase()) || p.toLowerCase().includes(mfrLower));
+}
+
 /** Evaluate multiple candidates and return ranked recommendations */
 export function findReplacements(
   logicTable: LogicTable,
   source: PartAttributes,
-  candidates: PartAttributes[]
+  candidates: PartAttributes[],
+  preferredManufacturers?: string[],
 ): XrefRecommendation[] {
   // Filter out the source part itself
   const filteredCandidates = candidates.filter(
@@ -901,9 +926,21 @@ export function findReplacements(
     evaluateCandidate(logicTable, source, candidate)
   );
 
-  // Sort by: passed first, then by match percentage
+  // Sort by: passed first, then by match percentage (with manufacturer preference boost)
+  const hasPreferred = preferredManufacturers && preferredManufacturers.length > 0;
   evaluations.sort((a, b) => {
     if (a.passed !== b.passed) return a.passed ? -1 : 1;
+    // Apply manufacturer preference: preferred manufacturers sort above non-preferred at equal/close scores
+    if (hasPreferred) {
+      const aPreferred = isPreferredManufacturer(a.candidate.part.manufacturer, preferredManufacturers);
+      const bPreferred = isPreferredManufacturer(b.candidate.part.manufacturer, preferredManufacturers);
+      if (aPreferred !== bPreferred) {
+        // Only boost if scores are within 5% of each other
+        if (Math.abs(a.matchPercentage - b.matchPercentage) <= 5) {
+          return aPreferred ? -1 : 1;
+        }
+      }
+    }
     return b.matchPercentage - a.matchPercentage;
   });
 

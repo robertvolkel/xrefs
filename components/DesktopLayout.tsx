@@ -258,7 +258,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           {isLoadingRecs ? (
             <RecommendationsSkeleton />
           ) : phase === 'comparing' &&
-            comparisonAttributes &&
+            selectedRecommendation &&
             sourceAttributes ? (
             <ComparisonView
               sourceAttributes={sourceAttributes}

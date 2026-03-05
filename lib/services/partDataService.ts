@@ -70,11 +70,30 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       const attrs = mapDigikeyProductToAttributes(response.Product);
       return { ...attrs, dataSource: 'digikey' as const };
     }
-    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
   } catch (error) {
-    console.warn('Digikey product details failed, falling back to mock:', error);
-    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
+    console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
   }
+
+  // Fallback: keyword search by MPN (handles cases where Product Details API
+  // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
+  try {
+    const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency);
+    const lowerMpn = mpn.toLowerCase();
+    // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
+    const match = searchResponse.Products?.find(
+      (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
+    ) ?? searchResponse.Products?.find(
+      (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
+    );
+    if (match) {
+      const attrs = mapDigikeyProductToAttributes(match);
+      return { ...attrs, dataSource: 'digikey' as const };
+    }
+  } catch {
+    console.warn('Digikey keyword search fallback also failed for', mpn);
+  }
+
+  return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
 }
 
 // ============================================================
@@ -86,9 +105,14 @@ export async function getRecommendations(
   attributeOverrides?: Record<string, string>,
   applicationContext?: ApplicationContext,
   currency?: string,
+  preferredManufacturers?: string[],
 ): Promise<RecommendationResult> {
+  const recsStart = performance.now();
+
   // Step 1: Get source part attributes
+  console.time('[perf] getAttributes');
   const sourceAttrs = await getAttributes(mpn, currency);
+  console.timeEnd('[perf] getAttributes');
   if (!sourceAttrs) {
     const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
     return { recommendations: [], sourceAttributes: emptyAttrs };
@@ -192,9 +216,14 @@ export async function getRecommendations(
   // Step 3: Try to get candidates from Digikey
   if (isDigikeyConfigured()) {
     try {
+      console.time('[perf] fetchDigikeyCandidates');
       const candidates = await fetchDigikeyCandidates(sourceAttrs, currency);
+      console.timeEnd('[perf] fetchDigikeyCandidates');
+      console.log(`[perf] candidates found: ${candidates.length}`);
       if (candidates.length > 0) {
-        let recs = findReplacements(effectiveTable, sourceAttrs, candidates);
+        console.time('[perf] findReplacements (scoring)');
+        let recs = findReplacements(effectiveTable, sourceAttrs, candidates, preferredManufacturers);
+        console.timeEnd('[perf] findReplacements (scoring)');
 
         // Step 3b: Post-scoring filter for C2 switching regulators —
         // topology and architecture are BLOCKING identity gates. Remove any
@@ -251,6 +280,7 @@ export async function getRecommendations(
           recs = filterDacOutputTypeMismatches(recs, sourceAttrs);
         }
 
+        console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
         return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
       }
     } catch (error) {

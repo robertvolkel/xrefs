@@ -9,9 +9,10 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick }: RecommendationCardProps) {
-  const { part, matchDetails, notes } = recommendation;
-  const hasFailures = matchDetails.some(d => d.ruleResult === 'fail');
-  const hasReviews = !hasFailures && matchDetails.some(d => d.ruleResult === 'review');
+  const { part, matchDetails } = recommendation;
+  const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
+  const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
+  const showSummary = failCount > 0 || reviewCount > 0;
 
   return (
     <Card
@@ -65,27 +66,29 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap>
                 {part.description}
               </Typography>
-              {notes && (
+              {showSummary && (
                 <>
                   <Divider sx={{ my: 1, opacity: 0.4 }} />
-                  <Stack direction="row" alignItems="flex-start" spacing={0.75}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        bgcolor: hasFailures ? '#FF5252' : hasReviews ? '#FFD54F' : '#90A4AE',
-                        flexShrink: 0,
-                        mt: '4px',
-                      }}
-                    />
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: '0.75rem', opacity: 0.8, lineHeight: 1.4 }}
-                    >
-                      {notes}
-                    </Typography>
+                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.25 }}>
+                    {failCount > 0 && (
+                      <Stack direction="row" alignItems="center" spacing={0.4}>
+                        <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: '#FF5252', flexShrink: 0 }} />
+                        <Typography variant="caption" sx={{ fontSize: '0.72rem', color: '#FF5252' }}>
+                          {failCount} failing
+                        </Typography>
+                      </Stack>
+                    )}
+                    {failCount > 0 && reviewCount > 0 && (
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', opacity: 0.5 }}>·</Typography>
+                    )}
+                    {reviewCount > 0 && (
+                      <Stack direction="row" alignItems="center" spacing={0.4}>
+                        <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: '#FFD54F', flexShrink: 0 }} />
+                        <Typography variant="caption" sx={{ fontSize: '0.72rem', color: '#FFD54F' }}>
+                          {reviewCount} needs review
+                        </Typography>
+                      </Stack>
+                    )}
                   </Stack>
                 </>
               )}

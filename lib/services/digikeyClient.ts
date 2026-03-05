@@ -175,6 +175,7 @@ export async function keywordSearch(
   options: DigikeySearchOptions = {},
   currency?: string,
 ): Promise<DigikeyKeywordResponse> {
+  console.time('[perf] digikey:keywordSearch');
   const token = await getAccessToken();
 
   const body = {
@@ -194,7 +195,9 @@ export async function keywordSearch(
     body: JSON.stringify(body),
   }, currency);
 
-  return res.json();
+  const data = await res.json();
+  console.timeEnd('[perf] digikey:keywordSearch');
+  return data;
 }
 
 /** Get detailed product information including all parametric specs */
@@ -206,9 +209,11 @@ export async function getProductDetails(
   const cacheKey = currency ? `${productNumber}__${currency}` : productNumber;
   const cached = detailsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log('[perf] digikey:getProductDetails CACHE HIT');
     return cached.data;
   }
 
+  console.time('[perf] digikey:getProductDetails');
   const token = await getAccessToken();
 
   const res = await digikeyFetch(
@@ -221,6 +226,7 @@ export async function getProductDetails(
   );
 
   const data: DigikeyProductDetailResponse = await res.json();
+  console.timeEnd('[perf] digikey:getProductDetails');
 
   // Store in cache
   detailsCache.set(cacheKey, { data, timestamp: Date.now() });

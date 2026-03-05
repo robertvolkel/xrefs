@@ -177,7 +177,7 @@
   "recommendations": {
     "header": "Empfohlene Ersatzteile",
     "headerFiltered": "{{activeCount}} aktive {{matchWord}} · {{hiddenCount}} ausgeblendet",
-    "headerUnfiltered": "{{count}} {{matchWord}} gefunden — zum Vergleichen klicken",
+    "headerUnfiltered": "{{count}} {{matchWord}} gefunden",
     "match": "Treffer",
     "matches": "Treffer",
     "activeOnly": "Nur aktive"
