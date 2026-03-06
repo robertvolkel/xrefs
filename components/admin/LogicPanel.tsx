@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Chip,
@@ -10,10 +11,24 @@ import {
   TableHead,
   TableRow,
   Typography,
+  IconButton,
+  Tooltip,
+  Button,
 } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useTranslation } from 'react-i18next';
-import { LogicTable, MatchingRule } from '@/lib/types';
+import { LogicTable, MatchingRule, RuleOverrideRecord } from '@/lib/types';
+import { getRuleOverrides } from '@/lib/api';
 import { typeColors, typeTranslationKeys, typeLabels } from './logicConstants';
+import RuleOverrideDrawer from './RuleOverrideDrawer';
+
+// Override action → dot color
+const ACTION_DOT_COLORS: Record<string, string> = {
+  modify: '#FFB74D',  // amber
+  add: '#69F0AE',     // green
+  remove: '#FF5252',  // red
+};
 
 interface LogicPanelProps {
   table: LogicTable | null;
@@ -21,78 +36,189 @@ interface LogicPanelProps {
 
 export default function LogicPanel({ table }: LogicPanelProps) {
   const { t } = useTranslation();
+  const [overrides, setOverrides] = useState<RuleOverrideRecord[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedRule, setSelectedRule] = useState<MatchingRule | null>(null);
+  const [isAddMode, setIsAddMode] = useState(false);
+
+  // Build override lookup map
+  const overrideMap = useMemo(() => {
+    const map = new Map<string, RuleOverrideRecord>();
+    for (const ov of overrides) map.set(ov.attributeId, ov);
+    return map;
+  }, [overrides]);
+
+  // Fetch overrides when family changes
+  const fetchOverrides = useCallback(async () => {
+    if (!table) { setOverrides([]); return; }
+    const data = await getRuleOverrides(table.familyId);
+    setOverrides(data);
+  }, [table]);
+
+  useEffect(() => { fetchOverrides(); }, [fetchOverrides]);
+
+  const handleRowClick = useCallback((rule: MatchingRule) => {
+    setSelectedRule(rule);
+    setIsAddMode(false);
+    setDrawerOpen(true);
+  }, []);
+
+  const handleAddClick = useCallback(() => {
+    setSelectedRule(null);
+    setIsAddMode(true);
+    setDrawerOpen(true);
+  }, []);
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false);
+    setSelectedRule(null);
+    setIsAddMode(false);
+  }, []);
 
   if (!table) return null;
 
   const fKey = `logicTable.${table.familyId}`;
 
+  // Count active overrides for the header badge
+  const overrideCount = overrides.length;
+
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {t(`${fKey}.name`, table.familyName)}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+        <Typography variant="h6">
+          {t(`${fKey}.name`, table.familyName)}
+        </Typography>
+        <Button
+          size="small"
+          startIcon={<AddIcon />}
+          onClick={handleAddClick}
+          sx={{ textTransform: 'none' }}
+        >
+          Add Rule
+        </Button>
+      </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {t(`${fKey}.desc`, table.description)} &mdash; {t('admin.rulesCount', { count: table.rules.length })}
+        {overrideCount > 0 && (
+          <Chip
+            label={`${overrideCount} override${overrideCount !== 1 ? 's' : ''}`}
+            size="small"
+            color="warning"
+            variant="outlined"
+            sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
+          />
+        )}
       </Typography>
 
       <TableContainer>
         <Table size="small" sx={{ '& td, & th': { borderColor: 'divider' } }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, width: 40 }}>#</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 24, p: 0.5 }} />
+              <TableCell sx={{ fontWeight: 600, width: 34 }}>#</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 180 }}>{t('admin.colAttribute', 'Attribute')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 140 }}>{t('admin.colRuleType', 'Rule Type')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 200 }}>{t('admin.colCondition', 'Condition')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>{t('admin.colWeight', 'Weight')}</TableCell>
               <TableCell sx={{ fontWeight: 600 }}>{t('admin.colEngineering', 'Engineering Reason')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 40 }} />
             </TableRow>
           </TableHead>
           <TableBody>
-            {table.rules.map((rule, idx) => (
-              <TableRow key={rule.attributeId} sx={{ '&:last-child td': { borderBottom: 0 } }}>
-                <TableCell>
-                  <Typography variant="caption" color="text.secondary">
-                    {idx + 1}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {t(`${fKey}.attr.${rule.attributeId}`, rule.attributeName)}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
-                    size="small"
-                    sx={{
-                      bgcolor: typeColors[rule.logicType] + '22',
-                      color: typeColors[rule.logicType],
-                      fontWeight: 500,
-                      fontSize: '0.72rem',
-                      height: 24,
-                    }}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    {getConditionText(rule, t)}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ textAlign: 'center' }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {rule.weight}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.5 }}>
-                    {t(`${fKey}.reason.${rule.attributeId}`, rule.engineeringReason)}
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ))}
+            {table.rules.map((rule, idx) => {
+              const override = overrideMap.get(rule.attributeId);
+              const isOverridden = !!override;
+
+              return (
+                <TableRow
+                  key={rule.attributeId}
+                  sx={{
+                    '&:last-child td': { borderBottom: 0 },
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: 'action.hover' },
+                    ...(isOverridden && { bgcolor: 'rgba(255,183,77,0.06)' }),
+                  }}
+                  onClick={() => handleRowClick(rule)}
+                >
+                  {/* Override indicator dot */}
+                  <TableCell sx={{ p: 0.5, textAlign: 'center' }}>
+                    {isOverridden && (
+                      <Tooltip title={`Override: ${override.action} — ${override.changeReason}`}>
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            bgcolor: ACTION_DOT_COLORS[override.action] ?? '#FFB74D',
+                            display: 'inline-block',
+                          }}
+                        />
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="caption" color="text.secondary">
+                      {idx + 1}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {t(`${fKey}.attr.${rule.attributeId}`, rule.attributeName)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
+                      size="small"
+                      sx={{
+                        bgcolor: typeColors[rule.logicType] + '22',
+                        color: typeColors[rule.logicType],
+                        fontWeight: 500,
+                        fontSize: '0.72rem',
+                        height: 24,
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                      {getConditionText(rule, t)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {rule.weight}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.5 }}>
+                      {t(`${fKey}.reason.${rule.attributeId}`, rule.engineeringReason)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ p: 0.5 }}>
+                    <IconButton
+                      size="small"
+                      onClick={e => { e.stopPropagation(); handleRowClick(rule); }}
+                      sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}
+                    >
+                      <EditOutlinedIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Override Drawer */}
+      <RuleOverrideDrawer
+        open={drawerOpen}
+        onClose={handleDrawerClose}
+        familyId={table.familyId}
+        baseRule={isAddMode ? null : selectedRule}
+        existingOverride={selectedRule ? overrideMap.get(selectedRule.attributeId) ?? null : null}
+        onSaved={fetchOverrides}
+      />
     </Box>
   );
 }

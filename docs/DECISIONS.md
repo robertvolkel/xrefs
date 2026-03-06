@@ -1373,3 +1373,31 @@ Translated all 719 engineering reason strings (`logicTable.*.reason`) to Simplif
 
 **Files modified:** `locales/zh-CN.json` (719 reason entries added)
 **Files created:** `scripts/translate-reasons.mjs`, `scripts/zh-translations.json`
+
+---
+
+### 60. Admin Override Layer for Logic Tables & Context Questions
+
+**Date:** 2026-03-06
+**Status:** Implemented
+
+All 38 component families have hardcoded TypeScript logic tables (~700 rules) and context questions (~80 questions). Any correction — even changing a single weight — previously required a code change, rebuild, and deploy. This decision adds a database-backed override layer so admins can make corrections through the existing admin UI, instantly, with full audit trail.
+
+**Architecture:** Keep TypeScript files as the tested, version-controlled base. Admin overrides are stored in Supabase (`rule_overrides` and `context_overrides` tables) and merged at runtime using the same remove→override→add pattern established in `deltaBuilder.ts`. The merge order is: TS base → DB rule overrides → context modifier (user answers). This means admin corrections have higher authority than code, but user per-search context answers still apply on top.
+
+**Why override layer, not full DB migration:** (1) Incremental — doesn't require migrating 38 families. (2) Safe — if overrides break something, delete them and the base still works. (3) The existing `contextModifier.ts` already demonstrates the pattern (deep clone + apply effects). (4) Most admin edits will be small corrections (5-20 overrides total), not wholesale rewrites.
+
+**Why not PR-based code generation:** Requires a deploy for every fix, too slow for admin iteration. The override layer provides instant feedback — admin saves, next xref uses the fix (within 60s cache TTL).
+
+**Caching:** In-memory cache with 60-second TTL. Override tables will be tiny (5-20 rows). Cache is invalidated immediately after admin writes via `invalidateOverrideCache()`.
+
+**Rule override actions:** `modify` (patch fields on existing TS rule), `add` (new rule not in TS base), `remove` (suppress a TS rule). Soft-delete via `is_active` flag preserves audit history.
+
+**Context override actions:** `modify_question`, `add_question`, `disable_question`, `add_option`, `modify_option`. Effects stored as JSONB `AttributeEffect[]`.
+
+**Admin UI:** LogicPanel rows are now clickable — opens a right-side drawer for editing weight, logicType, thresholdDirection, upgradeHierarchy, blockOnMissing, tolerancePercent, engineeringReason. Override indicators (amber/green/red dots) show which rules have active overrides. ContextPanel options are clickable for effect editing, with add/disable buttons on question cards.
+
+**Validation:** `overrideValidator.ts` enforces type constraints (weight 0-10, valid LogicType, threshold needs direction, identity_upgrade needs hierarchy, add requires attributeName + logicType + weight, modify/remove attribute must exist in TS base). changeReason is always required.
+
+**Files created:** `scripts/supabase-overrides-schema.sql`, `lib/services/overrideMerger.ts`, `lib/services/overrideValidator.ts`, `components/admin/RuleOverrideDrawer.tsx`, `components/admin/ContextOverrideDrawer.tsx`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `app/api/admin/overrides/context/route.ts`, `app/api/admin/overrides/context/[overrideId]/route.ts`, `__tests__/services/overrideMerger.test.ts`
+**Files modified:** `lib/types.ts`, `lib/api.ts`, `lib/services/partDataService.ts`, `components/admin/LogicPanel.tsx`, `components/admin/ContextPanel.tsx`

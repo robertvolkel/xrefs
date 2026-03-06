@@ -36,6 +36,10 @@ app/                          # Next.js App Router
   api/admin/qc/settings/     # QC settings (GET/PUT logging toggle)
   api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase)
   api/admin/taxonomy/        # Digikey category taxonomy with coverage
+  api/admin/overrides/rules/ # Rule override CRUD (GET list, POST create)
+  api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH, DELETE)
+  api/admin/overrides/context/ # Context override CRUD (GET list, POST create)
+  api/admin/overrides/context/[overrideId]/ # Context override update/delete (PATCH, DELETE)
   api/feedback/              # User feedback submission (POST)
   lists/                      # Lists dashboard page
   parts-list/                 # Parts list editor page
@@ -67,7 +71,9 @@ components/                   # React components
     QcRecommendationSummary.tsx # Recommendation summary card (used in logs detail)
     QcAnalysisDrawer.tsx      # AI analysis right-side drawer with streaming markdown
     qcConstants.ts            # Shared dot colors + utility functions for QC components
-    LogicPanel.tsx            # Logic table rules viewer (per-family)
+    LogicPanel.tsx            # Logic table rules viewer/editor (per-family, clickable rows)
+    RuleOverrideDrawer.tsx    # Right-side drawer for editing rule overrides
+    ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
     ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   qc/                         # QC top-level shell (admin-only)
@@ -98,6 +104,8 @@ lib/
   api.ts                      # Client-side API wrapper (includes admin feedback/QC functions)
   services/recommendationLogger.ts # Logs recommendations to Supabase with JSONB snapshots
   services/qcAnalyzer.ts      # Server-side aggregation of QC log snapshots for AI analysis
+  services/overrideMerger.ts  # Fetches admin overrides from Supabase, merges onto TS base
+  services/overrideValidator.ts # Validates override values against type constraints
   columnDefinitions.ts        # Dynamic column system for parts list table
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
@@ -117,7 +125,8 @@ The core pipeline is in `lib/services/partDataService.ts → getRecommendations(
 2. **Merge overrides** — Apply any user-supplied attribute corrections
 3. **Classify family** — Map subcategory string → family ID, detect variant families (e.g., current sense within chip resistors) via `lib/logicTables/familyClassifier.ts`
 4. **Get logic table** — Load the family's matching rules from `lib/logicTables/`
-5. **Apply context** — If user answered application context questions, `contextModifier.ts` adjusts rule weights/types (e.g., automotive → AEC-Q200 weight becomes 10)
+5. **Apply admin overrides** — `overrideMerger.ts` fetches active DB overrides and merges onto the TS base (remove→override→add pattern)
+6. **Apply context** — If user answered application context questions, `contextModifier.ts` adjusts rule weights/types (e.g., automotive → AEC-Q200 weight becomes 10). Context questions are also subject to admin overrides.
 6. **Fetch candidates** — Search Digikey for replacement candidates using critical parameters as keywords
 7. **Score candidates** — `matchingEngine.ts` evaluates each candidate against every rule
 

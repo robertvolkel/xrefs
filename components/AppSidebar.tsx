@@ -1,6 +1,7 @@
 'use client';
+import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Box, IconButton } from '@mui/material';
+import { Box, IconButton, Badge } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
@@ -9,6 +10,7 @@ import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
@@ -28,11 +30,37 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const logoSrc = mode === 'dark' ? '/xq-logo.png' : '/xq-logo-dark.png';
 
   const isListsActive = pathname === '/lists';
+  const isReleasesActive = pathname === '/releases';
   const isQcActive = pathname === '/qc';
   const isAdminActive = pathname === '/admin';
   const isOrgActive = pathname === '/organization';
   const isAboutActive = pathname === '/about';
   const isSettingsActive = pathname === '/settings';
+
+  const [hasNewReleases, setHasNewReleases] = useState(false);
+
+  // Check for unseen release notes on mount
+  useEffect(() => {
+    fetch('/api/releases')
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && json.data?.length > 0) {
+          const latestAt = json.data[0].createdAt;
+          const lastSeen = localStorage.getItem('lastSeenReleasesAt');
+          if (!lastSeen || new Date(latestAt) > new Date(lastSeen)) {
+            setHasNewReleases(true);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Clear badge when releases page is visited (same-tab event)
+  useEffect(() => {
+    const handler = () => setHasNewReleases(false);
+    window.addEventListener('releases-seen', handler);
+    return () => window.removeEventListener('releases-seen', handler);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -170,6 +198,21 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           }}
         >
           <HelpOutlineIcon fontSize="small" />
+        </IconButton>
+        <IconButton
+          onClick={() => router.push('/releases')}
+          size="small"
+          sx={{
+            mb: 1.5,
+            color: isReleasesActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isReleasesActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <Badge variant="dot" color="error" invisible={!hasNewReleases}>
+            <CampaignOutlinedIcon fontSize="small" />
+          </Badge>
         </IconButton>
         <IconButton
           onClick={() => router.push('/settings')}

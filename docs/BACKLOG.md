@@ -46,7 +46,28 @@ Created `.env.example` with all required variables, placeholder values, and comm
 
 ---
 
+### ~~Admin override layer for logic tables & context questions~~ COMPLETED
+**Files:** `lib/services/overrideMerger.ts`, `lib/services/overrideValidator.ts`, `components/admin/RuleOverrideDrawer.tsx`, `components/admin/ContextOverrideDrawer.tsx`
+
+Admins can now edit rule weights, logic types, thresholds, hierarchies, and context questions/options/effects from the admin UI without code deploys. Overrides stored in Supabase, merged at runtime on top of TS base. See Decision #60.
+
+---
+
 ## P1 — Medium Priority
+
+### Override preview: show scoring impact before saving
+**Files:** `components/admin/RuleOverrideDrawer.tsx`
+
+Currently admins save overrides blindly — they can't see how a weight or logicType change would affect scoring for a specific part before publishing. A "preview" mode that re-runs scoring with the proposed override and shows the delta would be very valuable.
+
+---
+
+### QC feedback → override workflow
+**Files:** `components/admin/QcFeedbackDetailView.tsx`, `components/admin/RuleOverrideDrawer.tsx`
+
+When an admin reviews QC feedback flagging a specific rule, there should be a direct "Create Override" button that pre-fills the RuleOverrideDrawer with the flagged rule's family and attributeId. Currently the admin must navigate to the Logic section manually.
+
+---
 
 ### i18n: German translations incomplete for context questions and engineering reasons
 **Status:** Partial — Chinese complete, German partial

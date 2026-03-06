@@ -683,3 +683,65 @@ export type QcAnalysisEvent =
   | { type: 'chunk'; content: string }
   | { type: 'complete'; fullContent: string }
   | { type: 'error'; message: string };
+
+// ============================================================
+// ADMIN OVERRIDE TYPES
+// ============================================================
+
+export type RuleOverrideAction = 'modify' | 'add' | 'remove';
+
+export interface RuleOverrideRecord {
+  id: string;
+  familyId: string;
+  attributeId: string;
+  action: RuleOverrideAction;
+  weight?: number;
+  logicType?: LogicType;
+  thresholdDirection?: ThresholdDirection;
+  upgradeHierarchy?: string[];
+  blockOnMissing?: boolean;
+  tolerancePercent?: number;
+  engineeringReason?: string;
+  attributeName?: string;
+  sortOrder?: number;
+  isActive: boolean;
+  changeReason: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ContextOverrideAction =
+  | 'modify_question'
+  | 'add_question'
+  | 'disable_question'
+  | 'add_option'
+  | 'modify_option';
+
+export interface ContextOverrideRecord {
+  id: string;
+  familyId: string;
+  questionId: string;
+  action: ContextOverrideAction;
+  questionText?: string;
+  priority?: number;
+  required?: boolean;
+  optionValue?: string;
+  optionLabel?: string;
+  optionDescription?: string;
+  attributeEffects?: AttributeEffect[];
+  isActive: boolean;
+  changeReason: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A release note post */
+export interface ReleaseNote {
+  id: string;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}

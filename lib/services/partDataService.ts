@@ -17,6 +17,7 @@ import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logic
 import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
+import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 
 // ============================================================
 // CONFIGURATION CHECK
@@ -204,12 +205,16 @@ export async function getRecommendations(
   const familyId = logicTable.familyId;
   const familyName = logicTable.familyName;
 
-  // Step 2b: Apply application context to modify logic table weights/rules
-  let effectiveTable = logicTable;
+  // Step 2b: Apply admin rule overrides on top of TS base
+  const tableWithOverrides = await applyRuleOverrides(logicTable);
+
+  // Step 2c: Apply application context to modify logic table weights/rules
+  let effectiveTable = tableWithOverrides;
   if (applicationContext) {
-    const familyConfig = getContextQuestionsForFamily(logicTable.familyId);
+    let familyConfig = getContextQuestionsForFamily(logicTable.familyId);
     if (familyConfig) {
-      effectiveTable = applyContextToLogicTable(logicTable, applicationContext, familyConfig);
+      familyConfig = await applyContextOverrides(familyConfig);
+      effectiveTable = applyContextToLogicTable(tableWithOverrides, applicationContext, familyConfig);
     }
   }
 

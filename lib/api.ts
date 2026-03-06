@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -276,4 +276,114 @@ export async function validatePartsList(
     throw new Error(`Validation failed: ${detail}`);
   }
   return res.body;
+}
+
+// ── Admin Override API ──────────────────────────────────────
+
+import type { RuleOverrideRecord, ContextOverrideRecord } from './types';
+
+export async function getRuleOverrides(familyId?: string): Promise<RuleOverrideRecord[]> {
+  const qs = familyId ? `?family_id=${familyId}` : '';
+  const res = await fetch(`${BASE}/admin/overrides/rules${qs}`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data ?? [];
+}
+
+export async function createRuleOverride(
+  data: Omit<RuleOverrideRecord, 'id' | 'isActive' | 'createdBy' | 'createdAt' | 'updatedAt'>,
+): Promise<RuleOverrideRecord | null> {
+  const res = await fetch(`${BASE}/admin/overrides/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+export async function updateRuleOverride(
+  id: string,
+  data: Partial<RuleOverrideRecord>,
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.ok;
+}
+
+export async function deleteRuleOverride(id: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/${id}`, { method: 'DELETE' });
+  return res.ok;
+}
+
+export async function getContextOverrides(familyId?: string): Promise<ContextOverrideRecord[]> {
+  const qs = familyId ? `?family_id=${familyId}` : '';
+  const res = await fetch(`${BASE}/admin/overrides/context${qs}`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data ?? [];
+}
+
+export async function createContextOverride(
+  data: Omit<ContextOverrideRecord, 'id' | 'isActive' | 'createdBy' | 'createdAt' | 'updatedAt'>,
+): Promise<ContextOverrideRecord | null> {
+  const res = await fetch(`${BASE}/admin/overrides/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+export async function updateContextOverride(
+  id: string,
+  data: Partial<ContextOverrideRecord>,
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/context/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.ok;
+}
+
+export async function deleteContextOverride(id: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/context/${id}`, { method: 'DELETE' });
+  return res.ok;
+}
+
+// ── Release Notes API ──────────────────────────────────────
+
+export async function getReleaseNotes(): Promise<ReleaseNote[]> {
+  return fetchApi<ReleaseNote[]>(`${BASE}/releases`);
+}
+
+export async function createReleaseNote(content: string): Promise<ReleaseNote> {
+  return fetchApi<ReleaseNote>(`${BASE}/admin/releases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function updateReleaseNote(id: string, content: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/releases/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update release note');
+}
+
+export async function deleteReleaseNote(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/releases/${id}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to delete release note');
 }
