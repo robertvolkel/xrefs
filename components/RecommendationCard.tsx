@@ -1,5 +1,5 @@
 'use client';
-import { Card, CardActionArea, CardContent, Chip, Divider, IconButton, Typography, Stack, Box } from '@mui/material';
+import { Card, CardActionArea, CardContent, Chip, Divider, Typography, Stack, Box } from '@mui/material';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { XrefRecommendation } from '@/lib/types';
 
@@ -68,13 +68,14 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap component="div">
                 {part.description}
                 {part.datasheetUrl && (
-                  <IconButton
-                    size="small"
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
-                    sx={{ p: 0.25, ml: 0.5, verticalAlign: 'middle', '&:hover': { opacity: 0.8 } }}
+                  <Box
+                    component="span"
+                    role="link"
+                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
+                    sx={{ ml: 0.5, verticalAlign: 'middle', cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
                   >
                     <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </IconButton>
+                  </Box>
                 )}
               </Typography>
               {showCommercial && (

@@ -42,13 +42,13 @@ export default function PartsListHeader({
           <ArrowBackIcon fontSize="small" />
         </IconButton>
         <Link href="/lists" underline="hover">
-          <Typography variant="body2" color="text.secondary" component="span">
+          <Typography variant="h6" fontWeight={400} color="text.secondary" component="span" sx={{ lineHeight: 1 }}>
             {t('sidebar.yourLists')}
           </Typography>
         </Link>
         {listName && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 0.5 }}>
-            <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+            <Typography variant="h6" fontWeight={400} color="text.primary" sx={{ lineHeight: 1 }}>
               / {listName}
             </Typography>
             {onEditName && (

@@ -22,6 +22,7 @@ import {
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
 import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
+import { deriveAutoAnswers } from '@/lib/contextQuestions/autoAnswer';
 import { logSearch } from '@/lib/supabaseLogger';
 
 interface AppState {
@@ -283,23 +284,97 @@ export function useAppState() {
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
-            setStatus('');
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
-              type: 'context-questions',
-              questions: contextConfig.questions,
-              familyId: logicTableForContext.familyId,
+            // Auto-answer disambiguation questions when the attribute is already known
+            const autoAnswers = deriveAutoAnswers(sourceAttrs, logicTableForContext.familyId);
+            const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
+            const autoAnswerIds = new Set(Object.keys(autoAnswers));
+
+            // Check if any remaining (non-auto-answered) questions would be visible
+            const hasVisibleRemaining = contextConfig.questions.some((q) => {
+              if (autoAnswerIds.has(q.questionId)) return false;
+              if (!q.condition) return true;
+              const depAnswer = autoAnswers[q.condition.questionId];
+              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
             });
-            conversationRef.current.push({
-              role: 'assistant',
-              content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
-            });
-            pendingOverridesRef.current = {};
+
+            if (hasVisibleRemaining) {
+              // Some questions still need user input — show form with auto-answers pre-filled
+              setStatus('');
+              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+                type: 'context-questions',
+                questions: contextConfig.questions,
+                familyId: logicTableForContext.familyId,
+                initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
+              });
+              conversationRef.current.push({
+                role: 'assistant',
+                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+              });
+              pendingOverridesRef.current = {};
+              setState((prev) => ({
+                ...prev,
+                phase: 'awaiting-context',
+                sourceAttributes: sourceAttrs,
+              }));
+              return; // Wait for handleContextResponse
+            }
+
+            if (!hasAutoAnswers) {
+              // No auto-answers and no visible questions — show full form
+              setStatus('');
+              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+                type: 'context-questions',
+                questions: contextConfig.questions,
+                familyId: logicTableForContext.familyId,
+              });
+              conversationRef.current.push({
+                role: 'assistant',
+                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+              });
+              pendingOverridesRef.current = {};
+              setState((prev) => ({
+                ...prev,
+                phase: 'awaiting-context',
+                sourceAttributes: sourceAttrs,
+              }));
+              return;
+            }
+
+            // All questions auto-answered — skip form, get recs with auto-context
+            const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
+            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
-              phase: 'awaiting-context',
+              phase: 'finding-matches',
               sourceAttributes: sourceAttrs,
+              applicationContext: autoContext,
             }));
-            return; // Wait for handleContextResponse
+
+            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal);
+            if (signal.aborted) return;
+            setStatus('Generating engineering assessment...');
+            conversationRef.current.push({
+              role: 'user',
+              content: `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
+            });
+            const assessmentResponse = await chatWithOrchestrator(conversationRef.current, recs, signal).catch(() => null);
+            if (signal.aborted) return;
+            setStatus('');
+
+            if (assessmentResponse?.message) {
+              conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
+              addMessage('assistant', assessmentResponse.message);
+            } else {
+              const paramCount = sourceAttrs.parameters.length;
+              const msg = recs.length > 0
+                ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
+                : `No cross-references found for ${part.mpn}.`;
+              conversationRef.current.push({ role: 'assistant', content: msg });
+              addMessage('assistant', msg);
+            }
+            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            return;
           }
         }
 
@@ -473,19 +548,54 @@ export function useAppState() {
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
-            setStatus('');
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
-              type: 'context-questions',
-              questions: contextConfig.questions,
-              familyId: logicTableForContext.familyId,
+            // Auto-answer disambiguation questions when the attribute is already known
+            const autoAnswers = deriveAutoAnswers(attributes, logicTableForContext.familyId);
+            const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
+            const autoAnswerIds = new Set(Object.keys(autoAnswers));
+
+            const hasVisibleRemaining = contextConfig.questions.some((q) => {
+              if (autoAnswerIds.has(q.questionId)) return false;
+              if (!q.condition) return true;
+              const depAnswer = autoAnswers[q.condition.questionId];
+              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
             });
-            pendingOverridesRef.current = {};
+
+            if (hasVisibleRemaining || !hasAutoAnswers) {
+              setStatus('');
+              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+                type: 'context-questions',
+                questions: contextConfig.questions,
+                familyId: logicTableForContext.familyId,
+                initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
+              });
+              pendingOverridesRef.current = {};
+              setState((prev) => ({
+                ...prev,
+                phase: 'awaiting-context',
+                sourceAttributes: attributes,
+              }));
+              return; // Wait for handleContextResponse
+            }
+
+            // All questions auto-answered — skip form, get recs with auto-context
+            const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
+            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
-              phase: 'awaiting-context',
+              phase: 'finding-matches',
               sourceAttributes: attributes,
+              applicationContext: autoContext,
             }));
-            return; // Wait for handleContextResponse
+            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext);
+            setStatus('');
+            const paramCount = attributes.parameters.length;
+            addMessage(
+              'assistant',
+              `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
+            );
+            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            return;
           }
         }
 
@@ -656,41 +766,65 @@ export function useAppState() {
       if (!mpn) return;
 
       // Check for application context questions before finding matches
+      let autoContext: ApplicationContext | undefined;
       const sourceAttrs = state.sourceAttributes;
       if (sourceAttrs) {
         const logicTableForContext = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
         if (logicTableForContext) {
           const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
           if (contextConfig && contextConfig.questions.length > 0) {
-            addMessage('assistant', 'One more thing — let me understand your application to find the best match.', {
-              type: 'context-questions',
-              questions: contextConfig.questions,
-              familyId: logicTableForContext.familyId,
+            // Auto-answer disambiguation questions when the attribute is already known
+            const autoAnswers = deriveAutoAnswers(sourceAttrs, logicTableForContext.familyId);
+            const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
+            const autoAnswerIds = new Set(Object.keys(autoAnswers));
+
+            const hasVisibleRemaining = contextConfig.questions.some((q) => {
+              if (autoAnswerIds.has(q.questionId)) return false;
+              if (!q.condition) return true;
+              const depAnswer = autoAnswers[q.condition.questionId];
+              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
             });
-            conversationRef.current.push({
-              role: 'user',
-              content: filledCount > 0
-                ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}`
-                : 'Proceeding without additional attribute information.',
-            });
-            conversationRef.current.push({
-              role: 'assistant',
-              content: `Received attribute values. Now asking application context questions for ${mpn} before finding replacements.`,
-            });
-            pendingOverridesRef.current = overrides;
-            setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
-            return; // Wait for handleContextResponse
+
+            if (hasVisibleRemaining || !hasAutoAnswers) {
+              addMessage('assistant', 'One more thing — let me understand your application to find the best match.', {
+                type: 'context-questions',
+                questions: contextConfig.questions,
+                familyId: logicTableForContext.familyId,
+                initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
+              });
+              conversationRef.current.push({
+                role: 'user',
+                content: filledCount > 0
+                  ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}`
+                  : 'Proceeding without additional attribute information.',
+              });
+              conversationRef.current.push({
+                role: 'assistant',
+                content: `Received attribute values. Now asking application context questions for ${mpn} before finding replacements.`,
+              });
+              pendingOverridesRef.current = overrides;
+              setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
+              return; // Wait for handleContextResponse
+            }
+            // All questions auto-answered — carry auto-context forward to recommendation call
+            if (hasAutoAnswers) {
+              autoContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
+            }
           }
         }
       }
 
       addMessage('assistant', `Finding cross-references for **${mpn}**...`);
       setStatus('Evaluating candidates against replacement rules...');
-      setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
+      setState((prev) => ({
+        ...prev,
+        phase: 'finding-matches' as AppPhase,
+        ...(autoContext ? { applicationContext: autoContext } : {}),
+      }));
 
       try {
-        const recs = filledCount > 0
-          ? await getRecommendationsWithOverrides(mpn, overrides, undefined, signal)
+        const recs = (filledCount > 0 || autoContext)
+          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal)
           : await getRecommendations(mpn, signal);
         if (signal.aborted) return;
 

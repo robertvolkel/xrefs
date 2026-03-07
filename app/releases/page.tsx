@@ -26,7 +26,7 @@ export default function ReleasesPage() {
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
       <AppSidebar
-        onReset={() => router.push('/')}
+        onReset={() => { window.location.href = '/'; }}
         onToggleHistory={handleToggleHistory}
         historyOpen={historyOpen}
       />

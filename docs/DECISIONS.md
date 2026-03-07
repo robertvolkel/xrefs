@@ -1401,3 +1401,60 @@ All 38 component families have hardcoded TypeScript logic tables (~700 rules) an
 
 **Files created:** `scripts/supabase-overrides-schema.sql`, `lib/services/overrideMerger.ts`, `lib/services/overrideValidator.ts`, `components/admin/RuleOverrideDrawer.tsx`, `components/admin/ContextOverrideDrawer.tsx`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `app/api/admin/overrides/context/route.ts`, `app/api/admin/overrides/context/[overrideId]/route.ts`, `__tests__/services/overrideMerger.test.ts`
 **Files modified:** `lib/types.ts`, `lib/api.ts`, `lib/services/partDataService.ts`, `components/admin/LogicPanel.tsx`, `components/admin/ContextPanel.tsx`
+
+---
+
+### 61. Release Notes Feed
+
+**Date:** 2026-03-06
+**Status:** Implemented
+
+Admin-only announcement feed visible to all authenticated users at `/releases`. Feed-style page with latest posts at top, text posts up to 1000 characters, timestamps as section headers, Dividers between posts. Admin sees create/edit/delete controls; users see read-only feed.
+
+**Sidebar icon:** `CampaignOutlined` (megaphone) in the bottom group above the Settings (sprocket) icon, visible to all users (not inside `isAdmin` guard). MUI `Badge variant="dot" color="error"` shows when there are unread posts.
+
+**Read tracking:** `localStorage` key `lastSeenReleasesAt` stores the ISO timestamp of the latest post the user has seen. On mount, `AppSidebar` fetches `/api/releases` and compares `data[0].createdAt` vs localStorage. `ReleasesShell` sets localStorage and dispatches a custom `releases-seen` window event when the page is visited, which `AppSidebar` listens for to clear the badge in the same tab.
+
+**Optimistic UI:** Create shows the note immediately with a temporary ID, replaces with the server response on success, reverts on failure. Delete removes immediately, reverts on failure. This avoids the perception of slowness from cold-start API route compilation in dev.
+
+**API routes:** `GET /api/releases` (all authenticated users), `POST /api/admin/releases` (admin), `PATCH/DELETE /api/admin/releases/[id]` (admin). Hard delete — no soft delete or audit trail (ephemeral announcements).
+
+**Why localStorage, not server-side:** Simplicity — no additional Supabase table for per-user read timestamps. Tradeoff: read state doesn't sync across devices. Acceptable for announcements that are informational, not actionable.
+
+**Why hard delete:** Release notes are ephemeral announcements, not audit-critical records. Soft delete would add complexity for no benefit.
+
+**Files created:** `scripts/supabase-releases-schema.sql`, `app/api/releases/route.ts`, `app/api/admin/releases/route.ts`, `app/api/admin/releases/[id]/route.ts`, `app/releases/page.tsx`, `components/releases/ReleasesShell.tsx`
+**Files modified:** `lib/types.ts` (ReleaseNote interface), `lib/api.ts` (4 client API functions), `components/AppSidebar.tsx` (megaphone icon + badge + read tracking)
+
+---
+
+### 62. Auto-Answer Disambiguation Questions When Family Is Already Resolved
+
+**Date:** 2026-03-06
+**Status:** Implemented
+
+**Problem:** When a user enters a part number like TLC555CDR, the app resolves it to family C8 (Timers/Oscillators), fetches Digikey attributes, and enriches `device_category = "555 Timer"` from MPN patterns — but then still asks "What is the device category?" presenting 555 Timer, XO, MEMS, etc. as options. The answer is already known. This affected 6 families whose first context question is a disambiguation gate that duplicates information already available from part attributes.
+
+**Fix:** Added `deriveAutoAnswers(sourceAttrs, familyId)` in `lib/contextQuestions/autoAnswer.ts` with a declarative `DISAMBIGUATION_MAP` that maps enriched part attributes to context question answer values. At all 3 places in `useAppState.ts` where context questions are triggered, the function checks if the disambiguation attribute is already set. If so, Q1 is auto-answered and hidden from the user; remaining application-context questions (Q2-Q4) still display normally.
+
+**Affected families (disambiguation Q1 auto-answered when attribute is known):**
+- **C8** Timers/Oscillators: `device_category` → `device_category_type` (6 values: 555_timer, xo, mems, tcxo, vcxo, ocxo)
+- **C4** Op-Amps/Comparators: `device_type` → `device_function` (3 values: op_amp, comparator, instrumentation_amp)
+- **C7** Interface ICs: `protocol` → `interface_protocol` (4 values: rs485, can, i2c, usb)
+- **C9** ADCs: `architecture` → `adc_architecture` (4 values: sar, delta_sigma, pipeline, flash)
+- **C10** DACs: `output_type` → `dac_output_type` (2 values: voltage_output, current_output)
+- **B8** Thyristors: `device_type` → `device_subtype` (3 values: scr, triac, diac)
+
+**Not affected (user-intent questions, not disambiguation):**
+- C2 Q1 (integrated vs controller) — has "Unknown" option, genuinely about design context
+- B5 Q1 (switching topology) — circuit context, not device classification
+- B6 Q1 (operating mode) — circuit context
+- C5 Q1 (driving source) — circuit context
+- B2 Q1 (low-voltage application) — circuit context
+
+**Guard logic:** If enriched attribute value doesn't match any known option in the mapping (unknown MPN, missing Digikey data), the disambiguation question fires normally — the guard only suppresses when there's a confident match.
+
+**ApplicationContextForm:** Accepts optional `initialAnswers` prop. Auto-answered questions are hidden but their answers seed the form state, so conditional Q2-Q4 questions that depend on Q1's value display correctly. On submit, auto-answers are merged with user answers.
+
+**Files created:** `lib/contextQuestions/autoAnswer.ts`
+**Files modified:** `lib/types.ts` (initialAnswers on InteractiveElement), `hooks/useAppState.ts` (3 trigger points), `components/ApplicationContextForm.tsx` (initialAnswers prop), `components/MessageBubble.tsx` (pass-through)

@@ -39,27 +39,25 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
 
   const [hasNewReleases, setHasNewReleases] = useState(false);
 
-  // Check for unseen release notes on mount
+  // Check for unseen releases via localStorage (no API call)
   useEffect(() => {
-    fetch('/api/releases')
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.success && json.data?.length > 0) {
-          const latestAt = json.data[0].createdAt;
-          const lastSeen = localStorage.getItem('lastSeenReleasesAt');
-          if (!lastSeen || new Date(latestAt) > new Date(lastSeen)) {
-            setHasNewReleases(true);
-          }
-        }
-      })
-      .catch(() => {});
+    const latestAt = localStorage.getItem('latestReleaseAt');
+    const lastSeen = localStorage.getItem('lastSeenReleasesAt');
+    if (latestAt && (!lastSeen || new Date(latestAt) > new Date(lastSeen))) {
+      setHasNewReleases(true);
+    }
   }, []);
 
-  // Clear badge when releases page is visited (same-tab event)
+  // Listen for releases-seen (same-tab) and releases-new (new post created)
   useEffect(() => {
-    const handler = () => setHasNewReleases(false);
-    window.addEventListener('releases-seen', handler);
-    return () => window.removeEventListener('releases-seen', handler);
+    const clearBadge = () => setHasNewReleases(false);
+    const showBadge = () => setHasNewReleases(true);
+    window.addEventListener('releases-seen', clearBadge);
+    window.addEventListener('releases-new', showBadge);
+    return () => {
+      window.removeEventListener('releases-seen', clearBadge);
+      window.removeEventListener('releases-new', showBadge);
+    };
   }, []);
 
   const handleLogout = async () => {

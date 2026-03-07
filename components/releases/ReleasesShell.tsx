@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Typography, Divider, TextField, IconButton, Button, CircularProgress,
+  Box, Typography, Divider, TextField, IconButton, Button, Skeleton,
 } from '@mui/material';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
+import ParticleWaveBackground from '@/components/ParticleWaveBackground';
 import { useProfile } from '@/lib/hooks/useProfile';
 import { createReleaseNote, updateReleaseNote, deleteReleaseNote } from '@/lib/api';
 import type { ReleaseNote } from '@/lib/types';
@@ -30,13 +31,15 @@ export default function ReleasesShell() {
         if (json.success && Array.isArray(json.data)) {
           setNotes(json.data);
           if (json.data.length > 0) {
-            localStorage.setItem('lastSeenReleasesAt', json.data[0].createdAt);
+            const latest = json.data[0].createdAt;
+            localStorage.setItem('latestReleaseAt', latest);
+            localStorage.setItem('lastSeenReleasesAt', latest);
             window.dispatchEvent(new Event('releases-seen'));
           }
         }
       })
       .catch(() => {})
-      .finally(() => setLoaded(true));
+      .finally(() => { if (!controller.signal.aborted) setLoaded(true); });
     return () => controller.abort();
   }, []);
 
@@ -52,6 +55,7 @@ export default function ReleasesShell() {
     };
     setNotes((prev) => [optimistic, ...prev]);
     setNewContent('');
+    localStorage.setItem('latestReleaseAt', now);
     localStorage.setItem('lastSeenReleasesAt', now);
     window.dispatchEvent(new Event('releases-seen'));
 
@@ -59,27 +63,36 @@ export default function ReleasesShell() {
       const note = await createReleaseNote(text);
       // Replace optimistic with real
       setNotes((prev) => prev.map((n) => n.id === optimisticId ? note : n));
+      localStorage.setItem('latestReleaseAt', note.createdAt);
       localStorage.setItem('lastSeenReleasesAt', note.createdAt);
-    } catch {
-      // Revert on failure
+    } catch (err) {
+      console.error('Failed to create release note:', err);
       setNotes((prev) => prev.filter((n) => n.id !== optimisticId));
     }
   }, [newContent]);
 
   const handleUpdate = useCallback(async (id: string) => {
-    if (!editContent.trim()) return;
+    const text = editContent.trim();
+    if (!text) return;
+
+    // Optimistic: update immediately
+    const snapshot = notes;
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === id
+          ? { ...n, content: text, updatedAt: new Date().toISOString() }
+          : n,
+      ),
+    );
+    setEditingId(null);
+
     try {
-      await updateReleaseNote(id, editContent.trim());
-      setNotes((prev) =>
-        prev.map((n) =>
-          n.id === id
-            ? { ...n, content: editContent.trim(), updatedAt: new Date().toISOString() }
-            : n,
-        ),
-      );
-      setEditingId(null);
-    } catch { /* ignore */ }
-  }, [editContent]);
+      await updateReleaseNote(id, text);
+    } catch {
+      // Revert on failure
+      setNotes(snapshot);
+    }
+  }, [editContent, notes]);
 
   const handleDelete = useCallback(async (id: string) => {
     // Optimistic: remove immediately
@@ -94,10 +107,13 @@ export default function ReleasesShell() {
   }, [notes]);
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default', position: 'relative' }}>
+      <ParticleWaveBackground visible />
       {/* Header */}
       <Box
         sx={{
+          position: 'relative',
+          zIndex: 1,
           display: 'flex',
           alignItems: 'center',
           px: 3,
@@ -113,7 +129,7 @@ export default function ReleasesShell() {
       </Box>
 
       {/* Scrollable content */}
-      <Box sx={{ flex: 1, overflowY: 'auto' }}>
+      <Box sx={{ flex: 1, overflowY: 'auto', position: 'relative', zIndex: 1 }}>
         <Box sx={{ maxWidth: 720, mx: 'auto', px: 3, py: 4 }}>
           {/* Admin create form */}
           {isAdmin && (
@@ -143,9 +159,14 @@ export default function ReleasesShell() {
             </Box>
           )}
 
-          {!loaded && (
-            <CircularProgress size={20} sx={{ display: 'block', mx: 'auto', mt: 4 }} />
-          )}
+          {!loaded && [0, 1, 2].map((i) => (
+            <Box key={i} sx={{ py: 2 }}>
+              <Skeleton variant="text" width={160} sx={{ fontSize: '1rem', mb: 1 }} />
+              <Skeleton variant="text" width="100%" sx={{ fontSize: '0.85rem' }} />
+              <Skeleton variant="text" width="80%" sx={{ fontSize: '0.85rem' }} />
+              {i < 2 && <Divider sx={{ mt: 2 }} />}
+            </Box>
+          ))}
 
           {loaded && notes.length === 0 && (
             <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mt: 4 }}>
@@ -159,6 +180,7 @@ export default function ReleasesShell() {
                 /* Edit mode */
                 <Box sx={{ display: 'flex', gap: 1, py: 2 }}>
                   <TextField
+                    autoFocus
                     multiline
                     minRows={1}
                     maxRows={4}

@@ -40,10 +40,14 @@ app/                          # Next.js App Router
   api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH, DELETE)
   api/admin/overrides/context/ # Context override CRUD (GET list, POST create)
   api/admin/overrides/context/[overrideId]/ # Context override update/delete (PATCH, DELETE)
+  api/admin/releases/        # Create release note (POST, admin-only)
+  api/admin/releases/[id]/   # Update/delete release note (PATCH/DELETE, admin-only)
+  api/releases/              # List release notes (GET, all authenticated)
   api/feedback/              # User feedback submission (POST)
   lists/                      # Lists dashboard page
   parts-list/                 # Parts list editor page
   logic/                      # Admin logic table viewer page
+  releases/                   # Release notes feed page (all users)
   qc/                          # QC top-level page (admin-only)
 
 components/                   # React components
@@ -76,6 +80,8 @@ components/                   # React components
     ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
     ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
+  releases/                    # Release notes feed
+    ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
   qc/                         # QC top-level shell (admin-only)
     QcShell.tsx               # QC orchestrator — settings toggle, section nav, content
     QcSectionNav.tsx          # Left nav: Feedback + Logs sections

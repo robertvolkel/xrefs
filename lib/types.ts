@@ -126,7 +126,7 @@ export type InteractiveElement =
   | { type: 'confirmation'; part: PartSummary }
   | { type: 'options'; parts: PartSummary[] }
   | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
-  | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string };
+  | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> };
 
 export interface MissingAttributeInfo {
   attributeId: string;

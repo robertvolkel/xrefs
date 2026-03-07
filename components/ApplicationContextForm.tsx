@@ -19,6 +19,7 @@ import FeedbackButton from './FeedbackButton';
 interface ApplicationContextFormProps {
   questions: ContextQuestion[];
   familyId?: string;
+  initialAnswers?: Record<string, string>;
   onSubmit: (answers: Record<string, string>) => void;
   onSkip: () => void;
   sourceMpn?: string;
@@ -155,23 +156,30 @@ function QuestionField({
 export default function ApplicationContextForm({
   questions,
   familyId,
+  initialAnswers,
   onSubmit,
   onSkip,
   sourceMpn,
   sourceManufacturer,
 }: ApplicationContextFormProps) {
   const { t } = useTranslation();
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers ?? {});
+
+  // IDs of questions that were auto-answered — these are hidden from the user
+  const autoAnsweredIds = useMemo(() => new Set(Object.keys(initialAnswers ?? {})), [initialAnswers]);
 
   // Filter questions based on conditions — only show questions whose conditions are met
+  // Also exclude auto-answered disambiguation questions
   const visibleQuestions = useMemo(() => {
     const sorted = [...questions].sort((a, b) => a.priority - b.priority);
     return sorted.filter((q) => {
+      // Hide auto-answered questions
+      if (autoAnsweredIds.has(q.questionId)) return false;
       if (!q.condition) return true;
       const depAnswer = answers[q.condition.questionId];
       return depAnswer !== undefined && q.condition.values.includes(depAnswer);
     });
-  }, [questions, answers]);
+  }, [questions, answers, autoAnsweredIds]);
 
   // Check if any visible required questions are unanswered
   const hasUnansweredRequired = useMemo(() => {
@@ -229,7 +237,7 @@ export default function ApplicationContextForm({
           variant="contained"
           size="small"
           startIcon={<CheckIcon />}
-          onClick={() => onSubmit(answers)}
+          onClick={() => onSubmit({ ...initialAnswers, ...answers })}
           disabled={hasUnansweredRequired}
         >
           {t('chat.continue')}
