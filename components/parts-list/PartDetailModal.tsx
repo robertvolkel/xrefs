@@ -29,6 +29,8 @@ interface PartDetailModalProps {
   onBackToRecs: () => void;
   onConfirmReplacement: (rec: XrefRecommendation) => void;
   onRecommendationsRefreshed: (recs: XrefRecommendation[]) => void;
+  preferredMpn?: string;
+  onTogglePreferred?: (mpn: string) => void;
 }
 
 const PANEL_HEIGHT = '74vh';
@@ -44,6 +46,8 @@ export default function PartDetailModal({
   onBackToRecs,
   onConfirmReplacement,
   onRecommendationsRefreshed,
+  preferredMpn,
+  onTogglePreferred,
 }: PartDetailModalProps) {
   const { t } = useTranslation();
   const [recsLoading, setRecsLoading] = useState(false);
@@ -91,6 +95,8 @@ export default function PartDetailModal({
               recommendations={recs}
               onSelect={onSelectRec}
               loading={recsLoading}
+              preferredMpn={preferredMpn}
+              onTogglePreferred={onTogglePreferred}
             />
           </Box>
         )}

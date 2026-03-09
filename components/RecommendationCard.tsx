@@ -1,6 +1,8 @@
 'use client';
 import { Card, CardActionArea, CardContent, Chip, Divider, Typography, Stack, Box } from '@mui/material';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
+import StarIcon from '@mui/icons-material/Star';
+import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation } from '@/lib/types';
 
 interface RecommendationCardProps {
@@ -8,9 +10,11 @@ interface RecommendationCardProps {
   onClick: () => void;
   onManufacturerClick?: (manufacturer: string) => void;
   showCommercial?: boolean;
+  isPreferred?: boolean;
+  onTogglePreferred?: () => void;
 }
 
-export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial }: RecommendationCardProps) {
+export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
   const { part, matchDetails } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
@@ -43,6 +47,25 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
+                {onTogglePreferred && (
+                  <Box
+                    component="span"
+                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); onTogglePreferred(); }}
+                    sx={{
+                      ml: 'auto',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      color: isPreferred ? '#FFD54F' : 'text.disabled',
+                      '&:hover': { color: '#FFD54F' },
+                      transition: 'color 0.15s ease',
+                    }}
+                  >
+                    {isPreferred
+                      ? <StarIcon sx={{ fontSize: 18 }} />
+                      : <StarOutlineIcon sx={{ fontSize: 18 }} />
+                    }
+                  </Box>
+                )}
               </Stack>
               <Typography variant="body2" color="text.secondary" noWrap component="div">
                 {onManufacturerClick ? (

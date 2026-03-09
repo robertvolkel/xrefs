@@ -13,10 +13,13 @@ import { classifyListTheme } from './themeClassifier';
 /** Strip heavy fields from rows for storage */
 function toStoredRows(rows: PartsListRow[]): StoredRow[] {
   return rows.map(r => {
-    // Derive top non-failing sub-recs (positions #2 and #3) from live data
+    // Derive top non-failing sub-recs from live data, excluding the preferred rec
     const nonFailing = r.allRecommendations
-      ?.filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
-      .slice(1, 3);
+      ?.filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'));
+    // If a preferred MPN is set, exclude it from sub-rows (it's the top suggestion)
+    const subCandidates = r.preferredMpn
+      ? nonFailing?.filter(rec => rec.part.mpn !== r.preferredMpn)
+      : nonFailing?.slice(1);
 
     return {
       rowIndex: r.rowIndex,
@@ -27,8 +30,9 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       status: r.status,
       resolvedPart: r.resolvedPart,
       suggestedReplacement: r.suggestedReplacement,
-      topNonFailingRecs: nonFailing?.length ? nonFailing : r.topNonFailingRecs,
+      topNonFailingRecs: subCandidates?.length ? subCandidates.slice(0, 2) : r.topNonFailingRecs,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
+      preferredMpn: r.preferredMpn,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
     };
@@ -44,6 +48,7 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     allRecommendations: undefined,
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
+    preferredMpn: r.preferredMpn,
   }));
 }
 

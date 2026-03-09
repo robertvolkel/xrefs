@@ -25,6 +25,8 @@ export interface StoredRow {
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — for accurate hits column on load */
   recommendationCount?: number;
+  /** MPN explicitly chosen by user as preferred alternate */
+  preferredMpn?: string;
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;

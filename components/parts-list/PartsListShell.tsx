@@ -47,6 +47,7 @@ export default function PartsListShell() {
     handleLoadList, handleOpenModal, handleCloseModal,
     handleModalSelectRec, handleModalBackToRecs,
     handleModalConfirmReplacement, handleModalRecsRefreshed,
+    handleSetPreferred,
     handleUpdateListDetails, handleRefreshRows, handleDeleteRows,
   } = usePartsListState();
 
@@ -262,6 +263,10 @@ export default function PartsListShell() {
         onBackToRecs={handleModalBackToRecs}
         onConfirmReplacement={handleModalConfirmReplacement}
         onRecommendationsRefreshed={handleModalRecsRefreshed}
+        preferredMpn={modalRow?.preferredMpn}
+        onTogglePreferred={(mpn) => {
+          if (modalRow) handleSetPreferred(modalRow.rowIndex, mpn || null);
+        }}
       />
 
       <ColumnPickerDialog

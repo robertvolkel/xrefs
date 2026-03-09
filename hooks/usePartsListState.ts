@@ -373,7 +373,7 @@ export function usePartsListState() {
       const newRows = [...prev.rows];
       const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
       if (idx >= 0) {
-        newRows[idx] = { ...newRows[idx], suggestedReplacement: rec };
+        newRows[idx] = { ...newRows[idx], suggestedReplacement: rec, preferredMpn: rec.part.mpn };
       }
 
       return {
@@ -433,12 +433,19 @@ export function usePartsListState() {
       const newRows = [...prev.rows];
       const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
       if (idx >= 0) {
+        const row = newRows[idx];
+        // Resolve suggestedReplacement: prefer user's preferredMpn, fall back to recs[0]
+        let topRec = recs ? recs[0] : undefined;
+        if (recs && row.preferredMpn) {
+          const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
+          if (preferred) topRec = preferred;
+        }
         newRows[idx] = {
-          ...newRows[idx],
+          ...row,
           ...(attrs ? { sourceAttributes: attrs } : {}),
           ...(recs ? {
             allRecommendations: recs,
-            suggestedReplacement: recs[0] ?? newRows[idx].suggestedReplacement,
+            suggestedReplacement: topRec ?? row.suggestedReplacement,
             recommendationCount: recs.length,
           } : {}),
         };
@@ -497,15 +504,64 @@ export function usePartsListState() {
       const newRows = [...prev.rows];
       const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
       if (idx >= 0) {
-        const topRec = recs.length > 0 ? recs[0] : undefined;
+        const row = newRows[idx];
+        // Resolve suggestedReplacement: prefer user's preferredMpn, fall back to recs[0]
+        let topRec = recs.length > 0 ? recs[0] : undefined;
+        if (row.preferredMpn) {
+          const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
+          if (preferred) topRec = preferred;
+        }
         newRows[idx] = {
-          ...newRows[idx],
+          ...row,
           allRecommendations: recs,
-          suggestedReplacement: topRec ?? newRows[idx].suggestedReplacement,
+          suggestedReplacement: topRec ?? row.suggestedReplacement,
         };
       }
       return { ...prev, rows: newRows };
     });
+  }, []);
+
+  // ----------------------------------------------------------
+  // Set / clear preferred alternate for a row
+  // ----------------------------------------------------------
+
+  const handleSetPreferred = useCallback((rowIndex: number, mpn: string | null) => {
+    setState(prev => {
+      const newRows = [...prev.rows];
+      const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
+      if (idx < 0) return prev;
+
+      const row = newRows[idx];
+      const preferredMpn = mpn || undefined;
+
+      // Resolve suggestedReplacement from allRecommendations
+      let suggestedReplacement = row.suggestedReplacement;
+      if (row.allRecommendations && row.allRecommendations.length > 0) {
+        if (preferredMpn) {
+          const preferred = row.allRecommendations.find(r => r.part.mpn === preferredMpn);
+          if (preferred) suggestedReplacement = preferred;
+        } else {
+          // Cleared preference — revert to highest score
+          suggestedReplacement = row.allRecommendations[0];
+        }
+      }
+
+      newRows[idx] = { ...row, preferredMpn, suggestedReplacement };
+      return { ...prev, rows: newRows };
+    });
+
+    // Auto-save
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setTimeout(() => {
+        setState(prev => {
+          if (prev.activeListId) {
+            updatePartsListSupabase(prev.activeListId, prev.rows).catch(() => {});
+          }
+          return prev;
+        });
+      }, 0);
+    }
   }, []);
 
   // ----------------------------------------------------------
@@ -560,7 +616,7 @@ export function usePartsListState() {
       error: null,
       rows: prev.rows.map(r =>
         indexSet.has(r.rowIndex)
-          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, suggestedReplacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined }
+          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, suggestedReplacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined /* preferredMpn deliberately preserved */ }
           : r,
       ),
     }));
@@ -599,15 +655,29 @@ export function usePartsListState() {
               const newRows = [...prev.rows];
               const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
               if (idx >= 0) {
+                const existingRow = newRows[idx];
+                // Resolve suggestedReplacement: prefer user's preferredMpn if still in results
+                let suggestedReplacement = item.suggestedReplacement;
+                let preferredMpn = existingRow.preferredMpn;
+                if (preferredMpn && item.allRecommendations) {
+                  const preferred = item.allRecommendations.find(r => r.part.mpn === preferredMpn);
+                  if (preferred) {
+                    suggestedReplacement = preferred;
+                  } else {
+                    // Preferred MPN no longer in results — clear preference
+                    preferredMpn = undefined;
+                  }
+                }
                 newRows[idx] = {
-                  ...newRows[idx],
+                  ...existingRow,
                   status: item.status,
                   resolvedPart: item.resolvedPart,
                   sourceAttributes: item.sourceAttributes,
-                  suggestedReplacement: item.suggestedReplacement,
+                  suggestedReplacement,
                   allRecommendations: item.allRecommendations,
                   enrichedData: item.enrichedData,
                   errorMessage: item.errorMessage,
+                  preferredMpn,
                 };
               }
               const pending = newRows.filter(r => indexSet.has(r.rowIndex) && r.status === 'pending').length;
@@ -702,6 +772,7 @@ export function usePartsListState() {
     handleModalBackToRecs,
     handleModalConfirmReplacement,
     handleModalRecsRefreshed,
+    handleSetPreferred,
     handleReset,
     handleUpdateListDetails,
     handleRefreshRows,

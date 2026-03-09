@@ -29,6 +29,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
+import StarIcon from '@mui/icons-material/Star';
 import { PartsListRow, XrefRecommendation } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
@@ -46,9 +47,13 @@ const SUGGESTION_COLUMN_IDS = new Set([
  */
 function getSubSuggestions(row: PartsListRow): XrefRecommendation[] {
   if (row.allRecommendations && row.allRecommendations.length >= 2) {
-    return row.allRecommendations
-      .filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
-      .slice(1, 3);
+    const nonFailing = row.allRecommendations
+      .filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'));
+    // If a preferred MPN is set, exclude it from sub-rows (it's the top suggestion)
+    const candidates = row.preferredMpn
+      ? nonFailing.filter(rec => rec.part.mpn !== row.preferredMpn)
+      : nonFailing.slice(1); // Skip the #1 (already the top suggestion)
+    return candidates.slice(0, 2);
   }
   // Fallback: persisted top non-failing recs (already positions #2 and #3)
   return row.topNonFailingRecs ?? [];
@@ -271,12 +276,18 @@ function CellRenderer({
         if (topRec) {
           const hasFails = topRec.matchDetails.some(d => d.ruleResult === 'fail');
           const dotColor = hasFails ? '#FF5252' : topRec.matchPercentage >= 85 ? '#69F0AE' : '#FFD54F';
+          const isUserPicked = !isSubRow && row.preferredMpn != null && row.preferredMpn === topRec.part.mpn;
           return (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
               <FiberManualRecordIcon sx={{ fontSize: 8, color: dotColor, flexShrink: 0 }} />
               <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
                 {topRec.part.mpn}
               </OverflowTooltip>
+              {isUserPicked && (
+                <Tooltip title="Preferred alternate">
+                  <StarIcon sx={{ fontSize: 12, color: '#FFD54F', flexShrink: 0 }} />
+                </Tooltip>
+              )}
               <Typography
                 component="span"
                 sx={{

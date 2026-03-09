@@ -411,6 +411,8 @@ export interface PartsListRow {
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — persisted so hits column is accurate on load */
   recommendationCount?: number;
+  /** MPN explicitly chosen by user as preferred alternate — survives re-validation */
+  preferredMpn?: string;
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;

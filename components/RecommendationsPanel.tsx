@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Box, Checkbox, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
@@ -11,11 +11,20 @@ interface RecommendationsPanelProps {
   onSelect: (rec: XrefRecommendation) => void;
   onManufacturerClick?: (manufacturer: string) => void;
   loading?: boolean;
+  preferredMpn?: string;
+  onTogglePreferred?: (mpn: string) => void;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred }: RecommendationsPanelProps) {
   const { t } = useTranslation();
-  const sorted = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
+  const sorted = useMemo(() => {
+    const byScore = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
+    if (!preferredMpn) return byScore;
+    const prefIdx = byScore.findIndex(r => r.part.mpn === preferredMpn);
+    if (prefIdx <= 0) return byScore; // Already first or not found
+    const [preferred] = byScore.splice(prefIdx, 1);
+    return [preferred, ...byScore];
+  }, [recommendations, preferredMpn]);
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
   const [showCommercial, setShowCommercial] = useState(false);
@@ -149,6 +158,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                 onClick={() => onSelect(rec)}
                 onManufacturerClick={onManufacturerClick}
                 showCommercial={showCommercial}
+                isPreferred={rec.part.mpn === preferredMpn}
+                onTogglePreferred={onTogglePreferred ? () => {
+                  onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
+                } : undefined}
               />
             </Box>
           );
