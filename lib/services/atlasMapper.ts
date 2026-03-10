@@ -131,7 +131,7 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
 
 // ─── Parameter Translation Dictionaries ───────────────────
 
-interface AtlasParamMapping {
+export interface AtlasParamMapping {
   attributeId: string;
   attributeName: string;
   unit?: string;
@@ -1027,6 +1027,128 @@ function normalizeVoltageRange(value: string): string {
   return value;
 }
 
+// ─── Dictionary Accessor Functions ────────────────────────
+
+/** Returns the base (TS) dictionary for a family, or undefined if none exists. */
+export function getAtlasParamDictionary(familyId: string): Record<string, AtlasParamMapping> | undefined {
+  return atlasParamDictionaries[familyId];
+}
+
+/** Returns the shared (cross-family) fallback dictionary. */
+export function getSharedParamDictionary(): Record<string, AtlasParamMapping> {
+  return sharedParamDictionary;
+}
+
+/** Returns all family IDs that have a translation dictionary. */
+export function getAtlasDictionaryFamilyIds(): string[] {
+  return Object.keys(atlasParamDictionaries);
+}
+
+/** Returns the set of parameter names that should always be skipped. */
+export function getSkipParams(): Set<string> {
+  return skipParams;
+}
+
+// ─── Dictionary Override Cache & Merge ────────────────────
+
+interface DictOverrideRow {
+  id: string;
+  family_id: string;
+  param_name: string;
+  action: 'modify' | 'add' | 'remove';
+  attribute_id: string | null;
+  attribute_name: string | null;
+  unit: string | null;
+  sort_order: number | null;
+}
+
+interface DictCacheEntry {
+  data: DictOverrideRow[];
+  fetchedAt: number;
+}
+
+const DICT_CACHE_TTL_MS = 60_000; // 1 minute
+const dictOverrideCache = new Map<string, DictCacheEntry>();
+
+/** Invalidate dictionary override cache after admin writes. */
+export function invalidateDictOverrideCache(familyId?: string): void {
+  if (familyId) {
+    dictOverrideCache.delete(familyId);
+  } else {
+    dictOverrideCache.clear();
+  }
+}
+
+/** Fetch active dictionary overrides for a family (cached). */
+export async function fetchDictOverrides(familyId: string): Promise<DictOverrideRow[]> {
+  const cached = dictOverrideCache.get(familyId);
+  if (cached && Date.now() - cached.fetchedAt < DICT_CACHE_TTL_MS) return cached.data;
+
+  try {
+    const { createClient } = await import('@/lib/supabase/server');
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from('atlas_dictionary_overrides')
+      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+      .eq('family_id', familyId)
+      .eq('is_active', true);
+
+    const rows = (data ?? []) as DictOverrideRow[];
+    dictOverrideCache.set(familyId, { data: rows, fetchedAt: Date.now() });
+    return rows;
+  } catch {
+    // If table doesn't exist yet or Supabase is unavailable, return empty
+    return [];
+  }
+}
+
+/**
+ * Merges DB overrides onto a base dictionary (remove → override → add).
+ * Returns a new dictionary object without mutating the base.
+ */
+export function applyDictOverrides(
+  baseDict: Record<string, AtlasParamMapping>,
+  overrides: DictOverrideRow[],
+): Record<string, AtlasParamMapping> {
+  if (overrides.length === 0) return baseDict;
+
+  const merged = { ...baseDict };
+
+  // 1. REMOVE
+  for (const ov of overrides) {
+    if (ov.action === 'remove') {
+      delete merged[ov.param_name];
+    }
+  }
+
+  // 2. MODIFY — patch fields on existing entries
+  for (const ov of overrides) {
+    if (ov.action === 'modify' && merged[ov.param_name]) {
+      const base = merged[ov.param_name];
+      merged[ov.param_name] = {
+        attributeId: ov.attribute_id ?? base.attributeId,
+        attributeName: ov.attribute_name ?? base.attributeName,
+        unit: ov.unit !== null ? ov.unit : base.unit,
+        sortOrder: ov.sort_order ?? base.sortOrder,
+      };
+    }
+  }
+
+  // 3. ADD — new entries
+  for (const ov of overrides) {
+    if (ov.action === 'add' && ov.attribute_id && ov.attribute_name) {
+      merged[ov.param_name] = {
+        attributeId: ov.attribute_id,
+        attributeName: ov.attribute_name,
+        ...(ov.unit && { unit: ov.unit }),
+        sortOrder: ov.sort_order ?? 50,
+      };
+    }
+  }
+
+  return merged;
+}
+
 // ─── Main Mapping Functions ───────────────────────────────
 
 export interface MappedAtlasProduct {
@@ -1041,12 +1163,13 @@ export interface MappedAtlasProduct {
 /**
  * Maps a single Atlas model to internal types.
  * Returns a MappedAtlasProduct with Part, ParametricAttribute[], familyId, and warnings.
+ * Async because it fetches dictionary overrides from Supabase (cached).
  */
-export function mapAtlasModel(
+export async function mapAtlasModel(
   model: AtlasModel,
   manufacturerName: string,
   sourceFile?: string,
-): MappedAtlasProduct {
+): Promise<MappedAtlasProduct> {
   const warnings: string[] = [];
 
   // 1. Classify family
@@ -1079,8 +1202,14 @@ export function mapAtlasModel(
     manufacturerCountry: 'CN',
   };
 
-  // 4. Map parameters
-  const familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
+  // 4. Map parameters (with DB overrides merged onto TS base)
+  let familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
+  if (familyDict && classification.familyId) {
+    const overrides = await fetchDictOverrides(classification.familyId);
+    if (overrides.length > 0) {
+      familyDict = applyDictOverrides(familyDict, overrides);
+    }
+  }
   const parameters: ParametricAttribute[] = [];
   let packageValue: string | undefined;
 

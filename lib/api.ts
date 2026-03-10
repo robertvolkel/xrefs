@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -355,6 +355,47 @@ export async function updateContextOverride(
 
 export async function deleteContextOverride(id: string): Promise<boolean> {
   const res = await fetch(`${BASE}/admin/overrides/context/${id}`, { method: 'DELETE' });
+  return res.ok;
+}
+
+// ── Atlas Dictionary Overrides API ────────────────────────
+
+export async function getAtlasDictOverrides(familyId?: string): Promise<AtlasDictOverrideRecord[]> {
+  const url = familyId
+    ? `${BASE}/admin/atlas/dictionaries?familyId=${familyId}`
+    : `${BASE}/admin/atlas/dictionaries`;
+  const result = await fetchApi<{ overrides: AtlasDictOverrideRecord[] }>(url);
+  return result.overrides;
+}
+
+export async function createAtlasDictOverride(
+  data: Record<string, unknown>,
+): Promise<AtlasDictOverrideRecord | null> {
+  try {
+    return await fetchApi<AtlasDictOverrideRecord>(`${BASE}/admin/atlas/dictionaries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function updateAtlasDictOverride(
+  id: string,
+  data: Record<string, unknown>,
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/atlas/dictionaries/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.ok;
+}
+
+export async function deleteAtlasDictOverride(id: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/atlas/dictionaries/${id}`, { method: 'DELETE' });
   return res.ok;
 }
 

@@ -741,6 +741,24 @@ export interface ContextOverrideRecord {
   updatedAt: string;
 }
 
+export type AtlasDictOverrideAction = 'modify' | 'add' | 'remove';
+
+export interface AtlasDictOverrideRecord {
+  id: string;
+  familyId: string;
+  paramName: string;
+  action: AtlasDictOverrideAction;
+  attributeId?: string;
+  attributeName?: string;
+  unit?: string;
+  sortOrder?: number;
+  isActive: boolean;
+  changeReason: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A release note post */
 export interface ReleaseNote {
   id: string;

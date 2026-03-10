@@ -7,9 +7,10 @@ import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
 import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
+import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas';
+export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
@@ -18,6 +19,7 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
   { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
   { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlas' },
+  { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
 ];
 
 interface AdminSectionNavProps {

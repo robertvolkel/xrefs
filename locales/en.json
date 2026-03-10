@@ -342,7 +342,18 @@
     "dsSupabaseUsage": "Auth, profiles, conversations",
     "dsMockData": "Mock data (9 parts)",
     "paramCoverageLabel": "Digikey parameter coverage:",
-    "paramsMapped": "{{count}} parameters mapped"
+    "paramsMapped": "{{count}} parameters mapped",
+    "atlasDictionaries": "Atlas Dictionaries",
+    "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
+    "atlasParamName": "Atlas Parameter",
+    "lang": "Lang",
+    "sharedDictionary": "Shared Dictionary",
+    "unmappedParams": "Unmapped Parameters",
+    "unmappedParamsDesc": "Parameters found in Atlas products with no dictionary entry.",
+    "addMapping": "Add Mapping",
+    "noDictionary": "No Atlas translation dictionary for this family.",
+    "entries": "entries",
+    "uniqueAttributes": "unique attributes"
   },
   "settings": {
     "title": "Settings",
