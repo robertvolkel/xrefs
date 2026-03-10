@@ -226,6 +226,11 @@ export async function getRecommendations(
     enrichDacAttributes(sourceAttrs);
   }
 
+  // Step 1m: Enrich tantalum capacitors with capacitor_type from MPN prefix
+  if (logicTablePrecheck?.familyId === '59') {
+    enrichTantalumAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -1791,5 +1796,47 @@ function enrichDacAttributes(attrs: PartAttributes): void {
       });
     }
     break; // First match wins
+  }
+}
+
+/** MPN patterns for tantalum Polymer vs MnO2 detection (fallback for non-Digikey sources) */
+const tantalumMpnPatterns: { pattern: RegExp; capacitorType: string }[] = [
+  // Polymer prefixes
+  { pattern: /^T52[015]/i, capacitorType: 'Polymer' },    // KEMET T520/T521/T525
+  { pattern: /^T530/i, capacitorType: 'Polymer' },         // KEMET T530
+  { pattern: /^255D/i, capacitorType: 'Polymer' },          // Vishay 255D
+  { pattern: /^T55/i, capacitorType: 'Polymer' },           // Vishay T55
+  { pattern: /^TCJ/i, capacitorType: 'Polymer' },           // AVX TCJ
+  { pattern: /^F38/i, capacitorType: 'Polymer' },           // AVX F38
+  { pattern: /^\d+TQC/i, capacitorType: 'Polymer' },       // Panasonic POSCAP TQC
+  { pattern: /^\d+TDC/i, capacitorType: 'Polymer' },       // Panasonic POSCAP TDC
+  { pattern: /^TP[MU]/i, capacitorType: 'Polymer' },        // Panasonic TPM/TPU
+  // MnO2 prefixes
+  { pattern: /^T49[1-6]/i, capacitorType: 'MnO2' },        // KEMET T491-T496
+  { pattern: /^293[DEP]/i, capacitorType: 'MnO2' },         // Vishay 293D/293E/293P
+  { pattern: /^593D/i, capacitorType: 'MnO2' },             // Vishay 593D
+  { pattern: /^893D/i, capacitorType: 'MnO2' },             // Vishay 893D
+  { pattern: /^59[45]D/i, capacitorType: 'MnO2' },          // Vishay 594D/595D
+  { pattern: /^TAJ/i, capacitorType: 'MnO2' },              // AVX TAJ
+  { pattern: /^TPS/i, capacitorType: 'MnO2' },              // AVX TPS
+  { pattern: /^T97/i, capacitorType: 'MnO2' },              // Vishay T97 hi-rel
+  { pattern: /^597D/i, capacitorType: 'MnO2' },             // Vishay 597D
+];
+
+/** Enrich tantalum capacitor_type from MPN prefix (fallback when Digikey category not available) */
+function enrichTantalumAttributes(attrs: PartAttributes): void {
+  if (attrs.parameters.some(p => p.parameterId === 'capacitor_type')) return;
+
+  const mpn = attrs.part.mpn;
+  for (const hint of tantalumMpnPatterns) {
+    if (hint.pattern.test(mpn)) {
+      attrs.parameters.push({
+        parameterId: 'capacitor_type',
+        parameterName: 'Capacitor Type',
+        value: hint.capacitorType,
+        sortOrder: 4,
+      });
+      return;
+    }
   }
 }

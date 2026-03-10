@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Drawer,
@@ -32,12 +33,12 @@ import {
 } from '@/lib/types';
 import { createContextOverride, deleteContextOverride } from '@/lib/api';
 
-const EFFECT_TYPES: { value: ContextEffectType; label: string }[] = [
-  { value: 'escalate_to_mandatory', label: 'Escalate to Mandatory (w=10)' },
-  { value: 'escalate_to_primary', label: 'Escalate to Primary (w=9)' },
-  { value: 'not_applicable', label: 'Not Applicable (w=0)' },
-  { value: 'add_review_flag', label: 'Add Review Flag' },
-  { value: 'set_threshold', label: 'Set Threshold' },
+const EFFECT_TYPES: { value: ContextEffectType; key: string }[] = [
+  { value: 'escalate_to_mandatory', key: 'adminOverride.escalateMandatoryW10' },
+  { value: 'escalate_to_primary', key: 'adminOverride.escalatePrimaryW9' },
+  { value: 'not_applicable', key: 'adminOverride.notApplicableW0' },
+  { value: 'add_review_flag', key: 'adminOverride.addReviewFlagLabel' },
+  { value: 'set_threshold', key: 'adminOverride.setThresholdLabel' },
 ];
 
 interface ContextOverrideDrawerProps {
@@ -65,6 +66,8 @@ export default function ContextOverrideDrawer({
   existingOverride,
   onSaved,
 }: ContextOverrideDrawerProps) {
+  const { t } = useTranslation();
+
   // Question-level fields
   const [questionId, setQuestionId] = useState('');
   const [questionText, setQuestionText] = useState('');
@@ -130,7 +133,7 @@ export default function ContextOverrideDrawer({
 
   const handleSave = useCallback(async () => {
     if (!changeReason.trim()) {
-      setError('Please provide a reason for this change.');
+      setError(t('adminOverride.changeReasonRequired'));
       return;
     }
     setSaving(true);
@@ -174,7 +177,7 @@ export default function ContextOverrideDrawer({
       setSaving(false);
     }
   }, [
-    familyId, mode, question, questionId, questionText, priority,
+    t, familyId, mode, question, questionId, questionText, priority,
     optionValue, optionLabel, optionDescription, effects, changeReason,
     onSaved, onClose,
   ]);
@@ -194,11 +197,14 @@ export default function ContextOverrideDrawer({
     }
   }, [existingOverride, onSaved, onClose]);
 
-  const modeLabels: Record<string, string> = {
-    add_question: 'Add Question',
-    add_option: `Add Option to Q: ${question?.questionId ?? ''}`,
-    modify_option: `Edit Option: ${option?.value ?? ''}`,
-    disable_question: `Disable: ${question?.questionId ?? ''}`,
+  const getModeLabel = () => {
+    switch (mode) {
+      case 'add_question': return t('adminOverride.addQuestion');
+      case 'add_option': return t('adminOverride.addOptionTo', { id: question?.questionId ?? '' });
+      case 'modify_option': return t('adminOverride.editOption', { value: option?.value ?? '' });
+      case 'disable_question': return t('adminOverride.disableQuestion', { id: question?.questionId ?? '' });
+      default: return mode;
+    }
   };
 
   return (
@@ -211,7 +217,7 @@ export default function ContextOverrideDrawer({
       <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
-          <Typography variant="h6">{modeLabels[mode] ?? mode}</Typography>
+          <Typography variant="h6">{getModeLabel()}</Typography>
           <IconButton onClick={onClose} size="small">
             <CloseIcon />
           </IconButton>
@@ -224,15 +230,15 @@ export default function ContextOverrideDrawer({
             {mode === 'add_question' && (
               <>
                 <TextField
-                  label="Question ID"
+                  label={t('adminOverride.questionId')}
                   value={questionId}
                   onChange={e => setQuestionId(e.target.value)}
                   size="small"
                   fullWidth
-                  placeholder="e.g. new_question"
+                  placeholder={t('adminOverride.questionIdPlaceholder')}
                 />
                 <TextField
-                  label="Question Text"
+                  label={t('adminOverride.questionText')}
                   value={questionText}
                   onChange={e => setQuestionText(e.target.value)}
                   size="small"
@@ -241,7 +247,7 @@ export default function ContextOverrideDrawer({
                   rows={2}
                 />
                 <TextField
-                  label="Priority"
+                  label={t('adminOverride.priorityLabel')}
                   value={priority}
                   onChange={e => setPriority(parseInt(e.target.value) || 1)}
                   size="small"
@@ -254,8 +260,7 @@ export default function ContextOverrideDrawer({
             {/* Disable confirmation */}
             {mode === 'disable_question' && (
               <Alert severity="warning">
-                This will suppress the question &quot;{question?.questionText}&quot; from being
-                shown during cross-reference evaluation.
+                {t('adminOverride.disableWarning', { question: question?.questionText ?? '' })}
               </Alert>
             )}
 
@@ -263,31 +268,31 @@ export default function ContextOverrideDrawer({
             {(mode === 'add_option' || mode === 'modify_option') && (
               <>
                 <TextField
-                  label="Option Value"
+                  label={t('adminOverride.optionValue')}
                   value={optionValue}
                   onChange={e => setOptionValue(e.target.value)}
                   size="small"
                   fullWidth
                   disabled={mode === 'modify_option'}
-                  placeholder="e.g. high_impedance"
+                  placeholder={t('adminOverride.optionValuePlaceholder')}
                 />
                 <TextField
-                  label="Option Label"
+                  label={t('adminOverride.optionLabel')}
                   value={optionLabel}
                   onChange={e => setOptionLabel(e.target.value)}
                   size="small"
                   fullWidth
-                  placeholder="Display label for this option"
+                  placeholder={t('adminOverride.optionLabelPlaceholder')}
                 />
                 <TextField
-                  label="Description"
+                  label={t('adminOverride.description')}
                   value={optionDescription}
                   onChange={e => setOptionDescription(e.target.value)}
                   size="small"
                   fullWidth
                   multiline
                   rows={2}
-                  placeholder="Help text for the user"
+                  placeholder={t('adminOverride.descriptionPlaceholder')}
                 />
 
                 <Divider />
@@ -295,20 +300,20 @@ export default function ContextOverrideDrawer({
                 {/* Effects Editor */}
                 <Box>
                   <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-                    <Typography variant="subtitle2">Attribute Effects</Typography>
+                    <Typography variant="subtitle2">{t('adminOverride.attributeEffects')}</Typography>
                     <Button
                       size="small"
                       startIcon={<AddIcon />}
                       onClick={addEffect}
                       sx={{ textTransform: 'none' }}
                     >
-                      Add Effect
+                      {t('adminOverride.addEffect')}
                     </Button>
                   </Stack>
 
                   {effects.length === 0 && (
                     <Typography variant="caption" color="text.secondary">
-                      No effects — this option will have no impact on matching rules.
+                      {t('adminOverride.noEffects')}
                     </Typography>
                   )}
 
@@ -326,22 +331,22 @@ export default function ContextOverrideDrawer({
                         }}
                       >
                         <TextField
-                          label="Attribute ID"
+                          label={t('adminOverride.attributeId')}
                           value={effect.attributeId}
                           onChange={e => updateEffect(idx, 'attributeId', e.target.value)}
                           size="small"
                           sx={{ flex: 1 }}
-                          placeholder="e.g. voltage_rating"
+                          placeholder={t('adminOverride.effectAttrIdPlaceholder')}
                         />
                         <FormControl size="small" sx={{ minWidth: 180 }}>
-                          <InputLabel>Effect</InputLabel>
+                          <InputLabel>{t('adminOverride.effectLabel')}</InputLabel>
                           <Select
                             value={effect.effect}
-                            label="Effect"
+                            label={t('adminOverride.effectLabel')}
                             onChange={e => updateEffect(idx, 'effect', e.target.value)}
                           >
                             {EFFECT_TYPES.map(et => (
-                              <MenuItem key={et.value} value={et.value}>{et.label}</MenuItem>
+                              <MenuItem key={et.value} value={et.value}>{t(et.key)}</MenuItem>
                             ))}
                           </Select>
                         </FormControl>
@@ -353,7 +358,7 @@ export default function ContextOverrideDrawer({
                               size="small"
                             />
                           }
-                          label={<Typography variant="caption">Block</Typography>}
+                          label={<Typography variant="caption">{t('adminOverride.blockLabel')}</Typography>}
                           sx={{ mr: 0 }}
                         />
                         <IconButton size="small" onClick={() => removeEffect(idx)}>
@@ -370,7 +375,7 @@ export default function ContextOverrideDrawer({
 
             {/* Change Reason */}
             <TextField
-              label="Why are you making this change?"
+              label={t('adminOverride.changeReason')}
               value={changeReason}
               onChange={e => setChangeReason(e.target.value)}
               size="small"
@@ -378,7 +383,7 @@ export default function ContextOverrideDrawer({
               multiline
               rows={2}
               required
-              placeholder="Required — explain why this override is needed"
+              placeholder={t('adminOverride.changeReasonPlaceholder')}
             />
           </Stack>
         </Box>
@@ -398,7 +403,7 @@ export default function ContextOverrideDrawer({
             disabled={saving}
             sx={{ flex: 1 }}
           >
-            {saving ? 'Saving...' : 'Save Override'}
+            {saving ? t('adminOverride.saving') : t('adminOverride.saveOverride')}
           </Button>
 
           {existingOverride && (
@@ -408,7 +413,7 @@ export default function ContextOverrideDrawer({
               onClick={handleRevert}
               disabled={saving}
             >
-              Revert
+              {t('adminOverride.revert')}
             </Button>
           )}
         </Stack>

@@ -26,7 +26,7 @@ app/                          # Next.js App Router
   api/modal-chat/             # Refinement chat (per-part in parts list modal)
   api/parts-list/validate/    # Batch validation (streaming NDJSON)
   api/auth/register/          # User registration with invite code
-  api/admin/users/            # Admin user management
+  api/admin/users/            # Admin user management (role changes owner-only)
   api/admin/qc/               # QC log list (GET with filters, sort, pagination)
   api/admin/qc/[logId]/      # QC log detail (GET snapshot)
   api/admin/qc/export/       # QC log export (GET, CSV/JSON download)
@@ -35,7 +35,10 @@ app/                          # Next.js App Router
   api/admin/qc/feedback/[feedbackId]/ # Feedback status update (PATCH)
   api/admin/qc/settings/     # QC settings (GET/PUT logging toggle)
   api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase)
-  api/admin/atlas/           # Atlas manufacturer stats (GET, paginated aggregation)
+  api/admin/atlas/           # Atlas manufacturer stats (GET, paginated aggregation + coverage %)
+  api/admin/atlas/coverage/  # Atlas per-family attribute gap analysis (GET)
+  api/admin/atlas/dictionaries/ # Atlas dictionary override CRUD (GET list, POST create)
+  api/admin/atlas/dictionaries/[overrideId]/ # Dictionary override update/delete (PATCH, DELETE)
   api/admin/taxonomy/        # Digikey category taxonomy with coverage
   api/admin/overrides/rules/ # Rule override CRUD (GET list, POST create)
   api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH, DELETE)
@@ -80,7 +83,10 @@ components/                   # React components
     RuleOverrideDrawer.tsx    # Right-side drawer for editing rule overrides
     ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
     ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
-    AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table
+    AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table + coverage %
+    AtlasCoverageDrawer.tsx   # Per-family attribute gap analysis drawer (Atlas vs Digikey vs logic table)
+    AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + shared)
+    AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   releases/                    # Release notes feed
     ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
@@ -116,6 +122,7 @@ lib/
   services/overrideValidator.ts # Validates override values against type constraints
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
+  services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
   columnDefinitions.ts        # Dynamic column system for parts list table
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
@@ -299,7 +306,7 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
-- **Atlas** (built — products + param dictionaries; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product)
+- **Atlas** (built — products + param dictionaries + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product). Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69).
 - **Distributor APIs** (planned) — Mouser, Arrow, Nexar/Octopart for multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering
 

@@ -60,6 +60,7 @@ function MfrRow({
   familyNames: Record<string, string>;
   onFamilyClick: (manufacturer: string, familyId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const mfrBreakdown = breakdown.filter((b) => b.manufacturer === row.manufacturer);
 
@@ -118,11 +119,11 @@ function MfrRow({
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell><Typography variant="caption" fontWeight={600}>Family</Typography></TableCell>
-                      <TableCell><Typography variant="caption" fontWeight={600}>Category</Typography></TableCell>
-                      <TableCell><Typography variant="caption" fontWeight={600}>Subcategory</Typography></TableCell>
-                      <TableCell align="right"><Typography variant="caption" fontWeight={600}>Products</Typography></TableCell>
-                      <TableCell align="right"><Typography variant="caption" fontWeight={600}>Coverage</Typography></TableCell>
+                      <TableCell><Typography variant="caption" fontWeight={600}>{t('admin.atlasFamilyCol')}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" fontWeight={600}>{t('admin.atlasCategoryCol')}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" fontWeight={600}>{t('admin.atlasSubcategoryCol')}</Typography></TableCell>
+                      <TableCell align="right"><Typography variant="caption" fontWeight={600}>{t('admin.atlasProductsCol')}</Typography></TableCell>
+                      <TableCell align="right"><Typography variant="caption" fontWeight={600}>{t('admin.atlasCoverageCol')}</Typography></TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -200,18 +201,12 @@ export default function AtlasPanel() {
         {t('admin.atlasDesc', 'Chinese manufacturer product catalog.')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {summary.totalManufacturers} manufacturer{summary.totalManufacturers !== 1 ? 's' : ''}
-        {' \u00B7 '}
-        {summary.totalProducts.toLocaleString()} products
-        {' \u00B7 '}
-        {summary.scorableProducts.toLocaleString()} scorable
-        {' \u00B7 '}
-        {summary.familiesCovered} families
+        {t('admin.atlasMfrSummary', { mfrCount: summary.totalManufacturers, productCount: summary.totalProducts.toLocaleString(), scorableCount: summary.scorableProducts.toLocaleString(), familyCount: summary.familiesCovered })}
       </Typography>
 
       {data.manufacturers.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          No Atlas manufacturers have been ingested yet.
+          {t('admin.atlasNoData')}
         </Typography>
       ) : (
         <TableContainer>
@@ -219,12 +214,12 @@ export default function AtlasPanel() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: 40 }} />
-                <TableCell>Manufacturer</TableCell>
-                <TableCell align="right">Products</TableCell>
-                <TableCell align="right">Scorable</TableCell>
-                <TableCell align="right">Coverage</TableCell>
-                <TableCell>Families</TableCell>
-                <TableCell>Last Updated</TableCell>
+                <TableCell>{t('admin.atlasManufacturer')}</TableCell>
+                <TableCell align="right">{t('admin.atlasProductsCol')}</TableCell>
+                <TableCell align="right">{t('admin.atlasScorableCol')}</TableCell>
+                <TableCell align="right">{t('admin.atlasCoverageCol')}</TableCell>
+                <TableCell>{t('admin.atlasFamiliesCol')}</TableCell>
+                <TableCell>{t('admin.atlasLastUpdatedCol')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>

@@ -120,7 +120,7 @@ export default function QcAnalysisDrawer({ open, onClose, filters }: QcAnalysisD
 
   const activeFilters: string[] = [];
   if (filters.requestSource) activeFilters.push(filters.requestSource);
-  if (filters.hasFeedback) activeFilters.push('Has Feedback');
+  if (filters.hasFeedback) activeFilters.push(t('adminQc.hasFeedbackLabel'));
   if (filters.search) activeFilters.push(`"${filters.search}"`);
 
   return (
@@ -177,7 +177,7 @@ export default function QcAnalysisDrawer({ open, onClose, filters }: QcAnalysisD
           {activeFilters.length > 0 && (
             <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap">
               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                Filters:
+                {t('adminQc.filtersLabel')}
               </Typography>
               {activeFilters.map((f) => (
                 <Chip key={f} label={f} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />

@@ -356,13 +356,13 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                 {weightSummary && weightSummary.totalWeight > 0 && (
                   <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1, py: 0.5 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                      Score:{' '}
+                      {t('adminQc.score')}{' '}
                       <Typography component="span" variant="body2" sx={{ fontWeight: 700, fontSize: '0.75rem' }}>
                         {weightSummary.matchPercentage}%
                       </Typography>
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                      Data coverage:{' '}
+                      {t('adminQc.dataCoverage')}{' '}
                       <Typography
                         component="span"
                         variant="body2"
@@ -378,15 +378,15 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                       >
                         {weightSummary.coveragePct}%
                       </Typography>
-                      {' '}({weightSummary.evaluatedWeight} / {weightSummary.totalWeight} weight)
+                      {' '}{t('adminQc.ofWeight', { evaluated: weightSummary.evaluatedWeight, total: weightSummary.totalWeight })}
                     </Typography>
                     {weightSummary.missingWeight > 0 && (
                       <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                        Missing:{' '}
+                        {t('adminQc.missing')}{' '}
                         <Typography component="span" variant="body2" sx={{ fontWeight: 600, fontSize: '0.75rem', color: 'warning.main' }}>
                           {weightSummary.missingWeight}
                         </Typography>
-                        {' '}weight
+                        {' '}{t('adminQc.weightUnit')}
                       </Typography>
                     )}
                   </Stack>
@@ -397,7 +397,7 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary' }}>
-                          Parameter
+                          {t('adminQc.parameter')}
                         </TableCell>
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary' }}>
                           {t('adminQc.sourceColumn')}
@@ -406,10 +406,10 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                           {t('adminQc.replacementColumn')}
                         </TableCell>
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: 50, textAlign: 'center' }}>
-                          Wt
+                          {t('adminQc.wtHeader')}
                         </TableCell>
                         <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, color: 'text.secondary', width: 80 }}>
-                          Result
+                          {t('adminQc.resultHeader')}
                         </TableCell>
                       </TableRow>
                     </TableHead>

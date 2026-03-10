@@ -121,7 +121,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
             onClick={() => openDrawer('add_question', null, null)}
             sx={{ textTransform: 'none' }}
           >
-            Add Question
+            {t('admin.addQuestion')}
           </Button>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
@@ -154,7 +154,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
           onClick={() => openDrawer('add_question', null, null)}
           sx={{ textTransform: 'none' }}
         >
-          Add Question
+          {t('admin.addQuestion')}
         </Button>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 3 }}>
@@ -162,7 +162,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
           {t('admin.contextSensitivity')}:
         </Typography>
         <Chip
-          label={config.contextSensitivity}
+          label={t(`admin.sensitivity${config.contextSensitivity.charAt(0).toUpperCase() + config.contextSensitivity.slice(1)}`)}
           size="small"
           sx={{
             bgcolor: (sensitivityColors[config.contextSensitivity] ?? '#90A4AE') + '22',
@@ -170,7 +170,6 @@ export default function ContextPanel({ table }: ContextPanelProps) {
             fontWeight: 600,
             fontSize: '0.72rem',
             height: 24,
-            textTransform: 'capitalize',
           }}
         />
         <Typography variant="body2" color="text.secondary">
@@ -178,7 +177,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
         </Typography>
         {overrideCount > 0 && (
           <Chip
-            label={`${overrideCount} override${overrideCount !== 1 ? 's' : ''}`}
+            label={t('admin.overrideCount', { count: overrideCount })}
             size="small"
             color="warning"
             variant="outlined"
@@ -224,7 +223,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
 
                     {/* Question-level actions */}
                     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-                      <Tooltip title="Add option">
+                      <Tooltip title={t('adminOverride.addOption')}>
                         <IconButton
                           size="small"
                           onClick={() => openDrawer('add_option', question, null)}
@@ -233,7 +232,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
                           <AddIcon sx={{ fontSize: 16 }} />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title={isDisabled ? 'Disabled by override' : 'Disable question'}>
+                      <Tooltip title={isDisabled ? t('adminOverride.disabledByOverride') : t('adminOverride.disableQuestionTooltip')}>
                         <IconButton
                           size="small"
                           onClick={() => openDrawer('disable_question', question, null)}
@@ -349,7 +348,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
                                       color="text.secondary"
                                       sx={{ fontSize: '0.7rem', lineHeight: 1.4 }}
                                     >
-                                      {effect.note}
+                                      {t(`contextQ.${table.familyId}.${question.questionId}.opt.${option.value}.effects.${effect.attributeId}.note`, effect.note)}
                                     </Typography>
                                   )}
                                 </Box>

@@ -47,6 +47,7 @@ This document maps every component family to the application-context questions t
 | 35 | Timers and Oscillators | C8 | **Moderate** | Device category (555 timer / XO / MEMS / TCXO / VCXO / OCXO) is a hard categorical gate — none are cross-substitutable. Within oscillators: output frequency is always Identity. OE polarity is a functional hard gate for enable-controlled designs. Stability class (XO vs. TCXO vs. OCXO) drives the accuracy/power/cost trade-off. AEC-Q100 is BLOCKING for automotive. |
 | 36 | ADCs (Analog-to-Digital Converters) | C9 | **High** | Architecture (SAR / Delta-Sigma / Pipeline / Flash) is a hard categorical gate — each has fundamentally different latency, noise floor, and speed characteristics. Resolution is always Identity. Simultaneous sampling vs. multiplexed is a hard gate for multi-channel phase-sensitive applications. Interface type (SPI/I2C/Parallel) requires firmware compatibility. ENOB is the honest performance metric; resolution_bits is nominal. AEC-Q100 is BLOCKING for automotive. |
 | 37 | DACs (Digital-to-Analog Converters) | C10 | **High** | Output type (voltage vs. current) is a hard categorical gate — voltage-output and current-output DACs are architecturally incompatible circuit topologies. Resolution is always Identity. Power-on reset state is BLOCKING when it determines safe or unsafe actuator state before firmware initialization. Glitch energy is the hidden spec that separates audio-grade and precision DACs from general-purpose parts. AEC-Q100 is BLOCKING for automotive. |
+| 38 | Crystals (Quartz Resonators) | D1 | **Moderate-High** | Nominal frequency and load capacitance are both hard Identity gates — mismatched load capacitance is the most common crystal substitution error and causes a systematic frequency offset that persists over temperature. ESR must be verified for cold-start margin (5× minimum negative resistance margin). Overtone mode vs. fundamental mode is a hard gate — cross-substitution causes oscillation at the wrong frequency. Cut type (AT-cut vs. Tuning Fork) is determined by frequency range. AEC-Q200 is BLOCKING for automotive. |
 ---
 
 ## Digikey Subcategory Coverage Map
@@ -98,6 +99,7 @@ This table maps component families to their corresponding Digikey leaf categorie
 | C8 | Timers and Oscillators | Clock/Timing - Crystal Oscillators | 555 Timers |
 | C9 | ADCs (Analog-to-Digital Converters) | Data Acquisition — Analog to Digital Converters (ADC) | — |
 | C10 | DACs (Digital-to-Analog Converters) | Data Acquisition — Digital to Analog Converters (DAC) | Audio — DAC |
+| D1 | Crystals (Quartz Resonators) | Crystals and Oscillators — Crystals | — |
 
 ---
 
@@ -2412,6 +2414,88 @@ Output type (voltage vs. current) is the first and hardest gate. Voltage-output 
 | `power_on_reset_state` | identity_flag w8 | escalate_to_primary | unchanged |
 
 
+
+## Block D: Frequency Components
+
+---
+
+### 38. Crystals — Quartz Resonators (Family D1)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Nominal frequency and load capacitance are both hard Identity gates. Load capacitance is the most commonly mismatched crystal parameter — it shifts the oscillation frequency by 30–100 ppm and cannot be corrected in firmware. ESR determines oscillator startup margin at cold temperature (minimum 5× negative-resistance margin required). Overtone mode is a hard gate — a 3rd-overtone crystal in a fundamental-mode circuit oscillates at the wrong (lower) frequency.
+
+**Digikey:** Single category "Crystals and Oscillators — Crystals" covers all quartz resonators. Key parametric fields present: frequency, load capacitance, package, ESR (sometimes), tolerance (ppm), stability (ppm), operating temp, AEC-Q200. Missing from Digikey: aging rate, shunt capacitance (C0), drive level (sometimes), TC curve coefficients, overtone order (sometimes not explicit).
+
+**18 matching rules** (total weight: ~115):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `nominal_frequency_hz` | identity | 10 | yes | Exact match. 16.000 MHz ≠ 16.384 MHz. 32.768 kHz ≠ 32.000 kHz |
+| 2 | `cut_type` | identity_flag | 8 | no | AT-cut / Tuning Fork / SC-cut. Determines TC curve shape. Escalated for precision and RTC (Q1) |
+| 3 | `frequency_tolerance_ppm` | threshold lte | 8 | no | Initial accuracy at +25°C. Replacement must be ≤ original. Escalated to mandatory for comms/precision (Q1) |
+| 4 | `frequency_stability_ppm` | threshold lte | 8 | no | Stability over full operating temp range. Escalated to mandatory for comms/precision (Q1) |
+| 5 | `load_capacitance_pf` | identity | 9 | yes | HARD GATE. 12pF ≠ 18pF — shifts frequency 30–100 ppm. PCB external caps are fixed |
+| 6 | `equivalent_series_resistance_ohm` | threshold lte | 8 | no | ESR at resonance. 5× negative-resistance margin must be maintained. Escalated for extended temp (Q3) |
+| 7 | `drive_level_uw` | threshold lte | 7 | no | Max crystal power absorption. Overdrive causes accelerated aging and electrode fracture |
+| 8 | `shunt_capacitance_pf` | threshold lte | 6 | no | Parasitic parallel capacitance (C0). Escalated to mandatory for VCXO circuits (Q2) |
+| 9 | `aging_ppm_per_year` | threshold lte | 6 | no | Long-term frequency drift. Escalated to mandatory for precision/RTC (Q1) |
+| 10 | `package_type` | identity_flag | 8 | no | SMD size (3225/2016/1612/5032) vs. through-hole (HC-49). Cross-type BLOCKED |
+| 11 | `package_pins` | identity_flag | 6 | no | 2-pad vs. 4-pad SMD. 4-pad cannot install in 2-pad footprint |
+| 12 | `mounting_type` | identity | 7 | yes | SMD vs. Through-Hole. BLOCK cross-type |
+| 13 | `operating_temp_range` | threshold superset | 7 | yes | Must cover full application range |
+| 14 | `storage_temp_range` | application_review | 3 | no | Rarely blocking; verify for extreme logistics environments |
+| 15 | `aec_q200` | identity_flag | 4 | no | Escalated to mandatory + blockOnMissing for automotive (Q3). Note: AEC-Q200 (passive), not AEC-Q100 |
+| 16 | `overtone_order` | identity_flag | 9 | no | Fundamental / 3rd / 5th overtone. HARD GATE — cross-substitution oscillates at wrong frequency |
+| 17 | `frequency_vs_temp_curve` | application_review | 4 | no | TC curve shape. Escalated to primary for VCXO replacement circuits (Q2) |
+| 18 | `qualification_level` | operational | 2 | no | Commercial / Industrial / MIL-SPEC. Procurement filter only |
+
+**MPN enrichment** (~40 prefix patterns): Infers `nominal_frequency_hz` (parsed from MPN numeric field — ABM8-10.000MHZ → 10 MHz, AB38T-32.768KHZ → 32.768 kHz), `cut_type` (32.768 kHz → Tuning Fork; all others → AT-cut unless SC-cut specified in description), `load_capacitance_pf` (suffix codes where standardized: -B2 = 18pF in Abracon, last numeric field in TXC and Murata), `package_type` (prefix physical size code where encoded), `mounting_type` (SMD vs. HC-49 prefix inferred from package code). Common prefixes: ABM, ABM3, ABM8, AB38T, ABLS, ABLNO (Abracon); 7M, 7V, 9C, 7A (TXC); NX3225, NX5032, NX2016 (NDK); FC-135, MC-306 (Epson); CSTCE, CSTLS (Murata — note: CSTCE is a ceramic resonator, not quartz crystal — flag as Application Review); XTAL, TSX, TSX-3225, TSX-2520, CX3225 (Kyocera); ECS-160, ECS-250 (ECS).
+
+#### Question 1: What is the application / accuracy requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Consumer / general purpose** | Default thresholds. `frequency_tolerance_ppm` ≤ 50 ppm. `frequency_stability_ppm` ≤ 100 ppm. `aging_ppm_per_year` → Application Review. |
+| **Communications / protocol timing** | `frequency_tolerance_ppm` → escalate_to_mandatory + blockOnMissing. `frequency_stability_ppm` → escalate_to_mandatory. `cut_type` → escalate_to_primary. `aging_ppm_per_year` → escalate_to_primary. |
+| **Precision / instrumentation** | `frequency_tolerance_ppm` → escalate_to_mandatory ≤ 10 ppm. `frequency_stability_ppm` → escalate_to_mandatory ≤ 20 ppm. `aging_ppm_per_year` → escalate_to_mandatory. `cut_type` → escalate_to_mandatory. `equivalent_series_resistance_ohm` → escalate_to_primary. `frequency_vs_temp_curve` → escalate_to_primary. |
+| **RTC / watch (32.768 kHz)** | `cut_type` → confirm Tuning Fork. `frequency_tolerance_ppm` → escalate_to_primary. `frequency_stability_ppm` → escalate_to_primary. `aging_ppm_per_year` → escalate_to_primary. `equivalent_series_resistance_ohm` → escalate_to_primary. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q1=Consumer | Q1=Comms | Q1=Precision | Q1=RTC |
+|-----------|---------|-------------|----------|-------------|--------|
+| `frequency_tolerance_ppm` | threshold lte w8 | ≤ 50 ppm | escalate_to_mandatory | escalate_to_mandatory ≤ 10 ppm | escalate_to_primary |
+| `frequency_stability_ppm` | threshold lte w8 | ≤ 100 ppm | escalate_to_mandatory | escalate_to_mandatory ≤ 20 ppm | escalate_to_primary |
+| `aging_ppm_per_year` | threshold lte w6 | App Review | escalate_to_primary | escalate_to_mandatory | escalate_to_primary |
+| `cut_type` | identity_flag w8 | App Review | escalate_to_primary | escalate_to_mandatory | confirm TF |
+| `equivalent_series_resistance_ohm` | threshold lte w8 | default | default | escalate_to_primary | escalate_to_primary |
+| `frequency_vs_temp_curve` | application_review w4 | unchanged | unchanged | escalate_to_primary | unchanged |
+
+#### Question 2: Is this crystal in a voltage-controlled (VCXO) oscillator circuit?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — VCXO circuit (voltage-controlled pulling)** | `shunt_capacitance_pf` → escalate_to_mandatory + blockOnMissing (±0.5 pF — C0 controls pullability). `frequency_vs_temp_curve` → escalate_to_primary. `equivalent_series_resistance_ohm` → escalate_to_primary. |
+| **No — standard fixed-frequency oscillator** | Default matching. `shunt_capacitance_pf` → active at default weight. |
+
+#### Question 3: Is this an extended temperature or automotive application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — extended temp / automotive (−40°C or beyond)** | `operating_temp_range` → escalate_to_mandatory covering full range. `equivalent_series_resistance_ohm` → escalate_to_mandatory (cold ESR must maintain 5× startup margin). `aec_q200` → escalate_to_mandatory + blockOnMissing for automotive. `frequency_stability_ppm` → escalate_to_mandatory over extended range. TF 32.768 kHz candidates → Application Review if range exceeds 0°C to +70°C. |
+| **No — commercial temperature (0°C to +70°C)** | Default weights apply. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q3=Extended/Automotive | Q3=Commercial |
+|-----------|---------|----------------------|---------------|
+| `operating_temp_range` | threshold superset w7 | escalate_to_mandatory full range | unchanged |
+| `equivalent_series_resistance_ohm` | threshold lte w8 | escalate_to_mandatory (cold ESR) | unchanged |
+| `aec_q200` | identity_flag w4 | escalate_to_mandatory + blockOnMissing | unchanged |
+| `frequency_stability_ppm` | threshold lte w8 | escalate_to_mandatory over extended range | unchanged |
+
+
 ## Summary: Application Context Questions by Family
 
 This table shows which questions to ask and in what order. The chat engine should ask ONLY the questions relevant to the resolved family.
@@ -2460,6 +2544,8 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **Timers and Oscillators** | C8 | Device category? (555 timer / XO / MEMS / TCXO / VCXO / OCXO — BLOCKING) | Frequency accuracy / stability requirement? (comms / precision / SerDes / general) | Battery-powered / power-constrained? | Automotive? (AEC-Q100 — BLOCKING) |
 | **ADCs (Analog-to-Digital Converters)** | C9 | ADC architecture? (SAR / Delta-Sigma / Pipeline / Flash — BLOCKING) | Resolution / precision class? (≤12-bit / 12–16-bit / 16–24-bit) | Sampling topology / application type? (simultaneous / multiplexed / control loop / battery) | Automotive? (AEC-Q100 — BLOCKING) |
 | **DACs (Digital-to-Analog Converters)** | C10 | DAC output type? (Voltage / Current — BLOCKING) | Resolution / precision class? (≤12-bit / 12–16-bit / 16–20-bit) | Application type? (audio / precision DC / industrial / battery) | Automotive? (AEC-Q100 — BLOCKING) |
+| **— BLOCK D: FREQUENCY COMPONENTS —** | | | | | |
+| **Crystals (Quartz Resonators)** | D1 | Application / accuracy requirement? (consumer / comms / precision / RTC) | VCXO circuit? (voltage-controlled pulling) | Extended temp / automotive? (AEC-Q200 — BLOCKING) | — |
 
 ---
 

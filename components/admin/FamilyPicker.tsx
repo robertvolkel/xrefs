@@ -83,7 +83,7 @@ export default function FamilyPicker({
               }}
             />
             {indicatorFamilyIds?.has(table.familyId) && (
-              <Tooltip title="Atlas dictionary available" arrow>
+              <Tooltip title={t('admin.atlasDictAvailable')} arrow>
                 <TranslateOutlinedIcon sx={{ fontSize: 14, opacity: 0.5, ml: 0.5, flexShrink: 0 }} />
               </Tooltip>
             )}

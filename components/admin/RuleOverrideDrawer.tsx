@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import RestoreIcon from '@mui/icons-material/Restore';
+import { useTranslation } from 'react-i18next';
 import {
   MatchingRule,
   LogicType,
@@ -36,11 +37,13 @@ const LOGIC_TYPES: LogicType[] = [
   'threshold', 'fit', 'application_review', 'operational', 'vref_check',
 ];
 
-const THRESHOLD_DIRECTIONS: { value: ThresholdDirection; label: string }[] = [
-  { value: 'gte', label: 'Replacement \u2265 Original' },
-  { value: 'lte', label: 'Replacement \u2264 Original' },
-  { value: 'range_superset', label: 'Replacement range \u2287 Original' },
-];
+const THRESHOLD_DIRECTIONS: ThresholdDirection[] = ['gte', 'lte', 'range_superset'];
+
+const DIRECTION_KEYS: Record<ThresholdDirection, string> = {
+  gte: 'adminOverride.dirGte',
+  lte: 'adminOverride.dirLte',
+  range_superset: 'adminOverride.dirRangeSuperset',
+};
 
 interface RuleOverrideDrawerProps {
   open: boolean;
@@ -61,6 +64,7 @@ export default function RuleOverrideDrawer({
   existingOverride,
   onSaved,
 }: RuleOverrideDrawerProps) {
+  const { t } = useTranslation();
   const isAddMode = !baseRule;
 
   // Form state
@@ -118,7 +122,7 @@ export default function RuleOverrideDrawer({
 
   const handleSave = useCallback(async () => {
     if (!changeReason.trim()) {
-      setError('Please provide a reason for this change.');
+      setError(t('adminOverride.changeReasonRequired'));
       return;
     }
     setSaving(true);
@@ -166,7 +170,7 @@ export default function RuleOverrideDrawer({
     attributeId, attributeName, logicType, weight, thresholdDirection,
     upgradeHierarchy, blockOnMissing, tolerancePercent, engineeringReason,
     changeReason, needsDirection, needsHierarchy, needsTolerance,
-    onSaved, onClose,
+    onSaved, onClose, t,
   ]);
 
   const handleRevert = useCallback(async () => {
@@ -187,7 +191,7 @@ export default function RuleOverrideDrawer({
 
   const handleRemoveRule = useCallback(async () => {
     if (!baseRule || !changeReason.trim()) {
-      setError('Please provide a reason for removing this rule.');
+      setError(t('adminOverride.removeReasonRequired'));
       return;
     }
     setSaving(true);
@@ -207,7 +211,7 @@ export default function RuleOverrideDrawer({
     } finally {
       setSaving(false);
     }
-  }, [familyId, baseRule, changeReason, onSaved, onClose]);
+  }, [familyId, baseRule, changeReason, onSaved, onClose, t]);
 
   return (
     <Drawer
@@ -220,7 +224,7 @@ export default function RuleOverrideDrawer({
         {/* Header */}
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
           <Typography variant="h6">
-            {isAddMode ? 'Add Rule' : `Edit: ${baseRule?.attributeName}`}
+            {isAddMode ? t('adminOverride.addRule') : t('adminOverride.editRule', { name: baseRule?.attributeName })}
           </Typography>
           <IconButton onClick={onClose} size="small">
             <CloseIcon />
@@ -230,8 +234,8 @@ export default function RuleOverrideDrawer({
         {/* Base value indicator */}
         {!isAddMode && baseRule && (
           <Alert severity="info" sx={{ mb: 2, py: 0.5 }}>
-            Base: {typeLabels[baseRule.logicType]}, weight {baseRule.weight}
-            {existingOverride && ' — override active'}
+            {t('adminOverride.baseInfo', { type: typeLabels[baseRule.logicType], weight: baseRule.weight })}
+            {existingOverride && ` ${t('adminOverride.overrideActive')}`}
           </Alert>
         )}
 
@@ -242,30 +246,30 @@ export default function RuleOverrideDrawer({
             {isAddMode && (
               <>
                 <TextField
-                  label="Attribute ID"
+                  label={t('adminOverride.attributeId')}
                   value={attributeId}
                   onChange={e => setAttributeId(e.target.value)}
                   size="small"
                   fullWidth
-                  placeholder="e.g. new_parameter"
+                  placeholder={t('adminOverride.placeholderAttrId')}
                 />
                 <TextField
-                  label="Attribute Name"
+                  label={t('adminOverride.attributeName')}
                   value={attributeName}
                   onChange={e => setAttributeName(e.target.value)}
                   size="small"
                   fullWidth
-                  placeholder="e.g. New Parameter"
+                  placeholder={t('adminOverride.placeholderAttrName')}
                 />
               </>
             )}
 
             {/* Logic Type */}
             <FormControl size="small" fullWidth>
-              <InputLabel>Rule Type</InputLabel>
+              <InputLabel>{t('adminOverride.ruleType')}</InputLabel>
               <Select
                 value={logicType}
-                label="Rule Type"
+                label={t('adminOverride.ruleType')}
                 onChange={e => setLogicType(e.target.value as LogicType)}
               >
                 {LOGIC_TYPES.map(lt => (
@@ -277,7 +281,7 @@ export default function RuleOverrideDrawer({
             {/* Weight */}
             <Box>
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                Weight: {weight}
+                {t('adminOverride.weightLabel', { weight })}
               </Typography>
               <Slider
                 value={weight}
@@ -294,14 +298,14 @@ export default function RuleOverrideDrawer({
             {/* Threshold Direction (conditional) */}
             {needsDirection && (
               <FormControl size="small" fullWidth>
-                <InputLabel>Direction</InputLabel>
+                <InputLabel>{t('adminOverride.direction')}</InputLabel>
                 <Select
                   value={thresholdDirection}
-                  label="Direction"
+                  label={t('adminOverride.direction')}
                   onChange={e => setThresholdDirection(e.target.value as ThresholdDirection)}
                 >
                   {THRESHOLD_DIRECTIONS.map(d => (
-                    <MenuItem key={d.value} value={d.value}>{d.label}</MenuItem>
+                    <MenuItem key={d} value={d}>{t(DIRECTION_KEYS[d])}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
@@ -310,26 +314,26 @@ export default function RuleOverrideDrawer({
             {/* Upgrade Hierarchy (conditional) */}
             {needsHierarchy && (
               <TextField
-                label="Upgrade Hierarchy"
+                label={t('adminOverride.upgradeHierarchy')}
                 value={upgradeHierarchy}
                 onChange={e => setUpgradeHierarchy(e.target.value)}
                 size="small"
                 fullWidth
-                placeholder="Best, Good, Acceptable (comma-separated, best first)"
-                helperText="Comma-separated list, best option first"
+                placeholder={t('adminOverride.upgradeHierarchyPlaceholder')}
+                helperText={t('adminOverride.upgradeHierarchyHelper')}
               />
             )}
 
             {/* Tolerance Percent (conditional) */}
             {needsTolerance && (
               <TextField
-                label="Tolerance %"
+                label={t('adminOverride.tolerancePercent')}
                 value={tolerancePercent}
                 onChange={e => setTolerancePercent(e.target.value)}
                 size="small"
                 fullWidth
                 type="number"
-                placeholder="e.g. 10"
+                placeholder={t('adminOverride.placeholderTolerance')}
               />
             )}
 
@@ -344,14 +348,14 @@ export default function RuleOverrideDrawer({
               }
               label={
                 <Typography variant="body2">
-                  Block on missing data (fail instead of review)
+                  {t('adminOverride.blockOnMissing')}
                 </Typography>
               }
             />
 
             {/* Engineering Reason */}
             <TextField
-              label="Engineering Reason"
+              label={t('adminOverride.engineeringReason')}
               value={engineeringReason}
               onChange={e => setEngineeringReason(e.target.value)}
               size="small"
@@ -364,7 +368,7 @@ export default function RuleOverrideDrawer({
 
             {/* Change Reason (required) */}
             <TextField
-              label="Why are you making this change?"
+              label={t('adminOverride.changeReason')}
               value={changeReason}
               onChange={e => setChangeReason(e.target.value)}
               size="small"
@@ -373,7 +377,7 @@ export default function RuleOverrideDrawer({
               rows={2}
               required
               error={!!error && !changeReason.trim()}
-              placeholder="Required — explain why this override is needed"
+              placeholder={t('adminOverride.changeReasonPlaceholder')}
             />
           </Stack>
         </Box>
@@ -393,7 +397,7 @@ export default function RuleOverrideDrawer({
             disabled={saving}
             sx={{ flex: 1 }}
           >
-            {saving ? 'Saving...' : existingOverride ? 'Update Override' : 'Save Override'}
+            {saving ? t('adminOverride.saving') : existingOverride ? t('adminOverride.updateOverride') : t('adminOverride.saveOverride')}
           </Button>
 
           {existingOverride && (
@@ -404,7 +408,7 @@ export default function RuleOverrideDrawer({
               disabled={saving}
               startIcon={<RestoreIcon />}
             >
-              Revert
+              {t('adminOverride.revert')}
             </Button>
           )}
 
@@ -416,7 +420,7 @@ export default function RuleOverrideDrawer({
               disabled={saving}
               size="small"
             >
-              Remove
+              {t('adminOverride.remove')}
             </Button>
           )}
         </Stack>

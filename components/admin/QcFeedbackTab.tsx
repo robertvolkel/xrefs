@@ -288,13 +288,13 @@ export default function QcFeedbackTab() {
       {total > 50 && (
         <Stack direction="row" justifyContent="center" spacing={1} sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>
           <Button size="small" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
-            Previous
+            {t('adminQc.previous')}
           </Button>
           <Typography variant="caption" sx={{ lineHeight: '30px' }}>
             {page * 50 + 1}–{Math.min((page + 1) * 50, total)} of {total}
           </Typography>
           <Button size="small" disabled={(page + 1) * 50 >= total} onClick={() => setPage(p => p + 1)}>
-            Next
+            {t('adminQc.next')}
           </Button>
         </Stack>
       )}

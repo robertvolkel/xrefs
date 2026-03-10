@@ -105,6 +105,7 @@ function InfoStat({ label }: { label: string }) {
 }
 
 function SubcategoryRow({ sub }: { sub: TaxonomySubcategory }) {
+  const { t } = useTranslation();
   return (
     <Box sx={{ py: 0.75, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: sub.covered ? 1 : 0 }}>
@@ -117,7 +118,7 @@ function SubcategoryRow({ sub }: { sub: TaxonomySubcategory }) {
         </Typography>
         {sub.productCount > 0 && (
           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-            {sub.productCount.toLocaleString()} products
+            {t('admin.productsCount', { count: sub.productCount })}
           </Typography>
         )}
       </Box>
@@ -170,8 +171,8 @@ function CategoryAccordion({ cat }: { cat: TaxonomyCategory }) {
         {cat.productCount > 0 && (
           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto', mr: 1 }}>
             {cat.coveredProductCount > 0
-              ? `${cat.coveredProductCount.toLocaleString()} of ${cat.productCount.toLocaleString()} products`
-              : `${cat.productCount.toLocaleString()} products`}
+              ? t('admin.productsOfTotal', { covered: cat.coveredProductCount.toLocaleString(), total: cat.productCount.toLocaleString() })
+              : t('admin.productsCount', { count: cat.productCount })}
           </Typography>
         )}
       </AccordionSummary>

@@ -38,7 +38,7 @@ export default function QcFeedbackCard({ feedback: fb, onAction, t }: QcFeedback
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Stack direction="row" alignItems="center" spacing={1}>
             <Chip
-              label={fb.feedbackStage === 'rule_logic' ? 'Rule' : 'Question'}
+              label={fb.feedbackStage === 'rule_logic' ? t('adminQc.typeRuleLabel') : t('adminQc.typeQuestionLabel')}
               size="small"
               variant="outlined"
               sx={{ height: 20, fontSize: '0.65rem' }}

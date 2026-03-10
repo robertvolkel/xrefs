@@ -94,14 +94,14 @@ export default function LogicPanel({ table }: LogicPanelProps) {
           onClick={handleAddClick}
           sx={{ textTransform: 'none' }}
         >
-          Add Rule
+          {t('admin.addRule')}
         </Button>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {t(`${fKey}.desc`, table.description)} &mdash; {t('admin.rulesCount', { count: table.rules.length })}
         {overrideCount > 0 && (
           <Chip
-            label={`${overrideCount} override${overrideCount !== 1 ? 's' : ''}`}
+            label={t('admin.overrideCount', { count: overrideCount })}
             size="small"
             color="warning"
             variant="outlined"

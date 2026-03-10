@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Chip,
@@ -64,6 +65,7 @@ export default function AtlasCoverageDrawer({
   familyId,
   familyName,
 }: AtlasCoverageDrawerProps) {
+  const { t } = useTranslation();
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -108,12 +110,12 @@ export default function AtlasCoverageDrawer({
         {/* Summary */}
         {data && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {data.totalProducts} products · {avgCoverage}% avg coverage · {data.attributes.length} rules
+            {t('admin.coverageSummary', { products: data.totalProducts, coverage: avgCoverage, rules: data.attributes.length })}
           </Typography>
         )}
 
         {loading && !data && (
-          <Typography variant="body2" color="text.secondary">Loading...</Typography>
+          <Typography variant="body2" color="text.secondary">{t('common.loading')}</Typography>
         )}
 
         {/* Gap matrix table */}
@@ -122,12 +124,12 @@ export default function AtlasCoverageDrawer({
             <Table size="small" stickyHeader sx={{ '& td, & th': { borderColor: 'divider' } }}>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>Attribute</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 36, textAlign: 'center' }}>W</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 100 }}>Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 70, textAlign: 'right' }}>Atlas</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>Dict</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>DK</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('admin.coverageAttribute')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 36, textAlign: 'center' }}>{t('admin.coverageW')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 100 }}>{t('admin.coverageType')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 70, textAlign: 'right' }}>{t('admin.coverageAtlas')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>{t('admin.coverageDict')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>{t('admin.coverageDK')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>

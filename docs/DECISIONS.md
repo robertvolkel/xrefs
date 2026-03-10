@@ -1598,3 +1598,91 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 **Results:** 27,030 products re-ingested with 0 errors. Average mapped params went from 0.5–2 (shared dictionary only) to 3–9 per product for most families. Unmapped warnings reduced by ~28% after Ω→ω fix and additional variant entries.
 
 **Files modified:** `lib/services/atlasMapper.ts` (24 new family dictionaries + expanded skipParams + Ω→ω fix), `scripts/atlas-ingest.mjs` (mirrored all dictionary changes in FAMILY_PARAMS)
+
+---
+
+### 68. Atlas Dictionary Admin Panel
+
+**Date:** 2026-03-09
+**Status:** Implemented
+
+**Problem:** Atlas parameter translation dictionaries (28 families + shared) were hardcoded in `atlasMapper.ts`. Adding or correcting dictionary entries required code deploys. Admins needed a UI to view, edit, add, and remove dictionary mappings without touching code.
+
+**Solution:** Built an admin panel (`AtlasDictionaryPanel.tsx`) with a Supabase-backed override layer (`atlas_dict_overrides` table), following the same override-on-top-of-base pattern as rule/context overrides.
+
+**Key Design Decisions:**
+
+1. **Override architecture:** Dictionary overrides stored in `atlas_dict_overrides` table (Supabase), merged at runtime on top of the TypeScript base dictionaries. Actions: `add` (new entry), `modify` (change attributeId/unit/sortOrder), `remove` (suppress entry). Same merge pattern as `overrideMerger.ts`.
+
+2. **Server/client module boundary:** `atlasMapper.ts` must remain importable from client components (it exports pure dictionary data). Supabase-dependent fetch/cache code extracted to `lib/services/atlasDictOverrides.ts` (server-only module). This prevents the build error from dynamic `import('@/lib/supabase/server')` leaking into client bundles.
+
+3. **Cache:** 60-second TTL in-memory cache in `atlasDictOverrides.ts`, invalidated on admin writes via `invalidateDictOverrideCache()`.
+
+4. **Edit UX:** Pencil icon on the far right of each row (matching LogicPanel pattern), not row-click. Right-side drawer (`AtlasDictOverrideDrawer.tsx`) for editing with action selector (Modify/Add/Remove).
+
+5. **Shared dictionary:** Read-only in the UI — shared entries affect all 28 families, so they shouldn't be casually editable. Shown collapsed by default at the bottom of the table.
+
+6. **Family picker integration:** Reuses the existing `FamilyPicker` component. Family selector shows only families that have Atlas dictionaries (28 of 38).
+
+7. **Admin nav:** Dedicated "Atlas Dictionary" section with translate icon, separate from "Atlas Products" (the manufacturer stats panel).
+
+**Files created:** `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasDictOverrideDrawer.tsx`, `lib/services/atlasDictOverrides.ts`, `app/api/admin/atlas/dictionaries/route.ts`, `app/api/admin/atlas/dictionaries/[overrideId]/route.ts`
+
+**Files modified:** `components/admin/AdminShell.tsx` (new section), `components/admin/AdminSectionNav.tsx` (new nav entry), `lib/services/atlasMapper.ts` (exported `getAtlasDictionaryFamilyIds`, `applyDictOverrides`, removed Supabase code), `locales/en.json` (i18n keys)
+
+---
+
+### 69. Atlas Coverage Analytics — Coverage %, Gap Analysis Drawer
+
+**Date:** 2026-03-09
+**Status:** Implemented
+
+**Problem:** The Atlas Products admin panel showed product counts per manufacturer but no insight into data quality. Admins couldn't tell which attributes were missing for a given manufacturer's products vs. what the logic table requires vs. what Digikey provides. This made it hard to prioritize which data gaps to fill.
+
+**Solution:** Two features: (1) a coverage % column in the Atlas Products table showing how well each manufacturer's products cover logic table attributes, and (2) a drill-down gap analysis drawer showing per-attribute coverage detail.
+
+**Key Design Decisions:**
+
+1. **Coverage % calculation:** Uses `parameters` JSONB column (keys are already-mapped attributeIds). For each product, count how many of its parameter keys intersect with the family's logic table rule attributeIds. Aggregate per-manufacturer and per-manufacturer-family. Coverage = `totalCovered / totalRules * 100`, averaged across all products.
+
+2. **Gap analysis drawer:** Right-side MUI Drawer (580px). Triggered by clicking a family row in the expanded manufacturer breakdown. Shows every logic table rule with:
+   - Weight and logic type (reusing `typeLabels`/`typeColors` from `logicConstants.ts`)
+   - Atlas product coverage: what % of this manufacturer's products have data for this attribute
+   - Atlas Dictionary: whether a dictionary mapping exists for this attributeId (checkmark/dash)
+   - Digikey: whether the Digikey param map covers this attribute (checkmark/dash)
+
+3. **Three-source gap classification:** Reveals three types of gaps:
+   - **Dictionary gap:** Digikey covers it, but Atlas dictionary doesn't → need to add translation
+   - **Data gap:** Dictionary exists, but products lack the param → manufacturer doesn't provide this spec
+   - **Source gap:** Neither Digikey nor Atlas covers it → datasheet-only attribute
+
+4. **Row tinting:** Green (80%+ coverage), amber (1-79% partial), red (no coverage from any source). Sorted by weight descending (highest-priority gaps first).
+
+5. **Digikey helper:** Added `getDigikeyAttributeIdsForFamily(familyId)` to `digikeyParamMap.ts` — returns deduplicated set of all attributeIds covered by Digikey param maps for a family. Refactored existing `computeFamilyParamCoverage` to use it.
+
+**Files created:** `app/api/admin/atlas/coverage/route.ts`, `components/admin/AtlasCoverageDrawer.tsx`
+
+**Files modified:** `app/api/admin/atlas/route.ts` (added `parameters` column fetch + coverage calculation), `components/admin/AtlasPanel.tsx` (coverage column + drawer state + clickable family rows), `lib/services/digikeyParamMap.ts` (added `getDigikeyAttributeIdsForFamily`)
+
+---
+
+### 70. Owner-Only Admin Privilege Management
+
+**Date:** 2026-03-10
+**Status:** Implemented
+
+**Problem:** Any admin could promote or demote any other user. If an admin promoted someone else, that person could then demote the original admin or promote additional users without oversight.
+
+**Solution:** Restrict role changes (promote/demote) to the account owner (`rvolkel@supplyframe.com`). Regular admins retain all other admin capabilities (view users, disable/enable accounts, manage overrides, QC, etc.) but cannot change anyone's role.
+
+**Key Design Decisions:**
+
+1. **Shared constant:** `OWNER_EMAIL` defined in `lib/constants.ts` — single source of truth used by both API route and UI.
+2. **API enforcement:** `PATCH /api/admin/users/[userId]` checks `user.email === OWNER_EMAIL` before allowing role changes. Returns 403 "Only the account owner can change user roles" for non-owners. Disable/enable toggle remains available to all admins.
+3. **UI enforcement:** `OrgPanel.tsx` hides role toggle buttons (promote/demote) for non-owner admins. Disable/enable buttons remain visible.
+4. **No schema change:** The existing binary role system (`user` | `admin`) is unchanged. The owner concept is enforced at the application layer, not the database layer. Supabase RLS still allows any admin to UPDATE profiles, but all writes go through the API route which enforces the owner check.
+5. **Consistency with existing trigger:** The Supabase `on_auth_user_created` trigger already hardcodes the same email for initial admin assignment.
+
+**Files created:** `lib/constants.ts`
+
+**Files modified:** `app/api/admin/users/[userId]/route.ts` (owner check on role changes), `components/settings/OrgPanel.tsx` (conditional role toggle visibility)

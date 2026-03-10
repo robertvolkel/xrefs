@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Box,
   Drawer,
@@ -54,6 +55,8 @@ export default function DictionaryOverrideDrawer({
   addParamName,
   onSaved,
 }: DictionaryOverrideDrawerProps) {
+  const { t } = useTranslation();
+
   // Form state
   const [paramName, setParamName] = useState('');
   const [attributeId, setAttributeId] = useState('');
@@ -89,19 +92,19 @@ export default function DictionaryOverrideDrawer({
 
   const handleSave = useCallback(async () => {
     if (!changeReason.trim()) {
-      setError('Please provide a reason for this change.');
+      setError(t('adminOverride.changeReasonRequired'));
       return;
     }
     if (!paramName.trim()) {
-      setError('Parameter name is required.');
+      setError(t('adminOverride.paramNameRequired'));
       return;
     }
     if (!attributeId.trim()) {
-      setError('Attribute ID is required.');
+      setError(t('adminOverride.attributeIdRequired'));
       return;
     }
     if (!attributeName.trim()) {
-      setError('Attribute name is required.');
+      setError(t('adminOverride.attributeNameRequired'));
       return;
     }
 
@@ -156,7 +159,7 @@ export default function DictionaryOverrideDrawer({
 
   const handleRemoveMapping = useCallback(async () => {
     if (!baseEntry || !changeReason.trim()) {
-      setError('Please provide a reason for removing this mapping.');
+      setError(t('adminOverride.removeMappingReasonRequired'));
       return;
     }
     setSaving(true);
@@ -188,7 +191,7 @@ export default function DictionaryOverrideDrawer({
         {/* Header */}
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 3 }}>
           <Typography variant="h6">
-            {isAddMode ? 'Add Mapping' : 'Edit Mapping'}
+            {isAddMode ? t('adminOverride.addMapping') : t('adminOverride.editMapping')}
           </Typography>
           <IconButton onClick={onClose} size="small">
             <CloseIcon />
@@ -198,8 +201,8 @@ export default function DictionaryOverrideDrawer({
         {/* Base value indicator */}
         {!isAddMode && baseEntry && (
           <Alert severity="info" sx={{ mb: 2, py: 0.5 }}>
-            Base: {baseEntry.attributeId} &rarr; {baseEntry.attributeName}
-            {existingOverride && ' — override active'}
+            {t('adminOverride.baseDictInfo', { attributeId: baseEntry.attributeId, attributeName: baseEntry.attributeName })}
+            {existingOverride && ` ${t('adminOverride.overrideActive')}`}
           </Alert>
         )}
 
@@ -208,64 +211,64 @@ export default function DictionaryOverrideDrawer({
           <Stack spacing={2.5}>
             {/* Param Name */}
             <TextField
-              label="Atlas Parameter Name"
+              label={t('adminOverride.atlasParamName')}
               value={paramName}
               onChange={(e) => setParamName(e.target.value)}
               size="small"
               fullWidth
               disabled={!isAddMode}
-              helperText={isAddMode ? 'Lowercase Atlas parameter name (Chinese or English)' : undefined}
+              helperText={isAddMode ? t('adminOverride.atlasParamHelper') : undefined}
             />
 
             {/* Attribute ID */}
             <TextField
-              label="Attribute ID"
+              label={t('adminOverride.attributeId')}
               value={attributeId}
               onChange={(e) => setAttributeId(e.target.value)}
               size="small"
               fullWidth
-              placeholder="e.g. capacitance, vds_max"
-              helperText="Internal attribute ID used by the matching engine"
+              placeholder={t('adminOverride.attrIdPlaceholder')}
+              helperText={t('adminOverride.attrIdHelper')}
             />
 
             {/* Attribute Name */}
             <TextField
-              label="Attribute Name"
+              label={t('adminOverride.attributeName')}
               value={attributeName}
               onChange={(e) => setAttributeName(e.target.value)}
               size="small"
               fullWidth
-              placeholder="e.g. Capacitance, Vds Max"
-              helperText="Display name shown in the UI"
+              placeholder={t('adminOverride.attrNamePlaceholder')}
+              helperText={t('adminOverride.attrNameHelper')}
             />
 
             {/* Unit */}
             <TextField
-              label="Unit"
+              label={t('adminOverride.unit')}
               value={unit}
               onChange={(e) => setUnit(e.target.value)}
               size="small"
               fullWidth
-              placeholder="e.g. V, A, pF, mOhm"
+              placeholder={t('adminOverride.unitPlaceholder')}
             />
 
             {/* Sort Order */}
             <TextField
-              label="Sort Order"
+              label={t('adminOverride.sortOrder')}
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value)}
               size="small"
               fullWidth
               type="number"
-              placeholder="e.g. 5"
-              helperText="Lower numbers display first (1-20 critical, 90+ reference)"
+              placeholder={t('adminOverride.sortOrderPlaceholder')}
+              helperText={t('adminOverride.sortOrderHelper')}
             />
 
             <Divider />
 
             {/* Change Reason (required) */}
             <TextField
-              label="Why are you making this change?"
+              label={t('adminOverride.changeReason')}
               value={changeReason}
               onChange={(e) => setChangeReason(e.target.value)}
               size="small"
@@ -274,7 +277,7 @@ export default function DictionaryOverrideDrawer({
               rows={2}
               required
               error={!!error && !changeReason.trim()}
-              placeholder="Required — explain why this override is needed"
+              placeholder={t('adminOverride.changeReasonPlaceholder')}
             />
           </Stack>
         </Box>
@@ -294,7 +297,7 @@ export default function DictionaryOverrideDrawer({
             disabled={saving}
             sx={{ flex: 1 }}
           >
-            {saving ? 'Saving...' : existingOverride ? 'Update Override' : 'Save Override'}
+            {saving ? t('adminOverride.saving') : existingOverride ? t('adminOverride.updateOverride') : t('adminOverride.saveOverride')}
           </Button>
 
           {existingOverride && (
@@ -305,7 +308,7 @@ export default function DictionaryOverrideDrawer({
               disabled={saving}
               startIcon={<RestoreIcon />}
             >
-              Revert
+              {t('adminOverride.revert')}
             </Button>
           )}
 
@@ -317,7 +320,7 @@ export default function DictionaryOverrideDrawer({
               disabled={saving}
               size="small"
             >
-              Remove
+              {t('adminOverride.remove')}
             </Button>
           )}
         </Stack>

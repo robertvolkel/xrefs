@@ -1390,6 +1390,23 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
     }
   }
 
+  // Tantalum capacitor_type enrichment — Digikey maintains separate categories:
+  // "Tantalum Capacitors" (MnO2) vs "Tantalum - Polymer Capacitors" (Polymer).
+  // The identity_upgrade rule on capacitor_type needs explicit values to compare.
+  if (!addedIds.has('capacitor_type')) {
+    const catLower = categoryName.toLowerCase();
+    if (catLower.includes('tantalum')) {
+      const isPolymer = catLower.includes('polymer');
+      parameters.push({
+        parameterId: 'capacitor_type',
+        parameterName: 'Capacitor Type',
+        value: isPolymer ? 'Polymer' : 'MnO2',
+        sortOrder: 4,
+      });
+      addedIds.add('capacitor_type');
+    }
+  }
+
   // Sort by sortOrder
   parameters.sort((a, b) => a.sortOrder - b.sortOrder);
 

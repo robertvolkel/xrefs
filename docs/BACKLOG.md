@@ -365,10 +365,10 @@ Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. 
 ---
 
 ### Phase 7: Atlas Integration & Manufacturer Profile API
-**Status:** Partially done (Decisions #66, #67)
+**Status:** Partially done (Decisions #66, #67, #68, #69)
 **Priority:** P2
 
-Atlas product database integrated: 99 manufacturers, 27,030 products ingested into Supabase `atlas_products` table. Parallel search + candidate fetch working. Admin panel for ingestion monitoring built. Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67) — average mapped params went from 0.5–2 to 3–9 per product.
+Atlas product database integrated: 99 manufacturers, 27,030 products ingested into Supabase `atlas_products` table. Parallel search + candidate fetch working. Admin panel for ingestion monitoring built. Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67) — average mapped params went from 0.5–2 to 3–9 per product. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics added: per-manufacturer coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table requirements (Decision #69).
 
 **Remaining:**
 - Manufacturer profile API (company profiles, verification, factory audit, export compliance)
@@ -377,7 +377,7 @@ Atlas product database integrated: 99 manufacturers, 27,030 products ingested in
 - Further reduce unmapped param warnings (~40K remaining, mostly manufacturer-specific naming variants)
 - Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
 
-**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `scripts/atlas-ingest.mjs`
+**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
 
 ---
 

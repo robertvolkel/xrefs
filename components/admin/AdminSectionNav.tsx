@@ -13,12 +13,12 @@ import { useTranslation } from 'react-i18next';
 export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
-  { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
   { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlasProducts' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
+  { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
   { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
 ];
 

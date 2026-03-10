@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import { OWNER_EMAIL } from '@/lib/constants';
 
 export async function PATCH(
   request: NextRequest,
@@ -15,6 +16,12 @@ export async function PATCH(
 
     // Determine what action is being performed
     if ('role' in body) {
+      if (user!.email !== OWNER_EMAIL) {
+        return NextResponse.json(
+          { success: false, error: 'Only the account owner can change user roles' },
+          { status: 403 },
+        );
+      }
       return handleRoleUpdate(user!.id, userId, body.role);
     }
 

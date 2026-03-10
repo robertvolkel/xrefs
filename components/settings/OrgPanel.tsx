@@ -23,6 +23,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { useAuth } from '@/components/AuthProvider';
 import { AdminUser, getUsers, updateUserRole, toggleUserDisabled } from '@/lib/api';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import { OWNER_EMAIL } from '@/lib/constants';
 
 export default function OrgPanel() {
   const { t } = useTranslation();
@@ -69,6 +70,7 @@ export default function OrgPanel() {
   };
 
   const isCurrentUser = (u: AdminUser) => u.id === currentUser?.id;
+  const isOwner = currentUser?.email === OWNER_EMAIL;
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return t('orgSettings.never');
@@ -188,26 +190,28 @@ export default function OrgPanel() {
                         <TableCell>
                           {!isCurrentUser(u) && (
                             <Box sx={{ display: 'flex', gap: 0.5 }}>
-                              <Tooltip
-                                title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
-                              >
-                                <IconButton
-                                  size="small"
-                                  onClick={() =>
-                                    setConfirmAction({
-                                      type: 'role',
-                                      user: u,
-                                      newValue: u.role === 'admin' ? 'user' : 'admin',
-                                    })
-                                  }
+                              {isOwner && (
+                                <Tooltip
+                                  title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
                                 >
-                                  {u.role === 'admin' ? (
-                                    <PersonOutlineIcon sx={{ fontSize: 18 }} />
-                                  ) : (
-                                    <AdminPanelSettingsOutlinedIcon sx={{ fontSize: 18 }} />
-                                  )}
-                                </IconButton>
-                              </Tooltip>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() =>
+                                      setConfirmAction({
+                                        type: 'role',
+                                        user: u,
+                                        newValue: u.role === 'admin' ? 'user' : 'admin',
+                                      })
+                                    }
+                                  >
+                                    {u.role === 'admin' ? (
+                                      <PersonOutlineIcon sx={{ fontSize: 18 }} />
+                                    ) : (
+                                      <AdminPanelSettingsOutlinedIcon sx={{ fontSize: 18 }} />
+                                    )}
+                                  </IconButton>
+                                </Tooltip>
+                              )}
                               <Tooltip title={u.disabled ? 'Enable Account' : 'Disable Account'}>
                                 <IconButton
                                   size="small"
