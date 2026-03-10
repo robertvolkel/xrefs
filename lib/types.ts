@@ -17,6 +17,7 @@ export interface Part {
   moistureSensitivityLevel?: string;
   digikeyCategoryId?: number;
   qualifications?: string[];
+  manufacturerCountry?: string;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -55,8 +56,8 @@ export interface ParametricAttribute {
 export interface PartAttributes {
   part: Part;
   parameters: ParametricAttribute[];
-  /** Where this data came from — 'digikey' for live API, 'mock' for fallback */
-  dataSource?: 'digikey' | 'mock';
+  /** Where this data came from */
+  dataSource?: 'digikey' | 'atlas' | 'mock';
 }
 
 /** A cross-reference recommendation */
@@ -65,6 +66,7 @@ export interface XrefRecommendation {
   matchPercentage: number;
   matchDetails: MatchDetail[];
   notes?: string;
+  dataSource?: 'digikey' | 'atlas' | 'mock';
 }
 
 /** Per-parameter match detail for comparison */
@@ -532,7 +534,7 @@ export interface RecommendationResult {
   sourceAttributes: PartAttributes;
   familyId?: string;
   familyName?: string;
-  dataSource?: 'digikey' | 'mock';
+  dataSource?: 'digikey' | 'atlas' | 'mock';
 }
 
 /** The stage of the recommendation pipeline being questioned */

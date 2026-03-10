@@ -35,8 +35,8 @@ export function useViewConfig() {
     update(prev => ({ ...prev, activeViewId: viewId }));
   }, [update]);
 
-  const createView = useCallback((name: string, columns: string[], description?: string): SavedView => {
-    const newView: SavedView = { id: generateId(), name, columns, ...(description ? { description } : {}) };
+  const createView = useCallback((name: string, columns: string[], description?: string, columnMeta?: Record<string, string>): SavedView => {
+    const newView: SavedView = { id: generateId(), name, columns, ...(description ? { description } : {}), ...(columnMeta ? { columnMeta } : {}) };
     update(prev => ({
       ...prev,
       views: [...prev.views, newView],
@@ -45,11 +45,11 @@ export function useViewConfig() {
     return newView;
   }, [update]);
 
-  const updateView = useCallback((viewId: string, columns: string[], name?: string, description?: string) => {
+  const updateView = useCallback((viewId: string, columns: string[], name?: string, description?: string, columnMeta?: Record<string, string>) => {
     update(prev => ({
       ...prev,
       views: prev.views.map(v => v.id === viewId
-        ? { ...v, columns, ...(name ? { name } : {}), ...(description !== undefined ? { description } : {}) }
+        ? { ...v, columns, ...(name ? { name } : {}), ...(description !== undefined ? { description } : {}), ...(columnMeta ? { columnMeta } : {}) }
         : v),
     }));
   }, [update]);
@@ -83,7 +83,7 @@ export function useViewConfig() {
     update(prev => {
       const source = prev.views.find(v => v.id === viewId);
       if (!source) return prev;
-      newView = { id: generateId(), name: newName, columns: [...source.columns] };
+      newView = { id: generateId(), name: newName, columns: [...source.columns], ...(source.columnMeta ? { columnMeta: { ...source.columnMeta } } : {}) };
       return {
         ...prev,
         views: [...prev.views, newView],

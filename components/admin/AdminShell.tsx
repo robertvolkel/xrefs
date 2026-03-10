@@ -13,13 +13,14 @@ import ParamMappingsPanel from './ParamMappingsPanel';
 import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
+import AtlasPanel from './AtlasPanel';
 const allTables = getAllLogicTables();
 const allCategories = [...new Set(allTables.map((t) => t.category))];
 
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'data-sources' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy';
+  return s === 'data-sources' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas';
 }
 
 function AdminShellInner() {
@@ -113,6 +114,7 @@ function AdminShellInner() {
           {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
           {activeSection === 'context' && <ContextPanel table={selectedTable} />}
           {activeSection === 'taxonomy' && <TaxonomyPanel />}
+          {activeSection === 'atlas' && <AtlasPanel />}
         </Box>
       </Box>
     </Box>

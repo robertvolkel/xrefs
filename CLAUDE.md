@@ -35,6 +35,7 @@ app/                          # Next.js App Router
   api/admin/qc/feedback/[feedbackId]/ # Feedback status update (PATCH)
   api/admin/qc/settings/     # QC settings (GET/PUT logging toggle)
   api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase)
+  api/admin/atlas/           # Atlas manufacturer stats (GET, paginated aggregation)
   api/admin/taxonomy/        # Digikey category taxonomy with coverage
   api/admin/overrides/rules/ # Rule override CRUD (GET list, POST create)
   api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH, DELETE)
@@ -79,6 +80,7 @@ components/                   # React components
     RuleOverrideDrawer.tsx    # Right-side drawer for editing rule overrides
     ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
     ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
+    AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   releases/                    # Release notes feed
     ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
@@ -112,6 +114,8 @@ lib/
   services/qcAnalyzer.ts      # Server-side aggregation of QC log snapshots for AI analysis
   services/overrideMerger.ts  # Fetches admin overrides from Supabase, merges onto TS base
   services/overrideValidator.ts # Validates override values against type constraints
+  services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
+  services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
   columnDefinitions.ts        # Dynamic column system for parts list table
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
@@ -295,7 +299,7 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
-- **Atlas** (planned) — Proprietary Chinese component manufacturer dataset: products, company profiles, sponsored crosses
+- **Atlas** (built — products + param dictionaries; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product)
 - **Distributor APIs** (planned) — Mouser, Arrow, Nexar/Octopart for multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering
 

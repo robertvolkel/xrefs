@@ -211,6 +211,8 @@
     "dataSources": "数据源",
     "paramMappings": "参数映射",
     "logicRules": "交叉参考逻辑",
+    "atlas": "Atlas",
+    "atlasDesc": "中国制造商产品目录。",
     "contextQuestions": "应用上下文",
     "configured": "已配置",
     "notConfigured": "未配置",

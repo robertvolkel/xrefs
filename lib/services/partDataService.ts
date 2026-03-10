@@ -13,6 +13,7 @@ import {
 } from './digikeyMapper';
 import { mockSearch, mockGetAttributes } from '../mockSearchService';
 import { mockGetRecommendations } from '../mockXrefService';
+import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
@@ -32,25 +33,49 @@ function isDigikeyConfigured(): boolean {
 // ============================================================
 
 export async function searchParts(query: string, currency?: string): Promise<SearchResult> {
-  if (!isDigikeyConfigured()) {
-    return mockSearch(query);
-  }
+  // Search Digikey + Atlas in parallel, merge results
+  const [digikeyResult, atlasResult] = await Promise.all([
+    (async (): Promise<SearchResult> => {
+      if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
+      try {
+        const response = await keywordSearch(query, { limit: 10 }, currency);
+        return mapKeywordResponseToSearchResult(response);
+      } catch (error) {
+        console.warn('Digikey search failed:', error);
+        return { type: 'none', matches: [] };
+      }
+    })(),
+    searchAtlasProducts(query).catch(() => ({ type: 'none' as const, matches: [] })),
+  ]);
 
-  try {
-    const response = await keywordSearch(query, { limit: 10 }, currency);
-    const result = mapKeywordResponseToSearchResult(response);
+  // Merge: Digikey results first, then Atlas, deduplicate by MPN
+  const seenMpns = new Set<string>();
+  const mergedMatches = [];
 
-    // If Digikey returned nothing, try mock as fallback
-    if (result.type === 'none') {
-      const mockResult = mockSearch(query);
-      if (mockResult.type !== 'none') return mockResult;
+  for (const part of digikeyResult.matches ?? []) {
+    const key = part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      mergedMatches.push(part);
     }
-
-    return result;
-  } catch (error) {
-    console.warn('Digikey search failed, falling back to mock:', error);
-    return mockSearch(query);
   }
+  for (const part of atlasResult.matches ?? []) {
+    const key = part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      mergedMatches.push(part);
+    }
+  }
+
+  if (mergedMatches.length > 0) {
+    return {
+      type: mergedMatches.length === 1 ? 'single' : 'multiple',
+      matches: mergedMatches,
+    };
+  }
+
+  // Fallback to mock
+  return mockSearch(query);
 }
 
 // ============================================================
@@ -92,6 +117,14 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     }
   } catch {
     console.warn('Digikey keyword search fallback also failed for', mpn);
+  }
+
+  // Fallback: try Atlas database
+  try {
+    const atlasAttrs = await getAtlasAttributes(mpn);
+    if (atlasAttrs) return atlasAttrs;
+  } catch {
+    console.warn('Atlas attribute lookup failed for', mpn);
   }
 
   return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
@@ -218,79 +251,115 @@ export async function getRecommendations(
     }
   }
 
-  // Step 3: Try to get candidates from Digikey
-  if (isDigikeyConfigured()) {
-    try {
-      console.time('[perf] fetchDigikeyCandidates');
-      const candidates = await fetchDigikeyCandidates(sourceAttrs, currency);
-      console.timeEnd('[perf] fetchDigikeyCandidates');
-      console.log(`[perf] candidates found: ${candidates.length}`);
-      if (candidates.length > 0) {
-        console.time('[perf] findReplacements (scoring)');
-        let recs = findReplacements(effectiveTable, sourceAttrs, candidates, preferredManufacturers);
-        console.timeEnd('[perf] findReplacements (scoring)');
-
-        // Step 3b: Post-scoring filter for C2 switching regulators —
-        // topology and architecture are BLOCKING identity gates. Remove any
-        // candidate with a confirmed mismatch so they never appear in results.
-        if (familyId === 'C2') {
-          recs = filterSwitchingRegulatorMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3c: Post-scoring filter for C4 op-amps/comparators —
-        // device_type (op-amp vs comparator) is a BLOCKING identity gate.
-        if (familyId === 'C4') {
-          recs = filterOpampComparatorMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3d: Post-scoring filter for C5 logic ICs —
-        // logic_function (part number suffix) is a BLOCKING identity gate.
-        // '04 ≠ '14 even though both are inverters.
-        if (familyId === 'C5') {
-          recs = filterLogicICFunctionMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3e: Post-scoring filter for C6 voltage references —
-        // configuration (series vs shunt) is a BLOCKING identity gate.
-        // Series and shunt are architecturally incompatible topologies.
-        if (familyId === 'C6') {
-          recs = filterVoltageReferenceConfigMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3f: Post-scoring filter for C7 interface ICs —
-        // protocol (RS-485/CAN/I2C/USB) is a BLOCKING identity gate.
-        // No cross-protocol substitution is possible without circuit redesign.
-        if (familyId === 'C7') {
-          recs = filterInterfaceICProtocolMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3g: Post-scoring filter for C8 timers/oscillators —
-        // device_category (555/XO/MEMS/TCXO/VCXO/OCXO) is a BLOCKING identity gate.
-        // Exception: XO↔MEMS cross-substitution is permitted with review flag.
-        if (familyId === 'C8') {
-          recs = filterTimerOscillatorCategoryMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3h: Post-scoring filter for C9 ADCs —
-        // architecture (SAR/Delta-Sigma/Pipeline/Flash) is a BLOCKING identity gate.
-        // Cross-architecture candidates are removed before ranking. No exceptions.
-        if (familyId === 'C9') {
-          recs = filterAdcArchitectureMismatches(recs, sourceAttrs);
-        }
-
-        // Step 3i: Post-scoring filter for C10 DACs —
-        // output_type (Voltage Output/Current Output) is a BLOCKING identity gate.
-        // Cross-type candidates are removed before ranking. No exceptions.
-        if (familyId === 'C10') {
-          recs = filterDacOutputTypeMismatches(recs, sourceAttrs);
-        }
-
-        console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
-        return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: 'digikey' };
+  // Step 3: Fetch candidates from Digikey + Atlas in parallel
+  console.time('[perf] fetchCandidates');
+  const [digikeyCandidates, atlasCandidates] = await Promise.all([
+    (async () => {
+      if (!isDigikeyConfigured()) return [];
+      try {
+        return await fetchDigikeyCandidates(sourceAttrs, currency);
+      } catch (error) {
+        console.warn('Digikey candidate search failed:', error);
+        return [];
       }
-    } catch (error) {
-      console.warn('Digikey candidate search failed, falling back to mock:', error);
+    })(),
+    fetchAtlasCandidates(familyId).catch((error) => {
+      console.warn('Atlas candidate fetch failed:', error);
+      return [] as PartAttributes[];
+    }),
+  ]);
+  console.timeEnd('[perf] fetchCandidates');
+
+  // Merge candidates, deduplicate by MPN (prefer Digikey for richer data)
+  const seenMpns = new Set<string>();
+  const allCandidates: PartAttributes[] = [];
+  for (const c of digikeyCandidates) {
+    const key = c.part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      allCandidates.push(c);
     }
+  }
+  for (const c of atlasCandidates) {
+    const key = c.part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      allCandidates.push(c);
+    }
+  }
+  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas = ${allCandidates.length} total`);
+
+  if (allCandidates.length > 0) {
+    console.time('[perf] findReplacements (scoring)');
+    let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, preferredManufacturers);
+    console.timeEnd('[perf] findReplacements (scoring)');
+
+    // Propagate dataSource from candidate to recommendation
+    recs = recs.map(rec => ({
+      ...rec,
+      dataSource: allCandidates.find(c => c.part.mpn === rec.part.mpn)?.dataSource,
+    }));
+
+    // Step 3b: Post-scoring filter for C2 switching regulators —
+    // topology and architecture are BLOCKING identity gates. Remove any
+    // candidate with a confirmed mismatch so they never appear in results.
+    if (familyId === 'C2') {
+      recs = filterSwitchingRegulatorMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3c: Post-scoring filter for C4 op-amps/comparators —
+    // device_type (op-amp vs comparator) is a BLOCKING identity gate.
+    if (familyId === 'C4') {
+      recs = filterOpampComparatorMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3d: Post-scoring filter for C5 logic ICs —
+    // logic_function (part number suffix) is a BLOCKING identity gate.
+    // '04 ≠ '14 even though both are inverters.
+    if (familyId === 'C5') {
+      recs = filterLogicICFunctionMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3e: Post-scoring filter for C6 voltage references —
+    // configuration (series vs shunt) is a BLOCKING identity gate.
+    // Series and shunt are architecturally incompatible topologies.
+    if (familyId === 'C6') {
+      recs = filterVoltageReferenceConfigMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3f: Post-scoring filter for C7 interface ICs —
+    // protocol (RS-485/CAN/I2C/USB) is a BLOCKING identity gate.
+    // No cross-protocol substitution is possible without circuit redesign.
+    if (familyId === 'C7') {
+      recs = filterInterfaceICProtocolMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3g: Post-scoring filter for C8 timers/oscillators —
+    // device_category (555/XO/MEMS/TCXO/VCXO/OCXO) is a BLOCKING identity gate.
+    // Exception: XO↔MEMS cross-substitution is permitted with review flag.
+    if (familyId === 'C8') {
+      recs = filterTimerOscillatorCategoryMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3h: Post-scoring filter for C9 ADCs —
+    // architecture (SAR/Delta-Sigma/Pipeline/Flash) is a BLOCKING identity gate.
+    // Cross-architecture candidates are removed before ranking. No exceptions.
+    if (familyId === 'C9') {
+      recs = filterAdcArchitectureMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3i: Post-scoring filter for C10 DACs —
+    // output_type (Voltage Output/Current Output) is a BLOCKING identity gate.
+    // Cross-type candidates are removed before ranking. No exceptions.
+    if (familyId === 'C10') {
+      recs = filterDacOutputTypeMismatches(recs, sourceAttrs);
+    }
+
+    // Determine primary dataSource for the result set
+    const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : dataSource);
+
+    console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
+    return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
   }
 
   // Step 4: Fall back to mock candidates + matching engine

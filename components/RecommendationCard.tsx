@@ -1,5 +1,5 @@
 'use client';
-import { Card, CardActionArea, CardContent, Chip, Divider, Typography, Stack, Box } from '@mui/material';
+import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, Stack, Box } from '@mui/material';
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
@@ -15,7 +15,7 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
-  const { part, matchDetails } = recommendation;
+  const { part, matchDetails, dataSource } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
@@ -87,6 +87,11 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 ) : (
                   part.manufacturer
                 )}
+                {dataSource === 'atlas' && (
+                  <Tooltip title="Atlas — Chinese manufacturer" arrow>
+                    <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                  </Tooltip>
+                )}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap component="div">
                 {part.description}
@@ -101,41 +106,30 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   </Box>
                 )}
               </Typography>
-              {showCommercial && (
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
-                    {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', opacity: 0.5 }}>·</Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
-                    {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
-                  </Typography>
-                </Stack>
+              {showCommercial && (part.unitPrice != null || part.quantityAvailable != null) && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }} noWrap>
+                  Digikey: {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'} · {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
+                </Typography>
               )}
               {showSummary && (
                 <>
                   <Divider sx={{ my: 1, opacity: 0.4 }} />
-                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.25 }}>
+                  <Typography variant="caption" sx={{ fontSize: '0.72rem' }} component="div">
+                    <Box component="span" sx={{ color: 'text.secondary' }}>Replacement attributes: </Box>
                     {failCount > 0 && (
-                      <Stack direction="row" alignItems="center" spacing={0.4}>
-                        <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: '#FF5252', flexShrink: 0 }} />
-                        <Typography variant="caption" sx={{ fontSize: '0.72rem', color: '#FF5252' }}>
-                          {failCount} failing
-                        </Typography>
-                      </Stack>
+                      <Box component="span" sx={{ color: '#FF5252' }}>
+                        {failCount} failed
+                      </Box>
                     )}
                     {failCount > 0 && reviewCount > 0 && (
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', opacity: 0.5 }}>·</Typography>
+                      <Box component="span" sx={{ color: 'text.secondary' }}> · </Box>
                     )}
                     {reviewCount > 0 && (
-                      <Stack direction="row" alignItems="center" spacing={0.4}>
-                        <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: '#FFD54F', flexShrink: 0 }} />
-                        <Typography variant="caption" sx={{ fontSize: '0.72rem', color: '#FFD54F' }}>
-                          {reviewCount} needs review
-                        </Typography>
-                      </Stack>
+                      <Box component="span" sx={{ color: '#FFD54F' }}>
+                        {reviewCount} need review
+                      </Box>
                     )}
-                  </Stack>
+                  </Typography>
                 </>
               )}
             </Box>

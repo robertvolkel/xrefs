@@ -256,6 +256,8 @@
     "dataSources": "Data Sources",
     "paramMappings": "Parameter Mappings",
     "logicRules": "Cross-Reference Logic",
+    "atlas": "Atlas",
+    "atlasDesc": "Chinese manufacturer product catalog.",
     "contextQuestions": "Application Context",
     "configured": "Configured",
     "notConfigured": "Not Configured",

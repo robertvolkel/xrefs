@@ -355,22 +355,29 @@ Apply preferred/excluded manufacturer filters to candidate search results. Optio
 ---
 
 ### Phase 6: Chinese Manufacturer Highlighting
-**Status:** Not started
+**Status:** Done (Decision #66)
 **Priority:** P2
 
-Add manufacturer→country resolution and display a subtle icon/badge on Chinese manufacturer options in `RecommendationCard` and `PartsListTable`. Non-intrusive — icon only, no ranking changes.
+Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. Tooltip "Atlas — Chinese manufacturer". Non-promotional, informative only.
 
-**Key files:** `components/RecommendationCard.tsx`, `components/parts-list/PartsListTable.tsx`, `lib/mockManufacturerData.ts`
+**Remaining:** Add same badge to `PartsListTable` "Top Suggestion" column for Atlas-sourced recommendations.
 
 ---
 
 ### Phase 7: Atlas Integration & Manufacturer Profile API
-**Status:** Not started
+**Status:** Partially done (Decisions #66, #67)
 **Priority:** P2
 
-Build Atlas API client + mapper. Replace static `mockManufacturerData.ts` with API-fed profiles from Atlas. Extend `ManufacturerProfile` with Chinese-manufacturer-specific fields (verification, factory audit, export compliance). Integrate Atlas products as candidate source.
+Atlas product database integrated: 99 manufacturers, 27,030 products ingested into Supabase `atlas_products` table. Parallel search + candidate fetch working. Admin panel for ingestion monitoring built. Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67) — average mapped params went from 0.5–2 to 3–9 per product.
 
-**Key files:** `lib/services/atlasClient.ts` (new), `lib/services/atlasMapper.ts` (new), `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`
+**Remaining:**
+- Manufacturer profile API (company profiles, verification, factory audit, export compliance)
+- Replace `mockManufacturerData.ts` with Atlas-fed profiles
+- ManufacturerProfilePanel enrichment with Atlas company data
+- Further reduce unmapped param warnings (~40K remaining, mostly manufacturer-specific naming variants)
+- Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
+
+**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `scripts/atlas-ingest.mjs`
 
 ---
 

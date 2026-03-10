@@ -1456,5 +1456,145 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 
 **ApplicationContextForm:** Accepts optional `initialAnswers` prop. Auto-answered questions are hidden but their answers seed the form state, so conditional Q2-Q4 questions that depend on Q1's value display correctly. On submit, auto-answers are merged with user answers.
 
+**Bugfix (2026-03-08):** The auto-answer mechanism wasn't working for C8 because both `timer555ParamMap` and `oscillatorParamMap` in `digikeyParamMap.ts` mapped the Digikey `"Type"` field → `device_category`. The param map runs first during `mapDigikeyProductToAttributes()`, adding `device_category` to `addedIds` with the raw Digikey value (e.g., `"555 Type, Timer/Oscillator (Single)"`). The smart enrichment code in `digikeyMapper.ts` then skipped because `addedIds.has('device_category')` was already true, so the normalized value (`"555 Timer"`) that `deriveAutoAnswers()` expects was never set. Affected: 555 timers, XO (`"XO (Standard)"` ≠ `"XO"`), MEMS (Base Resonator check never ran). TCXO/VCXO/OCXO coincidentally matched. Fix: removed the `'Type'` → `device_category` entries from both param maps so the enrichment code runs and sets normalized values.
+
 **Files created:** `lib/contextQuestions/autoAnswer.ts`
-**Files modified:** `lib/types.ts` (initialAnswers on InteractiveElement), `hooks/useAppState.ts` (3 trigger points), `components/ApplicationContextForm.tsx` (initialAnswers prop), `components/MessageBubble.tsx` (pass-through)
+**Files modified:** `lib/types.ts` (initialAnswers on InteractiveElement), `hooks/useAppState.ts` (3 trigger points), `components/ApplicationContextForm.tsx` (initialAnswers prop), `components/MessageBubble.tsx` (pass-through), `lib/services/digikeyParamMap.ts` (removed Type→device_category from timer555ParamMap and oscillatorParamMap)
+
+---
+
+### 63. Recommendation Card Cosmetic Improvements
+
+**Date:** 2026-03-08
+**Status:** Implemented
+
+**Changes to `RecommendationCard.tsx`:**
+
+1. **Price/stock line — source label and font size:** Changed from small `caption` (0.72rem) to `body2` to match the manufacturer name font size. Added "Digikey:" prefix to indicate the data source (future-proofing for multi-supplier pricing). Format: `"Digikey: $0.73 · 6,458 in stock"`. Only renders when at least one of price/stock is available.
+
+2. **Fail/review summary — wording and layout:** Changed from dot-prefixed separate items (`"● 1 failing · ● 3 needs review"`) to inline text with label prefix: `"Replacement attributes: 1 failed · 2 need review"`. "failed" in red (#FF5252), "need review" in yellow (#FFD54F). Corrected tenses: "failing" → "failed", "needs" → "need".
+
+**Files modified:** `components/RecommendationCard.tsx`
+
+---
+
+### 64. Cross-List Column Remapping for Custom Views
+
+**Date:** 2026-03-08
+**Status:** Implemented
+
+**Problem:** Views are global (localStorage, shared across all parts lists). Custom views store spreadsheet columns as index-based IDs (`ss:3`). When a different list is loaded, `ss:3` might reference a completely different column — "Quantity" in List A but "Notes" in List B. Non-`ss:*` columns (`dk:*`, `dkp:*`, `sys:*`, `mapped:*`) are unaffected because they resolve by semantic key.
+
+**Solution:** Store header text alongside each `ss:N` column at save time via `columnMeta` on `SavedView`. At render time, verify the header still matches and remap by header text if it doesn't.
+
+- `SavedView.columnMeta?: Record<string, string>` — e.g., `{ 'ss:3': 'Quantity' }`
+- `remapSpreadsheetColumns()` pure function in `viewConfigStorage.ts` — matches by header text (case-insensitive), first occurrence wins for duplicate headers, drops columns with no match
+- Backward compatible — old views without `columnMeta` skip remapping entirely; metadata is populated on next save
+
+**Files modified:** `lib/viewConfigStorage.ts` (type + remap function), `hooks/useViewConfig.ts` (createView/updateView/duplicateView signatures), `components/parts-list/PartsListShell.tsx` (build meta on save, call remap on render)
+
+---
+
+### 65. Preferred Alternate Selection for Parts List Rows
+
+**Date:** 2026-03-09
+**Status:** Implemented
+
+**Problem:** After the matching engine generates recommendations for a BOM part, the top suggestion is always auto-selected by highest match score. Users had no way to mark which alternate they actually prefer. The only mechanism to change the top suggestion was the heavyweight "Use this Replacement" flow (click card → comparison view → confirm button → modal closes). No visual distinction existed between "engine auto-picked this" and "user deliberately chose this", and re-validation always reset to `recs[0]`.
+
+**Solution:** Added a `preferredMpn` field to `PartsListRow` that tracks the user's explicit choice. A star icon on each recommendation card in the parts list modal allows one-click marking. The preferred rec floats to the top everywhere (modal list, table top suggestion, sub-rows), its price drives BOM cost display, and the choice persists across reloads and re-validations.
+
+**Key Design Decisions:**
+
+1. **`preferredMpn: string` (not full `XrefRecommendation`):** Lightweight MPN string is safe to persist. After re-validation, the full `XrefRecommendation` may have updated `matchDetails` or pricing — storing the MPN lets us look it up from fresh results.
+2. **Star icon uses `Box component="span"` (not `IconButton`):** Avoids nested `<button>` hydration error inside MUI `CardActionArea` (which renders a `<button>`). Same pattern used for the datasheet PDF icon.
+3. **"Use this Replacement" also sets `preferredMpn`:** The comparison-flow confirmation button is functionally equivalent to starring — both result in the rec becoming preferred. Ensures consistent state regardless of which path the user takes.
+4. **Re-validation preserves `preferredMpn`:** When rows are reset for refresh, `preferredMpn` is deliberately not cleared. When streaming results arrive, if the preferred MPN still appears in new recommendations, it remains the `suggestedReplacement`. If the MPN is no longer in results (part went obsolete, etc.), `preferredMpn` is cleared gracefully — the star disappears and the system reverts to auto-selection by score.
+5. **Sub-rows exclude preferred MPN:** `getSubSuggestions()` filters out the preferred rec so it doesn't appear both as the top suggestion and as a sub-row duplicate.
+6. **No Supabase schema change:** `preferredMpn` is persisted as part of the existing JSONB `rows` column in `parts_lists`. Backward compatible — old rows without the field default to `undefined`.
+
+**UI Details:**
+- **Modal:** Yellow star (`StarIcon`) when preferred, outline star (`StarOutlineIcon`) when not. Positioned at far right of MPN row with `ml: 'auto'`. Click toggles: non-preferred → preferred, already-preferred → clears preference (reverts to auto-select by score).
+- **Table:** Small (12px) filled yellow star after the MPN in the "Top Suggestion" column, with tooltip "Preferred alternate", only when `row.preferredMpn === topRec.part.mpn`. Auto-selected rows show no star.
+- **Sort order:** Preferred rec floats to position 0 in `RecommendationsPanel`; remaining recs sorted by `matchPercentage` descending.
+
+**Files modified:** `lib/types.ts` (preferredMpn on PartsListRow), `lib/partsListStorage.ts` (preferredMpn on StoredRow), `lib/supabasePartsListStorage.ts` (persist/restore + sub-row derivation fix), `hooks/usePartsListState.ts` (new handleSetPreferred + 4 handler modifications), `components/RecommendationCard.tsx` (star icon), `components/RecommendationsPanel.tsx` (sort + star props), `components/parts-list/PartDetailModal.tsx` (thread props), `components/parts-list/PartsListShell.tsx` (wire handler), `components/parts-list/PartsListTable.tsx` (star indicator + getSubSuggestions fix)
+
+---
+
+### 66. Atlas Integration — Chinese Manufacturer Product Database
+
+**Date:** 2026-03-09
+**Status:** Implemented
+
+**Problem:** The cross-reference engine only sourced candidates from Digikey, limiting coverage to western-distributed parts. Chinese manufacturers produce competitive alternatives (especially in passives, discretes, and standard ICs) but had no representation in search results or recommendations.
+
+**Solution:** Built a full Atlas integration pipeline: JSON ingestion → Supabase storage → parallel search/candidate fetch → scoring by the same matching engine → UI badge on recommendation cards.
+
+**Key Design Decisions:**
+
+1. **Supabase `atlas_products` table:** Stores all Atlas products with `parameters` as JSONB (same schema approach as recommendation logger). Fields: `id`, `mpn`, `manufacturer`, `description`, `category`, `subcategory`, `family_id`, `status`, `datasheet_url`, `package`, `parameters`, `manufacturer_country`, `updated_at`. Composite unique constraint on `(mpn, manufacturer)` for upsert dedup.
+
+2. **`atlasMapper.ts` — `fromParametersJsonb()`:** Converts raw Atlas JSON parameter objects into the internal `ParametricAttribute[]` format. This is the same format Digikey data gets normalized to, so the matching engine scores Atlas and Digikey candidates identically.
+
+3. **Parallel search and candidate fetch:** `searchParts()` runs Digikey + Atlas in parallel via `Promise.all()`, merges with MPN-based dedup (Digikey preferred when both have the same MPN). `getRecommendations()` does the same for candidate fetching — `fetchDigikeyCandidates()` and `fetchAtlasCandidates(familyId)` run in parallel.
+
+4. **Attribute fallback chain:** Digikey product details → Digikey keyword search → Atlas → Mock. Atlas is the third-priority source, used when Digikey doesn't carry the part.
+
+5. **Family classification at ingestion time:** The ingestion script maps each product's `subcategory` to a `family_id` using `mapSubcategoryToFamilyId()` from `lib/logicTables/index.ts`. Products without a matching family get `family_id = null` (search-only, not scorable).
+
+6. **`dataSource` field on `XrefRecommendation`:** `'digikey' | 'atlas' | 'mock'` — propagated from candidate to recommendation after scoring via MPN lookup. Used for UI badge display.
+
+7. **Atlas badge — subtle globe icon:** A small `PublicOutlinedIcon` (13px, `text.disabled` color) appears after the manufacturer name on recommendation cards when `dataSource === 'atlas'`. Tooltip reads "Atlas — Chinese manufacturer". Non-promotional, informative only — per product direction guidelines.
+
+8. **Admin Atlas panel:** New admin section showing manufacturer ingestion status. Summary stats (total products, scorable, families covered) + expandable table with per-manufacturer breakdown. Family chips have tooltips showing family names. Pagination uses PAGE_SIZE=1000 to work within Supabase's server-side row limit.
+
+9. **Ingestion script (`scripts/atlas-ingest.mjs`):** Reads Atlas JSON files, maps fields, upserts into Supabase. Handles multiple files via glob pattern. Reports per-file stats (inserted, skipped, errors) and totals.
+
+**Coverage:** 99 manufacturers, 26,516 products, 17,920 scorable (67.6%). Families covered: 12, 52, 58-60, 64-66, 69-71 (passives), B1-B8 (discretes), C1-C10 (ICs).
+
+**Files created:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `scripts/atlas-ingest.mjs`, `scripts/supabase-atlas-schema.sql`, `app/api/admin/atlas/route.ts`, `components/admin/AtlasPanel.tsx`
+
+**Files modified:** `lib/types.ts` (dataSource on XrefRecommendation + PartAttributes), `lib/services/partDataService.ts` (parallel Atlas search + candidates + fallback), `components/RecommendationCard.tsx` (Atlas globe badge), `components/admin/AdminSectionNav.tsx` (atlas section), `components/admin/AdminShell.tsx` (AtlasPanel render), `locales/{en,de,zh-CN}/translation.json` (i18n keys)
+
+---
+
+### 67. Atlas Parameter Translation Dictionaries — All 28 Families
+
+**Date:** 2026-03-09
+**Status:** Implemented
+
+**Problem:** Atlas products (27K from 99 Chinese manufacturers) had shallow parameter mapping — only 4 families (C6, C1, C2, C9) had dedicated Chinese→English translation dictionaries. The other 24 families only mapped `package_case` + `operating_temp` via the shared dictionary, averaging 0.5–2 mapped params per product. This severely limited scoring depth for Atlas candidates.
+
+**Solution:** Added per-family translation dictionaries for all remaining 24 families (11 passives, 7 discrete semiconductors, 6 ICs), expanded global `skipParams` with ~20 metadata fields, and fixed a Unicode case-sensitivity bug.
+
+**Key Design Decisions:**
+
+1. **Dictionary architecture:** Each family gets an entry in `atlasParamDictionaries` (keyed by family ID). Keys are lowercased Atlas param names (Chinese or English). Values are `{ attributeId, attributeName, unit?, sortOrder }`. The `_` prefix convention marks internal-only attributes stored but not returned as ParametricAttribute.
+
+2. **Dual code paths:** `atlasMapper.ts` (TypeScript) is the runtime mapper; `atlas-ingest.mjs` (JavaScript) mirrors dictionaries inline in `FAMILY_PARAMS` (can't import TS). Both must stay synchronized manually.
+
+3. **Expanded `skipParams`:** Added ~20 metadata fields that appear across families but aren't parametric: `商品目录`, `系列`, `系列名称`, `等级`, `特性`, `应用领域`, `封装技术`, `产品状态`, `描述`, `class`, `印字类型`, `无卤`, `product status`, `mounting style`, `package type`, `rating`, etc. Reduces unmapped warnings without per-family `_catalog` entries.
+
+4. **Ω→ω Unicode bug fix:** JavaScript's `toLowerCase()` converts Greek capital omega (Ω, U+03A9) to lowercase omega (ω, U+03C9). Dictionary keys with `mΩ` (milliohm) failed lookup after lowercasing. Fixed by adding duplicate entries with `mω` for all affected keys (B5 Rds(on), B7 thermal resistance, inductor DCR).
+
+5. **Mixed language handling:** B5 MOSFETs have the most diverse param names — some manufacturers use English (`Polarity`, `BVDSS`, `RDS(on)`), others Chinese (`极性`, `击穿电压`, `不同 id，vgs时的 rdson`), and some have typos (`tech nology` with space, `qg*  (nc)` with asterisk). Added ~55 entries to cover all variants.
+
+6. **Family coverage by product count (top 10):**
+
+| Family | Products | Avg Params Mapped |
+|--------|----------|-------------------|
+| B5 MOSFETs | 3,337 | 6.4 |
+| 71 Fixed Inductors | 2,474 | 5.6 |
+| B1 Rectifier Diodes | 2,171 | 5.2 |
+| B4 TVS Diodes | 1,810 | 6.1 |
+| 58 Al Electrolytic | 758 | 8.7 |
+| B3 Zener Diodes | 739 | 4.1 |
+| B7 IGBTs | 634 | 5.9 |
+| C4 Op-Amps | 595 | 3.3 |
+| 12 MLCC | 594 | 6.0 |
+| 52 Chip Resistors | 528 | 6.5 |
+
+**Results:** 27,030 products re-ingested with 0 errors. Average mapped params went from 0.5–2 (shared dictionary only) to 3–9 per product for most families. Unmapped warnings reduced by ~28% after Ω→ω fix and additional variant entries.
+
+**Files modified:** `lib/services/atlasMapper.ts` (24 new family dictionaries + expanded skipParams + Ω→ω fix), `scripts/atlas-ingest.mjs` (mirrored all dictionary changes in FAMILY_PARAMS)

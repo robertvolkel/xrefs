@@ -19,6 +19,9 @@ export interface SavedView {
   description?: string;
   /** Per-list hidden row indices: { [listId]: number[] } */
   hiddenRows?: Record<string, number[]>;
+  /** Maps ss:N column IDs → header text at creation time.
+   *  Used to remap columns when a view is applied to a different list. */
+  columnMeta?: Record<string, string>;
 }
 
 export interface ViewState {
@@ -113,4 +116,50 @@ export function saveViewState(state: ViewState): void {
 
 export function isBuiltinView(viewId: string): boolean {
   return (BUILTIN_VIEW_IDS as readonly string[]).includes(viewId);
+}
+
+// ============================================================
+// CROSS-LIST COLUMN REMAPPING
+// ============================================================
+
+/**
+ * Remap ss:* column IDs using stored header metadata.
+ * When a view is applied to a list with different column order,
+ * this finds columns by header text instead of raw index.
+ */
+export function remapSpreadsheetColumns(
+  cols: string[],
+  columnMeta: Record<string, string> | undefined,
+  effectiveHeaders: string[],
+): string[] {
+  if (!columnMeta || effectiveHeaders.length === 0) return cols;
+
+  const headerToIndex = new Map<string, number>();
+  effectiveHeaders.forEach((h, i) => {
+    const lower = h.toLowerCase();
+    if (!headerToIndex.has(lower)) {
+      headerToIndex.set(lower, i);
+    }
+  });
+
+  return cols.flatMap(colId => {
+    if (!colId.startsWith('ss:')) return [colId];
+    const storedHeader = columnMeta[colId];
+    if (!storedHeader) return [colId]; // No meta for this column, keep as-is
+
+    const idx = parseInt(colId.slice(3), 10);
+    const currentHeader = effectiveHeaders[idx];
+
+    // Header at index N still matches — keep ss:N
+    if (currentHeader && currentHeader.toLowerCase() === storedHeader.toLowerCase()) {
+      return [colId];
+    }
+
+    // Header mismatch — find the column by header text
+    const remappedIdx = headerToIndex.get(storedHeader.toLowerCase());
+    if (remappedIdx !== undefined) return [`ss:${remappedIdx}`];
+
+    // Column doesn't exist in this list — drop it
+    return [];
+  });
 }

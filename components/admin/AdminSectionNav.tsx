@@ -6,9 +6,10 @@ import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
+import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy';
+export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
@@ -16,6 +17,7 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
   { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
+  { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlas' },
 ];
 
 interface AdminSectionNavProps {

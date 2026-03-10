@@ -3670,11 +3670,10 @@ const interfaceDigitalIsolatorParamMap: Record<string, ParamMapEntry> = {
  * ~20% weight coverage — most 555-specific specs are datasheet-only.
  */
 const timer555ParamMap: Record<string, ParamMapEntry> = {
-  'Type': {
-    attributeId: 'device_category',
-    attributeName: 'Device Category / Stability Class',
-    sortOrder: 1,
-  },
+  // NOTE: 'Type' is NOT mapped here — device_category is enriched from the
+  // Digikey category name in digikeyMapper.ts (normalized to '555 Timer').
+  // Mapping raw 'Type' values (e.g., '555 Type, Timer/Oscillator (Single)')
+  // would preempt the enrichment and break auto-answer disambiguation.
   'Voltage - Supply': {
     attributeId: 'supply_voltage_range',
     attributeName: 'Supply Voltage Range',
@@ -3713,11 +3712,10 @@ const timer555ParamMap: Record<string, ParamMapEntry> = {
  * OE polarity (Function field says "Enable/Disable" but not polarity direction).
  */
 const oscillatorParamMap: Record<string, ParamMapEntry> = {
-  'Type': {
-    attributeId: 'device_category',
-    attributeName: 'Device Category / Stability Class',
-    sortOrder: 1,
-  },
+  // NOTE: 'Type' is NOT mapped here — device_category is enriched from
+  // Type + Base Resonator in digikeyMapper.ts (normalized to XO/MEMS/TCXO/etc).
+  // Mapping raw 'Type' values (e.g., 'XO (Standard)') would preempt the
+  // enrichment and break auto-answer disambiguation + MEMS detection.
   'Frequency': {
     attributeId: 'output_frequency_hz',
     attributeName: 'Output Frequency',

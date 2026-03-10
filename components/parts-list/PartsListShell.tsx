@@ -25,6 +25,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
+import { remapSpreadsheetColumns } from '@/lib/viewConfigStorage';
 import PartsListHeader from './PartsListHeader';
 import PartsListActionBar from './PartsListActionBar';
 import ViewControls from './ViewControls';
@@ -103,6 +104,9 @@ export default function PartsListShell() {
     } else {
       cols = activeView.columns;
     }
+
+    // Remap ss:* columns using stored header metadata (cross-list portability)
+    cols = remapSpreadsheetColumns(cols, activeView.columnMeta, effectiveHeaders);
 
     if (inferredMapping) {
       cols = cols
@@ -276,10 +280,22 @@ export default function PartsListShell() {
         initialView={pickerMode === 'edit' ? { ...activeView, columns: resolvedViewColumns } : undefined}
         isBuiltinView={pickerMode === 'edit' && activeView.id === 'raw'}
         onSave={(name, columns, description) => {
-          if (pickerMode === 'create') createView(name, columns, description);
+          // Build columnMeta: map each ss:N to its current header text
+          const meta: Record<string, string> = {};
+          for (const colId of columns) {
+            if (colId.startsWith('ss:')) {
+              const idx = parseInt(colId.slice(3), 10);
+              if (idx >= 0 && idx < effectiveHeaders.length) {
+                meta[colId] = effectiveHeaders[idx];
+              }
+            }
+          }
+          const columnMeta = Object.keys(meta).length > 0 ? meta : undefined;
+
+          if (pickerMode === 'create') createView(name, columns, description, columnMeta);
           else {
             const newName = activeView.id !== 'raw' ? name : undefined;
-            updateView(activeView.id, columns, newName, description);
+            updateView(activeView.id, columns, newName, description, columnMeta);
           }
           setPickerOpen(false);
         }}
