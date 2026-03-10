@@ -17,9 +17,9 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
-  { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
-  { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlas' },
+  { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlasProducts' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
+  { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
 ];
 
 interface AdminSectionNavProps {

@@ -22,12 +22,12 @@ export async function GET() {
 
     // Per-manufacturer stats — paginate to get all rows (Supabase default limit is 1000)
     const PAGE_SIZE = 1000;
-    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }[] = [];
+    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string; parameters: Record<string, unknown> | null }[] = [];
     let offset = 0;
     while (true) {
       const { data: page } = await supabase
         .from('atlas_products')
-        .select('manufacturer, family_id, category, subcategory, updated_at')
+        .select('manufacturer, family_id, category, subcategory, updated_at, parameters')
         .range(offset, offset + PAGE_SIZE - 1);
       if (!page || page.length === 0) break;
       rows.push(...page);
@@ -99,18 +99,75 @@ export async function GET() {
       }
     }
 
+    // ── Coverage calculation ───────────────────────────────
+    // Pre-build per-family rule attributeId sets
+    const familyRuleAttrs = new Map<string, Set<string>>();
+    for (const fid of allFamilies) {
+      const table = getLogicTable(fid);
+      if (table) {
+        familyRuleAttrs.set(fid, new Set(table.rules.map(r => r.attributeId)));
+      }
+    }
+
+    // Accumulate coverage using the already-mapped `parameters` JSONB column
+    // (keys are attributeIds, so we just intersect with rule attributeIds)
+    const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
+    const fbCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
+
+    for (const row of rows) {
+      if (!row.family_id || !row.parameters) continue;
+
+      const ruleAttrs = familyRuleAttrs.get(row.family_id);
+      if (!ruleAttrs || ruleAttrs.size === 0) continue;
+
+      const productAttrs = Object.keys(row.parameters);
+      let covered = 0;
+      for (const attr of productAttrs) {
+        if (ruleAttrs.has(attr)) covered++;
+      }
+      const total = ruleAttrs.size;
+
+      // Per-manufacturer
+      let mc = mfrCoverage.get(row.manufacturer);
+      if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(row.manufacturer, mc); }
+      mc.totalCovered += covered;
+      mc.totalRules += total;
+
+      // Per-manufacturer-family
+      const fbKey = `${row.manufacturer}::${row.family_id}`;
+      let fc = fbCoverage.get(fbKey);
+      if (!fc) { fc = { totalCovered: 0, totalRules: 0 }; fbCoverage.set(fbKey, fc); }
+      fc.totalCovered += covered;
+      fc.totalRules += total;
+    }
+
     const manufacturers = [...mfrMap.entries()]
-      .map(([name, m]) => ({
-        manufacturer: name,
-        productCount: m.productCount,
-        scorableCount: m.scorableCount,
-        families: [...m.families].sort(),
-        categories: [...m.categories].sort(),
-        lastUpdated: m.lastUpdated,
-      }))
+      .map(([name, m]) => {
+        const cov = mfrCoverage.get(name);
+        return {
+          manufacturer: name,
+          productCount: m.productCount,
+          scorableCount: m.scorableCount,
+          families: [...m.families].sort(),
+          categories: [...m.categories].sort(),
+          lastUpdated: m.lastUpdated,
+          coveragePct: cov && cov.totalRules > 0
+            ? Math.round((cov.totalCovered / cov.totalRules) * 100)
+            : 0,
+        };
+      })
       .sort((a, b) => b.productCount - a.productCount);
 
     const familyBreakdown = [...familyBreakdownMap.values()]
+      .map(fb => {
+        const cov = fbCoverage.get(`${fb.manufacturer}::${fb.familyId}`);
+        return {
+          ...fb,
+          coveragePct: cov && cov.totalRules > 0
+            ? Math.round((cov.totalCovered / cov.totalRules) * 100)
+            : 0,
+        };
+      })
       .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer) || a.familyId.localeCompare(b.familyId));
 
     // Build family ID → name map for tooltip display

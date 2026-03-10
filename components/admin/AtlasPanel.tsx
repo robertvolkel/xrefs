@@ -18,6 +18,7 @@ import {
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { useTranslation } from 'react-i18next';
+import AtlasCoverageDrawer from './AtlasCoverageDrawer';
 
 interface AtlasStats {
   summary: {
@@ -35,6 +36,7 @@ interface AtlasStats {
     families: string[];
     categories: string[];
     lastUpdated: string;
+    coveragePct: number;
   }[];
   familyBreakdown: {
     manufacturer: string;
@@ -42,6 +44,7 @@ interface AtlasStats {
     category: string;
     subcategory: string;
     count: number;
+    coveragePct: number;
   }[];
   familyNames: Record<string, string>;
 }
@@ -50,10 +53,12 @@ function MfrRow({
   row,
   breakdown,
   familyNames,
+  onFamilyClick,
 }: {
   row: AtlasStats['manufacturers'][number];
   breakdown: AtlasStats['familyBreakdown'];
   familyNames: Record<string, string>;
+  onFamilyClick: (manufacturer: string, familyId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const mfrBreakdown = breakdown.filter((b) => b.manufacturer === row.manufacturer);
@@ -83,6 +88,11 @@ function MfrRow({
         <TableCell align="right">
           <Typography variant="body2">{row.scorableCount.toLocaleString()}</Typography>
         </TableCell>
+        <TableCell align="right">
+          <Typography variant="body2" sx={{ opacity: row.coveragePct > 0 ? 1 : 0.3 }}>
+            {row.coveragePct > 0 ? `${row.coveragePct}%` : '\u2014'}
+          </Typography>
+        </TableCell>
         <TableCell>
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
             {row.families.map((f) => (
@@ -102,7 +112,7 @@ function MfrRow({
       {/* Expanded family breakdown */}
       {mfrBreakdown.length > 0 && (
         <TableRow>
-          <TableCell colSpan={6} sx={{ py: 0, px: 0 }}>
+          <TableCell colSpan={7} sx={{ py: 0, px: 0 }}>
             <Collapse in={open} timeout="auto" unmountOnExit>
               <Box sx={{ mx: 4, my: 1.5 }}>
                 <Table size="small">
@@ -112,11 +122,17 @@ function MfrRow({
                       <TableCell><Typography variant="caption" fontWeight={600}>Category</Typography></TableCell>
                       <TableCell><Typography variant="caption" fontWeight={600}>Subcategory</Typography></TableCell>
                       <TableCell align="right"><Typography variant="caption" fontWeight={600}>Products</Typography></TableCell>
+                      <TableCell align="right"><Typography variant="caption" fontWeight={600}>Coverage</Typography></TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {mfrBreakdown.map((fb) => (
-                      <TableRow key={fb.familyId}>
+                      <TableRow
+                        key={fb.familyId}
+                        hover
+                        onClick={() => onFamilyClick(fb.manufacturer, fb.familyId)}
+                        sx={{ cursor: 'pointer' }}
+                      >
                         <TableCell>
                           <Tooltip title={familyNames[fb.familyId] || fb.familyId} arrow>
                             <Chip label={fb.familyId} size="small" sx={{ height: 22, fontSize: '0.72rem' }} />
@@ -125,6 +141,11 @@ function MfrRow({
                         <TableCell><Typography variant="caption">{fb.category}</Typography></TableCell>
                         <TableCell><Typography variant="caption">{fb.subcategory}</Typography></TableCell>
                         <TableCell align="right"><Typography variant="caption">{fb.count}</Typography></TableCell>
+                        <TableCell align="right">
+                          <Typography variant="caption" sx={{ opacity: fb.coveragePct > 0 ? 1 : 0.3 }}>
+                            {fb.coveragePct > 0 ? `${fb.coveragePct}%` : '\u2014'}
+                          </Typography>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -141,6 +162,17 @@ function MfrRow({
 export default function AtlasPanel() {
   const { t } = useTranslation();
   const [data, setData] = useState<AtlasStats | null>(null);
+
+  // Coverage drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedMfr, setSelectedMfr] = useState('');
+  const [selectedFamilyId, setSelectedFamilyId] = useState('');
+
+  const handleFamilyClick = (manufacturer: string, familyId: string) => {
+    setSelectedMfr(manufacturer);
+    setSelectedFamilyId(familyId);
+    setDrawerOpen(true);
+  };
 
   useEffect(() => {
     fetch('/api/admin/atlas')
@@ -190,18 +222,28 @@ export default function AtlasPanel() {
                 <TableCell>Manufacturer</TableCell>
                 <TableCell align="right">Products</TableCell>
                 <TableCell align="right">Scorable</TableCell>
+                <TableCell align="right">Coverage</TableCell>
                 <TableCell>Families</TableCell>
                 <TableCell>Last Updated</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {data.manufacturers.map((mfr) => (
-                <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} />
+                <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} onFamilyClick={handleFamilyClick} />
               ))}
             </TableBody>
           </Table>
         </TableContainer>
       )}
+
+      {/* Coverage gap analysis drawer */}
+      <AtlasCoverageDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        manufacturer={selectedMfr}
+        familyId={selectedFamilyId}
+        familyName={data?.familyNames[selectedFamilyId] ?? selectedFamilyId}
+      />
     </Box>
   );
 }

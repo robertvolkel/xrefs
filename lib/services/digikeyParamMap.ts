@@ -4262,6 +4262,23 @@ export function getAllCategoryParamMaps(): [string, Record<string, ParamMapEntry
   return categoryParamMaps;
 }
 
+/** Get the set of attributeIds that Digikey can provide for a family. */
+export function getDigikeyAttributeIdsForFamily(familyId: string): Set<string> {
+  const categories = getDigikeyCategoriesForFamily(familyId);
+  const attrs = new Set<string>();
+  for (const cat of categories) {
+    const map = findCategoryMap(cat);
+    if (!map) continue;
+    for (const entry of Object.values(map)) {
+      const mappings = Array.isArray(entry) ? entry : [entry];
+      for (const m of mappings) {
+        attrs.add(m.attributeId);
+      }
+    }
+  }
+  return attrs;
+}
+
 /**
  * Compute the matchable weight for a family — the sum of rule weights
  * that have corresponding Digikey parameter mappings.
@@ -4270,24 +4287,11 @@ export function computeFamilyParamCoverage(
   familyId: string,
   rules: { attributeId: string; weight: number }[],
 ): { totalWeight: number; matchableWeight: number } {
-  const categories = getDigikeyCategoriesForFamily(familyId);
+  const mappedAttributeIds = getDigikeyAttributeIdsForFamily(familyId);
   const totalWeight = rules.reduce((sum, r) => sum + r.weight, 0);
 
-  if (categories.length === 0) {
+  if (mappedAttributeIds.size === 0) {
     return { totalWeight, matchableWeight: 0 };
-  }
-
-  // Collect all attributeIds that have Digikey param mappings
-  const mappedAttributeIds = new Set<string>();
-  for (const cat of categories) {
-    const map = findCategoryMap(cat);
-    if (!map) continue;
-    for (const entry of Object.values(map)) {
-      const mappings = Array.isArray(entry) ? entry : [entry];
-      for (const m of mappings) {
-        mappedAttributeIds.add(m.attributeId);
-      }
-    }
   }
 
   const matchableWeight = rules
