@@ -7,7 +7,9 @@ import {
   ListItemText,
   MenuItem,
   Select,
+  Tooltip,
 } from '@mui/material';
+import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import { useTranslation } from 'react-i18next';
 import { LogicTable } from '@/lib/types';
 
@@ -18,6 +20,8 @@ interface FamilyPickerProps {
   onCategoryChange: (category: string) => void;
   selectedFamilyId: string;
   onFamilyChange: (familyId: string) => void;
+  /** Family IDs to show with an indicator icon (e.g. families with Atlas dictionaries) */
+  indicatorFamilyIds?: Set<string>;
 }
 
 export default function FamilyPicker({
@@ -27,6 +31,7 @@ export default function FamilyPicker({
   onCategoryChange,
   selectedFamilyId,
   onFamilyChange,
+  indicatorFamilyIds,
 }: FamilyPickerProps) {
   const { t } = useTranslation();
   const filtered = tables.filter((tb) => tb.category === selectedCategory);
@@ -77,6 +82,11 @@ export default function FamilyPicker({
                 fontWeight: table.familyId === selectedFamilyId ? 600 : 400,
               }}
             />
+            {indicatorFamilyIds?.has(table.familyId) && (
+              <Tooltip title="Atlas dictionary available" arrow>
+                <TranslateOutlinedIcon sx={{ fontSize: 14, opacity: 0.5, ml: 0.5, flexShrink: 0 }} />
+              </Tooltip>
+            )}
           </ListItemButton>
         ))}
       </List>

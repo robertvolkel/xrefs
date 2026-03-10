@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
-import { invalidateDictOverrideCache } from '@/lib/services/atlasMapper';
+import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 
 /** PATCH /api/admin/atlas/dictionaries/:overrideId */
 export async function PATCH(

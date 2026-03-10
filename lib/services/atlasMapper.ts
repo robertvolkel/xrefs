@@ -1049,9 +1049,10 @@ export function getSkipParams(): Set<string> {
   return skipParams;
 }
 
-// ─── Dictionary Override Cache & Merge ────────────────────
+// ─── Dictionary Override Merge ────────────────────────────
 
-interface DictOverrideRow {
+/** Shape of a dictionary override row from Supabase. */
+export interface DictOverrideRow {
   id: string;
   family_id: string;
   param_name: string;
@@ -1060,46 +1061,6 @@ interface DictOverrideRow {
   attribute_name: string | null;
   unit: string | null;
   sort_order: number | null;
-}
-
-interface DictCacheEntry {
-  data: DictOverrideRow[];
-  fetchedAt: number;
-}
-
-const DICT_CACHE_TTL_MS = 60_000; // 1 minute
-const dictOverrideCache = new Map<string, DictCacheEntry>();
-
-/** Invalidate dictionary override cache after admin writes. */
-export function invalidateDictOverrideCache(familyId?: string): void {
-  if (familyId) {
-    dictOverrideCache.delete(familyId);
-  } else {
-    dictOverrideCache.clear();
-  }
-}
-
-/** Fetch active dictionary overrides for a family (cached). */
-export async function fetchDictOverrides(familyId: string): Promise<DictOverrideRow[]> {
-  const cached = dictOverrideCache.get(familyId);
-  if (cached && Date.now() - cached.fetchedAt < DICT_CACHE_TTL_MS) return cached.data;
-
-  try {
-    const { createClient } = await import('@/lib/supabase/server');
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('family_id', familyId)
-      .eq('is_active', true);
-
-    const rows = (data ?? []) as DictOverrideRow[];
-    dictOverrideCache.set(familyId, { data: rows, fetchedAt: Date.now() });
-    return rows;
-  } catch {
-    // If table doesn't exist yet or Supabase is unavailable, return empty
-    return [];
-  }
 }
 
 /**
@@ -1163,13 +1124,12 @@ export interface MappedAtlasProduct {
 /**
  * Maps a single Atlas model to internal types.
  * Returns a MappedAtlasProduct with Part, ParametricAttribute[], familyId, and warnings.
- * Async because it fetches dictionary overrides from Supabase (cached).
  */
-export async function mapAtlasModel(
+export function mapAtlasModel(
   model: AtlasModel,
   manufacturerName: string,
   sourceFile?: string,
-): Promise<MappedAtlasProduct> {
+): MappedAtlasProduct {
   const warnings: string[] = [];
 
   // 1. Classify family
@@ -1202,14 +1162,8 @@ export async function mapAtlasModel(
     manufacturerCountry: 'CN',
   };
 
-  // 4. Map parameters (with DB overrides merged onto TS base)
-  let familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
-  if (familyDict && classification.familyId) {
-    const overrides = await fetchDictOverrides(classification.familyId);
-    if (overrides.length > 0) {
-      familyDict = applyDictOverrides(familyDict, overrides);
-    }
-  }
+  // 4. Map parameters
+  const familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
   const parameters: ParametricAttribute[] = [];
   let packageValue: string | undefined;
 

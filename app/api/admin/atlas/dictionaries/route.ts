@@ -7,9 +7,9 @@ import {
   getSharedParamDictionary,
   getSkipParams,
   applyDictOverrides,
-  invalidateDictOverrideCache,
   type AtlasParamMapping,
 } from '@/lib/services/atlasMapper';
+import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 
 /** GET /api/admin/atlas/dictionaries?familyId=B5 */
 export async function GET(request: NextRequest): Promise<NextResponse> {

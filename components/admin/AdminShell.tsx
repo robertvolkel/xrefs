@@ -15,7 +15,9 @@ import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
 import AtlasPanel from './AtlasPanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
+import { getAtlasDictionaryFamilyIds } from '@/lib/services/atlasMapper';
 const allTables = getAllLogicTables();
+const atlasDictFamilyIds = new Set(getAtlasDictionaryFamilyIds());
 const allCategories = [...new Set(allTables.map((t) => t.category))];
 
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
@@ -105,6 +107,7 @@ function AdminShellInner() {
             onCategoryChange={handleCategoryChange}
             selectedFamilyId={selectedTable?.familyId ?? ''}
             onFamilyChange={setSelectedFamilyId}
+            indicatorFamilyIds={activeSection === 'atlas-dictionaries' ? atlasDictFamilyIds : undefined}
           />
         )}
 

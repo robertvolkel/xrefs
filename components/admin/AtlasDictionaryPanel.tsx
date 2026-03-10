@@ -19,6 +19,7 @@ import {
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useTranslation } from 'react-i18next';
 import { LogicTable, AtlasDictOverrideRecord } from '@/lib/types';
 import DictionaryOverrideDrawer from './DictionaryOverrideDrawer';
@@ -205,6 +206,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
               <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>
                 {t('admin.sortOrder', 'Sort')}
               </TableCell>
+              <TableCell sx={{ width: 40 }} />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -216,9 +218,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                 <TableRow
                   key={entry.paramName}
                   hover
-                  onClick={() => handleRowClick(entry)}
                   sx={{
-                    cursor: 'pointer',
                     opacity: isRemoved ? 0.4 : 1,
                     textDecoration: isRemoved ? 'line-through' : 'none',
                   }}
@@ -281,6 +281,15 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
                       {entry.sortOrder}
                     </Typography>
+                  </TableCell>
+                  <TableCell sx={{ p: 0.5 }}>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleRowClick(entry)}
+                      sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}
+                    >
+                      <EditOutlinedIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
                   </TableCell>
                 </TableRow>
               );
