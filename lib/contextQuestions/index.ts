@@ -39,8 +39,14 @@ import { interfaceICsContext } from './interfaceICs';
 import { timersOscillatorsContext } from './timersOscillators';
 import { adcContext } from './adc';
 import { dacContext } from './dac';
-// Block D: Frequency Control
+// Block D: Frequency Control & Protection
 import { d1CrystalsContext } from './d1Crystals';
+import { d2FusesContext } from './d2Fuses';
+// Block E: Optoelectronics
+import { e1OptocouplerContext } from './e1Optocouplers';
+// Block F: Relays
+import { f1RelayContext } from './f1Relays';
+import { f2SolidStateRelayContext } from './f2SolidStateRelays';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -84,8 +90,14 @@ const allConfigs: FamilyContextConfig[] = [
   timersOscillatorsContext,
   adcContext,
   dacContext,
-  // Block D: Frequency Control
+  // Block D: Frequency Control & Protection
   d1CrystalsContext,
+  d2FusesContext,
+  // Block E: Optoelectronics
+  e1OptocouplerContext,
+  // Block F: Relays
+  f1RelayContext,
+  f2SolidStateRelayContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

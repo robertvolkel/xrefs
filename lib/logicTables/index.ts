@@ -36,8 +36,14 @@ import { interfaceICsLogicTable } from './interfaceICs';
 import { timersOscillatorsLogicTable } from './timersOscillators';
 import { adcLogicTable } from './adc';
 import { dacLogicTable } from './dac';
-// Block D: Frequency Control
+// Block D: Frequency Control & Protection
 import { d1CrystalsLogicTable } from './d1Crystals';
+import { d2FusesLogicTable } from './d2Fuses';
+// Block E: Optoelectronics
+import { e1OptocouplerLogicTable } from './e1Optocouplers';
+// Block F: Relays
+import { f1RelayLogicTable } from './f1Relays';
+import { f2SolidStateRelayLogicTable } from './f2SolidStateRelays';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -82,8 +88,14 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C8': timersOscillatorsLogicTable,
   'C9': adcLogicTable,
   'C10': dacLogicTable,
-  // Block D: Frequency Control
+  // Block D: Frequency Control & Protection
   'D1': d1CrystalsLogicTable,
+  'D2': d2FusesLogicTable,
+  // Block E: Optoelectronics
+  'E1': e1OptocouplerLogicTable,
+  // Block F: Relays
+  'F1': f1RelayLogicTable,
+  'F2': f2SolidStateRelayLogicTable,
 };
 
 export { logicTableRegistry };
@@ -411,6 +423,58 @@ const subcategoryToFamily: Record<string, string> = {
   'Tuning Fork Crystal': 'D1',
   'Tuning Fork': 'D1',
   '32.768 kHz Crystal': 'D1',
+  // Fuses — Traditional Overcurrent Protection (Family D2)
+  'Fuse': 'D2',
+  'Cartridge Fuse': 'D2',
+  'Glass Fuse': 'D2',
+  'Ceramic Fuse': 'D2',
+  'SMD Fuse': 'D2',
+  'Surface Mount Fuse': 'D2',
+  'Blade Fuse': 'D2',
+  'Automotive Fuse': 'D2',
+  'Fast-Blow Fuse': 'D2',
+  'Slow-Blow Fuse': 'D2',
+  'Time-Delay Fuse': 'D2',
+  'Circuit Protection Fuse': 'D2',
+  'Fuses': 'D2',
+  'Automotive Fuses': 'D2',
+  // --- Block E: Optoelectronics ---
+  // Optocouplers / Photocouplers (Family E1)
+  'Optocoupler': 'E1',
+  'Photocoupler': 'E1',
+  'Optoisolator': 'E1',
+  'Opto Isolator': 'E1',
+  'Optical Isolator': 'E1',
+  'Transistor Optocoupler': 'E1',
+  'Logic Output Optocoupler': 'E1',
+  'Phototransistor Output': 'E1',
+  'Photodarlington Output': 'E1',
+  'Optoisolators - Transistor, Photovoltaic Output': 'E1',
+  'Optoisolators - Logic Output': 'E1',
+  // --- Block F: Relays ---
+  // Electromechanical Relays — EMR (Family F1)
+  'Relay': 'F1',
+  'EMR': 'F1',
+  'Electromechanical Relay': 'F1',
+  'Power Relay': 'F1',
+  'Signal Relay': 'F1',
+  'Automotive Relay': 'F1',
+  'PCB Relay': 'F1',
+  'General Purpose Relay': 'F1',
+  'SPDT Relay': 'F1',
+  'DPDT Relay': 'F1',
+  'Form C Relay': 'F1',
+  'Normally Open Relay': 'F1',
+  // Solid State Relays — SSR (Family F2)
+  'Solid State Relay': 'F2',
+  'SSR': 'F2',
+  'Solid-State Relay': 'F2',
+  'SSR AC': 'F2',
+  'SSR DC': 'F2',
+  'SSR TRIAC': 'F2',
+  'SSR MOSFET': 'F2',
+  'AC Solid State Relay': 'F2',
+  'DC Solid State Relay': 'F2',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -454,8 +518,14 @@ const familyLastUpdated: Record<string, string> = {
   'C8': '2026-03-02',
   'C9': '2026-03-02',
   'C10': '2026-03-02',
-  // Block D: Frequency Control
+  // Block D: Frequency Control & Protection
   'D1': '2026-03-10',
+  'D2': '2026-03-11',
+  // Block E: Optoelectronics
+  'E1': '2026-03-11',
+  // Block F: Relays
+  'F1': '2026-03-11',
+  'F2': '2026-03-11',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

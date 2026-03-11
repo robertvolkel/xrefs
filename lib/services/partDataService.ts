@@ -236,6 +236,26 @@ export async function getRecommendations(
     enrichCrystalAttributes(sourceAttrs);
   }
 
+  // Step 1o: Enrich fuses with speed_class/package_format/mounting_type from MPN
+  if (logicTablePrecheck?.familyId === 'D2') {
+    enrichFuseAttributes(sourceAttrs);
+  }
+
+  // Step 1p: Enrich optocouplers with output_transistor_type/ctr_class/channel_count from MPN
+  if (logicTablePrecheck?.familyId === 'E1') {
+    enrichOptocouplerAttributes(sourceAttrs);
+  }
+
+  // Step 1q: Enrich relays with coil_voltage_vdc/contact_form from MPN
+  if (logicTablePrecheck?.familyId === 'F1') {
+    enrichRelayAttributes(sourceAttrs);
+  }
+
+  // Step 1r: Enrich solid state relays with output_switch_type/firing_mode from MPN
+  if (logicTablePrecheck?.familyId === 'F2') {
+    enrichSolidStateRelayAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -369,6 +389,30 @@ export async function getRecommendations(
     // mounting_type (SMD vs Through-Hole) and overtone_order are BLOCKING gates.
     if (familyId === 'D1') {
       recs = filterCrystalMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3k: Post-scoring filter for D2 fuses —
+    // speed_class and package_format are BLOCKING identity gates.
+    if (familyId === 'D2') {
+      recs = filterFuseMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3l: Post-scoring filter for E1 optocouplers —
+    // output_transistor_type and channel_count are BLOCKING identity gates.
+    if (familyId === 'E1') {
+      recs = filterOptocouplerMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3m: Post-scoring filter for F1 relays —
+    // contact_form, coil_voltage_vdc, and contact_count are BLOCKING identity gates.
+    if (familyId === 'F1') {
+      recs = filterRelayMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3n: Post-scoring filter for F2 solid state relays —
+    // output_switch_type and mounting_type are BLOCKING identity gates.
+    if (familyId === 'F2') {
+      recs = filterSolidStateRelayMismatches(recs, sourceAttrs);
     }
 
     // Determine primary dataSource for the result set
@@ -559,6 +603,42 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   if (crystalFreq && !outputFreq) parts.push(crystalFreq.value);
   const crystalCL = paramMap.get('load_capacitance_pf');
   if (crystalCL) parts.push(crystalCL.value);
+
+  // Fuses (D2): use current rating, voltage, and speed class as keywords
+  const fuseCurrentRating = paramMap.get('current_rating_a');
+  if (fuseCurrentRating) parts.push(fuseCurrentRating.value);
+  const fuseVoltage = paramMap.get('voltage_rating_v');
+  if (fuseVoltage && !vout && !voltage) parts.push(fuseVoltage.value);
+  const fuseSpeed = paramMap.get('speed_class');
+  if (fuseSpeed) parts.push(fuseSpeed.value);
+  const fusePackage = paramMap.get('package_format');
+  if (fusePackage) parts.push(fusePackage.value);
+
+  // Optocouplers (E1): use output type, isolation voltage, and channel count
+  const optoOutputType = paramMap.get('output_transistor_type');
+  if (optoOutputType) parts.push(optoOutputType.value);
+  const optoIsolation = paramMap.get('isolation_voltage_vrms');
+  if (optoIsolation && !voltage) parts.push(optoIsolation.value);
+  const optoChannels = paramMap.get('channel_count');
+  if (optoChannels) parts.push(optoChannels.value);
+
+  // Relays (F1): use coil voltage, contact form, and contact current rating
+  const relayCoilVoltage = paramMap.get('coil_voltage_vdc');
+  if (relayCoilVoltage) parts.push(relayCoilVoltage.value);
+  const relayContactForm = paramMap.get('contact_form');
+  if (relayContactForm) parts.push(relayContactForm.value);
+  const relayContactCurrent = paramMap.get('contact_current_rating_a');
+  if (relayContactCurrent) parts.push(relayContactCurrent.value);
+
+  // Solid State Relays (F2): use output switch type, load voltage, load current + "SSR"
+  const ssrOutputType = paramMap.get('output_switch_type');
+  if (ssrOutputType) parts.push(ssrOutputType.value + ' SSR');
+  const ssrLoadVoltage = paramMap.get('load_voltage_max_v');
+  if (ssrLoadVoltage && !voltage && !vout) parts.push(ssrLoadVoltage.value);
+  const ssrLoadCurrent = paramMap.get('load_current_max_a');
+  if (ssrLoadCurrent && !relayContactCurrent) parts.push(ssrLoadCurrent.value);
+  const ssrFiringMode = paramMap.get('firing_mode');
+  if (ssrFiringMode) parts.push(ssrFiringMode.value);
 
   // Package
   const pkg = paramMap.get('package_case');
@@ -2084,6 +2164,818 @@ function filterCrystalMismatches(
       if (srcIsFundamental !== candIsFundamental) return false;
       // Block if both are overtone but different order (3rd ≠ 5th)
       if (!srcIsFundamental && !candIsFundamental && srcOvertone !== candOvertoneVal) return false;
+    }
+
+    return true;
+  });
+}
+
+// ============================================================
+// D2 FUSES — MPN Enrichment + Post-Scoring Filter
+// ============================================================
+
+interface FuseMpnHint {
+  pattern: RegExp;
+  speedClass?: string;
+  packageFormat?: string;
+  mountingType?: string;
+  manufacturer?: string;
+  isPtcResettable?: boolean;
+  isThermalCutoff?: boolean;
+}
+
+const fuseMpnPatterns: FuseMpnHint[] = [
+  // === PTC RESETTABLE FUSES — redirect to Family 66, NOT D2 ===
+  { pattern: /^RXEF/i, isPtcResettable: true, manufacturer: 'Littelfuse' },
+  { pattern: /^RUEF/i, isPtcResettable: true, manufacturer: 'Littelfuse' },
+  { pattern: /^RGEF/i, isPtcResettable: true, manufacturer: 'Littelfuse' },
+  { pattern: /^RHEF/i, isPtcResettable: true, manufacturer: 'Littelfuse' },
+  { pattern: /^MF-MSMF/i, isPtcResettable: true, manufacturer: 'Bourns' },
+  { pattern: /^MF-R/i, isPtcResettable: true, manufacturer: 'Bourns' },
+  { pattern: /^0ZC/i, isPtcResettable: true, manufacturer: 'Bel Fuse' },
+  { pattern: /^PPTC/i, isPtcResettable: true },
+  { pattern: /polyswitch/i, isPtcResettable: true },
+  { pattern: /polyfuse/i, isPtcResettable: true },
+
+  // === THERMAL CUTOFFS — not D2, flag as out of scope ===
+  { pattern: /^G4A/i, isThermalCutoff: true, manufacturer: 'Microtemp' },
+  { pattern: /^SEFUSE/i, isThermalCutoff: true, manufacturer: 'Schott' },
+
+  // === LITTELFUSE CARTRIDGE — 5×20mm ===
+  { pattern: /^218\d{3}/i, speedClass: 'Fast-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+  { pattern: /^218T/i, speedClass: 'Slow-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+  { pattern: /^218P/i, speedClass: 'Fast-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+
+  // === LITTELFUSE CARTRIDGE — 6.3×32mm ===
+  { pattern: /^312T/i, speedClass: 'Slow-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+  { pattern: /^312\d{3}/i, speedClass: 'Fast-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+  { pattern: /^313T/i, speedClass: 'Slow-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+  { pattern: /^313\d{3}/i, speedClass: 'Fast-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Littelfuse' },
+
+  // === LITTELFUSE SMD ===
+  { pattern: /^0451/i, speedClass: 'Fast-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+  { pattern: /^0452/i, speedClass: 'Slow-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+  { pattern: /^0453/i, speedClass: 'Fast-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+  { pattern: /^0454/i, speedClass: 'Fast-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+  { pattern: /^0455/i, speedClass: 'Fast-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+  { pattern: /^0456/i, speedClass: 'Slow-Blow', mountingType: 'SMD', manufacturer: 'Littelfuse' },
+
+  // === SCHURTER ===
+  { pattern: /^GSF/i, speedClass: 'Fast-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Schurter' },
+  { pattern: /^FST/i, speedClass: 'Slow-Blow', mountingType: 'Chassis Mount', manufacturer: 'Schurter' },
+  { pattern: /^PFRA/i, mountingType: 'SMD', manufacturer: 'Schurter' },
+  { pattern: /^UST/i, mountingType: 'SMD', manufacturer: 'Schurter' },
+
+  // === BEL FUSE ===
+  { pattern: /^GMA/i, speedClass: 'Fast-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^GMC/i, speedClass: 'Fast-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^GDC/i, speedClass: 'Slow-Blow', packageFormat: '5x20mm', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^MDL/i, speedClass: 'Slow-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^MDX/i, speedClass: 'Slow-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^FLQ/i, speedClass: 'Slow-Blow', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^FLA/i, speedClass: 'Slow-Blow', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^5HH/i, speedClass: 'Fast-Blow', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+  { pattern: /^5SB/i, speedClass: 'Slow-Blow', mountingType: 'Chassis Mount', manufacturer: 'Bel Fuse' },
+
+  // === BOURNS SMD ===
+  { pattern: /^SF-?0603/i, packageFormat: '0603', mountingType: 'SMD', manufacturer: 'Bourns' },
+  { pattern: /^SF-?0805/i, packageFormat: '0805', mountingType: 'SMD', manufacturer: 'Bourns' },
+  { pattern: /^SF-?1206/i, packageFormat: '1206', mountingType: 'SMD', manufacturer: 'Bourns' },
+  { pattern: /^SF-?2410/i, packageFormat: '2410', mountingType: 'SMD', manufacturer: 'Bourns' },
+
+  // === AUTOMOTIVE BLADE FUSES ===
+  { pattern: /^ATM/i, packageFormat: 'Mini Blade (ATM)', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^ATO/i, packageFormat: 'Regular Blade (ATO)', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^ATC/i, packageFormat: 'Regular Blade (ATC)', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^APX/i, packageFormat: 'Maxi Blade (APX)', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^MIDI/i, packageFormat: 'MIDI Blade', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^MAXI/i, packageFormat: 'Maxi Blade', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^MCASE/i, packageFormat: 'M-CASE', mountingType: 'Blade', manufacturer: 'Automotive' },
+  { pattern: /^JCASE/i, packageFormat: 'J-CASE', mountingType: 'Blade', manufacturer: 'Automotive' },
+
+  // === CARTRIDGE VARIANTS ===
+  { pattern: /^AGA/i, speedClass: 'Fast-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount' },
+  { pattern: /^AGC/i, speedClass: 'Fast-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount' },
+  { pattern: /^AGX/i, speedClass: 'Fast-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount' },
+  { pattern: /^AGW/i, speedClass: 'Slow-Blow', packageFormat: '6.3x32mm', mountingType: 'Chassis Mount' },
+  { pattern: /^F500/i, speedClass: 'Fast-Blow', mountingType: 'Chassis Mount' },
+  { pattern: /^F501/i, speedClass: 'Slow-Blow', mountingType: 'Chassis Mount' },
+];
+
+/**
+ * Enrich fuse attributes from MPN patterns.
+ * Infers speed_class, package_format, and mounting_type from part number prefixes.
+ * Guards against PTC resettable fuses (Family 66) and thermal cutoffs.
+ */
+function enrichFuseAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const desc = attrs.part.description.toLowerCase();
+
+  // Guard: PTC resettable fuses should be Family 66, not D2
+  if (desc.includes('ptc') || desc.includes('resettable') || desc.includes('polyfuse') || desc.includes('polyswitch')) {
+    console.warn(`[D2] MPN ${mpn} appears to be PTC resettable (Family 66), not D2 traditional fuse`);
+    return;
+  }
+
+  // Guard: Thermal cutoffs are out of scope
+  if (desc.includes('thermal cutoff') || desc.includes('thermal fuse') || desc.includes('therm-o-disc')) {
+    console.warn(`[D2] MPN ${mpn} appears to be a thermal cutoff, not D2 traditional fuse`);
+    return;
+  }
+
+  const paramMap = new Map(attrs.parameters.map(p => [p.parameterId, p]));
+
+  // Try MPN prefix patterns
+  for (const hint of fuseMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    // PTC redirect guard
+    if (hint.isPtcResettable) {
+      console.warn(`[D2] MPN ${mpn} matched PTC resettable pattern — should be Family 66`);
+      return;
+    }
+
+    // Thermal cutoff guard
+    if (hint.isThermalCutoff) {
+      console.warn(`[D2] MPN ${mpn} matched thermal cutoff pattern — out of scope`);
+      return;
+    }
+
+    // Enrich speed_class if not already present
+    if (hint.speedClass && !paramMap.has('speed_class')) {
+      attrs.parameters.push({
+        parameterId: 'speed_class',
+        parameterName: 'Speed Class',
+        value: hint.speedClass,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    // Enrich package_format if not already present
+    if (hint.packageFormat && !paramMap.has('package_format')) {
+      attrs.parameters.push({
+        parameterId: 'package_format',
+        parameterName: 'Package Format',
+        value: hint.packageFormat,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    // Enrich mounting_type if not already present
+    if (hint.mountingType && !paramMap.has('mounting_type')) {
+      attrs.parameters.push({
+        parameterId: 'mounting_type',
+        parameterName: 'Mounting Type',
+        value: hint.mountingType,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    break; // First match wins
+  }
+
+  // Suffix-based speed class inference (generic, only if not set by prefix patterns)
+  if (!paramMap.has('speed_class') && !attrs.parameters.find(p => p.parameterId === 'speed_class')) {
+    const upperMpn = mpn.toUpperCase();
+    if (upperMpn.endsWith('FF') || upperMpn.includes('-FF')) {
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Fast (FF)', source: 'mpn_enrichment' });
+    } else if (upperMpn.endsWith('TT') || upperMpn.includes('-TT')) {
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Slow (TT)', source: 'mpn_enrichment' });
+    } else if (/[^A-Z]T$/i.test(mpn) || mpn.includes('-T-') || /TD$/i.test(mpn)) {
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Slow-Blow', source: 'mpn_enrichment' });
+    }
+  }
+}
+
+/**
+ * Post-scoring filter for D2 fuses — removes confirmed speed_class and
+ * package_format mismatches. These are BLOCKING identity gates that must
+ * match exactly; the scoring engine may not catch all string normalization
+ * edge cases, so this filter ensures hard rejections.
+ */
+function filterFuseMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcSpeed = sourceAttrs.parameters.find(p => p.parameterId === 'speed_class')?.value?.toLowerCase();
+  const srcPackage = sourceAttrs.parameters.find(p => p.parameterId === 'package_format')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Block speed_class mismatch (fast ≠ slow)
+    if (srcSpeed) {
+      const candSpeed = rec.matchDetails?.find(d => d.parameterId === 'speed_class');
+      if (candSpeed?.replacementValue) {
+        const candSpeedVal = candSpeed.replacementValue.toLowerCase();
+        const srcIsFast = srcSpeed.includes('fast') || srcSpeed === 'f' || srcSpeed === 'ff';
+        const candIsFast = candSpeedVal.includes('fast') || candSpeedVal === 'f' || candSpeedVal === 'ff';
+        const srcIsSlow = srcSpeed.includes('slow') || srcSpeed.includes('time-delay') || srcSpeed === 't' || srcSpeed === 'tt';
+        const candIsSlow = candSpeedVal.includes('slow') || candSpeedVal.includes('time-delay') || candSpeedVal === 't' || candSpeedVal === 'tt';
+        // Cross-class: one is fast and the other is slow → BLOCK
+        if ((srcIsFast && candIsSlow) || (srcIsSlow && candIsFast)) return false;
+      }
+    }
+
+    // Block package_format mismatch (cartridge ≠ blade ≠ SMD)
+    if (srcPackage) {
+      const candPackage = rec.matchDetails?.find(d => d.parameterId === 'package_format');
+      if (candPackage?.replacementValue) {
+        const candPkgVal = candPackage.replacementValue.toLowerCase();
+        // Different cartridge sizes
+        const srcIsCartridge5x20 = srcPackage.includes('5x20') || srcPackage.includes('5×20');
+        const candIsCartridge5x20 = candPkgVal.includes('5x20') || candPkgVal.includes('5×20');
+        const srcIsCartridge6x32 = srcPackage.includes('6.3x32') || srcPackage.includes('6.3×32');
+        const candIsCartridge6x32 = candPkgVal.includes('6.3x32') || candPkgVal.includes('6.3×32');
+        // Blade types
+        const srcIsBlade = srcPackage.includes('blade') || srcPackage.includes('atm') || srcPackage.includes('atc') || srcPackage.includes('ato') || srcPackage.includes('apx');
+        const candIsBlade = candPkgVal.includes('blade') || candPkgVal.includes('atm') || candPkgVal.includes('atc') || candPkgVal.includes('ato') || candPkgVal.includes('apx');
+        // SMD sizes
+        const srcIsSmd = /\b(0402|0603|0805|1206|2410)\b/.test(srcPackage);
+        const candIsSmd = /\b(0402|0603|0805|1206|2410)\b/.test(candPkgVal);
+
+        // Cross-format: cartridge ↔ blade ↔ SMD
+        if (srcIsCartridge5x20 && !candIsCartridge5x20) return false;
+        if (srcIsCartridge6x32 && !candIsCartridge6x32) return false;
+        if (srcIsBlade && !candIsBlade) return false;
+        if (srcIsSmd && !candIsSmd) return false;
+
+        // Within blade: ATM ≠ ATC/ATO ≠ APX (different physical dimensions)
+        if (srcIsBlade && candIsBlade) {
+          const srcMini = srcPackage.includes('mini') || srcPackage.includes('atm');
+          const candMini = candPkgVal.includes('mini') || candPkgVal.includes('atm');
+          const srcMaxi = srcPackage.includes('maxi') || srcPackage.includes('apx');
+          const candMaxi = candPkgVal.includes('maxi') || candPkgVal.includes('apx');
+          if (srcMini !== candMini) return false;
+          if (srcMaxi !== candMaxi) return false;
+        }
+      }
+    }
+
+    return true;
+  });
+}
+
+// ============================================================
+// E1: Optocouplers / Photocouplers — MPN Enrichment & Post-Scoring Filter
+// ============================================================
+
+/** MPN prefix patterns for optocoupler output type inference */
+const optocouplerMpnPatterns: { pattern: RegExp; outputType?: string; channelCount?: string; isDigitalIsolator?: boolean }[] = [
+  // Digital isolator redirect guards — NOT optocouplers
+  { pattern: /^ADUM\d/i, isDigitalIsolator: true },
+  { pattern: /^Si8[4-9]\d/i, isDigitalIsolator: true },
+  { pattern: /^Si86\d/i, isDigitalIsolator: true },
+  { pattern: /^ISO1\d/i, isDigitalIsolator: true },
+
+  // Logic-output optocouplers (high-speed, VCC required)
+  { pattern: /^6N13[5-7]/i, outputType: 'Logic Output' },
+  { pattern: /^HCPL-?0[36]/i, outputType: 'Logic Output' },
+  { pattern: /^HCPL-?26/i, outputType: 'Logic Output' },
+  { pattern: /^HCPL-?31/i, outputType: 'Logic Output' },
+  { pattern: /^HCPL-?06/i, outputType: 'Logic Output' },
+  { pattern: /^ACPL-?[P3]/i, outputType: 'Logic Output' },
+  { pattern: /^ACPL-?06/i, outputType: 'Logic Output' },
+  { pattern: /^FOD8/i, outputType: 'Logic Output' },
+
+  // Photodarlington optocouplers (high CTR, slow)
+  { pattern: /^MCT2/i, outputType: 'Photodarlington' },
+  { pattern: /^H11D/i, outputType: 'Photodarlington' },
+  { pattern: /^TLP627/i, outputType: 'Photodarlington' },
+  { pattern: /^TLP521/i, outputType: 'Photodarlington' },
+
+  // Phototransistor optocouplers (most common)
+  { pattern: /^PC817/i, outputType: 'Phototransistor', channelCount: '1' },
+  { pattern: /^PC827/i, outputType: 'Phototransistor', channelCount: '2' },
+  { pattern: /^PC837/i, outputType: 'Phototransistor', channelCount: '3' },
+  { pattern: /^PC847/i, outputType: 'Phototransistor', channelCount: '4' },
+  { pattern: /^4N2[5-8]/i, outputType: 'Phototransistor' },
+  { pattern: /^4N3[5-7]/i, outputType: 'Phototransistor' },
+  { pattern: /^H11A/i, outputType: 'Phototransistor' },
+  { pattern: /^H11AA/i, outputType: 'Phototransistor' },
+  { pattern: /^TLP18[5-9]/i, outputType: 'Phototransistor' },
+  { pattern: /^TLP29[1-4]/i, outputType: 'Phototransistor' },
+  { pattern: /^TLP78[5-9]/i, outputType: 'Phototransistor' },
+  { pattern: /^TLP180/i, outputType: 'Phototransistor' },
+  { pattern: /^SFH61[5-7]/i, outputType: 'Phototransistor' },
+  { pattern: /^SFH6156/i, outputType: 'Phototransistor' },
+  { pattern: /^EL817/i, outputType: 'Phototransistor', channelCount: '1' },
+  { pattern: /^EL827/i, outputType: 'Phototransistor', channelCount: '2' },
+  { pattern: /^EL847/i, outputType: 'Phototransistor', channelCount: '4' },
+  { pattern: /^LTV-?817/i, outputType: 'Phototransistor', channelCount: '1' },
+  { pattern: /^LTV-?827/i, outputType: 'Phototransistor', channelCount: '2' },
+  { pattern: /^LTV-?847/i, outputType: 'Phototransistor', channelCount: '4' },
+  { pattern: /^FOD817/i, outputType: 'Phototransistor', channelCount: '1' },
+  { pattern: /^CNY17/i, outputType: 'Phototransistor' },
+  { pattern: /^CNY65/i, outputType: 'Phototransistor' },
+  { pattern: /^VOA300/i, outputType: 'Phototransistor' },
+];
+
+/**
+ * Enrich optocoupler attributes from MPN patterns.
+ * Infers output_transistor_type, ctr_class, channel_count from part number.
+ * Guards against digital isolators (ADUM, Si84xx, Si86xx).
+ */
+function enrichOptocouplerAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const desc = attrs.part.description.toLowerCase();
+
+  // Guard: Digital isolators are NOT optocouplers
+  if (desc.includes('digital isolator') || desc.includes('magnetic isolator') || desc.includes('capacitive isolator')) {
+    console.warn(`[E1] MPN ${mpn} appears to be a digital isolator, not E1 optocoupler`);
+    return;
+  }
+
+  const paramMap = new Map(attrs.parameters.map(p => [p.parameterId, p]));
+
+  // Try MPN prefix patterns
+  for (const hint of optocouplerMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    // Digital isolator redirect guard
+    if (hint.isDigitalIsolator) {
+      console.warn(`[E1] MPN ${mpn} matched digital isolator pattern — should be C7 Interface ICs`);
+      return;
+    }
+
+    // Enrich output_transistor_type if not already present
+    if (hint.outputType && !paramMap.has('output_transistor_type')) {
+      attrs.parameters.push({
+        parameterId: 'output_transistor_type',
+        parameterName: 'Output Transistor Type',
+        value: hint.outputType,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    // Enrich channel_count if not already present
+    if (hint.channelCount && !paramMap.has('channel_count')) {
+      attrs.parameters.push({
+        parameterId: 'channel_count',
+        parameterName: 'Channel Count',
+        value: hint.channelCount,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    break; // First match wins
+  }
+
+  // CTR class inference from trailing letter suffix (PC817A, PC817B, etc.)
+  if (!paramMap.has('ctr_class') && !attrs.parameters.find(p => p.parameterId === 'ctr_class')) {
+    // Match PC817X, EL817X, LTV-817X patterns where X is a CTR class letter
+    const ctrMatch = mpn.match(/(?:PC|EL|LTV-?|FOD)8[1-4]7([A-E])\b/i);
+    if (ctrMatch) {
+      attrs.parameters.push({
+        parameterId: 'ctr_class',
+        parameterName: 'CTR Class (Rank)',
+        value: ctrMatch[1].toUpperCase(),
+        source: 'mpn_enrichment',
+      });
+    }
+  }
+}
+
+/**
+ * Post-scoring filter for E1 optocouplers — removes confirmed
+ * output_transistor_type and channel_count mismatches. These are
+ * BLOCKING identity gates that must match exactly.
+ */
+function filterOptocouplerMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcOutputType = sourceAttrs.parameters.find(p => p.parameterId === 'output_transistor_type')?.value?.toLowerCase();
+  const srcChannelCount = sourceAttrs.parameters.find(p => p.parameterId === 'channel_count')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Block output_transistor_type mismatch (phototransistor ≠ photodarlington ≠ logic-output)
+    if (srcOutputType) {
+      const candOutput = rec.matchDetails?.find(d => d.parameterId === 'output_transistor_type');
+      if (candOutput?.replacementValue) {
+        const candVal = candOutput.replacementValue.toLowerCase();
+        const srcIsPhototransistor = srcOutputType.includes('phototransistor') || srcOutputType.includes('transistor output');
+        const candIsPhototransistor = candVal.includes('phototransistor') || candVal.includes('transistor output');
+        const srcIsDarlington = srcOutputType.includes('darlington');
+        const candIsDarlington = candVal.includes('darlington');
+        const srcIsLogic = srcOutputType.includes('logic') || srcOutputType.includes('cmos') || srcOutputType.includes('ttl');
+        const candIsLogic = candVal.includes('logic') || candVal.includes('cmos') || candVal.includes('ttl');
+
+        // Cross-type: one is logic and the other isn't → BLOCK
+        if (srcIsLogic !== candIsLogic) return false;
+        // Cross-type: phototransistor vs photodarlington → BLOCK
+        if (srcIsPhototransistor && candIsDarlington) return false;
+        if (srcIsDarlington && candIsPhototransistor) return false;
+      }
+    }
+
+    // Block channel_count mismatch (single ≠ dual ≠ quad)
+    if (srcChannelCount) {
+      const candChannel = rec.matchDetails?.find(d => d.parameterId === 'channel_count');
+      if (candChannel?.replacementValue) {
+        const candChVal = candChannel.replacementValue.toLowerCase();
+        // Normalize to numbers for comparison
+        const srcNum = srcChannelCount.match(/\d+/)?.[0];
+        const candNum = candChVal.match(/\d+/)?.[0];
+        if (srcNum && candNum && srcNum !== candNum) return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+// ── F1: Electromechanical Relays — MPN enrichment patterns ─────────────
+
+/** Relay MPN prefix patterns for enriching coil_voltage_vdc, contact_form, and mounting_type */
+const relayMpnPatterns: { pattern: RegExp; contactForm?: string; mountingType?: string; isSSR?: boolean }[] = [
+  // SSR redirect guards — these are NOT F1 EMRs
+  { pattern: /^G3(NA|NE|PA|PB|PE|PF|S|MB)/i, isSSR: true },
+  { pattern: /^G9(H|EC)/i, isSSR: true },
+  { pattern: /^SSR/i, isSSR: true },
+  { pattern: /^CRYDOM/i, isSSR: true },
+  { pattern: /^SSM/i, isSSR: true },  // Schneider SSR
+  { pattern: /^CX\d{3}/i, isSSR: true },  // Crydom CX series
+
+  // Omron — Power relays
+  { pattern: /^G2R-1/i, contactForm: 'SPDT' },
+  { pattern: /^G2R-2/i, contactForm: 'DPDT' },
+  { pattern: /^G2RL-1/i, contactForm: 'SPDT' },
+  { pattern: /^G2RL-14/i, contactForm: 'DPDT' },
+  { pattern: /^G2RL-2/i, contactForm: 'DPDT' },
+  { pattern: /^G5LE-1/i, contactForm: 'SPDT' },
+  { pattern: /^G5LE-1A/i, contactForm: 'SPST-NO' },
+  { pattern: /^G5Q-1/i, contactForm: 'SPST-NO' },
+  { pattern: /^G5Q-1A/i, contactForm: 'SPST-NO' },
+  { pattern: /^G7L-1A/i, contactForm: 'SPST-NO' },
+  { pattern: /^G7L-2A/i, contactForm: 'DPST-NO' },
+  { pattern: /^G7Z/i, contactForm: 'SPST-NO' },
+  // Omron — Signal relays
+  { pattern: /^G5V-1/i, contactForm: 'SPDT' },
+  { pattern: /^G5V-2/i, contactForm: 'DPDT' },
+  { pattern: /^G6B-1/i, contactForm: 'SPDT' },
+  { pattern: /^G6B-2/i, contactForm: 'DPDT' },
+  { pattern: /^G6C-1/i, contactForm: 'SPDT' },
+  { pattern: /^G6C-2/i, contactForm: 'DPDT' },
+  { pattern: /^G6K-2/i, contactForm: 'DPDT' },
+  { pattern: /^G6K-2F/i, contactForm: 'DPDT' },
+
+  // TE / Tyco / Axicom
+  { pattern: /^V23084/i },
+  { pattern: /^V23092/i },
+  { pattern: /^IM\d/i },
+  { pattern: /^RT\d/i, contactForm: 'SPDT' },
+  { pattern: /^EC2/i, contactForm: 'DPDT' },
+  { pattern: /^RTE\d/i },
+  { pattern: /^T9A/i, contactForm: 'SPDT' },
+  { pattern: /^T9G/i, contactForm: 'DPDT' },
+
+  // Panasonic / Aromat
+  { pattern: /^JS\d/i },
+  { pattern: /^JW\d/i },
+  { pattern: /^TQ\d/i },
+  { pattern: /^TXS\d/i },
+  { pattern: /^TXD\d/i },
+  { pattern: /^DS\d/i },
+  { pattern: /^DK\d/i },
+
+  // Fujitsu
+  { pattern: /^FTR-F1/i, contactForm: 'SPDT' },
+  { pattern: /^FTR-B3/i, contactForm: 'SPST-NO' },
+  { pattern: /^FBR\d/i },
+
+  // Hongfa
+  { pattern: /^HF115F/i, contactForm: 'SPDT' },
+  { pattern: /^HF32F/i, contactForm: 'SPST-NO' },
+  { pattern: /^HF3F/i },
+  { pattern: /^HF41F/i, contactForm: 'SPDT' },
+  { pattern: /^HF46F/i, contactForm: 'DPDT' },
+
+  // Songle / generic PCB relays
+  { pattern: /^SRD-\d+VDC/i },
+  { pattern: /^SRS-\d+VDC/i },
+
+  // Zettler
+  { pattern: /^AZ742/i, contactForm: 'SPDT' },
+  { pattern: /^AZ764/i, contactForm: 'SPDT' },
+  { pattern: /^AZ943/i, contactForm: 'SPDT' },
+
+  // Chinese generic PCB relays
+  { pattern: /^JQX/i },
+  { pattern: /^JZC/i },
+
+  // Potter & Brumfield (TE)
+  { pattern: /^RY\d/i },
+];
+
+/**
+ * Enrich relay attributes from MPN patterns.
+ * Primary enrichment: coil_voltage_vdc from MPN suffix (most critical).
+ * Secondary: contact_form from series model, mounting_type inference.
+ */
+function enrichRelayAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const desc = attrs.part.description.toLowerCase();
+
+  // Guard: Solid-state relays are NOT F1 EMRs
+  if (desc.includes('solid state') || desc.includes('ssr')) {
+    console.warn(`[F1] MPN ${mpn} appears to be a solid-state relay, not F1 EMR`);
+    return;
+  }
+
+  const paramMap = new Map(attrs.parameters.map(p => [p.parameterId, p]));
+
+  // Try MPN prefix patterns for contact_form
+  for (const hint of relayMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    // SSR redirect guard
+    if (hint.isSSR) {
+      console.warn(`[F1] MPN ${mpn} matched SSR pattern — should be F2 (not yet implemented)`);
+      return;
+    }
+
+    // Enrich contact_form if not already present
+    if (hint.contactForm && !paramMap.has('contact_form')) {
+      attrs.parameters.push({
+        parameterId: 'contact_form',
+        parameterName: 'Contact Form',
+        value: hint.contactForm,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    break; // First match wins
+  }
+
+  // Coil voltage from MPN suffix — the most critical enrichment
+  // Patterns: -12VDC, -DC12, -12, -012, DC12
+  if (!paramMap.has('coil_voltage_vdc') && !attrs.parameters.find(p => p.parameterId === 'coil_voltage_vdc')) {
+    const voltageMatch = mpn.match(
+      /(?:[-_](\d{1,3})VDC|[-_]DC(\d{1,3})|[-_]0*(\d{1,3})(?:[-_]|$))\b/i
+    );
+    if (voltageMatch) {
+      const volts = voltageMatch[1] || voltageMatch[2] || voltageMatch[3];
+      const v = parseInt(volts, 10);
+      // Only enrich for standard relay coil voltages
+      if ([3, 5, 6, 9, 12, 24, 48, 110].includes(v)) {
+        attrs.parameters.push({
+          parameterId: 'coil_voltage_vdc',
+          parameterName: 'Coil Voltage (VDC)',
+          value: `${v}V`,
+          numericValue: v,
+          unit: 'V',
+          source: 'mpn_enrichment',
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Post-scoring filter for F1 relays — removes confirmed
+ * contact_form, coil_voltage_vdc, and contact_count mismatches.
+ * These are BLOCKING identity gates that must match exactly.
+ */
+function filterRelayMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcContactForm = sourceAttrs.parameters.find(p => p.parameterId === 'contact_form')?.value?.toLowerCase();
+  const srcCoilVoltage = sourceAttrs.parameters.find(p => p.parameterId === 'coil_voltage_vdc')?.numericValue;
+  const srcContactCount = sourceAttrs.parameters.find(p => p.parameterId === 'contact_count')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Block contact_form mismatch (SPST-NO ≠ SPST-NC ≠ SPDT ≠ DPST ≠ DPDT)
+    if (srcContactForm) {
+      const candForm = rec.matchDetails?.find(d => d.parameterId === 'contact_form');
+      if (candForm?.replacementValue) {
+        const candVal = candForm.replacementValue.toLowerCase();
+        if (srcContactForm !== candVal) return false;
+      }
+    }
+
+    // Block coil_voltage_vdc mismatch (exact identity — NOT a threshold)
+    if (srcCoilVoltage !== undefined) {
+      const candVoltage = rec.matchDetails?.find(d => d.parameterId === 'coil_voltage_vdc');
+      if (candVoltage?.replacementValue) {
+        const candV = parseFloat(candVoltage.replacementValue);
+        if (!isNaN(candV) && Math.abs(candV - srcCoilVoltage) > 0.5) return false;
+      }
+    }
+
+    // Block contact_count mismatch (1P ≠ 2P ≠ 3P ≠ 4P)
+    if (srcContactCount) {
+      const candCount = rec.matchDetails?.find(d => d.parameterId === 'contact_count');
+      if (candCount?.replacementValue) {
+        const candVal = candCount.replacementValue.toLowerCase();
+        const srcNum = srcContactCount.match(/\d+/)?.[0];
+        const candNum = candVal.match(/\d+/)?.[0];
+        if (srcNum && candNum && srcNum !== candNum) return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+// ── F2: Solid State Relays — MPN enrichment patterns ───────────────────
+
+/** SSR MPN prefix patterns for enriching output_switch_type, firing_mode, and load_voltage_type */
+const ssrMpnPatterns: { pattern: RegExp; outputSwitchType?: string; firingMode?: string; loadVoltageType?: string; isEMR?: boolean; isDiscrete?: boolean }[] = [
+  // EMR redirect guards — these are NOT F2 SSRs, they are F1 EMRs
+  { pattern: /^G5LE/i, isEMR: true },
+  { pattern: /^G2R/i, isEMR: true },
+  { pattern: /^G2RL/i, isEMR: true },
+  { pattern: /^V23084/i, isEMR: true },
+  { pattern: /^V23092/i, isEMR: true },
+  { pattern: /^HF115F/i, isEMR: true },
+  { pattern: /^SRD-/i, isEMR: true },
+  { pattern: /^G5Q/i, isEMR: true },
+  { pattern: /^G5V/i, isEMR: true },
+  { pattern: /^G6K/i, isEMR: true },
+  { pattern: /^JS\d/i, isEMR: true },
+  { pattern: /^JW\d/i, isEMR: true },
+  { pattern: /^FTR/i, isEMR: true },
+
+  // Discrete TRIAC/SCR redirect guards — NOT SSRs
+  { pattern: /^BT13[6-9]/i, isDiscrete: true },
+  { pattern: /^BT14[0-9]/i, isDiscrete: true },
+  { pattern: /^TIC2\d{2}/i, isDiscrete: true },
+  { pattern: /^MAC\d/i, isDiscrete: true },
+  { pattern: /^BCR\d/i, isDiscrete: true },
+
+  // Crydom / Sensata — DC MOSFET output
+  { pattern: /^D24\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+  { pattern: /^D48\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+  { pattern: /^D12\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+  { pattern: /^DC\d{2}/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+  // Crydom / Sensata — AC TRIAC output
+  { pattern: /^CMX\d/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^CX\d{3}/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^HD\d{4}/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^EZ\d/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC', firingMode: 'Zero-Crossing' },
+  { pattern: /^EZD\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC', firingMode: 'Zero-Crossing' },
+
+  // Omron — AC SSRs (TRIAC output, zero-crossing default)
+  { pattern: /^G3NA/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC', firingMode: 'Zero-Crossing' },
+  { pattern: /^G3NB/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC', firingMode: 'Zero-Crossing' },
+  { pattern: /^G3MC/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^G3PA/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^G3PE/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^G3MB/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+
+  // Carlo Gavazzi — AC (RA/RZ) and DC (RD/RP)
+  { pattern: /^RA\d/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^RZ\d/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC', firingMode: 'Zero-Crossing' },
+  { pattern: /^RD\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+  { pattern: /^RP\d/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+
+  // Schneider Electric
+  { pattern: /^SSM\d/i },
+
+  // Kyotto
+  { pattern: /^KSI/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC' },
+  { pattern: /^KSR/i, outputSwitchType: 'TRIAC', loadVoltageType: 'AC', firingMode: 'Random-Fire' },
+  { pattern: /^KSD/i, outputSwitchType: 'MOSFET', loadVoltageType: 'DC' },
+
+  // TE Connectivity
+  { pattern: /^TD\d/i },
+
+  // Generic / Chinese panel SSRs
+  { pattern: /^MGR/i },
+  { pattern: /^SAP/i },
+
+  // Littelfuse
+  { pattern: /^RSSR/i },
+  { pattern: /^MSSR/i },
+];
+
+/**
+ * Enrich solid state relay attributes from MPN patterns.
+ * Primary enrichment: output_switch_type (TRIAC vs MOSFET) from MPN prefix.
+ * Secondary: firing_mode (Zero-Crossing vs Random-Fire), load_voltage_type (AC vs DC).
+ */
+function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const desc = attrs.part.description.toLowerCase();
+  const paramMap = new Map(attrs.parameters.map(p => [p.parameterId, p]));
+
+  // Try MPN prefix patterns
+  for (const hint of ssrMpnPatterns) {
+    if (!hint.pattern.test(mpn)) continue;
+
+    // EMR redirect guard
+    if (hint.isEMR) {
+      console.warn(`[F2] MPN ${mpn} matched EMR pattern — should be F1`);
+      return;
+    }
+
+    // Discrete semiconductor redirect guard
+    if (hint.isDiscrete) {
+      console.warn(`[F2] MPN ${mpn} matched discrete TRIAC/SCR pattern — not an SSR (Family B8)`);
+      return;
+    }
+
+    // Enrich output_switch_type
+    if (hint.outputSwitchType && !paramMap.has('output_switch_type')) {
+      attrs.parameters.push({
+        parameterId: 'output_switch_type',
+        parameterName: 'Output Switch Type',
+        value: hint.outputSwitchType,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    // Enrich firing_mode
+    if (hint.firingMode && !paramMap.has('firing_mode')) {
+      attrs.parameters.push({
+        parameterId: 'firing_mode',
+        parameterName: 'Firing Mode',
+        value: hint.firingMode,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    // Enrich load_voltage_type
+    if (hint.loadVoltageType && !paramMap.has('load_voltage_type')) {
+      attrs.parameters.push({
+        parameterId: 'load_voltage_type',
+        parameterName: 'Load Voltage Type',
+        value: hint.loadVoltageType,
+        source: 'mpn_enrichment',
+      });
+    }
+
+    break; // First match wins
+  }
+
+  // Infer output type from description if not enriched from MPN
+  if (!paramMap.has('output_switch_type') && !attrs.parameters.find(p => p.parameterId === 'output_switch_type')) {
+    if (desc.includes('triac') || desc.includes('scr output')) {
+      attrs.parameters.push({
+        parameterId: 'output_switch_type',
+        parameterName: 'Output Switch Type',
+        value: 'TRIAC',
+        source: 'mpn_enrichment',
+      });
+    } else if (desc.includes('mosfet') || (desc.includes('dc') && desc.includes('solid state'))) {
+      attrs.parameters.push({
+        parameterId: 'output_switch_type',
+        parameterName: 'Output Switch Type',
+        value: 'MOSFET',
+        source: 'mpn_enrichment',
+      });
+    }
+  }
+
+  // Infer firing mode from description if not enriched
+  if (!paramMap.has('firing_mode') && !attrs.parameters.find(p => p.parameterId === 'firing_mode')) {
+    if (desc.includes('zero cross') || desc.includes('zero-cross') || desc.includes('zc')) {
+      attrs.parameters.push({
+        parameterId: 'firing_mode',
+        parameterName: 'Firing Mode',
+        value: 'Zero-Crossing',
+        source: 'mpn_enrichment',
+      });
+    } else if (desc.includes('random') || desc.includes('instant on') || desc.includes('phase angle')) {
+      attrs.parameters.push({
+        parameterId: 'firing_mode',
+        parameterName: 'Firing Mode',
+        value: 'Random-Fire',
+        source: 'mpn_enrichment',
+      });
+    }
+  }
+}
+
+/**
+ * Post-scoring filter for F2 solid state relays — removes confirmed
+ * output_switch_type and mounting_type mismatches.
+ * These are BLOCKING identity gates that must match exactly.
+ */
+function filterSolidStateRelayMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcOutputType = sourceAttrs.parameters.find(p => p.parameterId === 'output_switch_type')?.value?.toLowerCase();
+  const srcMounting = sourceAttrs.parameters.find(p => p.parameterId === 'mounting_type')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Block output_switch_type mismatch (TRIAC ≠ MOSFET ≠ SCR)
+    if (srcOutputType) {
+      const candType = rec.matchDetails?.find(d => d.parameterId === 'output_switch_type');
+      if (candType?.replacementValue) {
+        const candVal = candType.replacementValue.toLowerCase();
+        if (srcOutputType !== candVal) return false;
+      }
+    }
+
+    // Block mounting_type mismatch (PCB ≠ DIN-rail ≠ Panel)
+    if (srcMounting) {
+      const candMount = rec.matchDetails?.find(d => d.parameterId === 'mounting_type');
+      if (candMount?.replacementValue) {
+        const candVal = candMount.replacementValue.toLowerCase();
+        if (srcMounting !== candVal) return false;
+      }
     }
 
     return true;

@@ -1722,3 +1722,155 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 **Files created:** `lib/logicTables/d1Crystals.ts`, `lib/contextQuestions/d1Crystals.ts`
 
 **Files modified:** `lib/types.ts` (Crystals category), `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`, `lib/services/atlasMapper.ts`, `locales/en.json`, `locales/zh-CN.json`, `__tests__/services/logicTableConsistency.test.ts` (38→39 families)
+
+### 72. D2 Fuses — Traditional Overcurrent Protection (Block D: Protection)
+
+**Status:** Implemented
+
+**Problem:** Need to encode Family D2 — traditional one-time fuses (cartridge, SMD, automotive blade) into the matching engine. D2 is the second family in Block D, covering overcurrent protection devices distinct from Family 66 (PTC Resettable Fuses).
+
+**Decision:** Implemented D2 as a standalone base family with 14 matching rules, 3 context questions, and ~30 MPN enrichment patterns.
+
+**Key Design Choices:**
+
+1. **current_rating_a is Identity, NOT a threshold**: The most dangerous fuse substitution error. A 3A fuse in a 2A circuit leaves wiring unprotected for faults between 2–3A. A 2A fuse in a 3A circuit blows under normal load. Current rating must match exactly.
+2. **speed_class is a HARD GATE**: Fast-blow (F/FF) and Slow-blow (T/TT) have fundamentally different time-current curves. Post-scoring filter enforces cross-class blocking.
+3. **voltage_rating_v threshold GTE w10 blockOnMissing**: Safety-critical minimum. A fuse rated below circuit voltage cannot safely extinguish the arc — the arc sustains, fuse body may rupture. Upsizing is always safe.
+4. **breaking_capacity_a threshold GTE w10 blockOnMissing**: Safety-critical minimum. If fault current exceeds breaking capacity, fuse body may explode.
+5. **package_format HARD GATE**: 5×20mm / 6.3×32mm / SMD / blade (ATM/ATC/APX) are physically incompatible. Post-scoring filter also enforces within-blade discrimination (ATM ≠ ATC ≠ APX).
+6. **i2t_rating_a2s threshold LTE w8**: Let-through energy — the semiconductor protection spec. Escalated to mandatory + blockOnMissing for Q2 = semiconductor protection.
+7. **voltage_type (AC/DC) identity_flag w7**: DC fuses require explicit DC rating. A 250VAC fuse may be rated only 32VDC. Escalated to mandatory for Q1 = DC applications.
+8. **body_material escalation**: Glass bodies BLOCKED for high-voltage DC (Q1 = HV DC) — ceramic sand-fill mandatory because DC arcs have no zero crossing.
+9. **AEC-Q200 (not AEC-Q100)**: Fuses are passive components — they use the Q200 standard.
+10. **PTC redirect guard**: MPN patterns for PPTC/MF-MSMF/0ZC/Polyswitch/polyfuse detected and redirected to Family 66. Thermal cutoffs flagged as out of scope.
+11. **mapCategory() split**: Removed `'fuse'` from the Protection catch-all. PTC resettable check comes before general fuse check. Traditional fuses route to new `'Fuses'` ComponentCategory.
+
+**Digikey Integration:**
+- Categories: "Fuses" (cartridge/SMD) + "Automotive Fuses" (blade) — exact leaf names need verification via discovery script
+- ~9 field mappings per category (estimated ~45-50% weight coverage)
+- Fields not in Digikey: I²t (often absent), melting I²t, derating factor, explicit DC voltage rating (sometimes separate field)
+
+**MPN Enrichment (~30 patterns):**
+- Littelfuse cartridge: 218 (5×20mm fast), 218T (slow), 312/313 (6.3×32mm)
+- Littelfuse SMD: 0451 (fast), 0452 (slow), 0453–0456
+- Schurter: GSF, FST, PFRA, UST
+- Bel Fuse: GMA, GMC, GDC, MDL, MDX, FLQ, FLA, 5HH, 5SB
+- Bourns SMD: SF-0603/0805/1206/2410
+- Automotive blade: ATM (Mini), ATO/ATC (Regular), APX (Maxi), MIDI, MAXI, MCASE, JCASE
+- Cartridge variants: AGA, AGC, AGX, AGW, F500, F501
+- Suffix inference: -FF (Very Fast), -TT (Very Slow), -T (Slow-Blow)
+
+**Context Questions (3):**
+- Q1: Supply type/voltage — AC mains escalates safety_certification + breaking_capacity; HV DC escalates body_material to mandatory (glass BLOCKED)
+- Q2: What is the fuse protecting — semiconductor escalates speed_class to mandatory Fast-blow + i2t to mandatory + blockOnMissing; motor/inductive escalates speed_class to mandatory Slow-blow
+- Q3: Automotive — AEC-Q200 mandatory + blockOnMissing, operating_temp_range mandatory
+
+**Files created:** `lib/logicTables/d2Fuses.ts`, `lib/contextQuestions/d2Fuses.ts`
+
+**Files modified:** `lib/types.ts` (Fuses category), `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`, `__tests__/services/logicTableConsistency.test.ts` (39→40 families)
+
+### 73. E1 Optocouplers / Photocouplers (Block E: Optoelectronics)
+
+**Status:** Implemented
+
+**Problem:** Need to encode Family E1 — optocouplers/photocouplers (single-LED-input, single-output galvanic isolation devices) into the matching engine. E1 is the first family in Block E (Optoelectronics), covering phototransistor, photodarlington, and logic-output types.
+
+**Decision:** Encode E1 as a standalone base family with 23 matching rules, 4 context questions, TWO Digikey categories, ~30 MPN enrichment patterns, and post-scoring filters.
+
+**Key rules and rationale:**
+1. **output_transistor_type (identity w10 blockOnMissing)**: HARD GATE — phototransistor / photodarlington / logic-output are architecturally incompatible. Cross-type BLOCKED.
+2. **isolation_voltage_vrms (threshold GTE w10 blockOnMissing)**: Safety-critical minimum. Never downgrade. Reinforced isolation: ≥3750 Vrms.
+3. **working_voltage_vrms (threshold GTE w9 blockOnMissing)**: Continuous rated working voltage. Distinct from test voltage. Escalated for reinforced isolation.
+4. **channel_count (identity w9 blockOnMissing)**: HARD GATE. Single / Dual / Quad — pinout incompatibility.
+5. **package_type (identity w9 blockOnMissing)**: HARD GATE. DIP-4 / DIP-6 / SOP-4 / SSOP-4 — footprint incompatibility.
+6. **ctr_min_pct (threshold GTE w9)**: CTR gain budget at specified If. Escalated to mandatory for precision CTR (Q3).
+7. **vce_sat_v (threshold LTE w8)**: Output saturation voltage. Logic-output and tight-swing applications.
+8. **bandwidth_khz (threshold GTE w8)**: Escalated for PWM (≥5× Fsw) and digital (≥2× data rate) via Q2.
+9. **AEC-Q101 (not AEC-Q100 or AEC-Q200)**: Optocouplers are discrete semiconductors (LED + phototransistor).
+10. **Digital isolator guard**: ADUM, Si84xx, Si86xx → flagged as out of scope, not E1.
+11. **category: 'Discrete Semiconductors'**: Uses AEC-Q101 standard — avoids singleton category.
+
+**Digikey Integration:**
+- Categories: "Optoisolators - Transistor, Photovoltaic Output" + "Optoisolators - Logic Output"
+- ~8-9 field mappings per category (estimated ~45% weight coverage)
+- Fields not in Digikey: creepage/clearance distances, working voltage, CTR degradation, safety certification, peak isolation voltage
+
+**MPN Enrichment (~30 patterns):**
+- Logic-output: 6N135/136/137, HCPL-0314/2601/3120, ACPL-P343, FOD8xxx
+- Phototransistor: PC817/827/837/847, 4N25-28/35-37, H11A, TLP185/291/785, SFH617A, EL/LTV-817/827/847, CNY17, FOD817
+- Photodarlington: MCT2, H11D, TLP627, TLP521
+- CTR class: trailing letter suffix (PC817A→class A, PC817B→class B, etc.)
+- Channel count: PC827=2ch, PC837=3ch, PC847=4ch (from MPN family)
+
+**Context Questions (4):**
+- Q1: Isolation class — functional / basic / reinforced / safety-rated. Reinforced escalates working_voltage+creepage+safety_cert to mandatory+blockOnMissing.
+- Q2: Bandwidth/speed — slow-DC / PWM-control / high-speed digital / wideband-analog. High-speed digital escalates bandwidth+propagation_delay+supply_voltage_vcc.
+- Q3: CTR precision — standard / precision / long-life. Precision escalates ctr_min+ctr_max+ctr_class. Long-life escalates ctr_degradation.
+- Q4: Automotive — AEC-Q101 mandatory + blockOnMissing, operating_temp_range mandatory.
+
+**Files created:** `lib/logicTables/e1Optocouplers.ts`, `lib/contextQuestions/e1Optocouplers.ts`
+
+**Files modified:** `lib/types.ts` (Optocouplers category), `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`, `__tests__/services/logicTableConsistency.test.ts` (40→41 families)
+
+## 74. Family F1 — Electromechanical Relays (EMR) — Block F: Relays (2026-03-11)
+
+**Context:** F1 is the first family in Block F (Relays). Covers single-coil electromechanical relays: PCB power relays, signal relays, and automotive relays. 42nd family in the system.
+
+**Key rules (23 total):**
+- `coil_voltage_vdc` (identity w10 blockOnMissing) — HARD GATE. Exact match required, NOT a threshold. 24V coil on 12V won't pull in; 5V coil on 12V overheats (P = V²/R). Both directions are hard failures.
+- `contact_form` (identity w10 blockOnMissing) — HARD GATE. SPST-NO/SPST-NC/SPDT/DPST/DPDT define wiring topology. Cross-form substitution BLOCKED.
+- `contact_current_rating_a` (threshold gte w9 blockOnMissing) — Safety-critical minimum. Derate for inductive (1.5×) and motor (2×/LRA) loads.
+- `contact_voltage_rating_v` (threshold gte w9 blockOnMissing) — Safety-critical minimum. AC/DC ratings NOT interchangeable.
+- `contact_material` (identity_flag w7) — Reliability gate for dry-circuit (<100mA). Gold-clad required. Context Q1 escalates to mandatory+block.
+- `coil_resistance_ohm` (threshold gte w7) — Critical for GPIO direct drive. Context Q2 escalates to mandatory+block.
+- `operating_temp_range` (threshold range_superset w7 blockOnMissing) — Must cover application range. Automotive requires −40°C to +125°C.
+- `aec_q200` (identity_flag w4) — AEC-Q200 (electromechanical/passive), NOT AEC-Q100/Q101. Context Q4 escalates to mandatory+block.
+
+**Digikey integration:** THREE categories ("Power Relays, Over 2 Amps" + "Signal Relays, Up to 2 Amps" + "Automotive Relays"). Power relay param map (~10 fields), Signal relay adds contact_material, Automotive relay adds AEC-Q200. ~45% weight coverage — electrical_life, contact_bounce, coil_suppress_diode, coil_power, mechanical_life all datasheet-only. Param field names need verification via discovery script.
+
+**MPN enrichment:** ~40 patterns. Coil voltage from MPN suffix (-12VDC, -DC12, -012, DC12 → 12V). Contact form from series model (G5LE-1 = SPDT, G5Q-1 = SPST-NO, G5V-2 = DPDT). SSR redirect guard (G3/G9/Crydom/SSM → flag out of scope, redirect to F2).
+
+**Context questions (4):** Q1=load type (resistive/inductive/motor/dry-circuit), Q2=coil driver (dedicated/GPIO/battery), Q3=cycle/timing (standard/high-cycle/timing-critical), Q4=automotive AEC-Q200. contextSensitivity: moderate-high.
+
+**Post-scoring filter:** Blocks contact_form, coil_voltage_vdc, and contact_count mismatches.
+
+**Scope boundaries:** EMRs only. SSRs → F2 (not yet). Latching relays → Application Review. Contactors (>25A) → out of scope. Reed relays → Application Review.
+
+**Category:** `'Relays'` (new ComponentCategory for Block F). AEC-Q200 qualification.
+
+## 75. Family F2 — Solid State Relays (SSR) — Logic Table + Digikey Integration (2026-03-11)
+
+**Context:** Family F2 covers solid state relays (SSRs): semiconductor switching devices with input-output isolation in a relay form factor. Three output types: TRIAC-output (AC loads), SCR-output (AC loads), and MOSFET-output (DC loads). PCB-mount, panel-mount, and DIN-rail form factors. 23 matching rules, 4 context questions.
+
+**Key design decisions:**
+
+- `output_switch_type` (w10 identity blockOnMissing) is the HARD GATE — TRIAC/SCR latches on DC loads because there is no load current zero-crossing for turn-off commutation. This is a permanent fault, not a degraded condition. MOSFET-output is not rated for bidirectional AC current. Cross-type BLOCKED unconditionally.
+- `firing_mode` (w9 identity blockOnMissing) — Zero-crossing (ZC) waits for AC voltage zero before switching, eliminating inrush but adding up to 10ms latency. Random-fire (RF) switches immediately, enabling phase-angle control but generating inrush. Not interchangeable.
+- `load_voltage_max_v` and `load_current_max_a` (w10 threshold gte blockOnMissing) — Safety-critical. For AC: verify peak voltage (Vrms × √2). Thermal derating applies: 25A-rated SSR may be limited to 12A at 50°C ambient.
+- `load_current_min_a` (w6 threshold lte) — Hidden TRIAC failure mode. Below holding current, TRIAC de-latches prematurely. Escalated to mandatory+block for low-current loads (Q2).
+- `off_state_leakage_ma` (w7 threshold lte) — Internal snubber leaks 1-10mA through load even when SSR is off. Escalated to mandatory+block for sensitive loads (Q2).
+- `input_voltage_range_v` (w9 threshold superset blockOnMissing) — Control range must fully contain the actual control voltage, not merely overlap. 5V in a 10-14V range = fail.
+- `on_state_voltage_drop_v` (w7 threshold lte) — Determines Pdiss = Vdrop × Iload and heatsink adequacy. Higher Vdrop = undersized existing heatsink. Datasheet-only.
+- `thermal_resistance_jc` (w6 threshold lte) — Junction-to-case thermal resistance determines derating curve. Escalated to mandatory+block for high-temp applications (Q3). Datasheet-only.
+- `built_in_snubber` and `built_in_varistor` (identity_flag w6/w5) — Changes require external circuit modifications. Application Review on any change.
+- No AEC-Q standard applies to SSRs (not Q100/Q101/Q200). Safety certification via UL508/IEC 62314/VDE — per-part listings.
+
+**Digikey integration:**
+- TWO categories: "Solid State Relays" (PCB-mount) + "Solid State Relays - Industrial Mount" (panel/DIN)
+- ~11 param fields per category, ~45% weight coverage
+- thermal_resistance, on_state_voltage_drop, dV/dt, dI/dt, load_current_min, off_state_leakage, snubber, varistor, safety_certification all datasheet-only
+- Same ComponentCategory `'Relays'` as F1 EMRs — differentiated by subcategory
+
+**MPN enrichment:** ~25 patterns covering Crydom/Sensata (D24/D48=DC MOSFET, CMX/CX/HD=AC TRIAC, EZ=Zero-Crossing), Omron (G3NA/G3NB/G3MC/G3PA/G3PE=AC TRIAC), Carlo Gavazzi (RA/RZ=AC, RD/RP=DC), Schneider (SSM), Kyotto (KSI/KSR=AC, KSD=DC), Littelfuse (RSSR/MSSR). Output switch type and firing mode inferred from MPN prefix and description keywords.
+
+**Redirect guards:**
+- EMR redirect: G5LE/G2R/G2RL/V23084/HF115F/SRD → F1
+- Discrete semiconductor: BT136/BT138/TIC206/MAC/BCR → B8 (not SSR — requires separate gate drive)
+
+**Post-scoring filter:** Blocks output_switch_type mismatches (TRIAC≠MOSFET) and mounting_type mismatches (PCB≠DIN-rail≠Panel).
+
+**Context questions:**
+- Q1 (load supply type): DC load → MOSFET only (TRIAC BLOCKED). AC safety-certified → isolation+certification mandatory+block.
+- Q2 (load type): Capacitive/lamp → dI/dt mandatory+block. Low-current → off_state_leakage+load_current_min mandatory+block.
+- Q3 (speed/thermal): Timing-critical → turn_on/turn_off mandatory+block, RF firing required. High temp → thermal_resistance mandatory+block.
+- Q4 (transient protection): Industrial/harsh → dV/dt mandatory, varistor+snubber to primary.

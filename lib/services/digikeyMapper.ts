@@ -51,7 +51,11 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
-  if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
+  if (lower.includes('varistor') || lower.includes('thermistor')) return 'Protection';
+  // PTC Resettable Fuses (Family 66) — must come before D2 general 'fuse' check
+  if (lower.includes('ptc resettable') || lower.includes('pptc') || lower.includes('polyfuse')) return 'Protection';
+  // Traditional Fuses (Family D2) — cartridge, SMD, blade, automotive
+  if (lower.includes('fuse')) return 'Protection';
   if (lower.includes('voltage reference')) return 'Voltage References';
   if (lower.includes('voltage regulator') || lower.includes('ldo')) return 'Voltage Regulators';
   if (lower.includes('switching regulator') || lower.includes('switching controller') || lower.includes('dc dc')) return 'Voltage Regulators';
@@ -61,6 +65,8 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('digital to analog') || (lower.includes('dac') && !lower.includes('diac'))) return 'DACs';
   // ADCs (Family C9) — all architectures in one Digikey category
   if (lower.includes('analog to digital') || (lower.includes('adc') && !lower.includes('ladder'))) return 'ADCs';
+  // Optocouplers / Photocouplers (Family E1) — MUST come before any generic 'isolator' check
+  if (lower.includes('optoisolator') || lower.includes('optocoupler') || lower.includes('photocoupler')) return 'Optocouplers';
   // Crystals (Family D1) — 2-pin passive quartz resonators, MUST come BEFORE C8 oscillator checks
   // Digikey category "Crystals" under parent "Crystals, Oscillators, Resonators"
   // Guard: "Crystal Oscillator" should route to C8, not D1
@@ -79,6 +85,10 @@ function mapCategory(categoryName: string): ComponentCategory {
       lower.includes('latch') || lower.includes('counter') || lower.includes('divider') ||
       lower.includes('shift register') || lower.includes('multiplexer') ||
       lower.includes('decoder') || lower.includes('transceiver')) return 'Logic ICs';
+  // Solid State Relays (Family F2) — PCB-mount and industrial-mount SSRs
+  if (lower.includes('solid state') && lower.includes('relay')) return 'Relays';
+  // Electromechanical Relays (Family F1) — SSR guard prevents misclassification
+  if (lower.includes('relay') && !lower.includes('solid state') && !lower.includes('ssr')) return 'Relays';
   // Default: ICs covers a huge range
   return 'ICs';
 }
@@ -102,6 +112,12 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('common mode choke')) return 'Common Mode Choke';
   if (lower.includes('varistor')) return 'Varistor';
   if (lower.includes('ptc resettable') || lower.includes('polyfuse') || lower.includes('pptc')) return 'PTC Resettable Fuse';
+  // Traditional Fuses (Family D2) — must come after PTC resettable check
+  if (lower.includes('automotive fuse')) return 'Automotive Fuse';
+  if (lower.includes('fuse') && !lower.includes('fuse holder') && !lower.includes('fuse clip') && !lower.includes('fuse block')) return 'Fuse';
+  // Optocouplers / Photocouplers (Family E1)
+  if (lower.includes('optoisolator') && lower.includes('logic output')) return 'Logic Output Optocoupler';
+  if (lower.includes('optoisolator') || lower.includes('optocoupler') || lower.includes('photocoupler')) return 'Optocoupler';
   if (lower.includes('ntc thermistor')) return 'NTC Thermistor';
   if (lower.includes('ptc thermistor')) return 'PTC Thermistor';
   if (lower.includes('schottky')) return 'Schottky Diode';
@@ -177,6 +193,17 @@ function mapSubcategory(categoryName: string): string {
     if (lower.includes('pnp')) return 'PNP BJT';
     if (lower.includes('npn')) return 'NPN BJT';
     return 'BJT';
+  }
+  // Solid State Relays (Family F2) — must come before EMR check
+  if (lower.includes('solid state') && lower.includes('relay')) {
+    if (lower.includes('industrial')) return 'Solid State Relay - Industrial Mount';
+    return 'Solid State Relay';
+  }
+  // Electromechanical Relays (Family F1) — SSR guard prevents misclassification
+  if (lower.includes('relay') && !lower.includes('solid state') && !lower.includes('ssr')) {
+    if (lower.includes('automotive')) return 'Automotive Relay';
+    if (lower.includes('signal')) return 'Signal Relay';
+    return 'Power Relay';
   }
   return categoryName;
 }

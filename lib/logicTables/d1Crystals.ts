@@ -47,7 +47,7 @@ import { LogicTable } from '../types';
 export const d1CrystalsLogicTable: LogicTable = {
   familyId: 'D1',
   familyName: 'Crystals — Quartz Resonators',
-  category: 'Frequency Control',
+  category: 'Passives',
   description: 'Hard logic filters for crystal replacement validation — nominal_frequency_hz and load_capacitance_pf are BLOCKING gates before any parametric evaluation',
   rules: [
     // ============================================================

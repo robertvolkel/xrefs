@@ -1,5 +1,5 @@
 /**
- * Structural consistency tests for all 39 component family logic tables
+ * Structural consistency tests for all 43 component family logic tables
  * and their context question configurations.
  *
  * These tests validate structural correctness without making API calls.
@@ -15,7 +15,10 @@ const ALL_FAMILY_IDS = [
   '69', '70', '71', '72',
   'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
   'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10',
-  'D1',
+  'D1', 'D2',
+  'E1',
+  'F1',
+  'F2',
 ] as const;
 
 function getAttributeIds(table: LogicTable): Set<string> {
@@ -206,13 +209,13 @@ describe('Logic Table Structural Consistency', () => {
   // ============================================================
   describe('Tier 3: Cross-registry completeness', () => {
 
-    test('logic table registry contains exactly 39 families', () => {
+    test('logic table registry contains exactly 41 families', () => {
       const registryKeys = Object.keys(logicTableRegistry).sort();
-      expect(registryKeys).toHaveLength(39);
+      expect(registryKeys).toHaveLength(43);
       expect(registryKeys).toEqual([...ALL_FAMILY_IDS].sort());
     });
 
-    test('context questions cover all 39 families', () => {
+    test('context questions cover all 41 families', () => {
       const allConfigs = getAllContextConfigs();
       const coveredFamilyIds = new Set(allConfigs.flatMap(c => c.familyIds));
       for (const id of ALL_FAMILY_IDS) {

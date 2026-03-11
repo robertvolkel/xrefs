@@ -48,11 +48,15 @@ This document maps every component family to the application-context questions t
 | 36 | ADCs (Analog-to-Digital Converters) | C9 | **High** | Architecture (SAR / Delta-Sigma / Pipeline / Flash) is a hard categorical gate — each has fundamentally different latency, noise floor, and speed characteristics. Resolution is always Identity. Simultaneous sampling vs. multiplexed is a hard gate for multi-channel phase-sensitive applications. Interface type (SPI/I2C/Parallel) requires firmware compatibility. ENOB is the honest performance metric; resolution_bits is nominal. AEC-Q100 is BLOCKING for automotive. |
 | 37 | DACs (Digital-to-Analog Converters) | C10 | **High** | Output type (voltage vs. current) is a hard categorical gate — voltage-output and current-output DACs are architecturally incompatible circuit topologies. Resolution is always Identity. Power-on reset state is BLOCKING when it determines safe or unsafe actuator state before firmware initialization. Glitch energy is the hidden spec that separates audio-grade and precision DACs from general-purpose parts. AEC-Q100 is BLOCKING for automotive. |
 | 38 | Crystals (Quartz Resonators) | D1 | **Moderate-High** | Nominal frequency and load capacitance are both hard Identity gates — mismatched load capacitance is the most common crystal substitution error and causes a systematic frequency offset that persists over temperature. ESR must be verified for cold-start margin (5× minimum negative resistance margin). Overtone mode vs. fundamental mode is a hard gate — cross-substitution causes oscillation at the wrong frequency. Cut type (AT-cut vs. Tuning Fork) is determined by frequency range. AEC-Q200 is BLOCKING for automotive. |
+| 39 | Fuses (Traditional Overcurrent Protection) | D2 | **Moderate** | Current rating is Identity — not a threshold. Speed class (fast-blow vs. slow-blow) is a hard categorical gate: cross-class substitutions either blow on normal inrush or fail to protect semiconductors. Voltage rating and breaking capacity are minimum thresholds with safety implications. I²t let-through energy is the key semiconductor protection spec. DC voltage rating is separate from AC rating and must be verified for solar, EV, and battery applications. AEC-Q200 is BLOCKING for automotive. |
+| 40 | Optocouplers / Photocouplers | E1 | **Moderate-High** | Output transistor type (phototransistor / photodarlington / logic-output) is a hard categorical gate — gain range, bandwidth, and drive interface differ fundamentally across types. Isolation voltage is safety-critical and must never be downgraded; working voltage, creepage, and clearance are independent safety attributes that must all be met. CTR precision class matters for bounded-gain applications. Bandwidth/propagation delay is the discriminating spec for high-speed vs. slow applications. AEC-Q101 is BLOCKING for automotive (discrete semiconductor qualification — not AEC-Q100 or AEC-Q200). |
+| 41 | Electromechanical Relays (EMR) | F1 | **Moderate-High** | Coil voltage is Identity — not a threshold. Contact form (SPST-NO/NC, SPDT, DPDT) is a hard categorical gate that defines wiring topology; cross-form substitution is never safe. Contact current and voltage ratings are safety-critical minimum thresholds and must account for load-type derating — inductive and motor loads require significant derating from resistive ratings. Contact material is a hidden reliability gate for dry-circuit applications below 100mA — silver contacts in a dry-circuit application cause insidious intermittent failures. AEC-Q200 is BLOCKING for automotive (electromechanical/passive qualification — not AEC-Q100 or AEC-Q101). |
+| 42 | Solid State Relays (SSR) | F2 | **High** | Output switch type (TRIAC/SCR vs. MOSFET) is a hard categorical gate — TRIAC-output SSRs cannot switch DC loads (no zero-crossing for turn-off, device latches permanently), and MOSFET-output SSRs cannot switch AC loads. Firing mode (zero-crossing vs. random-fire) is a hard gate for inrush-sensitive and proportional-control applications. Load current rating requires thermal derating at elevated ambient temperature — a 25A-rated SSR may be limited to 12A at 50°C. Minimum load current is a hidden reliability gate for TRIAC-output SSRs switching low-current loads. Off-state leakage is a functional gate for sensitive loads that must be fully de-energised. |
 ---
 
 ## Digikey Subcategory Coverage Map
 
-This table maps component families to their corresponding Digikey leaf categories. Some families span multiple Digikey subcategories (e.g., Rectifier Diodes covers both "Single Diodes" and "Bridge Rectifiers"). The system currently has param maps for **55 Digikey subcategories** out of 1,059 total.
+This table maps component families to their corresponding Digikey leaf categories. Some families span multiple Digikey subcategories (e.g., Rectifier Diodes covers both "Single Diodes" and "Bridge Rectifiers"). The system currently has param maps for **62 Digikey subcategories** out of 1,059 total.
 
 | Family ID | Family Name | Digikey Subcategory 1 | Digikey Subcategory 2 |
 |-----------|-------------|----------------------|----------------------|
@@ -100,6 +104,11 @@ This table maps component families to their corresponding Digikey leaf categorie
 | C9 | ADCs (Analog-to-Digital Converters) | Data Acquisition — Analog to Digital Converters (ADC) | — |
 | C10 | DACs (Digital-to-Analog Converters) | Data Acquisition — Digital to Analog Converters (DAC) | Audio — DAC |
 | D1 | Crystals (Quartz Resonators) | Crystals and Oscillators — Crystals | — |
+| D2 | Fuses (Traditional Overcurrent Protection) | Circuit Protection — Fuses | Circuit Protection — Automotive Fuses |
+| E1 | Optocouplers / Photocouplers | Optoisolators — Transistor, Photovoltaic Output | Optoisolators — Logic Output |
+| F1 | Electromechanical Relays (EMR) | Relays — Power | Relays — Signal |
+| F1 | Electromechanical Relays (EMR) | Relays — Automotive | — |
+| F2 | Solid State Relays (SSR) | Relays — Solid State | Relays — Solid State — Industrial Mount |
 
 ---
 
@@ -2496,6 +2505,398 @@ Nominal frequency and load capacitance are both hard Identity gates. Load capaci
 | `frequency_stability_ppm` | threshold lte w8 | escalate_to_mandatory over extended range | unchanged |
 
 
+---
+
+### 39. Fuses — Traditional Overcurrent Protection (Family D2)
+
+**Context sensitivity: MODERATE**
+
+Current rating is Identity — not a minimum threshold. Speed class is a hard categorical gate. Voltage rating and breaking capacity are safety-critical minimum thresholds — never downgrade either. I²t let-through energy is the semiconductor-protection spec that is rarely in distributor parametric tables. DC voltage rating is separate from AC rating and is the binding constraint for solar, EV, and battery applications.
+
+**Digikey:** Two subcategories cover D2: "Circuit Protection — Fuses" (cartridge, SMD, PCB) and "Circuit Protection — Automotive Fuses" (blade types). Key parametric fields present: current rating, voltage rating, speed class, breaking capacity, package, mounting, certification. Missing from Digikey: I²t (often absent), melting I²t, derating factor at temperature, explicit DC voltage rating (sometimes separate field, sometimes not).
+
+**14 matching rules** (total weight: ~100):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `current_rating_a` | identity | 10 | yes | HARD GATE. Exact match. 2A ≠ 3A. Upsizing is not a safe substitution — higher rating may not interrupt faults the original would have caught |
+| 2 | `voltage_rating_v` | threshold gte | 10 | yes | Replacement rating ≥ circuit voltage. BLOCKING if below. Upsizing (higher voltage rating) is always safe |
+| 3 | `breaking_capacity_a` | threshold gte | 10 | yes | Replacement breaking capacity ≥ available fault current. Underrated fuse may rupture or sustain arc during fault |
+| 4 | `speed_class` | identity | 9 | yes | HARD GATE. Fast-blow (F) / Slow-blow (T/TT) / Very Fast (FF). Cross-class substitution BLOCKED |
+| 5 | `i2t_rating_a2s` | threshold lte | 8 | no | Let-through energy. Escalated to mandatory for semiconductor protection (Q2). Replacement I²t ≤ component I²t rating |
+| 6 | `melting_i2t_a2s` | threshold lte | 6 | no | Pre-arcing energy. Escalated to primary for semiconductor protection (Q2) |
+| 7 | `package_format` | identity | 9 | yes | HARD GATE. 5×20mm / 6.3×32mm / SMD / Blade (ATM/ATC/APX). Cross-format BLOCKED |
+| 8 | `body_material` | identity_flag | 6 | no | Glass / Ceramic / Sand-fill. Escalated to mandatory for high-voltage DC and mains (Q1) |
+| 9 | `mounting_type` | identity | 8 | yes | PCB through-hole / SMD / Panel-mount / In-line. BLOCK cross-type |
+| 10 | `operating_temp_range` | threshold superset | 6 | no | Must cover full ambient range. Fuse derates at elevated temperature |
+| 11 | `derating_factor` | application_review | 5 | no | % of rated current for continuous operation. Flag when operating current is close to derating limit |
+| 12 | `voltage_type` | identity_flag | 7 | no | AC / DC / AC+DC. DC-specific rating required for solar, EV, battery. Escalated to mandatory for DC applications (Q1) |
+| 13 | `safety_certification` | identity_flag | 7 | no | UL248 / IEC 60127 / AEC-Q200. Escalated to mandatory for mains-connected (Q1) |
+| 14 | `aec_q200` | identity_flag | 4 | no | Escalated to mandatory + blockOnMissing for automotive (Q3) |
+
+**MPN enrichment** (~30 prefix patterns): Infers `current_rating_a` and `voltage_rating_v` (parsed from MPN numeric fields), `speed_class` (suffix F = fast-blow, T = slow-blow, TT = very slow, FF = very fast in most Littelfuse/Schurter/Bel naming), `package_format` (prefix or body code: 218 = 5×20mm, 312 = 6.3×32mm, ATO/ATC/ATM/APX = automotive blade, 0451/0685/SF = SMD). Common prefixes: 218, 218T, 312, 312T (Littelfuse cartridge); 0451, 0452, 0453 (Littelfuse SMD); GSF, FST, PFRA (Schurter); 5HH, 5SB, GMA, GMC (Bel Fuse); SF-xx06 (Bourns SMD); ATM, ATO, ATC, APX, MIDI, MAXI (automotive blade — manufacturer-agnostic blade designations).
+
+#### Question 1: What is the supply type and voltage level?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **AC mains-connected (120–277VAC)** | `voltage_rating_v` → escalate_to_mandatory ≥ circuit voltage. `breaking_capacity_a` → escalate_to_mandatory ≥ 1500A (IEC) or 10000A (UL). `safety_certification` → escalate_to_mandatory. `body_material` → escalate_to_primary (ceramic preferred). `voltage_type` → confirm AC or AC+DC. |
+| **Low-voltage DC board-level (≤60VDC)** | `voltage_type` → escalate_to_mandatory + confirm DC rating ≥ circuit voltage. `breaking_capacity_a` → escalate_to_primary. `safety_certification` → default. |
+| **High-voltage DC (>60VDC — solar, EV, industrial DC bus)** | `voltage_type` → escalate_to_mandatory. `body_material` → escalate_to_mandatory (ceramic sand-fill — glass BLOCKED for HV DC). `breaking_capacity_a` → escalate_to_mandatory. Non-DC-rated and glass-body fuses → BLOCKED. |
+
+#### Question 2: What is the fuse protecting?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Semiconductor protection (MOSFET, IGBT, diode — component cannot survive sustained overcurrent)** | `speed_class` → escalate_to_mandatory Fast-blow (F). Slow-blow BLOCKED. `i2t_rating_a2s` → escalate_to_mandatory + blockOnMissing ≤ component I²t. `melting_i2t_a2s` → escalate_to_primary. |
+| **Motor / transformer / inductive load (inrush during normal operation)** | `speed_class` → escalate_to_mandatory Slow-blow (T or TT). Fast-blow BLOCKED. `i2t_rating_a2s` → default. |
+| **General wiring / overcurrent protection** | `speed_class` → match original class (default). `i2t_rating_a2s` → Application Review. `breaking_capacity_a` → escalate_to_primary. |
+
+#### Question 3: Is this an automotive application (AEC-Q200 required)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — automotive** | `aec_q200` → escalate_to_mandatory + blockOnMissing. Non-AEC parts removed before scoring. `operating_temp_range` → escalate_to_mandatory −40°C to +125°C. |
+| **No** | `aec_q200` → Operational. Standard matching. |
+
+
+## Block E: Optoelectronics
+
+---
+
+### 40. Optocouplers — Photocouplers (Family E1)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Output transistor type is a hard categorical gate before any other evaluation — phototransistor, photodarlington, and logic-output devices differ in gain range, bandwidth, and interface topology. Isolation voltage is a safety attribute that must never be downgraded; working voltage, creepage distance, and clearance distance are independent safety parameters that must all be satisfied. CTR (current transfer ratio) is a gain budget, not a single number — it must be verified at the actual operating If and must carry end-of-life margin based on the CTR degradation curve. Bandwidth and propagation delay are the primary discriminating specs for high-speed digital isolation vs. slow-switching applications.
+
+**Digikey:** Two subcategories cover E1: "Optoisolators — Transistor, Photovoltaic Output" (phototransistor and photodarlington types) and "Optoisolators — Logic Output" (CMOS/TTL-compatible output types). Key parametric fields present: CTR min, isolation voltage, output type, package, channel count, operating temperature. Missing from Digikey parametric: creepage/clearance distances, working voltage (Vrms), CTR degradation curves, safety certification mark, peak isolation voltage.
+
+**23 matching rules** (total weight: ~153):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `output_transistor_type` | identity | 10 | yes | HARD GATE. Phototransistor / Photodarlington / Logic-output (open-collector or push-pull). Defines gain, speed, and interface topology. Cross-type BLOCKED |
+| 2 | `isolation_voltage_vrms` | threshold gte | 10 | yes | AC test isolation voltage. Replacement ≥ original. BLOCKING if below. Safety attribute — never downgrade |
+| 3 | `working_voltage_vrms` | threshold gte | 9 | yes | Continuous rated working voltage across isolation barrier. Must cover actual circuit voltage. Distinct from test voltage |
+| 4 | `channel_count` | identity | 9 | yes | HARD GATE. Single / Dual / Quad. Circuit PCB footprint uses a fixed channel count |
+| 5 | `package_type` | identity | 9 | yes | HARD GATE. DIP-4 / DIP-6 / SOP-4 / SSOP-4 / SMD. Footprint incompatibility BLOCKED |
+| 6 | `creepage_distance_mm` | threshold gte | 8 | no | Minimum creepage distance. Escalated to mandatory for mains-connected reinforced isolation (Q1). Replacement ≥ original |
+| 7 | `clearance_distance_mm` | threshold gte | 7 | no | Minimum clearance (air path). Paired with creepage — one cannot compensate for the other. Escalated for reinforced class (Q1) |
+| 8 | `peak_isolation_voltage_v` | threshold gte | 7 | no | Peak non-repetitive isolation voltage. Escalated to mandatory when transient overvoltage present (Q1) |
+| 9 | `safety_certification` | identity_flag | 7 | no | UL1577 / IEC 62368-1 / VDE / CSA. Escalated to mandatory for mains-connected safety isolation (Q1) |
+| 10 | `pollution_degree` | identity_flag | 5 | no | Pollution degree 1 / 2 / 3. Determines creepage multiplier per IEC 60664. Escalated for harsh environments |
+| 11 | `ctr_min_pct` | threshold gte | 9 | no | CTR minimum at specified If. Replacement CTR_min ≥ required minimum. Escalated to mandatory for precision CTR (Q3) |
+| 12 | `ctr_max_pct` | threshold lte | 7 | no | CTR maximum. Relevant when load circuit assumes bounded gain. Escalated to mandatory for precision CTR (Q3) |
+| 13 | `ctr_class` | identity_flag | 6 | no | CTR rank suffix (A/B/C/D/E). Escalated to mandatory for precision CTR (Q3) |
+| 14 | `if_rated_ma` | threshold lte | 7 | yes | LED rated continuous forward current. Circuit drive current must not exceed this |
+| 15 | `input_forward_voltage_vf` | threshold lte | 7 | no | LED Vf at specified If. Replacement Vf ≤ original to avoid exceeding input drive voltage budget |
+| 16 | `vce_sat_v` | threshold lte | 8 | no | Output transistor saturation voltage. Escalated for logic-output types and tight output swing applications |
+| 17 | `bandwidth_khz` | threshold gte | 8 | no | Small-signal bandwidth or max switching frequency. Escalated to mandatory for high-speed digital isolation (Q2) |
+| 18 | `propagation_delay_us` | threshold lte | 7 | no | Turn-on/turn-off propagation delay. Escalated to mandatory for digital/PWM applications (Q2). Asymmetric tpHL/tpLH distorts PWM duty cycle |
+| 19 | `output_leakage_iceo_ua` | threshold lte | 5 | no | Off-state collector leakage current. Escalated for high-impedance analog input stages |
+| 20 | `supply_voltage_vcc` | threshold superset | 7 | no | For logic-output types: VCC range must include board supply. blockOnMissing applies when output_transistor_type = logic-output |
+| 21 | `ctr_degradation_pct` | threshold lte | 6 | no | CTR degradation over rated lifetime. Escalated to mandatory for long-life industrial applications (Q3) and automotive (Q4) |
+| 22 | `operating_temp_range` | threshold superset | 7 | yes | Must fully cover application range. Extended −40°C to +125°C mandatory for automotive (Q4) |
+| 23 | `aec_q101` | identity_flag | 4 | no | AEC-Q101 discrete semiconductor automotive qualification. Escalated to mandatory + blockOnMissing for automotive (Q4). Note: AEC-Q101 (discrete semiconductors) — not AEC-Q100 or AEC-Q200 |
+
+**MPN enrichment** (~30 prefix patterns): Infers `output_transistor_type` (6N137/HCPL-xxxx = logic-output; 4Nxx/H11xx/PC8xx = phototransistor; MCT2/H11Dxx = photodarlington), `ctr_class` (trailing letter suffix for PC817/PC817A/B/C/D family and equivalents), `channel_count` (parsed from description for dual/quad devices), `package_type` (SOP-4/DIP-4/DIP-6 from package code), `isolation_voltage_vrms` (family-level lookup — 5000Vrms for PC817C/D, 3750Vrms for 4N35/36/37). Common prefixes: PC817, PC827 (Sharp/ONSEMI); 4N25, 4N35, 4N36, 4N37 (phototransistor family); 6N135, 6N136, 6N137 (logic-output); H11A1–H11A4, H11D1 (Vishay); HCPL-0314, HCPL-2601, HCPL-3120 (Broadcom/Avago); TLP185, TLP291, TLP785 (Toshiba); MCT2 (ONSEMI photodarlington); SFH6156, SFH617A (OSRAM).
+
+#### Question 1: What is the isolation class / application type?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Functional isolation only (low-voltage signal crossing, no safety requirement)** | Default thresholds. `isolation_voltage_vrms` ≥ 500V acceptable. `creepage_distance_mm` and `clearance_distance_mm` → Application Review only. `safety_certification` → not required. `peak_isolation_voltage_v` → Application Review. |
+| **Basic isolation (low-voltage boundary, IEC 62368 or similar, single fault protection)** | `isolation_voltage_vrms` → escalate_to_mandatory ≥ 1500V. `working_voltage_vrms` → escalate_to_primary. `creepage_distance_mm` → escalate_to_primary. `clearance_distance_mm` → escalate_to_primary. `safety_certification` → escalate_to_primary. |
+| **Reinforced isolation (mains-connected, 2× basic isolation, no accessible single fault)** | `isolation_voltage_vrms` → escalate_to_mandatory ≥ 3750V. `working_voltage_vrms` → escalate_to_mandatory + blockOnMissing. `creepage_distance_mm` → escalate_to_mandatory + blockOnMissing (≥ 8mm at PD2). `clearance_distance_mm` → escalate_to_mandatory. `peak_isolation_voltage_v` → escalate_to_mandatory. `safety_certification` → escalate_to_mandatory + blockOnMissing (UL1577 or VDE required). |
+| **Safety-rated / medical / industrial certified (specific certification mark required)** | All reinforced rules apply. `safety_certification` → escalate_to_mandatory + blockOnMissing with specific mark. `pollution_degree` → escalate_to_mandatory. Application Review: verify creepage for pollution degree × overvoltage category. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q1=Functional | Q1=Basic | Q1=Reinforced/Safety |
+|-----------|---------|---------------|----------|----------------------|
+| `isolation_voltage_vrms` | threshold gte w10 | ≥ 500V | escalate_to_mandatory ≥ 1500V | escalate_to_mandatory ≥ 3750V |
+| `working_voltage_vrms` | threshold gte w9 | Application Review | escalate_to_primary | escalate_to_mandatory + blockOnMissing |
+| `creepage_distance_mm` | threshold gte w8 | Application Review | escalate_to_primary | escalate_to_mandatory + blockOnMissing |
+| `clearance_distance_mm` | threshold gte w7 | Application Review | escalate_to_primary | escalate_to_mandatory |
+| `safety_certification` | identity_flag w7 | not required | escalate_to_primary | escalate_to_mandatory + blockOnMissing |
+| `peak_isolation_voltage_v` | threshold gte w7 | Application Review | Application Review | escalate_to_mandatory |
+
+#### Question 2: What is the bandwidth / speed requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Slow / DC monitoring (≤10 kHz switching, relay driving, slow analog feedback)** | Default thresholds. `bandwidth_khz` → Application Review. `propagation_delay_us` → Application Review. Phototransistor and photodarlington both acceptable. |
+| **PWM / control loop (10 kHz–100 kHz switching, motor control, SMPS feedback)** | `bandwidth_khz` → escalate_to_mandatory + blockOnMissing ≥ 5× switching frequency. `propagation_delay_us` → escalate_to_mandatory (tpHL and tpLH asymmetry flags duty-cycle distortion). `output_transistor_type` photodarlington → Application Review flag (typically too slow above 50 kHz). |
+| **High-speed digital isolation (>500 kHz, UART/SPI/CAN boundary isolation)** | `bandwidth_khz` → escalate_to_mandatory + blockOnMissing ≥ 2× data rate. `propagation_delay_us` → escalate_to_mandatory. `output_transistor_type` → logic-output strongly preferred; phototransistor BLOCKED above ~1 MHz. `supply_voltage_vcc` → escalate_to_mandatory + blockOnMissing for logic-output types. |
+| **Wideband analog isolation (signal fidelity, audio, analog bandwidth)** | `bandwidth_khz` → escalate_to_mandatory + blockOnMissing. `propagation_delay_us` → escalate_to_primary. Phototransistor preferred. Application Review: verify CTR linearity and output load impedance for analog fidelity. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q2=Slow/DC | Q2=PWM/Control | Q2=High-Speed Digital |
+|-----------|---------|------------|----------------|----------------------|
+| `bandwidth_khz` | threshold gte w8 | Application Review | escalate_to_mandatory ≥ 5× freq | escalate_to_mandatory ≥ 2× data rate |
+| `propagation_delay_us` | threshold lte w7 | Application Review | escalate_to_mandatory | escalate_to_mandatory |
+| `output_transistor_type` | identity w10 | all types OK | photodarlington App Review | logic-output preferred; phototransistor BLOCKED >1 MHz |
+| `supply_voltage_vcc` | threshold superset w7 | N/A if not logic-out | N/A if not logic-out | escalate_to_mandatory + blockOnMissing (logic-out) |
+
+#### Question 3: Is there a CTR precision / range requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Standard — CTR minimum only matters (relay driving, digital switching)** | Default thresholds. `ctr_min_pct` → threshold gte w9. `ctr_max_pct` → Application Review. `ctr_class` → Application Review. `ctr_degradation_pct` → Application Review. |
+| **Precision CTR — bounded range required (analog feedback, linear region, proportional control)** | `ctr_min_pct` → escalate_to_mandatory + blockOnMissing. `ctr_max_pct` → escalate_to_mandatory + blockOnMissing. `ctr_class` → escalate_to_mandatory. `ctr_degradation_pct` → escalate_to_primary. Application Review: verify CTR at actual operating If. |
+| **Long-life / high-reliability (industrial safety relay, 10,000h+ service life)** | `ctr_min_pct` → escalate_to_mandatory with end-of-life margin (initial CTR_min ≥ 2× required minimum). `ctr_degradation_pct` → escalate_to_mandatory + blockOnMissing. `if_rated_ma` → escalate_to_primary (lower If = slower LED aging). Application Review flag for any part without published CTR lifetime curve. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q3=Standard | Q3=Precision CTR | Q3=Long-Life |
+|-----------|---------|-------------|-----------------|--------------|
+| `ctr_min_pct` | threshold gte w9 | default | escalate_to_mandatory + blockOnMissing | escalate_to_mandatory (2× margin) |
+| `ctr_max_pct` | threshold lte w7 | Application Review | escalate_to_mandatory + blockOnMissing | Application Review |
+| `ctr_class` | identity_flag w6 | Application Review | escalate_to_mandatory | escalate_to_primary |
+| `ctr_degradation_pct` | threshold lte w6 | Application Review | escalate_to_primary | escalate_to_mandatory + blockOnMissing |
+| `if_rated_ma` | threshold lte w7 | default | default | escalate_to_primary |
+
+#### Question 4: Is this an automotive application (AEC-Q101 required)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — automotive (AEC-Q101 required)** | `aec_q101` → escalate_to_mandatory + blockOnMissing. Non-AEC-Q101 parts removed before scoring. `operating_temp_range` → escalate_to_mandatory −40°C to +125°C. `ctr_degradation_pct` → escalate_to_primary. Note: AEC-Q101 (discrete semiconductors) — not AEC-Q100 or AEC-Q200. |
+| **No — commercial / industrial** | `aec_q101` → Operational. Standard qualification matching. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q4=Yes (Automotive) | Q4=No |
+|-----------|---------|---------------------|-------|
+| `aec_q101` | identity_flag w4 | escalate_to_mandatory + blockOnMissing | unchanged |
+| `operating_temp_range` | threshold superset w7 | escalate_to_mandatory −40°C to +125°C | unchanged |
+| `ctr_degradation_pct` | threshold lte w6 | escalate_to_primary | unchanged |
+
+
+## Block F: Switching & Electromechanical
+
+---
+
+### 41. Electromechanical Relays — EMR (Family F1)
+
+**Context sensitivity: MODERATE-HIGH**
+
+Coil voltage is Identity — exact match required, not a minimum threshold. Contact form is a hard categorical gate that defines wiring topology; cross-form substitution breaks the controlled circuit. Contact current and voltage ratings are safety-critical minimum thresholds and must be derated for inductive and motor loads. Contact material is a hidden reliability gate for dry-circuit (low-current signal) applications — silver contacts form insulating oxide film below ~100mA, causing intermittent failures that do not appear in lab testing at full load current. AEC-Q200 qualification applies to electromechanical components in automotive applications.
+
+**Digikey:** Three subcategories cover F1: "Relays — Power" (general purpose board and panel-mount), "Relays — Signal" (low-level and dry-circuit), and "Relays — Automotive" (AEC-Q200 qualified). Key parametric fields present in Digikey: coil voltage, contact form, contact current rating, contact voltage rating, mounting type, operating temperature. Missing from Digikey parametric: electrical life, contact bounce, coil suppression diode type, DC-specific contact voltage rating (separate from AC), mechanical life.
+
+**23 matching rules** (total weight: ~148):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `coil_voltage_vdc` | identity | 10 | yes | HARD GATE. Must exactly match driver supply voltage. Overvoltage overheats coil; undervoltage fails to operate. Not a threshold — a 12V coil on a 5V supply will not operate |
+| 2 | `contact_form` | identity | 10 | yes | HARD GATE. SPST-NO / SPST-NC / SPDT (Form C) / DPST / DPDT. Cross-form substitution BLOCKED — wiring topology is fundamentally different |
+| 3 | `mounting_type` | identity | 9 | yes | HARD GATE. PCB through-hole / PCB SMD / DIN-rail / panel-mount / socket. Cross-type BLOCKED — footprint and enclosure are incompatible |
+| 4 | `contact_count` | identity | 8 | yes | Number of switched poles (1P/2P/3P/4P). Tied to contact form. Cannot replace 2-pole with 1-pole |
+| 5 | `contact_voltage_rating_v` | threshold gte | 9 | yes | Maximum rated switching voltage. Replacement ≥ circuit voltage. BLOCKING if below. AC and DC ratings are separate — verify correct type for load |
+| 6 | `contact_current_rating_a` | threshold gte | 9 | yes | Maximum rated switching current. Replacement ≥ original. Derate for inductive (1.5×) and motor (2×) loads. Escalated for inductive/motor (Q1) |
+| 7 | `contact_voltage_type` | identity_flag | 7 | no | AC / DC / AC+DC. AC-rated contacts may not be suitable for DC switching applications above 30V. Escalated to mandatory for DC load (Q1) |
+| 8 | `contact_material` | identity_flag | 7 | no | AgNi / AgCdO / AgSnO2 / Au-clad / bifurcated gold. Escalated to mandatory for dry-circuit (<100mA) applications (Q1). Gold required for dry-circuit reliability |
+| 9 | `max_switching_power_va` | threshold lte | 6 | no | Maximum switching power envelope. Contact rating is bounded by both voltage and current — verify the combination is within rated switching power |
+| 10 | `coil_resistance_ohm` | threshold gte | 7 | no | DC coil resistance. Replacement ≥ original to avoid exceeding driver source current capability. Escalated to mandatory for GPIO direct drive (Q2) |
+| 11 | `coil_power_mw` | threshold lte | 6 | no | Steady-state coil power consumption. Escalated to mandatory for battery/low-power applications (Q2) |
+| 12 | `must_operate_voltage_v` | threshold lte | 7 | no | Minimum reliable operate voltage. Must be ≤ supply voltage minimum. Escalated to mandatory for battery/variable supply (Q2) |
+| 13 | `must_release_voltage_v` | threshold gte | 5 | no | Maximum release voltage. Escalated to primary for battery/variable supply (Q2) |
+| 14 | `operate_time_ms` | threshold lte | 6 | no | Time from coil energisation to contact closure. Escalated to mandatory for timing-critical applications (Q3) |
+| 15 | `release_time_ms` | threshold lte | 6 | no | Time from coil de-energisation to contact opening. Escalated to mandatory for timing-critical applications (Q3). Flyback diode significantly increases release time |
+| 16 | `mechanical_life_ops` | threshold gte | 5 | no | No-load endurance. Escalated to primary for high-cycle applications (Q3) |
+| 17 | `electrical_life_ops` | threshold gte | 6 | no | Endurance at rated electrical load. Escalated to mandatory for high-cycle industrial applications (Q3). Load-type dependent — inductive load may yield 10–50% of resistive rating |
+| 18 | `contact_bounce_ms` | threshold lte | 5 | no | Contact bounce duration after closure. Escalated to primary for timing-critical and counter/edge-detection applications (Q3) |
+| 19 | `package_footprint` | identity_flag | 8 | no | PCB footprint / pin pitch. Escalated to mandatory for PCB drop-in replacement. JEDEC and manufacturer-standard footprints interchangeable within that standard |
+| 20 | `coil_suppress_diode` | identity_flag | 6 | no | None / Diode / Diode+Zener / Varistor. Change in suppression type requires external circuit modification. Application Review whenever type changes |
+| 21 | `operating_temp_range` | threshold superset | 7 | yes | Must fully cover application range. −40°C to +125°C mandatory for automotive (Q4) |
+| 22 | `sealing_type` | identity_flag | 5 | no | Open / Sealed / Flux-tight / Fully sealed / Hermetic. Escalated to primary for wash-through assembly and automotive (Q4) |
+| 23 | `aec_q200` | identity_flag | 4 | no | AEC-Q200 electromechanical/passive automotive qualification. Escalated to mandatory + blockOnMissing for automotive (Q4). Note: AEC-Q200 — not AEC-Q100 (ICs) or AEC-Q101 (discrete semiconductors) |
+
+**MPN enrichment** (~35 prefix patterns): Infers `coil_voltage_vdc` from MPN suffix (G5LE-1-DC12 → 12V, V23084-A201 → 12V, field position varies by manufacturer), `contact_form` from series model (G5LE-1 = SPDT, G5Q-1 = SPST-NO, G5V-2 = DPDT), `mounting_type` (PCB from series; DIN-rail from prefix like FINDER 40/41 series). Common prefixes: G2R, G2RL, G5LE, G5Q, G5V, G6B, G6C, G6K (Omron); V23084, V23092, IM (TE/Tyco/Axicom); JS, JW, TQ, TXS (Panasonic); FTR (Fujitsu); DS (Aromat); HF115F, HF32F (Hongfa); SRD (Songle/generic PCB). Coil voltage suffix codes: 5/005 = 5V; 12/012 = 12V; 24/024 = 24V; 48/048 = 48V.
+
+#### Question 1: What type of load is being switched?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Resistive load (heaters, steady-state lamps, resistive test loads)** | Default thresholds. `contact_current_rating_a` → threshold gte at nominal. `contact_material` → Application Review for currents below 100mA. `electrical_life_ops` → default. |
+| **Inductive load (motors, solenoids, transformers, relays)** | `contact_current_rating_a` → escalate_to_mandatory with 1.5× inductive derating applied. `contact_voltage_type` → escalate_to_primary (verify DC rating for DC inductive). `coil_suppress_diode` → escalate_to_primary. `electrical_life_ops` → escalate_to_primary. Application Review: note inductive derating in explanation. |
+| **Motor load (high inrush — starting current 3–10× running current)** | `contact_current_rating_a` → escalate_to_mandatory with 2× motor derating or ≥ LRA if known. `contact_voltage_type` → escalate_to_primary. `electrical_life_ops` → escalate_to_mandatory. `coil_suppress_diode` → escalate_to_primary. Application Review: verify rating against locked-rotor amperage. |
+| **Dry-circuit / signal switching (load < 100mA)** | `contact_material` → escalate_to_mandatory + blockOnMissing (Au-clad or bifurcated gold required). Silver-contact relays BLOCKED. `max_switching_power_va` → escalate_to_primary (minimum switching current spec). |
+
+**Affected attributes:**
+
+| Attribute | Default | Q1=Resistive | Q1=Inductive | Q1=Motor | Q1=Dry-Circuit |
+|-----------|---------|--------------|--------------|----------|----------------|
+| `contact_current_rating_a` | threshold gte w9 | default | escalate 1.5× derating | escalate 2× / LRA | default (low current) |
+| `contact_material` | identity_flag w7 | App Review <100mA | default | default | escalate_to_mandatory + blockOnMissing |
+| `contact_voltage_type` | identity_flag w7 | default | escalate_to_primary | escalate_to_primary | App Review |
+| `electrical_life_ops` | threshold gte w6 | default | escalate_to_primary | escalate_to_mandatory | default |
+| `coil_suppress_diode` | identity_flag w6 | default | escalate_to_primary | escalate_to_primary | default |
+
+#### Question 2: What is the coil driver circuit?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Dedicated relay driver IC or transistor** | Default thresholds. `coil_voltage_vdc` → identity match. `coil_resistance_ohm` → threshold gte w7. `must_operate_voltage_v` → default. |
+| **Microcontroller GPIO direct drive (limited source current, 8–25mA typical)** | `coil_resistance_ohm` → escalate_to_mandatory + blockOnMissing (verify coil current ≤ GPIO Ioh_max). `coil_power_mw` → escalate_to_primary. Application Review: flag any replacement where coil_voltage / coil_resistance > 20mA without explicit GPIO capability confirmation. |
+| **Battery / low-power supply (voltage varies or droops under load)** | `must_operate_voltage_v` → escalate_to_mandatory (must operate at battery minimum, not nominal). `coil_power_mw` → escalate_to_mandatory + blockOnMissing. `must_release_voltage_v` → escalate_to_primary. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q2=Dedicated Driver | Q2=GPIO Direct | Q2=Battery/Low-Power |
+|-----------|---------|---------------------|----------------|----------------------|
+| `coil_resistance_ohm` | threshold gte w7 | default | escalate_to_mandatory + blockOnMissing | escalate_to_primary |
+| `coil_power_mw` | threshold lte w6 | default | escalate_to_primary | escalate_to_mandatory + blockOnMissing |
+| `must_operate_voltage_v` | threshold lte w7 | default | default | escalate_to_mandatory |
+| `must_release_voltage_v` | threshold gte w5 | default | default | escalate_to_primary |
+
+#### Question 3: Is this a high-cycle or timing-critical application?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Standard / low-cycle (HVAC, lighting, general switching — <100k operations)** | Default thresholds. `operate_time_ms` → Application Review. `release_time_ms` → Application Review. `electrical_life_ops` → threshold gte w6. |
+| **High-cycle industrial (>1M operations — production equipment, test fixtures)** | `electrical_life_ops` → escalate_to_mandatory + blockOnMissing (≥ expected cycle count at actual load). `mechanical_life_ops` → escalate_to_primary. `contact_material` → escalate_to_primary (AgSnO2 preferred for high-cycle inductive). Application Review if electrical life < 110% of expected cycles. |
+| **Timing-critical / sequential control (operate and release times affect behaviour)** | `operate_time_ms` → escalate_to_mandatory + blockOnMissing. `release_time_ms` → escalate_to_mandatory + blockOnMissing. `contact_bounce_ms` → escalate_to_primary. Application Review: verify flyback suppression matches original — diode suppression significantly extends release time. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q3=Standard | Q3=High-Cycle | Q3=Timing-Critical |
+|-----------|---------|-------------|---------------|--------------------|
+| `electrical_life_ops` | threshold gte w6 | default | escalate_to_mandatory + blockOnMissing | default |
+| `mechanical_life_ops` | threshold gte w5 | default | escalate_to_primary | default |
+| `operate_time_ms` | threshold lte w6 | App Review | default | escalate_to_mandatory + blockOnMissing |
+| `release_time_ms` | threshold lte w6 | App Review | default | escalate_to_mandatory + blockOnMissing |
+| `contact_bounce_ms` | threshold lte w5 | App Review | default | escalate_to_primary |
+
+#### Question 4: Is this an automotive application (AEC-Q200 required)?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Yes — automotive (AEC-Q200 required)** | `aec_q200` → escalate_to_mandatory + blockOnMissing. Non-AEC-Q200 parts removed before scoring. `operating_temp_range` → escalate_to_mandatory −40°C to +125°C. `sealing_type` → escalate_to_primary (sealed or fully sealed required). Note: AEC-Q200 (electromechanical/passive) — not AEC-Q100 or AEC-Q101. |
+| **No — commercial / industrial** | `aec_q200` → Operational. Standard matching. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q4=Yes (Automotive) | Q4=No |
+|-----------|---------|---------------------|-------|
+| `aec_q200` | identity_flag w4 | escalate_to_mandatory + blockOnMissing | unchanged |
+| `operating_temp_range` | threshold superset w7 | escalate_to_mandatory −40°C to +125°C | unchanged |
+| `sealing_type` | identity_flag w5 | escalate_to_primary | unchanged |
+
+
+---
+
+### 42. Solid State Relays — SSR (Family F2)
+
+**Context sensitivity: HIGH**
+
+Output switch type (TRIAC/SCR vs. MOSFET) is a hard categorical gate before any other evaluation — TRIAC-output SSRs latch permanently on DC loads with no turn-off mechanism, and MOSFET-output SSRs are not rated for AC current flow. Firing mode (zero-crossing vs. random-fire) is a hard gate for inrush-sensitive and proportional-control applications. Load current rating requires thermal derating at elevated ambient temperature — a 25A-rated SSR may be limited to 12A at 50°C ambient. Minimum load current is a hidden failure mode for TRIAC-output SSRs on low-current loads (LED lamps, low-power electronics) where the TRIAC holding current may not be sustained. Off-state leakage through the internal snubber network (1–10mA at mains voltage) can partially energise sensitive loads in the off state.
+
+**Digikey:** Two subcategories cover F2: "Relays — Solid State" (PCB-mount SSRs) and "Relays — Solid State — Industrial Mount" (panel and DIN-rail SSRs). Key parametric fields present: load voltage, load current, input voltage range, output type (AC/DC), mounting, firing mode (sometimes), operating temperature. Missing from Digikey parametric: thermal resistance, on-state voltage drop, dV/dt and dI/dt ratings, minimum load current, off-state leakage, snubber and varistor presence, specific certification marks.
+
+**23 matching rules** (total weight: ~157):
+
+| # | Attribute | Rule Type | Weight | blockOnMissing | Key behavior |
+|---|-----------|-----------|--------|----------------|--------------|
+| 1 | `output_switch_type` | identity | 10 | yes | HARD GATE. TRIAC / Back-to-back SCR / MOSFET / IGBT. TRIAC/SCR = AC output only (latches on DC). MOSFET = DC output only. Cross-type BLOCKED unconditionally |
+| 2 | `firing_mode` | identity | 9 | yes | HARD GATE. Zero-crossing (ZC) / Random-fire (RF). ZC waits for AC zero before switching — eliminates inrush, adds up to one half-cycle delay. RF switches immediately — enables phase control, generates inrush. Not interchangeable in inrush-sensitive or timing-critical applications |
+| 3 | `mounting_type` | identity | 9 | yes | HARD GATE. PCB / DIN-rail / Panel-mount. Cross-type BLOCKED |
+| 4 | `load_voltage_type` | identity_flag | 8 | no | AC / DC. Must match load supply. Escalated to mandatory when mismatch with output_switch_type detected |
+| 5 | `load_voltage_max_v` | threshold gte | 10 | yes | Maximum rated load voltage. Replacement ≥ circuit load voltage. For AC: verify peak rating (Vpeak = Vrms × 1.414). BLOCKING if below |
+| 6 | `load_current_max_a` | threshold gte | 10 | yes | Maximum rated load current. Replacement ≥ original. Thermal derating applies: verify derated rating at Tmax ambient ≥ load current. BLOCKING if underated |
+| 7 | `load_current_min_a` | threshold lte | 6 | no | Minimum load current for reliable TRIAC latching. Escalated to mandatory for lamp and low-current loads (Q2). Replacement minimum ≤ actual load current |
+| 8 | `off_state_leakage_ma` | threshold lte | 7 | no | Off-state output leakage through snubber. Escalated to mandatory for sensitive loads (Q2). Replacement leakage ≤ original |
+| 9 | `input_voltage_range_v` | threshold superset | 9 | yes | Control input voltage range must contain actual control voltage. Mismatch = failure to turn on or input damage |
+| 10 | `input_current_ma` | threshold lte | 7 | no | Control input current at rated voltage. Replacement ≤ original to avoid exceeding drive source current |
+| 11 | `input_impedance_ohm` | threshold gte | 5 | no | Control input impedance. Lower impedance draws more current — Application Review when impedance decreases significantly |
+| 12 | `turn_on_time_ms` | threshold lte | 7 | no | Time from input signal to load conduction. Escalated to mandatory for timing-critical and proportional control (Q3) |
+| 13 | `turn_off_time_ms` | threshold lte | 7 | no | Time from input removal to load cessation. AC TRIAC: up to one full cycle. DC MOSFET: typically <1ms. Escalated to mandatory for timing-critical (Q3) |
+| 14 | `dv_dt_rating_v_us` | threshold gte | 6 | no | Critical rate of voltage rise without spurious turn-on. Replacement ≥ original. Escalated to mandatory for harsh/industrial environments (Q4) |
+| 15 | `di_dt_rating_a_us` | threshold gte | 6 | no | Critical rate of current rise at turn-on. Replacement ≥ original. Escalated to mandatory for capacitive/lamp loads (Q2) |
+| 16 | `on_state_voltage_drop_v` | threshold lte | 7 | no | Output terminal voltage drop at rated current. Determines power dissipation. Replacement ≤ original to keep existing heatsink adequate. Escalated to primary for high-temp applications (Q3) |
+| 17 | `thermal_resistance_jc` | threshold lte | 6 | no | Junction-to-case thermal resistance. Replacement ≤ original. Escalated to mandatory for high-temp applications (Q3) |
+| 18 | `built_in_snubber` | identity_flag | 6 | no | Yes / No. Change requires external circuit modification. Application Review whenever type changes |
+| 19 | `built_in_varistor` | identity_flag | 5 | no | Yes / No. Absence requires external overvoltage protection. Application Review on change. Escalated to primary for harsh environments (Q4) |
+| 20 | `isolation_voltage_vrms` | threshold gte | 8 | no | Input-to-output isolation voltage. Replacement ≥ original. Never downgrade. Escalated to mandatory for safety-certified applications (Q1) |
+| 21 | `safety_certification` | identity_flag | 7 | no | UL508 / IEC 62314 / VDE / CSA. Escalated to mandatory for industrial control panel applications (Q1) |
+| 22 | `operating_temp_range` | threshold superset | 7 | yes | Must fully cover application range. SSR current rating derate begins at +25–40°C — verify derated current ≥ load current at Tmax |
+| 23 | `package_footprint` | identity_flag | 7 | no | PCB footprint / panel cutout / DIN pitch. Escalated to mandatory for drop-in replacement. Standard industry outlines interchangeable within that standard |
+
+**MPN enrichment** (~25 prefix patterns): Infers `output_switch_type` (D-prefix Crydom = DC MOSFET output; CMX/CX/HD = AC TRIAC; G3NA/G3NB/G3MC = AC TRIAC Omron), `firing_mode` (EZ suffix Crydom = zero-crossing; suffix Z Carlo Gavazzi = zero-crossing; suffix R = random-fire; G3NA/G3NB = zero-crossing), `load_voltage_max_v` (numeric field in MPN: D2425 → 240VAC 25A; D4825 → 480VAC 25A), `mounting_type` (panel series vs. PCB series from model prefix). Common prefixes: D24, D48, CMX, CX, HD (Crydom/Sensata); G3NA, G3NB, G3MC, G3PA (Omron); RA, RZ, RD (Carlo Gavazzi); SSM (Schneider); KSI, KSR (Kyotto); TD (TE); MGR (generic panel).
+
+#### Question 1: What is the load supply type and isolation requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **AC mains load (120VAC or 230VAC, no specific certification required)** | Default thresholds. `output_switch_type` → TRIAC/SCR only (MOSFET BLOCKED). `load_voltage_max_v` → threshold gte at Vpeak. `isolation_voltage_vrms` → threshold gte w8 (4000Vrms min). `safety_certification` → Application Review. |
+| **AC mains with safety certification required (UL508 industrial panel, IEC 62314)** | `isolation_voltage_vrms` → escalate_to_mandatory ≥ 4000Vrms + blockOnMissing. `safety_certification` → escalate_to_mandatory + blockOnMissing. Application Review: higher isolation voltage alone does not substitute for a listed certification mark. |
+| **DC load (24VDC, 48VDC, or higher DC bus)** | `output_switch_type` → MOSFET only (TRIAC BLOCKED). `load_voltage_type` → escalate_to_mandatory. `firing_mode` → not applicable for DC SSRs. `load_voltage_max_v` → threshold gte at DC bus voltage. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q1=AC Mains | Q1=AC Safety-Certified | Q1=DC Load |
+|-----------|---------|-------------|------------------------|------------|
+| `output_switch_type` | identity w10 | TRIAC/SCR only | TRIAC/SCR only | MOSFET only — TRIAC BLOCKED |
+| `isolation_voltage_vrms` | threshold gte w8 | 4000Vrms min | escalate_to_mandatory + blockOnMissing | default |
+| `safety_certification` | identity_flag w7 | Application Review | escalate_to_mandatory + blockOnMissing | App Review |
+| `load_voltage_max_v` | threshold gte w10 | ≥ Vpeak | ≥ Vpeak | ≥ DC bus voltage |
+
+#### Question 2: What type of load is being switched?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Resistive load (heaters, ovens — no inrush, no back-EMF)** | Default thresholds. `load_current_min_a` → Application Review. `off_state_leakage_ma` → Application Review. `dv_dt_rating_v_us` → default. |
+| **Inductive load (motors, solenoids, transformers — back-EMF at switch-off)** | `dv_dt_rating_v_us` → escalate_to_primary. `load_current_max_a` → escalate_to_mandatory with 1.5× inductive derating. `built_in_snubber` → escalate_to_primary. `thermal_resistance_jc` → escalate_to_primary. Application Review: back-EMF may require external snubber. |
+| **Capacitive / lamp load (LED drivers, CFL, fluorescent, capacitor banks — high inrush)** | `di_dt_rating_a_us` → escalate_to_mandatory + blockOnMissing. `firing_mode` → escalate_to_primary (zero-crossing preferred). `load_current_min_a` → escalate_to_primary. `off_state_leakage_ma` → escalate_to_primary. |
+| **Low-current / sensitive load (< 1A — signals, indicators, low-power electronics)** | `off_state_leakage_ma` → escalate_to_mandatory + blockOnMissing. `load_current_min_a` → escalate_to_mandatory + blockOnMissing. Application Review: consider whether EMR (F1) is more appropriate at very low load currents. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q2=Resistive | Q2=Inductive | Q2=Capacitive/Lamp | Q2=Low-Current |
+|-----------|---------|--------------|--------------|-------------------|----------------|
+| `dv_dt_rating_v_us` | threshold gte w6 | default | escalate_to_primary | default | default |
+| `di_dt_rating_a_us` | threshold gte w6 | default | default | escalate_to_mandatory | default |
+| `load_current_min_a` | threshold lte w6 | App Review | default | escalate_to_primary | escalate_to_mandatory |
+| `off_state_leakage_ma` | threshold lte w7 | App Review | default | escalate_to_primary | escalate_to_mandatory |
+| `built_in_snubber` | identity_flag w6 | default | escalate_to_primary | default | default |
+
+#### Question 3: Is switching speed or thermal management a concern?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Standard / non-timing-critical (on/off control only)** | Default thresholds. `turn_on_time_ms` → Application Review. `turn_off_time_ms` → Application Review. |
+| **Timing-critical / proportional control (phase-angle firing, duty-cycle accuracy)** | `turn_on_time_ms` → escalate_to_mandatory + blockOnMissing. `turn_off_time_ms` → escalate_to_mandatory + blockOnMissing. `firing_mode` → escalate_to_mandatory (random-fire required for proportional control; zero-crossing BLOCKED). |
+| **High ambient temperature (>40°C ambient or enclosed panel)** | `thermal_resistance_jc` → escalate_to_mandatory + blockOnMissing. `on_state_voltage_drop_v` → escalate_to_primary. Application Review: verify derated current at Tmax ≥ load current. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q3=Standard | Q3=Timing-Critical | Q3=High Temp |
+|-----------|---------|-------------|--------------------|--------------|
+| `turn_on_time_ms` | threshold lte w7 | App Review | escalate_to_mandatory + blockOnMissing | default |
+| `turn_off_time_ms` | threshold lte w7 | App Review | escalate_to_mandatory + blockOnMissing | default |
+| `firing_mode` | identity w9 | default | escalate_to_mandatory (RF for proportional) | default |
+| `thermal_resistance_jc` | threshold lte w6 | default | default | escalate_to_mandatory + blockOnMissing |
+| `on_state_voltage_drop_v` | threshold lte w7 | default | default | escalate_to_primary |
+
+#### Question 4: Is there an overvoltage or transient protection requirement?
+
+| Answer | Effect on Matching |
+|--------|-------------------|
+| **Standard environment (normal mains transients)** | Default thresholds. `built_in_varistor` → Application Review. `built_in_snubber` → default identity_flag. |
+| **Industrial / harsh environment (significant transients, motor back-EMF, lightning coupling)** | `built_in_varistor` → escalate_to_primary. `built_in_snubber` → escalate_to_primary. `dv_dt_rating_v_us` → escalate_to_mandatory. `isolation_voltage_vrms` → escalate_to_primary. Application Review: if replacement lacks built-in varistor and original had one, external TVS/MOV required on load terminals. |
+
+**Affected attributes:**
+
+| Attribute | Default | Q4=Standard | Q4=Industrial/Harsh |
+|-----------|---------|-------------|---------------------|
+| `built_in_varistor` | identity_flag w5 | App Review | escalate_to_primary |
+| `built_in_snubber` | identity_flag w6 | default | escalate_to_primary |
+| `dv_dt_rating_v_us` | threshold gte w6 | default | escalate_to_mandatory |
+| `isolation_voltage_vrms` | threshold gte w8 | default | escalate_to_primary |
+
+
 ## Summary: Application Context Questions by Family
 
 This table shows which questions to ask and in what order. The chat engine should ask ONLY the questions relevant to the resolved family.
@@ -2546,6 +2947,14 @@ This table shows which questions to ask and in what order. The chat engine shoul
 | **DACs (Digital-to-Analog Converters)** | C10 | DAC output type? (Voltage / Current — BLOCKING) | Resolution / precision class? (≤12-bit / 12–16-bit / 16–20-bit) | Application type? (audio / precision DC / industrial / battery) | Automotive? (AEC-Q100 — BLOCKING) |
 | **— BLOCK D: FREQUENCY COMPONENTS —** | | | | | |
 | **Crystals (Quartz Resonators)** | D1 | Application / accuracy requirement? (consumer / comms / precision / RTC) | VCXO circuit? (voltage-controlled pulling) | Extended temp / automotive? (AEC-Q200 — BLOCKING) | — |
+| **Fuses (Traditional Overcurrent Protection)** | D2 | Supply type and voltage level? (AC mains / low-voltage DC / high-voltage DC) | What is the fuse protecting? (semiconductor / motor-inductive / general wiring) | Automotive? (AEC-Q200 — BLOCKING) | — |
+| | | | | | |
+| **— BLOCK E: OPTOELECTRONICS —** | | | | | |
+| **Optocouplers / Photocouplers** | E1 | Isolation class / application type? (functional / basic / reinforced / safety-rated mains) | Bandwidth / speed requirement? (slow-DC / PWM-control / high-speed digital / analog) | CTR precision? (standard min only / precision bounded range / long-life high-reliability) | Automotive? (AEC-Q101 — BLOCKING) |
+| | | | | | |
+| **— BLOCK F: SWITCHING & ELECTROMECHANICAL —** | | | | | |
+| **Electromechanical Relays (EMR)** | F1 | Load type? (resistive / inductive / motor / dry-circuit signal) | Coil driver circuit? (dedicated driver / GPIO direct / battery low-power) | High-cycle or timing-critical? (standard / >1M ops / operate+release time matters) | Automotive? (AEC-Q200 — BLOCKING) |
+| **Solid State Relays (SSR)** | F2 | Load supply type and isolation? (AC mains / AC safety-certified / DC load) | Load type? (resistive / inductive / capacitive-lamp / low-current sensitive) | Switching speed or thermal concern? (standard / timing-critical proportional / high ambient temp) | Transient protection? (standard / industrial-harsh environment) |
 
 ---
 

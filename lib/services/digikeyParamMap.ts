@@ -4045,6 +4045,452 @@ const crystalParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// D2: Fuses — Traditional Overcurrent Protection
+// TWO Digikey categories: "Fuses" (cartridge, SMD, PCB) and
+// "Automotive Fuses" (blade types: ATM, ATC, APX).
+// NOTE: Exact Digikey ParameterText field names must be verified via
+// discovery script. Field names below are best estimates.
+// Missing from Digikey: I²t (often absent), melting I²t, derating factor,
+// explicit DC voltage rating (sometimes separate, sometimes not).
+// ============================================================
+const fuseParamMap: Record<string, ParamMapEntry> = {
+  // Current rating — HARD GATE (identity w10, blockOnMissing)
+  'Current Rating': {
+    attributeId: 'current_rating_a',
+    attributeName: 'Current Rating (A)',
+    unit: 'A',
+    sortOrder: 1,
+  },
+  // Voltage rating — safety-critical minimum (threshold GTE w10, blockOnMissing)
+  'Voltage Rating - DC': {
+    attributeId: 'voltage_rating_v',
+    attributeName: 'Voltage Rating (V)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Voltage Rating - AC': {
+    attributeId: 'voltage_rating_v',
+    attributeName: 'Voltage Rating (V)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  // Breaking capacity / interrupting rating (threshold GTE w10, blockOnMissing)
+  'Interrupt Rating': {
+    attributeId: 'breaking_capacity_a',
+    attributeName: 'Breaking Capacity (A)',
+    unit: 'A',
+    sortOrder: 3,
+  },
+  // Speed class — HARD GATE (identity w9, blockOnMissing)
+  // Digikey field may be "Fuse Type", "Response Time", or "Speed"
+  'Fuse Type': {
+    attributeId: 'speed_class',
+    attributeName: 'Speed Class',
+    sortOrder: 4,
+  },
+  'Response Time': {
+    attributeId: 'speed_class',
+    attributeName: 'Speed Class',
+    sortOrder: 4,
+  },
+  // Package / Case — HARD GATE (identity w9, blockOnMissing)
+  'Package / Case': {
+    attributeId: 'package_format',
+    attributeName: 'Package Format',
+    sortOrder: 7,
+  },
+  // Mounting Type — BLOCKING (identity w8, blockOnMissing)
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  // Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+  // AEC-Q200 / safety certification
+  'Ratings': {
+    attributeId: 'aec_q200',
+    attributeName: 'AEC-Q200 Qualification',
+    sortOrder: 14,
+  },
+};
+
+const automotiveFuseParamMap: Record<string, ParamMapEntry> = {
+  // Automotive blade fuses — fewer parametric fields than cartridge/SMD
+  'Current Rating': {
+    attributeId: 'current_rating_a',
+    attributeName: 'Current Rating (A)',
+    unit: 'A',
+    sortOrder: 1,
+  },
+  'Voltage Rating - DC': {
+    attributeId: 'voltage_rating_v',
+    attributeName: 'Voltage Rating (V)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Voltage Rating - AC': {
+    attributeId: 'voltage_rating_v',
+    attributeName: 'Voltage Rating (V)',
+    unit: 'V',
+    sortOrder: 2,
+  },
+  'Fuse Type': {
+    attributeId: 'speed_class',
+    attributeName: 'Speed Class',
+    sortOrder: 4,
+  },
+  'Response Time': {
+    attributeId: 'speed_class',
+    attributeName: 'Speed Class',
+    sortOrder: 4,
+  },
+  // Package / Case — blade type (ATM/ATC/APX)
+  'Package / Case': {
+    attributeId: 'package_format',
+    attributeName: 'Package Format',
+    sortOrder: 7,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 10,
+  },
+  'Ratings': {
+    attributeId: 'aec_q200',
+    attributeName: 'AEC-Q200 Qualification',
+    sortOrder: 14,
+  },
+};
+
+// ============================================================
+// E1: Optocouplers / Photocouplers — TWO Digikey categories
+// ============================================================
+
+/**
+ * Param map for "Optoisolators - Transistor, Photovoltaic Output"
+ * (phototransistor and photodarlington types — PC817, 4N25, MCT2)
+ *
+ * Key parametric fields present: CTR min, isolation voltage, output type,
+ * package, channel count, operating temperature, Vf, Vce(sat).
+ * Missing: creepage/clearance, working voltage, CTR degradation, safety cert.
+ *
+ * ~8 fields, ~45% weight coverage (creepage/clearance/working_voltage/
+ * CTR_degradation/safety_cert/bandwidth/propagation_delay all datasheet-only).
+ *
+ * NOTE: Digikey ParameterText field names need verification via discovery script.
+ */
+const optocouplerTransistorParamMap: Record<string, ParamMapEntry> = {
+  // Output type — HARD GATE (identity w10, blockOnMissing)
+  'Output Type': {
+    attributeId: 'output_transistor_type',
+    attributeName: 'Output Transistor Type',
+    sortOrder: 1,
+  },
+  // Isolation voltage — safety-critical minimum (threshold GTE w10, blockOnMissing)
+  'Isolation Voltage': {
+    attributeId: 'isolation_voltage_vrms',
+    attributeName: 'Isolation Voltage (Vrms)',
+    unit: 'Vrms',
+    sortOrder: 2,
+  },
+  // CTR minimum (threshold GTE w9)
+  'Current Transfer Ratio (Min)': {
+    attributeId: 'ctr_min_pct',
+    attributeName: 'CTR Minimum (%)',
+    unit: '%',
+    sortOrder: 11,
+  },
+  // Channel count — HARD GATE (identity w9, blockOnMissing)
+  'Number of Channels': {
+    attributeId: 'channel_count',
+    attributeName: 'Channel Count',
+    sortOrder: 4,
+  },
+  // Package / Case — HARD GATE (identity w9, blockOnMissing)
+  'Package / Case': {
+    attributeId: 'package_type',
+    attributeName: 'Package Type',
+    sortOrder: 5,
+  },
+  // Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 22,
+  },
+  // LED forward voltage (threshold LTE w7)
+  'Voltage - Forward (Vf) (Typ)': {
+    attributeId: 'input_forward_voltage_vf',
+    attributeName: 'Input Forward Voltage Vf (V)',
+    unit: 'V',
+    sortOrder: 15,
+  },
+  // Vce(sat) — output saturation voltage (threshold LTE w8)
+  'Voltage - Output (Max)': {
+    attributeId: 'vce_sat_v',
+    attributeName: 'Vce(sat) (V)',
+    unit: 'V',
+    sortOrder: 16,
+  },
+  // Mounting Type
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 5,
+  },
+};
+
+/**
+ * Param map for "Optoisolators - Logic Output"
+ * (CMOS/TTL-compatible output — 6N137, HCPL-2601, ACPL-P343)
+ *
+ * Similar fields to transistor output but may include data rate / bandwidth.
+ * Logic-output types have VCC supply and push-pull or open-collector output.
+ *
+ * NOTE: Digikey ParameterText field names need verification via discovery script.
+ */
+const optocouplerLogicParamMap: Record<string, ParamMapEntry> = {
+  // Output type — HARD GATE (identity w10, blockOnMissing)
+  'Output Type': {
+    attributeId: 'output_transistor_type',
+    attributeName: 'Output Transistor Type',
+    sortOrder: 1,
+  },
+  // Isolation voltage — safety-critical minimum (threshold GTE w10, blockOnMissing)
+  'Isolation Voltage': {
+    attributeId: 'isolation_voltage_vrms',
+    attributeName: 'Isolation Voltage (Vrms)',
+    unit: 'Vrms',
+    sortOrder: 2,
+  },
+  // Channel count — HARD GATE (identity w9, blockOnMissing)
+  'Number of Channels': {
+    attributeId: 'channel_count',
+    attributeName: 'Channel Count',
+    sortOrder: 4,
+  },
+  // Package / Case — HARD GATE (identity w9, blockOnMissing)
+  'Package / Case': {
+    attributeId: 'package_type',
+    attributeName: 'Package Type',
+    sortOrder: 5,
+  },
+  // Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 22,
+  },
+  // Data rate (maps to bandwidth_khz — logic-output specs give max data rate)
+  'Data Rate': {
+    attributeId: 'bandwidth_khz',
+    attributeName: 'Bandwidth (kHz)',
+    unit: 'kHz',
+    sortOrder: 17,
+  },
+  // Propagation delay
+  'Propagation Delay tpLH / tpHL (Max)': {
+    attributeId: 'propagation_delay_us',
+    attributeName: 'Propagation Delay (us)',
+    unit: 'us',
+    sortOrder: 18,
+  },
+  // Supply voltage (for logic-output types)
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage_vcc',
+    attributeName: 'Supply Voltage VCC',
+    sortOrder: 20,
+  },
+  // Mounting Type
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 5,
+  },
+};
+
+// ── F1: Electromechanical Relays — Power Relays ────────────────────────
+// Digikey category: "Power Relays, Over 2 Amps" (exact name needs verification)
+// ~10 fields, ~45% weight coverage
+const powerRelayParamMap: Record<string, ParamMapEntry> = {
+  // Coil Voltage
+  'Coil Voltage': {
+    attributeId: 'coil_voltage_vdc',
+    attributeName: 'Coil Voltage (VDC)',
+    sortOrder: 1,
+  },
+  // Contact Form
+  'Contact Form': {
+    attributeId: 'contact_form',
+    attributeName: 'Contact Form',
+    sortOrder: 2,
+  },
+  // Contact Rating (Current)
+  'Contact Rating (Current)': {
+    attributeId: 'contact_current_rating_a',
+    attributeName: 'Contact Current Rating (A)',
+    sortOrder: 3,
+  },
+  // Contact Rating (Voltage)
+  'Contact Rating (Voltage)': {
+    attributeId: 'contact_voltage_rating_v',
+    attributeName: 'Contact Voltage Rating (V)',
+    sortOrder: 4,
+  },
+  // Coil Resistance
+  'Coil Resistance': {
+    attributeId: 'coil_resistance_ohm',
+    attributeName: 'Coil Resistance (Ω)',
+    sortOrder: 5,
+  },
+  // Must Operate Voltage
+  'Must Operate Voltage': {
+    attributeId: 'must_operate_voltage_v',
+    attributeName: 'Must-Operate Voltage (V)',
+    sortOrder: 6,
+  },
+  // Operating Temperature
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 7,
+  },
+  // Mounting Type
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 8,
+  },
+  // Seal Rating
+  'Seal Rating': {
+    attributeId: 'sealing_type',
+    attributeName: 'Sealing Type',
+    sortOrder: 9,
+  },
+  // Package / Case
+  'Package / Case': {
+    attributeId: 'package_footprint',
+    attributeName: 'Package Footprint',
+    sortOrder: 10,
+  },
+};
+
+// ── F1: Electromechanical Relays — Signal Relays ───────────────────────
+// Digikey category: "Signal Relays, Up to 2 Amps" (exact name needs verification)
+// Same as power relay + Contact Material (more relevant for signal/dry-circuit)
+const signalRelayParamMap: Record<string, ParamMapEntry> = {
+  ...powerRelayParamMap,
+  // Contact Material — particularly relevant for signal/dry-circuit applications
+  'Contact Material': {
+    attributeId: 'contact_material',
+    attributeName: 'Contact Material',
+    sortOrder: 11,
+  },
+};
+
+// ── F1: Electromechanical Relays — Automotive Relays ───────────────────
+// Digikey category: "Automotive Relays" (exact name needs verification)
+// Same as power relay + AEC-Q200 qualification field
+const automotiveRelayParamMap: Record<string, ParamMapEntry> = {
+  ...powerRelayParamMap,
+  // Qualification — AEC-Q200 for automotive EMRs
+  'Qualification': {
+    attributeId: 'aec_q200',
+    attributeName: 'AEC-Q200 Qualification',
+    sortOrder: 11,
+  },
+};
+
+// ── F2: Solid State Relays — PCB-mount ──────────────────────────────────
+// Digikey category: "Solid State Relays" (exact name needs discovery script verification)
+// ~11 fields, ~45% weight coverage
+const ssrPcbParamMap: Record<string, ParamMapEntry> = {
+  // Output Type — TRIAC / SCR / MOSFET / IGBT
+  'Output Type': {
+    attributeId: 'output_switch_type',
+    attributeName: 'Output Switch Type',
+    sortOrder: 1,
+  },
+  // Switch Type — Zero-Crossing / Random-Fire (Instant On)
+  'Switch Type': {
+    attributeId: 'firing_mode',
+    attributeName: 'Firing Mode',
+    sortOrder: 2,
+  },
+  // Load Voltage (Max) — Maximum rated load voltage
+  'Load Voltage (Max)': {
+    attributeId: 'load_voltage_max_v',
+    attributeName: 'Load Voltage Max (V)',
+    sortOrder: 3,
+  },
+  // Load Current (Max) — Maximum rated load current
+  'Load Current (Max)': {
+    attributeId: 'load_current_max_a',
+    attributeName: 'Load Current Max (A)',
+    sortOrder: 4,
+  },
+  // Voltage - Input — Control input voltage range
+  'Voltage - Input': {
+    attributeId: 'input_voltage_range_v',
+    attributeName: 'Input Voltage Range (V)',
+    sortOrder: 5,
+  },
+  // Current - Input — Control input current
+  'Current - Input': {
+    attributeId: 'input_current_ma',
+    attributeName: 'Input Current (mA)',
+    sortOrder: 6,
+  },
+  // On-State Resistance — maps to on-state voltage drop at rated current
+  'On-State Resistance': {
+    attributeId: 'on_state_voltage_drop_v',
+    attributeName: 'On-State Voltage Drop (V)',
+    sortOrder: 7,
+  },
+  // Isolation Voltage — Input-to-output isolation
+  'Isolation Voltage': {
+    attributeId: 'isolation_voltage_vrms',
+    attributeName: 'Isolation Voltage (Vrms)',
+    sortOrder: 8,
+  },
+  // Operating Temperature — Operating temperature range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 9,
+  },
+  // Mounting Type — PCB / Panel / DIN-rail
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 10,
+  },
+  // Package / Case — Physical package
+  'Package / Case': {
+    attributeId: 'package_footprint',
+    attributeName: 'Package Footprint',
+    sortOrder: 11,
+  },
+};
+
+// ── F2: Solid State Relays — Industrial Mount ───────────────────────────
+// Digikey category: "Solid State Relays - Industrial Mount" (exact name needs verification)
+// Same as PCB-mount SSR (panel/DIN-rail SSRs use the same parametric fields)
+const ssrIndustrialParamMap: Record<string, ParamMapEntry> = {
+  ...ssrPcbParamMap,
+};
+
 /**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
@@ -4137,6 +4583,23 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   ['Analog to Digital Converters', adcParamMap],
   // C10: DACs — single Digikey category covers all DAC types
   ['Digital to Analog Converters', dacParamMap],
+  // D2: Fuses — TWO Digikey categories (general fuses + automotive blade)
+  // "Automotive Fuses" MUST come before "Fuses" for correct substring matching
+  ['Automotive Fuses', automotiveFuseParamMap],
+  ['Fuses', fuseParamMap],
+  // E1: Optocouplers — TWO Digikey categories (transistor/photovoltaic + logic output)
+  // "Optoisolators - Logic Output" MUST come before "Optoisolators" for correct substring matching
+  ['Optoisolators - Logic Output', optocouplerLogicParamMap],
+  ['Optoisolators', optocouplerTransistorParamMap],
+  // F1: Electromechanical Relays — THREE Digikey categories (automotive + signal + power)
+  // "Automotive Relays" MUST come before "Signal Relays" BEFORE general "Relays" for correct substring matching
+  ['Automotive Relays', automotiveRelayParamMap],
+  ['Signal Relays', signalRelayParamMap],
+  ['Relays', powerRelayParamMap],
+  // F2: Solid State Relays — TWO Digikey categories (industrial mount + PCB-mount)
+  // "Industrial Mount" MUST come before "Solid State" for correct substring matching
+  ['Solid State - Industrial Mount', ssrIndustrialParamMap],
+  ['Solid State', ssrPcbParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -4251,8 +4714,14 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'C8': ['Programmable Timers', 'Oscillators'],
   'C9': ['Analog to Digital Converters'],
   'C10': ['Digital to Analog Converters'],
-  // Block D: Frequency Control
+  // Block D: Frequency Control & Protection
   'D1': ['Crystals'],
+  'D2': ['Fuses', 'Automotive Fuses'],
+  // Block E: Optoelectronics
+  'E1': ['Optoisolators - Transistor, Photovoltaic Output', 'Optoisolators - Logic Output'],
+  // Block F: Relays
+  'F1': ['Power Relays, Over 2 Amps', 'Signal Relays, Up to 2 Amps', 'Automotive Relays'],
+  'F2': ['Solid State Relays', 'Solid State Relays - Industrial Mount'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -4324,6 +4793,18 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   'C10': ['Digital to Analog Converters (DACs)'],
   // D1: Crystals — Digikey leaf name is just "Crystals" (verified Mar 2026)
   'D1': ['Crystals'],
+  // D2: Fuses — TWO Digikey categories (cartridge/SMD + automotive blade)
+  // Exact leaf names need verification via discovery script
+  'D2': ['Fuses', 'Automotive Fuses'],
+  // E1: Optocouplers — TWO Digikey categories (transistor/photovoltaic + logic output)
+  // Digikey leaf names: "Optoisolators - Transistor, Photovoltaic Output" and "Optoisolators - Logic Output"
+  'E1': ['Optoisolators - Transistor, Photovoltaic Output', 'Optoisolators - Logic Output'],
+  // F1: Electromechanical Relays — THREE Digikey categories
+  // Exact leaf names need verification via discovery script
+  'F1': ['Power Relays, Over 2 Amps', 'Signal Relays, Up to 2 Amps', 'Automotive Relays'],
+  // F2: Solid State Relays — TWO Digikey categories
+  // Exact leaf names need verification via discovery script
+  'F2': ['Solid State Relays', 'Solid State Relays - Industrial Mount'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

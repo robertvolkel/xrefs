@@ -41,7 +41,9 @@ export type ComponentCategory =
   | 'Timers and Oscillators'
   | 'ADCs'
   | 'DACs'
-  | 'Crystals';
+  | 'Crystals'
+  | 'Optocouplers'
+  | 'Relays';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {
