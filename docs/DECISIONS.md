@@ -1686,3 +1686,39 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 **Files created:** `lib/constants.ts`
 
 **Files modified:** `app/api/admin/users/[userId]/route.ts` (owner check on role changes), `components/settings/OrgPanel.tsx` (conditional role toggle visibility)
+
+---
+
+### 71. D1 Crystals — Quartz Resonators (Block D: Frequency Control)
+
+**Date:** 2026-03-10
+**Status:** Implemented
+
+**Problem:** Need to encode the first family in Block D (Frequency Control) — quartz crystal resonators used as frequency references in oscillator circuits.
+
+**Decision:** Implemented D1 as a standalone base family (no variant detection) with 18 matching rules, 3 context questions, and comprehensive MPN enrichment.
+
+**Key Design Choices:**
+
+1. **drive_level_uw direction = GTE** (not LTE): The docx table header says "threshold lte" but the replacement crystal must handle ≥ the original power level. A crystal that can absorb more power is safer; one rated for less power will degrade and fracture under the circuit's drive level.
+2. **AEC-Q200 (not AEC-Q100)**: Crystals are passive components — they use the Q200 qualification standard. This differs from packaged oscillators (C8) which use Q100 since they contain active circuitry.
+3. **Ceramic resonator detection**: CSTCE, CSTLS, CSTNR, AWSCR, and ZTT MPN prefixes are ceramic resonators (50–100× less accurate than quartz). These are detected in MPN enrichment and flagged as Application Review rather than classified as D1.
+4. **mapCategory() ordering**: Crystal check MUST come before C8 oscillator check. Guard `!lower.includes('oscillator')` prevents "Crystal Oscillator" (which belongs to C8) from being caught as D1.
+5. **Digikey "Operating Mode" field**: Maps to `overtone_order` (Fundamental / 3rd Overtone / 5th Overtone). Discovered via discovery script — this is NOT the "Type" field which contains "MHz Crystal" or "kHz Crystal (Tuning Fork)".
+6. **overtone_order as identity_flag w9**: Hard gate — a fundamental crystal in a 3rd-overtone circuit oscillates at the wrong frequency (1/3 of intended). Post-scoring filter also enforces this.
+7. **load_capacitance_pf (identity w9 blockOnMissing)**: The #1 crystal substitution error. CL determines exact oscillation frequency in Pierce circuit — wrong CL shifts frequency 10–30 ppm permanently, uncorrectable by firmware.
+
+**Digikey Integration:**
+- Category: "Crystals" (single category, verified via discovery script on ABM8-16.000MHZ-B2-T)
+- 10 field mappings, ~55% weight coverage
+- Fields not in Digikey: shunt_capacitance_pf, drive_level_uw, aging_ppm_per_year, frequency_vs_temp_curve (all datasheet-only)
+
+**MPN Enrichment (~40 patterns):**
+- Frequency parsing from MPN: ABM8-10.000MHZ → 10 MHz → 10000000 Hz, ABS25-32.768KHZ → 32768 Hz
+- Cut type inference: 32.768 kHz → Tuning Fork, >1 MHz → AT-cut
+- Package type from prefix: NX3225 → 3225, HC-49 → HC-49
+- Manufacturer coverage: Abracon (ABM/ABS/ABL), NDK (NX/AT/NT), Epson (TSX/FA/FC), TXC (7M/7V/9C), Kyocera (CX), ECS, IQD (LFXTAL/CFPX), Murata (XRCGB)
+
+**Files created:** `lib/logicTables/d1Crystals.ts`, `lib/contextQuestions/d1Crystals.ts`
+
+**Files modified:** `lib/types.ts` (Crystals category), `lib/logicTables/index.ts`, `lib/contextQuestions/index.ts`, `lib/services/digikeyMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/services/partDataService.ts`, `lib/services/atlasMapper.ts`, `locales/en.json`, `locales/zh-CN.json`, `__tests__/services/logicTableConsistency.test.ts` (38→39 families)

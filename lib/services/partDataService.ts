@@ -231,6 +231,11 @@ export async function getRecommendations(
     enrichTantalumAttributes(sourceAttrs);
   }
 
+  // Step 1n: Enrich crystals with frequency/cut_type/overtone/mounting_type from MPN
+  if (logicTablePrecheck?.familyId === 'D1') {
+    enrichCrystalAttributes(sourceAttrs);
+  }
+
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
@@ -358,6 +363,12 @@ export async function getRecommendations(
     // Cross-type candidates are removed before ranking. No exceptions.
     if (familyId === 'C10') {
       recs = filterDacOutputTypeMismatches(recs, sourceAttrs);
+    }
+
+    // Step 3j: Post-scoring filter for D1 crystals —
+    // mounting_type (SMD vs Through-Hole) and overtone_order are BLOCKING gates.
+    if (familyId === 'D1') {
+      recs = filterCrystalMismatches(recs, sourceAttrs);
     }
 
     // Determine primary dataSource for the result set
@@ -542,6 +553,12 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   if (dacRes && !adcRes) parts.push(dacRes.value + ' bit');
   const dacInterface = paramMap.get('interface_type');
   if (dacInterface && !adcInterface) parts.push(dacInterface.value);
+
+  // Crystals (D1): use nominal frequency and load capacitance as keywords
+  const crystalFreq = paramMap.get('nominal_frequency_hz');
+  if (crystalFreq && !outputFreq) parts.push(crystalFreq.value);
+  const crystalCL = paramMap.get('load_capacitance_pf');
+  if (crystalCL) parts.push(crystalCL.value);
 
   // Package
   const pkg = paramMap.get('package_case');
@@ -1839,4 +1856,236 @@ function enrichTantalumAttributes(attrs: PartAttributes): void {
       return;
     }
   }
+}
+
+// ============================================================
+// CRYSTAL (D1) MPN ENRICHMENT
+// ============================================================
+
+interface CrystalMpnHint {
+  pattern: RegExp;
+  frequency?: string;
+  cutType?: string;
+  packageType?: string;
+  mountingType?: string;
+  isCeramicResonator?: boolean;
+  manufacturer?: string;
+}
+
+/**
+ * Crystal MPN patterns for enriching attributes from part number.
+ * Frequency is typically embedded in the MPN (e.g., ABM8-16.000MHZ-B2-T → 16 MHz).
+ * Cut type, package, and mounting are inferred from prefix/suffix conventions.
+ *
+ * IMPORTANT: CSTCE/CSTLS/CSTNR/AWSCR/ZTT are ceramic resonators (NOT quartz crystals).
+ * Packaged oscillators (ASFL, ASEM, SiT8xxx, DSC1xxx) are C8, not D1.
+ */
+const crystalMpnPatterns: CrystalMpnHint[] = [
+  // === CERAMIC RESONATORS (NOT quartz — flag as Application Review) ===
+  { pattern: /^CSTCE/i, isCeramicResonator: true, manufacturer: 'Murata' },
+  { pattern: /^CSTLS/i, isCeramicResonator: true, manufacturer: 'Murata' },
+  { pattern: /^CSTNR/i, isCeramicResonator: true, manufacturer: 'Murata' },
+  { pattern: /^AWSCR/i, isCeramicResonator: true, manufacturer: 'Abracon' },
+  { pattern: /^ZTT/i, isCeramicResonator: true, manufacturer: 'Murata' },
+
+  // === ABRACON CRYSTALS ===
+  { pattern: /^ABM8G?-/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABM3-/i, packageType: '5032', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABM10-/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABM8W-/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABMM2?-/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABMPN-/i, packageType: '1612', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABMRAD-/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^AB38T2?-/i, cutType: 'Tuning Fork', manufacturer: 'Abracon' },
+  { pattern: /^AB26TRQ-/i, cutType: 'Tuning Fork', manufacturer: 'Abracon' },
+  { pattern: /^ABS25-/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABLS2?-/i, mountingType: 'SMD', manufacturer: 'Abracon' },
+  { pattern: /^ABLNO-/i, mountingType: 'SMD', manufacturer: 'Abracon' },
+
+  // === NDK CRYSTALS ===
+  { pattern: /^NX2016/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'NDK' },
+  { pattern: /^NX3225/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'NDK' },
+  { pattern: /^NX5032/i, packageType: '5032', mountingType: 'SMD', manufacturer: 'NDK' },
+
+  // === EPSON CRYSTALS ===
+  { pattern: /^FC-135/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+  { pattern: /^FC-12[MD]/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+  { pattern: /^MC-146/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+  { pattern: /^MC-306/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+  { pattern: /^MC-405/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+  { pattern: /^MC-505/i, cutType: 'Tuning Fork', mountingType: 'SMD', manufacturer: 'Epson' },
+
+  // === TXC CRYSTALS ===
+  { pattern: /^7M-/i, mountingType: 'SMD', manufacturer: 'TXC' },
+  { pattern: /^9C-/i, mountingType: 'SMD', manufacturer: 'TXC' },
+  { pattern: /^7[VA]-/i, mountingType: 'SMD', manufacturer: 'TXC' },
+
+  // === KYOCERA / AVX CRYSTALS ===
+  { pattern: /^CX2016/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Kyocera' },
+  { pattern: /^CX3225/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'Kyocera' },
+  { pattern: /^CX5032/i, packageType: '5032', mountingType: 'SMD', manufacturer: 'Kyocera' },
+  { pattern: /^TSX-3225/i, packageType: '3225', mountingType: 'SMD', manufacturer: 'Kyocera' },
+  { pattern: /^TSX-2520/i, packageType: '2520', mountingType: 'SMD', manufacturer: 'Kyocera' },
+  { pattern: /^TSX-4025/i, packageType: '4025', mountingType: 'SMD', manufacturer: 'Kyocera' },
+
+  // === ECS CRYSTALS ===
+  { pattern: /^ECS-\d+/i, mountingType: 'SMD', manufacturer: 'ECS' },
+
+  // === IQD / IQXC CRYSTALS ===
+  { pattern: /^IQXC-/i, mountingType: 'SMD', manufacturer: 'IQD' },
+  { pattern: /^LFXTAL/i, mountingType: 'SMD', manufacturer: 'IQD' },
+
+  // === MURATA QUARTZ (not ceramic) ===
+  { pattern: /^XRCGB/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Murata' },
+  { pattern: /^XRCMD/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Murata' },
+  { pattern: /^XRCPB/i, packageType: '2016', mountingType: 'SMD', manufacturer: 'Murata' },
+
+  // === THROUGH-HOLE CRYSTALS ===
+  { pattern: /^HC-?49/i, mountingType: 'Through-Hole' },
+];
+
+/** Parse frequency from crystal MPN (returns raw value string like "16 MHz" or "32.768 kHz") */
+function parseCrystalFrequency(mpn: string): string | null {
+  // Pattern: numeric field followed by MHz or kHz (e.g., ABM8-16.000MHZ, AB38T-32.768KHZ)
+  const freqMatch = mpn.match(/(\d+\.?\d*)\s*(MHZ|KHZ)/i);
+  if (freqMatch) {
+    const value = freqMatch[1];
+    const unit = freqMatch[2].toUpperCase();
+    if (unit === 'MHZ') return `${value} MHz`;
+    if (unit === 'KHZ') return `${value} kHz`;
+  }
+  return null;
+}
+
+/** Enrich crystal attributes from MPN prefix, frequency, and package conventions */
+function enrichCrystalAttributes(attrs: PartAttributes): void {
+  const mpn = attrs.part.mpn;
+  const existingIds = new Set(attrs.parameters.map(p => p.parameterId));
+
+  // Check for ceramic resonator — flag but do not block (it's scored by the engine)
+  for (const hint of crystalMpnPatterns) {
+    if (hint.isCeramicResonator && hint.pattern.test(mpn)) {
+      // Ceramic resonator detected — not a quartz crystal
+      // The matching engine will flag Application Review; we just note it here
+      if (!existingIds.has('qualification_level')) {
+        attrs.parameters.push({
+          parameterId: 'qualification_level',
+          parameterName: 'Qualification Level',
+          value: 'Ceramic Resonator (not quartz crystal — ±0.5% tolerance, 50–100× less accurate)',
+          sortOrder: 18,
+        });
+      }
+      return; // Don't enrich further — ceramic resonator, not quartz
+    }
+  }
+
+  // Parse frequency from MPN
+  if (!existingIds.has('nominal_frequency_hz')) {
+    const freq = parseCrystalFrequency(mpn);
+    if (freq) {
+      attrs.parameters.push({
+        parameterId: 'nominal_frequency_hz',
+        parameterName: 'Nominal Frequency',
+        value: freq,
+        sortOrder: 1,
+      });
+      existingIds.add('nominal_frequency_hz');
+    }
+  }
+
+  // Infer cut type from frequency (32.768 kHz → Tuning Fork, else AT-cut)
+  if (!existingIds.has('cut_type')) {
+    const freqParam = attrs.parameters.find(p => p.parameterId === 'nominal_frequency_hz');
+    const freqVal = freqParam?.value?.toLowerCase() ?? '';
+    // Check MPN pattern hints first
+    const mpnHint = crystalMpnPatterns.find(h => !h.isCeramicResonator && h.cutType && h.pattern.test(mpn));
+    if (mpnHint?.cutType) {
+      attrs.parameters.push({
+        parameterId: 'cut_type',
+        parameterName: 'Crystal Cut Type',
+        value: mpnHint.cutType,
+        sortOrder: 2,
+      });
+    } else if (freqVal.includes('32.768') && freqVal.includes('khz')) {
+      attrs.parameters.push({
+        parameterId: 'cut_type',
+        parameterName: 'Crystal Cut Type',
+        value: 'Tuning Fork',
+        sortOrder: 2,
+      });
+    } else if (freqVal) {
+      attrs.parameters.push({
+        parameterId: 'cut_type',
+        parameterName: 'Crystal Cut Type',
+        value: 'AT-cut',
+        sortOrder: 2,
+      });
+    }
+    existingIds.add('cut_type');
+  }
+
+  // Infer package type and mounting type from MPN prefix
+  for (const hint of crystalMpnPatterns) {
+    if (hint.isCeramicResonator) continue;
+    if (!hint.pattern.test(mpn)) continue;
+
+    if (hint.packageType && !existingIds.has('package_type')) {
+      attrs.parameters.push({
+        parameterId: 'package_type',
+        parameterName: 'Package / Case',
+        value: hint.packageType,
+        sortOrder: 10,
+      });
+      existingIds.add('package_type');
+    }
+    if (hint.mountingType && !existingIds.has('mounting_type')) {
+      attrs.parameters.push({
+        parameterId: 'mounting_type',
+        parameterName: 'Mounting Type',
+        value: hint.mountingType,
+        sortOrder: 12,
+      });
+      existingIds.add('mounting_type');
+    }
+    break; // Use first match
+  }
+}
+
+// ============================================================
+// CRYSTAL (D1) POST-SCORING FILTER
+// ============================================================
+
+/**
+ * Post-scoring filter for D1 crystals:
+ * - mounting_type (SMD vs Through-Hole) mismatch → BLOCK
+ * - overtone_order mismatch (fundamental ↔ overtone) → BLOCK
+ */
+function filterCrystalMismatches(
+  recs: XrefRecommendation[],
+  sourceAttrs: PartAttributes,
+): XrefRecommendation[] {
+  const srcMount = sourceAttrs.parameters.find(p => p.parameterId === 'mounting_type')?.value;
+  const srcOvertone = sourceAttrs.parameters.find(p => p.parameterId === 'overtone_order')?.value?.toLowerCase();
+
+  return recs.filter(rec => {
+    // Block mounting type mismatch (SMD ↔ Through-Hole)
+    const candMount = rec.matchDetails?.find(d => d.parameterId === 'mounting_type');
+    if (srcMount && candMount?.replacementValue && srcMount !== candMount.replacementValue) {
+      return false;
+    }
+
+    // Block overtone order mismatch (fundamental ↔ 3rd/5th overtone)
+    const candOvertone = rec.matchDetails?.find(d => d.parameterId === 'overtone_order');
+    if (srcOvertone && candOvertone?.replacementValue) {
+      const candOvertoneVal = candOvertone.replacementValue.toLowerCase();
+      const srcIsFundamental = srcOvertone.includes('fundamental');
+      const candIsFundamental = candOvertoneVal.includes('fundamental');
+      // Block if one is fundamental and the other is overtone
+      if (srcIsFundamental !== candIsFundamental) return false;
+      // Block if both are overtone but different order (3rd ≠ 5th)
+      if (!srcIsFundamental && !candIsFundamental && srcOvertone !== candOvertoneVal) return false;
+    }
+
+    return true;
+  });
 }

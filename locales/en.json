@@ -1650,6 +1650,55 @@
         }
       }
     },
+    "D1": {
+      "accuracy_requirement": {
+        "text": "What is the application / accuracy requirement for this crystal?",
+        "opt": {
+          "consumer": {
+            "label": "Consumer / general purpose",
+            "desc": "Standard clock applications. Frequency tolerance ≤ 50 ppm acceptable. Temperature stability ≤ 100 ppm acceptable. Aging rate is informational."
+          },
+          "comms": {
+            "label": "Communications / protocol timing (USB, Bluetooth, Ethernet, UART)",
+            "desc": "Frequency tolerance and stability escalated to mandatory + blockOnMissing. USB HS requires ±50 ppm total. Bluetooth requires ±20 ppm. Cut type and aging rate escalated to primary."
+          },
+          "precision": {
+            "label": "Precision / instrumentation (measurement, calibration, reference clock)",
+            "desc": "Tolerance ≤ 10 ppm, stability ≤ 20 ppm required — both mandatory + blockOnMissing. Aging rate and cut type escalated to mandatory. ESR and TC curve escalated to primary."
+          },
+          "rtc": {
+            "label": "RTC / watch (32.768 kHz timekeeping)",
+            "desc": "Confirm Tuning Fork cut type. Tolerance, stability, aging, and ESR all escalated to primary. RTC oscillators have limited drive current — high ESR causes startup failure."
+          }
+        }
+      },
+      "vcxo_circuit": {
+        "text": "Is this crystal in a voltage-controlled (VCXO) oscillator circuit?",
+        "opt": {
+          "yes": {
+            "label": "Yes — VCXO circuit (voltage-controlled frequency pulling)",
+            "desc": "Shunt capacitance (C0) escalated to mandatory + blockOnMissing — C0 directly controls pullability range, must be within ±0.5 pF. TC curve escalated to primary. ESR escalated to primary."
+          },
+          "no": {
+            "label": "No — standard fixed-frequency oscillator",
+            "desc": "Default matching. Shunt capacitance evaluated at default weight — ±1 pF mismatch typically acceptable."
+          }
+        }
+      },
+      "extended_temp_automotive": {
+        "text": "Is this an extended temperature or automotive application?",
+        "opt": {
+          "yes": {
+            "label": "Yes — extended temperature / automotive (−40°C or beyond)",
+            "desc": "Operating temp range and ESR escalated to mandatory. AEC-Q200 escalated to mandatory + blockOnMissing. Note: crystals use AEC-Q200 (passive), NOT AEC-Q100 (active ICs). Frequency stability escalated to mandatory over extended range."
+          },
+          "no": {
+            "label": "No — commercial temperature (0°C to +70°C)",
+            "desc": "Default weights apply for all temperature-related attributes."
+          }
+        }
+      }
+    },
     "C3": {
       "driver_topology": {
         "text": "What driver topology does this application use?",
@@ -4505,6 +4554,48 @@
         "operating_temp_range": "Must fully cover the application operating range. Industrial: −40°C to +85°C. Automotive: −40°C to +105°C or +125°C. Note: DAC accuracy specs (INL, offset, gain, reference TC) are temperature-dependent — verify specs are maintained over the full operating range, not just at +25°C. Internal voltage reference TC directly contributes to output voltage drift.",
         "aec_q100": "Escalated to mandatory + blockOnMissing for automotive (Q4). AEC-Q100 required for DACs in ECU output stages, body control modules, ADAS actuator control, and battery management. Non-AEC parts BLOCKED from automotive designs.",
         "package_case": "SOT-23-6, MSOP-10, TSSOP-16, QFN-20, etc. Precision DACs may have exposed pad requirements for thermal management of internal reference. Layout-sensitive: output pin placement relative to AGND affects noise. Package change is Application Review — verify footprint and any layout-critical pin assignments."
+      }
+    },
+    "D1": {
+      "attribute": {
+        "nominal_frequency_hz": "Nominal Frequency (Hz)",
+        "cut_type": "Crystal Cut Type",
+        "frequency_tolerance_ppm": "Frequency Tolerance (ppm)",
+        "frequency_stability_ppm": "Frequency Stability (ppm)",
+        "load_capacitance_pf": "Load Capacitance (pF)",
+        "equivalent_series_resistance_ohm": "ESR — Equivalent Series Resistance (Ω)",
+        "drive_level_uw": "Drive Level (µW)",
+        "shunt_capacitance_pf": "Shunt Capacitance C0 (pF)",
+        "aging_ppm_per_year": "Aging Rate (ppm/year)",
+        "package_type": "Package Type",
+        "package_pins": "Package Pin Count",
+        "mounting_type": "Mounting Type",
+        "operating_temp_range": "Operating Temperature Range (°C)",
+        "storage_temp_range": "Storage Temperature Range (°C)",
+        "aec_q200": "AEC-Q200 Qualification",
+        "overtone_order": "Overtone Order",
+        "frequency_vs_temp_curve": "Frequency vs. Temperature Curve",
+        "qualification_level": "Qualification Level"
+      },
+      "reason": {
+        "nominal_frequency_hz": "HARD GATE. Exact frequency match in Hz. A 16.000 MHz crystal cannot substitute for a 16.384 MHz crystal — the oscillation frequency is determined by the quartz blank's mechanical resonance, not by external components. Even a 0.1% frequency error causes protocol timing failures (USB, Bluetooth, Ethernet all have ppm-level budgets). Frequency is the primary identity attribute of any crystal.",
+        "cut_type": "Crystal cut determines the temperature-frequency curve shape and operating mode. AT-cut (thickness shear, MHz range): cubic TC curve with inflection near +25°C, ±20 ppm over −40 to +85°C. Tuning Fork (flexural, 32.768 kHz): parabolic TC curve, much narrower stable range. SC-cut (stress-compensated): superior aging and phase noise for precision. Substituting AT-cut for Tuning Fork (or vice versa) produces wrong frequency and wrong TC behavior.",
+        "frequency_tolerance_ppm": "Initial frequency accuracy at +25°C. Replacement tolerance must be ≤ original. Communications protocols have tight total error budgets: USB HS ±50 ppm, Bluetooth ±20 ppm, GPS ±2.5 ppm. The total budget = tolerance + stability + aging — if tolerance alone consumes 50 ppm, there is no margin for temperature drift or aging. A ±50 ppm crystal where ±20 ppm is required will cause intermittent link failures.",
+        "frequency_stability_ppm": "Frequency deviation over the operating temperature range. Replacement stability must be ≤ original. This is the temperature-dependent component of the total frequency error budget. AT-cut crystals achieve ±10–50 ppm over −40 to +85°C; Tuning Fork crystals achieve ±20 ppm over a narrower range. If stability alone exceeds the protocol timing budget, the system fails at temperature extremes.",
+        "load_capacitance_pf": "HARD GATE. Exact CL match required. Load capacitance is the #1 crystal substitution error — it determines the exact oscillation frequency in the Pierce oscillator circuit. A crystal specified for CL = 18 pF will oscillate at a different frequency if placed in a circuit designed for CL = 12 pF (frequency shift of ~10–30 ppm). This shift is permanent and cannot be corrected by firmware. Common values: 8 pF, 12 pF, 18 pF, 20 pF.",
+        "equivalent_series_resistance_ohm": "ESR determines oscillator startup reliability and phase noise. The oscillator circuit's negative resistance must exceed ESR by ≥5× for reliable startup. ESR increases 30–50% from +25°C to −40°C — a crystal with 40 Ω at room temperature may reach 55–65 Ω at −40°C. Cold-start failure (crystal fails to oscillate at power-on in cold conditions) is the #1 crystal field failure mode. Replacement ESR must be ≤ original.",
+        "drive_level_uw": "Maximum power the crystal can absorb without degradation. The oscillator circuit delivers a certain drive level — if it exceeds the crystal's rating, the crystal ages rapidly, frequency shifts, and eventually fractures. Replacement drive level must be ≥ original (can handle more power safely). Typical values: 10–200 µW for MHz AT-cut, 0.5–1 µW for 32.768 kHz Tuning Fork.",
+        "shunt_capacitance_pf": "Shunt capacitance C0 represents the static capacitance of the crystal package (electrodes + leads). C0 determines the crystal's pullability — the ppm range over which frequency can be pulled by varying external capacitance. In VCXO circuits, C0 must match within ±0.5 pF to maintain tuning range and loop gain. C0 is rarely in distributor parametric data — typically 1–7 pF, found in datasheet equivalent circuit parameters.",
+        "aging_ppm_per_year": "Long-term frequency drift due to material migration and stress relaxation in the quartz blank. Typical: ±3–5 ppm/year for standard AT-cut, ±1 ppm/year for precision. For RTC applications: ±3 ppm/year = ~95 seconds/year drift. Over a 10-year battery lifetime = >15 minutes cumulative error. For communications: aging contributes to the long-term frequency error budget alongside tolerance and stability.",
+        "package_type": "Physical package format: 3225 (3.2×2.5mm), 2520 (2.5×2.0mm), 2016, 1612, 5032, 7050, HC-49/U (leaded), HC-49/S (SMD). Package determines PCB footprint, land pattern, and mechanical compatibility. Same-size packages from different manufacturers are pin-compatible. HC-49 comes in both through-hole (/U) and surface-mount (/S) variants — verify mounting type separately.",
+        "package_pins": "Number of package terminals: 2-pad (standard), 4-pad (with ground pads for stability). 4-pad crystals have center ground pads that improve EMI performance and mechanical stability but require matching PCB footprint. A 2-pad crystal cannot be placed on a 4-pad footprint (center pads are open) and a 4-pad crystal may not fit a 2-pad footprint.",
+        "mounting_type": "HARD GATE. Surface Mount (SMD) vs. Through-Hole. Physically incompatible mounting technologies — SMD crystals cannot be placed in through-hole PCB holes and vice versa. HC-49/U = Through-Hole, HC-49/S = SMD. All modern ceramic packages (3225, 2520, etc.) are SMD.",
+        "operating_temp_range": "Replacement temperature range must be a superset of the original. Crystal frequency stability is only guaranteed within the stated operating range. Standard commercial: 0°C to +70°C. Industrial: −20°C to +70°C or −40°C to +85°C. Automotive: −40°C to +105°C or +125°C. Tuning Fork 32.768 kHz crystals often have narrower ranges than AT-cut — verify carefully for extended-temp applications.",
+        "storage_temp_range": "Storage temperature range before the crystal is powered. Exceeding storage limits can cause permanent frequency shift due to electrode stress or package seal failure. Typically wider than operating range (e.g., −55°C to +125°C). Application Review — verify if the supply chain or warehouse conditions could exceed limits.",
+        "aec_q200": "AEC-Q200 is the automotive qualification standard for passive components (crystals, capacitors, resistors). Note: crystals use AEC-Q200, NOT AEC-Q100 (which is for active ICs like oscillators and microcontrollers). AEC-Q200 tests include temperature cycling, moisture resistance, mechanical shock, vibration, and solderability. Non-AEC parts are blocked from automotive designs.",
+        "overtone_order": "HARD GATE for overtone crystals. Fundamental mode (1st harmonic) vs. 3rd overtone vs. 5th overtone. The oscillator circuit is designed for a specific overtone — a fundamental-mode crystal in a 3rd-overtone circuit will oscillate at the wrong frequency (1/3 of intended), and vice versa. The oscillator's LC tank selects the overtone; without the tank tuned for 3rd overtone, a 3rd-overtone crystal oscillates at its fundamental. Overtone crystals are used above ~30 MHz where fundamental blanks become too thin.",
+        "frequency_vs_temp_curve": "The shape of the frequency-temperature characteristic curve. AT-cut: cubic curve with inflection near +25°C. Tuning Fork: parabolic (concave down). SC-cut: flatter cubic with different inflection point. Two crystals with the same ±20 ppm stability spec may have different curve shapes — one could be +20 ppm at −40°C while the other is −20 ppm. In temperature-compensated designs (TCXO), the compensation network is calibrated to a specific curve shape. Application Review — relevant for precision and VCXO applications.",
+        "qualification_level": "Additional qualifications beyond AEC-Q200: MIL-PRF-3098 (military), ESA/ESCC (space), custom screening levels. Informational for commercial applications. For military/aerospace: specific screening (Group A/B/C testing, 100% DPA) may be required and cannot be substituted with commercial equivalents."
       }
     }
   }

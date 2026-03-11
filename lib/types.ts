@@ -40,7 +40,8 @@ export type ComponentCategory =
   | 'Interface ICs'
   | 'Timers and Oscillators'
   | 'ADCs'
-  | 'DACs';
+  | 'DACs'
+  | 'Crystals';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {

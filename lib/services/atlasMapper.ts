@@ -107,6 +107,8 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   // Interface ICs — check BEFORE Logic ICs (both can have 'transceiver')
   if (lower.includes('drivers, receivers, transceivers')) return { category: 'Interface ICs', subcategory: 'Interface IC', familyId: 'C7' };
   if (lower.includes('digital isolator') && !lower.includes('gate driver')) return { category: 'Interface ICs', subcategory: 'Digital Isolator', familyId: 'C7' };
+  // Crystals (D1) — MUST come BEFORE oscillator check (Digikey parent "Crystals, Oscillators, Resonators")
+  if (lower.includes('crystal') && !lower.includes('oscillator')) return { category: 'Crystals', subcategory: 'Crystal', familyId: 'D1' };
   // Oscillators
   if (lower.includes('oscillator') && !lower.includes('local oscillator')) return { category: 'Timers and Oscillators', subcategory: 'Oscillator', familyId: 'C8' };
   if (lower.includes('programmable timer') || lower.includes('555')) return { category: 'Timers and Oscillators', subcategory: '555 Timer', familyId: 'C8' };
@@ -880,6 +882,41 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     'temp range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+  },
+
+  // ─── D1 Crystals — Quartz Resonators ─────────────────────
+  D1: {
+    '频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    '标称频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency (mhz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'MHz', sortOrder: 1 },
+    'frequency (khz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'kHz', sortOrder: 1 },
+    '负载电容': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance (pf)': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    '频率公差': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance (ppm)': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    '频率稳定度': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability (ppm)': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    '等效串联电阻': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr (ohm)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    // Ω→ω gotcha: JS toLowerCase() converts Ω to ω
+    'esr (ω)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    'package': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    '老化率': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    'aging': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    '驱动电平': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    'drive level': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    '并联电容': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
+    'shunt capacitance': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
   },
 };
 

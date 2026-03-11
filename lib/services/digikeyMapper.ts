@@ -61,6 +61,10 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('digital to analog') || (lower.includes('dac') && !lower.includes('diac'))) return 'DACs';
   // ADCs (Family C9) — all architectures in one Digikey category
   if (lower.includes('analog to digital') || (lower.includes('adc') && !lower.includes('ladder'))) return 'ADCs';
+  // Crystals (Family D1) — 2-pin passive quartz resonators, MUST come BEFORE C8 oscillator checks
+  // Digikey category "Crystals" under parent "Crystals, Oscillators, Resonators"
+  // Guard: "Crystal Oscillator" should route to C8, not D1
+  if (lower.includes('crystal') && !lower.includes('oscillator') && !lower.includes('resonator ceramic')) return 'Crystals';
   // Timers and Oscillators (Family C8) — 555 timers + packaged oscillators
   if (lower.includes('programmable timer')) return 'Timers and Oscillators';
   if (lower.includes('555 timer')) return 'Timers and Oscillators';
@@ -130,6 +134,8 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('digital to analog') || (lower.includes('dac') && !lower.includes('diac'))) return 'DAC';
   // ADCs (Family C9) — single Digikey category
   if (lower.includes('analog to digital') || (lower.includes('adc') && !lower.includes('ladder'))) return 'ADC';
+  // Crystals (Family D1) — discrete quartz resonators, MUST come BEFORE C8 oscillator checks
+  if (lower.includes('crystal') && !lower.includes('oscillator') && !lower.includes('resonator ceramic')) return 'Crystal';
   // Timers and Oscillators (Family C8) — two Digikey categories
   if (lower.includes('programmable timer') || lower.includes('555 timer')) return '555 Timer';
   if (lower.includes('tcxo') || lower.includes('temperature compensated')) return 'TCXO';
@@ -1404,6 +1410,52 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
         sortOrder: 4,
       });
       addedIds.add('capacitor_type');
+    }
+  }
+
+  // Crystal (D1) enrichment — infer overtone_order, cut_type, mounting_type from Digikey fields
+  const catLowerForCrystal = categoryName.toLowerCase();
+  if (catLowerForCrystal.includes('crystal') && !catLowerForCrystal.includes('oscillator')) {
+    // Overtone order from "Type" field: "Fundamental", "3rd Overtone", "5th Overtone"
+    if (!addedIds.has('overtone_order')) {
+      const typeParam = product.Parameters?.find(p => p.ParameterText === 'Type');
+      if (typeParam) {
+        const typeVal = typeParam.ValueText.toLowerCase();
+        if (typeVal.includes('3rd') || typeVal.includes('third')) {
+          parameters.push({ parameterId: 'overtone_order', parameterName: 'Overtone Order', value: '3rd Overtone', sortOrder: 16 });
+          addedIds.add('overtone_order');
+        } else if (typeVal.includes('5th') || typeVal.includes('fifth')) {
+          parameters.push({ parameterId: 'overtone_order', parameterName: 'Overtone Order', value: '5th Overtone', sortOrder: 16 });
+          addedIds.add('overtone_order');
+        } else if (typeVal.includes('fundamental')) {
+          parameters.push({ parameterId: 'overtone_order', parameterName: 'Overtone Order', value: 'Fundamental', sortOrder: 16 });
+          addedIds.add('overtone_order');
+        }
+      }
+    }
+    // Cut type inferred from frequency: 32.768 kHz → Tuning Fork, >1 MHz → AT-cut
+    if (!addedIds.has('cut_type')) {
+      const freqParam = parameters.find(p => p.parameterId === 'nominal_frequency_hz');
+      const desc = (product.DetailedDescription ?? product.Description?.DetailedDescription ?? '').toLowerCase();
+      if (freqParam?.value?.includes('32.768') && freqParam.value.toLowerCase().includes('khz')) {
+        parameters.push({ parameterId: 'cut_type', parameterName: 'Crystal Cut Type', value: 'Tuning Fork', sortOrder: 2 });
+      } else if (desc.includes('sc-cut') || desc.includes('sc cut')) {
+        parameters.push({ parameterId: 'cut_type', parameterName: 'Crystal Cut Type', value: 'SC-cut', sortOrder: 2 });
+      } else {
+        parameters.push({ parameterId: 'cut_type', parameterName: 'Crystal Cut Type', value: 'AT-cut', sortOrder: 2 });
+      }
+      addedIds.add('cut_type');
+    }
+    // Mounting type from package name: HC-49 = Through-Hole, else SMD
+    if (!addedIds.has('mounting_type')) {
+      const pkg = parameters.find(p => p.parameterId === 'package_type')?.value ?? '';
+      const pkgLower = pkg.toLowerCase();
+      if (pkgLower.includes('hc-49') || pkgLower.includes('hc49') || pkgLower.includes('through hole') || pkgLower.includes('through-hole')) {
+        parameters.push({ parameterId: 'mounting_type', parameterName: 'Mounting Type', value: 'Through-Hole', sortOrder: 12 });
+      } else if (pkg) {
+        parameters.push({ parameterId: 'mounting_type', parameterName: 'Mounting Type', value: 'SMD', sortOrder: 12 });
+      }
+      addedIds.add('mounting_type');
     }
   }
 

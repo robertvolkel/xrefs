@@ -36,6 +36,8 @@ import { interfaceICsLogicTable } from './interfaceICs';
 import { timersOscillatorsLogicTable } from './timersOscillators';
 import { adcLogicTable } from './adc';
 import { dacLogicTable } from './dac';
+// Block D: Frequency Control
+import { d1CrystalsLogicTable } from './d1Crystals';
 import { classifyFamily } from './familyClassifier';
 
 /** Registry of all logic tables, keyed by family ID */
@@ -80,6 +82,8 @@ const logicTableRegistry: Record<string, LogicTable> = {
   'C8': timersOscillatorsLogicTable,
   'C9': adcLogicTable,
   'C10': dacLogicTable,
+  // Block D: Frequency Control
+  'D1': d1CrystalsLogicTable,
 };
 
 export { logicTableRegistry };
@@ -397,6 +401,16 @@ const subcategoryToFamily: Record<string, string> = {
   'Data Conversion - Digital to Analog': 'C10',
   // Digikey leaf category name (verified Mar 2026)
   'Digital to Analog Converters (DACs)': 'C10',
+  // --- Block D: Frequency Control ---
+  // Crystals — Quartz Resonators (Family D1)
+  'Crystal': 'D1',
+  'Quartz Crystal': 'D1',
+  'Quartz Resonator': 'D1',
+  'Crystal Resonator': 'D1',
+  'Crystals': 'D1',
+  'Tuning Fork Crystal': 'D1',
+  'Tuning Fork': 'D1',
+  '32.768 kHz Crystal': 'D1',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */
@@ -440,6 +454,8 @@ const familyLastUpdated: Record<string, string> = {
   'C8': '2026-03-02',
   'C9': '2026-03-02',
   'C10': '2026-03-02',
+  // Block D: Frequency Control
+  'D1': '2026-03-10',
 };
 
 export function getFamilyLastUpdated(familyId: string): string {

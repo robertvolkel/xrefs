@@ -3972,6 +3972,79 @@ const dacParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// D1: Crystals — Quartz Resonators
+// Single Digikey category "Crystals" (verified Mar 2026)
+// 10 fields mapped, ~55-60% weight coverage
+// Missing from Digikey: aging_ppm_per_year, shunt_capacitance_pf,
+// drive_level_uw, frequency_vs_temp_curve, qualification_level
+// ============================================================
+const crystalParamMap: Record<string, ParamMapEntry> = {
+  // Nominal frequency — HARD GATE (w10, blockOnMissing)
+  'Frequency': {
+    attributeId: 'nominal_frequency_hz',
+    attributeName: 'Nominal Frequency',
+    sortOrder: 1,
+  },
+  // Frequency tolerance — initial accuracy at +25°C in ppm
+  'Frequency Tolerance': {
+    attributeId: 'frequency_tolerance_ppm',
+    attributeName: 'Frequency Tolerance (ppm)',
+    sortOrder: 3,
+  },
+  // Frequency stability — over operating temp range
+  'Frequency Stability': {
+    attributeId: 'frequency_stability_ppm',
+    attributeName: 'Frequency Stability (ppm)',
+    sortOrder: 4,
+  },
+  // Load capacitance — HARD GATE (w9, blockOnMissing). Exact CL match required.
+  'Load Capacitance': {
+    attributeId: 'load_capacitance_pf',
+    attributeName: 'Load Capacitance (pF)',
+    unit: 'pF',
+    sortOrder: 5,
+  },
+  // ESR — crystal resistance at resonance
+  'ESR (Equivalent Series Resistance)': {
+    attributeId: 'equivalent_series_resistance_ohm',
+    attributeName: 'ESR (Equivalent Series Resistance)',
+    unit: 'Ohm',
+    sortOrder: 6,
+  },
+  // Operating Mode — "Fundamental", "3rd Overtone", "5th Overtone"
+  // Maps to overtone_order for the identity_flag rule
+  'Operating Mode': {
+    attributeId: 'overtone_order',
+    attributeName: 'Overtone Order',
+    sortOrder: 16,
+  },
+  // Operating temperature range — must fully contain application range
+  'Operating Temperature': {
+    attributeId: 'operating_temp_range',
+    attributeName: 'Operating Temperature Range',
+    sortOrder: 13,
+  },
+  // Package / Case
+  'Package / Case': {
+    attributeId: 'package_type',
+    attributeName: 'Package / Case',
+    sortOrder: 10,
+  },
+  // Mounting Type — SMD vs Through-Hole (HARD GATE)
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 12,
+  },
+  // Ratings — AEC-Q200 qualification (crystals use Q200, not Q100)
+  'Ratings': {
+    attributeId: 'aec_q200',
+    attributeName: 'AEC-Q200 Qualification',
+    sortOrder: 15,
+  },
+};
+
 /**
  * Category name patterns → which param map to use.
  * Keys are substrings of Digikey category names (matched case-insensitively).
@@ -4053,6 +4126,8 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // because C5 Logic ICs also matches on "Transceivers" substring
   ['Digital Isolators', interfaceDigitalIsolatorParamMap],
   ['Drivers, Receivers, Transceivers', interfaceTransceiverParamMap],
+  // D1: Crystals — single Digikey category "Crystals" (MUST come before C8 Oscillators)
+  ['Crystals', crystalParamMap],
   // C8: Timers and Oscillators — TWO Digikey categories
   // "Programmable Timers and Oscillators" for 555 timers
   // "Oscillators" for all packaged oscillator types (XO, MEMS, TCXO, VCXO, OCXO)
@@ -4176,6 +4251,8 @@ const familyToDigikeyCategories: Record<string, string[]> = {
   'C8': ['Programmable Timers', 'Oscillators'],
   'C9': ['Analog to Digital Converters'],
   'C10': ['Digital to Analog Converters'],
+  // Block D: Frequency Control
+  'D1': ['Crystals'],
 };
 
 /** Get the Digikey category names associated with a family ID (for param coverage) */
@@ -4245,6 +4322,8 @@ const familyTaxonomyOverrides: Record<string, string[]> = {
   // C10: DACs — single Digikey category
   // Digikey leaf name: "Digital to Analog Converters (DACs)"
   'C10': ['Digital to Analog Converters (DACs)'],
+  // D1: Crystals — Digikey leaf name is just "Crystals" (verified Mar 2026)
+  'D1': ['Crystals'],
 };
 
 /** Get the Digikey taxonomy patterns for a family (for taxonomy panel matching) */

@@ -39,6 +39,8 @@ import { interfaceICsContext } from './interfaceICs';
 import { timersOscillatorsContext } from './timersOscillators';
 import { adcContext } from './adc';
 import { dacContext } from './dac';
+// Block D: Frequency Control
+import { d1CrystalsContext } from './d1Crystals';
 
 const allConfigs: FamilyContextConfig[] = [
   mlccContext,
@@ -82,6 +84,8 @@ const allConfigs: FamilyContextConfig[] = [
   timersOscillatorsContext,
   adcContext,
   dacContext,
+  // Block D: Frequency Control
+  d1CrystalsContext,
 ];
 
 /** Build a lookup map: familyId → FamilyContextConfig */

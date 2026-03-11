@@ -4521,6 +4521,87 @@
           }
         }
       }
+    },
+    "D1": {
+      "accuracy_requirement": {
+        "text": "该晶体的应用/精度要求是什么？",
+        "opt": {
+          "consumer": {
+            "label": "消费级/通用",
+            "desc": "标准时钟应用，精度要求宽松。频率容差≤50 ppm可接受。老化速率为信息性参数。"
+          },
+          "comms": {
+            "label": "通信/协议时序（USB、蓝牙、以太网、UART）",
+            "desc": "协议关键时序应用。USB HS要求±50 ppm总误差。蓝牙要求±20 ppm。频率容差和稳定度升级为强制。",
+            "effects": {
+              "frequency_tolerance_ppm": { "note": "阻断：通信时序 — 频率容差为协议预算关键。" },
+              "frequency_stability_ppm": { "note": "通信时序 — 温度频率稳定度为强制。总误差预算=初始容差+温度稳定度+老化。" },
+              "cut_type": { "note": "通信 — 切型影响TC曲线形状。" },
+              "aging_ppm_per_year": { "note": "通信 — 老化贡献长期频率误差预算。" }
+            }
+          },
+          "precision": {
+            "label": "精密/仪器（测量、校准、基准时钟）",
+            "desc": "高精度应用。容差≤10 ppm，稳定度≤20 ppm。老化速率、切型和TC曲线成为关键规格。",
+            "effects": {
+              "frequency_tolerance_ppm": { "note": "阻断：精密应用 — 频率容差≤10 ppm要求。" },
+              "frequency_stability_ppm": { "note": "阻断：精密 — 频率稳定度≤20 ppm要求。" },
+              "aging_ppm_per_year": { "note": "精密 — 老化速率决定校准间隔。" },
+              "cut_type": { "note": "阻断：精密 — 切型决定TC曲线形状。AT切和SC切具有根本不同的TC特性。" },
+              "equivalent_series_resistance_ohm": { "note": "精密 — ESR影响振荡器相位噪声和启动可靠性。" },
+              "frequency_vs_temp_curve": { "note": "精密 — TC曲线拐点和系数重要。" }
+            }
+          },
+          "rtc": {
+            "label": "RTC/手表（32.768 kHz计时）",
+            "desc": "实时时钟应用，使用32.768 kHz（2^15 Hz）音叉晶体。RTC振荡器驱动电流极低（典型<1 µA）— 高ESR导致启动失败。",
+            "effects": {
+              "cut_type": { "note": "RTC — 确认音叉切型。" },
+              "frequency_tolerance_ppm": { "note": "RTC — 初始频率精度直接影响计时精度。" },
+              "frequency_stability_ppm": { "note": "RTC — 温度稳定度影响季节性计时漂移。" },
+              "aging_ppm_per_year": { "note": "RTC — 老化是电池备份RTC的主要长期误差。±3 ppm/年 = ~95秒/年。" },
+              "equivalent_series_resistance_ohm": { "note": "RTC — ESR关键，因RTC振荡电路驱动电流极低。" }
+            }
+          }
+        }
+      },
+      "vcxo_circuit": {
+        "text": "该晶体是否用于压控（VCXO）振荡器电路？",
+        "opt": {
+          "yes": {
+            "label": "是 — VCXO电路（压控频率牵引）",
+            "desc": "并联电容C0直接决定晶体牵引范围。替换件C0必须在±0.5 pF以内。",
+            "effects": {
+              "shunt_capacitance_pf": { "note": "阻断：VCXO电路 — 并联电容C0直接控制牵引范围。" },
+              "frequency_vs_temp_curve": { "note": "VCXO — TC曲线形状影响补偿网络精度。" },
+              "equivalent_series_resistance_ohm": { "note": "VCXO — ESR影响振荡器环路增益和相位噪声。" }
+            }
+          },
+          "no": {
+            "label": "否 — 标准固定频率振荡器",
+            "desc": "标准Pierce或Colpitts固定频率振荡电路。并联电容以默认权重评估。"
+          }
+        }
+      },
+      "extended_temp_automotive": {
+        "text": "这是扩展温度或汽车应用吗？",
+        "opt": {
+          "yes": {
+            "label": "是 — 扩展温度/汽车（−40°C或更低）",
+            "desc": "ESR从室温到−40°C增加30–50%。需要AEC-Q200（无源器件认证）。注意：晶体使用AEC-Q200，不是AEC-Q100。",
+            "effects": {
+              "operating_temp_range": { "note": "扩展温度 — 工作温度范围必须完全覆盖应用环境。" },
+              "equivalent_series_resistance_ohm": { "note": "阻断：扩展温度 — ESR在−40°C时增加30–50%。冷启动裕量必须保持≥5×。" },
+              "aec_q200": { "note": "阻断：汽车 — AEC-Q200无源器件认证为强制要求。" },
+              "frequency_stability_ppm": { "note": "扩展温度 — 频率稳定度必须在全扩展温度范围内保证。" }
+            }
+          },
+          "no": {
+            "label": "否 — 商业温度（0°C至+70°C）",
+            "desc": "标准商业温度范围。所有温度相关属性使用默认权重。"
+          }
+        }
+      }
     }
   },
   "logicTable": {
@@ -6264,6 +6345,50 @@
         "operating_temp_range": "必须完全覆盖应用工作范围。工业级：−40°C至+85°C。汽车级：−40°C至+105°C或+125°C。注意：DAC精度规格（INL、偏移、增益、基准TC）与温度相关——验证规格在全工作范围内维持，而非仅+25°C。内部电压基准TC直接贡献输出电压漂移。",
         "aec_q100": "汽车应用（Q4）升级为强制+blockOnMissing。ECU输出级、车身控制模块、ADAS执行器控制和电池管理中的DAC需要AEC-Q100。非AEC器件被阻断在汽车设计之外。",
         "package_case": "SOT-23-6、MSOP-10、TSSOP-16、QFN-20等。精密DAC可能有裸露焊盘要求以管理内部基准的散热。布局敏感：输出引脚相对AGND的位置影响噪声。封装更换为应用评审——验证焊盘和任何布局关键的引脚分配。"
+      }
+    },
+    "D1": {
+      "name": "晶体 — 石英谐振器",
+      "desc": "石英晶体替代零件验证的硬逻辑过滤器",
+      "attr": {
+        "nominal_frequency_hz": "标称频率（Hz）",
+        "cut_type": "晶体切型",
+        "frequency_tolerance_ppm": "频率容差（ppm）",
+        "frequency_stability_ppm": "频率稳定度（ppm）",
+        "load_capacitance_pf": "负载电容（pF）",
+        "equivalent_series_resistance_ohm": "ESR — 等效串联电阻（Ω）",
+        "drive_level_uw": "驱动功率（µW）",
+        "shunt_capacitance_pf": "并联电容C0（pF）",
+        "aging_ppm_per_year": "老化速率（ppm/年）",
+        "package_type": "封装类型",
+        "package_pins": "封装引脚数",
+        "mounting_type": "安装类型",
+        "operating_temp_range": "工作温度范围（°C）",
+        "storage_temp_range": "存储温度范围（°C）",
+        "aec_q200": "AEC-Q200认证",
+        "overtone_order": "泛音阶次",
+        "frequency_vs_temp_curve": "频率-温度曲线",
+        "qualification_level": "认证等级"
+      },
+      "reason": {
+        "nominal_frequency_hz": "硬门。精确频率匹配（Hz）。16.000 MHz晶体不能替代16.384 MHz晶体——振荡频率由石英晶片的机械谐振决定，而非外部元件。即使0.1%的频率误差也会导致协议时序失败（USB、蓝牙、以太网都有ppm级预算）。频率是任何晶体的首要身份属性。",
+        "cut_type": "晶体切型决定温度-频率曲线形状和工作模式。AT切（厚度剪切，MHz范围）：三次TC曲线，拐点在+25°C附近，−40至+85°C范围内±20 ppm。音叉（弯曲振动，32.768 kHz）：抛物线TC曲线，稳定范围更窄。SC切（应力补偿）：优越的老化和相位噪声性能。AT切和音叉互换会产生错误频率和错误的TC行为。",
+        "frequency_tolerance_ppm": "初始频率精度（+25°C）。替换件容差必须≤原件。通信协议有严格的总误差预算：USB HS ±50 ppm，蓝牙±20 ppm，GPS ±2.5 ppm。总预算=容差+稳定度+老化——如果仅容差就消耗50 ppm，则温度漂移和老化没有余量。",
+        "frequency_stability_ppm": "工作温度范围内的频率偏差。替换件稳定度必须≤原件。这是总频率误差预算中与温度相关的分量。AT切晶体在−40至+85°C范围内可达±10–50 ppm；音叉晶体在更窄范围内可达±20 ppm。",
+        "load_capacitance_pf": "硬门。精确CL匹配要求。负载电容是最常见的晶体替换错误——它决定Pierce振荡电路中的精确振荡频率。CL=18 pF的晶体放入为CL=12 pF设计的电路中会以不同频率振荡（频偏~10–30 ppm）。此偏移是永久性的，无法通过固件修正。常见值：8 pF、12 pF、18 pF、20 pF。",
+        "equivalent_series_resistance_ohm": "ESR决定振荡器启动可靠性和相位噪声。振荡电路的负阻抗必须超过ESR≥5倍才能可靠启动。ESR从+25°C到−40°C增加30–50%——室温40 Ω的晶体在−40°C可能达到55–65 Ω。冷启动失败（晶体在低温上电时无法振荡）是最常见的晶体现场故障模式。替换件ESR必须≤原件。",
+        "drive_level_uw": "晶体在不退化情况下可吸收的最大功率。振荡电路提供一定驱动功率——如超过晶体额定值，晶体加速老化、频率漂移，最终断裂。替换件驱动功率必须≥原件（可安全承受更大功率）。典型值：MHz AT切10–200 µW，32.768 kHz音叉0.5–1 µW。",
+        "shunt_capacitance_pf": "并联电容C0代表晶体封装的静态电容（电极+引线）。C0决定晶体的牵引能力——通过改变外部电容可牵引频率的ppm范围。在VCXO电路中，C0必须在±0.5 pF以内匹配以维持调谐范围和环路增益。C0很少出现在分销商参数数据中——典型1–7 pF，需从数据手册等效电路参数中获取。",
+        "aging_ppm_per_year": "由石英晶片中材料迁移和应力松弛导致的长期频率漂移。典型值：标准AT切±3–5 ppm/年，精密±1 ppm/年。RTC应用：±3 ppm/年≈~95秒/年漂移。10年电池寿命累计>15分钟误差。通信：老化贡献长期频率误差预算。",
+        "package_type": "物理封装格式：3225（3.2×2.5mm）、2520（2.5×2.0mm）、2016、1612、5032、7050、HC-49/U（直插）、HC-49/S（贴片）。封装决定PCB焊盘图案和机械兼容性。不同厂商的同尺寸封装引脚兼容。HC-49有直插（/U）和贴片（/S）两种变体——需单独验证安装类型。",
+        "package_pins": "封装端子数：2焊盘（标准）、4焊盘（带接地焊盘提高稳定性）。4焊盘晶体有中心接地焊盘，可改善EMI性能和机械稳定性，但需要匹配的PCB焊盘图案。2焊盘晶体不能放在4焊盘焊盘上，反之亦然。",
+        "mounting_type": "硬门。贴片（SMD）vs 直插（Through-Hole）。物理上不兼容的安装技术——SMD晶体不能放入直插PCB孔中，反之亦然。HC-49/U=直插，HC-49/S=贴片。所有现代陶瓷封装（3225、2520等）均为SMD。",
+        "operating_temp_range": "替换件温度范围必须是原件的超集。晶体频率稳定度仅在规定的工作范围内有保证。标准商业级：0°C至+70°C。工业级：−20°C至+70°C或−40°C至+85°C。汽车级：−40°C至+105°C或+125°C。音叉32.768 kHz晶体的范围通常比AT切更窄。",
+        "storage_temp_range": "晶体上电前的存储温度范围。超过存储限值可导致永久频率漂移。典型比工作范围更宽（如−55°C至+125°C）。应用评审——验证供应链或仓储条件是否可能超限。",
+        "aec_q200": "AEC-Q200是无源器件（晶体、电容、电阻）的汽车认证标准。注意：晶体使用AEC-Q200，不是AEC-Q100（AEC-Q100用于有源IC如振荡器和微控制器）。AEC-Q200测试包括温度循环、耐湿、机械冲击、振动和可焊性。非AEC器件被阻断在汽车设计之外。",
+        "overtone_order": "泛音晶体的硬门。基频模式（1次谐波）vs 3次泛音 vs 5次泛音。振荡电路针对特定泛音设计——基频晶体放入3次泛音电路会以错误频率振荡（预期的1/3），反之亦然。振荡器的LC谐振槽选择泛音；若谐振槽未调谐到3次泛音，3次泛音晶体将在其基频振荡。泛音晶体用于>30 MHz以上，此时基频晶片变得太薄。",
+        "frequency_vs_temp_curve": "频率-温度特性曲线形状。AT切：三次曲线，拐点在+25°C附近。音叉：抛物线（凹形）。SC切：更平坦的三次曲线，拐点不同。相同±20 ppm稳定度规格的两个晶体可能具有不同的曲线形状。在温度补偿设计（TCXO）中，补偿网络针对特定曲线形状校准。应用评审——与精密和VCXO应用相关。",
+        "qualification_level": "AEC-Q200之外的额外认证：MIL-PRF-3098（军用）、ESA/ESCC（航天）、定制筛选等级。商业应用为信息性参数。军用/航天应用可能需要特定筛选（A/B/C组测试、100% DPA），不能用商业等级替代。"
       }
     }
   }
