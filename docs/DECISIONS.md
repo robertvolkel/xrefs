@@ -1948,3 +1948,21 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 - Added "Parts.io Field" column alongside "Digikey Field"
 - Coverage metric: `Digikey: 55% | +Parts.io: 12% | Combined: 67%`
 - Zone 2: extra parts.io fields not in schema (admin discovery)
+
+### 78. Remove Mock Product Data Fallback
+**Date:** 2026-03-14
+**Status:** Implemented
+
+**Problem:** The application fell back to mock product data (9 hardcoded parts: 6 MLCCs, 3 resistors) when Digikey and Atlas were both unavailable. This was misleading — users saw real-looking product data that isn't real. Mock data is acceptable for MFR profiles (development placeholder) but not for product searches, attributes, or recommendations.
+
+**Decision:** Remove all 4 mock product data fallback paths from `partDataService.ts`. When no real data source has results, return empty/null instead of fake data.
+
+**Changes:**
+1. `searchParts()` — returns `{ type: 'none', matches: [] }` instead of `mockSearch(query)`
+2. `getAttributes()` — restructured: Digikey tries guarded by `isDigikeyConfigured()`, falls through to Atlas, then returns `null`. Removed `mockGetAttributes()` call entirely.
+3. `getRecommendations()` (no logic table) — returns `{ recommendations: [] }` instead of `mockGetRecommendations(mpn)`
+4. `getRecommendations()` (no candidates) — returns `{ recommendations: [] }` instead of `mockGetRecommendations(mpn)`
+5. Removed imports of `mockSearch`, `mockGetAttributes`, `mockGetRecommendations`
+6. Removed "Mock Data" amber `Chip` from `AttributesPanel.tsx`
+
+**Kept:** `lib/mockData.ts`, `lib/mockSearchService.ts`, `lib/mockXrefService.ts` files remain for potential dev/test use — just no longer imported in production data path.

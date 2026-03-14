@@ -35,7 +35,7 @@ Config: `jest.config.ts` using `next/jest.js` (SWC transforms + path aliases), `
 ### ~~Silent data source fallback~~ COMPLETED
 **File:** `lib/services/partDataService.ts`
 
-Added `dataSource: 'digikey' | 'mock'` to `PartAttributes`. `partDataService.getAttributes()` tags every return path. `AttributesPanel` shows an amber "Mock Data" chip when `dataSource === 'mock'`. See Decision #20.
+Added `dataSource: 'digikey' | 'mock'` to `PartAttributes`. `partDataService.getAttributes()` tags every return path. `AttributesPanel` shows an amber "Mock Data" chip when `dataSource === 'mock'`. See Decision #20. **Update (Decision #78):** Mock product fallback fully removed — all 4 fallback paths now return empty/null. "Mock Data" chip removed from AttributesPanel.
 
 ---
 
@@ -144,7 +144,7 @@ Extracted to `MODEL` constant reading from `ANTHROPIC_MODEL` env var (defaults t
 ### ~~Mock data incomplete for MLCC recommendations~~ WON'T FIX
 **File:** `lib/mockData.ts`
 
-**Decision:** Rather than making mock data more complete, the app should surface a clear error when Digikey is unavailable instead of silently serving mock results. Mock data stays for local development only — production users should never see it. See future work: remove mock fallback from the recommendation path and show a "Digikey unavailable" message instead.
+**Decision:** Rather than making mock data more complete, the app should surface a clear error when Digikey is unavailable instead of silently serving mock results. Mock data stays for local development only — production users should never see it. **Done (Decision #78):** All 4 mock product fallback paths removed from `partDataService.ts`. Production users never see mock data for products. Mock files kept for dev/test use only.
 
 ---
 

@@ -1,7 +1,8 @@
 /**
  * Part Data Service — Unified data layer
  *
- * Tries Digikey API first, falls back to mock data.
+ * Tries Digikey API first, then parts.io gap-fill, then Atlas.
+ * Returns null/empty when no real data source has results.
  * All functions are async and server-side only.
  */
 
@@ -11,8 +12,6 @@ import {
   mapKeywordResponseToSearchResult,
   mapDigikeyProductToAttributes,
 } from './digikeyMapper';
-import { mockSearch, mockGetAttributes } from '../mockSearchService';
-import { mockGetRecommendations } from '../mockXrefService';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
@@ -76,8 +75,8 @@ export async function searchParts(query: string, currency?: string): Promise<Sea
     };
   }
 
-  // Fallback to mock
-  return mockSearch(query);
+  // No results from any source
+  return { type: 'none', matches: [] };
 }
 
 // ============================================================
@@ -119,42 +118,37 @@ async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes>
 // ============================================================
 
 export async function getAttributes(mpn: string, currency?: string): Promise<PartAttributes | null> {
-  // Always check mock first for instant results on known parts
-  const mockAttrs = mockGetAttributes(mpn);
-
-  if (!isDigikeyConfigured()) {
-    return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
-  }
-
-  try {
-    const response = await getProductDetails(mpn, currency);
-    if (response.Product) {
-      const attrs = mapDigikeyProductToAttributes(response.Product);
-      const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-      return enriched;
+  if (isDigikeyConfigured()) {
+    try {
+      const response = await getProductDetails(mpn, currency);
+      if (response.Product) {
+        const attrs = mapDigikeyProductToAttributes(response.Product);
+        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
+        return enriched;
+      }
+    } catch (error) {
+      console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
     }
-  } catch (error) {
-    console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
-  }
 
-  // Fallback: keyword search by MPN (handles cases where Product Details API
-  // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
-  try {
-    const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency);
-    const lowerMpn = mpn.toLowerCase();
-    // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
-    const match = searchResponse.Products?.find(
-      (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
-    ) ?? searchResponse.Products?.find(
-      (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
-    );
-    if (match) {
-      const attrs = mapDigikeyProductToAttributes(match);
-      const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-      return enriched;
+    // Fallback: keyword search by MPN (handles cases where Product Details API
+    // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
+    try {
+      const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency);
+      const lowerMpn = mpn.toLowerCase();
+      // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
+      const match = searchResponse.Products?.find(
+        (p) => p.ManufacturerProductNumber?.toLowerCase() === lowerMpn
+      ) ?? searchResponse.Products?.find(
+        (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
+      );
+      if (match) {
+        const attrs = mapDigikeyProductToAttributes(match);
+        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
+        return enriched;
+      }
+    } catch {
+      console.warn('Digikey keyword search fallback also failed for', mpn);
     }
-  } catch {
-    console.warn('Digikey keyword search fallback also failed for', mpn);
   }
 
   // Fallback: try Atlas database
@@ -165,7 +159,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     console.warn('Atlas attribute lookup failed for', mpn);
   }
 
-  return mockAttrs ? { ...mockAttrs, dataSource: 'mock' as const } : null;
+  return null;
 }
 
 // ============================================================
@@ -297,10 +291,9 @@ export async function getRecommendations(
   // Step 2: Check if this family has a logic table (classifier detects variants)
   const logicTable = logicTablePrecheck;
 
-  // No logic table → fall back to hardcoded mock recommendations
+  // No logic table → no recommendations possible
   if (!logicTable) {
-    const recs = mockGetRecommendations(mpn);
-    return { recommendations: recs, sourceAttributes: sourceAttrs, dataSource };
+    return { recommendations: [], sourceAttributes: sourceAttrs, dataSource };
   }
 
   const familyId = logicTable.familyId;
@@ -460,9 +453,8 @@ export async function getRecommendations(
     return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
   }
 
-  // Step 4: Fall back to mock candidates + matching engine
-  const recs = mockGetRecommendations(mpn);
-  return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
+  // Step 4: No candidates found from any source
+  return { recommendations: [], sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
 }
 
 // ============================================================
