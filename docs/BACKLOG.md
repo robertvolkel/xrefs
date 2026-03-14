@@ -148,12 +148,12 @@ Extracted to `MODEL` constant reading from `ANTHROPIC_MODEL` env var (defaults t
 
 ---
 
-### ~~Account settings mostly incomplete~~ SUBSUMED
-**File:** `components/AccountSettingsDialog.tsx`
+### ~~Account settings mostly incomplete~~ COMPLETED
+**File:** `components/settings/SettingsShell.tsx`
 
-3 of 4 tabs are disabled with "Coming Soon": Profile, Data Sources, Notifications. Only Global Settings (language selector) works. Currency selector is also disabled.
+~~3 of 4 tabs are disabled with "Coming Soon": Profile, Data Sources, Notifications. Only Global Settings (language selector) works. Currency selector is also disabled.~~
 
-**Note:** The Profile tab is now tracked as Phase 1 of the Product Roadmap (user preferences foundation). Data Sources and Notifications will be addressed in later phases. See `docs/PRODUCT_ROADMAP.md`.
+**Resolved (Decision #76):** Settings page restructured to two functional sections: "General Settings" (language, currency, theme) and "My Profile" (editable name/email + password change). Notifications section removed. Currency selector remains disabled (placeholder).
 
 ---
 
@@ -185,6 +185,8 @@ Status text in `PartsListTable` (e.g., "Validated", "Error", "Searching") and lo
 
 Of 22 logic table rules, the following have no Digikey parametric mapping: `control_mode`, `compensation_type`, `ton_min`, `gate_drive_current`, `ocp_mode`, `soft_start`, `enable_uvlo`, `rth_ja`, `tj_max`, `aec_q100` (controllers only — integrated has "Qualification"). These are typically datasheet-only specs. Integrated-switch parts have ~50% weight coverage; controller-only parts have ~40%.
 
+**Parts.io partial fill (Decision #77):** `control_mode` now filled from parts.io "Control Mode" field (+9 weight). `compensation_type`, `ton_min`, `gate_drive_current` still datasheet-only.
+
 Key data gaps: No way to distinguish control modes (PCM vs VM vs hysteretic) from Digikey parametric data. No COMP pin presence/type field. No gate drive current for controller-only designs. "Voltage - Output (Min/Fixed)" is mapped to `vref` but is actually the minimum adjustable output voltage for adjustable parts — not exactly the reference voltage (close but not identical for parts with non-unity gain internal dividers).
 
 ---
@@ -194,12 +196,16 @@ Key data gaps: No way to distinguish control modes (PCM vs VM vs hysteretic) fro
 
 Of 20 logic table rules, the following have no Digikey parametric mapping: `dead_time_control`, `dead_time`, `shutdown_enable` (polarity), `fault_reporting`, `rth_ja`, `tj_max`. Non-isolated "Gate Drivers" category has no propagation delay field; isolated "Isolators - Gate Drivers" has no bootstrap-related fields. Compound fields require 5 transformers (peak source/sink, logic threshold, propagation delay, rise/fall time). `isolation_type` enriched from Digikey category name (non-isolated → "Non-Isolated (Bootstrap)"). `driver_configuration` enriched from "Number of Channels"/"Number of Drivers" for isolated drivers. AEC-Q100 available via "Qualification" for isolated drivers only (not for non-isolated "Gate Drivers" category). ~45-50% weight coverage overall.
 
+**Parts.io partial fill (Decision #77):** Only output current confirmed from parts.io — marginal benefit (~+0 weight since Digikey already has it). `dead_time_control`, `dead_time`, timing specs still datasheet-only.
+
 ---
 
 ### C4 Op-Amps / Comparators — datasheet-only fields have no Digikey parametric data
 **Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/opampComparator.ts`
 
 Of 24 logic table rules, the following have no Digikey parametric mapping: `vicm_range` (w9, BLOCKING — phase reversal risk), `avol` (w5), `min_stable_gain` (w8 — decompensated detection), `input_noise_voltage` (w6), `rail_to_rail_input` (w8 — partially available via "Amplifier Type" but unreliable as a standalone indicator), `aec_q100` (w8), `packaging` (w1). Op-amp category ("Instrumentation, Op Amps, Buffer Amps") has ~50% weight coverage. Comparator category has ~45% weight coverage. Two separate Digikey categories with different field names require two param maps.
+
+**Parts.io partial fill (Decision #77):** `cmrr` (w5) and `avol` (w5) now filled from parts.io (+10 weight). `vicm_range`, `min_stable_gain`, `input_noise_voltage`, GBW, slew rate still NOT available from parts.io.
 
 Key data gaps: VICM range (the BLOCKING phase reversal check) is entirely datasheet-only — this is the biggest safety gap. Min stable gain (decompensated detection) is datasheet-only. Input noise voltage not in parametric data. AEC-Q100 not in Digikey parametric data for either category.
 
@@ -210,6 +216,8 @@ Key data gaps: VICM range (the BLOCKING phase reversal check) is entirely datash
 
 12 of 22 logic table rules have no Digikey parametric mapping (~48% weight unmapped): `vout_accuracy`, `output_cap_compatibility` (ceramic stability), `vin_min`, `load_regulation`, `line_regulation`, `power_good`, `soft_start`, `rth_ja`, `tj_max`, `aec_q100`, `packaging`. These are datasheet-only specs. PSRR is available but only as a headline dB number, not at specific frequencies.
 
+**Parts.io partial fill (Decision #77):** `vin_min`, `vout_accuracy`, `line_regulation`, `load_regulation` now filled from parts.io (+23 weight, ~52% → ~65%). `output_cap_compatibility`, `power_good`, `soft_start` still datasheet-only.
+
 Also: `enable_pin` polarity (active-high vs active-low) cannot be determined from Digikey "Control Features" — it only says "Enable" or "-". The transformer defaults to "Active High" which is correct for most modern LDOs but should be verified from datasheets.
 
 ---
@@ -218,6 +226,21 @@ Also: `enable_pin` polarity (active-high vs active-low) cannot be determined fro
 **Files:** `__tests__/services/`
 
 Family C1 logic table, context questions, and Digikey mapper transformers have no dedicated tests. Should add tests for: LDO-specific transformers (`transformToEnablePin`, `transformToThermalShutdown`, `transformToOutputCapCompatibility`, `transformToAecQ100`), subcategory routing ("Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" → C1), context question effects (ceramic cap → blockOnMissing, battery → Iq escalation).
+
+---
+
+### Parts.io integration — production URL + rate limits TBD
+**Files:** `lib/services/partsioClient.ts`
+**Status:** QA environment working, production migration pending
+
+Parts.io integration (Decision #77) is running against the QA environment (`api.qa.parts.io`, requires VPN to `10.20.x.x`). Before production use:
+- Obtain production API base URL (currently hardcoded QA URL)
+- Confirm rate limits and negotiate quota if needed
+- Test with production API key
+- Verify that field names are identical between QA and production environments
+- Consider adding `PARTSIO_BASE_URL` env var for environment switching
+
+Also: Film capacitors (family 64) returned 0 matches for all test MPNs — worth retesting with additional MPNs. Series voltage references (REF5025) not found but shunt refs (TL431) are — series refs may need different test MPNs.
 
 ---
 
@@ -305,10 +328,12 @@ No migration tool (like Prisma Migrate or Supabase CLI migrations). Schema chang
 The following items track the phased evolution from cross-reference engine to component intelligence platform. See `docs/PRODUCT_ROADMAP.md` for full details.
 
 ### Phase 1: User Preferences Foundation
-**Status:** Not started
+**Status:** Partially started (Profile UI done, preferences JSONB not yet)
 **Priority:** P1
 
-Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Build Profile panel UI (replace "Coming Soon" placeholder). Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.
+~~Build Profile panel UI (replace "Coming Soon" placeholder).~~ Done (Decision #76) — editable name/email + password change.
+
+Remaining: Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.
 
 **Key files:** `lib/types.ts`, `scripts/supabase-schema.sql`, `components/settings/ProfilePanel.tsx`, `app/api/profile/preferences/route.ts`
 

@@ -4860,3 +4860,41 @@ export function computeFamilyParamCoverage(
 
   return { totalWeight, matchableWeight };
 }
+
+/**
+ * Reverse lookup: attributeId → Digikey ParameterText, for a given category.
+ * Used by the admin ParamMappingsPanel to show Digikey field names per attribute.
+ */
+export function reverseParamLookup(categoryName: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const map = findCategoryMap(categoryName);
+  if (!map) return result;
+
+  for (const [parameterText, entry] of Object.entries(map)) {
+    const mappings = Array.isArray(entry) ? entry : [entry];
+    for (const m of mappings) {
+      if (!result.has(m.attributeId)) {
+        result.set(m.attributeId, parameterText);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Reverse lookup across ALL Digikey categories for a family.
+ * Returns attributeId → Digikey ParameterText (first match wins).
+ */
+export function reverseParamLookupForFamily(familyId: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const categories = getDigikeyCategoriesForFamily(familyId);
+  for (const cat of categories) {
+    const catReverse = reverseParamLookup(cat);
+    for (const [attrId, paramText] of catReverse) {
+      if (!result.has(attrId)) {
+        result.set(attrId, paramText);
+      }
+    }
+  }
+  return result;
+}

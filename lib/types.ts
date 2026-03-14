@@ -61,6 +61,8 @@ export interface PartAttributes {
   parameters: ParametricAttribute[];
   /** Where this data came from */
   dataSource?: 'digikey' | 'atlas' | 'mock';
+  /** Secondary data source used for gap-fill enrichment */
+  enrichedFrom?: 'partsio';
 }
 
 /** A cross-reference recommendation */

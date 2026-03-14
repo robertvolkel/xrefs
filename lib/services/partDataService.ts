@@ -19,6 +19,8 @@ import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
+import { isPartsioConfigured, getPartsioProductDetails } from './partsioClient';
+import { mapPartsioProductToAttributes } from './partsioMapper';
 
 // ============================================================
 // CONFIGURATION CHECK
@@ -79,6 +81,40 @@ export async function searchParts(query: string, currency?: string): Promise<Sea
 }
 
 // ============================================================
+// PARTS.IO ENRICHMENT (gap-fill after Digikey)
+// ============================================================
+
+/**
+ * Enrich Digikey attributes with parts.io data.
+ * Digikey values always win — parts.io only fills gaps (missing parameterId).
+ */
+async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes> {
+  if (!isPartsioConfigured()) return attrs;
+
+  try {
+    const listing = await getPartsioProductDetails(attrs.part.mpn);
+    if (!listing) return attrs;
+
+    const partsioParams = mapPartsioProductToAttributes(listing);
+    if (partsioParams.length === 0) return attrs;
+
+    const existingIds = new Set(attrs.parameters.map(p => p.parameterId));
+    const gapFills = partsioParams.filter(p => !existingIds.has(p.parameterId));
+
+    if (gapFills.length === 0) return attrs;
+
+    return {
+      ...attrs,
+      parameters: [...attrs.parameters, ...gapFills],
+      enrichedFrom: 'partsio',
+    };
+  } catch (error) {
+    console.warn('Parts.io enrichment failed for', attrs.part.mpn, error);
+    return attrs;
+  }
+}
+
+// ============================================================
 // ATTRIBUTES
 // ============================================================
 
@@ -94,7 +130,8 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     const response = await getProductDetails(mpn, currency);
     if (response.Product) {
       const attrs = mapDigikeyProductToAttributes(response.Product);
-      return { ...attrs, dataSource: 'digikey' as const };
+      const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
+      return enriched;
     }
   } catch (error) {
     console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -113,7 +150,8 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     );
     if (match) {
       const attrs = mapDigikeyProductToAttributes(match);
-      return { ...attrs, dataSource: 'digikey' as const };
+      const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
+      return enriched;
     }
   } catch {
     console.warn('Digikey keyword search fallback also failed for', mpn);

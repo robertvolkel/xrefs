@@ -1874,3 +1874,77 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 - Q2 (load type): Capacitive/lamp → dI/dt mandatory+block. Low-current → off_state_leakage+load_current_min mandatory+block.
 - Q3 (speed/thermal): Timing-critical → turn_on/turn_off mandatory+block, RF firing required. High temp → thermal_resistance mandatory+block.
 - Q4 (transient protection): Industrial/harsh → dV/dt mandatory, varistor+snubber to primary.
+
+---
+
+### 76. Settings page restructure — General Settings + Profile + Password Change
+**Date:** 2026-03-14
+**Files:** `components/settings/SettingsSectionNav.tsx`, `components/settings/SettingsShell.tsx`, `components/settings/ProfilePanel.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+Restructured the `/settings` page from three sections (Profile stub, Account Settings, Notifications stub) to two functional sections:
+
+1. **General Settings** (was "Account Settings") — Language, currency, theme. Moved to first position in nav and renamed.
+2. **My Profile** — Editable First Name, Last Name, Email with Save button, plus a separate Change Password section.
+
+**Profile implementation:**
+- User data sourced from `useAuth()` → `user.user_metadata.full_name` (split on first space for first/last) and `user.email`
+- Save updates both `auth.users` metadata (via `supabase.auth.updateUser`) and `profiles` table (direct update) to keep them in sync
+- No email confirmation required at this time
+
+**Password change flow:**
+- Current password verified first via `signInWithPassword(email, currentPassword)` before allowing update — prevents changes on unattended sessions
+- New password + confirm with 6-char minimum (matches registration)
+- Independent from profile save (separate button, separate state)
+- Fields clear and snackbar shows on success
+
+**Removed:** Notifications section (stub) and `NotificationsPanel.tsx` — not needed for current MVP.
+
+---
+
+### 77. Parts.io Integration — Parametric Data Enrichment + Admin Panel Redesign
+**Date:** 2026-03-14
+**Status:** Implemented
+
+**Problem:** Digikey provides partial parametric data for all 43 component families, but has known coverage gaps — thyristor tq/dv_dt (~48-51%), relay coil/contact specs (~45%), LDO dropout/regulation (~52%), fuse I²t (~50%). These gaps reduce matching accuracy for families where the missing attributes carry high weights.
+
+**Decision:** Integrate parts.io (SiliconExpert/IHS) as a secondary data source for gap-fill enrichment. After Digikey returns a part, call parts.io for the same MPN and merge deeper technical attributes — Digikey values always win on conflicts, parts.io fills gaps only. Also redesigned the admin Parameter Mappings panel to show both data sources side-by-side.
+
+**Validated via real API testing:** 46 MPNs tested across 43 families and 17 parts.io Class types (Mar 2026). Saved in `docs/partsio-api-findings.md`.
+
+**Architecture (3 new files + 5 modifications):**
+- `lib/services/partsioClient.ts` — API client with `limit=10` best-record selection, 30-min cache, retry with backoff. Must request limit=10 because `limit=1` often returns sparse records from minor manufacturers (Completeness: 0%).
+- `lib/services/partsioParamMap.ts` — 17 class param maps with verified field names, `familyToPartsioClass` mapping (39 families), reverse lookup functions, extra-fields discovery lists for admin panel.
+- `lib/services/partsioMapper.ts` — Converts `PartsioListing` → `ParametricAttribute[]` with operating temp and supply voltage range mergers.
+- `lib/services/partDataService.ts` — Added `enrichWithPartsio()` called after every Digikey lookup.
+- `lib/types.ts` — Added `enrichedFrom?: 'partsio'` to `PartAttributes`.
+- `lib/services/digikeyParamMap.ts` — Added `reverseParamLookup()` and `reverseParamLookupForFamily()` for admin panel.
+- `components/admin/ParamMappingsPanel.tsx` — Restructured from Digikey-field-first to attribute-centric: rows sorted by weight, with Digikey Field + Parts.io Field columns. Zone 2 shows extra parts.io fields not in schema.
+- `locales/en.json`, `locales/zh-CN.json` — 8 new i18n keys each.
+
+**API details:**
+- Auth: `api_key` query parameter (no OAuth2)
+- Base URL: `http://api.qa.parts.io/solr/partsio/listings` (QA — requires VPN)
+- Env var: `PARTSIO_API_KEY` in `.env.local`
+- 17 parts.io classes: Capacitors, Resistors, Inductors, Filters, Diodes, Transistors, Trigger Devices, Amplifier Circuits, Logic, Power Circuits, Converters, Drivers And Interfaces, Signal Circuits, Circuit Protection, Optoelectronics, Relays, Crystals/Resonators
+
+**Taxonomy surprises:**
+- CM Chokes + Ferrite Beads under "Filters" (NOT "Inductors")
+- SSR photoMOS under "Optoelectronics" (NOT "Relays")
+- PTC Fuses under "Resistors" (NOT "Circuit Protection")
+- Tantalum/Al Electrolytic classified as "Ceramic Capacitors" in Category
+
+**Top coverage improvements (by weight added):**
+- B8 Thyristors: +30 weight (tq, dv/dt, il — ~48% → ~65%)
+- F1 Relays: +46 weight (coil power, contact form/material, electrical life — ~45% → ~68%)
+- C1 LDOs: +23 weight (vin_min, vout_accuracy, line/load regulation — ~52% → ~65%)
+- E1 Optocouplers: +25 weight (if_rated, dark current, vceo — ~45% → ~57%)
+- 59 Tantalum: +17 weight (leakage_current, ripple_current, dissipation_factor — ~58% → ~73%)
+
+**Families with no parts.io benefit:** 13 Mica (not in DB), 55 Chassis Mount (not in DB), 64 Film (not in DB), B9 JFETs (too sparse).
+
+**Admin panel redesign:**
+- Removed Rule Type column (lives in Logic panel)
+- Removed mapped/unmapped split — single flat table sorted by weight descending
+- Added "Parts.io Field" column alongside "Digikey Field"
+- Coverage metric: `Digikey: 55% | +Parts.io: 12% | Combined: 67%`
+- Zone 2: extra parts.io fields not in schema (admin discovery)

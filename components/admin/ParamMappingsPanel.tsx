@@ -3,9 +3,6 @@
 import { useMemo } from 'react';
 import {
   Box,
-  Chip,
-  Tab,
-  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -16,94 +13,77 @@ import {
 } from '@mui/material';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LogicTable, MatchingRule } from '@/lib/types';
+import { LogicTable } from '@/lib/types';
 import {
   computeFamilyParamCoverage,
   getDigikeyCategoriesForFamily,
-  getFullParamMap,
-  ParamMapEntry,
-  ParamMapping,
+  getDigikeyAttributeIdsForFamily,
+  reverseParamLookupForFamily,
 } from '@/lib/services/digikeyParamMap';
-import { typeColors, typeTranslationKeys, typeLabels } from './logicConstants';
+import {
+  reversePartsioParamLookup,
+  computePartsioCoverage,
+  getAllPartsioFields,
+} from '@/lib/services/partsioParamMap';
 
 interface ParamMappingsPanelProps {
   table: LogicTable | null;
 }
 
-/** Flatten a param map into sorted rows for display */
-function flattenParamMap(map: Record<string, ParamMapEntry>): {
-  parameterText: string;
-  mappings: ParamMapping[];
-}[] {
-  const rows: { parameterText: string; mappings: ParamMapping[] }[] = [];
-
-  for (const [parameterText, entry] of Object.entries(map)) {
-    const mappings = Array.isArray(entry) ? entry : [entry];
-    rows.push({ parameterText, mappings });
-  }
-
-  // Sort by the first mapping's sortOrder
-  rows.sort((a, b) => (a.mappings[0]?.sortOrder ?? 99) - (b.mappings[0]?.sortOrder ?? 99));
-  return rows;
-}
-
-/** Shared column widths for visual alignment between mapped and unmapped tables */
-const COL = { num: 40, digikey: 240, attrId: 160, attrName: 180, ruleType: 140, weight: 60 };
-
-/** Shared divider style for the Digikey → Internal boundary */
-const dividerSx = { borderLeft: '1px solid', borderLeftColor: 'divider' } as const;
+/** Column widths for the attribute-centric table */
+const COL = { num: 36, attrId: 160, attrName: 180, weight: 50, digikey: 220, partsio: 220 };
 
 export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
   const { t } = useTranslation();
-  const [tabIndex, setTabIndex] = useState(0);
 
   const categories = useMemo(
     () => (table ? getDigikeyCategoriesForFamily(table.familyId) : []),
     [table],
   );
 
-  const activeCategory = categories[tabIndex] ?? categories[0];
-  const paramMap = useMemo(
-    () => (activeCategory ? getFullParamMap(activeCategory) : null),
-    [activeCategory],
-  );
-  const rows = useMemo(() => (paramMap ? flattenParamMap(paramMap) : []), [paramMap]);
-
-  // Lookup rule weight + logicType by attributeId
-  const ruleMap = useMemo(() => {
-    if (!table) return new Map<string, MatchingRule>();
-    return new Map(table.rules.map(r => [r.attributeId, r]));
+  // Digikey reverse lookup: attributeId → DK field name
+  const dkReverse = useMemo(() => {
+    if (!table) return new Map<string, string>();
+    return reverseParamLookupForFamily(table.familyId);
   }, [table]);
 
-  // Compute unmapped rules across ALL categories (not just active tab)
-  const unmappedRules = useMemo((): MatchingRule[] => {
-    if (!table) return [];
-    const mappedIds = new Set<string>();
-    for (const cat of categories) {
-      const map = getFullParamMap(cat);
-      if (!map) continue;
-      for (const entry of Object.values(map)) {
-        const mappings = Array.isArray(entry) ? entry : [entry];
-        for (const m of mappings) mappedIds.add(m.attributeId);
-      }
-    }
-    return table.rules
-      .filter(r => !mappedIds.has(r.attributeId))
-      .sort((a, b) => b.weight - a.weight);
-  }, [table, categories]);
+  // Parts.io reverse lookup: attributeId → PIO field name
+  const pioReverse = useMemo(() => {
+    if (!table) return new Map<string, string>();
+    return reversePartsioParamLookup(table.familyId);
+  }, [table]);
 
-  // Param coverage for this family
+  // All attributes from logic table, sorted by weight desc
+  const attributeRows = useMemo(() => {
+    if (!table) return [];
+    return [...table.rules].sort((a, b) => b.weight - a.weight);
+  }, [table]);
+
+  // Coverage metrics
   const coverage = useMemo(() => {
     if (!table) return null;
-    return computeFamilyParamCoverage(table.familyId, table.rules);
+    const dk = computeFamilyParamCoverage(table.familyId, table.rules);
+    const dkMappedIds = getDigikeyAttributeIdsForFamily(table.familyId);
+    const pio = computePartsioCoverage(table.familyId, table.rules, dkMappedIds);
+    const combinedWeight = dk.matchableWeight + pio.partsioOnlyWeight;
+    return {
+      totalWeight: dk.totalWeight,
+      dkWeight: dk.matchableWeight,
+      pioWeight: pio.partsioOnlyWeight,
+      combinedWeight,
+    };
   }, [table]);
 
-  // Count mapped body rows (multi-maps expand into multiple rows)
-  const mappedRowCount = rows.reduce((n, r) => n + r.mappings.length, 0);
+  // Extra parts.io fields not in our schema
+  const extraPioFields = useMemo(() => {
+    if (!table) return [];
+    const { unmapped } = getAllPartsioFields(table.familyId);
+    return unmapped;
+  }, [table]);
 
   if (!table) return null;
 
-  if (categories.length === 0) {
+  if (categories.length === 0 && pioReverse.size === 0) {
     return (
       <Box>
         <Typography variant="h6" sx={{ mb: 0.5 }}>
@@ -116,179 +96,154 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
     );
   }
 
+  const dkPct = coverage && coverage.totalWeight > 0
+    ? Math.round((coverage.dkWeight / coverage.totalWeight) * 100)
+    : 0;
+  const pioPct = coverage && coverage.totalWeight > 0
+    ? Math.round((coverage.pioWeight / coverage.totalWeight) * 100)
+    : 0;
+  const combinedPct = coverage && coverage.totalWeight > 0
+    ? Math.round((coverage.combinedWeight / coverage.totalWeight) * 100)
+    : 0;
+
+  const dkColor = dkPct >= 70 ? 'success.main' : dkPct >= 40 ? 'warning.main' : 'error.main';
+  const combinedColor = combinedPct >= 70 ? 'success.main' : combinedPct >= 40 ? 'warning.main' : 'error.main';
+
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 0.5 }}>
         {t(`logicTable.${table.familyId}.name`, table.familyName)}
       </Typography>
-      {coverage && (() => {
-        const pct = coverage.totalWeight > 0
-          ? Math.round((coverage.matchableWeight / coverage.totalWeight) * 100)
-          : 0;
-        const color = pct >= 70 ? 'success.main' : pct >= 40 ? 'warning.main' : 'error.main';
-        return (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            {t('admin.paramCoverageLabel', 'Digikey parameter coverage:')}{' '}
-            <Typography component="span" variant="body2" sx={{ fontWeight: 700, color }}>
-              {pct}%
-            </Typography>
-            {' '}({coverage.matchableWeight} / {coverage.totalWeight} weight)
-            {' '}&mdash; {t('admin.paramsMapped', { count: rows.length })}
-          </Typography>
-        );
-      })()}
 
-      {categories.length > 1 && (
-        <Tabs
-          value={tabIndex}
-          onChange={(_, v) => setTabIndex(v)}
-          sx={{ mb: 2, minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0.5 } }}
-        >
-          {categories.map((cat) => (
-            <Tab key={cat} label={cat} sx={{ fontSize: '0.8rem', textTransform: 'none' }} />
-          ))}
-        </Tabs>
+      {/* Coverage metric */}
+      {coverage && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {t('admin.paramCoverageDk', 'Digikey:')}{' '}
+          <Typography component="span" variant="body2" sx={{ fontWeight: 700, color: dkColor }}>
+            {dkPct}%
+          </Typography>
+          {pioPct > 0 && (
+            <>
+              {' '}{t('admin.paramCoveragePio', '+ Parts.io:')}{' '}
+              <Typography component="span" variant="body2" sx={{ fontWeight: 700, color: 'info.main' }}>
+                +{pioPct}%
+              </Typography>
+            </>
+          )}
+          {' '}{t('admin.paramCoverageCombined', '| Combined:')}{' '}
+          <Typography component="span" variant="body2" sx={{ fontWeight: 700, color: combinedColor }}>
+            {combinedPct}%
+          </Typography>
+          {' '}({coverage.combinedWeight} / {coverage.totalWeight} {t('admin.paramCoverageWeight', 'weight')})
+        </Typography>
       )}
 
       {categories.length === 1 && (
         <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
-          {t('admin.digikeyCategory')}: <strong>{activeCategory}</strong>
+          {t('admin.digikeyCategory')}: <strong>{categories[0]}</strong>
+        </Typography>
+      )}
+      {categories.length > 1 && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+          {t('admin.digikeyCategories', 'Digikey categories')}: <strong>{categories.join(', ')}</strong>
         </Typography>
       )}
 
-      {/* Single unified table: mapped parameters + unmapped rules */}
+      {/* Attribute-centric table */}
       <TableContainer>
         <Table size="small" sx={{ '& td, & th': { borderColor: 'divider' } }}>
           <TableHead>
             <TableRow>
               <TableCell sx={{ fontWeight: 600, width: COL.num }}>#</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: COL.digikey }}>{t('admin.parameterText')}</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: COL.attrId, ...dividerSx }}>{t('admin.attributeId')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.attrId }}>{t('admin.attributeId')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrName }}>{t('admin.attributeName')}</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: COL.ruleType }}>{t('admin.ruleType')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.weight, textAlign: 'center' }}>{t('admin.weight')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.digikey }}>{t('admin.digikeyField', 'Digikey Field')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.partsio }}>{t('admin.partsioField', 'Parts.io Field')}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {/* Mapped rows */}
-            {rows.map((row, idx) =>
-              row.mappings.map((mapping, mIdx) => {
-                const rule = ruleMap.get(mapping.attributeId);
-                return (
-                  <TableRow
-                    key={`${row.parameterText}-${mapping.attributeId}`}
-                  >
-                    <TableCell>
-                      {mIdx === 0 && (
-                        <Typography variant="caption" color="text.secondary">
-                          {idx + 1}
-                        </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {mIdx === 0 && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {row.parameterText}
-                          </Typography>
-                          {row.mappings.length > 1 && (
-                            <Chip
-                              label={t('admin.multiMap')}
-                              size="small"
-                              sx={{
-                                bgcolor: '#CE93D822',
-                                color: '#CE93D8',
-                                fontWeight: 500,
-                                fontSize: '0.65rem',
-                                height: 20,
-                              }}
-                            />
-                          )}
-                        </Box>
-                      )}
-                    </TableCell>
-                    <TableCell sx={dividerSx}>
-                      <Typography
-                        variant="caption"
-                        sx={{ fontFamily: 'monospace', color: 'text.secondary' }}
-                      >
-                        {mapping.attributeId}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{mapping.attributeName}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      {rule && (
-                        <Chip
-                          label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
-                          size="small"
-                          sx={{
-                            bgcolor: typeColors[rule.logicType] + '22',
-                            color: typeColors[rule.logicType],
-                            fontWeight: 500,
-                            fontSize: '0.72rem',
-                            height: 24,
-                          }}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell sx={{ textAlign: 'center' }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {rule?.weight ?? '\u2014'}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                );
-              }),
-            )}
+            {/* Zone 1: Schema attributes from logic table */}
+            {attributeRows.map((rule, idx) => {
+              const dkField = dkReverse.get(rule.attributeId);
+              const pioField = pioReverse.get(rule.attributeId);
+              const hasSources = !!dkField || !!pioField;
 
-            {/* Unmapped rows (continuing numbering, thicker top border on first) */}
-            {unmappedRules.map((rule, idx) => (
+              return (
+                <TableRow
+                  key={rule.attributeId}
+                  sx={!hasSources ? { opacity: 0.5 } : undefined}
+                >
+                  <TableCell>
+                    <Typography variant="caption" color="text.secondary">
+                      {idx + 1}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography
+                      variant="caption"
+                      sx={{ fontFamily: 'monospace', color: 'text.secondary' }}
+                    >
+                      {rule.attributeId}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{rule.attributeName}</Typography>
+                  </TableCell>
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {rule.weight}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: dkField ? 500 : 400, color: dkField ? 'text.primary' : 'text.disabled' }}>
+                      {dkField ?? '\u2014'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: pioField ? 500 : 400, color: pioField ? 'info.main' : 'text.disabled' }}>
+                      {pioField ?? '\u2014'}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+
+            {/* Zone 2: Extra parts.io fields not in schema */}
+            {extraPioFields.length > 0 && extraPioFields.map((field, idx) => (
               <TableRow
-                key={rule.attributeId}
+                key={`extra-${field}`}
                 sx={{
-                  opacity: 0.6,
+                  opacity: 0.5,
                   ...(idx === 0 && { '& td': { borderTop: '3px solid', borderTopColor: 'divider' } }),
                 }}
               >
                 <TableCell>
                   <Typography variant="caption" color="text.secondary">
-                    {rows.length + idx + 1}
+                    {attributeRows.length + idx + 1}
                   </Typography>
                 </TableCell>
                 <TableCell>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.disabled' }}>
                     {'\u2014'}
                   </Typography>
                 </TableCell>
-                <TableCell sx={dividerSx}>
-                  <Typography
-                    variant="caption"
-                    sx={{ fontFamily: 'monospace', color: 'text.secondary' }}
-                  >
-                    {rule.attributeId}
-                  </Typography>
-                </TableCell>
                 <TableCell>
-                  <Typography variant="body2">{rule.attributeName}</Typography>
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
-                    size="small"
-                    sx={{
-                      bgcolor: typeColors[rule.logicType] + '22',
-                      color: typeColors[rule.logicType],
-                      fontWeight: 500,
-                      fontSize: '0.72rem',
-                      height: 24,
-                    }}
-                  />
+                  {idx === 0 && (
+                    <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                      {t('admin.extraPartsioFields', 'Additional Parts.io fields (not in schema)')}
+                    </Typography>
+                  )}
                 </TableCell>
                 <TableCell sx={{ textAlign: 'center' }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {rule.weight}
+                  <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" color="text.disabled">{'\u2014'}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" sx={{ color: 'info.main', fontStyle: 'italic' }}>
+                    {field}
                   </Typography>
                 </TableCell>
               </TableRow>

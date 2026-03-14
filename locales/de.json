@@ -305,9 +305,20 @@
   "settings": {
     "title": "Einstellungen",
     "myProfile": "Mein Profil",
-    "accountSettings": "Einstellungen",
-    "notifications": "E-Mails & Benachrichtigungen",
-    "organization": "Organisation"
+    "generalSettings": "Allgemeine Einstellungen",
+    "organization": "Organisation",
+    "firstName": "Vorname",
+    "lastName": "Nachname",
+    "email": "E-Mail",
+    "changePassword": "Passwort ändern",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "profileSaved": "Profil aktualisiert",
+    "passwordChanged": "Passwort geändert",
+    "passwordMismatch": "Passwörter stimmen nicht überein",
+    "wrongPassword": "Aktuelles Passwort ist falsch",
+    "passwordTooShort": "Passwort muss mindestens 6 Zeichen lang sein"
   },
   "comparison": {
     "comparingWith": "Vergleich mit",

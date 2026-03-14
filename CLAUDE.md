@@ -82,7 +82,7 @@ components/                   # React components
     LogicPanel.tsx            # Logic table rules viewer/editor (per-family, clickable rows)
     RuleOverrideDrawer.tsx    # Right-side drawer for editing rule overrides
     ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
-    ParamMappingsPanel.tsx    # Digikey→internal param map + unmapped rules (unified table)
+    ParamMappingsPanel.tsx    # Attribute-centric param map: Digikey + Parts.io columns, coverage metrics
     AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table + coverage %
     AtlasCoverageDrawer.tsx   # Per-family attribute gap analysis drawer (Atlas vs Digikey vs logic table)
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + shared)
@@ -122,6 +122,9 @@ lib/
   supabase/                   # Auth guard, client, server, middleware
   mockData.ts                 # Fallback data (6 MLCCs, 3 resistors, 5 ICs)
   api.ts                      # Client-side API wrapper (includes admin feedback/QC functions)
+  services/partsioClient.ts    # Parts.io API client — best-record selection, caching, retry
+  services/partsioMapper.ts     # Parts.io listing → ParametricAttribute[] conversion
+  services/partsioParamMap.ts   # Maps parts.io field names → internal attributeId (17 class maps)
   services/recommendationLogger.ts # Logs recommendations to Supabase with JSONB snapshots
   services/qcAnalyzer.ts      # Server-side aggregation of QC log snapshots for AI analysis
   services/overrideMerger.ts  # Fetches admin overrides from Supabase, merges onto TS base
@@ -276,7 +279,7 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Two-step panel reveal**: idle → 70/30 (attributes) → 40/30/30 (recommendations)
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
-- **partDataService** tries Digikey first; if unavailable, falls back to mock data
+- **partDataService** tries Digikey first; if unavailable, falls back to mock data. After Digikey, enriches with parts.io gap-fill (Digikey values win on conflicts)
 
 ## QC & Feedback System
 
@@ -313,6 +316,28 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 
 Parameter mapping is complete for **all 19 passive + 9 discrete + 10 Block C IC + 2 Block D frequency control & protection + 1 Block E optoelectronic + 2 Block F relay families**: MLCC (12), Chip Resistors (52-55), Tantalum (59), Aluminum Electrolytic (58), Aluminum Polymer (60), Film (64), Supercapacitors (61), Fixed Inductors (71/72), Ferrite Beads (70), Common Mode Chokes (69), Varistors (65), PTC Resettable Fuses (66), NTC Thermistors (67), PTC Thermistors (68), Rectifier Diodes (B1, "Single Diodes" + "Bridge Rectifiers"), Schottky Barrier Diodes (B2, "Schottky Diodes" + "Schottky Diode Arrays" — virtual categories resolved from "Technology" parameter), Zener Diodes (B3, "Single Zener Diodes" + "Zener Diode Arrays" — own Digikey categories, ~51% weight coverage), TVS Diodes (B4, single "TVS Diodes" category, ~61% weight coverage — polarity derived from field name enrichment), MOSFETs (B5, "Single FETs, MOSFETs" category, 14 fields, ~60% weight coverage — verified Feb 2026), BJTs (B6, "Bipolar Transistors" category, 11 fields, ~55% weight coverage — verified Feb 2026), IGBTs (B7, "Single IGBTs" category, 14 fields incl. 2 compound, ~55% weight coverage — verified Feb 2026), Thyristors (B8, "SCRs" + "TRIACs" categories, 8-9 fields per sub-type, 1 compound ("Triac Type"→gate_sensitivity+snubberless), ~48-51% weight coverage — verified Feb 2026), JFETs (B9, "JFETs" category, 10 fields, ~45% weight coverage — verified Feb 2026), LDOs (C1, "Voltage Regulators - Linear, Low Drop Out (LDO) Regulators" category, 12 fields, ~52% weight coverage — verified Feb 2026), Switching Regulators (C2, TWO categories: "Voltage Regulators - DC DC Switching Regulators" (integrated, 14 fields) + "DC DC Switching Controllers" (controller-only, 10 fields), ~40-50% weight coverage — verified Feb 2026), Gate Drivers (C3, TWO categories: "Gate Drivers" (non-isolated, 10 fields) + "Isolators - Gate Drivers" (isolated, 10 fields), 5 compound field transformers, ~45-50% weight coverage — verified Feb 2026), Op-Amps/Comparators (C4, TWO categories: "Instrumentation, Op Amps, Buffer Amps" (15 fields) + "Comparators" (13 fields), compound "CMRR, PSRR (Typ)" transformer, ~45-50% weight coverage — verified Feb 2026), Logic ICs (C5, SEVEN categories: "Gates and Inverters" (13 fields) + "Buffers, Drivers, Receivers, Transceivers" (10 fields) + "Flip Flops" (15 fields) + "Latches" (10 fields) + "Counters, Dividers" (11 fields) + "Shift Registers" (9 fields) + "Signal Switches, Multiplexers, Decoders" (9 fields), ~40-45% weight coverage — verified Feb 2026), Voltage References (C6, single "Voltage Reference" category, 13 fields, series/shunt distinguished by "Reference Type" parametric field, ~63% weight coverage — verified Mar 2026), and Interface ICs (C7, TWO categories: "Drivers, Receivers, Transceivers" (RS-485+CAN, 7 fields, ~34% weight coverage) + "Digital Isolators" (I2C, 7 fields, ~39% weight coverage), protocol enrichment from Protocol parametric field + category name, USB ESD devices classified as TVS Diodes by Digikey — verified Mar 2026), and Timers/Oscillators (C8, TWO categories: "Programmable Timers and Oscillators" (555s, 5 fields, ~30% weight coverage) + "Oscillators" (all oscillator types, 10 fields, ~50% weight coverage), device category from "Type" + "Base Resonator" fields, MEMS distinguished by Base Resonator="MEMS", timer_variant inferred from supply voltage minimum — verified Mar 2026), and ADCs (C9, single "Analog to Digital Converters (ADCs)" category, 11 fields, architecture normalization (Sigma-Delta→Delta-Sigma, Pipelined→Pipeline), reference_type normalization (External+Internal→Both), channel_count takes max from multi-value, ~48% weight coverage — ENOB/INL/DNL/THD/simultaneous_sampling/conversion_latency all datasheet-only — verified Mar 2026), and DACs (C10, single "Digital to Analog Converters (DAC)" category, 13 fields incl. 2 compound ("Output Type"→output_type+output_buffered, "INL/DNL (LSB)"→inl_lsb+dnl_lsb), output_type enrichment from compound field, reference_type normalization, channel_count max, ~50% weight coverage — update_rate/glitch_energy/output_noise/output_current/power_on_reset/aec_q100 all datasheet-only — audio DACs in separate "ADCs/DACs - Special Purpose" category NOT mapped — verified Mar 2026), and Crystals (D1, single "Crystals" category, 10 fields, overtone_order from "Operating Mode" field, cut_type inferred from "Type" field ("MHz Crystal"→AT-cut, "kHz Crystal (Tuning Fork)"→Tuning Fork), ~55% weight coverage — shunt_capacitance/drive_level/aging/TC_curve all datasheet-only — ceramic resonator detection guards — verified Mar 2026), and Fuses (D2, TWO categories: "Fuses" (cartridge/SMD, 9 fields) + "Automotive Fuses" (blade, 9 fields), speed_class from "Fuse Type"/"Response Time", breaking_capacity from "Interrupt Rating", PTC resettable guard in mapCategory ordering, ~50% weight coverage — i2t/melting_i2t/body_material/derating all datasheet-only — param field names need discovery script verification — Mar 2026), and Optocouplers (E1, TWO categories: "Optoisolators - Transistor, Photovoltaic Output" (phototransistor/photodarlington, 9 fields) + "Optoisolators - Logic Output" (logic output, 9 fields), ~45% weight coverage — creepage/clearance/working_voltage/CTR_degradation/safety_cert/bandwidth all datasheet-only — param field names need discovery script verification — Mar 2026), and Relays (F1, THREE categories: "Power Relays, Over 2 Amps" (10 fields) + "Signal Relays, Up to 2 Amps" (11 fields) + "Automotive Relays" (11 fields), ~45% weight coverage — electrical_life/contact_bounce/coil_suppress_diode/coil_power/mechanical_life all datasheet-only — param field names need discovery verification — Mar 2026), and Relays (F2, TWO categories: "Solid State Relays" (PCB-mount, 11 fields) + "Solid State Relays - Industrial Mount" (panel/DIN, 11 fields), ~45% weight coverage — thermal_resistance/on_state_voltage_drop/dv_dt/di_dt/load_current_min/off_state_leakage/snubber/varistor/safety_certification all datasheet-only — param field names need discovery script verification — Mar 2026). See `docs/DECISIONS.md` (#16-19, #30-40, #46-55, #71-72) for Digikey API quirks.
 
+## Parts.io Integration (Gap-Fill Enrichment)
+
+Secondary data source (SiliconExpert/IHS) that fills parametric gaps after Digikey. See Decision #77.
+
+- Client: `lib/services/partsioClient.ts` — API key auth (query param), `limit=10` with best-record selection, 30-min cache
+- Mapper: `lib/services/partsioMapper.ts` — Converts `PartsioListing` → `ParametricAttribute[]`
+- Param Map: `lib/services/partsioParamMap.ts` — 17 class param maps, `familyToPartsioClass` mapping (39 families), reverse lookup + extra-fields for admin
+
+**Merge strategy:** Gap-fill only — Digikey values always win. `enrichWithPartsio()` in `partDataService.ts` runs after every Digikey fetch.
+
+**17 parts.io classes:** Capacitors, Resistors, Inductors, Filters, Diodes, Transistors, Trigger Devices, Amplifier Circuits, Logic, Power Circuits, Converters, Drivers And Interfaces, Signal Circuits, Circuit Protection, Optoelectronics, Relays, Crystals/Resonators.
+
+**Taxonomy surprises:** CM Chokes + Ferrite Beads under "Filters" (NOT "Inductors"). SSR photoMOS under "Optoelectronics" (NOT "Relays"). PTC Fuses under "Resistors" (NOT "Circuit Protection").
+
+**Families NOT mapped (no data):** 13 Mica, 55 Chassis Mount, 64 Film, B9 JFETs.
+
+**Top coverage improvements:** B8 Thyristors (+30 weight, ~48%→~65%), F1 Relays (+46, ~45%→~68%), C1 LDOs (+23, ~52%→~65%), E1 Optocouplers (+25, ~45%→~57%), 59 Tantalum (+17, ~58%→~73%).
+
+**Admin panel:** `ParamMappingsPanel.tsx` restructured to attribute-centric layout with Digikey Field + Parts.io Field columns, coverage metrics (DK% + PIO% + Combined%), and Zone 2 for extra parts.io fields not in schema.
+
+**API:** Base URL `http://api.qa.parts.io/solr/partsio/listings` (QA — requires VPN). Env var `PARTSIO_API_KEY`. Production URL TBD.
+
 ## Product Direction
 
 The app is evolving from a cross-reference tool into a component intelligence platform built on five pillars:
@@ -327,6 +352,7 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
+- **Parts.io** (built — Decision #77) — SiliconExpert/IHS gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
 - **Atlas** (built — products + param dictionaries + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product). Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69).
 - **Distributor APIs** (planned) — Mouser, Arrow, Nexar/Octopart for multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering
@@ -353,8 +379,8 @@ See `docs/PRODUCT_ROADMAP.md` for the full roadmap and `docs/DECISIONS.md` (#41-
 npm run dev     # Start dev server (Turbopack)
 npm run build   # Production build
 npm run lint    # ESLint
-npm test        # Jest unit tests (991 tests, ~0.8s)
+npm test        # Jest unit tests (1051 tests, ~0.8s)
 npm run test:watch  # Jest in watch mode
 ```
 
-Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
+Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.

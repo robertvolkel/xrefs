@@ -33,7 +33,7 @@ function AdminShellInner() {
 
   const sectionParam = searchParams.get('section');
   const [activeSection, setActiveSection] = useState<AdminSection>(
-    isValidSection(sectionParam) ? sectionParam : 'taxonomy',
+    isValidSection(sectionParam) ? sectionParam : 'param-mappings',
   );
 
   const [selectedCategory, setSelectedCategory] = useState(allCategories[0] ?? '');

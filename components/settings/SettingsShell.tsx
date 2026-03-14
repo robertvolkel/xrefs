@@ -8,10 +8,9 @@ import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import SettingsSectionNav, { SettingsSection } from './SettingsSectionNav';
 import ProfilePanel from './ProfilePanel';
 import AccountPanel from './AccountPanel';
-import NotificationsPanel from './NotificationsPanel';
 
 function isValidSection(s: string | null): s is SettingsSection {
-  return s === 'profile' || s === 'account' || s === 'notifications';
+  return s === 'profile' || s === 'account';
 }
 
 function SettingsShellInner() {
@@ -20,7 +19,7 @@ function SettingsShellInner() {
   const { t } = useTranslation();
 
   const sectionParam = searchParams.get('section');
-  const resolvedDefault = isValidSection(sectionParam) ? sectionParam : 'profile';
+  const resolvedDefault = isValidSection(sectionParam) ? sectionParam : 'account';
   const [activeSection, setActiveSection] = useState<SettingsSection>(resolvedDefault);
 
   const handleSectionChange = useCallback(
@@ -70,9 +69,8 @@ function SettingsShellInner() {
 
         {/* Content */}
         <Box sx={{ flex: 1, overflowY: 'auto' }}>
-          {activeSection === 'profile' && <ProfilePanel />}
           {activeSection === 'account' && <AccountPanel />}
-          {activeSection === 'notifications' && <NotificationsPanel />}
+          {activeSection === 'profile' && <ProfilePanel />}
         </Box>
       </Box>
     </Box>
