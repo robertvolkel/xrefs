@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { createServiceClient } from '@/lib/supabase/service';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 interface DigestNote {
   id: string;
   content: string;
@@ -137,6 +135,15 @@ async function handleDigest(request: NextRequest): Promise<NextResponse> {
     }
 
     // 5. Build and send email
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { success: false, error: 'RESEND_API_KEY not configured' },
+        { status: 500 },
+      );
+    }
+    const resend = new Resend(apiKey);
+
     const html = buildDigestHtml(notes);
     const fromEmail =
       process.env.DIGEST_FROM_EMAIL || 'XRefs <notifications@xrefs.app>';

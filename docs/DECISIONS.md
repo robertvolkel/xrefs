@@ -2039,3 +2039,43 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 - `package.json` — Added `@modelcontextprotocol/sdk`, `zod`, `tsx` deps; `mcp:dev` and `mcp:inspect` scripts
 
 **Dependencies added:** `@modelcontextprotocol/sdk`, `zod` (runtime); `tsx` (dev)
+
+## 81. Per-List Views with Template Inheritance + mapped:cpn (2026-03-16)
+
+**Context:** Views were global — stored in localStorage, shared across all parts lists. Editing a view for one list affected every other list using that view. Different lists contain different component types with different parametric attributes, making this problematic.
+
+**Design: Template + Instance Model**
+- **View Templates** (global, localStorage) — The existing `xrefs_column_views` system becomes the template library. Built-in "Basic" and "Original" plus user-created templates. Used to seed new lists.
+- **List Views** (per-list, Supabase) — Each list has its own views stored in `parts_lists.view_configs` JSONB. Editing a view only affects the current list.
+- **Inheritance:** New list → views copied from templates. User edits → per-list only. "Save as Template" pushes to global library.
+- **Migration:** Existing lists with no `view_configs` → on first load, copy global templates. Seamless.
+
+**Template column safety rule:** Templates must only contain portable column IDs (`sys:*`, `mapped:*`, `dk:*`, `dkp:*`). `ss:*` (raw spreadsheet index) stripped via `sanitizeTemplateColumns()` on "Save as Template".
+
+**mapped:cpn:** Added optional Customer Part Number / Internal Part Number as a portable mapped column. Auto-detected from headers matching 'cpn', 'customer part number', 'ipn', 'internal part number', etc. CPN dropdown added to ColumnMappingDialog (marked optional). `rawCpn` persisted on `PartsListRow` and `StoredRow`.
+
+**DEFAULT_VIEW_COLUMNS reordered:** Status moved right after source data columns (was buried at position 7). `mapped:cpn` inserted before status.
+
+**Key implementation details:**
+- `useViewConfig` renamed to `useViewTemplates` (backwards-compat alias kept)
+- `useListViewConfig` hook manages per-list views with debounced Supabase persistence
+- `saveListViewConfigsSupabase()` persists view configs per-list
+- `loadPartsListSupabase()` returns `viewConfigs: ViewState | null`
+- ViewControls kebab menu: "Save as Template" strips `ss:*` columns before saving
+
+**Files modified:**
+- `lib/types.ts` — `cpnColumn` on ColumnMapping, `rawCpn` on PartsListRow
+- `lib/excelParser.ts` — CPN auto-detection patterns
+- `lib/columnDefinitions.ts` — Reordered DEFAULT_VIEW_COLUMNS, added mapped:cpn
+- `lib/viewConfigStorage.ts` — `sanitizeTemplateColumns()` helper
+- `lib/partsListStorage.ts` — `rawCpn` on StoredRow
+- `lib/supabasePartsListStorage.ts` — `view_configs` JSONB support, `rawCpn`, `saveListViewConfigsSupabase()`
+- `hooks/useViewConfig.ts` — Renamed to `useViewTemplates`
+- `hooks/useListViewConfig.ts` — New per-list view config hook
+- `hooks/usePartsListState.ts` — `listViewConfigs` in state, `rawCpn` extraction
+- `hooks/useColumnCatalog.ts` — CPN in inferred mapping recovery
+- `components/parts-list/PartsListShell.tsx` — Wired up per-list views + save-as-template
+- `components/parts-list/ColumnMappingDialog.tsx` — CPN dropdown
+- `components/parts-list/ViewControls.tsx` — "Save as Template" menu item
+- `locales/{en,de,zh-CN}.json` — i18n keys for cpnLabel, saveAsTemplate
+- `scripts/supabase-view-configs-schema.sql` — Migration script

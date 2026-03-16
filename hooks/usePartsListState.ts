@@ -12,6 +12,7 @@ import {
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { getPartAttributes, getRecommendations, validatePartsList } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
+import { ViewState } from '@/lib/viewConfigStorage';
 import {
   getSavedListsSupabase,
   savePartsListSupabase,
@@ -60,6 +61,8 @@ interface PartsListState {
   savedLists: PartsListSummary[];
   /** Original spreadsheet column headers */
   spreadsheetHeaders: string[];
+  /** Per-list view configurations (null = not yet loaded / use templates) */
+  listViewConfigs: ViewState | null;
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -81,6 +84,7 @@ const INITIAL_STATE: PartsListState = {
   listDefaultViewId: null,
   savedLists: [],
   spreadsheetHeaders: [],
+  listViewConfigs: null,
 };
 
 // ============================================================
@@ -234,6 +238,9 @@ export function usePartsListState() {
         rawMpn: mapping.mpnColumn >= 0 ? (row[mapping.mpnColumn] ?? '') : '',
         rawManufacturer: mapping.manufacturerColumn >= 0 ? (row[mapping.manufacturerColumn] ?? '') : '',
         rawDescription: mapping.descriptionColumn >= 0 ? (row[mapping.descriptionColumn] ?? '') : '',
+        ...(mapping.cpnColumn != null && mapping.cpnColumn >= 0
+          ? { rawCpn: row[mapping.cpnColumn] ?? '' }
+          : {}),
         rawCells: row,
         status: 'pending' as const,
       }));
@@ -312,6 +319,7 @@ export function usePartsListState() {
         activeListId: id,
         validationProgress: activeVal.progress,
         spreadsheetHeaders: loaded?.spreadsheetHeaders ?? [],
+        listViewConfigs: loaded?.viewConfigs ?? null,
         parsedData: null,
         columnMapping: null,
         error: null,
@@ -341,6 +349,7 @@ export function usePartsListState() {
       activeListId: id,
       validationProgress: 1,
       spreadsheetHeaders: loaded.spreadsheetHeaders,
+      listViewConfigs: loaded.viewConfigs,
       parsedData: null,
       columnMapping: null,
       error: null,

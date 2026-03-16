@@ -28,7 +28,7 @@ import {
 } from '@/lib/supabasePartsListStorage';
 import { setPendingFile, setPendingParsedData } from '@/lib/pendingFile';
 import { ParsedSpreadsheet } from '@/lib/types';
-import { useViewConfig } from '@/hooks/useViewConfig';
+import { useViewTemplates } from '@/hooks/useViewConfig';
 import ParticleWaveBackground from '../ParticleWaveBackground';
 import ListCard from './ListCard';
 import NewListDialog from './NewListDialog';
@@ -54,7 +54,7 @@ function savePinnedIds(ids: Set<string>): void {
 export default function ListsDashboard() {
   const router = useRouter();
   const { t } = useTranslation();
-  const { views } = useViewConfig();
+  const { views } = useViewTemplates();
   const [lists, setLists] = useState<PartsListSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');

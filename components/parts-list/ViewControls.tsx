@@ -20,6 +20,7 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import SaveAsIcon from '@mui/icons-material/SaveAs';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
@@ -35,6 +36,7 @@ interface ViewControlsProps {
   setDefaultView: (viewId: string) => void;
   onEditView: () => void;
   onCreateView: () => void;
+  onSaveAsTemplate?: (view: SavedView) => void;
 }
 
 export default function ViewControls({
@@ -46,6 +48,7 @@ export default function ViewControls({
   setDefaultView,
   onEditView,
   onCreateView,
+  onSaveAsTemplate,
 }: ViewControlsProps) {
   const { t } = useTranslation();
   const [viewMenuAnchor, setViewMenuAnchor] = useState<HTMLElement | null>(null);
@@ -108,6 +111,18 @@ export default function ViewControls({
           <ListItemIcon><AddIcon fontSize="small" /></ListItemIcon>
           <ListItemText>{t('partsList.createNewView')}</ListItemText>
         </MenuItem>
+        {onSaveAsTemplate && !isBuiltinView(activeView.id) && (
+          <MenuItem
+            onClick={() => {
+              setViewMenuAnchor(null);
+              onSaveAsTemplate(activeView);
+            }}
+            sx={{ fontSize: '0.82rem' }}
+          >
+            <ListItemIcon><SaveAsIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>{t('partsList.saveAsTemplate')}</ListItemText>
+          </MenuItem>
+        )}
         <MenuItem
           disabled={isBuiltinView(activeView.id)}
           onClick={() => {

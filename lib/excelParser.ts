@@ -54,6 +54,12 @@ const DESC_PATTERNS = [
   'component name', 'item name', 'name',
 ];
 
+const CPN_PATTERNS = [
+  'cpn', 'customer part number', 'customer part', 'customer pn',
+  'customer number', 'ipn', 'internal part number', 'internal pn',
+  'customer p/n', 'internal p/n',
+];
+
 /**
  * Score how well a header matches a set of patterns.
  * Exact match = 1000 + pattern length (highly specific).
@@ -102,12 +108,13 @@ function scoreContentAsMPN(rows: string[][], colIndex: number): number {
  * with content-based heuristics as a tiebreaker.
  */
 export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnMapping | null {
-  type Field = 'mpn' | 'mfr' | 'desc';
-  const fields: Field[] = ['mpn', 'mfr', 'desc'];
+  type Field = 'mpn' | 'mfr' | 'desc' | 'cpn';
+  const fields: Field[] = ['mpn', 'mfr', 'desc', 'cpn'];
   const patternMap: Record<Field, string[]> = {
     mpn: MPN_PATTERNS,
     mfr: MFR_PATTERNS,
     desc: DESC_PATTERNS,
+    cpn: CPN_PATTERNS,
   };
 
   // Score every column for every field (header-based)
@@ -115,6 +122,7 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     mpn: headers.map((h) => scoreHeader(h, patternMap.mpn)),
     mfr: headers.map((h) => scoreHeader(h, patternMap.mfr)),
     desc: headers.map((h) => scoreHeader(h, patternMap.desc)),
+    cpn: headers.map((h) => scoreHeader(h, patternMap.cpn)),
   };
 
   // Add content-based bonus when rows are available
@@ -125,10 +133,10 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     }
   }
 
-  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC).
+  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC > CPN).
   // Each column can only be assigned to one field.
   const assigned = new Set<number>();
-  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1 };
+  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1, cpn: -1 };
 
   for (const field of fields) {
     let bestIdx = -1;
@@ -152,5 +160,6 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     mpnColumn: result.mpn,
     manufacturerColumn: result.mfr,
     descriptionColumn: result.desc,
+    ...(result.cpn >= 0 ? { cpnColumn: result.cpn } : {}),
   };
 }

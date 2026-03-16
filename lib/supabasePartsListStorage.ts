@@ -8,6 +8,7 @@
 import { PartsListRow } from './types';
 import { createClient } from './supabase/client';
 import { StoredRow, PartsListSummary } from './partsListStorage';
+import { ViewState } from './viewConfigStorage';
 import { classifyListTheme } from './themeClassifier';
 
 /** Strip heavy fields from rows for storage */
@@ -26,6 +27,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawMpn: r.rawMpn,
       rawManufacturer: r.rawManufacturer,
       rawDescription: r.rawDescription,
+      rawCpn: r.rawCpn,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,
@@ -93,6 +95,7 @@ export async function savePartsListSupabase(
   spreadsheetHeaders?: string[],
   customer?: string,
   defaultViewId?: string,
+  viewConfigs?: ViewState,
 ): Promise<string | null> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -110,6 +113,7 @@ export async function savePartsListSupabase(
       resolved_count: rows.filter(r => r.status === 'resolved').length,
       rows: toStoredRows(rows),
       spreadsheet_headers: spreadsheetHeaders ?? [],
+      ...(viewConfigs ? { view_configs: viewConfigs } : {}),
     })
     .select('id')
     .single();
@@ -144,11 +148,12 @@ export async function loadPartsListSupabase(id: string): Promise<{
   defaultViewId: string;
   rows: PartsListRow[];
   spreadsheetHeaders: string[];
+  viewConfigs: ViewState | null;
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers')
+    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs')
     .eq('id', id)
     .single();
 
@@ -163,6 +168,7 @@ export async function loadPartsListSupabase(id: string): Promise<{
     defaultViewId: (record.default_view_id as string) || '',
     rows: fromStoredRows(data.rows as StoredRow[]),
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
+    viewConfigs: (record.view_configs as ViewState) ?? null,
   };
 }
 
@@ -196,5 +202,17 @@ export async function deletePartsListSupabase(id: string): Promise<void> {
   await supabase
     .from('parts_lists')
     .delete()
+    .eq('id', id);
+}
+
+/** Save per-list view configurations */
+export async function saveListViewConfigsSupabase(id: string, viewConfigs: ViewState): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from('parts_lists')
+    .update({
+      view_configs: viewConfigs,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id);
 }

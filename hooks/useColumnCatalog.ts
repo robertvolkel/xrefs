@@ -34,10 +34,14 @@ export function useColumnCatalog(
     const mapping = columnMapping ?? (() => {
       const row = rows.find(r => r.rawMpn && r.rawCells?.length);
       if (!row) return null;
+      const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
       return {
         mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
-        manufacturerColumn: row.rawCells.findIndex(c => c === row.rawManufacturer),
+        manufacturerColumn: row.rawManufacturer
+          ? row.rawCells.findIndex(c => c === row.rawManufacturer)
+          : -1,
         descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
+        ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
       };
     })();
 
@@ -45,6 +49,7 @@ export function useColumnCatalog(
       if (mapping?.mpnColumn === i) return 'MPN';
       if (mapping?.manufacturerColumn === i) return 'Manufacturer';
       if (mapping?.descriptionColumn === i) return 'Description';
+      if (mapping?.cpnColumn === i) return 'Customer Part #';
       return `Column ${i + 1}`;
     });
   }, [spreadsheetHeaders, rows, columnMapping]);
@@ -91,12 +96,14 @@ export function useColumnCatalog(
     if (columnMapping) return columnMapping;
     const row = rows.find(r => r.rawMpn && r.rawCells?.length);
     if (!row) return null;
+    const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
     return {
       mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
       manufacturerColumn: row.rawManufacturer
         ? row.rawCells.findIndex(c => c === row.rawManufacturer)
         : -1,
       descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
+      ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
     };
   }, [columnMapping, rows]);
 

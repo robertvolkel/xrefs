@@ -44,6 +44,7 @@ export default function ColumnMappingDialog({
   const [mpnCol, setMpnCol] = useState<number>(NOT_MAPPED);
   const [mfrCol, setMfrCol] = useState<number>(NOT_MAPPED);
   const [descCol, setDescCol] = useState<number>(NOT_MAPPED);
+  const [cpnCol, setCpnCol] = useState<number>(NOT_MAPPED);
 
   // Sync from auto-detected mapping when dialog opens
   useEffect(() => {
@@ -51,6 +52,7 @@ export default function ColumnMappingDialog({
       setMpnCol(initialMapping.mpnColumn);
       setMfrCol(initialMapping.manufacturerColumn);
       setDescCol(initialMapping.descriptionColumn);
+      setCpnCol(initialMapping.cpnColumn ?? NOT_MAPPED);
     }
   }, [open, initialMapping]);
 
@@ -118,6 +120,20 @@ export default function ColumnMappingDialog({
               ))}
             </Select>
           </FormControl>
+
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel>{t('columnMapping.cpnLabel')}</InputLabel>
+            <Select
+              value={cpnCol}
+              label={t('columnMapping.cpnLabel')}
+              onChange={(e) => setCpnCol(e.target.value as number)}
+            >
+              <MenuItem value={NOT_MAPPED}><em>{t('columnMapping.notMapped')}</em></MenuItem>
+              {headers.map((h, i) => (
+                <MenuItem key={i} value={i}>{h || t('columnMapping.columnFallback', { number: i + 1 })}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
 
         {/* Preview table */}
@@ -134,7 +150,7 @@ export default function ColumnMappingDialog({
                     sx={{
                       fontWeight: 600,
                       fontSize: '0.75rem',
-                      bgcolor: i === mpnCol || i === mfrCol || i === descCol
+                      bgcolor: i === mpnCol || i === mfrCol || i === descCol || i === cpnCol
                         ? 'rgba(160, 196, 255, 0.15)'
                         : 'background.paper',
                     }}
@@ -169,7 +185,7 @@ export default function ColumnMappingDialog({
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onCancel} color="inherit">{t('common.cancel')}</Button>
         <Button
-          onClick={() => onConfirm({ mpnColumn: mpnCol, manufacturerColumn: mfrCol, descriptionColumn: descCol })}
+          onClick={() => onConfirm({ mpnColumn: mpnCol, manufacturerColumn: mfrCol, descriptionColumn: descCol, ...(cpnCol !== NOT_MAPPED ? { cpnColumn: cpnCol } : {}) })}
           variant="contained"
           disabled={!canConfirm}
         >

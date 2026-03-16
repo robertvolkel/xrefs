@@ -119,6 +119,18 @@ export function isBuiltinView(viewId: string): boolean {
 }
 
 // ============================================================
+// TEMPLATE HELPERS
+// ============================================================
+
+/**
+ * Strip list-specific ss:* column IDs from a column list.
+ * Templates must only contain portable column IDs (sys:*, mapped:*, dk:*, dkp:*).
+ */
+export function sanitizeTemplateColumns(columns: string[]): string[] {
+  return columns.filter(id => !id.startsWith('ss:'));
+}
+
+// ============================================================
 // CROSS-LIST COLUMN REMAPPING
 // ============================================================
 

@@ -447,6 +447,8 @@ export interface PartsListRow {
   rawMpn: string;
   rawManufacturer: string;
   rawDescription: string;
+  /** Customer Part Number / Internal Part Number (optional mapped column) */
+  rawCpn?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRowStatus;
@@ -470,6 +472,8 @@ export interface ColumnMapping {
   mpnColumn: number;
   manufacturerColumn: number;
   descriptionColumn: number;
+  /** Optional Customer Part Number / Internal Part Number column */
+  cpnColumn?: number;
 }
 
 /** Parsed spreadsheet data before column mapping */

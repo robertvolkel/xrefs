@@ -14,7 +14,8 @@ import {
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { usePartsListState } from '@/hooks/usePartsListState';
-import { useViewConfig } from '@/hooks/useViewConfig';
+import { useListViewConfig } from '@/hooks/useListViewConfig';
+import { useViewTemplates } from '@/hooks/useViewConfig';
 import { usePartsListAutoLoad } from '@/hooks/usePartsListAutoLoad';
 import { useRowSelection } from '@/hooks/useRowSelection';
 import { useRowDeletion } from '@/hooks/useRowDeletion';
@@ -25,7 +26,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { remapSpreadsheetColumns } from '@/lib/viewConfigStorage';
+import { SavedView, remapSpreadsheetColumns, sanitizeTemplateColumns } from '@/lib/viewConfigStorage';
 import PartsListHeader from './PartsListHeader';
 import PartsListActionBar from './PartsListActionBar';
 import ViewControls from './ViewControls';
@@ -41,7 +42,7 @@ export default function PartsListShell() {
   const {
     phase, parsedData, columnMapping, rows, validationProgress, error,
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
-    spreadsheetHeaders, activeListId,
+    spreadsheetHeaders, activeListId, listViewConfigs,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
     handleFileSelected, handleParsedDataReady,
     handleColumnMappingConfirmed, handleColumnMappingCancelled,
@@ -56,7 +57,14 @@ export default function PartsListShell() {
     activeView, views, defaultViewId,
     selectView, createView, updateView, deleteView, setDefaultView,
     hideRowInView, getHiddenRows,
-  } = useViewConfig();
+  } = useListViewConfig(activeListId, listViewConfigs);
+
+  const templates = useViewTemplates();
+
+  const handleSaveAsTemplate = useCallback((view: SavedView) => {
+    const safeColumns = sanitizeTemplateColumns(view.columns);
+    templates.createView(view.name, safeColumns, view.description);
+  }, [templates]);
 
   // --- Extracted hooks ---
 
@@ -117,6 +125,10 @@ export default function PartsListShell() {
             return 'dk:manufacturer';
           }
           if (id === 'mapped:description' && inferredMapping.descriptionColumn >= 0) return `ss:${inferredMapping.descriptionColumn}`;
+          if (id === 'mapped:cpn') {
+            if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) return `ss:${inferredMapping.cpnColumn}`;
+            return 'mapped:cpn'; // Will be filtered out below
+          }
           return id;
         })
         .filter(id => !id.startsWith('mapped:'));
@@ -210,6 +222,7 @@ export default function PartsListShell() {
             setDefaultView={setDefaultView}
             onEditView={() => { setPickerMode('edit'); setPickerOpen(true); }}
             onCreateView={() => { setPickerMode('create'); setPickerOpen(true); }}
+            onSaveAsTemplate={handleSaveAsTemplate}
           />
         }
         showViewControls={showTable}
