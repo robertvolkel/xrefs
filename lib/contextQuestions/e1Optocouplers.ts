@@ -25,7 +25,7 @@ import { FamilyContextConfig } from '../types';
  */
 export const e1OptocouplerContext: FamilyContextConfig = {
   familyIds: ['E1'],
-  contextSensitivity: 'moderate-high',
+  contextSensitivity: 'high',
   questions: [
     // Q1: Isolation class / application type
     {

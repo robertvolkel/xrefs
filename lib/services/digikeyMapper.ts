@@ -1463,7 +1463,7 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
     // Cut type inferred from frequency: 32.768 kHz → Tuning Fork, >1 MHz → AT-cut
     if (!addedIds.has('cut_type')) {
       const freqParam = parameters.find(p => p.parameterId === 'nominal_frequency_hz');
-      const desc = (product.DetailedDescription ?? product.Description?.DetailedDescription ?? '').toLowerCase();
+      const desc = (product.Description?.DetailedDescription ?? '').toLowerCase();
       if (freqParam?.value?.includes('32.768') && freqParam.value.toLowerCase().includes('khz')) {
         parameters.push({ parameterId: 'cut_type', parameterName: 'Crystal Cut Type', value: 'Tuning Fork', sortOrder: 2 });
       } else if (desc.includes('sc-cut') || desc.includes('sc cut')) {

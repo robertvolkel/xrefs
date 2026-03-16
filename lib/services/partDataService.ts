@@ -203,11 +203,12 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
             manufacturer: listing.Manufacturer || 'Unknown',
             description: listing.Description || '',
             detailedDescription: listing.Description || '',
-            status: listing['Part Life Cycle Code'] || 'Unknown',
+            status: (listing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            category: 'Capacitors',
             subcategory: listing.Category || listing.Class || '',
             datasheetUrl: listing['Current Datasheet Url'],
             ...extractPartsioLifecycle(listing),
-          },
+          } as Part,
           parameters,
           dataSource: 'partsio' as const,
         };
@@ -2490,7 +2491,7 @@ function enrichFuseAttributes(attrs: PartAttributes): void {
         parameterId: 'speed_class',
         parameterName: 'Speed Class',
         value: hint.speedClass,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2500,7 +2501,7 @@ function enrichFuseAttributes(attrs: PartAttributes): void {
         parameterId: 'package_format',
         parameterName: 'Package Format',
         value: hint.packageFormat,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2510,7 +2511,7 @@ function enrichFuseAttributes(attrs: PartAttributes): void {
         parameterId: 'mounting_type',
         parameterName: 'Mounting Type',
         value: hint.mountingType,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2521,11 +2522,11 @@ function enrichFuseAttributes(attrs: PartAttributes): void {
   if (!paramMap.has('speed_class') && !attrs.parameters.find(p => p.parameterId === 'speed_class')) {
     const upperMpn = mpn.toUpperCase();
     if (upperMpn.endsWith('FF') || upperMpn.includes('-FF')) {
-      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Fast (FF)', source: 'mpn_enrichment' });
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Fast (FF)', sortOrder: 0, source: 'mpn_enrichment' });
     } else if (upperMpn.endsWith('TT') || upperMpn.includes('-TT')) {
-      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Slow (TT)', source: 'mpn_enrichment' });
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Very Slow (TT)', sortOrder: 0, source: 'mpn_enrichment' });
     } else if (/[^A-Z]T$/i.test(mpn) || mpn.includes('-T-') || /TD$/i.test(mpn)) {
-      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Slow-Blow', source: 'mpn_enrichment' });
+      attrs.parameters.push({ parameterId: 'speed_class', parameterName: 'Speed Class', value: 'Slow-Blow', sortOrder: 0, source: 'mpn_enrichment' });
     }
   }
 }
@@ -2685,7 +2686,7 @@ function enrichOptocouplerAttributes(attrs: PartAttributes): void {
         parameterId: 'output_transistor_type',
         parameterName: 'Output Transistor Type',
         value: hint.outputType,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2695,7 +2696,7 @@ function enrichOptocouplerAttributes(attrs: PartAttributes): void {
         parameterId: 'channel_count',
         parameterName: 'Channel Count',
         value: hint.channelCount,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2711,7 +2712,7 @@ function enrichOptocouplerAttributes(attrs: PartAttributes): void {
         parameterId: 'ctr_class',
         parameterName: 'CTR Class (Rank)',
         value: ctrMatch[1].toUpperCase(),
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
   }
@@ -2882,7 +2883,7 @@ function enrichRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'contact_form',
         parameterName: 'Contact Form',
         value: hint.contactForm,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -2906,7 +2907,7 @@ function enrichRelayAttributes(attrs: PartAttributes): void {
           value: `${v}V`,
           numericValue: v,
           unit: 'V',
-          source: 'mpn_enrichment',
+          sortOrder: 0, source: 'mpn_enrichment',
         });
       }
     }
@@ -3064,7 +3065,7 @@ function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'output_switch_type',
         parameterName: 'Output Switch Type',
         value: hint.outputSwitchType,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -3074,7 +3075,7 @@ function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'firing_mode',
         parameterName: 'Firing Mode',
         value: hint.firingMode,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -3084,7 +3085,7 @@ function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'load_voltage_type',
         parameterName: 'Load Voltage Type',
         value: hint.loadVoltageType,
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
 
@@ -3098,14 +3099,14 @@ function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'output_switch_type',
         parameterName: 'Output Switch Type',
         value: 'TRIAC',
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     } else if (desc.includes('mosfet') || (desc.includes('dc') && desc.includes('solid state'))) {
       attrs.parameters.push({
         parameterId: 'output_switch_type',
         parameterName: 'Output Switch Type',
         value: 'MOSFET',
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
   }
@@ -3117,14 +3118,14 @@ function enrichSolidStateRelayAttributes(attrs: PartAttributes): void {
         parameterId: 'firing_mode',
         parameterName: 'Firing Mode',
         value: 'Zero-Crossing',
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     } else if (desc.includes('random') || desc.includes('instant on') || desc.includes('phase angle')) {
       attrs.parameters.push({
         parameterId: 'firing_mode',
         parameterName: 'Firing Mode',
         value: 'Random-Fire',
-        source: 'mpn_enrichment',
+        sortOrder: 0, source: 'mpn_enrichment',
       });
     }
   }

@@ -62,7 +62,7 @@ export interface ParametricAttribute {
   unit?: string;
   sortOrder: number;
   /** Which data source supplied this attribute value */
-  source?: 'digikey' | 'partsio' | 'atlas';
+  source?: 'digikey' | 'partsio' | 'atlas' | 'mpn_enrichment';
 }
 
 /** Full parametric profile of a part */

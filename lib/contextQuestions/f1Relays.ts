@@ -25,7 +25,7 @@ import { FamilyContextConfig } from '../types';
  */
 export const f1RelayContext: FamilyContextConfig = {
   familyIds: ['F1'],
-  contextSensitivity: 'moderate-high',
+  contextSensitivity: 'high',
   questions: [
     // ── Q1: LOAD TYPE ──────────────────────────────────────────────────
     {
