@@ -19,6 +19,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
+import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 
 interface ComparisonViewProps {
@@ -98,6 +99,7 @@ export default function ComparisonView({
 }: ComparisonViewProps) {
   const { t } = useTranslation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const matchMap = new Map(
     recommendation.matchDetails.map((d) => [d.parameterId, d])
   );
@@ -193,7 +195,14 @@ export default function ComparisonView({
       </Box>
 
       {/* Scrollable area: comparison table + issue summary */}
-      <Box sx={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
+      <Box sx={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        {canScrollUp && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 24, background: 'linear-gradient(to bottom, rgba(0,0,0,0.12), transparent)', pointerEvents: 'none', zIndex: 1 }} />
+        )}
+        {canScrollDown && (
+          <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 24, background: 'linear-gradient(to top, rgba(0,0,0,0.12), transparent)', pointerEvents: 'none', zIndex: 1 }} />
+        )}
+      <Box ref={scrollRef} sx={{ height: '100%', overflowY: 'auto', overflowX: 'auto' }}>
         <TableContainer>
           <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
             <TableHead>
@@ -382,6 +391,7 @@ export default function ComparisonView({
             </Box>
           );
         })()}
+      </Box>
       </Box>
 
       {/* Feedback link */}

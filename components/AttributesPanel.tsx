@@ -15,6 +15,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { PartAttributes } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
+import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -24,6 +25,7 @@ interface AttributesPanelProps {
 
 export default function AttributesPanel({ attributes, loading, title }: AttributesPanelProps) {
   const { t } = useTranslation();
+  const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — fixed height to align with right panel */}
@@ -67,7 +69,14 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
       </Box>
 
       {/* Attributes table */}
-      <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
+      <Box sx={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        {canScrollUp && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 24, background: 'linear-gradient(to bottom, rgba(0,0,0,0.12), transparent)', pointerEvents: 'none', zIndex: 1 }} />
+        )}
+        {canScrollDown && (
+          <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 24, background: 'linear-gradient(to top, rgba(0,0,0,0.12), transparent)', pointerEvents: 'none', zIndex: 1 }} />
+        )}
+      <TableContainer ref={scrollRef} sx={{ height: '100%', overflowY: 'auto' }}>
         <Table size="small" stickyHeader>
           <TableHead>
             <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
@@ -128,6 +137,7 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
           </TableBody>
         </Table>
       </TableContainer>
+      </Box>
 
       {/* Lifecycle & Compliance */}
       {attributes && (attributes.part.yteol != null || attributes.part.riskRank != null || attributes.part.countryOfOrigin || attributes.part.reachCompliance || attributes.part.eccnCode || attributes.part.htsCode || attributes.part.factoryLeadTimeWeeks != null) && (

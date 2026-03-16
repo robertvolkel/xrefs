@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "outDir": "./dist",
+    "rootDir": "..",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "paths": {
+      "@/*": ["../*"]
+    }
+  },
+  "include": [
+    "./**/*.ts",
+    "../lib/**/*.ts"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../app",
+    "../components",
+    "../hooks",
+    "../contexts",
+    "../theme",
+    "../__tests__",
+    "../**/*.test.ts"
+  ]
+}

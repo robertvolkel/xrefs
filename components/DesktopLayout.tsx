@@ -9,6 +9,7 @@ import RecommendationsPanel from './RecommendationsPanel';
 import ComparisonView from './ComparisonView';
 import ManufacturerProfilePanel from './ManufacturerProfilePanel';
 import ParticleWaveBackground from './ParticleWaveBackground';
+import ServiceStatusBanner from './ServiceStatusBanner';
 
 function getGridColumns(
   showAttrs: boolean,
@@ -142,7 +143,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         onNewChat={onNewChat}
         onDeleteConversation={onDeleteConversation}
       />
-      <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default' }}>
+      <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
+        <ServiceStatusBanner />
         <ParticleWaveBackground visible={!showAttributesPanel} />
         <Box
           sx={{
@@ -150,7 +152,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             zIndex: 1,
             display: 'grid',
             gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
-            height: '100%',
+            flex: 1,
             overflow: 'hidden',
             transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
             '@media (max-width: 900px)': {

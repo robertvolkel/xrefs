@@ -118,10 +118,22 @@ export interface SearchResult {
   matches: PartSummary[];
 }
 
+// ── Service Status ──────────────────────────────────────────
+
+export type ServiceName = 'digikey' | 'partsio' | 'anthropic';
+export type ServiceSeverity = 'degraded' | 'unavailable';
+
+export interface ServiceWarning {
+  service: ServiceName;
+  severity: ServiceSeverity;
+  message: string;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
+  serviceWarnings?: ServiceWarning[];
 }
 
 export type AppPhase =

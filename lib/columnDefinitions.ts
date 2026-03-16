@@ -46,7 +46,7 @@ export interface ColumnDefinition {
 export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:row_number', label: '#', source: 'system', group: 'System', defaultWidth: '40px', align: 'center' },
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
-  { id: 'sys:hits', label: 'Hits', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
+  { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
   { id: 'sys:top_suggestion', label: 'Top Suggestion(s)', source: 'system', group: 'Replacements', defaultWidth: '160px' },
   { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'Replacements', defaultWidth: '130px' },
   { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },

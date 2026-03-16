@@ -1,4 +1,5 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord } from './types';
+import type { ServiceWarning, ServiceName } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -15,9 +16,57 @@ export interface AdminUser {
 
 const BASE = '/api';
 
+// ── Service Status Event Emitter ──────────────────────────────
+
+type ServiceWarningListener = (warnings: ServiceWarning[]) => void;
+type ServiceRecoveryListener = (services: ServiceName[]) => void;
+
+const warningListeners = new Set<ServiceWarningListener>();
+const recoveryListeners = new Set<ServiceRecoveryListener>();
+
+/** Subscribe to service warning events. Returns unsubscribe function. */
+export function onServiceWarnings(listener: ServiceWarningListener): () => void {
+  warningListeners.add(listener);
+  return () => warningListeners.delete(listener);
+}
+
+/** Subscribe to service recovery events. Returns unsubscribe function. */
+export function onServiceRecoveries(listener: ServiceRecoveryListener): () => void {
+  recoveryListeners.add(listener);
+  return () => recoveryListeners.delete(listener);
+}
+
+/** Which services each API route exercises — used for recovery detection. */
+const ROUTE_SERVICES: Record<string, ServiceName[]> = {
+  '/api/search': ['digikey'],
+  '/api/attributes': ['digikey', 'partsio'],
+  '/api/xref': ['digikey', 'partsio'],
+  '/api/chat': ['anthropic'],
+  '/api/modal-chat': ['anthropic'],
+};
+
+function getRouteServices(url: string): ServiceName[] {
+  for (const [route, services] of Object.entries(ROUTE_SERVICES)) {
+    if (url.startsWith(route)) return services;
+  }
+  return [];
+}
+
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
   const json: ApiResponse<T> = await res.json();
+
+  // Emit service warnings or recoveries (before checking success — error responses can carry warnings too)
+  if (json.serviceWarnings && json.serviceWarnings.length > 0) {
+    for (const listener of warningListeners) listener(json.serviceWarnings);
+  } else {
+    // No warnings — services exercised by this route have recovered
+    const recovered = getRouteServices(url);
+    if (recovered.length > 0) {
+      for (const listener of recoveryListeners) listener(recovered);
+    }
+  }
+
   if (!json.success || !json.data) {
     throw new Error(json.error ?? 'Unknown API error');
   }

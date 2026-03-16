@@ -5,6 +5,7 @@ import ThemeRegistry from "@/components/ThemeRegistry";
 import AuthProvider from "@/components/AuthProvider";
 import I18nProvider from "@/components/I18nProvider";
 import { createClient } from "@/lib/supabase/server";
+import { ServiceStatusProvider } from "@/contexts/ServiceStatusContext";
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -39,7 +40,9 @@ export default async function RootLayout({
         <ThemeRegistry>
           <AuthProvider initialUser={user}>
             <I18nProvider initialLocale={(user?.user_metadata?.language as string) || undefined}>
-              {children}
+              <ServiceStatusProvider>
+                {children}
+              </ServiceStatusProvider>
             </I18nProvider>
           </AuthProvider>
         </ThemeRegistry>

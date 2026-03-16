@@ -13,6 +13,7 @@ import {
   mapDigikeyProductToAttributes,
 } from './digikeyMapper';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
+import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
@@ -64,6 +65,7 @@ export async function searchParts(query: string, currency?: string): Promise<Sea
         return mapKeywordResponseToSearchResult(response);
       } catch (error) {
         console.warn('Digikey search failed:', error);
+        reportServiceFailure('digikey', 'unavailable', 'Search failed');
         return { type: 'none', matches: [] };
       }
     })(),
@@ -141,6 +143,7 @@ async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes>
     };
   } catch (error) {
     console.warn('Parts.io enrichment failed for', attrs.part.mpn, error);
+    reportServiceFailure('partsio', 'degraded', 'Enrichment failed');
     return attrs;
   }
 }
@@ -160,6 +163,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
+      reportServiceFailure('digikey', 'unavailable', 'Product details failed');
     }
 
     // Fallback: keyword search by MPN (handles cases where Product Details API
@@ -180,6 +184,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
+      reportServiceFailure('digikey', 'unavailable', 'Search fallback failed');
     }
   }
 
@@ -215,6 +220,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       }
     } catch {
       console.warn('Parts.io attribute lookup failed for', mpn);
+      reportServiceFailure('partsio', 'degraded', 'Attribute lookup failed');
     }
   }
 
@@ -380,6 +386,7 @@ export async function getRecommendations(
         return await fetchDigikeyCandidates(sourceAttrs, currency);
       } catch (error) {
         console.warn('Digikey candidate search failed:', error);
+        reportServiceFailure('digikey', 'unavailable', 'Candidate search failed');
         return [];
       }
     })(),
@@ -389,6 +396,7 @@ export async function getRecommendations(
     }),
     fetchPartsioEquivalents(mpn).catch((error) => {
       console.warn('Parts.io equivalent fetch failed:', error);
+      reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
     }),
   ]);

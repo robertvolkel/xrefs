@@ -90,7 +90,7 @@ export default function PartDetailModal({
 
         {/* Recommendations panel */}
         {!isComparing && (
-          <Box sx={{ width: '60%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
+          <Box sx={{ width: '60%', height: PANEL_HEIGHT, overflow: 'auto' }}>
             <RecommendationsPanel
               recommendations={recs}
               onSelect={onSelectRec}
@@ -104,13 +104,13 @@ export default function PartDetailModal({
         {/* Source attributes + Comparison (when a rec is selected) */}
         {isComparing && selectedRec && row.sourceAttributes && comparisonAttrs && (
           <>
-            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'hidden', borderRight: 1, borderColor: 'divider' }}>
+            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'auto', borderRight: 1, borderColor: 'divider' }}>
               <AttributesPanel
                 attributes={row.sourceAttributes}
                 title={t('partDetail.sourcePartTitle')}
               />
             </Box>
-            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'hidden' }}>
+            <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'auto' }}>
               <ComparisonView
                 sourceAttributes={row.sourceAttributes}
                 replacementAttributes={comparisonAttrs}
