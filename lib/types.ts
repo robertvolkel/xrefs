@@ -18,6 +18,14 @@ export interface Part {
   digikeyCategoryId?: number;
   qualifications?: string[];
   manufacturerCountry?: string;
+  // Lifecycle & compliance metadata (from parts.io)
+  yteol?: number;
+  riskRank?: number;
+  countryOfOrigin?: string;
+  reachCompliance?: string;
+  eccnCode?: string;
+  htsCode?: string;
+  factoryLeadTimeWeeks?: number;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -53,6 +61,8 @@ export interface ParametricAttribute {
   numericValue?: number;
   unit?: string;
   sortOrder: number;
+  /** Which data source supplied this attribute value */
+  source?: 'digikey' | 'partsio' | 'atlas';
 }
 
 /** Full parametric profile of a part */
@@ -60,9 +70,11 @@ export interface PartAttributes {
   part: Part;
   parameters: ParametricAttribute[];
   /** Where this data came from */
-  dataSource?: 'digikey' | 'atlas' | 'mock';
+  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   /** Secondary data source used for gap-fill enrichment */
   enrichedFrom?: 'partsio';
+  /** Set when candidate comes from parts.io FFF/Functional Equivalent fields */
+  equivalenceType?: 'fff' | 'functional';
 }
 
 /** A cross-reference recommendation */
@@ -71,7 +83,11 @@ export interface XrefRecommendation {
   matchPercentage: number;
   matchDetails: MatchDetail[];
   notes?: string;
-  dataSource?: 'digikey' | 'atlas' | 'mock';
+  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
+  /** Set when candidate came from parts.io FFF/Functional Equivalent fields */
+  equivalenceType?: 'fff' | 'functional';
+  /** Secondary data source used for gap-fill enrichment */
+  enrichedFrom?: 'partsio';
 }
 
 /** Per-parameter match detail for comparison */
@@ -539,7 +555,7 @@ export interface RecommendationResult {
   sourceAttributes: PartAttributes;
   familyId?: string;
   familyName?: string;
-  dataSource?: 'digikey' | 'atlas' | 'mock';
+  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
 }
 
 /** The stage of the recommendation pipeline being questioned */

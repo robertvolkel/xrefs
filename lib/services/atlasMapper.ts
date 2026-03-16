@@ -1306,6 +1306,9 @@ export function mapAtlasModel(
     (part as Part & { _package?: string })._package = packageValue;
   }
 
+  // Tag all parameters with source
+  for (const p of parameters) p.source = 'atlas';
+
   return {
     part,
     parameters,
@@ -1387,6 +1390,7 @@ export function fromParametersJsonb(
       numericValue: data.numericValue,
       unit: data.unit,
       sortOrder,
+      source: 'atlas',
     });
   }
 

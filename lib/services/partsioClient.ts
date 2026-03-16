@@ -34,9 +34,69 @@ export interface PartsioListing {
   'Current Datasheet Url'?: string;
   'Risk Rank'?: number;
   YTEOL?: string;
+  'Reach Compliance Code'?: string;
+  'Country Of Origin'?: string;
+  'ECCN Code'?: string;
+  'HTS Code'?: string;
+  'Factory Lead Time'?: { Weeks: number; Days: number };
   'FFF Equivalent'?: unknown[];
   'Functional Equivalent'?: unknown[];
   [key: string]: unknown;
+}
+
+// ============================================================
+// EQUIVALENCE TYPES
+// ============================================================
+
+export type PartsioEquivalenceType = 'fff' | 'functional';
+
+export interface PartsioEquivalent {
+  mpn: string;
+  type: PartsioEquivalenceType;
+}
+
+/**
+ * Extract equivalent MPNs from FFF Equivalent and Functional Equivalent fields.
+ * Returns deduplicated entries with equivalence type, excluding the source MPN.
+ * Handles both string[] and object[] (with 'Manufacturer Part Number' key) formats.
+ */
+export function extractEquivalentMpns(
+  listing: PartsioListing,
+  sourceMpn: string,
+  limit: number = 20,
+): PartsioEquivalent[] {
+  const seen = new Set<string>();
+  const results: PartsioEquivalent[] = [];
+  const sourceLower = sourceMpn.toLowerCase();
+
+  const fields: [unknown[] | undefined, PartsioEquivalenceType][] = [
+    [listing['FFF Equivalent'], 'fff'],
+    [listing['Functional Equivalent'], 'functional'],
+  ];
+
+  for (const [field, type] of fields) {
+    if (!Array.isArray(field)) continue;
+    // Log first occurrence for discovery of field structure
+    if (field.length > 0) {
+      console.log(`[parts.io] ${type === 'fff' ? 'FFF' : 'Functional'} Equivalent sample:`, JSON.stringify(field.slice(0, 2)));
+    }
+    for (const entry of field) {
+      let mpn: string | undefined;
+      if (typeof entry === 'string') {
+        mpn = entry;
+      } else if (entry && typeof entry === 'object' && 'Manufacturer Part Number' in (entry as Record<string, unknown>)) {
+        mpn = String((entry as Record<string, unknown>)['Manufacturer Part Number']);
+      }
+      if (mpn && !seen.has(mpn.toLowerCase()) && mpn.toLowerCase() !== sourceLower) {
+        seen.add(mpn.toLowerCase());
+        results.push({ mpn, type });
+      }
+      if (results.length >= limit) break;
+    }
+    if (results.length >= limit) break;
+  }
+
+  return results;
 }
 
 // ============================================================
@@ -85,6 +145,7 @@ const METADATA_FIELDS = new Set([
   'FFF Equivalent', 'Functional Equivalent', 'Compliance',
   'IHS Mfr ID', 'Part Region', 'Part Number Region',
   'Essentials Only', 'Pin Count', 'Package Style',
+  'Reach Compliance Code', 'Country Of Origin', 'ECCN Code', 'HTS Code', 'Factory Lead Time',
 ]);
 
 /** Count parametric (non-metadata) fields on a listing */

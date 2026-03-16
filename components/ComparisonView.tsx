@@ -116,10 +116,11 @@ export default function ComparisonView({
         parameterId: sourceParam.parameterId,
         parameterName: sourceParam.parameterName,
         sourceValue: sourceParam.value,
-        replacementValue: replParam?.value ?? '—',
+        replacementValue: replParam?.value ?? matchDetail?.replacementValue ?? '—',
         matchStatus: matchDetail?.matchStatus ?? ('different' as MatchStatus),
         ruleResult: matchDetail?.ruleResult,
         note: matchDetail?.note,
+        replSource: replParam?.source,
       };
     })
     .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
@@ -137,6 +138,7 @@ export default function ComparisonView({
       matchStatus: d.matchStatus,
       ruleResult: d.ruleResult,
       note: d.note,
+      replSource: undefined as 'digikey' | 'partsio' | 'atlas' | undefined,
     }));
 
   const rows = [...rowsFromSource, ...extraRows];
@@ -202,16 +204,14 @@ export default function ComparisonView({
                 <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                   {t('comparison.valueHeader')}
                 </TableCell>
-                <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                  {t('comparison.resultHeader')}
-                </TableCell>
+                <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: 32 }} />
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.map((row) => {
                 const dot = getDotInfo(row.ruleResult, row.matchStatus, t);
                 const resultContent = (
-                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: row.note ? 'help' : 'default' }}>
+                  <Box sx={{ cursor: row.note ? 'help' : 'default', display: 'inline-flex' }}>
                     <Box
                       sx={{
                         width: 12,
@@ -221,14 +221,7 @@ export default function ComparisonView({
                         flexShrink: 0,
                       }}
                     />
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.43 }}
-                    >
-                      {dot.label}
-                    </Typography>
-                  </Stack>
+                  </Box>
                 );
                 return (
                   <TableRow key={row.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
@@ -253,10 +246,17 @@ export default function ComparisonView({
                         width: '45%',
                       }}
                     >
-                      {row.replacementValue}
+                      <Stack direction="row" alignItems="center" spacing={0.75}>
+                        <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.replacementValue}</Box>
+                        {row.replSource && (
+                          <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', border: '1px solid', borderColor: 'text.disabled', fontSize: '0.5rem', color: 'text.disabled', fontWeight: 600, fontFamily: 'sans-serif', flexShrink: 0 }}>
+                            {row.replSource === 'digikey' ? 'D' : row.replSource === 'partsio' ? 'P' : 'A'}
+                          </Box>
+                        )}
+                      </Stack>
                     </TableCell>
                     <TableCell
-                      sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '15%' }}
+                      sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: 32 }}
                     >
                       {row.note ? (
                         <Tooltip title={row.note} placement="left" arrow>
@@ -321,6 +321,64 @@ export default function ComparisonView({
                   ))}
                 </Box>
               )}
+            </Box>
+          );
+        })()}
+
+        {/* Lifecycle & Compliance */}
+        {(() => {
+          const p = (replacementAttributes ?? recommendation).part;
+          if (!(p.yteol != null || p.riskRank != null || p.countryOfOrigin || p.reachCompliance || p.eccnCode || p.htsCode || p.factoryLeadTimeWeeks != null)) return null;
+          return (
+            <Box sx={{ px: 2, py: 1.5, mt: 0.5 }}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1 }}>
+                {t('comparison.lifecycleHeading', 'Lifecycle & Compliance')}
+              </Typography>
+              <Stack spacing={0.5}>
+                {p.yteol != null && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>YTEOL</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{p.yteol.toFixed(1)} yrs</Typography>
+                  </Stack>
+                )}
+                {p.riskRank != null && (
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Risk Rank</Typography>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.riskRank <= 2 ? '#69F0AE' : p.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{p.riskRank.toFixed(1)}</Typography>
+                  </Stack>
+                )}
+                {p.countryOfOrigin && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Country of Origin</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem' }}>{p.countryOfOrigin}</Typography>
+                  </Stack>
+                )}
+                {p.reachCompliance && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>REACH</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem' }}>{p.reachCompliance}</Typography>
+                  </Stack>
+                )}
+                {p.eccnCode && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>ECCN</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{p.eccnCode}</Typography>
+                  </Stack>
+                )}
+                {p.htsCode && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>HTS Code</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{p.htsCode}</Typography>
+                  </Stack>
+                )}
+                {p.factoryLeadTimeWeeks != null && (
+                  <Stack direction="row" spacing={1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Factory Lead Time</Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{p.factoryLeadTimeWeeks} wks</Typography>
+                  </Stack>
+                )}
+              </Stack>
             </Box>
           );
         })()}

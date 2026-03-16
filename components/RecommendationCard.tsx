@@ -15,7 +15,7 @@ interface RecommendationCardProps {
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
-  const { part, matchDetails, dataSource } = recommendation;
+  const { part, matchDetails, dataSource, equivalenceType, enrichedFrom } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
@@ -47,6 +47,22 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
+                {equivalenceType === 'fff' && (
+                  <Chip label="FFF Equivalent" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#CE93D8', borderColor: '#CE93D8' }} />
+                )}
+                {equivalenceType === 'functional' && (
+                  <Chip label="Functional Equivalent" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#80CBC4', borderColor: '#80CBC4' }} />
+                )}
+                {part.datasheetUrl && (
+                  <Box
+                    component="span"
+                    role="link"
+                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
+                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
+                  >
+                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
+                  </Box>
+                )}
                 {onTogglePreferred && (
                   <Box
                     component="span"
@@ -93,19 +109,17 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   </Tooltip>
                 )}
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap component="div">
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }} noWrap>
                 {part.description}
-                {part.datasheetUrl && (
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
-                    sx={{ ml: 0.5, verticalAlign: 'middle', cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
-                )}
               </Typography>
+              {dataSource && (
+                <Typography variant="body2" sx={{ mt: 0.25, fontSize: '0.65rem', color: 'text.disabled', fontStyle: 'italic' }} noWrap>
+                  Attributes: {[
+                    dataSource === 'digikey' ? 'Digikey' : dataSource === 'atlas' ? 'Atlas' : dataSource === 'partsio' ? 'Parts.io' : dataSource,
+                    enrichedFrom === 'partsio' && dataSource !== 'partsio' ? 'Parts.io' : null,
+                  ].filter(Boolean).join(', ')}
+                </Typography>
+              )}
               {showCommercial && (part.unitPrice != null || part.quantityAvailable != null) && (
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }} noWrap>
                   Digikey: {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'} · {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}

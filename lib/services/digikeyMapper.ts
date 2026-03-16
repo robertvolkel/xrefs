@@ -1486,7 +1486,8 @@ export function mapDigikeyProductToAttributes(product: DigikeyProduct): PartAttr
     }
   }
 
-  // Sort by sortOrder
+  // Tag all parameters with source and sort
+  for (const p of parameters) p.source = 'digikey';
   parameters.sort((a, b) => a.sortOrder - b.sortOrder);
 
   return { part, parameters };

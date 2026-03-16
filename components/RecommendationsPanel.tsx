@@ -27,16 +27,29 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   }, [recommendations, preferredMpn]);
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
+  const [selectedSource, setSelectedSource] = useState('');
   const [showCommercial, setShowCommercial] = useState(false);
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
 
+  // Compute available data sources for filter
+  const sourceCounts = useMemo(() => {
+    const counts = { digikey: 0, atlas: 0, partsio: 0 };
+    for (const r of sorted) {
+      if (r.dataSource === 'digikey') counts.digikey++;
+      else if (r.dataSource === 'atlas') counts.atlas++;
+      else if (r.dataSource === 'partsio') counts.partsio++;
+    }
+    return counts;
+  }, [sorted]);
+  const hasMultipleSources = [sourceCounts.digikey, sourceCounts.atlas, sourceCounts.partsio].filter(c => c > 0).length > 1;
+
   const activeCount = sorted.filter(r => r.part.status === 'Active').length;
   const hiddenCount = sorted.length - activeCount;
 
-  const filtered = selectedMfr
-    ? sorted.filter(r => r.part.manufacturer === selectedMfr)
-    : sorted;
+  const filtered = sorted
+    .filter(r => !selectedMfr || r.part.manufacturer === selectedMfr)
+    .filter(r => !selectedSource || r.dataSource === selectedSource);
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -123,6 +136,27 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             <MenuItem key={mfr} value={mfr} sx={{ fontSize: '0.78rem' }}>{mfr}</MenuItem>
           ))}
         </Select>
+        {hasMultipleSources && (
+          <Select
+            value={selectedSource}
+            onChange={(e) => setSelectedSource(e.target.value)}
+            displayEmpty
+            variant="outlined"
+            size="small"
+            sx={{
+              fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+              height: 22,
+              minHeight: 22,
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+              '& .MuiSelect-select': { py: '1px', px: '8px' },
+            }}
+          >
+            <MenuItem value="" sx={{ fontSize: '0.78rem' }}>All Sources</MenuItem>
+            {sourceCounts.digikey > 0 && <MenuItem value="digikey" sx={{ fontSize: '0.78rem' }}>Digikey ({sourceCounts.digikey})</MenuItem>}
+            {sourceCounts.atlas > 0 && <MenuItem value="atlas" sx={{ fontSize: '0.78rem' }}>Atlas ({sourceCounts.atlas})</MenuItem>}
+            {sourceCounts.partsio > 0 && <MenuItem value="partsio" sx={{ fontSize: '0.78rem' }}>Parts.io ({sourceCounts.partsio})</MenuItem>}
+          </Select>
+        )}
         <Box sx={{ flex: 1 }} />
         <FormControlLabel
           control={

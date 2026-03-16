@@ -242,6 +242,8 @@ Parts.io integration (Decision #77) is running against the QA environment (`api.
 
 Also: Film capacitors (family 64) returned 0 matches for all test MPNs — worth retesting with additional MPNs. Series voltage references (REF5025) not found but shunt refs (TL431) are — series refs may need different test MPNs.
 
+**FFF/Functional Equivalent fields (Decision #79):** Now extracted and used as candidate source. However, these fields were never observed populated in 30+ test MPNs — need to test more parts to confirm they contain data. Discovery logging is in place (`[parts.io] FFF Equivalent sample:` / `[parts.io] Functional Equivalent sample:` in server console). If consistently empty, investigate alternative parts.io API parameters (e.g., `exactMatch=false`, Class/Category filtering) for candidate search.
+
 ---
 
 ### SI prefix parsing collision in digikeyMapper

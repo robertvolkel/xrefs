@@ -1966,3 +1966,26 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 6. Removed "Mock Data" amber `Chip` from `AttributesPanel.tsx`
 
 **Kept:** `lib/mockData.ts`, `lib/mockSearchService.ts`, `lib/mockXrefService.ts` files remain for potential dev/test use — just no longer imported in production data path.
+
+### 79. Parts.io FFF & Functional Equivalent Candidates
+**Date:** 2026-03-14
+**Status:** Implemented
+
+**Problem:** The recommendation pipeline only sourced candidates from Digikey keyword search (up to 30) and Atlas family queries (up to 50). The parts.io API response includes `FFF Equivalent` (Form-Fit-Function drop-in) and `Functional Equivalent` (functionally equivalent, may differ physically) fields that point to cross-reference MPNs — a free source of pre-identified alternative parts that was being ignored.
+
+**Decision:** Add parts.io equivalents as a third candidate source in the recommendation pipeline, running in parallel with Digikey and Atlas. Each equivalent goes through the full matching engine, gets scored and compared against the source part. The UI labels each candidate as "FFF Equivalent" (purple chip) or "Functional Equivalent" (teal chip) so users can see the equivalence classification.
+
+**Architecture:**
+- `extractEquivalentMpns()` in `partsioClient.ts` — parses FFF/Functional Equivalent fields (handles both `string[]` and `object[]` formats), returns `PartsioEquivalent[]` with `type: 'fff' | 'functional'`
+- `fetchPartsioEquivalents()` in `partDataService.ts` — gets source listing (cached), extracts equivalent MPNs, fetches full parametric data for each (up to 20, parallel), returns `PartAttributes[]` with `equivalenceType` set
+- Integrated as 3rd parallel fetch in `getRecommendations()` Step 3
+- Merge priority: Digikey > Atlas > parts.io (if MPN appears in multiple sources, richer source wins)
+- `equivalenceType` propagated from `PartAttributes` → `XrefRecommendation` → `RecommendationCard`
+
+**Key design decisions:**
+- Limit of 20 equivalents prevents runaway API calls
+- Source listing hits 30-min cache (no extra API call when enrichWithPartsio already ran)
+- Discovery logging: unknown field structures are logged on first encounter
+- Fields may be empty for many parts — zero overhead when empty (returns `[]` after cached listing check)
+
+**Files modified:** `partsioClient.ts` (types + extraction), `partDataService.ts` (fetcher + pipeline), `types.ts` (`equivalenceType` on PartAttributes + XrefRecommendation, `'partsio'` added to dataSource union), `RecommendationCard.tsx` (FFF/FE chips).

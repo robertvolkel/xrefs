@@ -108,5 +108,6 @@ export function mapPartsioProductToAttributes(listing: PartsioListing): Parametr
     });
   }
 
+  for (const a of attributes) a.source = 'partsio';
   return attributes;
 }

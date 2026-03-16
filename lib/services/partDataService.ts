@@ -18,8 +18,29 @@ import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
-import { isPartsioConfigured, getPartsioProductDetails } from './partsioClient';
+import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
+
+// ============================================================
+// PARTS.IO LIFECYCLE METADATA HELPER
+// ============================================================
+
+import type { PartsioListing } from './partsioClient';
+import type { Part } from '../types';
+
+/** Extract lifecycle & compliance metadata from a parts.io listing into Part fields */
+function extractPartsioLifecycle(listing: PartsioListing): Partial<Part> {
+  const result: Partial<Part> = {};
+  if (listing.YTEOL) result.yteol = parseFloat(listing.YTEOL);
+  if (listing['Risk Rank'] != null) result.riskRank = listing['Risk Rank'];
+  if (listing['Country Of Origin']) result.countryOfOrigin = listing['Country Of Origin'] as string;
+  if (listing['Reach Compliance Code']) result.reachCompliance = listing['Reach Compliance Code'];
+  if (listing['ECCN Code']) result.eccnCode = listing['ECCN Code'];
+  if (listing['HTS Code']) result.htsCode = listing['HTS Code'];
+  const leadTime = listing['Factory Lead Time'] as { Weeks?: number } | undefined;
+  if (leadTime?.Weeks) result.factoryLeadTimeWeeks = leadTime.Weeks;
+  return result;
+}
 
 // ============================================================
 // CONFIGURATION CHECK
@@ -95,16 +116,27 @@ async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes>
     if (!listing) return attrs;
 
     const partsioParams = mapPartsioProductToAttributes(listing);
-    if (partsioParams.length === 0) return attrs;
 
     const existingIds = new Set(attrs.parameters.map(p => p.parameterId));
     const gapFills = partsioParams.filter(p => !existingIds.has(p.parameterId));
 
-    if (gapFills.length === 0) return attrs;
+    // Enrich Part metadata from parts.io (gap-fill: only set if not already present)
+    const lifecycle = extractPartsioLifecycle(listing);
+    const enrichedPart = { ...attrs.part };
+    let partChanged = false;
+    for (const [key, value] of Object.entries(lifecycle)) {
+      if ((enrichedPart as Record<string, unknown>)[key] == null) {
+        (enrichedPart as Record<string, unknown>)[key] = value;
+        partChanged = true;
+      }
+    }
+
+    if (gapFills.length === 0 && !partChanged) return attrs;
 
     return {
       ...attrs,
-      parameters: [...attrs.parameters, ...gapFills],
+      part: partChanged ? enrichedPart : attrs.part,
+      parameters: gapFills.length > 0 ? [...attrs.parameters, ...gapFills] : attrs.parameters,
       enrichedFrom: 'partsio',
     };
   } catch (error) {
@@ -157,6 +189,32 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     if (atlasAttrs) return atlasAttrs;
   } catch {
     console.warn('Atlas attribute lookup failed for', mpn);
+  }
+
+  // Fallback: try parts.io directly (covers parts.io-only candidates like FFF/FE equivalents)
+  if (isPartsioConfigured()) {
+    try {
+      const listing = await getPartsioProductDetails(mpn);
+      if (listing) {
+        const parameters = mapPartsioProductToAttributes(listing);
+        return {
+          part: {
+            mpn: listing['Manufacturer Part Number'] || mpn,
+            manufacturer: listing.Manufacturer || 'Unknown',
+            description: listing.Description || '',
+            detailedDescription: listing.Description || '',
+            status: listing['Part Life Cycle Code'] || 'Unknown',
+            subcategory: listing.Category || listing.Class || '',
+            datasheetUrl: listing['Current Datasheet Url'],
+            ...extractPartsioLifecycle(listing),
+          },
+          parameters,
+          dataSource: 'partsio' as const,
+        };
+      }
+    } catch {
+      console.warn('Parts.io attribute lookup failed for', mpn);
+    }
   }
 
   return null;
@@ -312,9 +370,9 @@ export async function getRecommendations(
     }
   }
 
-  // Step 3: Fetch candidates from Digikey + Atlas in parallel
+  // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents in parallel
   console.time('[perf] fetchCandidates');
-  const [digikeyCandidates, atlasCandidates] = await Promise.all([
+  let [digikeyCandidates, atlasCandidates, partsioEquivalents] = await Promise.all([
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
@@ -328,8 +386,39 @@ export async function getRecommendations(
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
+    fetchPartsioEquivalents(mpn).catch((error) => {
+      console.warn('Parts.io equivalent fetch failed:', error);
+      return [] as PartAttributes[];
+    }),
   ]);
   console.timeEnd('[perf] fetchCandidates');
+
+  // Step 3a: Enrich Digikey candidates with parts.io gap-fill (parallel, ~one round-trip)
+  if (isPartsioConfigured() && digikeyCandidates.length > 0) {
+    console.time('[perf] enrichDigikeyCandidates');
+    digikeyCandidates = await Promise.all(digikeyCandidates.map(c => enrichWithPartsio(c)));
+    console.timeEnd('[perf] enrichDigikeyCandidates');
+  }
+
+  // Build metadata maps BEFORE dedup — survives even when higher-priority source wins
+  const equivalenceMap = new Map<string, 'fff' | 'functional'>();
+  for (const c of partsioEquivalents) {
+    if (c.equivalenceType) {
+      equivalenceMap.set(c.part.mpn.toLowerCase(), c.equivalenceType);
+    }
+  }
+  const dataSourceMap = new Map<string, 'digikey' | 'atlas' | 'partsio'>();
+  const enrichedFromMap = new Map<string, 'partsio'>();
+  for (const c of digikeyCandidates) {
+    dataSourceMap.set(c.part.mpn.toLowerCase(), 'digikey');
+    if (c.enrichedFrom) enrichedFromMap.set(c.part.mpn.toLowerCase(), c.enrichedFrom);
+  }
+  for (const c of atlasCandidates) {
+    if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'atlas');
+  }
+  for (const c of partsioEquivalents) {
+    if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'partsio');
+  }
 
   // Merge candidates, deduplicate by MPN (prefer Digikey for richer data)
   const seenMpns = new Set<string>();
@@ -348,17 +437,26 @@ export async function getRecommendations(
       allCandidates.push(c);
     }
   }
-  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas = ${allCandidates.length} total`);
+  for (const c of partsioEquivalents) {
+    const key = c.part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      allCandidates.push(c);
+    }
+  }
+  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
 
   if (allCandidates.length > 0) {
     console.time('[perf] findReplacements (scoring)');
     let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, preferredManufacturers);
     console.timeEnd('[perf] findReplacements (scoring)');
 
-    // Propagate dataSource from candidate to recommendation
+    // Propagate dataSource, equivalenceType, and enrichedFrom from pre-dedup maps
     recs = recs.map(rec => ({
       ...rec,
-      dataSource: allCandidates.find(c => c.part.mpn === rec.part.mpn)?.dataSource,
+      dataSource: dataSourceMap.get(rec.part.mpn.toLowerCase()),
+      equivalenceType: equivalenceMap.get(rec.part.mpn.toLowerCase()),
+      enrichedFrom: enrichedFromMap.get(rec.part.mpn.toLowerCase()),
     }));
 
     // Step 3b: Post-scoring filter for C2 switching regulators —
@@ -447,7 +545,7 @@ export async function getRecommendations(
     }
 
     // Determine primary dataSource for the result set
-    const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : dataSource);
+    const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
 
     console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
     return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
@@ -455,6 +553,61 @@ export async function getRecommendations(
 
   // Step 4: No candidates found from any source
   return { recommendations: [], sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
+}
+
+// ============================================================
+// PARTS.IO EQUIVALENT CANDIDATE FETCHER
+// ============================================================
+
+/**
+ * Fetch FFF and Functional Equivalent candidates from parts.io.
+ * Gets the source part listing, extracts equivalent MPNs, then fetches
+ * full parametric data for each equivalent.
+ * Each candidate has equivalenceType set to 'fff' or 'functional'.
+ */
+async function fetchPartsioEquivalents(mpn: string): Promise<PartAttributes[]> {
+  if (!isPartsioConfigured()) return [];
+
+  // Get source listing (hits 30-min cache if already called during enrichWithPartsio)
+  const listing = await getPartsioProductDetails(mpn);
+  if (!listing) return [];
+
+  const equivalents = extractEquivalentMpns(listing, mpn, 20);
+  if (equivalents.length === 0) return [];
+
+  const fffCount = equivalents.filter(e => e.type === 'fff').length;
+  const feCount = equivalents.filter(e => e.type === 'functional').length;
+  console.log(`[parts.io] Found ${equivalents.length} equivalents for ${mpn} (${fffCount} FFF, ${feCount} FE)`);
+
+  // Fetch attributes for each equivalent MPN (parallel, with individual error handling)
+  const results = await Promise.all(
+    equivalents.map(async ({ mpn: eqMpn, type }) => {
+      try {
+        const eqListing = await getPartsioProductDetails(eqMpn);
+        if (!eqListing) return null;
+
+        const parameters = mapPartsioProductToAttributes(eqListing);
+        return {
+          part: {
+            mpn: eqListing['Manufacturer Part Number'] || eqMpn,
+            manufacturer: eqListing.Manufacturer || 'Unknown',
+            description: eqListing.Description || '',
+            detailedDescription: eqListing.Description || '',
+            status: (eqListing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            subcategory: eqListing.Category || eqListing.Class || '',
+            ...extractPartsioLifecycle(eqListing),
+          },
+          parameters,
+          dataSource: 'partsio' as const,
+          equivalenceType: type,
+        } as PartAttributes;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return results.filter((r): r is PartAttributes => r !== null);
 }
 
 // ============================================================
@@ -476,7 +629,7 @@ async function fetchDigikeyCandidates(
 
   const response = await keywordSearch(
     keywords,
-    { limit: 30, categoryId: sourceAttrs.part.digikeyCategoryId },
+    { limit: 20, categoryId: sourceAttrs.part.digikeyCategoryId },
     currency,
   );
 
@@ -494,7 +647,7 @@ async function fetchDigikeyCandidates(
     const mpn = product.ManufacturerProductNumber;
     if (seen.has(mpn)) continue;
     seen.add(mpn);
-    candidates.push(mapDigikeyProductToAttributes(product));
+    candidates.push({ ...mapDigikeyProductToAttributes(product), dataSource: 'digikey' as const });
   }
 
   return candidates;
