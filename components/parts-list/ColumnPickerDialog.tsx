@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -25,8 +26,43 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SearchIcon from '@mui/icons-material/Search';
 import { useTranslation } from 'react-i18next';
-import { ColumnDefinition } from '@/lib/columnDefinitions';
+import { ColumnDefinition, GROUP_ORDER } from '@/lib/columnDefinitions';
 import { SavedView } from '@/lib/viewConfigStorage';
+
+// ============================================================
+// SOURCE BADGE
+// ============================================================
+
+const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
+  digikey: { label: 'DK', color: '#E65100' },
+  partsio: { label: 'PIO', color: '#1565C0' },
+  atlas: { label: 'Atlas', color: '#2E7D32' },
+};
+
+function SourceBadge({ dataSource }: { dataSource?: string }) {
+  if (!dataSource || !SOURCE_LABELS[dataSource]) return null;
+  const { label, color } = SOURCE_LABELS[dataSource];
+  return (
+    <Chip
+      label={label}
+      size="small"
+      sx={{
+        height: 16,
+        fontSize: '0.6rem',
+        fontWeight: 700,
+        ml: 0.5,
+        bgcolor: `${color}22`,
+        color,
+        border: `1px solid ${color}44`,
+        '& .MuiChip-label': { px: 0.5, py: 0 },
+      }}
+    />
+  );
+}
+
+// ============================================================
+// COMPONENT
+// ============================================================
 
 interface ColumnPickerDialogProps {
   open: boolean;
@@ -64,7 +100,7 @@ export default function ColumnPickerDialog({
     setTab(mode === 'create' ? 0 : 1);
   };
 
-  // Group available columns by their group field
+  // Group available columns by their group field, sorted by GROUP_ORDER
   const grouped = useMemo(() => {
     const groups = new Map<string, ColumnDefinition[]>();
     for (const col of availableColumns) {
@@ -72,7 +108,20 @@ export default function ColumnPickerDialog({
       existing.push(col);
       groups.set(col.group, existing);
     }
-    return groups;
+    // Sort by GROUP_ORDER (known groups first, then unknown groups alphabetically)
+    const sorted = new Map<string, ColumnDefinition[]>();
+    for (const g of GROUP_ORDER) {
+      const cols = groups.get(g);
+      if (cols) {
+        sorted.set(g, cols);
+        groups.delete(g);
+      }
+    }
+    // Append any groups not in GROUP_ORDER
+    for (const [g, cols] of groups) {
+      sorted.set(g, cols);
+    }
+    return sorted;
   }, [availableColumns]);
 
   // Filter available columns by search
@@ -259,7 +308,12 @@ export default function ColumnPickerDialog({
                           />
                         </ListItemIcon>
                         <ListItemText
-                          primary={col.label}
+                          primary={
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <span>{col.label}</span>
+                              <SourceBadge dataSource={col.dataSource} />
+                            </Box>
+                          }
                           primaryTypographyProps={{ fontSize: '0.82rem' }}
                         />
                       </ListItem>
@@ -318,7 +372,12 @@ export default function ColumnPickerDialog({
                     sx={{ py: 0.5, pr: 12 }}
                   >
                     <ListItemText
-                      primary={col.label || t('columnPicker.actionColumn')}
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <span>{col.label || t('columnPicker.actionColumn')}</span>
+                          <SourceBadge dataSource={col.dataSource} />
+                        </Box>
+                      }
                       secondary={col.group}
                       primaryTypographyProps={{ fontSize: '0.82rem' }}
                       secondaryTypographyProps={{ fontSize: '0.7rem' }}

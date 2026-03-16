@@ -1989,3 +1989,53 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 - Fields may be empty for many parts — zero overhead when empty (returns `[]` after cached listing check)
 
 **Files modified:** `partsioClient.ts` (types + extraction), `partDataService.ts` (fetcher + pipeline), `types.ts` (`equivalenceType` on PartAttributes + XrefRecommendation, `'partsio'` added to dataSource union), `RecommendationCard.tsx` (FFF/FE chips).
+
+### 80. MCP Server & External API Access
+**Date:** 2026-03-16
+**Status:** Implemented
+
+**Problem:** The matching engine was only accessible through the app's own UI. Sister products and external systems had no way to call the cross-reference engine — the REST endpoints required Supabase session cookies (browser-only), and there was no machine-to-machine integration path.
+
+**Decision:** Two integration paths for external consumers:
+
+1. **REST API with API key auth** — Added Bearer token authentication to the existing auth guard. External products send `Authorization: Bearer <key>` to call `/api/search`, `/api/attributes/{mpn}`, and `/api/xref/{mpn}`. Keys are configured via `XREFS_API_KEYS` env var (comma-separated). API key users get a fixed service user ID for QC logging; admin routes remain blocked.
+
+2. **MCP Server (Model Context Protocol)** — Standalone stdio-transport server exposing 5 tools for AI agent integration. Imports service functions directly (in-process, no HTTP overhead). Usable with Claude Desktop, Claude Code, or any MCP-compatible client.
+
+**MCP Server tools:**
+
+| Tool | Wraps | External calls? |
+|------|-------|-----------------|
+| `search_parts` | `searchParts()` | Digikey + Atlas |
+| `get_part_attributes` | `getAttributes()` | Digikey → Parts.io → Atlas |
+| `find_replacements` | `getRecommendations()` | Full pipeline |
+| `list_supported_families` | `logicTableRegistry` | None (in-memory) |
+| `get_context_questions` | `getContextQuestionsForFamily()` | None (in-memory) |
+
+**Key architectural decisions:**
+
+- **Supabase server.ts fallback:** Modified `lib/supabase/server.ts` to try/catch around `cookies()` from `next/headers`. When running outside Next.js (MCP server, standalone scripts), falls back to a direct `@supabase/supabase-js` client using service role key or anon key. This one change makes the entire service layer usable in non-Next.js environments.
+
+- **API key auth in auth guard:** `checkApiKey()` runs before Supabase cookie auth in `requireAuth()`. Valid keys return a fixed service user (`id: '00000000-...'`). `requireAdmin()` explicitly blocks API key users. No callers needed changes — all existing routes gain API key support automatically.
+
+- **MCP server as separate entry point:** Lives in `mcp-server/` with its own `tsconfig.json` (Node16 module resolution). Uses `tsx` for development, reads `.env.local` via custom `envLoader.ts`. Separate from Next.js build — doesn't affect app bundle or deployment.
+
+- **JSON string params for context/overrides:** `find_replacements` accepts `applicationContextJson` and `attributeOverridesJson` as JSON strings rather than nested objects, avoiding deep schema issues with LLM tool callers.
+
+**Files created:**
+- `mcp-server/index.ts` — Entry point (McpServer + 5 tool registrations + StdioServerTransport)
+- `mcp-server/tsconfig.json` — Standalone TS config (module: Node16)
+- `mcp-server/lib/envLoader.ts` — .env.local parser for standalone mode
+- `mcp-server/tools/searchParts.ts` — search_parts tool handler
+- `mcp-server/tools/getPartAttributes.ts` — get_part_attributes tool handler
+- `mcp-server/tools/findReplacements.ts` — find_replacements tool handler
+- `mcp-server/tools/listSupportedFamilies.ts` — list_supported_families tool handler
+- `mcp-server/tools/getContextQuestions.ts` — get_context_questions tool handler
+- `docs/API_INTEGRATION_GUIDE.md` — External integration documentation
+
+**Files modified:**
+- `lib/supabase/server.ts` — Added try/catch fallback for non-Next.js environments
+- `lib/supabase/auth-guard.ts` — Added API key auth (`checkApiKey()`) before Supabase cookie auth
+- `package.json` — Added `@modelcontextprotocol/sdk`, `zod`, `tsx` deps; `mcp:dev` and `mcp:inspect` scripts
+
+**Dependencies added:** `@modelcontextprotocol/sdk`, `zod` (runtime); `tsx` (dev)

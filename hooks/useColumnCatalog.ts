@@ -9,7 +9,7 @@ import {
 } from '@/lib/columnDefinitions';
 
 interface ColumnCatalogResult {
-  parameterKeys: Map<string, string>;
+  parameterKeys: Map<string, { name: string; source?: string }>;
   effectiveHeaders: string[];
   availableColumns: ColumnDefinition[];
   inferredMapping: ColumnMapping | null;

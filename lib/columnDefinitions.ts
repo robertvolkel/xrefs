@@ -1,9 +1,10 @@
 /**
  * Column Definition System
  *
- * Defines the catalog of all available columns for the parts list table,
- * from three sources: system columns, original spreadsheet columns, and
- * Digikey API data (product fields + parametric attributes).
+ * Defines the catalog of all available columns for the parts list table.
+ * Columns are organized by semantic category (Technical, Commercial,
+ * Compliance, Risk & Lifecycle, Trade & Export) with source badges
+ * indicating data origin (Digikey, Parts.io, Atlas).
  */
 
 import { PartsListRow, EnrichedPartData } from './types';
@@ -21,13 +22,13 @@ export interface ColumnDefinition {
   label: string;
   /** Where this column's data comes from */
   source: ColumnSource;
-  /** Category for grouping in the column picker UI */
+  /** Semantic category for grouping in the column picker UI */
   group: string;
   /** For spreadsheet columns: the original column index */
   spreadsheetIndex?: number;
-  /** For digikey param columns: the parameterId key */
+  /** For parametric columns: the parameterId key */
   parameterKey?: string;
-  /** For digikey product columns: the field name on EnrichedPartData */
+  /** For product-level columns: the field name on EnrichedPartData */
   enrichedField?: keyof EnrichedPartData;
   /** Default width (CSS value for colgroup) */
   defaultWidth?: string;
@@ -37,7 +38,23 @@ export interface ColumnDefinition {
   isNumeric?: boolean;
   /** Whether this is a URL/link column */
   isLink?: boolean;
+  /** Data source for display badge in column picker (DK, PIO, Atlas) */
+  dataSource?: 'digikey' | 'partsio' | 'atlas';
 }
+
+/** Display order for column groups in the column picker */
+export const GROUP_ORDER = [
+  'System',
+  'Replacements',
+  'Your Data',
+  'Product Identity',
+  'Commercial',
+  'Compliance',
+  'Risk & Lifecycle',
+  'Trade & Export',
+  'Documentation',
+  'Technical',
+] as const;
 
 // ============================================================
 // SYSTEM COLUMN DEFINITIONS (always available)
@@ -55,22 +72,38 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
 ];
 
 // ============================================================
-// DIGIKEY PRODUCT COLUMN DEFINITIONS (always available)
+// PRODUCT-LEVEL COLUMN DEFINITIONS (always available)
+// Organized by semantic category, tagged with data source.
 // ============================================================
 
-const DIGIKEY_PRODUCT_COLUMNS: ColumnDefinition[] = [
-  { id: 'dk:manufacturer', label: 'Manufacturer', source: 'digikey-product', enrichedField: 'manufacturer', group: 'DigiKey: Product ID', defaultWidth: '140px' },
-  { id: 'dk:digikeyPartNumber', label: 'DigiKey Part #', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'DigiKey: Product ID', defaultWidth: '140px' },
-  { id: 'dk:category', label: 'Category', source: 'digikey-product', enrichedField: 'category', group: 'DigiKey: Product Attributes', defaultWidth: '120px' },
-  { id: 'dk:subcategory', label: 'Subcategory', source: 'digikey-product', enrichedField: 'subcategory', group: 'DigiKey: Product Attributes', defaultWidth: '140px' },
-  { id: 'dk:datasheetUrl', label: 'Datasheet', source: 'digikey-product', enrichedField: 'datasheetUrl', group: 'DigiKey: Documentation', defaultWidth: '80px', isLink: true },
-  { id: 'dk:photoUrl', label: 'Photo', source: 'digikey-product', enrichedField: 'photoUrl', group: 'DigiKey: Documentation', defaultWidth: '80px', isLink: true },
-  { id: 'dk:productUrl', label: 'Product Page', source: 'digikey-product', enrichedField: 'productUrl', group: 'DigiKey: Documentation', defaultWidth: '80px', isLink: true },
-  { id: 'dk:unitPrice', label: 'DK Price', source: 'digikey-product', enrichedField: 'unitPrice', group: 'DigiKey: Pricing', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'dk:quantityAvailable', label: 'DK Stock', source: 'digikey-product', enrichedField: 'quantityAvailable', group: 'DigiKey: Pricing', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'dk:productStatus', label: 'Product Status', source: 'digikey-product', enrichedField: 'productStatus', group: 'DigiKey: Pricing', defaultWidth: '100px' },
-  { id: 'dk:rohsStatus', label: 'RoHS Status', source: 'digikey-product', enrichedField: 'rohsStatus', group: 'DigiKey: Compliance', defaultWidth: '100px' },
-  { id: 'dk:moistureSensitivityLevel', label: 'MSL', source: 'digikey-product', enrichedField: 'moistureSensitivityLevel', group: 'DigiKey: Compliance', defaultWidth: '60px' },
+const PRODUCT_COLUMNS: ColumnDefinition[] = [
+  // Product Identity
+  { id: 'dk:manufacturer', label: 'Manufacturer', source: 'digikey-product', enrichedField: 'manufacturer', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
+  { id: 'dk:digikeyPartNumber', label: 'DigiKey Part #', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
+  { id: 'dk:category', label: 'Category', source: 'digikey-product', enrichedField: 'category', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '120px' },
+  { id: 'dk:subcategory', label: 'Subcategory', source: 'digikey-product', enrichedField: 'subcategory', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
+  // Documentation
+  { id: 'dk:datasheetUrl', label: 'Datasheet', source: 'digikey-product', enrichedField: 'datasheetUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
+  { id: 'dk:photoUrl', label: 'Photo', source: 'digikey-product', enrichedField: 'photoUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
+  { id: 'dk:productUrl', label: 'Product Page', source: 'digikey-product', enrichedField: 'productUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
+  // Commercial
+  { id: 'dk:unitPrice', label: 'DK Price', source: 'digikey-product', enrichedField: 'unitPrice', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'dk:quantityAvailable', label: 'DK Stock', source: 'digikey-product', enrichedField: 'quantityAvailable', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'dk:productStatus', label: 'Product Status', source: 'digikey-product', enrichedField: 'productStatus', group: 'Commercial', dataSource: 'digikey', defaultWidth: '100px' },
+  { id: 'dk:factoryLeadTimeWeeks', label: 'Lead Time (Weeks)', source: 'digikey-product', enrichedField: 'factoryLeadTimeWeeks', group: 'Commercial', dataSource: 'partsio', defaultWidth: '100px', align: 'right', isNumeric: true },
+  // Compliance
+  { id: 'dk:rohsStatus', label: 'RoHS Status', source: 'digikey-product', enrichedField: 'rohsStatus', group: 'Compliance', dataSource: 'digikey', defaultWidth: '100px' },
+  { id: 'dk:moistureSensitivityLevel', label: 'MSL', source: 'digikey-product', enrichedField: 'moistureSensitivityLevel', group: 'Compliance', dataSource: 'digikey', defaultWidth: '60px' },
+  { id: 'dk:reachCompliance', label: 'REACH Compliance', source: 'digikey-product', enrichedField: 'reachCompliance', group: 'Compliance', dataSource: 'partsio', defaultWidth: '120px' },
+  { id: 'dk:qualifications', label: 'Qualifications', source: 'digikey-product', enrichedField: 'qualifications', group: 'Compliance', dataSource: 'digikey', defaultWidth: '120px' },
+  // Risk & Lifecycle
+  { id: 'dk:yteol', label: 'YTEOL', source: 'digikey-product', enrichedField: 'yteol', group: 'Risk & Lifecycle', dataSource: 'partsio', defaultWidth: '70px', align: 'right', isNumeric: true },
+  { id: 'dk:riskRank', label: 'Risk Rank', source: 'digikey-product', enrichedField: 'riskRank', group: 'Risk & Lifecycle', dataSource: 'partsio', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'dk:partLifecycleCode', label: 'Lifecycle Code', source: 'digikey-product', enrichedField: 'partLifecycleCode', group: 'Risk & Lifecycle', dataSource: 'partsio', defaultWidth: '100px' },
+  // Trade & Export
+  { id: 'dk:countryOfOrigin', label: 'Country of Origin', source: 'digikey-product', enrichedField: 'countryOfOrigin', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '110px' },
+  { id: 'dk:eccnCode', label: 'ECCN Code', source: 'digikey-product', enrichedField: 'eccnCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '90px' },
+  { id: 'dk:htsCode', label: 'HTS Code', source: 'digikey-product', enrichedField: 'htsCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '100px' },
 ];
 
 /** Standalone definition for the auto-appended row actions column */
@@ -103,16 +136,16 @@ export const DEFAULT_VIEW_COLUMNS: string[] = [
 // ============================================================
 
 /**
- * Scan all rows to collect the set of Digikey parameter keys and their display names.
- * Returns a Map of parameterId → display name.
+ * Scan all rows to collect the set of parametric keys, display names, and data sources.
+ * Returns a Map of parameterId → { name, source }.
  */
-export function collectParameterKeys(rows: PartsListRow[]): Map<string, string> {
-  const map = new Map<string, string>();
+export function collectParameterKeys(rows: PartsListRow[]): Map<string, { name: string; source?: string }> {
+  const map = new Map<string, { name: string; source?: string }>();
   for (const row of rows) {
     if (row.enrichedData?.parameters) {
       for (const [key, val] of Object.entries(row.enrichedData.parameters)) {
         if (!map.has(key)) {
-          map.set(key, val.name);
+          map.set(key, { name: val.name, source: val.source });
         }
       }
     }
@@ -124,11 +157,11 @@ export function collectParameterKeys(rows: PartsListRow[]): Map<string, string> 
  * Build the full catalog of available columns for the column picker.
  *
  * @param spreadsheetHeaders - Original headers from the uploaded file
- * @param parameterKeys - Map of Digikey parameterId → display name (from collectParameterKeys)
+ * @param parameterKeys - Map of parameterId → { name, source } (from collectParameterKeys)
  */
 export function buildAvailableColumns(
   spreadsheetHeaders: string[],
-  parameterKeys: Map<string, string>,
+  parameterKeys: Map<string, { name: string; source?: string }>,
 ): ColumnDefinition[] {
   const columns: ColumnDefinition[] = [];
 
@@ -142,22 +175,23 @@ export function buildAvailableColumns(
       label: header || `Column ${index + 1}`,
       source: 'spreadsheet',
       spreadsheetIndex: index,
-      group: 'Spreadsheet',
+      group: 'Your Data',
       defaultWidth: '120px',
     });
   });
 
-  // Digikey product columns
-  columns.push(...DIGIKEY_PRODUCT_COLUMNS);
+  // Product-level columns (from all data sources)
+  columns.push(...PRODUCT_COLUMNS);
 
-  // Digikey parametric columns (dynamic from actual data)
-  for (const [key, name] of parameterKeys) {
+  // Parametric columns (dynamic from actual data, grouped as Technical)
+  for (const [key, info] of parameterKeys) {
     columns.push({
       id: `dkp:${key}`,
-      label: name,
+      label: info.name,
       source: 'digikey-param',
       parameterKey: key,
-      group: 'DigiKey: Parameters',
+      group: 'Technical',
+      dataSource: (info.source as 'digikey' | 'partsio' | 'atlas') ?? 'digikey',
       defaultWidth: '120px',
     });
   }
@@ -194,6 +228,8 @@ export function getCellValue(
       const val = row.enrichedData[column.enrichedField];
       // parameters is a Record, not a display value
       if (column.enrichedField === 'parameters') return undefined;
+      // Array fields (e.g. qualifications) → join for display
+      if (Array.isArray(val)) return val.join(', ');
       return val as string | number | undefined;
     }
 

@@ -53,6 +53,21 @@ Admins can now edit rule weights, logic types, thresholds, hierarchies, and cont
 
 ---
 
+### ~~External API access for sister products~~ COMPLETED
+**Files:** `lib/supabase/auth-guard.ts`, `mcp-server/`, `docs/API_INTEGRATION_GUIDE.md`
+
+Two integration paths implemented (Decision #80):
+1. **REST API** — Bearer token auth via `XREFS_API_KEYS` env var. All existing routes (`/api/search`, `/api/attributes/{mpn}`, `/api/xref/{mpn}`) accessible with API key.
+2. **MCP Server** — Stdio-transport server with 5 tools for AI agent integration. Claude Desktop, Claude Code, and MCP-compatible clients.
+
+**Remaining (future):**
+- Streamable HTTP transport for remote MCP access (currently stdio only — requires local process)
+- Per-key rate limiting and usage tracking
+- API key management UI in admin panel (currently env var only)
+- Dedicated REST endpoint for context questions (currently MCP-only)
+
+---
+
 ## P1 — Medium Priority
 
 ### Override preview: show scoring impact before saving

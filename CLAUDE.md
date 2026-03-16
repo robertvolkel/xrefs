@@ -135,6 +135,12 @@ lib/
   columnDefinitions.ts        # Dynamic column system for parts list table
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
+mcp-server/                   # MCP server for external AI agent integration (Decision #80)
+  index.ts                    # Entry point: McpServer + tool registration + StdioServerTransport
+  tools/                      # Tool handlers (searchParts, getPartAttributes, findReplacements, etc.)
+  lib/envLoader.ts            # .env.local parser for standalone mode
+  tsconfig.json               # Standalone TS config (Node16 module resolution)
+
 __tests__/services/           # Jest unit tests for core business logic
 docs/                         # Cross-reference logic documents (.docx)
 scripts/                      # Utility scripts (Digikey param discovery, Supabase schema)
@@ -384,3 +390,15 @@ npm run test:watch  # Jest in watch mode
 ```
 
 Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
+
+Optional: `XREFS_API_KEYS` (comma-separated Bearer tokens for external API access), `SUPABASE_SERVICE_ROLE_KEY` (for MCP server Supabase access).
+
+## External API Access (Decision #80)
+
+The matching engine is accessible to sister products and external systems via two paths:
+
+**REST API** — Existing endpoints (`/api/search`, `/api/attributes/{mpn}`, `/api/xref/{mpn}`) accept `Authorization: Bearer <key>` for machine-to-machine auth. Keys configured in `XREFS_API_KEYS` env var. See `docs/API_INTEGRATION_GUIDE.md` for full documentation.
+
+**MCP Server** — Standalone stdio-transport server for AI agent integration. 5 tools: `search_parts`, `get_part_attributes`, `find_replacements`, `list_supported_families`, `get_context_questions`. Run with `npm run mcp:dev`. Test with `npm run mcp:inspect`. See `mcp-server/` directory.
+
+**Auth architecture:** `requireAuth()` in `lib/supabase/auth-guard.ts` checks API key first, then falls back to Supabase cookie auth. API key users get a fixed service user ID; admin routes remain blocked. `lib/supabase/server.ts` has a try/catch fallback that returns a direct Supabase client when `cookies()` from `next/headers` is unavailable (MCP server, standalone scripts).

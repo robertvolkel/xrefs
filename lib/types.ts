@@ -406,7 +406,7 @@ export interface ManufacturerLocation {
 /** Status of an individual row during batch validation */
 export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
 
-/** Flattened, storage-friendly Digikey product data built during validation */
+/** Flattened, storage-friendly product data built during validation (from all sources) */
 export interface EnrichedPartData {
   // Product Identification
   manufacturer?: string;
@@ -415,18 +415,30 @@ export interface EnrichedPartData {
   // Product Attributes
   category?: string;
   subcategory?: string;
-  /** All parametric parameters: parameterId → { name, value } */
-  parameters: Record<string, { name: string; value: string }>;
+  /** All parametric parameters: parameterId → { name, value, source } */
+  parameters: Record<string, { name: string; value: string; source?: string }>;
   // Documentation
   datasheetUrl?: string;
   photoUrl?: string;
-  // Pricing & Availability
+  // Commercial (Digikey)
   unitPrice?: number;
   quantityAvailable?: number;
   productStatus?: string;
-  // Environmental & Compliance
+  // Commercial (Parts.io)
+  factoryLeadTimeWeeks?: number;
+  // Compliance
   rohsStatus?: string;
   moistureSensitivityLevel?: string;
+  reachCompliance?: string;
+  qualifications?: string[];
+  // Risk & Lifecycle (Parts.io)
+  yteol?: number;
+  riskRank?: number;
+  partLifecycleCode?: string;
+  // Trade & Export (Parts.io)
+  countryOfOrigin?: string;
+  eccnCode?: string;
+  htsCode?: string;
 }
 
 /** A row from the uploaded parts list */
