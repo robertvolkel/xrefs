@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
-import { BatchValidateRequest, BatchValidateItem } from '@/lib/types';
+import { BatchValidateRequest, BatchValidateItem, UserPreferences } from '@/lib/types';
 import { searchParts, getAttributes, getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { buildEnrichedData } from '@/lib/services/enrichedDataBuilder';
 import { logRecommendation } from '@/lib/services/recommendationLogger';
+import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 
 const CONCURRENCY = 3;
 
@@ -12,6 +13,7 @@ async function processItem(
   item: { rowIndex: number; mpn: string; manufacturer?: string; description?: string },
   currency?: string,
   userId?: string,
+  userPreferences?: UserPreferences,
 ): Promise<BatchValidateItem> {
   try {
     // Step 1: Search for the part (use MPN if available, otherwise description)
@@ -41,7 +43,7 @@ async function processItem(
     }
 
     // Step 3: Get recommendations
-    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency);
+    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency, undefined, userPreferences);
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
 
@@ -98,6 +100,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Fetch user preferences once for the whole batch
+    const prefs = await fetchUserPreferences(user!.id);
+
     // Stream results as NDJSON
     const encoder = new TextEncoder();
     const stream = new TransformStream<Uint8Array, Uint8Array>();
@@ -109,7 +114,7 @@ export async function POST(request: NextRequest) {
         // Process in chunks for concurrency control
         for (let i = 0; i < body.items.length; i += CONCURRENCY) {
           const chunk = body.items.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(chunk.map(item => processItem(item, body.currency, user?.id)));
+          const results = await Promise.all(chunk.map(item => processItem(item, body.currency, user?.id, prefs)));
 
           for (const result of results) {
             await writer.write(encoder.encode(JSON.stringify(result) + '\n'));

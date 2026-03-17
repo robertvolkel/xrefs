@@ -2079,3 +2079,43 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 - `components/parts-list/ViewControls.tsx` — "Save as Template" menu item
 - `locales/{en,de,zh-CN}.json` — i18n keys for cpnLabel, saveAsTemplate
 - `scripts/supabase-view-configs-schema.sql` — Migration script
+
+## 82. User-Aware LLM Agent — Preferences, History Tools, Context Resolver (2026-03-16)
+
+**Context:** The home page LLM orchestrator was completely stateless — it received only conversation history, current recommendations, and locale. It had no awareness of the user's role, industry, past searches, BOMs, or chosen replacements. The product roadmap outlined a three-level context hierarchy (user profile → list context → per-search context) but none of it was implemented.
+
+**Design: Hybrid awareness model**
+
+1. **Rich user profile** (`profiles.preferences` JSONB): `UserPreferences` type with `businessRole`, `industry`, `company`, `preferredManufacturers`, `excludedManufacturers`, `complianceDefaults` (AEC-Q200/Q101/Q100, MIL-STD, RoHS, REACH), `defaultCurrency`, `manufacturingRegions`. Denormalized `business_role`/`industry`/`company` columns for admin queries.
+
+2. **System prompt injection**: `buildUserContextSection()` appends a compact "User Context" block to the system prompt with name, role, industry, compliance, manufacturer preferences. Behavioral instructions adapt the agent's communication style based on role (technical for engineers, commercial for procurement, strategic for executives).
+
+3. **History tools** (4 new agent tools, always available):
+   - `get_my_recent_searches` — queries `search_history`
+   - `get_my_lists` — queries `parts_lists`
+   - `get_my_past_recommendations` — queries `recommendation_log` (filterable by MPN/family)
+   - `get_my_conversations` — queries `conversations`
+   Agent instructed to use these only when user asks about past activity (not proactively on every conversation).
+
+4. **Context resolver** (`lib/services/contextResolver.ts`): Converts `UserPreferences` → `AttributeEffect[]` that modify logic table rules before scoring. Mappings: compliance defaults escalate AEC/MIL rules to mandatory, automotive industry escalates temp range to primary, medical escalates qualification to primary. Applied BEFORE per-family context questions (per-family overrides user-level — more specific wins).
+
+5. **Manufacturer handling**: Preferred manufacturers from user preferences merged with per-call `preferredManufacturers` (from LLM tool calling). Excluded manufacturers filtered from results after scoring.
+
+6. **Registration**: Optional `businessRole` and `industry` fields at registration, stored in `profiles.preferences`. Transparency notice explains the data is used by the AI assistant for personalization.
+
+**Override hierarchy:** User Preferences (broadest) < Per-Family Context Questions (most specific). User effects are applied first; per-family context answers override them for the same `attributeId`.
+
+**Backward compatibility:** Empty preferences (`'{}'`) produce zero effects. Existing users are unaffected. API key auth returns empty preferences. `applyEffect()` exported from `contextModifier.ts` (was private) for reuse by `contextResolver.ts` — no logic change.
+
+**Key files:**
+- `lib/types.ts` — `UserPreferences`, `BusinessRole`, `IndustryVertical`, `ComplianceDefaults`, `ManufacturingRegion`
+- `lib/services/userPreferencesService.ts` — Server-side preference fetch
+- `lib/services/contextResolver.ts` — `resolveUserEffects()` + `applyUserEffectsToLogicTable()`
+- `lib/services/llmOrchestrator.ts` — `buildUserContextSection()`, 4 history tools, `chat()`/`refinementChat()` signature changes
+- `lib/services/contextModifier.ts` — `applyEffect()` exported
+- `lib/services/partDataService.ts` — `userPreferences` param, pipeline insertion, manufacturer merge/filter
+- `app/api/profile/preferences/route.ts` — GET/PUT preferences
+- `app/api/chat/route.ts`, `app/api/modal-chat/route.ts` — fetch prefs, pass to orchestrator
+- `app/api/xref/[mpn]/route.ts`, `app/api/parts-list/validate/route.ts` — fetch prefs, pass to scoring
+- `components/settings/ProfilePanel.tsx` — Preferences UI (role, industry, company, manufacturers, compliance, currency, regions)
+- `scripts/supabase-user-preferences-schema.sql` — Migration script

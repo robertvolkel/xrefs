@@ -2,10 +2,32 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Box, Button, TextField, Typography, Alert, Link as MuiLink } from '@mui/material';
+import { Box, Button, TextField, Typography, Alert, Link as MuiLink, MenuItem } from '@mui/material';
 import NextLink from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useTranslation } from 'react-i18next';
+import type { BusinessRole, IndustryVertical } from '@/lib/types';
+
+const ROLE_OPTIONS: { value: BusinessRole; label: string }[] = [
+  { value: 'design_engineer', label: 'Design Engineer' },
+  { value: 'procurement', label: 'Procurement / Buyer' },
+  { value: 'supply_chain', label: 'Supply Chain' },
+  { value: 'commodity_manager', label: 'Commodity Manager' },
+  { value: 'quality', label: 'Quality Engineer' },
+  { value: 'executive', label: 'Executive' },
+  { value: 'other', label: 'Other' },
+];
+
+const INDUSTRY_OPTIONS: { value: IndustryVertical; label: string }[] = [
+  { value: 'automotive', label: 'Automotive' },
+  { value: 'aerospace_defense', label: 'Aerospace & Defense' },
+  { value: 'medical', label: 'Medical' },
+  { value: 'industrial', label: 'Industrial' },
+  { value: 'consumer_electronics', label: 'Consumer Electronics' },
+  { value: 'telecom_networking', label: 'Telecom & Networking' },
+  { value: 'energy', label: 'Energy' },
+  { value: 'other', label: 'Other' },
+];
 
 export default function RegisterForm() {
   const { t } = useTranslation();
@@ -16,6 +38,8 @@ export default function RegisterForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [businessRole, setBusinessRole] = useState('');
+  const [industry, setIndustry] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -39,7 +63,11 @@ export default function RegisterForm() {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inviteCode, email, password, firstName, lastName }),
+      body: JSON.stringify({
+        inviteCode, email, password, firstName, lastName,
+        ...(businessRole && { businessRole }),
+        ...(industry && { industry }),
+      }),
     });
 
     const data = await res.json();
@@ -151,6 +179,40 @@ export default function RegisterForm() {
           fullWidth
           autoComplete="new-password"
         />
+
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+          {t('auth.optionalProfileHeading')}
+        </Typography>
+
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <TextField
+            select
+            label={t('auth.businessRoleLabel')}
+            value={businessRole}
+            onChange={(e) => setBusinessRole(e.target.value)}
+            fullWidth
+            size="small"
+          >
+            <MenuItem value="">&mdash;</MenuItem>
+            {ROLE_OPTIONS.map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+          </TextField>
+
+          <TextField
+            select
+            label={t('auth.industryLabel')}
+            value={industry}
+            onChange={(e) => setIndustry(e.target.value)}
+            fullWidth
+            size="small"
+          >
+            <MenuItem value="">&mdash;</MenuItem>
+            {INDUSTRY_OPTIONS.map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+          </TextField>
+        </Box>
+
+        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', lineHeight: 1.3 }}>
+          {t('auth.profileTransparencyNote')}
+        </Typography>
 
         <Button
           type="submit"

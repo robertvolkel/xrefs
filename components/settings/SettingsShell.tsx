@@ -7,10 +7,11 @@ import { useTranslation } from 'react-i18next';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import SettingsSectionNav, { SettingsSection } from './SettingsSectionNav';
 import ProfilePanel from './ProfilePanel';
+import PreferencesPanel from './PreferencesPanel';
 import AccountPanel from './AccountPanel';
 
 function isValidSection(s: string | null): s is SettingsSection {
-  return s === 'profile' || s === 'account';
+  return s === 'profile' || s === 'preferences' || s === 'account';
 }
 
 function SettingsShellInner() {
@@ -19,7 +20,7 @@ function SettingsShellInner() {
   const { t } = useTranslation();
 
   const sectionParam = searchParams.get('section');
-  const resolvedDefault = isValidSection(sectionParam) ? sectionParam : 'account';
+  const resolvedDefault = isValidSection(sectionParam) ? sectionParam : 'profile';
   const [activeSection, setActiveSection] = useState<SettingsSection>(resolvedDefault);
 
   const handleSectionChange = useCallback(
@@ -70,6 +71,7 @@ function SettingsShellInner() {
         {/* Content */}
         <Box sx={{ flex: 1, overflowY: 'auto' }}>
           {activeSection === 'account' && <AccountPanel />}
+          {activeSection === 'preferences' && <PreferencesPanel />}
           {activeSection === 'profile' && <ProfilePanel />}
         </Box>
       </Box>

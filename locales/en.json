@@ -23,7 +23,6 @@
     "globalSettings": "Global Settings",
     "language": "Preferred Language",
     "currency": "Preferred Currency",
-    "currencyPlaceholder": "Currency settings coming soon",
     "displaySettings": "Display Settings",
     "theme": "Theme",
     "themeLight": "Light",
@@ -46,7 +45,11 @@
     "passwordMismatch": "Passwords do not match.",
     "passwordTooShort": "Password must be at least 6 characters.",
     "haveAccount": "Already have an account?",
-    "signInLink": "Sign In"
+    "signInLink": "Sign In",
+    "optionalProfileHeading": "Optional — tell us about yourself",
+    "businessRoleLabel": "Role",
+    "industryLabel": "Industry",
+    "profileTransparencyNote": "This helps our AI assistant provide more relevant recommendations tailored to your industry and role. You can update these anytime in Settings."
   },
   "lists": {
     "pageHeader": "Your Lists",
@@ -472,7 +475,7 @@
   },
   "settings": {
     "title": "Settings",
-    "myProfile": "My Profile",
+    "myAccount": "My Account",
     "generalSettings": "General Settings",
     "organization": "Organization",
     "firstName": "First Name",
@@ -486,7 +489,20 @@
     "passwordChanged": "Password changed",
     "passwordMismatch": "Passwords do not match",
     "wrongPassword": "Current password is incorrect",
-    "passwordTooShort": "Password must be at least 6 characters"
+    "passwordTooShort": "Password must be at least 6 characters",
+    "preferences": "Preferences",
+    "preferencesHelp": "These preferences are used by the assistant to tailor recommendations and advice to your needs.",
+    "preferencesSaved": "Preferences saved",
+    "businessRole": "Business Role",
+    "industry": "Industry",
+    "company": "Company",
+    "preferredManufacturers": "Preferred Manufacturers",
+    "excludedManufacturers": "Excluded Manufacturers",
+    "complianceDefaults": "Default Compliance Requirements",
+    "defaultCurrency": "Default Currency",
+    "manufacturingRegions": "Manufacturing Regions",
+    "notSpecified": "Not specified",
+    "typeAndEnter": "Type and press Enter"
   },
   "comparison": {
     "comparingWith": "Comparing with",

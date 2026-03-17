@@ -19,6 +19,9 @@ import DarkModeOutlined from '@mui/icons-material/DarkModeOutlined';
 import { SUPPORTED_LANGUAGES, SupportedLanguage, DEFAULT_LANGUAGE } from '@/lib/i18n';
 import { useAuth } from '@/components/AuthProvider';
 import { createClient } from '@/lib/supabase/client';
+import { getUserPreferences, updateUserPreferences } from '@/lib/api';
+
+const CURRENCY_OPTIONS = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'KRW'];
 
 export default function AccountPanel() {
   const { t } = useTranslation();
@@ -27,6 +30,8 @@ export default function AccountPanel() {
   const [language, setLanguage] = useState<SupportedLanguage>(DEFAULT_LANGUAGE);
   const [pendingTheme, setPendingTheme] = useState<'light' | 'dark' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [currency, setCurrency] = useState('USD');
+  const [currencyLoaded, setCurrencyLoaded] = useState(false);
 
   const savedLanguage = (user?.user_metadata?.language as SupportedLanguage) || DEFAULT_LANGUAGE;
   const savedTheme = (user?.user_metadata?.theme as 'light' | 'dark' | undefined) ?? 'light';
@@ -34,6 +39,23 @@ export default function AccountPanel() {
   useEffect(() => {
     setLanguage(savedLanguage);
   }, [savedLanguage]);
+
+  // Load currency from user preferences
+  useEffect(() => {
+    if (!user) return;
+    getUserPreferences()
+      .then(p => { setCurrency(p.defaultCurrency ?? 'USD'); setCurrencyLoaded(true); })
+      .catch(() => setCurrencyLoaded(true));
+  }, [user]);
+
+  const handleCurrencyChange = async (value: string) => {
+    setCurrency(value);
+    try {
+      await updateUserPreferences({ defaultCurrency: value });
+    } catch {
+      // silently fail — value is already shown in UI
+    }
+  };
 
   const handleThemeChange = (_: React.MouseEvent<HTMLElement>, newMode: 'light' | 'dark' | null) => {
     if (!newMode) return;
@@ -84,17 +106,18 @@ export default function AccountPanel() {
           </Select>
         </FormControl>
 
-        <FormControl size="small" fullWidth disabled sx={{ maxWidth: 360 }}>
+        <FormControl size="small" fullWidth sx={{ maxWidth: 360 }} disabled={!currencyLoaded}>
           <InputLabel>{t('accountSettings.currency')}</InputLabel>
-          <Select value="USD" label={t('accountSettings.currency')}>
-            <MenuItem value="USD">USD — US Dollar</MenuItem>
-            <MenuItem value="EUR">EUR — Euro</MenuItem>
-            <MenuItem value="CNY">CNY — Chinese Yuan</MenuItem>
+          <Select
+            value={currency}
+            label={t('accountSettings.currency')}
+            onChange={(e) => handleCurrencyChange(e.target.value)}
+          >
+            {CURRENCY_OPTIONS.map(c => (
+              <MenuItem key={c} value={c}>{c}</MenuItem>
+            ))}
           </Select>
         </FormControl>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: -2 }}>
-          {t('accountSettings.currencyPlaceholder')}
-        </Typography>
       </Box>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }} />

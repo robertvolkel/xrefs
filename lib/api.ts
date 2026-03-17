@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences } from './types';
 import type { ServiceWarning, ServiceName } from './types';
 
 // Admin types
@@ -476,4 +476,24 @@ export async function deleteReleaseNote(id: string): Promise<void> {
   const res = await fetch(`${BASE}/admin/releases/${id}`, { method: 'DELETE' });
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'Failed to delete release note');
+}
+
+// ── User Preferences ────────────────────────────────────────
+
+export async function getUserPreferences(): Promise<UserPreferences> {
+  const res = await fetch(`${BASE}/profile/preferences`);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to fetch preferences');
+  return json.data;
+}
+
+export async function updateUserPreferences(prefs: Partial<UserPreferences>): Promise<UserPreferences> {
+  const res = await fetch(`${BASE}/profile/preferences`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(prefs),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update preferences');
+  return json.data;
 }

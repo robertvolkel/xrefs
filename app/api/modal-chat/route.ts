@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ApplicationContext, OrchestratorMessage, XrefRecommendation } from '@/lib/types';
 import { refinementChat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
+import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 
 interface ModalChatRequestBody {
   messages: OrchestratorMessage[];
@@ -40,6 +41,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const locale = (user?.user_metadata?.language as string) ?? 'en';
+    const prefs = await fetchUserPreferences(user!.id);
+    const userName = (user?.user_metadata?.full_name as string) ?? undefined;
     const response = await refinementChat(
       body.messages,
       body.mpn,
@@ -49,6 +52,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body.recommendations,
       user?.id,
       locale,
+      prefs,
+      userName,
     );
 
     return NextResponse.json({

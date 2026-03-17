@@ -68,6 +68,15 @@ Two integration paths implemented (Decision #80):
 
 ---
 
+### ~~Per-list views — views are global, editing one list affects all others~~ COMPLETED
+**Files:** `hooks/useListViewConfig.ts` (new), `hooks/useViewConfig.ts`, `lib/supabasePartsListStorage.ts`, `lib/viewConfigStorage.ts`, `components/parts-list/PartsListShell.tsx`, `components/parts-list/ViewControls.tsx`
+
+Views are now per-list, stored in Supabase `parts_lists.view_configs` JSONB. Global views became **templates** (localStorage) used to seed new lists. Editing a view only affects the current list. "Save as Template" pushes a view back to the global template library (stripping `ss:*` columns for portability via `sanitizeTemplateColumns()`). Migration is automatic: lists with null `view_configs` copy from global templates on first load. `useViewConfig` renamed to `useViewTemplates` (backwards-compat alias kept). See Decision #81.
+
+Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number column mapping. Auto-detected from spreadsheet headers. Reordered `DEFAULT_VIEW_COLUMNS` to put `sys:status` right after source data columns.
+
+---
+
 ## P1 — Medium Priority
 
 ### Override preview: show scoring impact before saving
@@ -345,34 +354,28 @@ No migration tool (like Prisma Migrate or Supabase CLI migrations). Schema chang
 The following items track the phased evolution from cross-reference engine to component intelligence platform. See `docs/PRODUCT_ROADMAP.md` for full details.
 
 ### Phase 1: User Preferences Foundation
-**Status:** Partially started (Profile UI done, preferences JSONB not yet)
-**Priority:** P1
+~~**Status:** Partially started (Profile UI done, preferences JSONB not yet)~~
+**Status:** Done (Decision #82)
 
 ~~Build Profile panel UI (replace "Coming Soon" placeholder).~~ Done (Decision #76) — editable name/email + password change.
 
-Remaining: Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.
-
-**Key files:** `lib/types.ts`, `scripts/supabase-schema.sql`, `components/settings/ProfilePanel.tsx`, `app/api/profile/preferences/route.ts`
+~~Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.~~ Done (Decision #82) — full UserPreferences type, ProfilePanel with preferences UI, registration with optional businessRole/industry.
 
 ---
 
 ### Phase 2: LLM Context Injection
-**Status:** Not started
-**Priority:** P1
+~~**Status:** Not started~~
+**Status:** Done (Decision #82)
 
-Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.
-
-**Key files:** `lib/services/llmOrchestrator.ts`, `app/api/chat/route.ts`, `app/api/modal-chat/route.ts`
+~~Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.~~ Done — `buildUserContextSection()`, behavioral instructions, + 4 history tools (`get_my_recent_searches`, `get_my_lists`, `get_my_past_recommendations`, `get_my_conversations`).
 
 ---
 
 ### Phase 3: Global Effects on Matching Engine
-**Status:** Not started
-**Priority:** P1
+~~**Status:** Not started~~
+**Status:** Done (Decision #82)
 
-Create `contextResolver.ts` — resolves user/list preferences into `AttributeEffect[]`. Thread global context through `partDataService.getRecommendations()` and all API routes.
-
-**Key files:** `lib/services/contextResolver.ts` (new), `lib/services/contextModifier.ts`, `lib/services/partDataService.ts`
+~~Create `contextResolver.ts` — resolves user/list preferences into `AttributeEffect[]`. Thread global context through `partDataService.getRecommendations()` and all API routes.~~ Done — `resolveUserEffects()` + `applyUserEffectsToLogicTable()`. Preferred/excluded manufacturers merged/filtered. Applied before per-family context (more specific wins).
 
 ---
 
@@ -386,11 +389,10 @@ Add `context` JSONB column to `parts_lists` table. Define `ListContext` type. Bu
 
 ---
 
-### Phase 5: Manufacturer Filtering & Ranking
-**Status:** Not started
-**Priority:** P2
+### ~~Phase 5: Manufacturer Filtering & Ranking~~
+**Status:** Done (Decision #82)
 
-Apply preferred/excluded manufacturer filters to candidate search results. Optionally boost match scores for preferred manufacturers.
+~~Apply preferred/excluded manufacturer filters to candidate search results. Optionally boost match scores for preferred manufacturers.~~ Done — preferred manufacturers merged from user preferences + per-call. Excluded manufacturers filtered post-scoring.
 
 **Key files:** `lib/services/partDataService.ts`, `lib/services/matchingEngine.ts`
 

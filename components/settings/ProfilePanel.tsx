@@ -152,7 +152,7 @@ export default function ProfilePanel() {
     <Box sx={{ px: 3, pt: '16px', pb: 4 }}>
       {/* Profile Info */}
       <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-        {t('settings.myProfile')}
+        {t('settings.myAccount')}
       </Typography>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, mb: 4, maxWidth: 360 }}>
         <TextField

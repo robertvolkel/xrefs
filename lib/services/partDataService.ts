@@ -6,7 +6,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -18,6 +18,7 @@ import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logic
 import { findReplacements } from './matchingEngine';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
+import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
@@ -237,6 +238,7 @@ export async function getRecommendations(
   applicationContext?: ApplicationContext,
   currency?: string,
   preferredManufacturers?: string[],
+  userPreferences?: UserPreferences,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -367,13 +369,22 @@ export async function getRecommendations(
   // Step 2b: Apply admin rule overrides on top of TS base
   const tableWithOverrides = await applyRuleOverrides(logicTable);
 
-  // Step 2c: Apply application context to modify logic table weights/rules
-  let effectiveTable = tableWithOverrides;
+  // Step 2c: Apply user-level global effects (compliance defaults, industry escalations)
+  let tableWithUserEffects = tableWithOverrides;
+  if (userPreferences && Object.keys(userPreferences).length > 0) {
+    const userEffects = resolveUserEffects(userPreferences, tableWithOverrides);
+    if (userEffects.length > 0) {
+      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithOverrides, userEffects);
+    }
+  }
+
+  // Step 2d: Apply application context to modify logic table weights/rules (overrides user-level)
+  let effectiveTable = tableWithUserEffects;
   if (applicationContext) {
     let familyConfig = getContextQuestionsForFamily(logicTable.familyId);
     if (familyConfig) {
       familyConfig = await applyContextOverrides(familyConfig);
-      effectiveTable = applyContextToLogicTable(tableWithOverrides, applicationContext, familyConfig);
+      effectiveTable = applyContextToLogicTable(tableWithUserEffects, applicationContext, familyConfig);
     }
   }
 
@@ -456,8 +467,14 @@ export async function getRecommendations(
   console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
 
   if (allCandidates.length > 0) {
+    // Merge preferred manufacturers from user preferences + per-call
+    const mergedPreferred = [
+      ...(preferredManufacturers ?? []),
+      ...(userPreferences?.preferredManufacturers ?? []),
+    ];
+
     console.time('[perf] findReplacements (scoring)');
-    let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, preferredManufacturers);
+    let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, mergedPreferred.length > 0 ? mergedPreferred : undefined);
     console.timeEnd('[perf] findReplacements (scoring)');
 
     // Propagate dataSource, equivalenceType, and enrichedFrom from pre-dedup maps
@@ -551,6 +568,14 @@ export async function getRecommendations(
     // output_switch_type and mounting_type are BLOCKING identity gates.
     if (familyId === 'F2') {
       recs = filterSolidStateRelayMismatches(recs, sourceAttrs);
+    }
+
+    // Filter out excluded manufacturers from user preferences
+    if (userPreferences?.excludedManufacturers?.length) {
+      const excluded = userPreferences.excludedManufacturers.map(m => m.toLowerCase());
+      recs = recs.filter(r =>
+        !excluded.some(ex => r.part.manufacturer.toLowerCase().includes(ex))
+      );
     }
 
     // Determine primary dataSource for the result set

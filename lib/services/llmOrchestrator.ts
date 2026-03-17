@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
+import { createClient } from '../supabase/server';
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
 
@@ -197,6 +198,84 @@ function buildLocaleInstruction(locale?: string): string {
 }
 
 // ==============================================================
+// User context → system prompt section
+// ==============================================================
+
+const ROLE_LABELS: Record<string, string> = {
+  design_engineer: 'Design Engineer',
+  procurement: 'Procurement / Buyer',
+  supply_chain: 'Supply Chain',
+  commodity_manager: 'Commodity Manager',
+  quality: 'Quality Engineer',
+  executive: 'Executive',
+  other: 'Other',
+};
+
+const INDUSTRY_LABELS: Record<string, string> = {
+  automotive: 'Automotive',
+  aerospace_defense: 'Aerospace & Defense',
+  medical: 'Medical',
+  industrial: 'Industrial',
+  consumer_electronics: 'Consumer Electronics',
+  telecom_networking: 'Telecom & Networking',
+  energy: 'Energy',
+  other: 'Other',
+};
+
+const COMPLIANCE_LABELS: Record<string, string> = {
+  aecQ200: 'AEC-Q200',
+  aecQ101: 'AEC-Q101',
+  aecQ100: 'AEC-Q100',
+  milStd: 'MIL-STD',
+  rohs: 'RoHS',
+  reach: 'REACH',
+};
+
+const REGION_LABELS: Record<string, string> = {
+  north_america: 'North America',
+  europe: 'Europe',
+  greater_china: 'Greater China',
+  japan_korea: 'Japan/Korea',
+  southeast_asia: 'Southeast Asia',
+  india: 'India',
+  other: 'Other',
+};
+
+/** Build a compact user context section for the system prompt */
+function buildUserContextSection(prefs: UserPreferences, userName?: string): string {
+  const lines: string[] = [];
+
+  if (userName) lines.push(`- Name: ${userName}`);
+  if (prefs.businessRole) lines.push(`- Role: ${ROLE_LABELS[prefs.businessRole] ?? prefs.businessRole}`);
+  if (prefs.industry) lines.push(`- Industry: ${INDUSTRY_LABELS[prefs.industry] ?? prefs.industry}`);
+  if (prefs.company) lines.push(`- Company: ${prefs.company}`);
+
+  if (prefs.complianceDefaults) {
+    const active = Object.entries(prefs.complianceDefaults)
+      .filter(([, v]) => v)
+      .map(([k]) => COMPLIANCE_LABELS[k] ?? k);
+    if (active.length > 0) lines.push(`- Required compliance: ${active.join(', ')}`);
+  }
+
+  if (prefs.preferredManufacturers?.length) {
+    lines.push(`- Preferred manufacturers: ${prefs.preferredManufacturers.join(', ')}`);
+  }
+  if (prefs.excludedManufacturers?.length) {
+    lines.push(`- Excluded manufacturers: ${prefs.excludedManufacturers.join(', ')}`);
+  }
+  if (prefs.defaultCurrency && prefs.defaultCurrency !== 'USD') {
+    lines.push(`- Currency: ${prefs.defaultCurrency}`);
+  }
+  if (prefs.manufacturingRegions?.length) {
+    lines.push(`- Manufacturing regions: ${prefs.manufacturingRegions.map(r => REGION_LABELS[r] ?? r).join(', ')}`);
+  }
+
+  if (lines.length === 0) return '';
+
+  return `\n\n## User Context\n${lines.join('\n')}`;
+}
+
+// ==============================================================
 // Main chat
 // ==============================================================
 
@@ -242,7 +321,16 @@ Important rules:
 - Always use tools — never guess part numbers or specs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
-- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.`;
+- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.
+
+When User Context is provided:
+- Adapt your communication style to the user's role: more technical depth for engineers, more commercial focus for procurement, more strategic framing for executives
+- If the user has compliance defaults, proactively mention when recommendations do or don't meet those requirements
+- If the user has preferred manufacturers, note when top recommendations come from their preferred list
+- If the user has excluded manufacturers, never recommend parts from excluded manufacturers
+- Manufacturing regions provide context for trade compliance — mention relevant considerations when applicable
+
+You have access to the user's history through tools: get_my_recent_searches, get_my_lists, get_my_past_recommendations, and get_my_conversations. Use these ONLY when the user asks about their past activity, references a previous search, or when historical context would genuinely improve your response. Do NOT proactively fetch history on every conversation.`;
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
@@ -295,6 +383,56 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
+/** History tools for user awareness — query past searches, lists, recommendations */
+const historyTools: Anthropic.Tool[] = [
+  {
+    name: 'get_my_recent_searches',
+    description: 'Get the user\'s recent part searches. Shows what parts they\'ve looked up recently, with component categories and recommendation counts. Use this to understand the user\'s recent activity or remind them of past searches.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Max results (default 10, max 25)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_my_lists',
+    description: 'Get summaries of the user\'s parts lists (BOMs). Shows list names, descriptions, customer names, row counts, and resolved percentages. Use this when the user asks about their existing BOMs or wants to work on a specific list.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Max results (default 10, max 25)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_my_past_recommendations',
+    description: 'Get the user\'s past cross-reference recommendations. Shows source parts, family names, match counts, and data sources. Use this when the user wants to recall a previous recommendation or compare with current results.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Max results (default 10, max 25)' },
+        source_mpn: { type: 'string', description: 'Filter by source MPN (partial match)' },
+        family_name: { type: 'string', description: 'Filter by component family name' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_my_conversations',
+    description: 'Get the user\'s past chat conversations. Shows titles, source parts, phases reached, and timestamps. Use this when the user references a past conversation or wants to continue where they left off.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Max results (default 10, max 25)' },
+      },
+      required: [],
+    },
+  },
+];
+
 /** Tool result data extracted from tool calls */
 interface ToolResultData {
   searchResult?: SearchResult;
@@ -309,6 +447,7 @@ async function executeTool(
   data: ToolResultData,
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
+  userPreferences?: UserPreferences,
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
@@ -326,7 +465,7 @@ async function executeTool(
     case 'find_replacements': {
       const findInput = input as { mpn: string; preferred_manufacturers?: string[] };
       const mpn = findInput.mpn;
-      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers);
+      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers, userPreferences);
       const recs = result.recommendations;
       data.recommendations[mpn] = recs;
 
@@ -378,6 +517,68 @@ async function executeTool(
         })),
       });
     }
+    // ── History tools ──────────────────────────────────────────
+    case 'get_my_recent_searches': {
+      if (!userId) return JSON.stringify({ error: 'Not authenticated' });
+      const limit = Math.min((input as { limit?: number }).limit || 10, 25);
+      const supabase = await createClient();
+      const { data: rows } = await supabase
+        .from('search_history')
+        .select('query, source_mpn, source_manufacturer, source_category, recommendation_count, phase_reached, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      return JSON.stringify(rows ?? []);
+    }
+    case 'get_my_lists': {
+      if (!userId) return JSON.stringify({ error: 'Not authenticated' });
+      const limit = Math.min((input as { limit?: number }).limit || 10, 25);
+      const supabase = await createClient();
+      const { data: rows } = await supabase
+        .from('parts_lists')
+        .select('id, name, description, currency, customer, total_rows, resolved_count, created_at, updated_at')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(limit);
+      return JSON.stringify((rows ?? []).map(l => ({
+        name: l.name,
+        description: l.description,
+        currency: l.currency,
+        customer: l.customer,
+        totalRows: l.total_rows,
+        resolvedCount: l.resolved_count,
+        resolvedPercent: l.total_rows > 0 ? Math.round((l.resolved_count / l.total_rows) * 100) : 0,
+        updatedAt: l.updated_at,
+      })));
+    }
+    case 'get_my_past_recommendations': {
+      if (!userId) return JSON.stringify({ error: 'Not authenticated' });
+      const inp = input as { limit?: number; source_mpn?: string; family_name?: string };
+      const limit = Math.min(inp.limit || 10, 25);
+      const supabase = await createClient();
+      let query = supabase
+        .from('recommendation_log')
+        .select('source_mpn, source_manufacturer, family_id, family_name, recommendation_count, request_source, data_source, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (inp.source_mpn) query = query.ilike('source_mpn', `%${inp.source_mpn}%`);
+      if (inp.family_name) query = query.ilike('family_name', `%${inp.family_name}%`);
+      const { data: rows } = await query;
+      return JSON.stringify(rows ?? []);
+    }
+    case 'get_my_conversations': {
+      if (!userId) return JSON.stringify({ error: 'Not authenticated' });
+      const limit = Math.min((input as { limit?: number }).limit || 10, 25);
+      const supabase = await createClient();
+      const { data: rows } = await supabase
+        .from('conversations')
+        .select('id, title, source_mpn, phase, created_at, updated_at')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .limit(limit);
+      return JSON.stringify(rows ?? []);
+    }
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -394,6 +595,8 @@ export async function chat(
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
   locale?: string,
+  userPreferences?: UserPreferences,
+  userName?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -408,9 +611,11 @@ export async function chat(
     recommendations: {},
   };
 
-  // Build system prompt — append recommendation context + locale if available
-  let systemPrompt = SYSTEM_PROMPT + buildLocaleInstruction(locale);
-  const activeTools = [...tools];
+  // Build system prompt — append user context, recommendation context + locale
+  let systemPrompt = SYSTEM_PROMPT
+    + buildUserContextSection(userPreferences ?? {}, userName)
+    + buildLocaleInstruction(locale);
+  const activeTools = [...tools, ...historyTools];
   if (currentRecommendations && currentRecommendations.length > 0) {
     systemPrompt += summarizeRecommendations(currentRecommendations);
     systemPrompt += '\n\nYou also have a filter_recommendations tool to narrow down the list by manufacturer, match quality, etc. Use it when the user asks to filter or sort the existing results.';
@@ -451,6 +656,7 @@ export async function chat(
           toolData,
           currentRecommendations,
           userId,
+          userPreferences,
         );
         console.timeEnd(`[perf] tool:${toolUse.name}`);
         return {
@@ -581,9 +787,13 @@ export async function refinementChat(
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
   locale?: string,
+  userPreferences?: UserPreferences,
+  userName?: string,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
-  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations) + buildLocaleInstruction(locale);
+  const systemPrompt = buildRefinementSystemPrompt(mpn, overrides, applicationContext, currentRecommendations)
+    + buildUserContextSection(userPreferences ?? {}, userName)
+    + buildLocaleInstruction(locale);
 
   const activeTools: Anthropic.Tool[] = [...refinementTools];
   if (currentRecommendations && currentRecommendations.length > 0) {

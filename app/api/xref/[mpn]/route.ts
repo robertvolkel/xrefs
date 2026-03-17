@@ -4,6 +4,7 @@ import { getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { logRecommendation } from '@/lib/services/recommendationLogger';
 import { runWithServiceTracking, getServiceWarnings } from '@/lib/services/serviceStatusTracker';
+import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 
 export async function GET(
   _request: NextRequest,
@@ -15,8 +16,9 @@ export async function GET(
 
     const { mpn } = await params;
     const decodedMpn = decodeURIComponent(mpn);
+    const prefs = await fetchUserPreferences(user!.id);
 
-    const result = await getRecommendations(decodedMpn);
+    const result = await getRecommendations(decodedMpn, undefined, undefined, undefined, undefined, prefs);
 
     // QC log (awaited to ensure it completes within request lifecycle)
     await logRecommendation({
@@ -53,12 +55,13 @@ export async function POST(
 
     const { mpn } = await params;
     const decodedMpn = decodeURIComponent(mpn);
+    const prefs = await fetchUserPreferences(user!.id);
     const { overrides, applicationContext } = await request.json() as {
       overrides?: Record<string, string>;
       applicationContext?: ApplicationContext;
     };
 
-    const result = await getRecommendations(decodedMpn, overrides, applicationContext);
+    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs);
 
     // QC log (awaited to ensure it completes within request lifecycle)
     await logRecommendation({

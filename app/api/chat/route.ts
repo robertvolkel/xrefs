@@ -3,6 +3,7 @@ import { OrchestratorMessage, XrefRecommendation } from '@/lib/types';
 import { chat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { runWithServiceTracking, reportServiceFailure, getServiceWarnings } from '@/lib/services/serviceStatusTracker';
+import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 
 interface ChatRequestBody {
   messages: OrchestratorMessage[];
@@ -35,7 +36,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       const locale = (user?.user_metadata?.language as string) ?? 'en';
-      const response = await chat(body.messages, apiKey, body.recommendations, user?.id, locale);
+      const prefs = await fetchUserPreferences(user!.id);
+      const userName = (user?.user_metadata?.full_name as string) ?? undefined;
+      const response = await chat(body.messages, apiKey, body.recommendations, user?.id, locale, prefs, userName);
 
       const warnings = getServiceWarnings();
       return NextResponse.json({

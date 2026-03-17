@@ -106,7 +106,8 @@ hooks/
   useRowDeletion.ts           # Two-step delete confirmation (permanent vs. hide)
   useColumnCatalog.ts         # Header inference, column building, mapping fallback
   useModalChat.ts             # Refinement chat state
-  useViewConfig.ts            # Column view management
+  useViewConfig.ts            # Global view template management (renamed to useViewTemplates)
+  useListViewConfig.ts        # Per-list view management (Supabase-backed, debounced save)
 
 lib/
   types.ts                    # All TypeScript interfaces (single source of truth)
@@ -133,6 +134,7 @@ lib/
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
   columnDefinitions.ts        # Dynamic column system for parts list table
+  viewConfigStorage.ts        # View types (SavedView, ViewState), localStorage persistence, sanitizeTemplateColumns()
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
 
 mcp-server/                   # MCP server for external AI agent integration (Decision #80)
@@ -286,6 +288,9 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
 - **partDataService** tries Digikey first; if unavailable, falls back to mock data. After Digikey, enriches with parts.io gap-fill (Digikey values win on conflicts)
+- **Per-list views** (Decision #81): Views stored per-list in Supabase `parts_lists.view_configs` JSONB. Global views are templates (`useViewTemplates` in localStorage) used to seed new lists. `useListViewConfig` hook manages per-list views with 500ms debounced Supabase persistence. "Save as Template" strips `ss:*` columns via `sanitizeTemplateColumns()`. Lists with null `view_configs` auto-migrate from templates on first load.
+- **Column portability**: Templates may only contain portable column IDs (`sys:*`, `mapped:*`, `dk:*`, `dkp:*`). `ss:*` (raw spreadsheet index) columns are list-specific and stripped by `sanitizeTemplateColumns()` before saving to template library.
+- **mapped:cpn**: Optional Customer Part Number / Internal Part Number column. Auto-detected from headers in `excelParser.ts`. `cpnColumn` on `ColumnMapping`, `rawCpn` on `PartsListRow`. Resolved at render time like `mapped:manufacturer`.
 
 ## QC & Feedback System
 

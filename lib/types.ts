@@ -233,6 +233,63 @@ export interface ApplicationContext {
 }
 
 // ============================================================
+// USER PREFERENCES
+// ============================================================
+
+/** Job function within the organization (not admin/user system role) */
+export type BusinessRole =
+  | 'design_engineer'
+  | 'procurement'
+  | 'supply_chain'
+  | 'commodity_manager'
+  | 'quality'
+  | 'executive'
+  | 'other';
+
+/** Industry vertical */
+export type IndustryVertical =
+  | 'automotive'
+  | 'aerospace_defense'
+  | 'medical'
+  | 'industrial'
+  | 'consumer_electronics'
+  | 'telecom_networking'
+  | 'energy'
+  | 'other';
+
+/** Manufacturing region for trade/compliance context */
+export type ManufacturingRegion =
+  | 'north_america'
+  | 'europe'
+  | 'greater_china'
+  | 'japan_korea'
+  | 'southeast_asia'
+  | 'india'
+  | 'other';
+
+/** Compliance standards the user always requires */
+export interface ComplianceDefaults {
+  aecQ200?: boolean;    // Passive automotive
+  aecQ101?: boolean;    // Discrete semiconductor automotive
+  aecQ100?: boolean;    // IC automotive
+  milStd?: boolean;     // Military/defense
+  rohs?: boolean;
+  reach?: boolean;
+}
+
+/** User preferences stored as JSONB in profiles table */
+export interface UserPreferences {
+  businessRole?: BusinessRole;
+  industry?: IndustryVertical;
+  company?: string;
+  preferredManufacturers?: string[];
+  excludedManufacturers?: string[];
+  complianceDefaults?: ComplianceDefaults;
+  defaultCurrency?: string;
+  manufacturingRegions?: ManufacturingRegion[];
+}
+
+// ============================================================
 // MATCHING ENGINE TYPES
 // ============================================================
 

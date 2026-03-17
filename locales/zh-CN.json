@@ -22,12 +22,11 @@
   "accountSettings": {
     "title": "我的账户设置",
     "globalSettings": "全局设置",
-    "myProfile": "个人资料",
+    "myAccount": "我的账户",
     "dataSources": "数据源",
     "notifications": "通知与邮件",
     "language": "首选语言",
     "currency": "首选货币",
-    "currencyPlaceholder": "货币设置即将推出",
     "saved": "设置已保存",
     "displaySettings": "显示设置",
     "theme": "主题",
@@ -433,7 +432,7 @@
   },
   "settings": {
     "title": "设置",
-    "myProfile": "我的资料",
+    "myAccount": "我的账户",
     "generalSettings": "通用设置",
     "organization": "组织",
     "firstName": "名",

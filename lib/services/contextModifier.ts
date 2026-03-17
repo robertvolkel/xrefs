@@ -48,7 +48,7 @@ export function applyContextToLogicTable(
   };
 }
 
-function applyEffect(
+export function applyEffect(
   rule: MatchingRule,
   effect: ContextEffectType,
   note?: string,

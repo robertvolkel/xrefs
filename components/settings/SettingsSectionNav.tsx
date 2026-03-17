@@ -3,13 +3,15 @@
 import { List, ListItemButton, ListItemIcon, ListItemText } from '@mui/material';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
+import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type SettingsSection = 'profile' | 'account';
+export type SettingsSection = 'profile' | 'preferences' | 'account';
 
 const sections: { id: SettingsSection; icon: React.ElementType; labelKey: string }[] = [
+  { id: 'profile', icon: PersonOutlineIcon, labelKey: 'settings.myAccount' },
+  { id: 'preferences', icon: SettingsSuggestOutlinedIcon, labelKey: 'settings.preferences' },
   { id: 'account', icon: TuneOutlinedIcon, labelKey: 'settings.generalSettings' },
-  { id: 'profile', icon: PersonOutlineIcon, labelKey: 'settings.myProfile' },
 ];
 
 interface SettingsSectionNavProps {

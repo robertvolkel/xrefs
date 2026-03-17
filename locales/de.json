@@ -22,12 +22,11 @@
   "accountSettings": {
     "title": "Meine Kontoeinstellungen",
     "globalSettings": "Allgemeine Einstellungen",
-    "myProfile": "Mein Profil",
+    "myAccount": "Mein Konto",
     "dataSources": "Datenquellen",
     "notifications": "Benachrichtigungen & E-Mails",
     "language": "Bevorzugte Sprache",
     "currency": "Bevorzugte Währung",
-    "currencyPlaceholder": "Währungseinstellungen demnächst verfügbar",
     "saved": "Einstellungen gespeichert",
     "displaySettings": "Anzeigeeinstellungen",
     "theme": "Design",
@@ -306,7 +305,7 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "myProfile": "Mein Profil",
+    "myAccount": "Mein Konto",
     "generalSettings": "Allgemeine Einstellungen",
     "organization": "Organisation",
     "firstName": "Vorname",
