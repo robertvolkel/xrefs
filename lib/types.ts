@@ -661,6 +661,8 @@ export interface TaxonomySubcategory {
   productCount: number;
   covered: boolean;
   families: FamilyCoverageInfo[];
+  /** L2 category names covering this subcategory (display-only param maps, no logic table) */
+  l2Coverage?: string[];
 }
 
 /** A top-level category in the Digikey taxonomy */
@@ -685,6 +687,8 @@ export interface TaxonomyResponse {
     totalProducts: number;
     coveredProducts: number;
     productCoveragePercentage: number;
+    /** Number of subcategories with L2-only param map coverage */
+    l2OnlySubcategories?: number;
   };
   fetchedAt: string;
 }

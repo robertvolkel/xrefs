@@ -100,8 +100,12 @@ function mapCategory(categoryName: string): ComponentCategory {
   // Memory — EEPROM, Flash, SRAM, DRAM, FIFO
   if (lower.includes('memory') || lower.includes('eeprom') || lower.includes('fifo')) return 'Memory';
   // Sensors — MUST come after varistor/thermistor check (NTC/PTC are 'Protection')
+  // Includes Digikey leaf names that don't contain 'sensor': "Analog and Digital Output" (temperature),
+  // "Linear, Compass (ICs)" (magnetic), "IMUs (Inertial Measurement Units)"
   if (lower.includes('sensor') || lower.includes('transducer') || lower.includes('accelerometer') ||
-      lower.includes('gyroscope') || lower.includes('encoder')) return 'Sensors';
+      lower.includes('gyroscope') || lower.includes('encoder') ||
+      lower.includes('imu') || lower.includes('inertial') ||
+      lower.includes('compass') || lower === 'analog and digital output') return 'Sensors';
   // RF and Wireless — "RF/IF and RFID", antennas, baluns
   if (lower.includes('rf/') || lower.includes('rf ') || lower.includes('rfid') ||
       lower.includes('wireless') || lower.includes('antenna') || lower.includes('balun')) return 'RF and Wireless';

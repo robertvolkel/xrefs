@@ -2,6 +2,7 @@
 
 import {
   Box,
+  Chip,
   List,
   ListItemButton,
   ListItemText,
@@ -13,15 +14,27 @@ import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import { useTranslation } from 'react-i18next';
 import { LogicTable } from '@/lib/types';
 
+export interface PickerItem {
+  id: string;
+  name: string;
+}
+
+export interface CategoryEntry {
+  name: string;
+  tier: 'l3' | 'l2';
+}
+
 interface FamilyPickerProps {
   tables: LogicTable[];
-  categories: string[];
+  categories: CategoryEntry[];
   selectedCategory: string;
   onCategoryChange: (category: string) => void;
   selectedFamilyId: string;
   onFamilyChange: (familyId: string) => void;
   /** Family IDs to show with an indicator icon (e.g. families with Atlas dictionaries) */
   indicatorFamilyIds?: Set<string>;
+  /** Generic items to render instead of filtering tables (used for L2 families) */
+  items?: PickerItem[];
 }
 
 export default function FamilyPicker({
@@ -32,9 +45,15 @@ export default function FamilyPicker({
   selectedFamilyId,
   onFamilyChange,
   indicatorFamilyIds,
+  items,
 }: FamilyPickerProps) {
   const { t } = useTranslation();
   const filtered = tables.filter((tb) => tb.category === selectedCategory);
+  const selectedCatEntry = categories.find((c) => c.name === selectedCategory);
+
+  // Use items if provided (L2 mode), otherwise use filtered tables
+  const listItems: PickerItem[] = items
+    ?? filtered.map((tb) => ({ id: tb.familyId, name: t(`logicTable.${tb.familyId}.name`, tb.familyName) }));
 
   return (
     <Box
@@ -57,18 +76,26 @@ export default function FamilyPicker({
           sx={{ fontSize: '0.85rem' }}
         >
           {categories.map((cat) => (
-            <MenuItem key={cat} value={cat}>
-              {t(`admin.cat.${cat}`, cat)}
+            <MenuItem key={cat.name} value={cat.name}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                {t(`admin.cat.${cat.name}`, cat.name)}
+                <Chip
+                  label={cat.tier === 'l3' ? t('admin.logicBadge', 'Logic') : t('admin.displayOnly', 'Display')}
+                  size="small"
+                  variant="outlined"
+                  sx={{ height: 18, fontSize: '0.65rem', ml: 'auto', flexShrink: 0 }}
+                />
+              </Box>
             </MenuItem>
           ))}
         </Select>
       </Box>
       <List disablePadding sx={{ overflowY: 'auto', flex: 1 }}>
-        {filtered.map((table) => (
+        {listItems.map((item) => (
           <ListItemButton
-            key={table.familyId}
-            selected={table.familyId === selectedFamilyId}
-            onClick={() => onFamilyChange(table.familyId)}
+            key={item.id}
+            selected={item.id === selectedFamilyId}
+            onClick={() => onFamilyChange(item.id)}
             sx={{
               py: 1,
               px: 2,
@@ -76,16 +103,26 @@ export default function FamilyPicker({
             }}
           >
             <ListItemText
-              primary={t(`logicTable.${table.familyId}.name`, table.familyName)}
+              primary={item.name}
               primaryTypographyProps={{
                 variant: 'body2',
-                fontWeight: table.familyId === selectedFamilyId ? 600 : 400,
+                fontWeight: item.id === selectedFamilyId ? 600 : 400,
               }}
             />
-            {indicatorFamilyIds?.has(table.familyId) && (
+            {/* Atlas dictionary indicator (L3 only) */}
+            {!items && indicatorFamilyIds?.has(item.id) && (
               <Tooltip title={t('admin.atlasDictAvailable')} arrow>
                 <TranslateOutlinedIcon sx={{ fontSize: 14, opacity: 0.5, ml: 0.5, flexShrink: 0 }} />
               </Tooltip>
+            )}
+            {/* L2 display chip on items */}
+            {selectedCatEntry?.tier === 'l2' && (
+              <Chip
+                label={t('admin.displayOnly', 'Display')}
+                size="small"
+                variant="outlined"
+                sx={{ height: 16, fontSize: '0.6rem', ml: 0.5, flexShrink: 0, opacity: 0.6 }}
+              />
             )}
           </ListItemButton>
         ))}

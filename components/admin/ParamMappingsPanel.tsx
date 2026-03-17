@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import {
   Box,
+  Chip,
   Table,
   TableBody,
   TableCell,
@@ -11,13 +12,15 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LogicTable } from '@/lib/types';
 import {
+  ParamMapEntry,
+  ParamMapping,
   computeFamilyParamCoverage,
   getDigikeyCategoriesForFamily,
   getDigikeyAttributeIdsForFamily,
+  getFullParamMap,
   reverseParamLookupForFamily,
 } from '@/lib/services/digikeyParamMap';
 import {
@@ -26,40 +29,137 @@ import {
   getAllPartsioFields,
 } from '@/lib/services/partsioParamMap';
 
+/** Data for L2 display-only rendering */
+export interface L2ParamMapData {
+  name: string;
+  digikeyPatterns: string[];
+  paramMap: Record<string, ParamMapEntry>;
+}
+
 interface ParamMappingsPanelProps {
   table: LogicTable | null;
+  /** L2 param map data — when provided (and table is null), renders simplified L2 view */
+  l2ParamMap?: L2ParamMapData | null;
 }
 
 /** Column widths for the attribute-centric table */
 const COL = { num: 36, attrId: 160, attrName: 180, weight: 50, digikey: 220, partsio: 220 };
+/** Column widths for the L2 simplified table */
+const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
 
-export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
+/** Flatten a ParamMapEntry into individual ParamMapping items */
+function flattenEntries(paramMap: Record<string, ParamMapEntry>): { dkField: string; mapping: ParamMapping }[] {
+  const rows: { dkField: string; mapping: ParamMapping }[] = [];
+  for (const [dkField, entry] of Object.entries(paramMap)) {
+    if (Array.isArray(entry)) {
+      for (const m of entry) rows.push({ dkField, mapping: m });
+    } else {
+      rows.push({ dkField, mapping: entry });
+    }
+  }
+  return rows.sort((a, b) => a.mapping.sortOrder - b.mapping.sortOrder);
+}
+
+export default function ParamMappingsPanel({ table, l2ParamMap }: ParamMappingsPanelProps) {
   const { t } = useTranslation();
 
+  // --- L2 rendering mode ---
+  if (!table && l2ParamMap) {
+    return <L2View data={l2ParamMap} t={t} />;
+  }
+
+  // --- L3 rendering mode (existing) ---
+  return <L3View table={table} t={t} />;
+}
+
+/** L2 simplified view — no weights, no coverage, just attribute↔field mapping */
+function L2View({ data, t }: { data: L2ParamMapData; t: ReturnType<typeof useTranslation>['t'] }) {
+  const rows = useMemo(() => flattenEntries(data.paramMap), [data.paramMap]);
+  const digikeyCategories = data.digikeyPatterns;
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+        <Typography variant="h6">{data.name}</Typography>
+        <Chip
+          label={t('admin.displayOnly', 'Display')}
+          size="small"
+          variant="outlined"
+          sx={{ height: 20, fontSize: '0.7rem' }}
+        />
+      </Box>
+
+      {digikeyCategories.length > 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+          {digikeyCategories.length === 1
+            ? <>{t('admin.digikeyCategory')}: <strong>{digikeyCategories[0]}</strong></>
+            : <>{t('admin.digikeyCategories', 'Digikey categories')}: <strong>{digikeyCategories.join(', ')}</strong></>
+          }
+        </Typography>
+      )}
+
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {rows.length} {t('admin.mappedFields', 'mapped fields')}
+      </Typography>
+
+      <TableContainer>
+        <Table size="small" sx={{ '& td, & th': { borderColor: 'divider' } }}>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ fontWeight: 600, width: COL_L2.num }}>#</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL_L2.attrId }}>{t('admin.attributeId')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL_L2.attrName }}>{t('admin.attributeName')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL_L2.digikey }}>{t('admin.digikeyField', 'Digikey Field')}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map(({ dkField, mapping }, idx) => (
+              <TableRow key={`${mapping.attributeId}-${dkField}`}>
+                <TableCell>
+                  <Typography variant="caption" color="text.secondary">{idx + 1}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+                    {mapping.attributeId}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">{mapping.attributeName}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>{dkField}</Typography>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+}
+
+/** L3 full view — rules with weights, coverage metrics, DK+PIO columns */
+function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof useTranslation>['t'] }) {
   const categories = useMemo(
     () => (table ? getDigikeyCategoriesForFamily(table.familyId) : []),
     [table],
   );
 
-  // Digikey reverse lookup: attributeId → DK field name
   const dkReverse = useMemo(() => {
     if (!table) return new Map<string, string>();
     return reverseParamLookupForFamily(table.familyId);
   }, [table]);
 
-  // Parts.io reverse lookup: attributeId → PIO field name
   const pioReverse = useMemo(() => {
     if (!table) return new Map<string, string>();
     return reversePartsioParamLookup(table.familyId);
   }, [table]);
 
-  // All attributes from logic table, sorted by weight desc
   const attributeRows = useMemo(() => {
     if (!table) return [];
     return [...table.rules].sort((a, b) => b.weight - a.weight);
   }, [table]);
 
-  // Coverage metrics
   const coverage = useMemo(() => {
     if (!table) return null;
     const dk = computeFamilyParamCoverage(table.familyId, table.rules);
@@ -74,7 +174,6 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
     };
   }, [table]);
 
-  // Extra parts.io fields not in our schema
   const extraPioFields = useMemo(() => {
     if (!table) return [];
     const { unmapped } = getAllPartsioFields(table.familyId);
@@ -115,7 +214,6 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
         {t(`logicTable.${table.familyId}.name`, table.familyName)}
       </Typography>
 
-      {/* Coverage metric */}
       {coverage && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           {t('admin.paramCoverageDk', 'Digikey:')}{' '}
@@ -149,7 +247,6 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
         </Typography>
       )}
 
-      {/* Attribute-centric table */}
       <TableContainer>
         <Table size="small" sx={{ '& td, & th': { borderColor: 'divider' } }}>
           <TableHead>
@@ -163,7 +260,6 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {/* Zone 1: Schema attributes from logic table */}
             {attributeRows.map((rule, idx) => {
               const dkField = dkReverse.get(rule.attributeId);
               const pioField = pioReverse.get(rule.attributeId);
@@ -209,7 +305,6 @@ export default function ParamMappingsPanel({ table }: ParamMappingsPanelProps) {
               );
             })}
 
-            {/* Zone 2: Extra parts.io fields not in schema */}
             {extraPioFields.length > 0 && extraPioFields.map((field, idx) => (
               <TableRow
                 key={`extra-${field}`}

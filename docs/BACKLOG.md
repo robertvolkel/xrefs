@@ -79,22 +79,37 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
-### L2 taxonomy: curated param maps for high-value non-xref categories
-**Status:** Future — L0 classification complete (Decision #84)
-**Priority:** P1
+### ~~L2 taxonomy: curated param maps for high-value non-xref categories~~ COMPLETED
+**Status:** Done — Wave 1 (Decision #86) + Wave 2 (Decision #87)
 
-With L0 taxonomy done (37 `ComponentCategory` values, correct classification for all Digikey parts), the next step is L2: curated param maps for high-traffic categories that don't have logic tables. This would enable cross-source normalization (Digikey + Mouser + parts.io using canonical attribute IDs), smart columns in parts list tables, and richer LLM reasoning.
+14 L2 categories now have curated param maps in `digikeyParamMap.ts`:
+- **Wave 1** (Decision #86): Microcontrollers, Memory, Sensors, Connectors, LEDs, Switches
+- **Wave 2** (Decision #87): RF/Wireless, Power Supplies, Transformers, Filters, Processors, Audio, Battery Products (split: cells + charger ICs), Motors/Fans
 
-**Priority categories for L2 param maps:**
-1. Microcontrollers — Flash, RAM, peripherals, core architecture, clock speed, package
-2. Memory (EEPROM/Flash/SRAM) — capacity, interface, speed, voltage, package
-3. Sensors — sensing type, range, accuracy, interface, package
-4. Connectors — pitch, positions, orientation, mounting, current rating
-5. LEDs — color, wavelength, forward voltage, luminous intensity, viewing angle
+**Intentionally skipped:** Cables/Wires (too heterogeneous), Development Tools (no meaningful shared parametrics). Both remain at L0.
 
-Each L2 map requires: `digikeyParamMap.ts` entry keyed by Digikey category name, `partsioParamMap.ts` entry for gap-fill, and optionally a `mouserMapper.ts` entry. No logic tables needed — these are for display and normalization only.
+**Remaining gap:** Parts.io param maps (`partsioParamMap.ts`) and Mouser mapper entries not yet added for L2 categories — currently Digikey-only.
 
-**Key enabler:** `digikeyLeafCategory` field on `Part` (added in Decision #84) preserves exact Digikey category names for precise param map keying.
+### L2 family-level param maps: split union maps into per-sensor-type maps
+**Status:** Phase 1 (Sensors) done — Decision #88. 7 sensor sub-families with dedicated param maps + general fallback.
+
+**Completed (Phase 1):** Temperature Sensors, Accelerometers, Gyroscopes, IMUs, Current Sensors, Pressure Sensors, Humidity Sensors, Magnetic Sensors. `L2FamilyInfo` metadata index added. `mapCategory()` fixed for 3 sensor leaf categories that were misclassified as 'ICs'.
+
+**Completed (Phase 2):** RF Transceivers (18 fields, covers ICs + modules), RF Antennas (11 fields), Baluns (7 fields), RFID (8 fields). No `mapCategory()` fix needed — all 5 Digikey leaf categories already routed correctly.
+
+**Completed (Phase 3):** PCB Headers/Sockets (16 fields), Terminal Blocks (11 fields), RF Connectors (11 fields), USB/IO Connectors (12 fields). No `mapCategory()` fix needed.
+
+**Completed (Phase 4):** Audio: Buzzers/Sirens (15 fields), Microphones (13 fields), Speakers (17 fields). Switches: Tactile (14 fields), DIP (14 fields), Rocker/Toggle/Slide (15 fields). No `mapCategory()` fix needed.
+
+**Completed (Transformers):** SMPS Transformers (14 fields), Pulse Transformers (8 fields), Current Sense Transformers (11 fields). Memory investigated — single Digikey category with uniform fields across all types, no split needed.
+
+**Remaining phases:**
+- ~~Phase 2: RF/Wireless (transceivers vs antennas vs modules vs RFID)~~ ✅ Done (Decision #90)
+- ~~Phase 3: Connectors (PCB headers vs RF connectors vs terminal blocks)~~ ✅ Done (Decision #91)
+- ~~Phase 4: Audio (buzzers vs microphones vs speakers) + Switches (tactile vs toggle vs DIP)~~ ✅ Done (Decision #92)
+- ~~Transformers (SMPS vs pulse vs current sense)~~ ✅ Done (Decision #93)
+- ~~Phase 5: Admin panel integration (show L2 sub-families in param mappings panel)~~ ✅ Done (Decision #89)
+- Phase 5b: Taxonomy panel L2 integration (show L2 categories in taxonomy view)
 
 ---
 

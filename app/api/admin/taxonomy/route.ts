@@ -5,6 +5,7 @@ import { getAllLogicTables, getFamilyLastUpdated } from '@/lib/logicTables';
 import {
   getTaxonomyPatternsForFamily,
   computeFamilyParamCoverage,
+  getL2Categories,
 } from '@/lib/services/digikeyParamMap';
 import type {
   TaxonomyResponse,
@@ -61,6 +62,15 @@ export async function GET() {
       }
     }
 
+    // 2b. Build L2 reverse lookup: pattern → L2 display name
+    const l2Cats = getL2Categories();
+    const l2ReverseLookup = new Map<string, string>(); // pattern → L2 display name
+    for (const l2 of l2Cats) {
+      for (const key of l2.registrationKeys) {
+        l2ReverseLookup.set(key.toLowerCase(), l2.name);
+      }
+    }
+
     // 3. Enrich Digikey taxonomy with coverage data
     // Recursively collect leaf categories (no children) from any depth.
     // Passives are flat (leaves at L1), but Discrete Semiconductors has
@@ -82,6 +92,7 @@ export async function GET() {
     let coveredSubcategories = 0;
     let totalProducts = 0;
     let coveredProducts = 0;
+    let l2OnlySubcategories = 0;
 
     const categories: TaxonomyCategory[] = digikeyCategories.map((topCat) => {
       const leaves = collectLeaves(topCat.ChildCategories ?? []);
@@ -112,12 +123,27 @@ export async function GET() {
           return true;
         });
 
+        // Check L2 coverage
+        const l2CoverageNames: string[] = [];
+        if (!childLower.includes('kit') && !childLower.includes('pre-biased')) {
+          const l2Seen = new Set<string>();
+          for (const [pattern, name] of l2ReverseLookup) {
+            if (childLower.includes(pattern) && !l2Seen.has(name)) {
+              l2CoverageNames.push(name);
+              l2Seen.add(name);
+            }
+          }
+        }
+
         const covered = families.length > 0;
+        const hasL2 = l2CoverageNames.length > 0;
         const productCount = child.ProductCount ?? 0;
         totalProducts += productCount;
         if (covered) {
           coveredSubcategories++;
           coveredProducts += productCount;
+        } else if (hasL2) {
+          l2OnlySubcategories++;
         }
 
         return {
@@ -126,6 +152,7 @@ export async function GET() {
           productCount: child.ProductCount ?? 0,
           covered,
           families,
+          ...(l2CoverageNames.length > 0 && { l2Coverage: l2CoverageNames }),
         };
       });
 
@@ -175,6 +202,7 @@ export async function GET() {
         productCoveragePercentage: totalProducts > 0
           ? Math.round((coveredProducts / totalProducts) * 100)
           : 0,
+        l2OnlySubcategories,
       },
       fetchedAt: new Date().toISOString(),
     };

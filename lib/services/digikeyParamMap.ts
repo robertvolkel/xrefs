@@ -22,6 +22,32 @@ export interface ParamMapping {
  */
 export type ParamMapEntry = ParamMapping | ParamMapping[];
 
+/** Info about an L2 category (curated param maps, no logic table) */
+export interface L2CategoryInfo {
+  /** Display name like "RF and Wireless" */
+  name: string;
+  /** All registration keys in categoryParamMaps */
+  registrationKeys: string[];
+  /** Number of fields in the param map */
+  fieldCount: number;
+  /** The raw param map object */
+  paramMap: Record<string, ParamMapEntry>;
+}
+
+/** Info about an L2 sub-family (family-level param map within an L2 category) */
+export interface L2FamilyInfo {
+  /** Unique ID: 'category:subfamily' format, e.g. 'sensor:temperature' */
+  id: string;
+  /** Human-readable name, e.g. 'Temperature Sensors' */
+  name: string;
+  /** Parent L2 category, e.g. 'Sensors' */
+  category: string;
+  /** Digikey category substring keys (same as in categoryParamMaps) */
+  digikeyPatterns: string[];
+  /** Number of fields in the param map */
+  fieldCount: number;
+}
+
 /**
  * MLCC parameter mapping (Family 12).
  * Verified against: GRM188R71E105KA12 (Murata)
@@ -4666,10 +4692,518 @@ const memoryParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+// ============================================================
+// L2 SENSOR SUB-FAMILY PARAM MAPS (Decision #88)
+// Family-level param maps for specific sensor types.
+// Each contains only the fields relevant to that sensor type.
+// The general sensorParamMap (below) remains as fallback for
+// unrecognized sensor categories (optical, proximity, flow, etc.)
+// ============================================================
+
 /**
- * Sensor parameter mapping (L2) — general sensor map.
- * Digikey has many sensor subcategories (humidity, pressure, current, accelerometer, etc.)
- * with different params, but these fields appear across most types.
+ * Temperature sensor parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Analog and Digital Output" (under Temperature Sensors parent).
+ * NOT NTC/PTC thermistors — those are L3 families 67/68.
+ * Verified against: TMP117AIDRVR (TI digital temp sensor)
+ * 10 fields mapped of ~13 available.
+ */
+const temperatureSensorParamMap: Record<string, ParamMapEntry> = {
+  'Sensor Type': {
+    attributeId: 'sensor_type',
+    attributeName: 'Sensor Type',
+    sortOrder: 1,
+  },
+  'Sensing Temperature - Local': {
+    attributeId: 'sensing_temp_local',
+    attributeName: 'Sensing Temp (Local)',
+    sortOrder: 2,
+  },
+  'Sensing Temperature - Remote': {
+    attributeId: 'sensing_temp_remote',
+    attributeName: 'Sensing Temp (Remote)',
+    sortOrder: 3,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 4,
+  },
+  'Accuracy - Highest (Lowest)': {
+    attributeId: 'accuracy',
+    attributeName: 'Accuracy',
+    sortOrder: 5,
+  },
+  'Resolution': {
+    attributeId: 'resolution',
+    attributeName: 'Resolution',
+    sortOrder: 6,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 7,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 8,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Accelerometer parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Accelerometers".
+ * Verified against: ADXL345BCCZ (Analog Devices 3-axis digital accelerometer)
+ * 10 fields mapped of ~13 available.
+ */
+const accelerometerParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Axis': {
+    attributeId: 'axis',
+    attributeName: 'Axis',
+    sortOrder: 2,
+  },
+  'Acceleration Range': {
+    attributeId: 'acceleration_range',
+    attributeName: 'Acceleration Range',
+    sortOrder: 3,
+  },
+  'Sensitivity (LSB/g)': {
+    attributeId: 'sensitivity_lsb',
+    attributeName: 'Sensitivity (LSB/g)',
+    sortOrder: 4,
+  },
+  'Sensitivity (mV/g)': {
+    attributeId: 'sensitivity_mv',
+    attributeName: 'Sensitivity (mV/g)',
+    sortOrder: 5,
+  },
+  'Bandwidth': {
+    attributeId: 'bandwidth',
+    attributeName: 'Bandwidth',
+    unit: 'Hz',
+    sortOrder: 6,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 7,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 8,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Gyroscope parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Gyroscopes".
+ * Verified against: L3GD20HTR (STMicro 3-axis digital gyroscope)
+ * 11 fields mapped of ~12 available.
+ */
+const gyroscopeParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Axis': {
+    attributeId: 'axis',
+    attributeName: 'Axis',
+    sortOrder: 2,
+  },
+  'Range °/s': {
+    attributeId: 'angular_rate_range',
+    attributeName: 'Angular Rate Range (°/s)',
+    sortOrder: 3,
+  },
+  'Sensitivity (LSB/(°/s))': {
+    attributeId: 'sensitivity_lsb',
+    attributeName: 'Sensitivity (LSB/(°/s))',
+    sortOrder: 4,
+  },
+  'Sensitivity (mV/(°/s))': {
+    attributeId: 'sensitivity_mv',
+    attributeName: 'Sensitivity (mV/(°/s))',
+    sortOrder: 5,
+  },
+  'Bandwidth': {
+    attributeId: 'bandwidth',
+    attributeName: 'Bandwidth',
+    unit: 'Hz',
+    sortOrder: 6,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 7,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 8,
+  },
+  'Current - Supply': {
+    attributeId: 'supply_current',
+    attributeName: 'Supply Current',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 10,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * IMU (Inertial Measurement Unit) parameter mapping (L2 sub-family).
+ * Digikey leaf category: "IMUs (Inertial Measurement Units)".
+ * Digikey provides very sparse parametric data for IMUs — most specs are datasheet-only.
+ * Verified against: BMI160 (Bosch 6-axis IMU)
+ * 6 fields mapped of ~6 available.
+ */
+const imuParamMap: Record<string, ParamMapEntry> = {
+  'Sensor Type': {
+    attributeId: 'sensor_type',
+    attributeName: 'Sensor Type',
+    sortOrder: 1,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 2,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 3,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 4,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 5,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 6,
+  },
+};
+
+/**
+ * Current sensor parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Current Sensors".
+ * Covers Hall effect (open/closed loop), flux gate, and shunt-based current sensors.
+ * Verified against: ACS712ELCTR-20A-T (Allegro Hall effect current sensor)
+ * 14 fields mapped of ~17 available.
+ */
+const currentSensorParamMap: Record<string, ParamMapEntry> = {
+  'Sensor Type': {
+    attributeId: 'sensor_type',
+    attributeName: 'Sensor Type',
+    sortOrder: 1,
+  },
+  'For Measuring': {
+    attributeId: 'measuring',
+    attributeName: 'Measuring',
+    sortOrder: 2,
+  },
+  'Current - Sensing': {
+    attributeId: 'current_sensing',
+    attributeName: 'Current Sensing Range',
+    unit: 'A',
+    sortOrder: 3,
+  },
+  'Number of Channels': {
+    attributeId: 'channel_count',
+    attributeName: 'Number of Channels',
+    sortOrder: 4,
+  },
+  'Output': {
+    attributeId: 'output_resolution',
+    attributeName: 'Output Resolution',
+    sortOrder: 5,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 6,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 7,
+  },
+  'Linearity': {
+    attributeId: 'linearity',
+    attributeName: 'Linearity',
+    sortOrder: 8,
+  },
+  'Accuracy': {
+    attributeId: 'accuracy',
+    attributeName: 'Accuracy',
+    sortOrder: 9,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 10,
+  },
+  'Response Time': {
+    attributeId: 'response_time',
+    attributeName: 'Response Time',
+    sortOrder: 11,
+  },
+  'Polarization': {
+    attributeId: 'polarization',
+    attributeName: 'Polarization',
+    sortOrder: 12,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 13,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 14,
+  },
+};
+
+/**
+ * Pressure sensor parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Pressure Sensors, Transducers".
+ * Covers absolute, gauge, and differential pressure sensors.
+ * Verified against: BMP280 (Bosch digital barometric pressure sensor)
+ * 12 fields mapped of ~16 available.
+ */
+const pressureSensorParamMap: Record<string, ParamMapEntry> = {
+  'Pressure Type': {
+    attributeId: 'pressure_type',
+    attributeName: 'Pressure Type',
+    sortOrder: 1,
+  },
+  'Operating Pressure': {
+    attributeId: 'operating_pressure',
+    attributeName: 'Operating Pressure',
+    sortOrder: 2,
+  },
+  'Maximum Pressure': {
+    attributeId: 'max_pressure',
+    attributeName: 'Maximum Pressure',
+    sortOrder: 3,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 4,
+  },
+  'Output': {
+    attributeId: 'output_resolution',
+    attributeName: 'Output Resolution',
+    sortOrder: 5,
+  },
+  'Accuracy': {
+    attributeId: 'accuracy',
+    attributeName: 'Accuracy',
+    sortOrder: 6,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 7,
+  },
+  'Port Size': {
+    attributeId: 'port_size',
+    attributeName: 'Port Size',
+    sortOrder: 8,
+  },
+  'Port Style': {
+    attributeId: 'port_style',
+    attributeName: 'Port Style',
+    sortOrder: 9,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination Style',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Humidity sensor parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Humidity, Moisture Sensors".
+ * Often combined with temperature sensors (e.g., BME280).
+ * Verified against: BME280 (Bosch humidity/pressure/temperature combo sensor)
+ * 10 fields mapped of ~12 available.
+ */
+const humiditySensorParamMap: Record<string, ParamMapEntry> = {
+  'Sensor Type': {
+    attributeId: 'sensor_type',
+    attributeName: 'Sensor Type',
+    sortOrder: 1,
+  },
+  'Humidity Range': {
+    attributeId: 'humidity_range',
+    attributeName: 'Humidity Range',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 3,
+  },
+  'Output': {
+    attributeId: 'output_resolution',
+    attributeName: 'Output Resolution',
+    sortOrder: 4,
+  },
+  'Accuracy': {
+    attributeId: 'accuracy',
+    attributeName: 'Accuracy',
+    sortOrder: 5,
+  },
+  'Response Time': {
+    attributeId: 'response_time',
+    attributeName: 'Response Time',
+    sortOrder: 6,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 7,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 8,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Magnetic sensor parameter mapping (L2 sub-family).
+ * Digikey leaf category: "Linear, Compass (ICs)" (under Magnetic Sensors parent).
+ * Covers Hall effect switches, linear Hall sensors, and magnetoresistive sensors.
+ * Verified against: DRV5053VAQLPG (TI analog Hall effect sensor)
+ * 10 fields mapped of ~16 available.
+ */
+const magneticSensorParamMap: Record<string, ParamMapEntry> = {
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 1,
+  },
+  'Axis': {
+    attributeId: 'axis',
+    attributeName: 'Axis',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 3,
+  },
+  'Sensing Range': {
+    attributeId: 'sensing_range',
+    attributeName: 'Sensing Range',
+    sortOrder: 4,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 5,
+  },
+  'Bandwidth': {
+    attributeId: 'bandwidth',
+    attributeName: 'Bandwidth',
+    unit: 'Hz',
+    sortOrder: 6,
+  },
+  'Resolution': {
+    attributeId: 'resolution',
+    attributeName: 'Resolution',
+    sortOrder: 7,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 8,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 10,
+  },
+};
+
+/**
+ * Sensor parameter mapping (L2) — general sensor map (FALLBACK).
+ * Used for sensor types without a dedicated sub-family map above
+ * (optical, proximity, flow, force, gas, vibration, etc.).
+ * Digikey has many sensor subcategories with different params;
+ * these fields appear across most types.
  * Verified against: BME280 (humidity), ADXL345BCCZ (accelerometer), ACS712ELCTR-05B-T (current)
  * Union of common fields; missing params just won't match (no penalty without logic tables).
  */
@@ -4978,6 +5512,1898 @@ const switchParamMap: Record<string, ParamMapEntry> = {
   },
 };
 
+/**
+ * Tactile Switches parameter mapping (L2 sub-family).
+ * Verified against: B3F-1000 (Omron, 17 fields).
+ * Digikey category: "Tactile Switches"
+ * Key fields: Operating Force, Actuator Type/Orientation/Height, Illumination, Outline.
+ */
+const tactileSwitchParamMap: Record<string, ParamMapEntry> = {
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit',
+    sortOrder: 1,
+  },
+  'Switch Function': {
+    attributeId: 'switch_function',
+    attributeName: 'Switch Function',
+    sortOrder: 2,
+  },
+  'Contact Rating @ Voltage': {
+    attributeId: 'contact_rating',
+    attributeName: 'Contact Rating',
+    sortOrder: 3,
+  },
+  'Operating Force': {
+    attributeId: 'operating_force',
+    attributeName: 'Operating Force',
+    sortOrder: 4,
+  },
+  'Actuator Type': {
+    attributeId: 'actuator_type',
+    attributeName: 'Actuator Type',
+    sortOrder: 5,
+  },
+  'Actuator Orientation': {
+    attributeId: 'actuator_orientation',
+    attributeName: 'Actuator Orientation',
+    sortOrder: 6,
+  },
+  'Actuator Height off PCB, Vertical': {
+    attributeId: 'actuator_height',
+    attributeName: 'Actuator Height off PCB',
+    sortOrder: 7,
+  },
+  'Illumination': {
+    attributeId: 'illumination',
+    attributeName: 'Illumination',
+    sortOrder: 8,
+  },
+  'Illumination Type, Color': {
+    attributeId: 'illumination_color',
+    attributeName: 'Illumination Color',
+    sortOrder: 9,
+  },
+  'Outline': {
+    attributeId: 'outline',
+    attributeName: 'Dimensions',
+    sortOrder: 10,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 11,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination Style',
+    sortOrder: 12,
+  },
+  'Ingress Protection': {
+    attributeId: 'ingress_protection',
+    attributeName: 'Ingress Protection',
+    sortOrder: 13,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 14,
+  },
+};
+
+/**
+ * DIP Switches parameter mapping (L2 sub-family).
+ * Verified against: DS04-254-2-04BK-SMT (Same Sky, 15 fields).
+ * Digikey category: "DIP Switches"
+ * Key fields: Number of Positions, Pitch, Actuator Level, Washable.
+ */
+const dipSwitchParamMap: Record<string, ParamMapEntry> = {
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit',
+    sortOrder: 1,
+  },
+  'Number of Positions': {
+    attributeId: 'num_positions',
+    attributeName: 'Number of Positions',
+    sortOrder: 2,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    sortOrder: 3,
+  },
+  'Voltage Rating': {
+    attributeId: 'voltage_rating',
+    attributeName: 'Voltage Rating',
+    sortOrder: 4,
+  },
+  'Actuator Type': {
+    attributeId: 'actuator_type',
+    attributeName: 'Actuator Type',
+    sortOrder: 5,
+  },
+  'Actuator Level': {
+    attributeId: 'actuator_level',
+    attributeName: 'Actuator Level',
+    sortOrder: 6,
+  },
+  'Contact Material': {
+    attributeId: 'contact_material',
+    attributeName: 'Contact Material',
+    sortOrder: 7,
+  },
+  'Contact Finish': {
+    attributeId: 'contact_finish',
+    attributeName: 'Contact Finish',
+    sortOrder: 8,
+  },
+  'Pitch': {
+    attributeId: 'pitch',
+    attributeName: 'Pitch',
+    sortOrder: 9,
+  },
+  'Height Above Board': {
+    attributeId: 'height_above_board',
+    attributeName: 'Height Above Board',
+    sortOrder: 10,
+  },
+  'Washable': {
+    attributeId: 'washable',
+    attributeName: 'Washable',
+    sortOrder: 11,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 12,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination Style',
+    sortOrder: 13,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 14,
+  },
+};
+
+/**
+ * Rocker/Toggle/Slide Switches parameter mapping (L2 sub-family).
+ * Verified against: RA1113112R (E-Switch rocker, 16 fields), 1825232-1 (TE slide, 13 fields).
+ * Digikey categories: "Rocker Switches", "Toggle Switches", "Slide Switches"
+ * Key fields: Circuit, Switch Function, Current/Voltage Rating, Contact Material/Finish, Panel Cutout.
+ */
+const rockerToggleParamMap: Record<string, ParamMapEntry> = {
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit',
+    sortOrder: 1,
+  },
+  'Switch Function': {
+    attributeId: 'switch_function',
+    attributeName: 'Switch Function',
+    sortOrder: 2,
+  },
+  'Contact Timing': {
+    attributeId: 'contact_timing',
+    attributeName: 'Contact Timing',
+    sortOrder: 3,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    sortOrder: 4,
+  },
+  'Voltage Rating - AC': {
+    attributeId: 'voltage_rating_ac',
+    attributeName: 'Voltage Rating (AC)',
+    sortOrder: 5,
+  },
+  'Voltage Rating - DC': {
+    attributeId: 'voltage_rating_dc',
+    attributeName: 'Voltage Rating (DC)',
+    sortOrder: 6,
+  },
+  'Actuator Type': {
+    attributeId: 'actuator_type',
+    attributeName: 'Actuator Type',
+    sortOrder: 7,
+  },
+  'Contact Material': {
+    attributeId: 'contact_material',
+    attributeName: 'Contact Material',
+    sortOrder: 8,
+  },
+  'Contact Finish': {
+    attributeId: 'contact_finish',
+    attributeName: 'Contact Finish',
+    sortOrder: 9,
+  },
+  'Illumination Type, Color': {
+    attributeId: 'illumination_color',
+    attributeName: 'Illumination Color',
+    sortOrder: 10,
+  },
+  'Panel Cutout Dimensions': {
+    attributeId: 'panel_cutout',
+    attributeName: 'Panel Cutout',
+    sortOrder: 11,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 12,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination Style',
+    sortOrder: 13,
+  },
+  'Approval Agency': {
+    attributeId: 'approval_agency',
+    attributeName: 'Approval Agency',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 15,
+  },
+};
+
+/**
+ * RF and Wireless parameter mapping (L2).
+ * Union map covering RF transceivers, antennas, modules, and related devices.
+ * Verified against: CC1101RGPR (TI RF transceiver), SX1276IMLTRT (Semtech LoRa), ANT-433-HESM (TE antenna)
+ * Digikey categories: "RF Transceiver ICs", "RF Antennas"
+ * 15 fields mapped — union across transceivers (Type, Modulation, Data Rate) and antennas (Antenna Type, Gain).
+ */
+const rfWirelessParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'RF Family/Standard': {
+    attributeId: 'rf_standard',
+    attributeName: 'RF Standard',
+    sortOrder: 2,
+  },
+  'Protocol': {
+    attributeId: 'protocol',
+    attributeName: 'Protocol',
+    sortOrder: 3,
+  },
+  'Modulation': {
+    attributeId: 'modulation',
+    attributeName: 'Modulation',
+    sortOrder: 4,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 5,
+  },
+  'Frequency (Center/Band)': {
+    attributeId: 'center_frequency',
+    attributeName: 'Center Frequency',
+    unit: 'Hz',
+    sortOrder: 6,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 7,
+  },
+  'Data Rate (Max)': {
+    attributeId: 'data_rate_max',
+    attributeName: 'Data Rate (Max)',
+    sortOrder: 8,
+  },
+  'Power - Output': {
+    attributeId: 'output_power',
+    attributeName: 'Output Power',
+    sortOrder: 9,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 10,
+  },
+  'Gain': {
+    attributeId: 'gain',
+    attributeName: 'Gain',
+    sortOrder: 11,
+  },
+  'Antenna Type': {
+    attributeId: 'antenna_type',
+    attributeName: 'Antenna Type',
+    sortOrder: 12,
+  },
+  'Serial Interfaces': {
+    attributeId: 'serial_interfaces',
+    attributeName: 'Serial Interfaces',
+    sortOrder: 13,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 15,
+  },
+};
+
+/**
+ * RF Transceiver parameter mapping (L2 sub-family).
+ * Covers both transceiver ICs and transceiver modules/modems.
+ * Verified against: CC1101RGPR (TI sub-GHz), nRF24L01P-R7 (Nordic 2.4GHz),
+ *   SX1276IMLTRT (Semtech LoRa), ESP32-S3-WROOM-1-N8 (Espressif WiFi module),
+ *   RFM95W-915S2 (RF Solutions LoRa module)
+ * Digikey categories: "RF Transceiver ICs", "RF Transceiver Modules and Modems"
+ * 18 fields — ICs use "Data Rate (Max)", modules use "Data Rate"; both mapped to data_rate_max.
+ */
+const rfTransceiverParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'RF Family/Standard': {
+    attributeId: 'rf_standard',
+    attributeName: 'RF Standard',
+    sortOrder: 2,
+  },
+  'Protocol': {
+    attributeId: 'protocol',
+    attributeName: 'Protocol',
+    sortOrder: 3,
+  },
+  'Modulation': {
+    attributeId: 'modulation',
+    attributeName: 'Modulation',
+    sortOrder: 4,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 5,
+  },
+  'Data Rate (Max)': {
+    attributeId: 'data_rate_max',
+    attributeName: 'Data Rate (Max)',
+    sortOrder: 6,
+  },
+  'Data Rate': {
+    attributeId: 'data_rate_max',
+    attributeName: 'Data Rate',
+    sortOrder: 6,
+  },
+  'Power - Output': {
+    attributeId: 'output_power',
+    attributeName: 'Output Power',
+    sortOrder: 7,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 8,
+  },
+  'Serial Interfaces': {
+    attributeId: 'serial_interfaces',
+    attributeName: 'Serial Interfaces',
+    sortOrder: 9,
+  },
+  'Antenna Type': {
+    attributeId: 'antenna_type',
+    attributeName: 'Antenna Type',
+    sortOrder: 10,
+  },
+  'Utilized IC / Part': {
+    attributeId: 'utilized_ic',
+    attributeName: 'Utilized IC',
+    sortOrder: 11,
+  },
+  'GPIO': {
+    attributeId: 'gpio_count',
+    attributeName: 'GPIO Count',
+    sortOrder: 12,
+  },
+  'Memory Size': {
+    attributeId: 'memory_size',
+    attributeName: 'Memory Size',
+    sortOrder: 13,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 14,
+  },
+  'Current - Receiving': {
+    attributeId: 'current_receiving',
+    attributeName: 'Current (Rx)',
+    sortOrder: 15,
+  },
+  'Current - Transmitting': {
+    attributeId: 'current_transmitting',
+    attributeName: 'Current (Tx)',
+    sortOrder: 16,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 17,
+  },
+};
+
+/**
+ * RF Antenna parameter mapping (L2 sub-family).
+ * Verified against: ANT-433-HETH (TE Connectivity helical 433MHz)
+ * Digikey category: "RF Antennas"
+ * 11 fields — completely different from transceivers (VSWR, Gain, Return Loss, etc.)
+ */
+const rfAntennaParamMap: Record<string, ParamMapEntry> = {
+  'RF Family/Standard': {
+    attributeId: 'rf_standard',
+    attributeName: 'RF Standard',
+    sortOrder: 1,
+  },
+  'Frequency Group': {
+    attributeId: 'frequency_group',
+    attributeName: 'Frequency Group',
+    sortOrder: 2,
+  },
+  'Frequency (Center/Band)': {
+    attributeId: 'center_frequency',
+    attributeName: 'Center Frequency',
+    unit: 'Hz',
+    sortOrder: 3,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 4,
+  },
+  'Antenna Type': {
+    attributeId: 'antenna_type',
+    attributeName: 'Antenna Type',
+    sortOrder: 5,
+  },
+  'Number of Bands': {
+    attributeId: 'num_bands',
+    attributeName: 'Number of Bands',
+    sortOrder: 6,
+  },
+  'VSWR': {
+    attributeId: 'vswr',
+    attributeName: 'VSWR',
+    sortOrder: 7,
+  },
+  'Return Loss': {
+    attributeId: 'return_loss',
+    attributeName: 'Return Loss',
+    sortOrder: 8,
+  },
+  'Gain': {
+    attributeId: 'gain',
+    attributeName: 'Gain',
+    sortOrder: 9,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 10,
+  },
+  'Height (Max)': {
+    attributeId: 'height_max',
+    attributeName: 'Height (Max)',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Balun parameter mapping (L2 sub-family).
+ * Verified against: BAL-NRF01D3 (ST 2.4GHz balun)
+ * Digikey category: "Balun"
+ * 7 fields — impedance matching parameters only.
+ */
+const rfBalunParamMap: Record<string, ParamMapEntry> = {
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 1,
+  },
+  'Impedance - Unbalanced/Balanced': {
+    attributeId: 'impedance',
+    attributeName: 'Impedance (Unbal/Bal)',
+    sortOrder: 2,
+  },
+  'Phase Difference': {
+    attributeId: 'phase_difference',
+    attributeName: 'Phase Difference',
+    sortOrder: 3,
+  },
+  'Insertion Loss (Max)': {
+    attributeId: 'insertion_loss',
+    attributeName: 'Insertion Loss (Max)',
+    sortOrder: 4,
+  },
+  'Return Loss (Min)': {
+    attributeId: 'return_loss_min',
+    attributeName: 'Return Loss (Min)',
+    sortOrder: 5,
+  },
+  'Package / Case': {
+    attributeId: 'package',
+    attributeName: 'Package / Case',
+    sortOrder: 6,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 7,
+  },
+};
+
+/**
+ * RFID parameter mapping (L2 sub-family).
+ * Verified against: RI-I02-114A-01 (TI 13.56MHz RFID tag)
+ * Digikey category: "RFID Transponders, Tags"
+ * 8 fields — passive/active technology, memory, standards.
+ */
+const rfidParamMap: Record<string, ParamMapEntry> = {
+  'Style': {
+    attributeId: 'style',
+    attributeName: 'Style',
+    sortOrder: 1,
+  },
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 2,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 3,
+  },
+  'Memory Type': {
+    attributeId: 'memory_type',
+    attributeName: 'Memory Type',
+    sortOrder: 4,
+  },
+  'Writable Memory': {
+    attributeId: 'writable_memory',
+    attributeName: 'Writable Memory',
+    sortOrder: 5,
+  },
+  'Standards': {
+    attributeId: 'standards',
+    attributeName: 'Standards',
+    sortOrder: 6,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 7,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 8,
+  },
+};
+
+/**
+ * PCB Header/Socket parameter mapping (L2 sub-family).
+ * Covers male pin headers and female receptacle/socket headers.
+ * Verified against: TSW-110-07-G-S (Samtec 10-pos male), 68602-110HLF (Amphenol 10-pos male),
+ *   SFH11-PBPC-D25-ST-BK (Sullins 50-pos female socket)
+ * Digikey categories: "Headers, Male Pins", "Headers, Receptacles, Female Sockets"
+ * 16 fields — shared structure between male and female headers.
+ */
+const pcbHeaderParamMap: Record<string, ParamMapEntry> = {
+  'Connector Type': {
+    attributeId: 'connector_type',
+    attributeName: 'Connector Type',
+    sortOrder: 1,
+  },
+  'Contact Type': {
+    attributeId: 'contact_type',
+    attributeName: 'Contact Type',
+    sortOrder: 2,
+  },
+  'Number of Positions': {
+    attributeId: 'positions',
+    attributeName: 'Number of Positions',
+    sortOrder: 3,
+  },
+  'Number of Rows': {
+    attributeId: 'rows',
+    attributeName: 'Number of Rows',
+    sortOrder: 4,
+  },
+  'Pitch - Mating': {
+    attributeId: 'pitch',
+    attributeName: 'Pitch',
+    sortOrder: 5,
+  },
+  'Row Spacing - Mating': {
+    attributeId: 'row_spacing',
+    attributeName: 'Row Spacing',
+    sortOrder: 6,
+  },
+  'Shrouding': {
+    attributeId: 'shrouding',
+    attributeName: 'Shrouding',
+    sortOrder: 7,
+  },
+  'Style': {
+    attributeId: 'style',
+    attributeName: 'Style',
+    sortOrder: 8,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 10,
+  },
+  'Contact Shape': {
+    attributeId: 'contact_shape',
+    attributeName: 'Contact Shape',
+    sortOrder: 11,
+  },
+  'Contact Finish - Mating': {
+    attributeId: 'contact_finish',
+    attributeName: 'Contact Finish',
+    sortOrder: 12,
+  },
+  'Contact Material': {
+    attributeId: 'contact_material',
+    attributeName: 'Contact Material',
+    sortOrder: 13,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    unit: 'A',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 15,
+  },
+  'Material Flammability Rating': {
+    attributeId: 'flammability',
+    attributeName: 'Flammability Rating',
+    sortOrder: 16,
+  },
+};
+
+/**
+ * Terminal Block parameter mapping (L2 sub-family).
+ * Covers wire-to-board terminal blocks and pluggable connectors.
+ * Verified against: 282834-2 (TE 2-pos screw terminal)
+ * Digikey category: "Wire to Board"
+ * 11 fields — unique Wire Gauge, Wire Termination, Levels fields.
+ */
+const terminalBlockParamMap: Record<string, ParamMapEntry> = {
+  'Number of Levels': {
+    attributeId: 'levels',
+    attributeName: 'Number of Levels',
+    sortOrder: 1,
+  },
+  'Positions Per Level': {
+    attributeId: 'positions',
+    attributeName: 'Positions Per Level',
+    sortOrder: 2,
+  },
+  'Pitch': {
+    attributeId: 'pitch',
+    attributeName: 'Pitch',
+    sortOrder: 3,
+  },
+  'Mating Orientation': {
+    attributeId: 'mating_orientation',
+    attributeName: 'Mating Orientation',
+    sortOrder: 4,
+  },
+  'Current': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    unit: 'A',
+    sortOrder: 5,
+  },
+  'Voltage': {
+    attributeId: 'voltage_rating',
+    attributeName: 'Voltage Rating',
+    unit: 'V',
+    sortOrder: 6,
+  },
+  'Wire Gauge': {
+    attributeId: 'wire_gauge',
+    attributeName: 'Wire Gauge',
+    sortOrder: 7,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 8,
+  },
+  'Wire Termination': {
+    attributeId: 'wire_termination',
+    attributeName: 'Wire Termination',
+    sortOrder: 9,
+  },
+  'Color': {
+    attributeId: 'color',
+    attributeName: 'Color',
+    sortOrder: 10,
+  },
+  'Features': {
+    attributeId: 'features',
+    attributeName: 'Features',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * RF Connector (coaxial) parameter mapping (L2 sub-family).
+ * Verified against: 132289 (Amphenol SMA receptacle)
+ * Digikey category: "Coaxial Connector (RF) Assemblies"
+ * 11 fields — unique Impedance, Frequency Max, Connector Style.
+ */
+const rfConnectorParamMap: Record<string, ParamMapEntry> = {
+  'Connector Style': {
+    attributeId: 'connector_style',
+    attributeName: 'Connector Style',
+    sortOrder: 1,
+  },
+  'Connector Type': {
+    attributeId: 'connector_type',
+    attributeName: 'Connector Type',
+    sortOrder: 2,
+  },
+  'Impedance': {
+    attributeId: 'impedance',
+    attributeName: 'Impedance',
+    sortOrder: 3,
+  },
+  'Frequency - Max': {
+    attributeId: 'frequency_max',
+    attributeName: 'Frequency (Max)',
+    unit: 'Hz',
+    sortOrder: 4,
+  },
+  'Number of Ports': {
+    attributeId: 'num_ports',
+    attributeName: 'Number of Ports',
+    sortOrder: 5,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 6,
+  },
+  'Mounting Feature': {
+    attributeId: 'mounting_feature',
+    attributeName: 'Mounting Feature',
+    sortOrder: 7,
+  },
+  'Contact Termination': {
+    attributeId: 'contact_termination',
+    attributeName: 'Contact Termination',
+    sortOrder: 8,
+  },
+  'Fastening Type': {
+    attributeId: 'fastening_type',
+    attributeName: 'Fastening Type',
+    sortOrder: 9,
+  },
+  'Center Contact Material': {
+    attributeId: 'center_contact_material',
+    attributeName: 'Center Contact Material',
+    sortOrder: 10,
+  },
+  'Cable Group': {
+    attributeId: 'cable_group',
+    attributeName: 'Cable Group',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * USB/IO Connector parameter mapping (L2 sub-family).
+ * Covers USB, DVI, HDMI, and similar I/O connectors.
+ * Verified against: USB3076-30-A (GCT micro-B USB receptacle)
+ * Digikey category: "USB, DVI, HDMI Connector Assemblies"
+ * 12 fields — unique Gender, Specifications, Mating Cycles, Shielding.
+ */
+const usbIoConnectorParamMap: Record<string, ParamMapEntry> = {
+  'Connector Type': {
+    attributeId: 'connector_type',
+    attributeName: 'Connector Type',
+    sortOrder: 1,
+  },
+  'Number of Contacts': {
+    attributeId: 'contacts',
+    attributeName: 'Number of Contacts',
+    sortOrder: 2,
+  },
+  'Gender': {
+    attributeId: 'gender',
+    attributeName: 'Gender',
+    sortOrder: 3,
+  },
+  'Specifications': {
+    attributeId: 'specifications',
+    attributeName: 'Specifications',
+    sortOrder: 4,
+  },
+  'Number of Ports': {
+    attributeId: 'num_ports',
+    attributeName: 'Number of Ports',
+    sortOrder: 5,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 6,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 7,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    unit: 'A',
+    sortOrder: 8,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rating',
+    attributeName: 'Voltage Rating',
+    unit: 'V',
+    sortOrder: 9,
+  },
+  'Shielding': {
+    attributeId: 'shielding',
+    attributeName: 'Shielding',
+    sortOrder: 10,
+  },
+  'Mating Cycles': {
+    attributeId: 'mating_cycles',
+    attributeName: 'Mating Cycles',
+    sortOrder: 11,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Power supply parameter mapping (L2).
+ * Covers DC-DC converters (board-mount isolated modules) and AC-DC converters.
+ * Verified against: MEE1S0505SC (Murata DC-DC), IRM-02-5 (Mean Well AC-DC)
+ * Digikey categories: "DC DC Converters", "AC DC Converters"
+ * 13 fields mapped — DC-DC has separate min/max input voltage; AC-DC has combined input voltage.
+ */
+const powerSupplyParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Number of Outputs': {
+    attributeId: 'num_outputs',
+    attributeName: 'Number of Outputs',
+    sortOrder: 2,
+  },
+  'Voltage - Input': {
+    attributeId: 'input_voltage',
+    attributeName: 'Input Voltage',
+    sortOrder: 3,
+  },
+  'Voltage - Input (Min)': {
+    attributeId: 'input_voltage_min',
+    attributeName: 'Input Voltage (Min)',
+    sortOrder: 4,
+  },
+  'Voltage - Input (Max)': {
+    attributeId: 'input_voltage_max',
+    attributeName: 'Input Voltage (Max)',
+    sortOrder: 5,
+  },
+  'Voltage - Output 1': {
+    attributeId: 'output_voltage',
+    attributeName: 'Output Voltage',
+    sortOrder: 6,
+  },
+  'Current - Output (Max)': {
+    attributeId: 'output_current_max',
+    attributeName: 'Output Current (Max)',
+    sortOrder: 7,
+  },
+  'Power (Watts)': {
+    attributeId: 'power_watts',
+    attributeName: 'Power',
+    unit: 'W',
+    sortOrder: 8,
+  },
+  'Voltage - Isolation': {
+    attributeId: 'isolation_voltage',
+    attributeName: 'Isolation Voltage',
+    sortOrder: 9,
+  },
+  'Efficiency': {
+    attributeId: 'efficiency',
+    attributeName: 'Efficiency',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 11,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 12,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 13,
+  },
+};
+
+/**
+ * Transformer parameter mapping (L2).
+ * Union map covering SMPS/switching transformers and pulse transformers.
+ * Verified against: 760390012 (Wurth SMPS), DA101C (Murata pulse)
+ * Digikey categories: "Switching Converter, SMPS Transformers", "Pulse Transformers"
+ * 11 fields mapped — SMPS uses "Inductance @ Frequency", pulse uses "Inductance" and "ET (Volt-Time)".
+ */
+const transformerParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Transformer Type': {
+    attributeId: 'transformer_type',
+    attributeName: 'Transformer Type',
+    sortOrder: 2,
+  },
+  'Turns Ratio - Primary:Secondary': {
+    attributeId: 'turns_ratio',
+    attributeName: 'Turns Ratio',
+    sortOrder: 3,
+  },
+  'Voltage - Primary': {
+    attributeId: 'primary_voltage',
+    attributeName: 'Primary Voltage',
+    sortOrder: 4,
+  },
+  'Voltage - Isolation': {
+    attributeId: 'isolation_voltage',
+    attributeName: 'Isolation Voltage',
+    sortOrder: 5,
+  },
+  'Inductance': {
+    attributeId: 'inductance',
+    attributeName: 'Inductance',
+    sortOrder: 6,
+  },
+  'Inductance @ Frequency': {
+    attributeId: 'inductance_at_freq',
+    attributeName: 'Inductance @ Frequency',
+    sortOrder: 7,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 8,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 9,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 10,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * SMPS/Switching Converter Transformers parameter mapping (L2 sub-family).
+ * Verified against: 750315371 (Wurth DC/DC, 14 fields), 760895441 (Wurth AC/DC, 14 fields).
+ * Digikey category: "Switching Converter, SMPS Transformers"
+ * Key fields: Type (DC/DC vs AC/DC), Applications, Intended Chipset, Voltage-Primary/Isolation, Inductance@Freq.
+ */
+const smpsTransformerParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Applications': {
+    attributeId: 'applications',
+    attributeName: 'Applications',
+    sortOrder: 2,
+  },
+  'Intended Chipset': {
+    attributeId: 'intended_chipset',
+    attributeName: 'Intended Chipset',
+    sortOrder: 3,
+  },
+  'Chipset Manufacturer': {
+    attributeId: 'chipset_manufacturer',
+    attributeName: 'Chipset Manufacturer',
+    sortOrder: 4,
+  },
+  'Voltage - Primary': {
+    attributeId: 'primary_voltage',
+    attributeName: 'Primary Voltage',
+    sortOrder: 5,
+  },
+  'Voltage - Auxiliary': {
+    attributeId: 'auxiliary_voltage',
+    attributeName: 'Auxiliary Voltage',
+    sortOrder: 6,
+  },
+  'Voltage - Isolation': {
+    attributeId: 'isolation_voltage',
+    attributeName: 'Isolation Voltage',
+    sortOrder: 7,
+  },
+  'Inductance @ Frequency': {
+    attributeId: 'inductance_at_freq',
+    attributeName: 'Inductance @ Frequency',
+    sortOrder: 8,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 10,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 11,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 12,
+  },
+  'Height - Seated (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 13,
+  },
+  'Footprint': {
+    attributeId: 'footprint',
+    attributeName: 'Footprint',
+    sortOrder: 14,
+  },
+};
+
+/**
+ * Pulse Transformers parameter mapping (L2 sub-family).
+ * Verified against: PE-68386NL (Pulse Electronics, 8 fields), DA101C (Murata audio, 8 fields).
+ * Digikey category: "Pulse Transformers"
+ * Key fields: Transformer Type, Inductance, ET (Volt-Time), Turns Ratio.
+ */
+const pulseTransformerParamMap: Record<string, ParamMapEntry> = {
+  'Transformer Type': {
+    attributeId: 'transformer_type',
+    attributeName: 'Transformer Type',
+    sortOrder: 1,
+  },
+  'Inductance': {
+    attributeId: 'inductance',
+    attributeName: 'Inductance',
+    sortOrder: 2,
+  },
+  'ET (Volt-Time)': {
+    attributeId: 'et_volt_time',
+    attributeName: 'ET (Volt-Time)',
+    sortOrder: 3,
+  },
+  'Turns Ratio - Primary:Secondary': {
+    attributeId: 'turns_ratio',
+    attributeName: 'Turns Ratio',
+    sortOrder: 4,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 5,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 6,
+  },
+  'Height - Seated (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 7,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 8,
+  },
+};
+
+/**
+ * Current Sense Transformers parameter mapping (L2 sub-family).
+ * Verified against: CSE187L (Triad Magnetics, 12 fields).
+ * Digikey category: "Current Sense Transformers"
+ * Key fields: Type (Invasive/Non-Invasive), Current Rating, Turns Ratio, Current Ratio, DC Resistance.
+ */
+const currentSenseTransformerParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    sortOrder: 2,
+  },
+  'Turns Ratio - Primary:Secondary': {
+    attributeId: 'turns_ratio',
+    attributeName: 'Turns Ratio',
+    sortOrder: 3,
+  },
+  'Current Ratio': {
+    attributeId: 'current_ratio',
+    attributeName: 'Current Ratio',
+    sortOrder: 4,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 5,
+  },
+  'DC Resistance (DCR)': {
+    attributeId: 'dcr',
+    attributeName: 'DC Resistance',
+    sortOrder: 6,
+  },
+  'ET (Volt-Time)': {
+    attributeId: 'et_volt_time',
+    attributeName: 'ET (Volt-Time)',
+    sortOrder: 7,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination Style',
+    sortOrder: 8,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 9,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 10,
+  },
+  'Height - Seated (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Filter parameter mapping (L2).
+ * Covers EMI/RFI, SAW, BAW, ceramic, and active filters.
+ * Verified against: BNX022-01L (Murata EMI/RFI LC filter)
+ * Digikey category: "EMI/RFI Filters (LC, RC Networks)"
+ * 12 fields mapped — includes SAW-common fields (Insertion Loss) even though EMI discovery showed "-".
+ */
+const filterParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Filter Order': {
+    attributeId: 'filter_order',
+    attributeName: 'Filter Order',
+    sortOrder: 2,
+  },
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 3,
+  },
+  'Number of Channels': {
+    attributeId: 'channel_count',
+    attributeName: 'Number of Channels',
+    sortOrder: 4,
+  },
+  'Center / Cutoff Frequency': {
+    attributeId: 'cutoff_frequency',
+    attributeName: 'Cutoff Frequency',
+    unit: 'Hz',
+    sortOrder: 5,
+  },
+  'Attenuation Value': {
+    attributeId: 'attenuation',
+    attributeName: 'Attenuation',
+    sortOrder: 6,
+  },
+  'Insertion Loss': {
+    attributeId: 'insertion_loss',
+    attributeName: 'Insertion Loss',
+    sortOrder: 7,
+  },
+  'Current': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    unit: 'A',
+    sortOrder: 8,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Voltage Rating',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 10,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Processor parameter mapping (L2).
+ * Union map covering FPGAs and CPLDs (DSPs classified as Microcontrollers by Digikey).
+ * Verified against: XC7A35T-1CPG236C (AMD Artix-7 FPGA), EPM240T100C5N (Altera MAX II CPLD)
+ * Digikey categories: "FPGAs (Field Programmable Gate Array)", "CPLDs (Complex Programmable Logic Devices)"
+ * 12 fields mapped — FPGAs have LABs/CLBs + RAM bits; CPLDs have macrocells + propagation delay.
+ */
+const processorParamMap: Record<string, ParamMapEntry> = {
+  'Programmable Type': {
+    attributeId: 'programmable_type',
+    attributeName: 'Programmable Type',
+    sortOrder: 1,
+  },
+  'Number of LABs/CLBs': {
+    attributeId: 'lab_count',
+    attributeName: 'LABs/CLBs',
+    sortOrder: 2,
+  },
+  'Number of Logic Elements/Cells': {
+    attributeId: 'logic_elements',
+    attributeName: 'Logic Elements/Cells',
+    sortOrder: 3,
+  },
+  'Number of Logic Elements/Blocks': {
+    attributeId: 'logic_blocks',
+    attributeName: 'Logic Elements/Blocks',
+    sortOrder: 4,
+  },
+  'Number of Macrocells': {
+    attributeId: 'macrocells',
+    attributeName: 'Macrocells',
+    sortOrder: 5,
+  },
+  'Total RAM Bits': {
+    attributeId: 'total_ram',
+    attributeName: 'Total RAM Bits',
+    sortOrder: 6,
+  },
+  'Number of I/O': {
+    attributeId: 'io_count',
+    attributeName: 'Number of I/O',
+    sortOrder: 7,
+  },
+  'Delay Time tpd(1) Max': {
+    attributeId: 'delay_time',
+    attributeName: 'Propagation Delay (Max)',
+    sortOrder: 8,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 9,
+  },
+  'Voltage Supply - Internal': {
+    attributeId: 'supply_voltage_internal',
+    attributeName: 'Internal Supply Voltage',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Audio parameter mapping (L2).
+ * Union map covering buzzers/sirens, microphones, and speakers.
+ * Verified against: CMT-1603-SMT-TR (CUI piezo buzzer), SPH0645LM4H-B (MEMS mic), AS01808AO-3-R (PUI speaker)
+ * Digikey categories: "Alarms, Buzzers, and Sirens", "Microphones", "Speakers"
+ * 15 fields mapped — buzzers (SPL, Technology), mics (Sensitivity, S/N, Direction), speakers (Impedance, Power).
+ */
+const audioParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 2,
+  },
+  'Direction': {
+    attributeId: 'direction',
+    attributeName: 'Directionality',
+    sortOrder: 3,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 4,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 5,
+  },
+  'Impedance': {
+    attributeId: 'impedance',
+    attributeName: 'Impedance',
+    unit: 'Ohm',
+    sortOrder: 6,
+  },
+  'Sound Pressure Level (SPL)': {
+    attributeId: 'spl',
+    attributeName: 'Sound Pressure Level',
+    sortOrder: 7,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 8,
+  },
+  'S/N Ratio': {
+    attributeId: 'snr',
+    attributeName: 'Signal-to-Noise Ratio',
+    sortOrder: 9,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 10,
+  },
+  'Power - Rated': {
+    attributeId: 'power_rated',
+    attributeName: 'Rated Power',
+    unit: 'W',
+    sortOrder: 11,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Rated Voltage',
+    sortOrder: 12,
+  },
+  'Current - Supply': {
+    attributeId: 'supply_current',
+    attributeName: 'Supply Current',
+    sortOrder: 13,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 14,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 15,
+  },
+};
+
+/**
+ * Buzzers/Sirens/Alarms parameter mapping (L2 sub-family).
+ * Verified against: CMT-1603-SMT-TR (piezo, 18 fields), AI-1223-TWT-3V-2-R (magnetic, 18 fields).
+ * Digikey category: "Alarms, Buzzers, and Sirens"
+ * Key fields: Driver Circuitry, Technology, Operating Mode, Frequency (single), SPL.
+ */
+const buzzerParamMap: Record<string, ParamMapEntry> = {
+  'Driver Circuitry': {
+    attributeId: 'driver_circuitry',
+    attributeName: 'Driver Circuitry',
+    sortOrder: 1,
+  },
+  'Input Type': {
+    attributeId: 'input_type',
+    attributeName: 'Input Type',
+    sortOrder: 2,
+  },
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 3,
+  },
+  'Operating Mode': {
+    attributeId: 'operating_mode',
+    attributeName: 'Operating Mode',
+    sortOrder: 4,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 5,
+  },
+  'Sound Pressure Level (SPL)': {
+    attributeId: 'spl',
+    attributeName: 'Sound Pressure Level',
+    sortOrder: 6,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Rated Voltage',
+    sortOrder: 7,
+  },
+  'Voltage Range': {
+    attributeId: 'voltage_range',
+    attributeName: 'Voltage Range',
+    sortOrder: 8,
+  },
+  'Current - Supply': {
+    attributeId: 'supply_current',
+    attributeName: 'Supply Current',
+    sortOrder: 9,
+  },
+  'Port Location': {
+    attributeId: 'port_location',
+    attributeName: 'Port Location',
+    sortOrder: 10,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 11,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 12,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 13,
+  },
+  'Height - Seated (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 14,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 15,
+  },
+};
+
+/**
+ * Microphones parameter mapping (L2 sub-family).
+ * Verified against: SPH0645LM4H-B (MEMS digital, 14 fields).
+ * Digikey category: "Microphones"
+ * Key fields: Type, Direction, Output Type, Sensitivity, S/N Ratio, Frequency Range.
+ */
+const microphoneParamMap: Record<string, ParamMapEntry> = {
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 1,
+  },
+  'Direction': {
+    attributeId: 'direction',
+    attributeName: 'Directionality',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type',
+    sortOrder: 3,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 4,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 5,
+  },
+  'S/N Ratio': {
+    attributeId: 'snr',
+    attributeName: 'Signal-to-Noise Ratio',
+    sortOrder: 6,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Rated Voltage',
+    sortOrder: 7,
+  },
+  'Voltage Range': {
+    attributeId: 'voltage_range',
+    attributeName: 'Voltage Range',
+    sortOrder: 8,
+  },
+  'Current - Supply': {
+    attributeId: 'supply_current',
+    attributeName: 'Supply Current',
+    sortOrder: 9,
+  },
+  'Port Location': {
+    attributeId: 'port_location',
+    attributeName: 'Port Location',
+    sortOrder: 10,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 11,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 12,
+  },
+  'Height (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 13,
+  },
+};
+
+/**
+ * Speakers parameter mapping (L2 sub-family).
+ * Verified against: GF0401M (Same Sky, 19 fields).
+ * Digikey category: "Speakers"
+ * Key fields: Technology, Frequency Range, Impedance, Efficiency/SPL, Power Rated/Max, Material.
+ */
+const speakerParamMap: Record<string, ParamMapEntry> = {
+  'Technology': {
+    attributeId: 'technology',
+    attributeName: 'Technology',
+    sortOrder: 1,
+  },
+  'Type': {
+    attributeId: 'type',
+    attributeName: 'Type',
+    sortOrder: 2,
+  },
+  'Frequency Range': {
+    attributeId: 'frequency_range',
+    attributeName: 'Frequency Range',
+    sortOrder: 3,
+  },
+  'Frequency - Self Resonant': {
+    attributeId: 'freq_self_resonant',
+    attributeName: 'Self-Resonant Frequency',
+    sortOrder: 4,
+  },
+  'Impedance': {
+    attributeId: 'impedance',
+    attributeName: 'Impedance',
+    unit: 'Ohm',
+    sortOrder: 5,
+  },
+  'Efficiency - dBA': {
+    attributeId: 'efficiency_dba',
+    attributeName: 'Efficiency (dBA)',
+    sortOrder: 6,
+  },
+  'Efficiency - Type': {
+    attributeId: 'efficiency_type',
+    attributeName: 'Efficiency Type',
+    sortOrder: 7,
+  },
+  'Efficiency - Testing': {
+    attributeId: 'efficiency_testing',
+    attributeName: 'Efficiency Test Conditions',
+    sortOrder: 8,
+  },
+  'Power - Rated': {
+    attributeId: 'power_rated',
+    attributeName: 'Rated Power',
+    unit: 'W',
+    sortOrder: 9,
+  },
+  'Power - Max': {
+    attributeId: 'power_max',
+    attributeName: 'Max Power',
+    unit: 'W',
+    sortOrder: 10,
+  },
+  'Material - Cone': {
+    attributeId: 'material_cone',
+    attributeName: 'Cone Material',
+    sortOrder: 11,
+  },
+  'Material - Magnet': {
+    attributeId: 'material_magnet',
+    attributeName: 'Magnet Material',
+    sortOrder: 12,
+  },
+  'Port Location': {
+    attributeId: 'port_location',
+    attributeName: 'Port Location',
+    sortOrder: 13,
+  },
+  'Shape': {
+    attributeId: 'shape',
+    attributeName: 'Shape',
+    sortOrder: 14,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 15,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 16,
+  },
+  'Height - Seated (Max)': {
+    attributeId: 'height',
+    attributeName: 'Height (Max)',
+    sortOrder: 17,
+  },
+};
+
+/**
+ * Battery parameter mapping (L2) — cells/packs only, NOT charger ICs.
+ * Covers primary (non-rechargeable) and secondary (rechargeable) batteries.
+ * Verified against: P189-ND (Panasonic CR2032 coin cell)
+ * Digikey category: "Batteries Non-Rechargeable (Primary)"
+ * 6 fields mapped — batteries have few parametrics; these are the core specs.
+ */
+const batteryParamMap: Record<string, ParamMapEntry> = {
+  'Battery Chemistry': {
+    attributeId: 'chemistry',
+    attributeName: 'Chemistry',
+    sortOrder: 1,
+  },
+  'Battery Cell Size': {
+    attributeId: 'cell_size',
+    attributeName: 'Cell Size',
+    sortOrder: 2,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Rated Voltage',
+    unit: 'V',
+    sortOrder: 3,
+  },
+  'Capacity': {
+    attributeId: 'capacity',
+    attributeName: 'Capacity',
+    sortOrder: 4,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 5,
+  },
+  'Termination Style': {
+    attributeId: 'termination_style',
+    attributeName: 'Termination',
+    sortOrder: 6,
+  },
+};
+
+/**
+ * Battery charger IC parameter mapping (L2) — separate from battery cell map.
+ * Covers Li-Ion/Li-Poly charger ICs, power path management ICs.
+ * Verified against: BQ24190RGER (TI Li-Ion charger, I2C interface)
+ * Digikey category: "Battery Chargers"
+ * 11 fields mapped — fundamentally different from battery cells (active semiconductor vs passive storage).
+ */
+const chargerIcParamMap: Record<string, ParamMapEntry> = {
+  'Battery Chemistry': {
+    attributeId: 'chemistry',
+    attributeName: 'Battery Chemistry',
+    sortOrder: 1,
+  },
+  'Number of Cells': {
+    attributeId: 'num_cells',
+    attributeName: 'Number of Cells',
+    sortOrder: 2,
+  },
+  'Current - Charging': {
+    attributeId: 'charging_current',
+    attributeName: 'Charging Current',
+    sortOrder: 3,
+  },
+  'Charge Current - Max': {
+    attributeId: 'charge_current_max',
+    attributeName: 'Charge Current (Max)',
+    unit: 'A',
+    sortOrder: 4,
+  },
+  'Battery Pack Voltage': {
+    attributeId: 'pack_voltage',
+    attributeName: 'Battery Pack Voltage',
+    unit: 'V',
+    sortOrder: 5,
+  },
+  'Voltage - Supply (Max)': {
+    attributeId: 'supply_voltage_max',
+    attributeName: 'Supply Voltage (Max)',
+    sortOrder: 6,
+  },
+  'Fault Protection': {
+    attributeId: 'fault_protection',
+    attributeName: 'Fault Protection',
+    sortOrder: 7,
+  },
+  'Programmable Features': {
+    attributeId: 'programmable_features',
+    attributeName: 'Programmable Features',
+    sortOrder: 8,
+  },
+  'Interface': {
+    attributeId: 'interface',
+    attributeName: 'Interface',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 10,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 11,
+  },
+};
+
+/**
+ * Motor and fan parameter mapping (L2).
+ * Primarily verified against fans; motor-specific fields (torque) can be added on demand.
+ * Verified against: AFB0412SHB (Delta 40mm DC brushless fan)
+ * Digikey category: "DC Brushless Fans (BLDC)"
+ * 13 fields mapped — RPM, airflow, static pressure, noise are fan-centric but voltage/power/size shared.
+ */
+const motorFanParamMap: Record<string, ParamMapEntry> = {
+  'Fan Type': {
+    attributeId: 'fan_type',
+    attributeName: 'Fan Type',
+    sortOrder: 1,
+  },
+  'Voltage - Rated': {
+    attributeId: 'voltage_rated',
+    attributeName: 'Rated Voltage',
+    sortOrder: 2,
+  },
+  'Power (Watts)': {
+    attributeId: 'power_watts',
+    attributeName: 'Power',
+    unit: 'W',
+    sortOrder: 3,
+  },
+  'RPM': {
+    attributeId: 'rpm',
+    attributeName: 'Speed (RPM)',
+    sortOrder: 4,
+  },
+  'Air Flow': {
+    attributeId: 'airflow',
+    attributeName: 'Air Flow',
+    sortOrder: 5,
+  },
+  'Static Pressure': {
+    attributeId: 'static_pressure',
+    attributeName: 'Static Pressure',
+    sortOrder: 6,
+  },
+  'Noise': {
+    attributeId: 'noise',
+    attributeName: 'Noise Level',
+    sortOrder: 7,
+  },
+  'Bearing Type': {
+    attributeId: 'bearing_type',
+    attributeName: 'Bearing Type',
+    sortOrder: 8,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 9,
+  },
+  'Ingress Protection': {
+    attributeId: 'ip_rating',
+    attributeName: 'Ingress Protection',
+    sortOrder: 10,
+  },
+  'Size / Dimension': {
+    attributeId: 'size',
+    attributeName: 'Size / Dimension',
+    sortOrder: 11,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 12,
+  },
+  'Weight': {
+    attributeId: 'weight',
+    attributeName: 'Weight',
+    sortOrder: 13,
+  },
+};
+
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
   ['Ceramic Capacitors', mlccParamMap],
@@ -5077,22 +7503,83 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // === L2 categories (no logic tables — curated param maps only) ===
   ['Microcontrollers', mcuParamMap],
   ['Memory', memoryParamMap],
-  // Sensors — multiple Digikey subcategories all share common param names
+  // Sensors — family-specific maps first, general fallback last (Decision #88)
+  // Temperature sensors: Digikey leaf "Analog and Digital Output" (no 'sensor' in name!)
+  ['Analog and Digital Output', temperatureSensorParamMap],
+  // Accelerometers: Digikey leaf "Accelerometers"
+  ['Accelerometer', accelerometerParamMap],
+  // Gyroscopes: Digikey leaf "Gyroscopes"
+  ['Gyroscope', gyroscopeParamMap],
+  // IMUs: Digikey leaf "IMUs (Inertial Measurement Units)"
+  ['IMU', imuParamMap],
+  // Current sensors: Digikey leaf "Current Sensors"
+  ['Current Sensor', currentSensorParamMap],
+  // Pressure sensors: Digikey leaf "Pressure Sensors, Transducers"
+  ['Pressure Sensor', pressureSensorParamMap],
+  // Humidity sensors: Digikey leaf "Humidity, Moisture Sensors"
+  // 'Humidity' MUST come before 'Sensor' fallback for correct matching
+  ['Humidity', humiditySensorParamMap],
+  // Magnetic sensors: Digikey leaf "Linear, Compass (ICs)" (no 'sensor' in name!)
+  ['Linear, Compass', magneticSensorParamMap],
+  // General sensor fallback — for types without dedicated maps (optical, proximity, flow, etc.)
   ['Sensor', sensorParamMap],
-  ['Accelerometer', sensorParamMap],
-  ['Gyroscope', sensorParamMap],
-  ['IMU', sensorParamMap],
-  // Connectors — broad category covering headers, pins, sockets, etc.
-  ['Header', connectorParamMap],
-  ['Connector', connectorParamMap],
-  ['Socket', connectorParamMap],
+  // Connectors — family-specific maps (Decision #91), general fallback last
+  ['Header', pcbHeaderParamMap],           // "Headers, Male Pins" + "Headers, Receptacles, Female Sockets"
+  ['Wire to Board', terminalBlockParamMap], // "Wire to Board" terminal blocks
+  ['Coaxial Connector', rfConnectorParamMap], // "Coaxial Connector (RF) Assemblies"
+  ['USB, DVI, HDMI', usbIoConnectorParamMap], // "USB, DVI, HDMI Connector Assemblies"
+  ['Connector', connectorParamMap],        // fallback for other connector types
+  ['Socket', connectorParamMap],           // fallback for other socket types
   // LEDs — discrete indication LEDs
   ['LED Indication', ledParamMap],
-  // Switches — tactile, pushbutton, DIP, toggle
-  ['Tactile Switch', switchParamMap],
-  ['Pushbutton Switch', switchParamMap],
-  ['DIP Switch', switchParamMap],
-  ['Toggle Switch', switchParamMap],
+  // Switches — family-specific maps (Decision #92), general fallback last
+  ['Tactile Switch', tactileSwitchParamMap],  // "Tactile Switches"
+  ['Pushbutton Switch', tactileSwitchParamMap], // "Pushbutton Switches" (same field set as tactile)
+  ['DIP Switch', dipSwitchParamMap],           // "DIP Switches"
+  ['Rocker Switch', rockerToggleParamMap],     // "Rocker Switches"
+  ['Toggle Switch', rockerToggleParamMap],     // "Toggle Switches"
+  ['Slide Switch', rockerToggleParamMap],      // "Slide Switches"
+  ['Rotary Switch', switchParamMap],           // fallback for rotary, keypad, etc.
+  ['Keypad', switchParamMap],                  // fallback
+  ['Switch', switchParamMap],                  // general fallback (must be last)
+  // === L2 categories (continued) — Wave 2 (Decision #87) ===
+  // RF and Wireless — family-specific maps (Decision #90), general fallback last
+  ['RF Transceiver', rfTransceiverParamMap],
+  ['RF Receiver', rfTransceiverParamMap],
+  ['Antenna', rfAntennaParamMap],
+  ['Balun', rfBalunParamMap],
+  ['RFID', rfidParamMap],
+  ['RF Module', rfWirelessParamMap],  // fallback for RF modules not matching above
+  // Power Supplies — board-mount DC-DC and AC-DC converters
+  ['DC DC Converter', powerSupplyParamMap],
+  ['AC DC Converter', powerSupplyParamMap],
+  ['Power Supplies', powerSupplyParamMap],
+  // Transformers — family-specific maps (Decision #93), general fallback last
+  ['Switching Converter', smpsTransformerParamMap], // "Switching Converter, SMPS Transformers"
+  ['SMPS Transformer', smpsTransformerParamMap],    // alternate naming
+  ['Pulse Transformer', pulseTransformerParamMap],  // "Pulse Transformers"
+  ['Current Sense Transformer', currentSenseTransformerParamMap], // "Current Sense Transformers"
+  ['Transformer', transformerParamMap],             // fallback for other transformer types
+  // Filters — EMI, SAW, BAW, ceramic, active (NOT ferrite beads/CM chokes which are L3)
+  ['Filter', filterParamMap],
+  // Processors — FPGAs, CPLDs (DSPs classified as Microcontrollers by Digikey)
+  ['FPGA', processorParamMap],
+  ['CPLD', processorParamMap],
+  // Audio — family-specific maps (Decision #92), general fallback last
+  ['Buzzer', buzzerParamMap],        // "Alarms, Buzzers, and Sirens"
+  ['Siren', buzzerParamMap],         // same category
+  ['Alarm', buzzerParamMap],         // same category
+  ['Microphone', microphoneParamMap], // "Microphones"
+  ['Speaker', speakerParamMap],       // "Speakers"
+  ['Audio', audioParamMap],           // fallback for other audio devices
+  // Battery Products — SPLIT: cells/packs vs charger ICs
+  ['Battery Charger', chargerIcParamMap],
+  ['Batteries', batteryParamMap],
+  ['Battery Holder', batteryParamMap],
+  // Motors and Fans — fans, motors, solenoids (union approach)
+  ['Fan', motorFanParamMap],
+  ['Motor', motorFanParamMap],
+  ['Solenoid', motorFanParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */
@@ -5313,6 +7800,288 @@ export function getFullParamMap(categoryName: string): Record<string, ParamMapEn
 /** Get all category-to-param-map entries (for enumeration) */
 export function getAllCategoryParamMaps(): [string, Record<string, ParamMapEntry>][] {
   return categoryParamMaps;
+}
+
+// --- L2 Category helpers ---
+
+/** Display names for L2 param maps (keyed by object identity) */
+const l2DisplayNames = new Map<Record<string, ParamMapEntry>, string>([
+  [mcuParamMap, 'Microcontrollers'],
+  [memoryParamMap, 'Memory'],
+  // Sensor sub-families (Decision #88)
+  [temperatureSensorParamMap, 'Temperature Sensors'],
+  [accelerometerParamMap, 'Accelerometers'],
+  [gyroscopeParamMap, 'Gyroscopes'],
+  [imuParamMap, 'IMUs'],
+  [currentSensorParamMap, 'Current Sensors'],
+  [pressureSensorParamMap, 'Pressure Sensors'],
+  [humiditySensorParamMap, 'Humidity Sensors'],
+  [magneticSensorParamMap, 'Magnetic Sensors'],
+  [sensorParamMap, 'Sensors (Other)'],
+  // Connector sub-families (Decision #91)
+  [pcbHeaderParamMap, 'PCB Headers/Sockets'],
+  [terminalBlockParamMap, 'Terminal Blocks'],
+  [rfConnectorParamMap, 'RF Connectors'],
+  [usbIoConnectorParamMap, 'USB/IO Connectors'],
+  [connectorParamMap, 'Connectors (Other)'],
+  [ledParamMap, 'LEDs'],
+  [tactileSwitchParamMap, 'Tactile Switches'],
+  [dipSwitchParamMap, 'DIP Switches'],
+  [rockerToggleParamMap, 'Rocker/Toggle/Slide'],
+  [switchParamMap, 'Switches (Other)'],
+  // RF/Wireless sub-families (Decision #90)
+  [rfTransceiverParamMap, 'RF Transceivers'],
+  [rfAntennaParamMap, 'RF Antennas'],
+  [rfBalunParamMap, 'Baluns'],
+  [rfidParamMap, 'RFID'],
+  [rfWirelessParamMap, 'RF/Wireless (Other)'],
+  [powerSupplyParamMap, 'Power Supplies'],
+  [smpsTransformerParamMap, 'SMPS Transformers'],
+  [pulseTransformerParamMap, 'Pulse Transformers'],
+  [currentSenseTransformerParamMap, 'Current Sense Transformers'],
+  [transformerParamMap, 'Transformers (Other)'],
+  [filterParamMap, 'Filters'],
+  [processorParamMap, 'Processors (FPGA/CPLD)'],
+  [buzzerParamMap, 'Buzzers/Sirens'],
+  [microphoneParamMap, 'Microphones'],
+  [speakerParamMap, 'Speakers'],
+  [audioParamMap, 'Audio (Other)'],
+  [batteryParamMap, 'Batteries'],
+  [chargerIcParamMap, 'Battery Charger ICs'],
+  [motorFanParamMap, 'Motors and Fans'],
+]);
+
+// Collect all param map objects used by L3 families
+const l3ParamMapObjects = new Set<Record<string, ParamMapEntry>>();
+for (const cats of Object.values(familyToDigikeyCategories)) {
+  for (const cat of cats) {
+    const map = findCategoryMap(cat);
+    if (map) l3ParamMapObjects.add(map);
+  }
+}
+
+/**
+ * Get all L2-only category param maps (not used by any L3 family).
+ * Returns deduplicated entries with display name, registration keys, and field count.
+ */
+export function getL2Categories(): L2CategoryInfo[] {
+  // Group registration keys by param map object identity
+  const mapToKeys = new Map<Record<string, ParamMapEntry>, string[]>();
+  for (const [key, map] of categoryParamMaps) {
+    if (l3ParamMapObjects.has(map)) continue;
+    if (!l2DisplayNames.has(map)) continue;
+    if (!mapToKeys.has(map)) mapToKeys.set(map, []);
+    mapToKeys.get(map)!.push(key);
+  }
+
+  const result: L2CategoryInfo[] = [];
+  for (const [map, keys] of mapToKeys) {
+    result.push({
+      name: l2DisplayNames.get(map)!,
+      registrationKeys: keys,
+      fieldCount: Object.keys(map).length,
+      paramMap: map,
+    });
+  }
+  // Sort alphabetically by display name
+  result.sort((a, b) => a.name.localeCompare(b.name));
+  return result;
+}
+
+// --- L2 Sub-Family Index (Decision #88) ---
+
+/** Registry of L2 sub-families — family-level param maps within L2 categories */
+const l2FamilyIndex: L2FamilyInfo[] = [
+  {
+    id: 'sensor:temperature',
+    name: 'Temperature Sensors',
+    category: 'Sensors',
+    digikeyPatterns: ['Analog and Digital Output'],
+    fieldCount: Object.keys(temperatureSensorParamMap).length,
+  },
+  {
+    id: 'sensor:accelerometer',
+    name: 'Accelerometers',
+    category: 'Sensors',
+    digikeyPatterns: ['Accelerometer'],
+    fieldCount: Object.keys(accelerometerParamMap).length,
+  },
+  {
+    id: 'sensor:gyroscope',
+    name: 'Gyroscopes',
+    category: 'Sensors',
+    digikeyPatterns: ['Gyroscope'],
+    fieldCount: Object.keys(gyroscopeParamMap).length,
+  },
+  {
+    id: 'sensor:imu',
+    name: 'IMUs',
+    category: 'Sensors',
+    digikeyPatterns: ['IMU'],
+    fieldCount: Object.keys(imuParamMap).length,
+  },
+  {
+    id: 'sensor:current',
+    name: 'Current Sensors',
+    category: 'Sensors',
+    digikeyPatterns: ['Current Sensor'],
+    fieldCount: Object.keys(currentSensorParamMap).length,
+  },
+  {
+    id: 'sensor:pressure',
+    name: 'Pressure Sensors',
+    category: 'Sensors',
+    digikeyPatterns: ['Pressure Sensor'],
+    fieldCount: Object.keys(pressureSensorParamMap).length,
+  },
+  {
+    id: 'sensor:humidity',
+    name: 'Humidity Sensors',
+    category: 'Sensors',
+    digikeyPatterns: ['Humidity'],
+    fieldCount: Object.keys(humiditySensorParamMap).length,
+  },
+  {
+    id: 'sensor:magnetic',
+    name: 'Magnetic Sensors',
+    category: 'Sensors',
+    digikeyPatterns: ['Linear, Compass'],
+    fieldCount: Object.keys(magneticSensorParamMap).length,
+  },
+  // RF/Wireless sub-families (Decision #90)
+  {
+    id: 'rf:transceiver',
+    name: 'RF Transceivers',
+    category: 'RF and Wireless',
+    digikeyPatterns: ['RF Transceiver'],
+    fieldCount: Object.keys(rfTransceiverParamMap).length,
+  },
+  {
+    id: 'rf:antenna',
+    name: 'RF Antennas',
+    category: 'RF and Wireless',
+    digikeyPatterns: ['Antenna'],
+    fieldCount: Object.keys(rfAntennaParamMap).length,
+  },
+  {
+    id: 'rf:balun',
+    name: 'Baluns',
+    category: 'RF and Wireless',
+    digikeyPatterns: ['Balun'],
+    fieldCount: Object.keys(rfBalunParamMap).length,
+  },
+  {
+    id: 'rf:rfid',
+    name: 'RFID',
+    category: 'RF and Wireless',
+    digikeyPatterns: ['RFID'],
+    fieldCount: Object.keys(rfidParamMap).length,
+  },
+  // Connector sub-families (Decision #91)
+  {
+    id: 'conn:header',
+    name: 'PCB Headers/Sockets',
+    category: 'Connectors',
+    digikeyPatterns: ['Header'],
+    fieldCount: Object.keys(pcbHeaderParamMap).length,
+  },
+  {
+    id: 'conn:terminal',
+    name: 'Terminal Blocks',
+    category: 'Connectors',
+    digikeyPatterns: ['Wire to Board'],
+    fieldCount: Object.keys(terminalBlockParamMap).length,
+  },
+  {
+    id: 'conn:rf',
+    name: 'RF Connectors',
+    category: 'Connectors',
+    digikeyPatterns: ['Coaxial Connector'],
+    fieldCount: Object.keys(rfConnectorParamMap).length,
+  },
+  {
+    id: 'conn:usb',
+    name: 'USB/IO Connectors',
+    category: 'Connectors',
+    digikeyPatterns: ['USB, DVI, HDMI'],
+    fieldCount: Object.keys(usbIoConnectorParamMap).length,
+  },
+  // Switch sub-families (Decision #92)
+  {
+    id: 'sw:tactile',
+    name: 'Tactile Switches',
+    category: 'Switches',
+    digikeyPatterns: ['Tactile Switch'],
+    fieldCount: Object.keys(tactileSwitchParamMap).length,
+  },
+  {
+    id: 'sw:dip',
+    name: 'DIP Switches',
+    category: 'Switches',
+    digikeyPatterns: ['DIP Switch'],
+    fieldCount: Object.keys(dipSwitchParamMap).length,
+  },
+  {
+    id: 'sw:rocker_toggle',
+    name: 'Rocker/Toggle/Slide',
+    category: 'Switches',
+    digikeyPatterns: ['Rocker Switch', 'Toggle Switch', 'Slide Switch'],
+    fieldCount: Object.keys(rockerToggleParamMap).length,
+  },
+  // Audio sub-families (Decision #92)
+  {
+    id: 'audio:buzzer',
+    name: 'Buzzers/Sirens',
+    category: 'Audio',
+    digikeyPatterns: ['Buzzer', 'Siren', 'Alarm'],
+    fieldCount: Object.keys(buzzerParamMap).length,
+  },
+  {
+    id: 'audio:microphone',
+    name: 'Microphones',
+    category: 'Audio',
+    digikeyPatterns: ['Microphone'],
+    fieldCount: Object.keys(microphoneParamMap).length,
+  },
+  {
+    id: 'audio:speaker',
+    name: 'Speakers',
+    category: 'Audio',
+    digikeyPatterns: ['Speaker'],
+    fieldCount: Object.keys(speakerParamMap).length,
+  },
+  // Transformer sub-families (Decision #93)
+  {
+    id: 'xfmr:smps',
+    name: 'SMPS Transformers',
+    category: 'Transformers',
+    digikeyPatterns: ['Switching Converter'],
+    fieldCount: Object.keys(smpsTransformerParamMap).length,
+  },
+  {
+    id: 'xfmr:pulse',
+    name: 'Pulse Transformers',
+    category: 'Transformers',
+    digikeyPatterns: ['Pulse Transformer'],
+    fieldCount: Object.keys(pulseTransformerParamMap).length,
+  },
+  {
+    id: 'xfmr:current_sense',
+    name: 'Current Sense Transformers',
+    category: 'Transformers',
+    digikeyPatterns: ['Current Sense Transformer'],
+    fieldCount: Object.keys(currentSenseTransformerParamMap).length,
+  },
+];
+
+/** Get all L2 sub-families */
+export function getL2Families(): L2FamilyInfo[] {
+  return l2FamilyIndex;
+}
+
+/** Get L2 sub-families for a specific parent category */
+export function getL2FamiliesForCategory(category: string): L2FamilyInfo[] {
+  return l2FamilyIndex.filter(f => f.category === category);
 }
 
 /** Get the set of attributeIds that Digikey can provide for a family. */

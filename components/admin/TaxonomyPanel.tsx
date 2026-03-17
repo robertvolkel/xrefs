@@ -22,8 +22,24 @@ import type {
   FamilyCoverageInfo,
 } from '@/lib/types';
 
-function CoverageChip({ covered }: { covered: boolean }) {
+function CoverageChip({ covered, l2 }: { covered: boolean; l2?: boolean }) {
   const { t } = useTranslation();
+  // L2-only coverage (no L3 families)
+  if (l2 && !covered) {
+    return (
+      <Chip
+        label="L2"
+        size="small"
+        sx={{
+          bgcolor: '#42A5F522',
+          color: '#42A5F5',
+          fontWeight: 500,
+          fontSize: '0.7rem',
+          height: 22,
+        }}
+      />
+    );
+  }
   return (
     <Chip
       label={covered ? t('admin.covered') : t('admin.notCovered')}
@@ -106,16 +122,23 @@ function InfoStat({ label }: { label: string }) {
 
 function SubcategoryRow({ sub }: { sub: TaxonomySubcategory }) {
   const { t } = useTranslation();
+  const hasL2 = (sub.l2Coverage?.length ?? 0) > 0;
+  const hasContent = sub.covered || hasL2;
   return (
     <Box sx={{ py: 0.75, borderBottom: 1, borderColor: 'divider', '&:last-child': { borderBottom: 0 } }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: sub.covered ? 1 : 0 }}>
-        <CoverageChip covered={sub.covered} />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: hasContent ? 1 : 0 }}>
+        <CoverageChip covered={sub.covered} l2={hasL2} />
         <Typography
           variant="body2"
-          sx={{ opacity: sub.covered ? 1 : 0.5, fontWeight: sub.covered ? 500 : 400 }}
+          sx={{ opacity: hasContent ? 1 : 0.5, fontWeight: hasContent ? 500 : 400 }}
         >
           {sub.name}
         </Typography>
+        {hasL2 && !sub.covered && (
+          <Typography variant="caption" sx={{ color: '#42A5F5', opacity: 0.8 }}>
+            {sub.l2Coverage!.join(', ')}
+          </Typography>
+        )}
         {sub.productCount > 0 && (
           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
             {t('admin.productsCount', { count: sub.productCount })}
@@ -134,6 +157,10 @@ function SubcategoryRow({ sub }: { sub: TaxonomySubcategory }) {
 function CategoryAccordion({ cat }: { cat: TaxonomyCategory }) {
   const { t } = useTranslation();
   const hasCoverage = cat.coveredCount > 0;
+  const l2OnlyCount = cat.subcategories.filter(
+    (s) => !s.covered && (s.l2Coverage?.length ?? 0) > 0,
+  ).length;
+  const hasAnyCoverage = hasCoverage || l2OnlyCount > 0;
 
   return (
     <Accordion
@@ -153,7 +180,7 @@ function CategoryAccordion({ cat }: { cat: TaxonomyCategory }) {
         expandIcon={<ExpandMoreIcon />}
         sx={{ px: 2, minHeight: 48, '& .MuiAccordionSummary-content': { alignItems: 'center', gap: 1.5 } }}
       >
-        <Typography variant="body2" sx={{ fontWeight: 600, opacity: hasCoverage ? 1 : 0.6 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, opacity: hasAnyCoverage ? 1 : 0.6 }}>
           {cat.name}
         </Typography>
         {cat.subcategories.length > 0 && (
@@ -166,6 +193,13 @@ function CategoryAccordion({ cat }: { cat: TaxonomyCategory }) {
               bgcolor: hasCoverage ? '#81C78422' : '#90A4AE18',
               color: hasCoverage ? '#81C784' : '#90A4AE',
             }}
+          />
+        )}
+        {l2OnlyCount > 0 && (
+          <Chip
+            label={`+${l2OnlyCount} L2`}
+            size="small"
+            sx={{ height: 22, fontSize: '0.68rem', bgcolor: '#42A5F522', color: '#42A5F5' }}
           />
         )}
         {cat.productCount > 0 && (
@@ -254,6 +288,13 @@ export default function TaxonomyPanel() {
               percentage: summary.productCoveragePercentage,
             })}
           </Typography>
+          {(summary.l2OnlySubcategories ?? 0) > 0 && (
+            <Typography variant="body2" sx={{ mt: 0.5, color: '#42A5F5' }}>
+              {t('admin.l2CoverageSummary', '+ {{count}} subcategories with L2 param maps (display-only)', {
+                count: summary.l2OnlySubcategories,
+              })}
+            </Typography>
+          )}
         </CardContent>
       </Card>
 

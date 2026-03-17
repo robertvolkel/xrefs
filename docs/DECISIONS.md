@@ -2205,4 +2205,241 @@ Backward-compatible — existing flat `unitPrice`, `stock`, `leadTime` fields pr
 
 **Design:** L2 entries are registered AFTER all L3 entries in `categoryParamMaps` to ensure L3 families get priority in substring matching. The sensor map uses a union approach — all common sensor params in one map, shared across sensor subcategories.
 
-**Future L2 candidates:** RF/Wireless, Power Supplies, Transformers, Filters, Audio, Motors/Fans.
+**Future L2 candidates:** RF/Wireless, Power Supplies, Transformers, Filters, Audio, Motors/Fans. → Completed in Decision #87.
+
+---
+
+## 87. L2 Curated Param Maps — Wave 2 (8 More Categories) (2026-03-17)
+
+**Problem:** Decision #86 added L2 param maps for 6 high-value categories. 10 L0 categories still fell back to generic param extraction. Users uploading BOMs with RF modules, power supplies, transformers, etc. saw noisy auto-generated columns instead of clean parametric display.
+
+**Solution:** Added L2 curated param maps for 8 more categories (9 param map constants — Battery Products split into cells + charger ICs). Cables/Wires and Development Tools intentionally skipped — too heterogeneous for meaningful shared parametrics.
+
+**L2 param maps added (Wave 2):**
+
+| Category | Digikey Registrations | Fields | Verified Against |
+|----------|----------------------|--------|------------------|
+| RF and Wireless | `RF Transceiver`, `RF Receiver`, `RF Module`, `Antenna`, `Balun`, `RFID` | 15 (union) | CC1101RGPR, SX1276IMLTRT, ANT-433-HESM |
+| Power Supplies | `DC DC Converter`, `AC DC Converter`, `Power Supplies` | 13 | MEE1S0505SC, IRM-02-5 |
+| Transformers | `Transformer` | 11 (union) | 760390012 (SMPS), DA101C (Pulse) |
+| Filters | `Filter` | 12 | BNX022-01L (EMI/RFI) |
+| Processors | `FPGA`, `CPLD` | 12 (union) | XC7A35T-1CPG236C, EPM240T100C5N |
+| Audio | `Buzzer`, `Siren`, `Alarm`, `Microphone`, `Speaker` | 15 (union) | CMT-1603-SMT-TR, SPH0645LM4H-B, AS01808AO-3-R |
+| Battery (cells) | `Batteries`, `Battery Holder` | 6 | P189-ND (CR2032) |
+| Battery (chargers) | `Battery Charger` | 11 | BQ24190RGER |
+| Motors and Fans | `Fan`, `Motor`, `Solenoid` | 13 | AFB0412SHB |
+
+**Design decisions:**
+- **Battery split**: Batteries (passive energy storage: chemistry, capacity, cell size) and charger ICs (active semiconductor: topology, charge current, interface) are fundamentally different product types. Single union map would be 80% empty on both sides.
+- **Filter catch-all**: Single `'Filter'` registration key catches EMI, SAW, BAW, ceramic, and active filters. No collision with L3 ferrite beads/CM chokes (their Digikey category names don't contain "filter").
+- **DSPs classified as MCUs**: Digikey categorizes DSPs like TMS320F28335 as "Microcontrollers" — the existing MCU param map (Decision #86) covers them. Processor param map targets FPGAs/CPLDs only.
+- **Cables/Dev Tools skipped**: Cable assemblies, raw wire, heat shrink have almost no shared parametrics. Dev boards have feature checkboxes, not engineering specs. Both stay at L0.
+
+**Totals:** 14 L2 categories now covered (6 Wave 1 + 8 Wave 2), with 15 param map constants. Combined with 43 L3 families, the platform now has curated parametric coverage for 57 component categories.
+
+## Decision #88 — L2 Family-Level Param Maps (Sensors Phase 1)
+
+**Problem:** L2 categories use union param maps that cover all sub-types with one map. The `sensorParamMap` (19 fields) was a union of temperature, accelerometer, gyroscope, current, pressure, humidity, and magnetic sensor fields — but a temperature sensor has no use for `Axis`, `Acceleration Range`, or `Current - Sensing`, and an accelerometer has no use for `Humidity Range`. This creates noisy columns in parts list tables and reduces the utility of search, comparison, and LLM reasoning.
+
+Additionally, 3 Digikey sensor leaf categories had no param map coverage at all:
+- `"Analog and Digital Output"` (temperature sensors) — leaf name contains no "sensor" keyword
+- `"Linear, Compass (ICs)"` (magnetic sensors) — leaf name contains no "sensor" keyword
+- `"IMUs (Inertial Measurement Units)"` — leaf name contains neither "sensor" nor "gyroscope"
+
+These fell through to the generic `'ICs'` category in `mapCategory()` and received no curated parametric mapping.
+
+**Solution:** Family-level param maps within L2 categories. Each sensor type gets its own dedicated param map containing only the fields relevant to that type. The general `sensorParamMap` remains as fallback for unrecognized sensor types (optical, proximity, flow, force, gas, etc.).
+
+This follows the same pattern as the Battery split (Decision #87) — more specific `categoryParamMaps` entries registered before the general fallback, using `findCategoryMap()`'s existing first-match-wins substring logic.
+
+**Architecture:**
+- 7 new param map constants in `digikeyParamMap.ts`
+- Registered in `categoryParamMaps` BEFORE the general `['Sensor', sensorParamMap]` entry
+- New `L2FamilyInfo` type and `l2FamilyIndex` metadata registry for discoverability
+- `getL2Families()` and `getL2FamiliesForCategory()` exports
+- `mapCategory()` in `digikeyMapper.ts` fixed to classify temperature/magnetic/IMU leaf categories as `'Sensors'`
+
+**Bug fixes in `mapCategory()`:**
+- Added `lower === 'analog and digital output'` (exact match — temperature sensor leaf)
+- Added `lower.includes('compass')` (magnetic sensor leaf)
+- Added `lower.includes('imu') || lower.includes('inertial')` (IMU leaf)
+
+**Sensor sub-family param maps:**
+
+| Sub-Family | Digikey Leaf Category | Param Map Key | Fields | Verified MPN |
+|------------|----------------------|---------------|--------|--------------|
+| Temperature Sensors | `Analog and Digital Output` | `'Analog and Digital Output'` | 10 | TMP117AIDRVR |
+| Accelerometers | `Accelerometers` | `'Accelerometer'` | 10 | ADXL345BCCZ |
+| Gyroscopes | `Gyroscopes` | `'Gyroscope'` | 11 | L3GD20HTR |
+| IMUs | `IMUs (Inertial Measurement Units)` | `'IMU'` | 6 | BMI160 |
+| Current Sensors | `Current Sensors` | `'Current Sensor'` | 14 | ACS712ELCTR-20A-T |
+| Pressure Sensors | `Pressure Sensors, Transducers` | `'Pressure Sensor'` | 12 | BMP280 |
+| Humidity Sensors | `Humidity, Moisture Sensors` | `'Humidity'` | 10 | BME280 |
+| Magnetic Sensors | `Linear, Compass (ICs)` | `'Linear, Compass'` | 10 | DRV5053VAQLPG |
+| *(fallback)* | Various | `'Sensor'` | 19 | *(union, unchanged)* |
+
+**L2 Family Metadata Index:** New `L2FamilyInfo` type with `id` (e.g., `'sensor:temperature'`), `name`, `category`, `digikeyPatterns`, and `fieldCount`. Accessible via `getL2Families()` and `getL2FamiliesForCategory()`. Separate from the L3 family registry (`logicTableRegistry`) — no family IDs, no logic tables.
+
+**Key design decisions:**
+- **Exact match for temperature sensors**: `lower === 'analog and digital output'` instead of `includes()` — the name is too generic for substring matching
+- **Separate gyroscope and accelerometer maps**: Despite sharing `axis`/`bandwidth`/`output_type`, they have different measurement-specific fields (`Acceleration Range` vs `Range °/s`, `Sensitivity (LSB/g)` vs `Sensitivity (LSB/(°/s))`)
+- **IMU map is sparse (6 fields)**: Digikey provides very limited parametric data for IMUs — most specs are datasheet-only. Map still valuable for normalization.
+- **Shared attributeIds where semantically identical**: `output_type`, `accuracy`, `supply_voltage`, `operating_temp`, `package_case` are reused across sensor types. Type-specific fields get unique IDs (`acceleration_range`, `angular_rate_range`, `current_sensing`, `pressure_type`, etc.)
+- **No L3 infrastructure changes**: No new family IDs, no logic tables, no classifier rules, no matching engine changes
+
+**Future phases:**
+- Phase 2: RF/Wireless (transceivers vs antennas vs modules vs RFID)
+- Phase 3: Connectors (PCB headers vs RF connectors vs terminal blocks)
+- Phase 4: Audio (buzzers vs microphones vs speakers) + Switches (tactile vs toggle vs DIP)
+
+---
+
+## Decision #89 — L2 Categories in Admin Parameter Mappings Panel
+
+**Problem:** The admin "Parameter Mappings" section only showed the 43 L3 families (those with logic tables). The 14 L2 categories — including the 8 new sensor sub-families from Decision #88 — have curated param maps but no visibility in the admin panel. Admins can't browse what attributes are mapped for Temperature Sensors, Accelerometers, etc.
+
+**Solution:** Add L2 categories to the FamilyPicker dropdown so admins can select an L2 category (e.g., "Sensors") and see its sub-families in the family list, then click one to see its param map attributes and Digikey field names.
+
+**Implementation:**
+
+1. **FamilyPicker.tsx** — Generalized to accept `CategoryEntry[]` (with `tier: 'l3' | 'l2'`) instead of `string[]`. L2 categories show a small MUI `Chip` badge ("Display") in the dropdown. New optional `items?: PickerItem[]` prop renders generic items instead of filtering `LogicTable[]` when in L2 mode.
+
+2. **ParamMappingsPanel.tsx** — Split into two sub-components: `L3View` (existing behavior — rules with weights, DK+PIO columns, coverage %) and `L2View` (simplified table — no weights, no coverage, just # / Attribute ID / Attribute Name / Digikey Field / Sort Order). New `l2ParamMap?: L2ParamMapData` prop triggers L2 rendering when table is null.
+
+3. **AdminShell.tsx** — Precomputes L2 admin category data at module level:
+   - Groups L2 sub-families under parent categories (Sensors → 8 sub-families + "Sensors (Other)")
+   - Standalone L2 categories (Microcontrollers, Memory, etc.) show as single-item categories
+   - `paramMappingCategoryEntries` (L3 + L2) used for param-mappings section; `l3OnlyCategoryEntries` used for other sections
+   - Tracks selection mode: when L2 category selected, passes `items` and `l2ParamMap` props; when L3, passes `table` as before
+   - Auto-resets to L3 when switching from param-mappings to logic/context/atlas sections
+
+**Visual distinction:** L2 categories get a small "Display" chip badge in both the category dropdown and the family list items. Same visual pattern as the existing Atlas dictionary `TranslateOutlinedIcon` indicator.
+
+**Files modified:**
+- `components/admin/FamilyPicker.tsx` — `CategoryEntry`/`PickerItem` types, L2 chip badge, generic items support
+- `components/admin/ParamMappingsPanel.tsx` — `L2ParamMapData` type, `L2View`/`L3View` split, `l2ParamMap` prop
+- `components/admin/AdminShell.tsx` — L2 data imports, unified category list, L2 selection tracking, data plumbing
+
+**What does NOT change:** Logic tables, matching engine, other admin sections (Logic, Context, Atlas), L3 behavior
+
+---
+
+## Decision #90 — L2 Family-Level Param Maps Phase 2: RF/Wireless
+
+**Problem:** The 15-field `rfWirelessParamMap` was a union covering 6 Digikey category patterns (RF Transceivers, RF Receivers, RF Modules, Antennas, Baluns, RFID). Antennas have VSWR/Gain/Return Loss, transceivers have Data Rate/Modulation/Sensitivity, baluns have Impedance/Phase Difference, RFID has Memory Type/Standards — zero overlap between these sub-types.
+
+**Discovery:** Ran Digikey discovery against 8 representative MPNs. Found 5 distinct leaf categories:
+- "RF Transceiver ICs" (18 params) — CC1101RGPR, nRF24L01P, SX1276
+- "RF Transceiver Modules and Modems" (18 params) — ESP32-S3-WROOM-1, RFM95W
+- "RF Antennas" (15 params) — ANT-433-HETH
+- "Balun" (7 params) — BAL-NRF01D3
+- "RFID Transponders, Tags" (8 params) — RI-I02-114A-01
+
+All 5 categories already correctly routed to 'RF and Wireless' by `mapCategory()` — no mapper fix needed (unlike sensors).
+
+**Solution:** Split into 4 family-specific maps:
+
+| Sub-family | ID | Fields | Digikey patterns |
+|---|---|---|---|
+| RF Transceivers | `rf:transceiver` | 18 | `['RF Transceiver']` — covers both ICs and modules |
+| RF Antennas | `rf:antenna` | 11 | `['Antenna']` |
+| Baluns | `rf:balun` | 7 | `['Balun']` |
+| RFID | `rf:rfid` | 8 | `['RFID']` |
+
+Plus `rfWirelessParamMap` retained as "RF/Wireless (Other)" fallback.
+
+**Key design choices:**
+- Transceivers ICs and Modules share one map — similar field sets, modules add `Utilized IC / Part` and `Antenna Type`, ICs add `GPIO`. Both `Data Rate (Max)` (ICs) and `Data Rate` (modules) map to `data_rate_max`.
+- `RF Receiver` pattern also routes to `rfTransceiverParamMap` (receiver ICs have same field structure as transceivers).
+
+**Files modified:** `lib/services/digikeyParamMap.ts` — 4 new param maps, updated categoryParamMaps registration, l2DisplayNames, l2FamilyIndex.
+
+**Admin panel:** Automatically picks up the new sub-families under "RF and Wireless" via Decision #89 infrastructure — no admin component changes needed.
+
+---
+
+## Decision #91 — L2 Family-Level Param Maps Phase 3: Connectors
+
+**Problem:** The 12-field `connectorParamMap` was a union covering headers, terminal blocks, RF connectors, USB/IO connectors, and FFC/FPC. These sub-types have almost no field overlap — PCB headers have Shrouding/Contact Shape/Row Spacing, terminal blocks have Wire Gauge/Wire Termination/Levels, RF connectors have Impedance/Frequency Max, USB connectors have Gender/Specifications/Mating Cycles.
+
+**Discovery:** Ran Digikey discovery against 8 representative MPNs. Found 6 distinct leaf categories:
+- "Headers, Male Pins" (29 params) — TSW-110-07-G-S, 68602-110HLF
+- "Headers, Receptacles, Female Sockets" (24 params) — SFH11-PBPC-D25-ST-BK
+- "Wire to Board" (11 params) — 282834-2 (terminal block)
+- "Coaxial Connector (RF) Assemblies" (15 params) — 132289 (SMA)
+- "USB, DVI, HDMI Connector Assemblies" (15 params) — USB3076-30-A
+- "FFC, FPC (Flat Flexible)" (18 params) — 0525591033
+
+All categories already correctly routed to 'Connectors' by `mapCategory()`.
+
+**Solution:** Split into 4 family-specific maps:
+
+| Sub-family | ID | Fields | Digikey patterns |
+|---|---|---|---|
+| PCB Headers/Sockets | `conn:header` | 16 | `['Header']` — covers male pins + female sockets |
+| Terminal Blocks | `conn:terminal` | 11 | `['Wire to Board']` |
+| RF Connectors | `conn:rf` | 11 | `['Coaxial Connector']` |
+| USB/IO Connectors | `conn:usb` | 12 | `['USB, DVI, HDMI']` |
+
+Plus `connectorParamMap` retained as "Connectors (Other)" fallback (covers FFC/FPC and other types).
+
+**Files modified:** `lib/services/digikeyParamMap.ts` — 4 new param maps, updated categoryParamMaps, l2DisplayNames, l2FamilyIndex.
+
+## Decision #92 — L2 Family-Level Param Maps Phase 4: Audio + Switches
+
+**Problem:** The 15-field `audioParamMap` was a union covering buzzers (Driver Circuitry, single Frequency, SPL), microphones (Direction, Sensitivity, SNR, Output Type), and speakers (Impedance, Efficiency, Power, Cone/Magnet Material). The 10-field `switchParamMap` was a union covering tactile (Operating Force, Illumination, Actuator Height), DIP (Number of Positions, Pitch, Washable), and rocker/toggle/slide (Current/Voltage Rating AC/DC, Contact Material, Panel Cutout).
+
+**Discovery:** Ran Digikey discovery against 8 representative MPNs:
+- Audio: CMT-1603-SMT-TR (piezo buzzer, 18 fields), AI-1223-TWT-3V-2-R (magnetic buzzer, 18 fields), SPH0645LM4H-B (MEMS mic, 14 fields), GF0401M (speaker, 19 fields)
+- Switches: B3F-1000 (tactile, 17 fields), DS04-254-2-04BK-SMT (DIP, 15 fields), RA1113112R (rocker, 16 fields), 1825232-1 (slide, 13 fields)
+
+All 7 Digikey leaf categories already correctly routed by `mapCategory()`.
+
+**Solution:** Split into 3 audio + 3 switch sub-families:
+
+**Audio:**
+
+| Sub-family | ID | Fields | Digikey patterns |
+|---|---|---|---|
+| Buzzers/Sirens | `audio:buzzer` | 15 | `['Buzzer', 'Siren', 'Alarm']` |
+| Microphones | `audio:microphone` | 13 | `['Microphone']` |
+| Speakers | `audio:speaker` | 17 | `['Speaker']` |
+
+Plus `audioParamMap` retained as "Audio (Other)" fallback.
+
+**Switches:**
+
+| Sub-family | ID | Fields | Digikey patterns |
+|---|---|---|---|
+| Tactile Switches | `sw:tactile` | 14 | `['Tactile Switch']` — also covers pushbutton |
+| DIP Switches | `sw:dip` | 14 | `['DIP Switch']` |
+| Rocker/Toggle/Slide | `sw:rocker_toggle` | 15 | `['Rocker Switch', 'Toggle Switch', 'Slide Switch']` |
+
+Plus `switchParamMap` retained as "Switches (Other)" fallback (covers rotary, keypad).
+
+**Files modified:** `lib/services/digikeyParamMap.ts` — 6 new param maps, updated categoryParamMaps, l2DisplayNames, l2FamilyIndex.
+
+## Decision #93 — L2 Family-Level Param Maps: Transformers (+ Memory skip)
+
+**Problem:** The 11-field `transformerParamMap` was a union covering SMPS/switching converter transformers (Intended Chipset, Applications, Voltage-Primary/Isolation, Footprint), pulse transformers (ET Volt-Time, Inductance), and current sense transformers (Current Rating, Current Ratio, DC Resistance). These sub-types have almost no field overlap.
+
+**Discovery:** Ran Digikey discovery against 5 representative MPNs:
+- 750315371 (Wurth DC/DC SMPS, 14 fields), 760895441 (Wurth AC/DC SMPS, 14 fields)
+- PE-68386NL (Pulse Electronics pulse, 8 fields), DA101C (Murata audio/pulse, 8 fields)
+- CSE187L (Triad current sense, 12 fields)
+
+Also investigated **Memory** (W25Q128JVSIQ Flash, AT24C256C EEPROM, 23LC1024 SRAM, IS42S16160J SDRAM). All 4 memory types use the same single Digikey category ("Memory") with identical field names — differentiated only by *values* of Memory Format/Technology. **Memory does NOT benefit from splitting.**
+
+**Solution:** Split transformers into 3 sub-families:
+
+| Sub-family | ID | Fields | Digikey patterns |
+|---|---|---|---|
+| SMPS Transformers | `xfmr:smps` | 14 | `['Switching Converter']` |
+| Pulse Transformers | `xfmr:pulse` | 8 | `['Pulse Transformer']` |
+| Current Sense Transformers | `xfmr:current_sense` | 11 | `['Current Sense Transformer']` |
+
+Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
+
+**Memory:** No split — single Digikey category with uniform fields across SRAM/Flash/EEPROM/SDRAM.
+
+**Files modified:** `lib/services/digikeyParamMap.ts` — 3 new param maps, updated categoryParamMaps, l2DisplayNames, l2FamilyIndex.
