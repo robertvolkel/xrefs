@@ -141,55 +141,61 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
 
       {/* Lifecycle & Compliance */}
       {attributes && (attributes.part.yteol != null || attributes.part.riskRank != null || attributes.part.countryOfOrigin || attributes.part.reachCompliance || attributes.part.eccnCode || attributes.part.htsCode || attributes.part.factoryLeadTimeWeeks != null) && (
-        <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', mb: 1 }}>
+        <Box sx={{ borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', px: 2, pt: 1.5, pb: 0.5 }}>
             {t('attributes.lifecycleHeading', 'Lifecycle & Compliance')}
           </Typography>
-          <Stack spacing={0.5}>
-            {attributes.part.yteol != null && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>YTEOL</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{attributes.part.yteol.toFixed(1)} yrs</Typography>
-              </Stack>
-            )}
-            {attributes.part.riskRank != null && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Risk Rank</Typography>
-                <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: attributes.part.riskRank <= 2 ? '#69F0AE' : attributes.part.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
-                <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{attributes.part.riskRank.toFixed(1)}</Typography>
-              </Stack>
-            )}
-            {attributes.part.countryOfOrigin && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Country of Origin</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem' }}>{attributes.part.countryOfOrigin}</Typography>
-              </Stack>
-            )}
-            {attributes.part.reachCompliance && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>REACH</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem' }}>{attributes.part.reachCompliance}</Typography>
-              </Stack>
-            )}
-            {attributes.part.eccnCode && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>ECCN</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{attributes.part.eccnCode}</Typography>
-              </Stack>
-            )}
-            {attributes.part.htsCode && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>HTS Code</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{attributes.part.htsCode}</Typography>
-              </Stack>
-            )}
-            {attributes.part.factoryLeadTimeWeeks != null && (
-              <Stack direction="row" spacing={1}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem', width: 120, flexShrink: 0 }}>Factory Lead Time</Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.72rem', fontFamily: 'monospace' }}>{attributes.part.factoryLeadTimeWeeks} wks</Typography>
-              </Stack>
-            )}
-          </Stack>
+          <Table size="small">
+            <TableBody>
+              {attributes.part.yteol != null && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>YTEOL</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.yteol.toFixed(1)} yrs</TableCell>
+                </TableRow>
+              )}
+              {attributes.part.riskRank != null && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Risk Rank</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: attributes.part.riskRank <= 2 ? '#69F0AE' : attributes.part.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
+                      <span>{attributes.part.riskRank.toFixed(1)}</span>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              )}
+              {attributes.part.countryOfOrigin && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Country of Origin</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.countryOfOrigin}</TableCell>
+                </TableRow>
+              )}
+              {attributes.part.reachCompliance && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>REACH</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.reachCompliance}</TableCell>
+                </TableRow>
+              )}
+              {attributes.part.eccnCode && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>ECCN</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.eccnCode}</TableCell>
+                </TableRow>
+              )}
+              {attributes.part.htsCode && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>HTS Code</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.htsCode}</TableCell>
+                </TableRow>
+              )}
+              {attributes.part.factoryLeadTimeWeeks != null && (
+                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Factory Lead Time</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.factoryLeadTimeWeeks} wks</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Box>
       )}
     </Box>

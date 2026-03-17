@@ -16,6 +16,7 @@ export interface Part {
   rohsStatus?: string;
   moistureSensitivityLevel?: string;
   digikeyCategoryId?: number;
+  digikeyLeafCategory?: string;
   qualifications?: string[];
   manufacturerCountry?: string;
   // Lifecycle & compliance metadata (from parts.io)
@@ -35,6 +36,7 @@ export interface Part {
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
 
 export type ComponentCategory =
+  // --- Families with cross-reference logic tables (43 families) ---
   | 'Capacitors'
   | 'Resistors'
   | 'Inductors'
@@ -55,7 +57,24 @@ export type ComponentCategory =
   | 'DACs'
   | 'Crystals'
   | 'Optocouplers'
-  | 'Relays';
+  | 'Relays'
+  // --- L0 taxonomy: categories without logic tables ---
+  | 'Microcontrollers'
+  | 'Processors'
+  | 'Memory'
+  | 'Sensors'
+  | 'RF and Wireless'
+  | 'LEDs and Optoelectronics'
+  | 'Power Supplies'
+  | 'Transformers'
+  | 'Switches'
+  | 'Cables and Wires'
+  | 'Filters'
+  | 'Audio'
+  | 'Motors and Fans'
+  | 'Test and Measurement'
+  | 'Development Tools'
+  | 'Battery Products';
 
 /** A single parametric attribute of a component */
 export interface ParametricAttribute {

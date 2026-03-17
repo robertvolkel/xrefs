@@ -4504,6 +4504,480 @@ const ssrIndustrialParamMap: Record<string, ParamMapEntry> = {
  * "Bipolar Transistors" covers all BJT types (NPN, PNP) — matches "Single Bipolar Transistors".
  * "JFETs" covers all JFET types (N-ch, P-ch) — Digikey leaf category name is "JFETs".
  */
+
+// ============================================================
+// L2 PARAM MAPS — Categories without logic tables (Decision #85)
+// These provide curated param IDs for clean display in parts list
+// tables and attributes panels, without matching engine support.
+// ============================================================
+
+/**
+ * Microcontroller parameter mapping (L2).
+ * Verified against: STM32F103C8T6 (STMicro), ATMEGA328P-AU (Microchip), STM32G431CBU6 (STMicro)
+ * Digikey category: "Microcontrollers" under "Embedded - Microcontrollers"
+ * 15 fields mapped of ~17 available (excluding DigiKey Programmable, Supplier Device Package)
+ */
+const mcuParamMap: Record<string, ParamMapEntry> = {
+  'Core Processor': {
+    attributeId: 'core_processor',
+    attributeName: 'Core Processor',
+    sortOrder: 1,
+  },
+  'Core Size': {
+    attributeId: 'core_size',
+    attributeName: 'Core Size',
+    sortOrder: 2,
+  },
+  'Speed': {
+    attributeId: 'clock_speed',
+    attributeName: 'Clock Speed',
+    unit: 'Hz',
+    sortOrder: 3,
+  },
+  'Program Memory Size': {
+    attributeId: 'program_memory_size',
+    attributeName: 'Program Memory Size',
+    sortOrder: 4,
+  },
+  'Program Memory Type': {
+    attributeId: 'program_memory_type',
+    attributeName: 'Program Memory Type',
+    sortOrder: 5,
+  },
+  'RAM Size': {
+    attributeId: 'ram_size',
+    attributeName: 'RAM Size',
+    sortOrder: 6,
+  },
+  'EEPROM Size': {
+    attributeId: 'eeprom_size',
+    attributeName: 'EEPROM Size',
+    sortOrder: 7,
+  },
+  'Connectivity': {
+    attributeId: 'connectivity',
+    attributeName: 'Connectivity',
+    sortOrder: 8,
+  },
+  'Peripherals': {
+    attributeId: 'peripherals',
+    attributeName: 'Peripherals',
+    sortOrder: 9,
+  },
+  'Number of I/O': {
+    attributeId: 'io_count',
+    attributeName: 'Number of I/O',
+    sortOrder: 10,
+  },
+  'Data Converters': {
+    attributeId: 'data_converters',
+    attributeName: 'Data Converters',
+    sortOrder: 11,
+  },
+  'Oscillator Type': {
+    attributeId: 'oscillator_type',
+    attributeName: 'Oscillator Type',
+    sortOrder: 12,
+  },
+  'Voltage - Supply (Vcc/Vdd)': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 13,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 14,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 15,
+  },
+};
+
+/**
+ * Memory IC parameter mapping (L2).
+ * Covers EEPROM, Flash, SRAM — all under Digikey "Memory" parent category.
+ * Verified against: AT24C256C-SSHL-T (EEPROM), W25Q128JVSIQ (Flash), IS62WV1288DBLL-45TLI (SRAM)
+ * 12 fields mapped of ~14 available (excluding DigiKey Programmable, Supplier Device Package)
+ */
+const memoryParamMap: Record<string, ParamMapEntry> = {
+  'Memory Type': {
+    attributeId: 'memory_type',
+    attributeName: 'Memory Type',
+    sortOrder: 1,
+  },
+  'Memory Format': {
+    attributeId: 'memory_format',
+    attributeName: 'Memory Format',
+    sortOrder: 2,
+  },
+  'Technology': {
+    attributeId: 'memory_technology',
+    attributeName: 'Technology',
+    sortOrder: 3,
+  },
+  'Memory Size': {
+    attributeId: 'memory_size',
+    attributeName: 'Memory Size',
+    sortOrder: 4,
+  },
+  'Memory Organization': {
+    attributeId: 'memory_organization',
+    attributeName: 'Memory Organization',
+    sortOrder: 5,
+  },
+  'Memory Interface': {
+    attributeId: 'memory_interface',
+    attributeName: 'Interface',
+    sortOrder: 6,
+  },
+  'Clock Frequency': {
+    attributeId: 'clock_frequency',
+    attributeName: 'Clock Frequency',
+    unit: 'Hz',
+    sortOrder: 7,
+  },
+  'Write Cycle Time - Word, Page': {
+    attributeId: 'write_cycle_time',
+    attributeName: 'Write Cycle Time',
+    sortOrder: 8,
+  },
+  'Access Time': {
+    attributeId: 'access_time',
+    attributeName: 'Access Time',
+    sortOrder: 9,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 10,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Sensor parameter mapping (L2) — general sensor map.
+ * Digikey has many sensor subcategories (humidity, pressure, current, accelerometer, etc.)
+ * with different params, but these fields appear across most types.
+ * Verified against: BME280 (humidity), ADXL345BCCZ (accelerometer), ACS712ELCTR-05B-T (current)
+ * Union of common fields; missing params just won't match (no penalty without logic tables).
+ */
+const sensorParamMap: Record<string, ParamMapEntry> = {
+  'Sensor Type': {
+    attributeId: 'sensor_type',
+    attributeName: 'Sensor Type',
+    sortOrder: 1,
+  },
+  'For Measuring': {
+    attributeId: 'measuring',
+    attributeName: 'Measuring',
+    sortOrder: 2,
+  },
+  'Output Type': {
+    attributeId: 'output_type',
+    attributeName: 'Output Type / Interface',
+    sortOrder: 3,
+  },
+  'Output': {
+    attributeId: 'output_resolution',
+    attributeName: 'Output Resolution',
+    sortOrder: 4,
+  },
+  'Accuracy': {
+    attributeId: 'accuracy',
+    attributeName: 'Accuracy',
+    sortOrder: 5,
+  },
+  'Sensitivity': {
+    attributeId: 'sensitivity',
+    attributeName: 'Sensitivity',
+    sortOrder: 6,
+  },
+  'Sensitivity (LSB/g)': {
+    attributeId: 'sensitivity_lsb',
+    attributeName: 'Sensitivity (LSB/g)',
+    sortOrder: 7,
+  },
+  'Axis': {
+    attributeId: 'axis',
+    attributeName: 'Axis',
+    sortOrder: 8,
+  },
+  'Acceleration Range': {
+    attributeId: 'measurement_range',
+    attributeName: 'Measurement Range',
+    sortOrder: 9,
+  },
+  'Humidity Range': {
+    attributeId: 'humidity_range',
+    attributeName: 'Humidity Range',
+    sortOrder: 10,
+  },
+  'Current - Sensing': {
+    attributeId: 'current_sensing',
+    attributeName: 'Current Sensing Range',
+    unit: 'A',
+    sortOrder: 11,
+  },
+  'Bandwidth': {
+    attributeId: 'bandwidth',
+    attributeName: 'Bandwidth',
+    unit: 'Hz',
+    sortOrder: 12,
+  },
+  'Response Time': {
+    attributeId: 'response_time',
+    attributeName: 'Response Time',
+    sortOrder: 13,
+  },
+  'Frequency': {
+    attributeId: 'frequency',
+    attributeName: 'Frequency',
+    unit: 'Hz',
+    sortOrder: 14,
+  },
+  'Linearity': {
+    attributeId: 'linearity',
+    attributeName: 'Linearity',
+    sortOrder: 15,
+  },
+  'Number of Channels': {
+    attributeId: 'channel_count',
+    attributeName: 'Number of Channels',
+    sortOrder: 16,
+  },
+  'Voltage - Supply': {
+    attributeId: 'supply_voltage',
+    attributeName: 'Supply Voltage',
+    sortOrder: 17,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 18,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 19,
+  },
+};
+
+/**
+ * Connector parameter mapping (L2).
+ * Covers headers, pin connectors, and general board-to-cable connectors.
+ * Verified against: B2B-XH-A (JST header)
+ * 12 most important fields of ~29 available.
+ */
+const connectorParamMap: Record<string, ParamMapEntry> = {
+  'Connector Type': {
+    attributeId: 'connector_type',
+    attributeName: 'Connector Type',
+    sortOrder: 1,
+  },
+  'Contact Type': {
+    attributeId: 'contact_type',
+    attributeName: 'Contact Type',
+    sortOrder: 2,
+  },
+  'Number of Positions': {
+    attributeId: 'positions',
+    attributeName: 'Number of Positions',
+    sortOrder: 3,
+  },
+  'Number of Rows': {
+    attributeId: 'rows',
+    attributeName: 'Number of Rows',
+    sortOrder: 4,
+  },
+  'Pitch - Mating': {
+    attributeId: 'pitch',
+    attributeName: 'Pitch',
+    sortOrder: 5,
+  },
+  'Style': {
+    attributeId: 'style',
+    attributeName: 'Style',
+    sortOrder: 6,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 7,
+  },
+  'Termination': {
+    attributeId: 'termination',
+    attributeName: 'Termination',
+    sortOrder: 8,
+  },
+  'Contact Finish - Mating': {
+    attributeId: 'contact_finish',
+    attributeName: 'Contact Finish',
+    sortOrder: 9,
+  },
+  'Current Rating (Amps)': {
+    attributeId: 'current_rating',
+    attributeName: 'Current Rating',
+    unit: 'A',
+    sortOrder: 10,
+  },
+  'Voltage Rating': {
+    attributeId: 'voltage_rating',
+    attributeName: 'Voltage Rating',
+    unit: 'V',
+    sortOrder: 11,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * LED parameter mapping (L2).
+ * Covers discrete LED indicators (Digikey "LED Indication - Discrete").
+ * Verified against: LTST-C171KRKT (Lite-On red SMD LED)
+ * 12 fields mapped of ~17 available.
+ */
+const ledParamMap: Record<string, ParamMapEntry> = {
+  'Color': {
+    attributeId: 'color',
+    attributeName: 'Color',
+    sortOrder: 1,
+  },
+  'Configuration': {
+    attributeId: 'configuration',
+    attributeName: 'Configuration',
+    sortOrder: 2,
+  },
+  'Wavelength - Dominant': {
+    attributeId: 'wavelength_dominant',
+    attributeName: 'Wavelength (Dominant)',
+    unit: 'nm',
+    sortOrder: 3,
+  },
+  'Wavelength - Peak': {
+    attributeId: 'wavelength_peak',
+    attributeName: 'Wavelength (Peak)',
+    unit: 'nm',
+    sortOrder: 4,
+  },
+  'Millicandela Rating': {
+    attributeId: 'luminous_intensity',
+    attributeName: 'Luminous Intensity',
+    unit: 'mcd',
+    sortOrder: 5,
+  },
+  'Viewing Angle': {
+    attributeId: 'viewing_angle',
+    attributeName: 'Viewing Angle',
+    sortOrder: 6,
+  },
+  'Voltage - Forward (Vf) (Typ)': {
+    attributeId: 'forward_voltage',
+    attributeName: 'Forward Voltage (Vf)',
+    unit: 'V',
+    sortOrder: 7,
+  },
+  'Current - Test': {
+    attributeId: 'test_current',
+    attributeName: 'Test Current',
+    unit: 'mA',
+    sortOrder: 8,
+  },
+  'Lens Color': {
+    attributeId: 'lens_color',
+    attributeName: 'Lens Color',
+    sortOrder: 9,
+  },
+  'Lens Transparency': {
+    attributeId: 'lens_transparency',
+    attributeName: 'Lens Transparency',
+    sortOrder: 10,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 11,
+  },
+  'Package / Case': {
+    attributeId: 'package_case',
+    attributeName: 'Package / Case',
+    sortOrder: 12,
+  },
+};
+
+/**
+ * Tactile switch parameter mapping (L2).
+ * Covers tactile, pushbutton, and similar switches.
+ * Verified against: B3F-1000 (Omron tactile)
+ * 10 fields mapped of ~17 available.
+ */
+const switchParamMap: Record<string, ParamMapEntry> = {
+  'Circuit': {
+    attributeId: 'circuit',
+    attributeName: 'Circuit',
+    sortOrder: 1,
+  },
+  'Switch Function': {
+    attributeId: 'switch_function',
+    attributeName: 'Switch Function',
+    sortOrder: 2,
+  },
+  'Contact Rating @ Voltage': {
+    attributeId: 'contact_rating',
+    attributeName: 'Contact Rating',
+    sortOrder: 3,
+  },
+  'Actuator Type': {
+    attributeId: 'actuator_type',
+    attributeName: 'Actuator Type',
+    sortOrder: 4,
+  },
+  'Actuator Orientation': {
+    attributeId: 'actuator_orientation',
+    attributeName: 'Actuator Orientation',
+    sortOrder: 5,
+  },
+  'Operating Force': {
+    attributeId: 'operating_force',
+    attributeName: 'Operating Force',
+    sortOrder: 6,
+  },
+  'Illumination': {
+    attributeId: 'illumination',
+    attributeName: 'Illumination',
+    sortOrder: 7,
+  },
+  'Mounting Type': {
+    attributeId: 'mounting_type',
+    attributeName: 'Mounting Type',
+    sortOrder: 8,
+  },
+  'Outline': {
+    attributeId: 'outline',
+    attributeName: 'Dimensions',
+    sortOrder: 9,
+  },
+  'Operating Temperature': {
+    attributeId: 'operating_temp',
+    attributeName: 'Operating Temp Range',
+    sortOrder: 10,
+  },
+};
+
 const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // Specific categories first (order matters for substring matching)
   ['Ceramic Capacitors', mlccParamMap],
@@ -4600,6 +5074,25 @@ const categoryParamMaps: [string, Record<string, ParamMapEntry>][] = [
   // "Industrial Mount" MUST come before "Solid State" for correct substring matching
   ['Solid State - Industrial Mount', ssrIndustrialParamMap],
   ['Solid State', ssrPcbParamMap],
+  // === L2 categories (no logic tables — curated param maps only) ===
+  ['Microcontrollers', mcuParamMap],
+  ['Memory', memoryParamMap],
+  // Sensors — multiple Digikey subcategories all share common param names
+  ['Sensor', sensorParamMap],
+  ['Accelerometer', sensorParamMap],
+  ['Gyroscope', sensorParamMap],
+  ['IMU', sensorParamMap],
+  // Connectors — broad category covering headers, pins, sockets, etc.
+  ['Header', connectorParamMap],
+  ['Connector', connectorParamMap],
+  ['Socket', connectorParamMap],
+  // LEDs — discrete indication LEDs
+  ['LED Indication', ledParamMap],
+  // Switches — tactile, pushbutton, DIP, toggle
+  ['Tactile Switch', switchParamMap],
+  ['Pushbutton Switch', switchParamMap],
+  ['DIP Switch', switchParamMap],
+  ['Toggle Switch', switchParamMap],
 ];
 
 /** Find the category map for a given Digikey category name */

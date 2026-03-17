@@ -2159,3 +2159,50 @@ Backward-compatible — existing flat `unitPrice`, `stock`, `leadTime` fields pr
 - **RecommendationCard**: Shows multi-supplier pricing lines when `SupplierQuote[]` has entries from multiple suppliers. Each line shows supplier name, best price at relevant quantity, and stock indicator.
 
 - **Admin data-sources route**: Reports Mouser API status (reachable/unreachable), daily quota remaining (tracked in-memory), and last successful call timestamp alongside existing Digikey/Anthropic/Supabase status checks.
+
+## 84. L0-L1 Taxonomy Expansion — Full Digikey Category Classification (2026-03-16)
+
+**Problem:** `mapCategory()` defaulted everything outside the 43 supported families to `'ICs'` — microcontrollers, memory, sensors, connectors, RF modules, power supplies, etc. were all misclassified. This undermined BOM analysis, LLM reasoning, and user experience when searching unsupported parts.
+
+**Solution:** Expanded `ComponentCategory` from 21 to 37 values, adding 16 new categories covering all major Digikey product areas. Updated `mapCategory()` and `mapSubcategory()` with new substring checks. Added `digikeyLeafCategory` to `Part` interface to preserve Digikey's exact leaf category name.
+
+**Design:** Two-tier taxonomy model:
+- **L3 families** (43): Full logic tables + curated param maps + cross-reference scoring
+- **L0 categories** (16 new): Correct classification + generic param extraction + clean display. No logic tables — parts show attributes panel but no recommendations.
+
+**New categories:** Microcontrollers, Processors, Memory, Sensors, RF and Wireless, LEDs and Optoelectronics, Power Supplies, Transformers, Switches, Cables and Wires, Filters, Audio, Motors and Fans, Test and Measurement, Development Tools, Battery Products.
+
+**Bug fix:** The SCR check `lower.includes('scr')` matched the 'scr' substring in 'discrete' (e.g., "LED Indication - Discrete" → Thyristors). Fixed to `lower.includes(' scr') || lower.startsWith('scr')`.
+
+**Future:** L2 (curated param maps for high-value non-xref categories) can be added incrementally without structural changes. The `digikeyLeafCategory` field enables precise keying for future param maps.
+
+---
+
+## 85. Lifecycle Section Table Format Consistency (2026-03-16)
+
+**Problem:** The "LIFECYCLE & COMPLIANCE" section in `AttributesPanel.tsx` and `ComparisonView.tsx` used ad-hoc `Stack direction="row"` layouts with hard-coded `width: 120` labels, while the parametric attributes section directly above used a proper MUI `<Table>` with consistent row height, padding, font size, border color, and hover effects. The visual inconsistency was noticeable — different spacing, alignment, and interaction patterns within the same panel.
+
+**Solution:** Converted both lifecycle sections to use the same MUI `<Table>` format as the parametric attributes table. Same `ROW_HEIGHT`, `ROW_PY`, `ROW_FONT_SIZE`, monospace values, `borderColor: 'divider'`, and row hover effect. Risk Rank retains its colored dot indicator within the table cell.
+
+**Files:** `components/AttributesPanel.tsx`, `components/ComparisonView.tsx`.
+
+## 86. L2 Curated Param Maps for Non-Logic-Table Categories (2026-03-16)
+
+**Problem:** With L0 (Decision #84), 16 new categories get correct classification but still use the generic param extraction fallback — auto-generated parameterIds, no value normalization, all Digikey fields dumped as noisy columns.
+
+**Solution:** Added curated param maps for 6 high-value categories in `digikeyParamMap.ts`. These provide stable `dkp:*` column IDs, clean display names, and proper sort ordering in parts list tables — without logic tables or matching engine.
+
+**L2 param maps added:**
+
+| Category | Digikey Registrations | Fields Mapped | Verified Against |
+|----------|----------------------|---------------|------------------|
+| Microcontrollers | `Microcontrollers` | 15 | STM32F103C8T6, ATMEGA328P-AU, STM32G431CBU6 |
+| Memory | `Memory` | 12 | AT24C256C (EEPROM), W25Q128JVSIQ (Flash), IS62WV1288 (SRAM) |
+| Sensors | `Sensor`, `Accelerometer`, `Gyroscope`, `IMU` | 19 (union) | BME280, ADXL345BCCZ, ACS712ELCTR-05B-T |
+| Connectors | `Header`, `Connector`, `Socket` | 12 | B2B-XH-A (JST) |
+| LEDs | `LED Indication` | 12 | LTST-C171KRKT |
+| Switches | `Tactile Switch`, `Pushbutton Switch`, `DIP Switch`, `Toggle Switch` | 10 | B3F-1000 (Omron) |
+
+**Design:** L2 entries are registered AFTER all L3 entries in `categoryParamMaps` to ensure L3 families get priority in substring matching. The sensor map uses a union approach — all common sensor params in one map, shared across sensor subcategories.
+
+**Future L2 candidates:** RF/Wireless, Power Supplies, Transformers, Filters, Audio, Motors/Fans.

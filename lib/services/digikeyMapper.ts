@@ -47,7 +47,7 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('capacitor')) return 'Capacitors';
   if (lower.includes('resistor')) return 'Resistors';
   if (lower.includes('inductor')) return 'Inductors';
-  if (lower.includes('thyristor') || lower.includes('scr') || lower.includes('triac') || lower.includes('diac')) return 'Thyristors';
+  if (lower.includes('thyristor') || lower.includes(' scr') || lower.startsWith('scr') || lower.includes('triac') || lower.includes('diac')) return 'Thyristors';
   if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
   if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('bjt') || lower.includes('igbt')) return 'Transistors';
   if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
@@ -89,7 +89,55 @@ function mapCategory(categoryName: string): ComponentCategory {
   if (lower.includes('solid state') && lower.includes('relay')) return 'Relays';
   // Electromechanical Relays (Family F1) — SSR guard prevents misclassification
   if (lower.includes('relay') && !lower.includes('solid state') && !lower.includes('ssr')) return 'Relays';
-  // Default: ICs covers a huge range
+
+  // === L0 taxonomy: categories without cross-reference logic tables ===
+
+  // Microcontrollers — "Embedded - Microcontrollers"
+  if (lower.includes('microcontroller')) return 'Microcontrollers';
+  // Processors — MPU, DSP, FPGA, CPLD, SoC
+  if (lower.includes('microprocessor') || lower.includes('fpga') || lower.includes('cpld') ||
+      lower.includes('dsp') || lower.includes('system on chip')) return 'Processors';
+  // Memory — EEPROM, Flash, SRAM, DRAM, FIFO
+  if (lower.includes('memory') || lower.includes('eeprom') || lower.includes('fifo')) return 'Memory';
+  // Sensors — MUST come after varistor/thermistor check (NTC/PTC are 'Protection')
+  if (lower.includes('sensor') || lower.includes('transducer') || lower.includes('accelerometer') ||
+      lower.includes('gyroscope') || lower.includes('encoder')) return 'Sensors';
+  // RF and Wireless — "RF/IF and RFID", antennas, baluns
+  if (lower.includes('rf/') || lower.includes('rf ') || lower.includes('rfid') ||
+      lower.includes('wireless') || lower.includes('antenna') || lower.includes('balun')) return 'RF and Wireless';
+  // LEDs and Optoelectronics — MUST come after optocoupler check
+  if (lower.includes('led') || lower.includes('optoelectronic') || lower.includes('display') ||
+      lower.includes('photodiode') || lower.includes('phototransistor') || lower.includes('infrared') ||
+      lower.includes('laser')) return 'LEDs and Optoelectronics';
+  // Power Supplies — board-mount, external/internal
+  if (lower.includes('power supply') || lower.includes('power supplies') ||
+      lower.includes('ac dc converter') || lower.includes('ac-dc')) return 'Power Supplies';
+  // Transformers
+  if (lower.includes('transformer')) return 'Transformers';
+  // Switches — physical switches only; guard against 'switching regulator' and 'signal switch'
+  if ((lower.includes('switch') || lower.includes('keypad') || lower.includes('pushbutton')) &&
+      !lower.includes('switching') && !lower.includes('signal switch') && !lower.includes('analog switch')) return 'Switches';
+  // Cables and Wires
+  if (lower.includes('cable') || (lower.includes('wire') && !lower.includes('wireless'))) return 'Cables and Wires';
+  // Filters — EMI/RFI, SAW, BAW (NOT ferrite beads/CM chokes which are 'Inductors')
+  if (lower.includes('filter') && !lower.includes('ferrite') && !lower.includes('common mode')) return 'Filters';
+  // Audio — speakers, microphones, buzzers
+  if (lower.includes('audio') || lower.includes('speaker') || lower.includes('microphone') ||
+      lower.includes('buzzer')) return 'Audio';
+  // Motors, Fans, Thermal
+  if (lower.includes('motor') || lower.includes('fan') || lower.includes('solenoid') ||
+      lower.includes('thermal management')) return 'Motors and Fans';
+  // Test and Measurement
+  if (lower.includes('test') && lower.includes('measurement')) return 'Test and Measurement';
+  // Development Tools — dev boards, kits, programmers, eval boards
+  if (lower.includes('development') || lower.includes('programmer') || lower.includes('eval board') ||
+      lower.includes('demo board')) return 'Development Tools';
+  // Battery Products
+  if (lower.includes('battery') || lower.includes('charger')) return 'Battery Products';
+  // Circuit Protection catch-all (beyond our varistors/fuses/thermistors)
+  if (lower.includes('circuit protection') || lower.includes('surge') || lower.includes('esd')) return 'Protection';
+
+  // Default: ICs covers remaining unclassified integrated circuits
   return 'ICs';
 }
 
@@ -205,6 +253,66 @@ function mapSubcategory(categoryName: string): string {
     if (lower.includes('signal')) return 'Signal Relay';
     return 'Power Relay';
   }
+
+  // === L0 subcategories for non-logic-table families ===
+  // Microcontrollers
+  if (lower.includes('microcontroller')) return 'Microcontroller';
+  // Processors
+  if (lower.includes('fpga')) return 'FPGA';
+  if (lower.includes('cpld')) return 'CPLD';
+  if (lower.includes('dsp')) return 'DSP';
+  if (lower.includes('microprocessor')) return 'Microprocessor';
+  if (lower.includes('system on chip')) return 'SoC';
+  // Memory
+  if (lower.includes('eeprom')) return 'EEPROM';
+  if (lower.includes('flash')) return 'Flash Memory';
+  if (lower.includes('sram')) return 'SRAM';
+  if (lower.includes('dram')) return 'DRAM';
+  if (lower.includes('fifo')) return 'FIFO';
+  if (lower.includes('memory')) return 'Memory IC';
+  // Sensors
+  if (lower.includes('temperature') && lower.includes('sensor')) return 'Temperature Sensor';
+  if (lower.includes('pressure') && lower.includes('sensor')) return 'Pressure Sensor';
+  if (lower.includes('current') && lower.includes('sensor')) return 'Current Sensor';
+  if (lower.includes('magnetic') && lower.includes('sensor')) return 'Magnetic Sensor';
+  if (lower.includes('accelerometer')) return 'Accelerometer';
+  if (lower.includes('gyroscope')) return 'Gyroscope';
+  if (lower.includes('image sensor')) return 'Image Sensor';
+  if (lower.includes('sensor') || lower.includes('transducer')) return 'Sensor';
+  // RF and Wireless
+  if (lower.includes('antenna')) return 'Antenna';
+  if (lower.includes('rfid')) return 'RFID';
+  if (lower.includes('rf') || lower.includes('wireless')) return 'RF Module';
+  // LEDs and Optoelectronics
+  if (lower.includes('display')) return 'Display';
+  if (lower.includes('led')) return 'LED';
+  if (lower.includes('laser')) return 'Laser Diode';
+  if (lower.includes('optoelectronic')) return 'Optoelectronic Device';
+  // Power Supplies
+  if (lower.includes('power supply') || lower.includes('power supplies')) return 'Power Supply';
+  if (lower.includes('ac dc') || lower.includes('ac-dc')) return 'AC-DC Converter';
+  // Transformers
+  if (lower.includes('transformer')) return 'Transformer';
+  // Switches
+  if (lower.includes('tactile') || lower.includes('pushbutton')) return 'Tactile Switch';
+  if (lower.includes('dip switch') || lower.includes('slide')) return 'DIP Switch';
+  if (lower.includes('toggle')) return 'Toggle Switch';
+  if (lower.includes('rotary')) return 'Rotary Switch';
+  if (lower.includes('switch') || lower.includes('keypad')) return 'Switch';
+  // Audio
+  if (lower.includes('speaker')) return 'Speaker';
+  if (lower.includes('microphone')) return 'Microphone';
+  if (lower.includes('buzzer')) return 'Buzzer';
+  if (lower.includes('audio')) return 'Audio Device';
+  // Motors and Fans
+  if (lower.includes('fan')) return 'Fan';
+  if (lower.includes('motor')) return 'Motor';
+  if (lower.includes('solenoid')) return 'Solenoid';
+  // Battery Products
+  if (lower.includes('battery') || lower.includes('charger')) return 'Battery Product';
+  // Development Tools
+  if (lower.includes('development') || lower.includes('programmer') || lower.includes('eval')) return 'Development Tool';
+
   return categoryName;
 }
 
@@ -868,6 +976,7 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
     rohsStatus: product.Classifications?.RohsStatus || undefined,
     moistureSensitivityLevel: product.Classifications?.MoistureSensitivityLevel || undefined,
     digikeyCategoryId: getDeepestCategoryId(product.Category),
+    digikeyLeafCategory: categoryName,
     qualifications: extractQualifications(product.Parameters ?? []),
   };
 }

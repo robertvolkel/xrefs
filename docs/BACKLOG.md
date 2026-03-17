@@ -79,6 +79,25 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### L2 taxonomy: curated param maps for high-value non-xref categories
+**Status:** Future — L0 classification complete (Decision #84)
+**Priority:** P1
+
+With L0 taxonomy done (37 `ComponentCategory` values, correct classification for all Digikey parts), the next step is L2: curated param maps for high-traffic categories that don't have logic tables. This would enable cross-source normalization (Digikey + Mouser + parts.io using canonical attribute IDs), smart columns in parts list tables, and richer LLM reasoning.
+
+**Priority categories for L2 param maps:**
+1. Microcontrollers — Flash, RAM, peripherals, core architecture, clock speed, package
+2. Memory (EEPROM/Flash/SRAM) — capacity, interface, speed, voltage, package
+3. Sensors — sensing type, range, accuracy, interface, package
+4. Connectors — pitch, positions, orientation, mounting, current rating
+5. LEDs — color, wavelength, forward voltage, luminous intensity, viewing angle
+
+Each L2 map requires: `digikeyParamMap.ts` entry keyed by Digikey category name, `partsioParamMap.ts` entry for gap-fill, and optionally a `mouserMapper.ts` entry. No logic tables needed — these are for display and normalization only.
+
+**Key enabler:** `digikeyLeafCategory` field on `Part` (added in Decision #84) preserves exact Digikey category names for precise param map keying.
+
+---
+
 ### Override preview: show scoring impact before saving
 **Files:** `components/admin/RuleOverrideDrawer.tsx`
 
