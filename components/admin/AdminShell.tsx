@@ -8,7 +8,6 @@ import { getAllLogicTables } from '@/lib/logicTables';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import AdminSectionNav, { AdminSection } from './AdminSectionNav';
 import FamilyPicker from './FamilyPicker';
-import DataSourcesPanel from './DataSourcesPanel';
 import ParamMappingsPanel from './ParamMappingsPanel';
 import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
@@ -23,7 +22,7 @@ const allCategories = [...new Set(allTables.map((t) => t.category))];
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'data-sources' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries';
+  return s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries';
 }
 
 function AdminShellInner() {
@@ -113,7 +112,6 @@ function AdminShellInner() {
 
         {/* Content */}
         <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
-          {activeSection === 'data-sources' && <DataSourcesPanel />}
           {activeSection === 'param-mappings' && <ParamMappingsPanel table={selectedTable} />}
           {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
           {activeSection === 'context' && <ContextPanel table={selectedTable} />}

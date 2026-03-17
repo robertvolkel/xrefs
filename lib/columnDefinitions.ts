@@ -38,8 +38,8 @@ export interface ColumnDefinition {
   isNumeric?: boolean;
   /** Whether this is a URL/link column */
   isLink?: boolean;
-  /** Data source for display badge in column picker (DK, PIO, Atlas) */
-  dataSource?: 'digikey' | 'partsio' | 'atlas';
+  /** Data source for display badge in column picker (DK, PIO, Atlas, Mouser) */
+  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mouser';
 }
 
 /** Display order for column groups in the column picker */
@@ -104,6 +104,21 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:countryOfOrigin', label: 'Country of Origin', source: 'digikey-product', enrichedField: 'countryOfOrigin', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '110px' },
   { id: 'dk:eccnCode', label: 'ECCN Code', source: 'digikey-product', enrichedField: 'eccnCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '90px' },
   { id: 'dk:htsCode', label: 'HTS Code', source: 'digikey-product', enrichedField: 'htsCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '100px' },
+  // Mouser Commercial
+  { id: 'mouser:unitPrice', label: 'Mouser Price', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'mouser:stock', label: 'Mouser Stock', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'mouser:leadTime', label: 'Mouser Lead Time', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '110px' },
+  // Multi-supplier summary
+  { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true },
+  // Mouser Risk & Lifecycle
+  { id: 'mouser:lifecycle', label: 'Lifecycle (Mouser)', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'mouser', defaultWidth: '110px' },
+  { id: 'mouser:suggestedReplacement', label: 'Suggested Replacement', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'mouser', defaultWidth: '140px' },
+  // Mouser Trade & Export (regional HTS codes)
+  { id: 'mouser:htsUS', label: 'HTS (US)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
+  { id: 'mouser:htsCN', label: 'HTS (CN)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
+  { id: 'mouser:htsEU', label: 'HTS (EU/TARIC)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '110px' },
+  { id: 'mouser:eccn', label: 'ECCN (Mouser)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
 ];
 
 /** Standalone definition for the auto-appended row actions column */
@@ -219,6 +234,14 @@ export function getCellValue(
         : undefined;
 
     case 'digikey-product': {
+      // Mouser columns (resolved from supplierQuotes/lifecycleInfo/complianceData)
+      if (column.id.startsWith('mouser:')) {
+        return getMouserCellValue(column.id, row);
+      }
+      // Multi-supplier summary columns
+      if (column.id.startsWith('commercial:')) {
+        return getCommercialSummaryCellValue(column.id, row);
+      }
       if (!column.enrichedField) return undefined;
       // Manufacturer fallback: rows validated before this field was added
       // may not have enrichedData.manufacturer, so fall back to resolvedPart.
@@ -274,6 +297,59 @@ export function getSortValue(
       return row.suggestedReplacement?.part.unitPrice;
     case 'sys:top_suggestion_stock':
       return row.suggestedReplacement?.part.quantityAvailable;
+    default:
+      return undefined;
+  }
+}
+
+// ============================================================
+// MOUSER / MULTI-SUPPLIER CELL VALUE HELPERS
+// ============================================================
+
+/** Extract a cell value from Mouser supplier data on a row */
+function getMouserCellValue(columnId: string, row: PartsListRow): string | number | undefined {
+  const quote = row.enrichedData?.supplierQuotes?.find(q => q.supplier === 'mouser');
+  const lifecycle = row.enrichedData?.lifecycleInfo?.find(l => l.source === 'mouser');
+  const compliance = row.enrichedData?.complianceData?.find(c => c.source === 'mouser');
+
+  switch (columnId) {
+    case 'mouser:unitPrice':
+      return quote?.unitPrice;
+    case 'mouser:stock':
+      return quote?.quantityAvailable;
+    case 'mouser:leadTime':
+      return quote?.leadTime;
+    case 'mouser:lifecycle':
+      return lifecycle?.status;
+    case 'mouser:suggestedReplacement':
+      return lifecycle?.suggestedReplacement;
+    case 'mouser:htsUS':
+      return compliance?.htsCodesByRegion?.US;
+    case 'mouser:htsCN':
+      return compliance?.htsCodesByRegion?.CN;
+    case 'mouser:htsEU':
+      return compliance?.htsCodesByRegion?.EU;
+    case 'mouser:eccn':
+      return compliance?.eccnCode;
+    default:
+      return undefined;
+  }
+}
+
+/** Compute multi-supplier summary values */
+function getCommercialSummaryCellValue(columnId: string, row: PartsListRow): number | undefined {
+  const quotes = row.enrichedData?.supplierQuotes;
+  if (!quotes || quotes.length === 0) return undefined;
+
+  switch (columnId) {
+    case 'commercial:bestPrice': {
+      const prices = quotes.map(q => q.unitPrice).filter((p): p is number => p != null && p > 0);
+      return prices.length > 0 ? Math.min(...prices) : undefined;
+    }
+    case 'commercial:totalStock': {
+      const stocks = quotes.map(q => q.quantityAvailable).filter((s): s is number => s != null);
+      return stocks.length > 0 ? stocks.reduce((sum, s) => sum + s, 0) : undefined;
+    }
     default:
       return undefined;
   }

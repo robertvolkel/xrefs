@@ -43,5 +43,9 @@ export function buildEnrichedData(attrs: PartAttributes): EnrichedPartData {
     countryOfOrigin: attrs.part.countryOfOrigin,
     eccnCode: attrs.part.eccnCode,
     htsCode: attrs.part.htsCode,
+    // Multi-supplier commercial data
+    supplierQuotes: attrs.part.supplierQuotes,
+    lifecycleInfo: attrs.part.lifecycleInfo,
+    complianceData: attrs.part.complianceData,
   };
 }

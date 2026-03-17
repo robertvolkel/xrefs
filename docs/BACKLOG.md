@@ -359,7 +359,7 @@ The following items track the phased evolution from cross-reference engine to co
 
 ~~Build Profile panel UI (replace "Coming Soon" placeholder).~~ Done (Decision #76) — editable name/email + password change.
 
-~~Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.~~ Done (Decision #82) — full UserPreferences type, ProfilePanel with preferences UI, registration with optional businessRole/industry.
+~~Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.~~ Done (Decision #82) — full UserPreferences type, registration with optional businessRole/industry. Settings reorganized into 3 sections: My Account (ProfilePanel), Preferences (PreferencesPanel), General Settings (AccountPanel). Currency enabled in General Settings, wired to `UserPreferences.defaultCurrency`.
 
 ---
 
@@ -425,11 +425,19 @@ Atlas product database integrated: 99 manufacturers, 27,030 products ingested in
 
 ---
 
-### Phase 8: Commercial Data Enrichment (Multi-Supplier)
-**Status:** Not started
+### ~~Phase 8: Commercial Data Enrichment (Multi-Supplier)~~ PARTIALLY COMPLETED
+**Status:** Mouser integration done (Decision #83); Arrow/Nexar and customer pricing remaining
 **Priority:** P3
 
-Integrate pricing enrichment API (Octopart/Nexar or similar). Extend `Part` type with `supplierPricing`. Build pricing comparison UI. Add lifecycle status tracking. Customer negotiated pricing overlays.
+~~Integrate pricing enrichment API.~~ Done — Mouser Search API v2 integrated as second distributor. `SupplierQuote[]` model with `PartAvailability` type. Live pricing, stock, lead time, lifecycle, and MOQ for both Digikey and Mouser. `enrichWithMouser()` gap-fill in `partDataService.ts`. Parts list batch enrichment via `validateRow()`. `SupplierPricingDrawer` shows multi-supplier comparison.
+
+**Remaining:**
+- Arrow/Nexar: Next distributor API integration (extend `SupplierQuote[]` model)
+- Customer negotiated pricing overlays
+- Mouser: ComparisonView multi-supplier pricing table (Phase 3C — side-by-side pricing comparison in xref detail view)
+- Mouser: Add Mouser suggested replacements as candidate source in `getRecommendations()` for obsolete/EOL parts
+- Mouser: "Commercial" view template with DK/Mouser price/stock/lead time columns pre-configured
+- Mouser: Lifecycle status reconciliation (worst-status-wins across Digikey, Parts.io, Mouser)
 
 ---
 

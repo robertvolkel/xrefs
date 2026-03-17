@@ -120,10 +120,20 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   ].filter(Boolean).join(', ')}
                 </Typography>
               )}
-              {showCommercial && (part.unitPrice != null || part.quantityAvailable != null) && (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }} noWrap>
-                  Digikey: {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'} · {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
-                </Typography>
+              {showCommercial && (part.unitPrice != null || part.quantityAvailable != null || part.supplierQuotes?.length) && (
+                <Box sx={{ mt: 0.25 }}>
+                  {part.supplierQuotes && part.supplierQuotes.length > 0 ? (
+                    part.supplierQuotes.map(q => (
+                      <Typography key={q.supplier} variant="body2" color="text.secondary" noWrap>
+                        {q.supplier === 'digikey' ? 'Digikey' : q.supplier === 'mouser' ? 'Mouser' : q.supplier}: {q.unitPrice != null ? `$${q.unitPrice.toFixed(2)}` : '—'} · {q.quantityAvailable != null ? `${q.quantityAvailable.toLocaleString()} in stock` : '—'}
+                      </Typography>
+                    ))
+                  ) : (
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      Digikey: {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'} · {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
+                    </Typography>
+                  )}
+                </Box>
               )}
               {showSummary && (
                 <>

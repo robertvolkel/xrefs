@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { getAllCategoryParamMaps } from '@/lib/services/digikeyParamMap';
+import { isMouserConfigured, getMouserDailyRemaining } from '@/lib/services/mouserClient';
 
 export async function GET() {
   try {
@@ -21,6 +22,11 @@ export async function GET() {
         configured: !!(digikeyCid && digikeySecret),
         clientIdPrefix: digikeyCid ? digikeyCid.slice(0, 8) + '...' : '',
         baseUrl: 'https://api.digikey.com/products/v4',
+      },
+      mouser: {
+        configured: isMouserConfigured(),
+        dailyCallsRemaining: isMouserConfigured() ? getMouserDailyRemaining() : 0,
+        baseUrl: 'https://api.mouser.com/api/v1',
       },
       anthropic: {
         configured: !!anthropicKey,

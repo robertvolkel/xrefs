@@ -1,7 +1,6 @@
 'use client';
 
 import { List, ListItemButton, ListItemIcon, ListItemText } from '@mui/material';
-import StorageOutlinedIcon from '@mui/icons-material/StorageOutlined';
 import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -10,7 +9,7 @@ import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'data-sources' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries';
+export type AdminSection = 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries';
 
 const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
@@ -19,7 +18,6 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlasProducts' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
-  { id: 'data-sources', icon: StorageOutlinedIcon, labelKey: 'admin.dataSources' },
 ];
 
 interface AdminSectionNavProps {

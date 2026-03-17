@@ -6,7 +6,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -22,6 +22,8 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
+import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget } from './mouserClient';
+import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
 
 // ============================================================
 // PARTS.IO LIFECYCLE METADATA HELPER
@@ -150,6 +152,97 @@ async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes>
 }
 
 // ============================================================
+// MOUSER ENRICHMENT (commercial data after Digikey + parts.io)
+// ============================================================
+
+/**
+ * Enrich part attributes with Mouser commercial data.
+ * Adds SupplierQuote (pricing/availability), LifecycleInfo, and ComplianceData.
+ * Also normalizes existing Digikey pricing into a SupplierQuote for uniform N-supplier display.
+ */
+async function enrichWithMouser(attrs: PartAttributes): Promise<PartAttributes> {
+  if (!isMouserConfigured() || !hasMouserBudget()) return attrs;
+
+  try {
+    const product = await getMouserProduct(attrs.part.mpn);
+
+    // Build Digikey quote from existing flat fields (always, for N-supplier uniformity)
+    const dkQuote = buildDigikeyQuote(attrs.part);
+    const quotes = [dkQuote];
+    const lifecycleInfos: LifecycleInfo[] = [];
+    const complianceEntries: ComplianceData[] = [];
+
+    if (product) {
+      const mouserQuote = mapMouserToQuote(product);
+      quotes.push(mouserQuote);
+
+      const lifecycle = mapMouserLifecycle(product);
+      if (lifecycle) lifecycleInfos.push(lifecycle);
+
+      const compliance = mapMouserCompliance(product);
+      if (compliance) complianceEntries.push(compliance);
+    }
+
+    return {
+      ...attrs,
+      part: {
+        ...attrs.part,
+        supplierQuotes: quotes,
+        lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
+        complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
+      },
+    };
+  } catch (error) {
+    console.warn('[mouser] Enrichment failed for', attrs.part.mpn, error);
+    reportServiceFailure('mouser', 'degraded', 'Enrichment failed');
+    return attrs;
+  }
+}
+
+/**
+ * Enrich recommendation candidates with Mouser pricing (batch).
+ * Uses pipe-separated batch API for efficiency (10 MPNs per call).
+ */
+async function enrichCandidatesWithMouser(recs: XrefRecommendation[]): Promise<XrefRecommendation[]> {
+  if (!isMouserConfigured() || !hasMouserBudget() || recs.length === 0) return recs;
+
+  try {
+    const mpns = recs.map(r => r.part.mpn);
+    const mouserProducts = await getMouserProductsBatch(mpns);
+
+    return recs.map(rec => {
+      const mouserProduct = mouserProducts.get(rec.part.mpn.toLowerCase());
+      const dkQuote = buildDigikeyQuote(rec.part);
+      const quotes = [dkQuote];
+      const lifecycleInfos: LifecycleInfo[] = [];
+      const complianceEntries: ComplianceData[] = [];
+
+      if (mouserProduct) {
+        quotes.push(mapMouserToQuote(mouserProduct));
+        const lifecycle = mapMouserLifecycle(mouserProduct);
+        if (lifecycle) lifecycleInfos.push(lifecycle);
+        const compliance = mapMouserCompliance(mouserProduct);
+        if (compliance) complianceEntries.push(compliance);
+      }
+
+      return {
+        ...rec,
+        part: {
+          ...rec.part,
+          supplierQuotes: quotes,
+          lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
+          complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
+        },
+      };
+    });
+  } catch (error) {
+    console.warn('[mouser] Candidate enrichment failed:', error);
+    reportServiceFailure('mouser', 'degraded', 'Candidate enrichment failed');
+    return recs;
+  }
+}
+
+// ============================================================
 // ATTRIBUTES
 // ============================================================
 
@@ -160,7 +253,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       if (response.Product) {
         const attrs = mapDigikeyProductToAttributes(response.Product);
         const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-        return enriched;
+        return await enrichWithMouser(enriched);
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -181,7 +274,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       if (match) {
         const attrs = mapDigikeyProductToAttributes(match);
         const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-        return enriched;
+        return await enrichWithMouser(enriched);
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
@@ -576,6 +669,13 @@ export async function getRecommendations(
       recs = recs.filter(r =>
         !excluded.some(ex => r.part.manufacturer.toLowerCase().includes(ex))
       );
+    }
+
+    // Step 3-mouser: Enrich scored recommendations with Mouser pricing (batch, ~1 API call)
+    if (isMouserConfigured() && hasMouserBudget() && recs.length > 0) {
+      console.time('[perf] enrichRecsWithMouser');
+      recs = await enrichCandidatesWithMouser(recs);
+      console.timeEnd('[perf] enrichRecsWithMouser');
     }
 
     // Determine primary dataSource for the result set

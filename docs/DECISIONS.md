@@ -2103,6 +2103,8 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 
 6. **Registration**: Optional `businessRole` and `industry` fields at registration, stored in `profiles.preferences`. Transparency notice explains the data is used by the AI assistant for personalization.
 
+7. **Settings reorganization**: Split the Settings area into three sections — "My Account" (name, email, password), "Preferences" (role, industry, company, manufacturers, compliance, regions), and "General Settings" (language, currency, theme). Currency moved from Preferences to General Settings (wired to `UserPreferences.defaultCurrency`). Preferences use a batch Save button (not auto-save per field).
+
 **Override hierarchy:** User Preferences (broadest) < Per-Family Context Questions (most specific). User effects are applied first; per-family context answers override them for the same `attributeId`.
 
 **Backward compatibility:** Empty preferences (`'{}'`) produce zero effects. Existing users are unaffected. API key auth returns empty preferences. `applyEffect()` exported from `contextModifier.ts` (was private) for reuse by `contextResolver.ts` — no logic change.
@@ -2117,5 +2119,43 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 - `app/api/profile/preferences/route.ts` — GET/PUT preferences
 - `app/api/chat/route.ts`, `app/api/modal-chat/route.ts` — fetch prefs, pass to orchestrator
 - `app/api/xref/[mpn]/route.ts`, `app/api/parts-list/validate/route.ts` — fetch prefs, pass to scoring
-- `components/settings/ProfilePanel.tsx` — Preferences UI (role, industry, company, manufacturers, compliance, currency, regions)
+- `components/settings/SettingsShell.tsx` — Settings orchestrator (3 sections)
+- `components/settings/SettingsSectionNav.tsx` — Left nav: My Account → Preferences → General Settings
+- `components/settings/ProfilePanel.tsx` — My Account (name, email, password)
+- `components/settings/PreferencesPanel.tsx` — Preferences UI (role, industry, company, manufacturers, compliance, regions)
+- `components/settings/AccountPanel.tsx` — General Settings (language, currency wired to UserPreferences, theme)
+- `components/auth/RegisterForm.tsx` — Optional role/industry dropdowns with transparency notice
 - `scripts/supabase-user-preferences-schema.sql` — Migration script
+
+## 83. Mouser API Integration — Commercial Intelligence (2026-03-16)
+
+**Context:** Mouser API was evaluated as a candidate data source. Live testing confirmed it provides zero electrical parametric data — `ProductAttributes` returns only packaging metadata (weight, dimensions, moisture sensitivity level). However, it provides excellent commercial intelligence: multi-tier pricing (up to 9 quantity breaks), real-time stock levels, lead times, lifecycle status (Obsolete/End of Life), suggested replacements for obsolete parts, regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), and ECCN export classification.
+
+**Decision:** Integrate Mouser as the first multi-supplier pricing source (Pillar 2: Commercial Intelligence) and compliance/trade data source (Pillar 3: Compliance & Lifecycle). NOT used for parametric attribute enrichment (Pillar 1 — that remains Digikey + parts.io).
+
+**N-supplier data model from day one:**
+
+New array-typed fields on `Part` and `EnrichedPartData`:
+- `SupplierQuote[]` — Multi-tier pricing per supplier (supplier, currency, quantity breaks, stock, lead time, MOQ, SPQ)
+- `LifecycleInfo[]` — Per-supplier lifecycle status (active, NRND, obsolete, EOL) with suggested replacements
+- `ComplianceData[]` — HTS codes by region (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN export classification
+
+Backward-compatible — existing flat `unitPrice`, `stock`, `leadTime` fields preserved. UI reads from `SupplierQuote[]` when available, falls back to flat fields.
+
+**Key implementation details:**
+
+- **`mouserClient.ts`**: API key auth (query param `apiKey`), batch up to 10 pipe-separated MPNs per call, 30-min in-memory cache, rate limiter (28 calls/min, 950 calls/day soft caps matching Mouser's documented limits).
+
+- **`mouserMapper.ts`**: Price string parsing (`$0.73` → `0.73`), HTS code mapping (`USHTS` → `US`, `TARIC` → `EU`, etc.), lifecycle status extraction from `LifecycleStatus` and `InfoMessages` fields.
+
+- **Pipeline integration**: Source part enriched after parts.io gap-fill step. Recommendation candidates enriched in batch after scoring (not during — avoids N×M API explosion).
+
+- **Rate limit strategy**: Source parts call Mouser only during batch BOM validation (20 calls per 200-row BOM = ~2% daily quota). Candidates enriched on-demand via `/api/mouser/enrich` endpoint (user-triggered, not automatic). This keeps daily quota consumption well within limits even for heavy BOM usage.
+
+- **Digikey pricing wrapped**: Existing Digikey pricing data wrapped into `SupplierQuote` format for uniform N-supplier display. Single code path for rendering pricing regardless of source count.
+
+- **11 new columns**: `mouser:price`, `mouser:stock`, `mouser:leadTime`, `mouser:moq`, `commercial:bestPrice`, `commercial:totalStock`, `commercial:supplierCount`, `commercial:lifecycle`, `commercial:htsUS`, `commercial:eccn`, `commercial:suggestedReplacement` — available in column picker, not in default views.
+
+- **RecommendationCard**: Shows multi-supplier pricing lines when `SupplierQuote[]` has entries from multiple suppliers. Each line shows supplier name, best price at relevant quantity, and stock indicator.
+
+- **Admin data-sources route**: Reports Mouser API status (reachable/unreachable), daily quota remaining (tracked in-memory), and last successful call timestamp alongside existing Digikey/Anthropic/Supabase status checks.

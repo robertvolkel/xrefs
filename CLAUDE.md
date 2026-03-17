@@ -47,6 +47,7 @@ app/                          # Next.js App Router
   api/admin/releases/        # Create release note (POST, admin-only)
   api/admin/releases/[id]/   # Update/delete release note (PATCH/DELETE, admin-only)
   api/releases/              # List release notes (GET, all authenticated)
+  api/mouser/enrich/         # On-demand Mouser enrichment (POST, batch MPNs)
   api/feedback/              # User feedback submission (POST)
   lists/                      # Lists dashboard page
   parts-list/                 # Parts list editor page
@@ -88,6 +89,12 @@ components/                   # React components
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + shared)
     AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
+  settings/                    # User settings panels
+    SettingsShell.tsx         # Settings orchestrator — section nav + content routing
+    SettingsSectionNav.tsx    # Left nav: My Account, Preferences, General Settings
+    ProfilePanel.tsx          # My Account — name, email, password
+    PreferencesPanel.tsx      # Preferences — role, industry, company, manufacturers, compliance, regions
+    AccountPanel.tsx          # General Settings — language, currency, theme
   releases/                    # Release notes feed
     ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
   qc/                         # QC top-level shell (admin-only)
@@ -133,6 +140,8 @@ lib/
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
+  services/mouserClient.ts    # Mouser API client — search, batch, cache, rate limiter
+  services/mouserMapper.ts    # Mouser response → SupplierQuote/LifecycleInfo/ComplianceData
   columnDefinitions.ts        # Dynamic column system for parts list table
   viewConfigStorage.ts        # View types (SavedView, ViewState), localStorage persistence, sanitizeTemplateColumns()
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
@@ -349,6 +358,24 @@ Secondary data source (SiliconExpert/IHS) that fills parametric gaps after Digik
 
 **API:** Base URL `http://api.qa.parts.io/solr/partsio/listings` (QA — requires VPN). Env var `PARTSIO_API_KEY`. Production URL TBD.
 
+## Mouser Integration (Commercial Intelligence — Decision #83)
+
+First multi-supplier pricing source. Provides zero parametric data — purely commercial intelligence (Pillar 2) and compliance/trade data (Pillar 3).
+
+- **Client:** `lib/services/mouserClient.ts` — API key auth (query param), batch up to 10 pipe-separated MPNs, 30-min cache, rate limiter (28/min, 950/day soft caps)
+- **Mapper:** `lib/services/mouserMapper.ts` — Price parsing, HTS code mapping (8 regions), lifecycle extraction, Digikey quote normalization
+- **API:** `https://api.mouser.com/api/v1/search/partnumber`. Env var `MOUSER_API_KEY`. Rate limits: 30/min, 1,000/day.
+
+**N-supplier data model:** `SupplierQuote[]`, `LifecycleInfo[]`, `ComplianceData[]` on `Part` and `EnrichedPartData`. Designed for N suppliers (Digikey, Mouser, Arrow, Nexar). Existing flat fields (`unitPrice`, `quantityAvailable`) preserved for backward compatibility.
+
+**Pipeline integration:** Source part enriched after parts.io in `getAttributes()`. Recommendation candidates enriched in batch after scoring in `getRecommendations()`. On-demand enrichment via `/api/mouser/enrich` for modal/comparison views.
+
+**Rate limit strategy:** Source parts only during batch BOM validation (200 parts ÷ 10/batch = 20 calls = 2% daily quota). Candidates enriched only for scored recommendations (~1 batch call). `hasMouserBudget()` check on every call — graceful skip when daily limit hit.
+
+**Unique data:** `SuggestedReplacement` (Mouser's own replacement MPN for obsolete parts), regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN.
+
+**Columns:** 11 new columns in column system (`mouser:unitPrice`, `mouser:stock`, `mouser:leadTime`, `commercial:bestPrice`, `commercial:totalStock`, `mouser:lifecycle`, `mouser:suggestedReplacement`, `mouser:htsUS/CN/EU`, `mouser:eccn`). Available in column picker, not in default view.
+
 ## Product Direction
 
 The app is evolving from a cross-reference tool into a component intelligence platform built on five pillars:
@@ -365,7 +392,8 @@ The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
 - **Parts.io** (built — Decision #77) — SiliconExpert/IHS gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
 - **Atlas** (built — products + param dictionaries + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product). Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69).
-- **Distributor APIs** (planned) — Mouser, Arrow, Nexar/Octopart for multi-supplier pricing
+- **Mouser** (built — Decision #83) — First multi-supplier pricing source: quantity-based price breaks, real-time stock, lead times, lifecycle status, suggested replacements, regional HTS codes (8 regions), ECCN. No parametric data. Rate limits: 30/min, 1,000/day.
+- **Distributor APIs** (planned) — Arrow, Nexar/Octopart for additional multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering
 
 Chinese manufacturer options are highlighted with a subtle icon in recommendations (non-promotional, informative only). Rich company profiles for Chinese manufacturers are fed by the Atlas API.
@@ -394,7 +422,7 @@ npm test        # Jest unit tests (1051 tests, ~0.8s)
 npm run test:watch  # Jest in watch mode
 ```
 
-Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
+Requires `.env.local` with: `ANTHROPIC_API_KEY`, `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `PARTSIO_API_KEY`, `MOUSER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `REGISTRATION_CODE`.
 
 Optional: `XREFS_API_KEYS` (comma-separated Bearer tokens for external API access), `SUPABASE_SERVICE_ROLE_KEY` (for MCP server Supabase access).
 

@@ -26,6 +26,10 @@ export interface Part {
   eccnCode?: string;
   htsCode?: string;
   factoryLeadTimeWeeks?: number;
+  // Multi-supplier commercial data
+  supplierQuotes?: SupplierQuote[];
+  lifecycleInfo?: LifecycleInfo[];
+  complianceData?: ComplianceData[];
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -120,7 +124,7 @@ export interface SearchResult {
 
 // ── Service Status ──────────────────────────────────────────
 
-export type ServiceName = 'digikey' | 'partsio' | 'anthropic';
+export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'anthropic';
 export type ServiceSeverity = 'degraded' | 'unavailable';
 
 export interface ServiceWarning {
@@ -463,6 +467,46 @@ export interface ManufacturerLocation {
 /** Status of an individual row during batch validation */
 export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
 
+// ── Multi-Supplier Commercial Data ─────────────────────────
+
+export type SupplierName = 'digikey' | 'mouser' | 'arrow' | 'nexar';
+
+/** A single price break from a supplier */
+export interface PriceBreak {
+  quantity: number;
+  unitPrice: number;
+  currency: string;
+}
+
+/** Pricing and availability from a single supplier */
+export interface SupplierQuote {
+  supplier: SupplierName;
+  supplierPartNumber?: string;
+  unitPrice?: number;
+  priceBreaks: PriceBreak[];
+  quantityAvailable?: number;
+  availableOnOrder?: Array<{ quantity: number; date: string }>;
+  leadTime?: string;
+  productUrl?: string;
+  fetchedAt: string;
+}
+
+/** Lifecycle intelligence from any source */
+export interface LifecycleInfo {
+  status?: string;
+  isDiscontinued?: boolean;
+  suggestedReplacement?: string;
+  source: SupplierName | 'partsio';
+}
+
+/** Regional compliance/trade data */
+export interface ComplianceData {
+  rohsStatus?: string;
+  eccnCode?: string;
+  htsCodesByRegion?: Record<string, string>;
+  source: SupplierName | 'partsio';
+}
+
 /** Flattened, storage-friendly product data built during validation (from all sources) */
 export interface EnrichedPartData {
   // Product Identification
@@ -496,6 +540,10 @@ export interface EnrichedPartData {
   countryOfOrigin?: string;
   eccnCode?: string;
   htsCode?: string;
+  // Multi-supplier commercial data
+  supplierQuotes?: SupplierQuote[];
+  lifecycleInfo?: LifecycleInfo[];
+  complianceData?: ComplianceData[];
 }
 
 /** A row from the uploaded parts list */
