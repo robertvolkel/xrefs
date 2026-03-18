@@ -76,10 +76,13 @@ export async function extractProfileFields(
       ],
     });
 
-    const text = response.content
+    let text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map(b => b.text)
       .join('');
+
+    // Strip markdown code fences if Haiku wraps the JSON
+    text = text.replace(/^```json?\s*\n?/, '').replace(/\n?\s*```\s*$/, '').trim();
 
     const parsed = JSON.parse(text) as ExtractedProfileFields;
     return validateExtraction(parsed);

@@ -41,16 +41,22 @@ export default function RegisterForm({ onSuccess }: RegisterFormProps) {
     setLoading(true);
 
     // Validate invite code server-side and create account
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inviteCode, email, password, firstName, lastName }),
-    });
-
-    const data = await res.json();
+    let data: { success: boolean; error?: string };
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inviteCode, email, password, firstName, lastName }),
+      });
+      data = await res.json();
+    } catch {
+      setError('Network error — please check your connection and try again.');
+      setLoading(false);
+      return;
+    }
 
     if (!data.success) {
-      setError(data.error);
+      setError(data.error ?? 'Registration failed.');
       setLoading(false);
       return;
     }

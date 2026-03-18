@@ -5,15 +5,17 @@ import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { useTranslation } from 'react-i18next';
 
-export type SettingsSection = 'profile' | 'myProfile' | 'companySettings' | 'account';
+export type SettingsSection = 'profile' | 'myProfile' | 'companySettings' | 'account' | 'about';
 
 const sections: { id: SettingsSection; icon: React.ElementType; label: string }[] = [
   { id: 'profile', icon: PersonOutlineIcon, label: 'My Account' },
   { id: 'myProfile', icon: BadgeOutlinedIcon, label: 'My Profile' },
   { id: 'companySettings', icon: BusinessOutlinedIcon, label: 'Company Settings' },
   { id: 'account', icon: TuneOutlinedIcon, label: 'General Settings' },
+  { id: 'about', icon: HelpOutlineIcon, label: 'About' },
 ];
 
 interface SettingsSectionNavProps {

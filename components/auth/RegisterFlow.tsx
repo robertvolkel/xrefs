@@ -47,14 +47,13 @@ export default function RegisterFlow() {
         sx={{
           width: '100%',
           maxWidth: 560,
+          height: 620,
           border: 1,
           borderColor: 'divider',
           borderRadius: 3,
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          // Step 2 (chat) needs more height
-          ...(step === 1 && { maxHeight: '85vh' }),
         }}
       >
         {/* Header: stepper + skip link */}
@@ -68,6 +67,7 @@ export default function RegisterFlow() {
             display: 'flex',
             alignItems: 'center',
             gap: 2,
+            flexShrink: 0,
           }}
         >
           <Stepper activeStep={step} sx={{ flex: 1 }}>
@@ -102,7 +102,17 @@ export default function RegisterFlow() {
 
         {/* Content */}
         {step === 0 ? (
-          <Box sx={{ px: 3, py: 3 }}>
+          <Box
+            sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              px: 3,
+              py: 3,
+              overflow: 'auto',
+            }}
+          >
             <RegisterForm
               onSuccess={(name) => {
                 setFirstName(name);

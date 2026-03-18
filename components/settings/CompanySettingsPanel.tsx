@@ -13,6 +13,7 @@ import {
   FormGroup,
   FormControlLabel,
   Checkbox,
+  Skeleton,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/components/AuthProvider';
@@ -109,6 +110,21 @@ export default function CompanySettingsPanel() {
       <Typography variant="caption" color="text.secondary" sx={{ mb: 2.5, display: 'block' }}>
         These settings are used to filter manufacturers, apply compliance requirements, and focus sourcing recommendations to your preferred regions.
       </Typography>
+
+      {!loaded && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, maxWidth: 360 }}>
+          <Skeleton variant="rounded" height={40} />
+          <Box>
+            <Skeleton variant="text" width={160} sx={{ mb: 1 }} />
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} variant="text" width={200} height={28} />
+            ))}
+          </Box>
+          <Skeleton variant="rounded" height={40} />
+          <Skeleton variant="rounded" height={40} />
+          <Skeleton variant="rounded" width={80} height={36} sx={{ borderRadius: 20 }} />
+        </Box>
+      )}
 
       {loaded && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, maxWidth: 360 }}>

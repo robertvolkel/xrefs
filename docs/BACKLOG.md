@@ -403,7 +403,7 @@ The following items track the phased evolution from cross-reference engine to co
 ~~**Status:** Not started~~
 **Status:** Done (Decision #82)
 
-~~Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.~~ Done — `buildUserContextSection()`, behavioral instructions, + 4 history tools (`get_my_recent_searches`, `get_my_lists`, `get_my_past_recommendations`, `get_my_conversations`).
+~~Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.~~ Done — `buildUserContextSection()`, behavioral instructions, + 5 history tools (`get_my_recent_searches`, `get_my_lists`, `get_list_parts`, `get_my_past_recommendations`, `get_my_conversations`). **Update (Decision #96):** Added `get_list_parts` tool — queries row-level data within BOMs (aggregate breakdowns or filtered detail rows). `get_my_lists` now returns list IDs.
 
 ---
 
@@ -515,3 +515,28 @@ Allow users to re-run the onboarding agent conversation from Settings → My Pro
 **Priority:** P3
 
 The onboarding agent messages, chip labels, and new settings section labels (My Profile, Company Settings) are hardcoded in English. Add translation keys to `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
+
+---
+
+## Code Audit Follow-ups (Decision #95)
+
+### Unit tests for new profile/preferences services
+**Status:** Not started
+**Priority:** P2
+
+Three new services have zero test coverage:
+- `lib/services/profileExtractor.ts` — `validateExtraction()` is pure and highly testable (enum validation, array filtering, goal cap at 3)
+- `lib/services/userPreferencesService.ts` — `migratePreferences()` is pure (role mapping, industry normalization)
+- `lib/services/contextResolver.ts` — `resolveUserEffects()` is pure (compliance escalation, industry-based rule boosting)
+
+### Fix fire-and-forget migration write-back
+**Status:** Not started
+**Priority:** P2
+
+`userPreferencesService.ts:67-77` — the Supabase migration auto-write-back uses `.then(() => {})`, silently swallowing errors. Should at minimum log errors: `.then(({ error }) => { if (error) console.error(...) })`.
+
+### Remove dead "Other" role text field in OnboardingAgent
+**Status:** Not started
+**Priority:** P2
+
+`components/auth/OnboardingAgent.tsx:542-545` — hidden `<Box sx={{ display: 'none' }} />` placeholder and `otherRoleText` state are dead code. Either implement the "Other" free-text input or remove the state + placeholder.

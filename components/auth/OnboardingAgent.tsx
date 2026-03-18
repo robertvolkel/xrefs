@@ -10,8 +10,11 @@ import {
   TextField,
   Link as MuiLink,
   Paper,
+  IconButton,
+  InputAdornment,
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import SendIcon from '@mui/icons-material/Send';
 import { updateUserPreferences } from '@/lib/api';
 import {
   ROLE_OPTIONS,
@@ -67,6 +70,48 @@ interface Answers {
 }
 
 // ============================================================
+// TEXT MATCHING
+// ============================================================
+
+/** Case-insensitive substring match against option labels. Returns first match. */
+function findMatch<T extends string>(
+  input: string,
+  options: { value: T; label: string }[],
+): T | null {
+  const lower = input.toLowerCase().trim();
+  if (!lower) return null;
+  // Exact match first
+  for (const o of options) {
+    if (o.label.toLowerCase() === lower) return o.value;
+  }
+  // Substring match
+  for (const o of options) {
+    if (o.label.toLowerCase().includes(lower) || lower.includes(o.label.toLowerCase())) return o.value;
+  }
+  return null;
+}
+
+/** Find multiple matches from comma-separated or free-form text */
+function findMultiMatch<T extends string>(
+  input: string,
+  options: { value: T; label: string }[],
+  max?: number,
+): T[] {
+  const lower = input.toLowerCase().trim();
+  if (!lower) return [];
+  const matches: T[] = [];
+  for (const o of options) {
+    if (max && matches.length >= max) break;
+    if (lower.includes(o.label.toLowerCase()) || o.label.toLowerCase().includes(lower)) {
+      matches.push(o.value);
+    }
+  }
+  return matches;
+}
+
+const AFFIRMATIVE = /^(yes|yeah|yep|sure|ok|okay|ready|let'?s go|let'?s do it|go|start)/i;
+
+// ============================================================
 // ACKNOWLEDGMENT MAPS
 // ============================================================
 
@@ -90,13 +135,14 @@ const VOLUME_ACKS: Record<string, string> = {
 
 interface OnboardingAgentProps {
   firstName: string;
-  /** When true, renders without full-page wrapper and top-right skip link (parent provides these) */
+  /** When true, renders without full-page wrapper (parent provides container) */
   embedded?: boolean;
 }
 
 export default function OnboardingAgent({ firstName, embedded }: OnboardingAgentProps) {
   const router = useRouter();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<OnboardingStep>('intro');
   const [messages, setMessages] = useState<Message[]>([]);
   const [answers, _setAnswers] = useState<Answers>({});
@@ -108,8 +154,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
       return next;
     });
   }, []);
-  const [otherRoleText, setOtherRoleText] = useState('');
-  const [freeformText, setFreeformText] = useState('');
+  const [chatInput, setChatInput] = useState('');
 
   // Multi-select pending selections (before user clicks Continue/Done)
   const [pendingIndustries, setPendingIndustries] = useState<IndustryVertical[]>([]);
@@ -147,7 +192,6 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     if (partial.productionVolume !== undefined) toSave.productionVolume = partial.productionVolume;
     if (partial.projectPhase !== undefined) toSave.projectPhase = partial.projectPhase;
     if (partial.goals !== undefined) toSave.goals = partial.goals;
-
     try {
       await updateUserPreferences(toSave);
     } catch (err) {
@@ -156,7 +200,6 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
   }, []);
 
   const goToDashboard = useCallback(async () => {
-    // Compose profile prompt from all answers (use ref for latest)
     const a = answersRef.current;
     const parts: string[] = [];
 
@@ -191,7 +234,6 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     }
 
     const profilePrompt = parts.join(' ');
-
     try {
       await updateUserPreferences({
         onboardingComplete: true,
@@ -200,7 +242,6 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     } catch (err) {
       console.error('[OnboardingAgent] Failed to save onboarding completion:', err);
     }
-
     router.push('/');
     router.refresh();
   }, [router]);
@@ -208,9 +249,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
   const skipToApp = useCallback(async () => {
     try {
       await updateUserPreferences({ onboardingComplete: true });
-    } catch {
-      // Best-effort
-    }
+    } catch { /* best-effort */ }
     router.push('/');
     router.refresh();
   }, [router]);
@@ -231,7 +270,6 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     };
 
     if (nextStep === 'closing') {
-      // Build closing message (use ref for latest answers)
       const a = answersRef.current;
       const answeredFields: string[] = [];
       if (a.businessRole) answeredFields.push(`**Role:** ${getRoleLabel(a.businessRole)}`);
@@ -253,62 +291,45 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           text: "No problem \u2014 you can fill in your profile anytime under Settings \u2192 My Profile. Let's get started.",
         });
       }
-
       setStep('closing');
       return;
     }
 
     const msg = questionMessages[nextStep];
-    if (msg) {
-      addMessages({ role: 'agent', text: msg });
-    }
+    if (msg) addMessages({ role: 'agent', text: msg });
     setStep(nextStep);
   }, [addMessages]);
 
   // --------------------------------------------------------
-  // HANDLERS
+  // CHIP HANDLERS (unchanged logic, streamlined)
   // --------------------------------------------------------
 
-  // Q1: Role (single select)
-  const handleRoleSelect = useCallback(async (role: BusinessRole) => {
-    const label = role === 'other' && otherRoleText.trim()
-      ? otherRoleText.trim()
-      : getRoleLabel(role);
-    addMessages({ role: 'user', text: label });
-
+  const handleRoleSelect = useCallback((role: BusinessRole, label?: string) => {
+    addMessages({ role: 'user', text: label ?? getRoleLabel(role) });
     setAnswers(prev => ({ ...prev, businessRole: role }));
-    await savePartial({ businessRole: role });
+    savePartial({ businessRole: role }); // fire-and-forget
     advanceTo('q2_industry');
-  }, [otherRoleText, addMessages, savePartial, advanceTo, setAnswers]);
+  }, [addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q2: Industry (multi select)
   const handleIndustryToggle = useCallback((ind: IndustryVertical) => {
     setPendingIndustries(prev =>
       prev.includes(ind) ? prev.filter(i => i !== ind) : [...prev, ind]
     );
   }, []);
 
-  const handleIndustryConfirm = useCallback(async () => {
-    if (pendingIndustries.length === 0) return;
-
-    const labels = pendingIndustries.map(i => getIndustryLabel(i));
+  const handleIndustryConfirm = useCallback((industries?: IndustryVertical[]) => {
+    const selected = industries ?? pendingIndustries;
+    if (selected.length === 0) return;
+    const labels = selected.map(i => getIndustryLabel(i));
     addMessages({ role: 'user', text: labels.join(', ') });
-
-    // Contextual acknowledgments
-    const acks = pendingIndustries
-      .map(i => INDUSTRY_ACKS[i])
-      .filter(Boolean) as string[];
-    if (acks.length > 0) {
-      addMessages({ role: 'agent', text: acks.join(' ') });
-    }
-
-    setAnswers(prev => ({ ...prev, industries: pendingIndustries }));
-    await savePartial({ industries: pendingIndustries });
+    const acks = selected.map(i => INDUSTRY_ACKS[i]).filter(Boolean) as string[];
+    if (acks.length > 0) addMessages({ role: 'agent', text: acks.join(' ') });
+    setAnswers(prev => ({ ...prev, industries: selected }));
+    savePartial({ industries: selected }); // fire-and-forget
     setPendingIndustries([]);
     advanceTo('q3_produce');
   }, [pendingIndustries, addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q3: Production types (multi select, max 3)
   const handleProdTypeToggle = useCallback((pt: ProductionType) => {
     setPendingProdTypes(prev => {
       if (prev.includes(pt)) return prev.filter(p => p !== pt);
@@ -317,43 +338,32 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     });
   }, []);
 
-  const handleProdTypeConfirm = useCallback(async () => {
-    if (pendingProdTypes.length === 0) return;
-
-    const labels = pendingProdTypes.map(p => getProductionTypeLabel(p));
-    addMessages({ role: 'user', text: labels.join(', ') });
-
-    setAnswers(prev => ({ ...prev, productionTypes: pendingProdTypes }));
-    await savePartial({ productionTypes: pendingProdTypes });
+  const handleProdTypeConfirm = useCallback((types?: ProductionType[]) => {
+    const selected = types ?? pendingProdTypes;
+    if (selected.length === 0) return;
+    addMessages({ role: 'user', text: selected.map(p => getProductionTypeLabel(p)).join(', ') });
+    setAnswers(prev => ({ ...prev, productionTypes: selected }));
+    savePartial({ productionTypes: selected }); // fire-and-forget
     setPendingProdTypes([]);
     advanceTo('q4_volume');
   }, [pendingProdTypes, addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q4: Volume (single select)
-  const handleVolumeSelect = useCallback(async (vol: ProductionVolume) => {
-    addMessages({ role: 'user', text: getVolumeLabel(vol) });
-
-    // Contextual acknowledgment
+  const handleVolumeSelect = useCallback((vol: ProductionVolume, label?: string) => {
+    addMessages({ role: 'user', text: label ?? getVolumeLabel(vol) });
     const ack = VOLUME_ACKS[vol];
-    if (ack) {
-      addMessages({ role: 'agent', text: ack });
-    }
-
+    if (ack) addMessages({ role: 'agent', text: ack });
     setAnswers(prev => ({ ...prev, productionVolume: vol }));
-    await savePartial({ productionVolume: vol });
+    savePartial({ productionVolume: vol }); // fire-and-forget
     advanceTo('q5_phase');
   }, [addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q5: Phase (single select)
-  const handlePhaseSelect = useCallback(async (phase: ProjectPhase) => {
-    addMessages({ role: 'user', text: getPhaseLabel(phase) });
-
+  const handlePhaseSelect = useCallback((phase: ProjectPhase, label?: string) => {
+    addMessages({ role: 'user', text: label ?? getPhaseLabel(phase) });
     setAnswers(prev => ({ ...prev, projectPhase: phase }));
-    await savePartial({ projectPhase: phase });
+    savePartial({ projectPhase: phase }); // fire-and-forget
     advanceTo('q6_goals');
   }, [addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q6: Goals (multi select, max 3)
   const handleGoalToggle = useCallback((goal: UserGoal) => {
     setPendingGoals(prev => {
       if (prev.includes(goal)) return prev.filter(g => g !== goal);
@@ -362,44 +372,122 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     });
   }, []);
 
-  const handleGoalConfirm = useCallback(async () => {
-    if (pendingGoals.length === 0) return;
-
-    const labels = pendingGoals.map(g => getGoalLabel(g));
-    addMessages({ role: 'user', text: labels.join(', ') });
-
-    setAnswers(prev => ({ ...prev, goals: pendingGoals }));
-    await savePartial({ goals: pendingGoals });
+  const handleGoalConfirm = useCallback((goals?: UserGoal[]) => {
+    const selected = goals ?? pendingGoals;
+    if (selected.length === 0) return;
+    addMessages({ role: 'user', text: selected.map(g => getGoalLabel(g)).join(', ') });
+    setAnswers(prev => ({ ...prev, goals: selected }));
+    savePartial({ goals: selected }); // fire-and-forget
     setPendingGoals([]);
     advanceTo('q7_anything_else');
   }, [pendingGoals, addMessages, savePartial, advanceTo, setAnswers]);
 
-  // Q7: Free-form
-  const handleFreeformSubmit = useCallback(() => {
-    const text = freeformText.trim();
-    if (text) {
-      addMessages({ role: 'user', text });
-    }
-    // Update answers ref directly so advanceTo('closing') reads latest
-    setAnswers(prev => ({ ...prev, freeformText: text || prev.freeformText }));
-    advanceTo('closing');
-  }, [freeformText, addMessages, advanceTo, setAnswers]);
-
-  // Skip handlers
   const handleSkipQuestion = useCallback(() => {
     const nextStepMap: Record<OnboardingStep, OnboardingStep> = {
-      intro: 'q1_role',
-      q1_role: 'q2_industry',
-      q2_industry: 'q3_produce',
-      q3_produce: 'q4_volume',
-      q4_volume: 'q5_phase',
-      q5_phase: 'q6_goals',
-      q6_goals: 'q7_anything_else',
-      q7_anything_else: 'closing',
-      closing: 'closing',
+      intro: 'q1_role', q1_role: 'q2_industry', q2_industry: 'q3_produce',
+      q3_produce: 'q4_volume', q4_volume: 'q5_phase', q5_phase: 'q6_goals',
+      q6_goals: 'q7_anything_else', q7_anything_else: 'closing', closing: 'closing',
     };
     advanceTo(nextStepMap[step]);
   }, [step, advanceTo]);
+
+  // --------------------------------------------------------
+  // CHAT INPUT HANDLER — text interpretation per step
+  // --------------------------------------------------------
+
+  const handleChatSend = useCallback(() => {
+    const text = chatInput.trim();
+    if (!text) return;
+    setChatInput('');
+
+    switch (step) {
+      case 'intro': {
+        if (AFFIRMATIVE.test(text)) {
+          addMessages({ role: 'user', text });
+          advanceTo('q1_role');
+        }
+        // Ignore non-affirmative text on intro
+        break;
+      }
+      case 'q1_role': {
+        const match = findMatch(text, ROLE_OPTIONS);
+        if (match) {
+          handleRoleSelect(match, text);
+        } else {
+          // Treat as "Other" with custom text
+          handleRoleSelect('other', text);
+        }
+        break;
+      }
+      case 'q2_industry': {
+        const matches = findMultiMatch(text, INDUSTRY_OPTIONS);
+        if (matches.length > 0) {
+          handleIndustryConfirm(matches);
+        } else {
+          // Show as user message, skip to next
+          addMessages({ role: 'user', text });
+          advanceTo('q3_produce');
+        }
+        break;
+      }
+      case 'q3_produce': {
+        const matches = findMultiMatch(text, PRODUCTION_TYPE_OPTIONS, 3);
+        if (matches.length > 0) {
+          handleProdTypeConfirm(matches);
+        } else {
+          addMessages({ role: 'user', text });
+          advanceTo('q4_volume');
+        }
+        break;
+      }
+      case 'q4_volume': {
+        const match = findMatch(text, VOLUME_OPTIONS);
+        if (match) {
+          handleVolumeSelect(match, text);
+        } else {
+          // Unmatched — show as user message, advance
+          addMessages({ role: 'user', text });
+          advanceTo('q5_phase');
+        }
+        break;
+      }
+      case 'q5_phase': {
+        const match = findMatch(text, PHASE_OPTIONS);
+        if (match) {
+          handlePhaseSelect(match, text);
+        } else {
+          addMessages({ role: 'user', text });
+          advanceTo('q6_goals');
+        }
+        break;
+      }
+      case 'q6_goals': {
+        const matches = findMultiMatch(text, GOAL_OPTIONS, 3);
+        if (matches.length > 0) {
+          handleGoalConfirm(matches);
+        } else {
+          addMessages({ role: 'user', text });
+          advanceTo('q7_anything_else');
+        }
+        break;
+      }
+      case 'q7_anything_else': {
+        addMessages({ role: 'user', text });
+        setAnswers(prev => ({ ...prev, freeformText: text }));
+        advanceTo('closing');
+        break;
+      }
+      default:
+        break;
+    }
+  }, [chatInput, step, addMessages, advanceTo, handleRoleSelect, handleIndustryConfirm, handleProdTypeConfirm, handleVolumeSelect, handlePhaseSelect, handleGoalConfirm, setAnswers]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleChatSend();
+    }
+  }, [handleChatSend]);
 
   // --------------------------------------------------------
   // RENDER
@@ -429,316 +517,259 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     mt: 1,
   };
 
-  const content = (
+  const showChatInput = step !== 'closing';
+
+  // ---- Scrollable messages + interactive area ----
+  const messagesArea = (
     <Box
       sx={{
         flex: 1,
         overflow: 'auto',
+        px: embedded ? 3 : 2,
+        py: 2,
         display: 'flex',
         flexDirection: 'column',
-        ...(embedded
-          ? { px: 3, py: 2 }
-          : { alignItems: 'center', px: 2, pb: 4 }),
+        ...(embedded ? {} : { alignItems: 'center' }),
       }}
     >
       <Box sx={{ width: '100%', ...(embedded ? {} : { maxWidth: 640 }) }}>
-          {messages.map((msg, i) => (
-            <Box
-              key={i}
-              sx={{
-                display: 'flex',
-                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                mb: 2,
-                gap: 1.5,
-                alignItems: 'flex-start',
-              }}
-            >
-              {msg.role === 'agent' && (
-                <Box
-                  sx={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: '50%',
-                    bgcolor: 'background.paper',
-                    border: 1,
-                    borderColor: 'divider',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                    mt: 0.25,
-                  }}
-                >
-                  <SmartToyIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                </Box>
-              )}
-              <Paper
-                elevation={0}
+        {messages.map((msg, i) => (
+          <Box
+            key={i}
+            sx={{
+              display: 'flex',
+              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              mb: 2,
+              gap: 1.5,
+              alignItems: 'flex-start',
+            }}
+          >
+            {msg.role === 'agent' && (
+              <Box
                 sx={{
-                  px: 2,
-                  py: 1.5,
-                  maxWidth: '85%',
-                  bgcolor: msg.role === 'user' ? 'primary.main' : 'background.paper',
-                  color: msg.role === 'user' ? 'primary.contrastText' : 'text.primary',
-                  borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                  border: msg.role === 'agent' ? 1 : 0,
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  bgcolor: 'background.paper',
+                  border: 1,
                   borderColor: 'divider',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  mt: 0.25,
                 }}
               >
-                <Typography
-                  variant="body2"
-                  sx={{ lineHeight: 1.6, whiteSpace: 'pre-line' }}
-                >
-                  {msg.text}
-                </Typography>
-              </Paper>
-            </Box>
-          ))}
-
-          {/* ---- Interactive area below messages ---- */}
-
-          {/* INTRO: Let's go / Skip */}
-          {step === 'intro' && (
-            <Box sx={{ display: 'flex', gap: 1.5, mt: 1, ml: 5.5 }}>
-              <Button
-                variant="contained"
-                size="small"
-                onClick={() => advanceTo('q1_role')}
-              >
-                Let&apos;s go
-              </Button>
-              <Button
-                variant="text"
-                size="small"
-                onClick={skipToApp}
-                sx={{ color: 'text.secondary' }}
-              >
-                Skip for now &rarr;
-              </Button>
-            </Box>
-          )}
-
-          {/* Q1: Role */}
-          {step === 'q1_role' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {ROLE_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant="outlined"
-                    onClick={() => {
-                      if (o.value === 'other') {
-                        // Show text field, don't advance yet
-                        setOtherRoleText('');
-                      } else {
-                        handleRoleSelect(o.value);
-                      }
-                    }}
-                    sx={chipSx}
-                  />
-                ))}
+                <SmartToyIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
               </Box>
-              {/* "Other" free text */}
-              {step === 'q1_role' && otherRoleText !== undefined && ROLE_OPTIONS.some(o => o.value === 'other') && (
-                <Box sx={{ display: 'none' }} /> // placeholder for Other text field state
+            )}
+            <Paper
+              elevation={0}
+              sx={{
+                px: 2,
+                py: 1.5,
+                maxWidth: '85%',
+                bgcolor: msg.role === 'user' ? 'primary.main' : 'background.paper',
+                color: msg.role === 'user' ? 'primary.contrastText' : 'text.primary',
+                borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                border: msg.role === 'agent' ? 1 : 0,
+                borderColor: 'divider',
+              }}
+            >
+              <Typography variant="body2" sx={{ lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                {msg.text}
+              </Typography>
+            </Paper>
+          </Box>
+        ))}
+
+        {/* ---- Interactive chips/buttons below messages ---- */}
+
+        {step === 'intro' && (
+          <Box sx={{ display: 'flex', gap: 1.5, mt: 1, ml: 5.5 }}>
+            <Button variant="contained" size="small" onClick={() => advanceTo('q1_role')}>
+              Let&apos;s go
+            </Button>
+            <Button variant="text" size="small" onClick={skipToApp} sx={{ color: 'text.secondary' }}>
+              Skip for now &rarr;
+            </Button>
+          </Box>
+        )}
+
+        {step === 'q1_role' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {ROLE_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant="outlined" onClick={() => handleRoleSelect(o.value)} sx={chipSx} />
+              ))}
+            </Box>
+            <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
+          </Box>
+        )}
+
+        {step === 'q2_industry' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {INDUSTRY_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant={pendingIndustries.includes(o.value) ? 'filled' : 'outlined'} onClick={() => handleIndustryToggle(o.value)} sx={pendingIndustries.includes(o.value) ? selectedChipSx : chipSx} />
+              ))}
+            </Box>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
+              {pendingIndustries.length > 0 && (
+                <Button variant="contained" size="small" onClick={() => handleIndustryConfirm()}>Continue &rarr;</Button>
               )}
-              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                Skip this question &rarr;
-              </MuiLink>
+              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
             </Box>
-          )}
+          </Box>
+        )}
 
-          {/* Q2: Industry (multi) */}
-          {step === 'q2_industry' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {INDUSTRY_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant={pendingIndustries.includes(o.value) ? 'filled' : 'outlined'}
-                    onClick={() => handleIndustryToggle(o.value)}
-                    sx={pendingIndustries.includes(o.value) ? selectedChipSx : chipSx}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
-                {pendingIndustries.length > 0 && (
-                  <Button variant="contained" size="small" onClick={handleIndustryConfirm}>
-                    Continue &rarr;
-                  </Button>
-                )}
-                <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                  Skip this question &rarr;
-                </MuiLink>
-              </Box>
+        {step === 'q3_produce' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {PRODUCTION_TYPE_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant={pendingProdTypes.includes(o.value) ? 'filled' : 'outlined'} onClick={() => handleProdTypeToggle(o.value)} disabled={!pendingProdTypes.includes(o.value) && pendingProdTypes.length >= 3} sx={pendingProdTypes.includes(o.value) ? selectedChipSx : chipSx} />
+              ))}
             </Box>
-          )}
-
-          {/* Q3: Production types (multi, max 3) */}
-          {step === 'q3_produce' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {PRODUCTION_TYPE_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant={pendingProdTypes.includes(o.value) ? 'filled' : 'outlined'}
-                    onClick={() => handleProdTypeToggle(o.value)}
-                    disabled={!pendingProdTypes.includes(o.value) && pendingProdTypes.length >= 3}
-                    sx={pendingProdTypes.includes(o.value) ? selectedChipSx : chipSx}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
-                {pendingProdTypes.length > 0 && (
-                  <Button variant="contained" size="small" onClick={handleProdTypeConfirm}>
-                    Continue &rarr;
-                  </Button>
-                )}
-                <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                  Skip this question &rarr;
-                </MuiLink>
-              </Box>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
+              {pendingProdTypes.length > 0 && (
+                <Button variant="contained" size="small" onClick={() => handleProdTypeConfirm()}>Continue &rarr;</Button>
+              )}
+              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
             </Box>
-          )}
+          </Box>
+        )}
 
-          {/* Q4: Volume (single) */}
-          {step === 'q4_volume' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {VOLUME_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant="outlined"
-                    onClick={() => handleVolumeSelect(o.value)}
-                    sx={chipSx}
-                  />
-                ))}
-              </Box>
-              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                Skip this question &rarr;
-              </MuiLink>
+        {step === 'q4_volume' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {VOLUME_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant="outlined" onClick={() => handleVolumeSelect(o.value)} sx={chipSx} />
+              ))}
             </Box>
-          )}
+            <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
+          </Box>
+        )}
 
-          {/* Q5: Phase (single) */}
-          {step === 'q5_phase' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {PHASE_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant="outlined"
-                    onClick={() => handlePhaseSelect(o.value)}
-                    sx={chipSx}
-                  />
-                ))}
-              </Box>
-              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                Skip this question &rarr;
-              </MuiLink>
+        {step === 'q5_phase' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {PHASE_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant="outlined" onClick={() => handlePhaseSelect(o.value)} sx={chipSx} />
+              ))}
             </Box>
-          )}
+            <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
+          </Box>
+        )}
 
-          {/* Q6: Goals (multi, max 3) */}
-          {step === 'q6_goals' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {GOAL_OPTIONS.map(o => (
-                  <Chip
-                    key={o.value}
-                    label={o.label}
-                    variant={pendingGoals.includes(o.value) ? 'filled' : 'outlined'}
-                    onClick={() => handleGoalToggle(o.value)}
-                    disabled={!pendingGoals.includes(o.value) && pendingGoals.length >= 3}
-                    sx={pendingGoals.includes(o.value) ? selectedChipSx : chipSx}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
-                {pendingGoals.length > 0 && (
-                  <Button variant="contained" size="small" onClick={handleGoalConfirm}>
-                    Done &rarr;
-                  </Button>
-                )}
-                <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>
-                  Skip this question &rarr;
-                </MuiLink>
-              </Box>
+        {step === 'q6_goals' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {GOAL_OPTIONS.map(o => (
+                <Chip key={o.value} label={o.label} variant={pendingGoals.includes(o.value) ? 'filled' : 'outlined'} onClick={() => handleGoalToggle(o.value)} disabled={!pendingGoals.includes(o.value) && pendingGoals.length >= 3} sx={pendingGoals.includes(o.value) ? selectedChipSx : chipSx} />
+              ))}
             </Box>
-          )}
-
-          {/* Q7: Free-form */}
-          {step === 'q7_anything_else' && (
-            <Box sx={{ ml: 5.5, mt: 1 }}>
-              <TextField
-                multiline
-                minRows={3}
-                maxRows={6}
-                fullWidth
-                placeholder="e.g., I mostly work with power electronics for motor drives, and I'm often looking for parts with extended temperature range..."
-                value={freeformText}
-                onChange={(e) => setFreeformText(e.target.value)}
-                sx={{ mb: 1.5 }}
-              />
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                <Button
-                  variant="contained"
-                  size="small"
-                  onClick={handleFreeformSubmit}
-                >
-                  {freeformText.trim() ? 'Done \u2192' : 'Skip \u2192'}
-                </Button>
-              </Box>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1.5 }}>
+              {pendingGoals.length > 0 && (
+                <Button variant="contained" size="small" onClick={() => handleGoalConfirm()}>Done &rarr;</Button>
+              )}
+              <MuiLink component="button" onClick={handleSkipQuestion} sx={skipLinkSx}>Skip this question &rarr;</MuiLink>
             </Box>
-          )}
+          </Box>
+        )}
 
-          {/* CLOSING: Go to Dashboard */}
-          {step === 'closing' && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-              <Button variant="contained" onClick={goToDashboard}>
-                Go to Dashboard &rarr;
-              </Button>
+        {step === 'q7_anything_else' && (
+          <Box sx={{ ml: 5.5, mt: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              Type your answer below, or skip to finish.
+            </Typography>
+            <Box sx={{ mt: 1 }}>
+              <MuiLink component="button" onClick={() => advanceTo('closing')} sx={skipLinkSx}>Skip &rarr;</MuiLink>
             </Box>
-          )}
+          </Box>
+        )}
 
-          <div ref={messagesEndRef} />
-        </Box>
+        {step === 'closing' && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+            <Button variant="contained" onClick={goToDashboard}>
+              Go to Dashboard &rarr;
+            </Button>
+          </Box>
+        )}
+
+        <div ref={messagesEndRef} />
       </Box>
+    </Box>
   );
 
-  // Embedded mode: content only (parent provides wrapper)
-  if (embedded) return content;
-
-  // Standalone mode: full-page wrapper with skip link
-  return (
+  // ---- Chat input bar ----
+  const chatInputBar = showChatInput ? (
     <Box
       sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        bgcolor: 'background.default',
+        borderTop: 1,
+        borderColor: 'divider',
+        px: embedded ? 2 : 2,
+        py: 1.5,
+        flexShrink: 0,
       }}
     >
+      <TextField
+        inputRef={inputRef}
+        fullWidth
+        size="small"
+        placeholder="Type a response..."
+        value={chatInput}
+        onChange={(e) => setChatInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        slotProps={{
+          input: {
+            endAdornment: (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  onClick={handleChatSend}
+                  disabled={!chatInput.trim()}
+                  sx={{ color: chatInput.trim() ? 'primary.main' : 'text.disabled' }}
+                >
+                  <SendIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </InputAdornment>
+            ),
+          },
+        }}
+        sx={{
+          '& .MuiOutlinedInput-root': {
+            borderRadius: '24px',
+            fontSize: '0.88rem',
+          },
+        }}
+      />
+    </Box>
+  ) : null;
+
+  // ---- Embedded mode: flex column filling parent ----
+  if (embedded) {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        {messagesArea}
+        {chatInputBar}
+      </Box>
+    );
+  }
+
+  // ---- Standalone mode: full-page wrapper ----
+  return (
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
         <MuiLink
           component="button"
           onClick={skipToApp}
-          sx={{
-            fontSize: '0.85rem',
-            color: 'text.secondary',
-            textDecoration: 'none',
-            '&:hover': { color: 'text.primary' },
-          }}
+          sx={{ fontSize: '0.85rem', color: 'text.secondary', textDecoration: 'none', '&:hover': { color: 'text.primary' } }}
         >
           Skip and go to app &rarr;
         </MuiLink>
       </Box>
-      {content}
+      {messagesArea}
+      {chatInputBar}
     </Box>
   );
 }

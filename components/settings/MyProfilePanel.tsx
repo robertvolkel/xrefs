@@ -8,6 +8,7 @@ import {
   Typography,
   Snackbar,
   Alert,
+  Skeleton,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/components/AuthProvider';
@@ -63,6 +64,13 @@ export default function MyProfilePanel() {
       <Typography variant="caption" color="text.secondary" sx={{ mb: 2.5, display: 'block' }}>
         This helps the AI assistant personalize recommendations, conversation style, and BOM analysis to your specific needs.
       </Typography>
+
+      {!loaded && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 560 }}>
+          <Skeleton variant="rounded" height={180} />
+          <Skeleton variant="rounded" width={80} height={36} sx={{ borderRadius: 20 }} />
+        </Box>
+      )}
 
       {loaded && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, maxWidth: 560 }}>
