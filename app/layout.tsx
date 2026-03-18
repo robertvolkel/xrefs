@@ -25,10 +25,19 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   let user = null;
+  let initialProfile = null;
   try {
     const supabase = await createClient();
     const { data } = await supabase.auth.getUser();
     user = data.user;
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, disabled, created_at')
+        .eq('id', user.id)
+        .single();
+      initialProfile = profile;
+    }
   } catch {
     // Supabase not configured — user stays null
   }
@@ -38,7 +47,7 @@ export default async function RootLayout({
       <body suppressHydrationWarning>
         <InitColorSchemeScript attribute="data-mui-color-scheme" />
         <ThemeRegistry>
-          <AuthProvider initialUser={user}>
+          <AuthProvider initialUser={user} initialProfile={initialProfile}>
             <I18nProvider initialLocale={(user?.user_metadata?.language as string) || undefined}>
               <ServiceStatusProvider>
                 {children}
