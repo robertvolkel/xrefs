@@ -172,6 +172,12 @@ export async function toggleUserDisabled(userId: string, disabled: boolean): Pro
   if (!json.success) throw new Error(json.error ?? 'Failed to update user status');
 }
 
+export async function deleteUser(userId: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to delete user');
+}
+
 // ── QC Feedback API ──────────────────────────────────────
 
 /** Submit user feedback on a recommendation rule or context question */

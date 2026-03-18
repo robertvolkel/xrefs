@@ -3,6 +3,7 @@ import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, 
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
 import { createClient } from '../supabase/server';
+import { getCountryName } from '../constants/profileOptions';
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
 
@@ -201,27 +202,6 @@ function buildLocaleInstruction(locale?: string): string {
 // User context → system prompt section
 // ==============================================================
 
-const ROLE_LABELS: Record<string, string> = {
-  design_engineer: 'Design Engineer',
-  procurement: 'Procurement / Buyer',
-  supply_chain: 'Supply Chain',
-  commodity_manager: 'Commodity Manager',
-  quality: 'Quality Engineer',
-  executive: 'Executive',
-  other: 'Other',
-};
-
-const INDUSTRY_LABELS: Record<string, string> = {
-  automotive: 'Automotive',
-  aerospace_defense: 'Aerospace & Defense',
-  medical: 'Medical',
-  industrial: 'Industrial',
-  consumer_electronics: 'Consumer Electronics',
-  telecom_networking: 'Telecom & Networking',
-  energy: 'Energy',
-  other: 'Other',
-};
-
 const COMPLIANCE_LABELS: Record<string, string> = {
   aecQ200: 'AEC-Q200',
   aecQ101: 'AEC-Q101',
@@ -231,24 +211,24 @@ const COMPLIANCE_LABELS: Record<string, string> = {
   reach: 'REACH',
 };
 
-const REGION_LABELS: Record<string, string> = {
-  north_america: 'North America',
-  europe: 'Europe',
-  greater_china: 'Greater China',
-  japan_korea: 'Japan/Korea',
-  southeast_asia: 'Southeast Asia',
-  india: 'India',
-  other: 'Other',
-};
-
-/** Build a compact user context section for the system prompt */
+/**
+ * Build user context section for the system prompt.
+ * - Profile prompt (free-form text) goes in verbatim as "## User Profile"
+ * - Company settings (structured fields) go as "## Company Settings" bullet list
+ */
 function buildUserContextSection(prefs: UserPreferences, userName?: string): string {
-  const lines: string[] = [];
+  const sections: string[] = [];
 
-  if (userName) lines.push(`- Name: ${userName}`);
-  if (prefs.businessRole) lines.push(`- Role: ${ROLE_LABELS[prefs.businessRole] ?? prefs.businessRole}`);
-  if (prefs.industry) lines.push(`- Industry: ${INDUSTRY_LABELS[prefs.industry] ?? prefs.industry}`);
-  if (prefs.company) lines.push(`- Company: ${prefs.company}`);
+  // --- User Profile section (free-form prompt) ---
+  if (prefs.profilePrompt?.trim()) {
+    const namePrefix = userName ? `User name: ${userName}\n\n` : '';
+    sections.push(`\n\n## User Profile\n${namePrefix}${prefs.profilePrompt.trim()}`);
+  } else if (userName) {
+    sections.push(`\n\n## User Profile\nUser name: ${userName}`);
+  }
+
+  // --- Company Settings section (structured fields) ---
+  const lines: string[] = [];
 
   if (prefs.complianceDefaults) {
     const active = Object.entries(prefs.complianceDefaults)
@@ -260,19 +240,30 @@ function buildUserContextSection(prefs: UserPreferences, userName?: string): str
   if (prefs.preferredManufacturers?.length) {
     lines.push(`- Preferred manufacturers: ${prefs.preferredManufacturers.join(', ')}`);
   }
-  if (prefs.excludedManufacturers?.length) {
-    lines.push(`- Excluded manufacturers: ${prefs.excludedManufacturers.join(', ')}`);
-  }
   if (prefs.defaultCurrency && prefs.defaultCurrency !== 'USD') {
     lines.push(`- Currency: ${prefs.defaultCurrency}`);
   }
-  if (prefs.manufacturingRegions?.length) {
+
+  // Country-based locations (new) with legacy region fallback
+  if (prefs.manufacturingLocations?.length) {
+    lines.push(`- Manufacturing locations: ${prefs.manufacturingLocations.map(c => getCountryName(c)).join(', ')}`);
+  } else if (prefs.manufacturingRegions?.length) {
+    const REGION_LABELS: Record<string, string> = {
+      north_america: 'North America', europe: 'Europe', greater_china: 'Greater China',
+      japan_korea: 'Japan/Korea', southeast_asia: 'Southeast Asia', india: 'India', other: 'Other',
+    };
     lines.push(`- Manufacturing regions: ${prefs.manufacturingRegions.map(r => REGION_LABELS[r] ?? r).join(', ')}`);
   }
 
-  if (lines.length === 0) return '';
+  if (prefs.shippingDestinations?.length) {
+    lines.push(`- Shipping destinations: ${prefs.shippingDestinations.map(c => getCountryName(c)).join(', ')}`);
+  }
 
-  return `\n\n## User Context\n${lines.join('\n')}`;
+  if (lines.length > 0) {
+    sections.push(`\n\n## Company Settings\n${lines.join('\n')}`);
+  }
+
+  return sections.join('');
 }
 
 // ==============================================================

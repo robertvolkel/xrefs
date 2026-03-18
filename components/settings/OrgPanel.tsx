@@ -20,8 +20,9 @@ import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettin
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import BlockIcon from '@mui/icons-material/Block';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { useAuth } from '@/components/AuthProvider';
-import { AdminUser, getUsers, updateUserRole, toggleUserDisabled } from '@/lib/api';
+import { AdminUser, getUsers, updateUserRole, toggleUserDisabled, deleteUser } from '@/lib/api';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { OWNER_EMAIL } from '@/lib/constants';
 
@@ -31,7 +32,7 @@ export default function OrgPanel() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'role' | 'disable';
+    type: 'role' | 'disable' | 'delete';
     user: AdminUser;
     newValue: string | boolean;
   } | null>(null);
@@ -58,6 +59,8 @@ export default function OrgPanel() {
     try {
       if (confirmAction.type === 'role') {
         await updateUserRole(confirmAction.user.id, confirmAction.newValue as 'user' | 'admin');
+      } else if (confirmAction.type === 'delete') {
+        await deleteUser(confirmAction.user.id);
       } else {
         await toggleUserDisabled(confirmAction.user.id, confirmAction.newValue as boolean);
       }
@@ -89,6 +92,7 @@ export default function OrgPanel() {
   const getConfirmTitle = () => {
     if (!confirmAction) return '';
     if (confirmAction.type === 'role') return t('orgSettings.confirmRoleTitle');
+    if (confirmAction.type === 'delete') return 'Delete Account';
     return confirmAction.newValue
       ? t('orgSettings.confirmDisableTitle')
       : t('orgSettings.confirmEnableTitle');
@@ -102,6 +106,9 @@ export default function OrgPanel() {
         name,
         role: confirmAction.newValue === 'admin' ? t('orgSettings.admin') : t('orgSettings.user'),
       });
+    }
+    if (confirmAction.type === 'delete') {
+      return `Permanently delete ${name} (${confirmAction.user.email})? This will remove all their data (searches, lists, conversations, feedback) and free the email for re-registration. This cannot be undone.`;
     }
     return confirmAction.newValue
       ? t('orgSettings.confirmDisableMessage', { name })
@@ -230,6 +237,22 @@ export default function OrgPanel() {
                                   )}
                                 </IconButton>
                               </Tooltip>
+                              {isOwner && (
+                                <Tooltip title="Delete Account Permanently">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() =>
+                                      setConfirmAction({
+                                        type: 'delete',
+                                        user: u,
+                                        newValue: true,
+                                      })
+                                    }
+                                  >
+                                    <DeleteOutlineIcon sx={{ fontSize: 18, color: 'error.main' }} />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
                             </Box>
                           )}
                         </TableCell>

@@ -39,13 +39,22 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
 
   const [hasNewReleases, setHasNewReleases] = useState(false);
 
-  // Check for unseen releases via localStorage (no API call)
+  // Check for unseen releases by fetching latest from server
   useEffect(() => {
-    const latestAt = localStorage.getItem('latestReleaseAt');
-    const lastSeen = localStorage.getItem('lastSeenReleasesAt');
-    if (latestAt && (!lastSeen || new Date(latestAt) > new Date(lastSeen))) {
-      setHasNewReleases(true);
-    }
+    let cancelled = false;
+    fetch('/api/releases?limit=1')
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json.success || !Array.isArray(json.data) || json.data.length === 0) return;
+        const latestAt = json.data[0].createdAt;
+        localStorage.setItem('latestReleaseAt', latestAt);
+        const lastSeen = localStorage.getItem('lastSeenReleasesAt');
+        if (!lastSeen || new Date(latestAt) > new Date(lastSeen)) {
+          setHasNewReleases(true);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   // Listen for releases-seen (same-tab) and releases-new (new post created)

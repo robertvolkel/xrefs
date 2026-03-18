@@ -63,8 +63,10 @@ export function resolveUserEffects(
     }
   }
 
-  // Industry-based escalations
-  if (prefs.industry === 'automotive') {
+  // Industry-based escalations (support both industries[] and legacy industry)
+  const userIndustries = prefs.industries ?? (prefs.industry ? [prefs.industry] : []);
+
+  if (userIndustries.includes('automotive')) {
     const tempRule = logicTable.rules.find(r =>
       r.attributeId === 'operating_temperature' || r.attributeId === 'temp_range'
     );
@@ -77,7 +79,7 @@ export function resolveUserEffects(
     }
   }
 
-  if (prefs.industry === 'medical') {
+  if (userIndustries.includes('medical')) {
     const qualRules = logicTable.rules.filter(r =>
       r.attributeId.includes('aec_q') || r.attributeId.includes('qualification')
     );

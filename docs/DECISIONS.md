@@ -2443,3 +2443,42 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **Memory:** No split — single Digikey category with uniform fields across SRAM/Flash/EEPROM/SDRAM.
 
 **Files modified:** `lib/services/digikeyParamMap.ts` — 3 new param maps, updated categoryParamMaps, l2DisplayNames, l2FamilyIndex.
+
+## Decision #94 — Registration Redesign + Onboarding Agent + Profile Prompt
+
+**Problem:** Registration collected optional role/industry fields that most users skipped. The settings Preferences panel mixed personal profile data (role, industry) with company-level settings (manufacturers, compliance, regions). There was no onboarding flow to help users set up their profile, and the LLM orchestrator received a structured bullet list of profile data instead of rich contextual information.
+
+**Solution:** Three-part redesign:
+
+1. **Two-step registration wizard** — Step 1 is account creation (name, email, password, invite code — no role/industry). Step 2 is a conversational onboarding agent that asks 7 questions (6 guided with selectable chips + 1 open-ended free-form). The onboarding is a client-side state machine (not an LLM call) with canned contextual acknowledgments. At the end, it composes a natural-language profile prompt from all answers.
+
+2. **Free-form profile prompt** — Instead of structured dropdowns, user's profile is a single editable text area in Settings → My Profile (similar to Claude/ChatGPT project instructions). On save, a lightweight LLM extraction (Claude Haiku) populates structured fields (`businessRole`, `industries`, `productionVolume`, etc.) behind the scenes for the deterministic matching engine. The orchestrator gets the raw profile text verbatim in its system prompt.
+
+3. **Settings restructure** — 4 sections: My Account (unchanged), My Profile (new — free-form prompt), Company Settings (renamed from Preferences — manufacturers, compliance, country-based manufacturing locations + shipping destinations), General Settings (unchanged). Removed: Business Role, Industry, Company, Excluded Manufacturers from settings form. Added: 25-country curated list for manufacturing locations and shipping destinations (replaces broad regions).
+
+**Onboarding questions:** Q1 Role (single), Q2 Industry (multi), Q3 What they make (multi, max 3), Q4 Volume (single), Q5 Phase (single), Q6 Goals (multi, max 3), Q7 Open-ended free-form. Contextual acknowledgments for automotive (AEC-Q), medical (ISO 13485), aerospace (MIL-STD), and volume-specific responses.
+
+**Type changes:** `BusinessRole` expanded from 7 to 9 values (added `procurement_buyer`, `supply_chain_manager`, `engineering_manager`, `quality_engineer`, `contract_manufacturer`, `consultant`). Old values auto-migrated on read via `migratePreferences()`. 5 new types: `ProductionType`, `ProductionVolume`, `ProjectPhase`, `UserGoal`, `CountryCode`. `UserPreferences` expanded with `profilePrompt`, `onboardingComplete`, `industries[]`, and structured extraction fields.
+
+**Backward compatibility:** `migratePreferences()` in `userPreferencesService.ts` maps old role values (`procurement`→`procurement_buyer`, `supply_chain`→`supply_chain_manager`, `commodity_manager`→`supply_chain_manager`, `quality`→`quality_engineer`). Normalizes singular `industry` → `industries[]`. Auto-writes back on first read. Legacy `manufacturingRegions` shown with "update to countries" prompt, cleared on save.
+
+**Files created:**
+- `lib/constants/profileOptions.ts` — shared option arrays, curated country list, label lookup functions
+- `lib/services/profileExtractor.ts` — Claude Haiku extraction of structured fields from profile prompt
+- `components/auth/RegisterFlow.tsx` — 2-step wizard orchestrator
+- `components/auth/OnboardingAgent.tsx` — client-side conversational state machine
+- `components/settings/MyProfilePanel.tsx` — free-form profile prompt text area
+- `components/settings/CompanySettingsPanel.tsx` — manufacturers, compliance, country-based locations
+
+**Files modified:**
+- `lib/types.ts` — expanded BusinessRole, 5 new types, expanded UserPreferences
+- `lib/services/userPreferencesService.ts` — added migratePreferences()
+- `app/api/auth/register/route.ts` — removed businessRole/industry from POST
+- `app/api/profile/preferences/route.ts` — migration on GET, LLM extraction on PUT
+- `lib/services/contextResolver.ts` — handles industries[] with industry fallback
+- `lib/services/llmOrchestrator.ts` — raw profilePrompt + company settings in system prompt
+- `components/auth/RegisterForm.tsx` — simplified, onSuccess callback
+- `components/settings/SettingsSectionNav.tsx` — 4 sections
+- `components/settings/SettingsShell.tsx` — routes to new panels
+
+**Files deleted:** `components/settings/PreferencesPanel.tsx` (replaced by CompanySettingsPanel)

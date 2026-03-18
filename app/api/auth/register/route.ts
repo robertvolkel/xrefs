@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { UserPreferences } from '@/lib/types';
 
 export async function POST(request: NextRequest) {
-  const { inviteCode, email, password, firstName, lastName, businessRole, industry } = await request.json();
+  const { inviteCode, email, password, firstName, lastName } = await request.json();
 
   // Validate invite code server-side
   if (inviteCode !== process.env.REGISTRATION_CODE) {
@@ -32,20 +31,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Store optional profile preferences (businessRole, industry)
-  if (signUpData?.user && (businessRole || industry)) {
-    const prefs: UserPreferences = {};
-    if (businessRole) prefs.businessRole = businessRole;
-    if (industry) prefs.industry = industry;
-
+  // Ensure profile row exists (Supabase trigger creates it, but verify)
+  if (signUpData?.user) {
     await supabase
       .from('profiles')
-      .update({
-        preferences: prefs,
-        business_role: businessRole || null,
-        industry: industry || null,
-      })
-      .eq('id', signUpData.user.id);
+      .upsert({ id: signUpData.user.id }, { onConflict: 'id', ignoreDuplicates: true });
   }
 
   return NextResponse.json({ success: true });

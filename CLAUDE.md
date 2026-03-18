@@ -89,11 +89,16 @@ components/                   # React components
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + shared)
     AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
+  auth/                        # Registration and onboarding
+    RegisterForm.tsx          # Step 1 — account creation (name, email, password, invite code)
+    RegisterFlow.tsx          # Two-step wizard orchestrator (registration → onboarding)
+    OnboardingAgent.tsx       # Step 2 — conversational state machine (6 guided Q&A + free-form)
   settings/                    # User settings panels
     SettingsShell.tsx         # Settings orchestrator — section nav + content routing
-    SettingsSectionNav.tsx    # Left nav: My Account, Preferences, General Settings
+    SettingsSectionNav.tsx    # Left nav: My Account, My Profile, Company Settings, General Settings
     ProfilePanel.tsx          # My Account — name, email, password
-    PreferencesPanel.tsx      # Preferences — role, industry, company, manufacturers, compliance, regions
+    MyProfilePanel.tsx        # My Profile — free-form profile prompt (LLM extraction on save)
+    CompanySettingsPanel.tsx  # Company Settings — manufacturers, compliance, country-based locations
     AccountPanel.tsx          # General Settings — language, currency, theme
   releases/                    # Release notes feed
     ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
@@ -118,7 +123,10 @@ hooks/
 
 lib/
   types.ts                    # All TypeScript interfaces (single source of truth)
+  constants/
+    profileOptions.ts         # Shared option arrays, curated countries, label lookups (onboarding + settings)
   services/                   # Server-side services (see below)
+  services/profileExtractor.ts # LLM extraction of structured fields from free-form profile prompt
   logicTables/                # Per-family matching rules (see below)
     e1Optocouplers.ts          # E1 optocoupler logic table
     f1Relays.ts                # F1 electromechanical relay logic table

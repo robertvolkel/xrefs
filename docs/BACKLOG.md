@@ -395,6 +395,8 @@ The following items track the phased evolution from cross-reference engine to co
 
 ~~Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.~~ Done (Decision #82) — full UserPreferences type, registration with optional businessRole/industry. Settings reorganized into 3 sections: My Account (ProfilePanel), Preferences (PreferencesPanel), General Settings (AccountPanel). Currency enabled in General Settings, wired to `UserPreferences.defaultCurrency`.
 
+**Update (Decision #94):** Registration redesigned as 2-step wizard (credentials → onboarding agent). Settings restructured to 4 sections: My Account, My Profile (free-form profile prompt), Company Settings (renamed from Preferences), General Settings. Profile prompt replaces structured role/industry dropdowns — LLM extraction populates structured fields on save. BusinessRole expanded to 9 values with backward-compatible migration. Manufacturing regions replaced by curated 25-country list + shipping destinations.
+
 ---
 
 ### Phase 2: LLM Context Injection
@@ -488,3 +490,28 @@ Customer data imports (BOMs, pricing files, AVLs). Negotiated pricing overlays. 
 **Priority:** P3
 
 Watchlists, event detection, proactive alerts, portfolio risk dashboard. Requires background job system beyond current Next.js architecture.
+
+---
+
+## Onboarding & Profile Follow-ups (Decision #94)
+
+### Profile prompt → matching engine effects
+**Status:** Not started
+**Priority:** P2
+
+The new profile fields (`productionVolume`, `projectPhase`, `goals`, `productionTypes`) are extracted from the profile prompt and stored as structured data, but `contextResolver.ts` does not yet generate `AttributeEffect[]` from them. Potential effects:
+- `productionVolume: 'prototype'` → suppress cost-optimization weights, emphasize availability
+- `projectPhase: 'sustaining_eol'` → escalate lifecycle/EOL risk rules
+- `goals: 'reduce_sole_source'` → boost multi-source availability scoring
+
+### Re-launch onboarding from settings
+**Status:** Not started
+**Priority:** P3
+
+Allow users to re-run the onboarding agent conversation from Settings → My Profile (e.g., a "Guided setup" button that replaces the text area with the chat flow temporarily). Currently onboarding only appears once at registration.
+
+### i18n for onboarding and new settings sections
+**Status:** Not started
+**Priority:** P3
+
+The onboarding agent messages, chip labels, and new settings section labels (My Profile, Company Settings) are hardcoded in English. Add translation keys to `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.

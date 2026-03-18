@@ -262,12 +262,17 @@ export interface ApplicationContext {
 /** Job function within the organization (not admin/user system role) */
 export type BusinessRole =
   | 'design_engineer'
-  | 'procurement'
-  | 'supply_chain'
-  | 'commodity_manager'
-  | 'quality'
+  | 'procurement_buyer'
+  | 'supply_chain_manager'
+  | 'engineering_manager'
+  | 'quality_engineer'
+  | 'contract_manufacturer'
+  | 'consultant'
   | 'executive'
   | 'other';
+
+/** @deprecated Old values kept for backward-compatible reads during migration */
+export type LegacyBusinessRole = 'procurement' | 'supply_chain' | 'commodity_manager' | 'quality';
 
 /** Industry vertical */
 export type IndustryVertical =
@@ -280,7 +285,49 @@ export type IndustryVertical =
   | 'energy'
   | 'other';
 
-/** Manufacturing region for trade/compliance context */
+/** What the user's company produces */
+export type ProductionType =
+  | 'pcb_assemblies'
+  | 'finished_consumer_products'
+  | 'sub_assemblies_modules'
+  | 'prototypes_rnd'
+  | 'custom_contract_manufacturing'
+  | 'other';
+
+/** Production volume scale */
+export type ProductionVolume =
+  | 'prototype'
+  | 'low_volume'
+  | 'mid_volume'
+  | 'high_volume'
+  | 'varies';
+
+/** Typical project phase when using the tool */
+export type ProjectPhase =
+  | 'early_design'
+  | 'pre_production_npi'
+  | 'volume_production'
+  | 'sustaining_eol'
+  | 'all_phases';
+
+/** Primary goals when evaluating components */
+export type UserGoal =
+  | 'drop_in_replacements'
+  | 'reduce_bom_cost'
+  | 'manage_shortages'
+  | 'reduce_sole_source'
+  | 'qualify_compliance'
+  | 'supply_chain_resilience'
+  | 'streamline_procurement';
+
+/** Curated country codes for manufacturing locations and shipping destinations */
+export type CountryCode =
+  | 'US' | 'CA' | 'MX' | 'BR'
+  | 'DE' | 'FR' | 'GB' | 'NL' | 'IT' | 'PL' | 'SE'
+  | 'CN' | 'TW' | 'JP' | 'KR' | 'IN' | 'VN' | 'TH' | 'MY' | 'SG' | 'PH' | 'ID'
+  | 'IL' | 'AU' | 'TR';
+
+/** @deprecated Manufacturing region — replaced by CountryCode-based locations */
 export type ManufacturingRegion =
   | 'north_america'
   | 'europe'
@@ -302,14 +349,34 @@ export interface ComplianceDefaults {
 
 /** User preferences stored as JSONB in profiles table */
 export interface UserPreferences {
+  // Profile prompt (user-facing free-form text)
+  profilePrompt?: string;
+  onboardingComplete?: boolean;
+
+  // Structured extraction (LLM-extracted from profilePrompt, not user-editable)
   businessRole?: BusinessRole;
+  industries?: IndustryVertical[];
+  /** @deprecated Use industries[] instead — kept for backward-compatible reads */
   industry?: IndustryVertical;
-  company?: string;
+  productionTypes?: ProductionType[];
+  productionVolume?: ProductionVolume;
+  projectPhase?: ProjectPhase;
+  goals?: UserGoal[];
+
+  // Company Settings (user-editable form fields)
   preferredManufacturers?: string[];
+  /** @deprecated UI removed — kept in type for backward compat */
   excludedManufacturers?: string[];
   complianceDefaults?: ComplianceDefaults;
-  defaultCurrency?: string;
+  manufacturingLocations?: CountryCode[];
+  shippingDestinations?: CountryCode[];
+  /** @deprecated Use manufacturingLocations[] instead */
   manufacturingRegions?: ManufacturingRegion[];
+  /** @deprecated UI removed — kept in type for backward compat */
+  company?: string;
+
+  // General Settings
+  defaultCurrency?: string;
 }
 
 // ============================================================

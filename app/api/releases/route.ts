@@ -1,19 +1,25 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import type { ReleaseNote } from '@/lib/types';
 
-/** GET /api/releases — all authenticated users */
-export async function GET(): Promise<NextResponse> {
+/** GET /api/releases — all authenticated users. Optional ?limit=N */
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { error: authError } = await requireAuth();
     if (authError) return authError;
 
+    const limitParam = request.nextUrl.searchParams.get('limit');
+    const limit = limitParam ? Math.max(1, Math.min(100, Number(limitParam) || 100)) : undefined;
+
     const supabase = await createClient();
-    const { data, error } = await supabase
+    let query = supabase
       .from('release_notes')
       .select('*')
       .order('created_at', { ascending: false });
+    if (limit !== undefined) query = query.limit(limit);
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Release notes fetch error:', error.message);
