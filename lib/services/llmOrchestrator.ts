@@ -319,6 +319,7 @@ Important rules:
 - Always use tools — never guess part numbers or specs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
+- If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. Never describe a part from general knowledge. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
 - If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.
 
 When User Context is provided:

@@ -11,7 +11,11 @@ import {
   Chip,
   Skeleton,
   Stack,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes } from '@/lib/types';
 import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -139,65 +143,74 @@ export default function AttributesPanel({ attributes, loading, title }: Attribut
       </TableContainer>
       </Box>
 
-      {/* Lifecycle & Compliance */}
-      {attributes && (attributes.part.yteol != null || attributes.part.riskRank != null || attributes.part.countryOfOrigin || attributes.part.reachCompliance || attributes.part.eccnCode || attributes.part.htsCode || attributes.part.factoryLeadTimeWeeks != null) && (
-        <Box sx={{ borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', px: 2, pt: 1.5, pb: 0.5 }}>
-            {t('attributes.lifecycleHeading', 'Lifecycle & Compliance')}
-          </Typography>
-          <Table size="small">
-            <TableBody>
-              {attributes.part.yteol != null && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>YTEOL</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.yteol.toFixed(1)} yrs</TableCell>
-                </TableRow>
-              )}
-              {attributes.part.riskRank != null && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Risk Rank</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
-                      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: attributes.part.riskRank <= 2 ? '#69F0AE' : attributes.part.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
-                      <span>{attributes.part.riskRank.toFixed(1)}</span>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              )}
-              {attributes.part.countryOfOrigin && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Country of Origin</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.countryOfOrigin}</TableCell>
-                </TableRow>
-              )}
-              {attributes.part.reachCompliance && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>REACH</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.reachCompliance}</TableCell>
-                </TableRow>
-              )}
-              {attributes.part.eccnCode && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>ECCN</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.eccnCode}</TableCell>
-                </TableRow>
-              )}
-              {attributes.part.htsCode && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>HTS Code</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.htsCode}</TableCell>
-                </TableRow>
-              )}
-              {attributes.part.factoryLeadTimeWeeks != null && (
-                <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Factory Lead Time</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{attributes.part.factoryLeadTimeWeeks} wks</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </Box>
-      )}
+      {/* Lifecycle & Compliance — collapsed by default */}
+      {attributes && (() => {
+        const p = attributes.part;
+        const fieldCount = [p.yteol != null, p.riskRank != null, !!p.countryOfOrigin, !!p.reachCompliance, !!p.eccnCode, !!p.htsCode, p.factoryLeadTimeWeeks != null].filter(Boolean).length;
+        if (fieldCount === 0) return null;
+        return (
+          <Accordion defaultExpanded={false} disableGutters elevation={0} sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider', '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ fontSize: '1rem', color: 'text.secondary' }} />} sx={{ minHeight: 32, px: 2, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {t('attributes.lifecycleHeading', 'Lifecycle & Compliance')} ({fieldCount})
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ p: 0 }}>
+              <Table size="small">
+                <TableBody>
+                  {p.yteol != null && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>YTEOL</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.yteol.toFixed(1)} yrs</TableCell>
+                    </TableRow>
+                  )}
+                  {p.riskRank != null && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Risk Rank</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                        <Stack direction="row" alignItems="center" spacing={0.75}>
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.riskRank <= 2 ? '#69F0AE' : p.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
+                          <span>{p.riskRank.toFixed(1)}</span>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {p.countryOfOrigin && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Country of Origin</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.countryOfOrigin}</TableCell>
+                    </TableRow>
+                  )}
+                  {p.reachCompliance && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>REACH</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.reachCompliance}</TableCell>
+                    </TableRow>
+                  )}
+                  {p.eccnCode && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>ECCN</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.eccnCode}</TableCell>
+                    </TableRow>
+                  )}
+                  {p.htsCode && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>HTS Code</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.htsCode}</TableCell>
+                    </TableRow>
+                  )}
+                  {p.factoryLeadTimeWeeks != null && (
+                    <TableRow hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      <TableCell sx={{ color: 'text.secondary', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', width: '50%', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>Factory Lead Time</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>{p.factoryLeadTimeWeeks} wks</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </AccordionDetails>
+          </Accordion>
+        );
+      })()}
     </Box>
   );
 }
