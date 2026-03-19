@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SendIcon from '@mui/icons-material/Send';
+import { keyframes } from '@mui/material/styles';
 import { updateUserPreferences } from '@/lib/api';
 import {
   ROLE_OPTIONS,
@@ -111,6 +112,11 @@ function findMultiMatch<T extends string>(
 
 const AFFIRMATIVE = /^(yes|yeah|yep|sure|ok|okay|ready|let'?s go|let'?s do it|go|start)/i;
 
+const bounce = keyframes`
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+`;
+
 // ============================================================
 // ACKNOWLEDGMENT MAPS
 // ============================================================
@@ -155,6 +161,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
     });
   }, []);
   const [chatInput, setChatInput] = useState('');
+  const [typing, setTyping] = useState(false);
 
   // Multi-select pending selections (before user clicks Continue/Done)
   const [pendingIndustries, setPendingIndustries] = useState<IndustryVertical[]>([]);
@@ -269,35 +276,43 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
       q7_anything_else: "Is there anything else about your work that would help me give you better recommendations? For example, specific product types you work with, particular challenges you face, or constraints I should know about.",
     };
 
-    if (nextStep === 'closing') {
-      const a = answersRef.current;
-      const answeredFields: string[] = [];
-      if (a.businessRole) answeredFields.push(`**Role:** ${getRoleLabel(a.businessRole)}`);
-      if (a.industries?.length) answeredFields.push(`**Industry:** ${a.industries.map(i => getIndustryLabel(i)).join(', ')}`);
-      if (a.productionTypes?.length) answeredFields.push(`**Makes:** ${a.productionTypes.map(p => getProductionTypeLabel(p)).join(', ')}`);
-      if (a.productionVolume) answeredFields.push(`**Volume:** ${getVolumeLabel(a.productionVolume)}`);
-      if (a.projectPhase) answeredFields.push(`**Phase:** ${getPhaseLabel(a.projectPhase)}`);
-      if (a.goals?.length) answeredFields.push(`**Goals:** ${a.goals.map(g => getGoalLabel(g)).join(', ')}`);
-      if (a.freeformText?.trim()) answeredFields.push(`**Additional context:** ${a.freeformText.trim()}`);
+    // Show typing indicator, then reveal the next question after a brief pause
+    setTyping(true);
+    const delay = 500 + Math.random() * 400; // 500–900ms
 
-      if (answeredFields.length > 0) {
-        addMessages({
-          role: 'agent',
-          text: `Perfect \u2014 here's what I've got:\n\n${answeredFields.join('\n')}\n\nI'll use this to tailor my recommendations. You can update any of this anytime under Settings \u2192 My Profile.`,
-        });
-      } else {
-        addMessages({
-          role: 'agent',
-          text: "No problem \u2014 you can fill in your profile anytime under Settings \u2192 My Profile. Let's get started.",
-        });
+    setTimeout(() => {
+      setTyping(false);
+
+      if (nextStep === 'closing') {
+        const a = answersRef.current;
+        const answeredFields: string[] = [];
+        if (a.businessRole) answeredFields.push(`**Role:** ${getRoleLabel(a.businessRole)}`);
+        if (a.industries?.length) answeredFields.push(`**Industry:** ${a.industries.map(i => getIndustryLabel(i)).join(', ')}`);
+        if (a.productionTypes?.length) answeredFields.push(`**Makes:** ${a.productionTypes.map(p => getProductionTypeLabel(p)).join(', ')}`);
+        if (a.productionVolume) answeredFields.push(`**Volume:** ${getVolumeLabel(a.productionVolume)}`);
+        if (a.projectPhase) answeredFields.push(`**Phase:** ${getPhaseLabel(a.projectPhase)}`);
+        if (a.goals?.length) answeredFields.push(`**Goals:** ${a.goals.map(g => getGoalLabel(g)).join(', ')}`);
+        if (a.freeformText?.trim()) answeredFields.push(`**Additional context:** ${a.freeformText.trim()}`);
+
+        if (answeredFields.length > 0) {
+          addMessages({
+            role: 'agent',
+            text: `Perfect \u2014 here's what I've got:\n\n${answeredFields.join('\n')}\n\nI'll use this to tailor my recommendations. You can update any of this anytime under Settings \u2192 My Profile.`,
+          });
+        } else {
+          addMessages({
+            role: 'agent',
+            text: "No problem \u2014 you can fill in your profile anytime under Settings \u2192 My Profile. Let's get started.",
+          });
+        }
+        setStep('closing');
+        return;
       }
-      setStep('closing');
-      return;
-    }
 
-    const msg = questionMessages[nextStep];
-    if (msg) addMessages({ role: 'agent', text: msg });
-    setStep(nextStep);
+      const msg = questionMessages[nextStep];
+      if (msg) addMessages({ role: 'agent', text: msg });
+      setStep(nextStep);
+    }, delay);
   }, [addMessages]);
 
   // --------------------------------------------------------
@@ -585,7 +600,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
 
         {/* ---- Interactive chips/buttons below messages ---- */}
 
-        {step === 'intro' && (
+        {!typing && step === 'intro' && (
           <Box sx={{ display: 'flex', gap: 1.5, mt: 1, ml: 5.5 }}>
             <Button variant="contained" size="small" onClick={() => advanceTo('q1_role')}>
               Let&apos;s go
@@ -596,7 +611,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q1_role' && (
+        {!typing && step === 'q1_role' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {ROLE_OPTIONS.map(o => (
@@ -607,7 +622,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q2_industry' && (
+        {!typing && step === 'q2_industry' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {INDUSTRY_OPTIONS.map(o => (
@@ -623,7 +638,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q3_produce' && (
+        {!typing && step === 'q3_produce' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {PRODUCTION_TYPE_OPTIONS.map(o => (
@@ -639,7 +654,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q4_volume' && (
+        {!typing && step === 'q4_volume' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {VOLUME_OPTIONS.map(o => (
@@ -650,7 +665,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q5_phase' && (
+        {!typing && step === 'q5_phase' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {PHASE_OPTIONS.map(o => (
@@ -661,7 +676,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q6_goals' && (
+        {!typing && step === 'q6_goals' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
               {GOAL_OPTIONS.map(o => (
@@ -677,7 +692,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
           </Box>
         )}
 
-        {step === 'q7_anything_else' && (
+        {!typing && step === 'q7_anything_else' && (
           <Box sx={{ ml: 5.5, mt: 1 }}>
             <Typography variant="caption" color="text.secondary">
               Type your answer below, or skip to finish.
@@ -693,6 +708,45 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
             <Button variant="contained" onClick={goToDashboard}>
               Go to Dashboard &rarr;
             </Button>
+          </Box>
+        )}
+
+        {/* Typing indicator */}
+        {typing && (
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mb: 2 }}>
+            <Box
+              sx={{
+                width: 32, height: 32, borderRadius: '50%',
+                bgcolor: 'background.paper', border: 1, borderColor: 'divider',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, mt: 0.25,
+              }}
+            >
+              <SmartToyIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+            </Box>
+            <Paper
+              elevation={0}
+              sx={{
+                px: 2, py: 1.5,
+                bgcolor: 'background.paper',
+                borderRadius: '16px 16px 16px 4px',
+                border: 1, borderColor: 'divider',
+                display: 'flex', gap: 0.5, alignItems: 'center',
+                minWidth: 56,
+              }}
+            >
+              {[0, 1, 2].map(i => (
+                <Box
+                  key={i}
+                  sx={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    bgcolor: 'text.secondary',
+                    animation: `${bounce} 1.2s ease-in-out infinite`,
+                    animationDelay: `${i * 0.15}s`,
+                  }}
+                />
+              ))}
+            </Paper>
           </Box>
         )}
 
@@ -720,6 +774,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
         value={chatInput}
         onChange={(e) => setChatInput(e.target.value)}
         onKeyDown={handleKeyDown}
+        disabled={typing}
         slotProps={{
           input: {
             endAdornment: (
