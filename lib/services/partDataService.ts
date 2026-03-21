@@ -58,13 +58,13 @@ function isDigikeyConfigured(): boolean {
 // SEARCH
 // ============================================================
 
-export async function searchParts(query: string, currency?: string): Promise<SearchResult> {
+export async function searchParts(query: string, currency?: string, userId?: string): Promise<SearchResult> {
   // Search Digikey + Atlas in parallel, merge results
   const [digikeyResult, atlasResult] = await Promise.all([
     (async (): Promise<SearchResult> => {
       if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
       try {
-        const response = await keywordSearch(query, { limit: 10 }, currency);
+        const response = await keywordSearch(query, { limit: 10 }, currency, userId);
         return mapKeywordResponseToSearchResult(response);
       } catch (error) {
         console.warn('Digikey search failed:', error);
@@ -113,11 +113,11 @@ export async function searchParts(query: string, currency?: string): Promise<Sea
  * Enrich Digikey attributes with parts.io data.
  * Digikey values always win — parts.io only fills gaps (missing parameterId).
  */
-async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes> {
+async function enrichWithPartsio(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
   if (!isPartsioConfigured()) return attrs;
 
   try {
-    const listing = await getPartsioProductDetails(attrs.part.mpn);
+    const listing = await getPartsioProductDetails(attrs.part.mpn, userId);
     if (!listing) return attrs;
 
     const partsioParams = mapPartsioProductToAttributes(listing);
@@ -160,11 +160,11 @@ async function enrichWithPartsio(attrs: PartAttributes): Promise<PartAttributes>
  * Adds SupplierQuote (pricing/availability), LifecycleInfo, and ComplianceData.
  * Also normalizes existing Digikey pricing into a SupplierQuote for uniform N-supplier display.
  */
-async function enrichWithMouser(attrs: PartAttributes): Promise<PartAttributes> {
+async function enrichWithMouser(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
   if (!isMouserConfigured() || !hasMouserBudget()) return attrs;
 
   try {
-    const product = await getMouserProduct(attrs.part.mpn);
+    const product = await getMouserProduct(attrs.part.mpn, userId);
 
     // Build Digikey quote from existing flat fields (always, for N-supplier uniformity)
     const dkQuote = buildDigikeyQuote(attrs.part);
@@ -203,12 +203,12 @@ async function enrichWithMouser(attrs: PartAttributes): Promise<PartAttributes> 
  * Enrich recommendation candidates with Mouser pricing (batch).
  * Uses pipe-separated batch API for efficiency (10 MPNs per call).
  */
-async function enrichCandidatesWithMouser(recs: XrefRecommendation[]): Promise<XrefRecommendation[]> {
+async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
   if (!isMouserConfigured() || !hasMouserBudget() || recs.length === 0) return recs;
 
   try {
     const mpns = recs.map(r => r.part.mpn);
-    const mouserProducts = await getMouserProductsBatch(mpns);
+    const mouserProducts = await getMouserProductsBatch(mpns, userId);
 
     return recs.map(rec => {
       const mouserProduct = mouserProducts.get(rec.part.mpn.toLowerCase());
@@ -246,14 +246,14 @@ async function enrichCandidatesWithMouser(recs: XrefRecommendation[]): Promise<X
 // ATTRIBUTES
 // ============================================================
 
-export async function getAttributes(mpn: string, currency?: string): Promise<PartAttributes | null> {
+export async function getAttributes(mpn: string, currency?: string, userId?: string): Promise<PartAttributes | null> {
   if (isDigikeyConfigured()) {
     try {
-      const response = await getProductDetails(mpn, currency);
+      const response = await getProductDetails(mpn, currency, userId);
       if (response.Product) {
         const attrs = mapDigikeyProductToAttributes(response.Product);
-        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-        return await enrichWithMouser(enriched);
+        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const }, userId);
+        return await enrichWithMouser(enriched, userId);
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -263,7 +263,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
     // Fallback: keyword search by MPN (handles cases where Product Details API
     // doesn't recognize the MPN directly, e.g. NXP's "BC847CW,115")
     try {
-      const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency);
+      const searchResponse = await keywordSearch(mpn, { limit: 5 }, currency, userId);
       const lowerMpn = mpn.toLowerCase();
       // Try exact match first, then prefix match (e.g. "BC857C" → "BC857C,115")
       const match = searchResponse.Products?.find(
@@ -273,8 +273,8 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
       );
       if (match) {
         const attrs = mapDigikeyProductToAttributes(match);
-        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const });
-        return await enrichWithMouser(enriched);
+        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const }, userId);
+        return await enrichWithMouser(enriched, userId);
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
@@ -293,7 +293,7 @@ export async function getAttributes(mpn: string, currency?: string): Promise<Par
   // Fallback: try parts.io directly (covers parts.io-only candidates like FFF/FE equivalents)
   if (isPartsioConfigured()) {
     try {
-      const listing = await getPartsioProductDetails(mpn);
+      const listing = await getPartsioProductDetails(mpn, userId);
       if (listing) {
         const parameters = mapPartsioProductToAttributes(listing);
         return {
@@ -332,12 +332,13 @@ export async function getRecommendations(
   currency?: string,
   preferredManufacturers?: string[],
   userPreferences?: UserPreferences,
+  userId?: string,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
   // Step 1: Get source part attributes
   console.time('[perf] getAttributes');
-  const sourceAttrs = await getAttributes(mpn, currency);
+  const sourceAttrs = await getAttributes(mpn, currency, userId);
   console.timeEnd('[perf] getAttributes');
   if (!sourceAttrs) {
     const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
@@ -487,7 +488,7 @@ export async function getRecommendations(
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
-        return await fetchDigikeyCandidates(sourceAttrs, currency);
+        return await fetchDigikeyCandidates(sourceAttrs, currency, userId);
       } catch (error) {
         console.warn('Digikey candidate search failed:', error);
         reportServiceFailure('digikey', 'unavailable', 'Candidate search failed');
@@ -498,12 +499,12 @@ export async function getRecommendations(
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
-    fetchPartsioEquivalents(mpn).catch((error) => {
+    fetchPartsioEquivalents(mpn, userId).catch((error) => {
       console.warn('Parts.io equivalent fetch failed:', error);
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
     }),
-    fetchMouserSuggestions(sourceAttrs, currency).catch((error) => {
+    fetchMouserSuggestions(sourceAttrs, currency, userId).catch((error) => {
       console.warn('Mouser suggestion fetch failed:', error);
       return [] as PartAttributes[];
     }),
@@ -513,7 +514,7 @@ export async function getRecommendations(
   // Step 3a: Enrich Digikey candidates with parts.io gap-fill (parallel, ~one round-trip)
   if (isPartsioConfigured() && digikeyCandidates.length > 0) {
     console.time('[perf] enrichDigikeyCandidates');
-    digikeyCandidates = await Promise.all(digikeyCandidates.map(c => enrichWithPartsio(c)));
+    digikeyCandidates = await Promise.all(digikeyCandidates.map(c => enrichWithPartsio(c, userId)));
     console.timeEnd('[perf] enrichDigikeyCandidates');
   }
 
@@ -543,7 +544,8 @@ export async function getRecommendations(
     if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'atlas');
   }
   for (const c of mouserSuggestions) {
-    if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), c.dataSource ?? 'digikey');
+    const src = c.dataSource === 'mock' ? 'digikey' : (c.dataSource ?? 'digikey');
+    if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), src);
   }
   for (const c of partsioEquivalents) {
     if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'partsio');
@@ -708,7 +710,7 @@ export async function getRecommendations(
     // Step 3-mouser: Enrich scored recommendations with Mouser pricing (batch, ~1 API call)
     if (isMouserConfigured() && hasMouserBudget() && recs.length > 0) {
       console.time('[perf] enrichRecsWithMouser');
-      recs = await enrichCandidatesWithMouser(recs);
+      recs = await enrichCandidatesWithMouser(recs, userId);
       console.timeEnd('[perf] enrichRecsWithMouser');
     }
 
@@ -733,11 +735,11 @@ export async function getRecommendations(
  * full parametric data for each equivalent.
  * Each candidate has equivalenceType set to 'fff' or 'functional'.
  */
-async function fetchPartsioEquivalents(mpn: string): Promise<PartAttributes[]> {
+async function fetchPartsioEquivalents(mpn: string, userId?: string): Promise<PartAttributes[]> {
   if (!isPartsioConfigured()) return [];
 
   // Get source listing (hits 30-min cache if already called during enrichWithPartsio)
-  const listing = await getPartsioProductDetails(mpn);
+  const listing = await getPartsioProductDetails(mpn, userId);
   if (!listing) return [];
 
   const equivalents = extractEquivalentMpns(listing, mpn, 20);
@@ -751,7 +753,7 @@ async function fetchPartsioEquivalents(mpn: string): Promise<PartAttributes[]> {
   const results = await Promise.all(
     equivalents.map(async ({ mpn: eqMpn, type }) => {
       try {
-        const eqListing = await getPartsioProductDetails(eqMpn);
+        const eqListing = await getPartsioProductDetails(eqMpn, userId);
         if (!eqListing) return null;
 
         const parameters = mapPartsioProductToAttributes(eqListing);
@@ -790,6 +792,7 @@ async function fetchPartsioEquivalents(mpn: string): Promise<PartAttributes[]> {
 async function fetchMouserSuggestions(
   sourceAttrs: PartAttributes,
   currency?: string,
+  userId?: string,
 ): Promise<PartAttributes[]> {
   const mouserLifecycle = sourceAttrs.part.lifecycleInfo?.find(l => l.source === 'mouser');
   if (!mouserLifecycle?.suggestedReplacement) return [];
@@ -800,7 +803,7 @@ async function fetchMouserSuggestions(
   console.log(`[mouser] Fetching suggested replacement: ${cleanMpn} (from ${mouserLifecycle.suggestedReplacement})`);
 
   try {
-    const attrs = await getAttributes(cleanMpn, currency);
+    const attrs = await getAttributes(cleanMpn, currency, userId);
     if (!attrs) return [];
     return [attrs];
   } catch (error) {
@@ -821,6 +824,7 @@ async function fetchMouserSuggestions(
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
+  userId?: string,
 ): Promise<PartAttributes[]> {
   // Build a search query from key parameters
   const keywords = buildCandidateSearchQuery(sourceAttrs);
@@ -830,6 +834,7 @@ async function fetchDigikeyCandidates(
     keywords,
     { limit: 20, categoryId: sourceAttrs.part.digikeyCategoryId },
     currency,
+    userId,
   );
 
   const allProducts = [

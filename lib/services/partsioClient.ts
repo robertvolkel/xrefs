@@ -6,6 +6,8 @@
  * All functions are server-side only (uses process.env).
  */
 
+import { logApiCall } from './apiUsageLogger';
+
 const BASE_URL = 'http://api.qa.parts.io/solr/partsio/listings';
 
 // ============================================================
@@ -217,7 +219,7 @@ async function partsioFetch(url: string): Promise<Response> {
  * Fetch the most complete parts.io listing for an MPN.
  * Returns null if not found, not configured, or on error.
  */
-export async function getPartsioProductDetails(mpn: string): Promise<PartsioListing | null> {
+export async function getPartsioProductDetails(mpn: string, userId?: string): Promise<PartsioListing | null> {
   if (!isPartsioConfigured()) return null;
 
   // Check cache
@@ -241,6 +243,10 @@ export async function getPartsioProductDetails(mpn: string): Promise<PartsioList
     if (!data.response || data.response.length === 0) {
       setCache(mpn, null);
       return null;
+    }
+
+    if (userId) {
+      await logApiCall({ userId, service: 'partsio', operation: 'gap_fill' });
     }
 
     const best = selectBestRecord(data.response);

@@ -18,7 +18,7 @@ export async function GET(
     const decodedMpn = decodeURIComponent(mpn);
     const prefs = await fetchUserPreferences(user!.id);
 
-    const result = await getRecommendations(decodedMpn, undefined, undefined, undefined, undefined, prefs);
+    const result = await getRecommendations(decodedMpn, undefined, undefined, undefined, undefined, prefs, user!.id);
 
     // QC log (awaited to ensure it completes within request lifecycle)
     await logRecommendation({
@@ -61,7 +61,7 @@ export async function POST(
       applicationContext?: ApplicationContext;
     };
 
-    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs);
+    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id);
 
     // QC log (awaited to ensure it completes within request lifecycle)
     await logRecommendation({

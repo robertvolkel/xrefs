@@ -58,6 +58,31 @@ export async function GET() {
       listsMap.set(row.user_id, (listsMap.get(row.user_id) ?? 0) + 1);
     }
 
+    // Get API usage stats per user from api_usage_log
+    const { data: usageRows } = await serviceClient
+      .from('api_usage_log')
+      .select('user_id, service, input_tokens, output_tokens, request_count, estimated_cost_usd');
+
+    // Aggregate: total Claude tokens + cost, per-service call counts
+    const tokensMap = new Map<string, number>();
+    const costMap = new Map<string, number>();
+    const dkCallsMap = new Map<string, number>();
+    const mouserCallsMap = new Map<string, number>();
+
+    for (const row of usageRows ?? []) {
+      const uid = row.user_id;
+      if (row.service === 'anthropic') {
+        tokensMap.set(uid, (tokensMap.get(uid) ?? 0) + (row.input_tokens ?? 0) + (row.output_tokens ?? 0));
+        costMap.set(uid, (costMap.get(uid) ?? 0) + (Number(row.estimated_cost_usd) || 0));
+      }
+      const count = row.request_count ?? 1;
+      if (row.service === 'digikey') {
+        dkCallsMap.set(uid, (dkCallsMap.get(uid) ?? 0) + count);
+      } else if (row.service === 'mouser') {
+        mouserCallsMap.set(uid, (mouserCallsMap.get(uid) ?? 0) + count);
+      }
+    }
+
     // Merge profiles with activity stats
     const users = (profiles ?? []).map((p) => {
       const activity = activityMap.get(p.id);
@@ -66,6 +91,10 @@ export async function GET() {
         search_count: activity?.search_count ?? 0,
         list_count: listsMap.get(p.id) ?? 0,
         last_active: activity?.last_active ?? null,
+        total_tokens: tokensMap.get(p.id) ?? 0,
+        estimated_cost: costMap.get(p.id) ?? 0,
+        dk_calls: dkCallsMap.get(p.id) ?? 0,
+        mouser_calls: mouserCallsMap.get(p.id) ?? 0,
       };
     });
 

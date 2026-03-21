@@ -11,6 +11,7 @@ import type {
   ProjectPhase,
   UserGoal,
 } from '@/lib/types';
+import { logTokenUsage } from './apiUsageLogger';
 
 interface ExtractedProfileFields {
   businessRole?: BusinessRole;
@@ -55,6 +56,7 @@ Return only valid JSON. No markdown, no explanation.`;
  */
 export async function extractProfileFields(
   profilePrompt: string,
+  userId?: string,
 ): Promise<ExtractedProfileFields> {
   if (!profilePrompt?.trim()) return {};
 
@@ -64,17 +66,30 @@ export async function extractProfileFields(
     return {};
   }
 
+  const model = 'claude-haiku-4-5-20251001';
+
   try {
     const client = new Anthropic({ apiKey });
 
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: 512,
-      system: EXTRACTION_SYSTEM_PROMPT,
+      system: [{ type: 'text' as const, text: EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' as const } }],
       messages: [
         { role: 'user', content: profilePrompt },
       ],
     });
+
+    // Log token usage
+    if (userId) {
+      await logTokenUsage({
+        userId,
+        model,
+        operation: 'profile_extract',
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
+    }
 
     let text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

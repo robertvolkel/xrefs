@@ -9,6 +9,8 @@
  * This client is purely for commercial intelligence (Pillar 2) and compliance (Pillar 3).
  */
 
+import { logApiCall } from './apiUsageLogger';
+
 const BASE_URL = 'https://api.mouser.com/api/v1/search/partnumber';
 
 // ============================================================
@@ -263,7 +265,7 @@ function selectBestProduct(products: MouserProduct[], targetMpn: string): Mouser
  * Fetch Mouser product details for a single MPN.
  * Returns null if not found, not configured, rate limited, or on error.
  */
-export async function getMouserProduct(mpn: string): Promise<MouserProduct | null> {
+export async function getMouserProduct(mpn: string, userId?: string): Promise<MouserProduct | null> {
   if (!isMouserConfigured()) return null;
 
   // Check cache
@@ -290,6 +292,10 @@ export async function getMouserProduct(mpn: string): Promise<MouserProduct | nul
       return null;
     }
 
+    if (userId) {
+      await logApiCall({ userId, service: 'mouser', operation: 'batch_search' });
+    }
+
     const best = selectBestProduct(parts, mpn);
     setCache(mpn, best);
     return best;
@@ -306,6 +312,7 @@ export async function getMouserProduct(mpn: string): Promise<MouserProduct | nul
  */
 export async function getMouserProductsBatch(
   mpns: string[],
+  userId?: string,
 ): Promise<Map<string, MouserProduct>> {
   const results = new Map<string, MouserProduct>();
   if (!isMouserConfigured() || mpns.length === 0) return results;
@@ -324,6 +331,7 @@ export async function getMouserProductsBatch(
   if (uncached.length === 0) return results;
 
   // Chunk into groups of 10 (Mouser batch limit)
+  let apiCallCount = 0;
   const BATCH_SIZE = 10;
   const chunks: string[][] = [];
   for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
@@ -364,11 +372,18 @@ export async function getMouserProductsBatch(
           setCache(targetMpn, null);
         }
       }
+      if (userId) {
+        apiCallCount++;
+      }
     } catch (error) {
       console.warn('[mouser] Batch lookup failed for chunk:', chunk, error);
       // Cache failures as null
       for (const mpn of chunk) setCache(mpn, null);
     }
+  }
+
+  if (userId && apiCallCount > 0) {
+    await logApiCall({ userId, service: 'mouser', operation: 'batch_search', requestCount: apiCallCount });
   }
 
   return results;

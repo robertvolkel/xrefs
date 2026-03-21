@@ -20,7 +20,7 @@ interface MouserEnrichResult {
 
 export async function POST(request: NextRequest) {
   try {
-    const { error: authError } = await requireAuth();
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
     if (!isMouserConfigured()) {
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Maximum 50 MPNs per request' }, { status: 400 });
     }
 
-    const products = await getMouserProductsBatch(mpns);
+    const products = await getMouserProductsBatch(mpns, user?.id);
     const results: Record<string, MouserEnrichResult> = {};
 
     for (const [mpnLower, product] of products) {

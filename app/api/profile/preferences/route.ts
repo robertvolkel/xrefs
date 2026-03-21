@@ -76,7 +76,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       updates.profilePrompt !== undefined &&
       updates.profilePrompt !== currentPrefs.profilePrompt
     ) {
-      const extracted = await extractProfileFields(updates.profilePrompt);
+      const extracted = await extractProfileFields(updates.profilePrompt, user!.id);
       merged = { ...merged, ...extracted };
     }
 

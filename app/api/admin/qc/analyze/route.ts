@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { aggregateQcStats } from '@/lib/services/qcAnalyzer';
+import { logTokenUsage } from '@/lib/services/apiUsageLogger';
 import type { QcAnalysisEvent } from '@/lib/types';
 
 const MODEL = 'claude-sonnet-4-5-20250929';
@@ -38,7 +39,7 @@ Be concise and specific. Use actual numbers from the data. Do not speculate beyo
 
 export async function POST(request: NextRequest): Promise<Response> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -90,7 +91,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         const messageStream = client.messages.stream({
           model: MODEL,
           max_tokens: 4096,
-          system: ANALYSIS_SYSTEM_PROMPT,
+          system: [{ type: 'text' as const, text: ANALYSIS_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' as const } }],
           messages: [{ role: 'user', content: `Here is the aggregated QC data:\n\n${dataPayload}` }],
         });
 
@@ -102,7 +103,18 @@ export async function POST(request: NextRequest): Promise<Response> {
         });
 
         // Wait for the stream to complete
-        await messageStream.finalMessage();
+        const finalMsg = await messageStream.finalMessage();
+
+        // Log token usage
+        if (user?.id) {
+          await logTokenUsage({
+            userId: user.id,
+            model: MODEL,
+            operation: 'qc_analysis',
+            inputTokens: finalMsg.usage?.input_tokens ?? 0,
+            outputTokens: finalMsg.usage?.output_tokens ?? 0,
+          });
+        }
 
         await sendEvent({ type: 'complete', fullContent });
       } catch (error) {

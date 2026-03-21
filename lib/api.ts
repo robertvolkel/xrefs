@@ -12,6 +12,10 @@ export interface AdminUser {
   search_count: number;
   list_count: number;
   last_active: string | null;
+  total_tokens: number;
+  estimated_cost: number;
+  dk_calls: number;
+  mouser_calls: number;
 }
 
 const BASE = '/api';

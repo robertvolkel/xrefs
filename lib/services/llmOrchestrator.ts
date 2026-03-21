@@ -2,34 +2,40 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
+import { logTokenUsage } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
 import { StoredRow } from '../partsListStorage';
 import { getCountryName } from '../constants/profileOptions';
 
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_LOOPS = 10;
+const CACHE_CONTROL: Anthropic.CacheControlEphemeral = { type: 'ephemeral' };
+
+/** Convert system prompt string to cached content blocks. */
+function cachedSystem(prompt: string): Anthropic.TextBlockParam[] {
+  return [{ type: 'text', text: prompt, cache_control: CACHE_CONTROL }];
+}
+
+/** Clone tools array and add cache_control to the last tool (cache breakpoint). */
+function cachedTools(tools: Anthropic.Tool[]): Anthropic.Tool[] {
+  if (tools.length === 0) return tools;
+  const cloned = tools.map(t => ({ ...t }));
+  cloned[cloned.length - 1].cache_control = CACHE_CONTROL;
+  return cloned;
+}
 
 // ==============================================================
 // Shared: recommendation summary + filter tool
 // ==============================================================
 
-/** Build a compact text summary of recommendations for the system prompt */
+/** Build a compact summary of recommendations (used as context, not in system prompt). */
 function summarizeRecommendations(recs: XrefRecommendation[]): string {
   if (recs.length === 0) return '';
 
-  const lines = recs.slice(0, 30).map((r, i) => {
-    const issues = r.matchDetails
-      .filter(d => d.ruleResult === 'review' || d.ruleResult === 'fail')
-      .map(d => `${d.parameterName} (${d.ruleResult})`);
-    const issueStr = issues.length > 0 ? ` | ${issues.join(', ')}` : '';
-    return `${i + 1}. **${r.part.mpn}** | ${r.part.manufacturer} | ${r.matchPercentage}% match | ${r.part.status}${issueStr}`;
-  });
+  const passed = recs.filter(r => r.matchPercentage > 0).length;
+  const top5 = recs.slice(0, 5).map(r => `${r.part.mpn} (${r.part.manufacturer}, ${r.matchPercentage}%)`).join(', ');
 
-  let summary = `\n\nCurrent replacement recommendations (${recs.length} total):\n${lines.join('\n')}`;
-  if (recs.length > 30) {
-    summary += `\n... and ${recs.length - 30} more`;
-  }
-  return summary;
+  return `\n\n[Context: ${recs.length} replacement candidates found, ${passed} passed. Top 5: ${top5}. You have a filter_recommendations tool to narrow results.]`;
 }
 
 const filterRecommendationsTool: Anthropic.Tool = {
@@ -299,13 +305,7 @@ Engineering Assessment (REQUIRED after find_replacements):
 - Flag anything requiring manual engineering review
 - 3–5 sentences max. Be direct and technical.
 
-Supported component families (cross-reference logic available — 43 families):
-Block A — Passives (19): MLCC capacitors, mica capacitors, chip resistors, through-hole resistors, current sense resistors, chassis mount resistors, aluminum electrolytic capacitors, aluminum polymer capacitors, tantalum capacitors, supercapacitors, film capacitors, varistors/MOVs, PTC resettable fuses, NTC thermistors, PTC thermistors, common mode chokes, ferrite beads, power inductors, RF/signal inductors.
-Block B — Discrete Semiconductors (9): Rectifier diodes, Schottky barrier diodes, Zener diodes, TVS diodes, MOSFETs (N-ch & P-ch), BJTs (NPN & PNP), IGBTs, Thyristors/TRIACs/SCRs, JFETs.
-Block C — ICs (10): Linear voltage regulators (LDOs), switching regulators (DC-DC), gate drivers, op-amps/comparators/instrumentation amplifiers, logic ICs (74-series), voltage references, interface ICs (RS-485, CAN, I2C, USB), timers & oscillators (555, XO, MEMS, TCXO), ADCs, DACs.
-Block D — Frequency Control & Protection (2): Crystals (quartz resonators), fuses.
-Block E — Optoelectronics (1): Optocouplers/photocouplers.
-Block F — Relays (2): Electromechanical relays (EMR), solid state relays (SSR).
+43 supported component families across 6 blocks: Passives (19), Discrete Semiconductors (9), ICs (10), Frequency Control & Protection (2), Optoelectronics (1), Relays (2). Use search_parts to check if a specific part is supported — the search result will indicate the family.
 
 If a part falls outside these families, clearly tell the user that the application does not yet support cross-referencing for that component category. Do NOT suggest "manual sourcing" or imply the search failed — state that the logic rules for that category haven't been built yet.
 
@@ -467,13 +467,13 @@ async function executeTool(
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
-      const result = await searchParts((input as { query: string }).query);
+      const result = await searchParts((input as { query: string }).query, undefined, userId);
       data.searchResult = result;
       return JSON.stringify(result);
     }
     case 'get_part_attributes': {
       const mpn = (input as { mpn: string }).mpn;
-      const attrs = await getAttributes(mpn);
+      const attrs = await getAttributes(mpn, undefined, userId);
       if (!attrs) return JSON.stringify({ error: `Part ${mpn} not found` });
       data.attributes[mpn] = attrs;
       return JSON.stringify(attrs);
@@ -481,7 +481,7 @@ async function executeTool(
     case 'find_replacements': {
       const findInput = input as { mpn: string; preferred_manufacturers?: string[] };
       const mpn = findInput.mpn;
-      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers, userPreferences);
+      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers, userPreferences, userId);
       const recs = result.recommendations;
       data.recommendations[mpn] = recs;
 
@@ -503,15 +503,14 @@ async function executeTool(
         });
       }
 
-      return JSON.stringify(recs.map(r => ({
+      return JSON.stringify(recs.slice(0, 20).map(r => ({
         mpn: r.part.mpn,
         manufacturer: r.part.manufacturer,
-        description: r.part.description,
         matchPercentage: r.matchPercentage,
         passed: r.matchPercentage > 0,
-        notes: r.notes,
         keyDifferences: r.matchDetails
           .filter(d => d.matchStatus !== 'exact')
+          .slice(0, 5)
           .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
       })));
     }
@@ -724,30 +723,43 @@ export async function chat(
   };
 
   // Build system prompt — append user context, recommendation context + locale
-  let systemPrompt = SYSTEM_PROMPT
+  const systemPrompt = SYSTEM_PROMPT
     + buildUserContextSection(userPreferences ?? {}, userName)
     + buildLocaleInstruction(locale);
   const activeTools = [...tools, ...historyTools];
   if (currentRecommendations && currentRecommendations.length > 0) {
-    systemPrompt += summarizeRecommendations(currentRecommendations);
-    systemPrompt += '\n\nYou also have a filter_recommendations tool to narrow down the list by manufacturer, match quality, etc. Use it when the user asks to filter or sort the existing results.';
+    // Inject rec summary as context in the last user message (keeps system prompt cacheable)
+    const recContext = summarizeRecommendations(currentRecommendations);
+    const lastMsg = anthropicMessages[anthropicMessages.length - 1];
+    if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
+      lastMsg.content = recContext + '\n\n' + lastMsg.content;
+    }
     activeTools.push(filterRecommendationsTool);
   }
 
   // Tool-use loop: keep going until Claude gives a final text response
   const chatStart = performance.now();
   let llmCallCount = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCachedTokens = 0;
+
+  const systemBlocks = cachedSystem(systemPrompt);
+  const toolsWithCache = cachedTools(activeTools);
 
   llmCallCount++;
   console.time(`[perf] LLM call #${llmCallCount}`);
   let response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
-    system: systemPrompt,
-    tools: activeTools,
+    system: systemBlocks,
+    tools: toolsWithCache,
     messages: anthropicMessages,
   });
   console.timeEnd(`[perf] LLM call #${llmCallCount}`);
+  totalInputTokens += response.usage?.input_tokens ?? 0;
+  totalOutputTokens += response.usage?.output_tokens ?? 0;
+  totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
 
   while (response.stop_reason === 'tool_use' && llmCallCount < MAX_TOOL_LOOPS) {
     const toolUseBlocks = response.content.filter(
@@ -789,18 +801,34 @@ export async function chat(
     response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
-      system: systemPrompt,
-      tools: activeTools,
+      system: systemBlocks,
+      tools: toolsWithCache,
       messages: anthropicMessages,
     });
     console.timeEnd(`[perf] LLM call #${llmCallCount}`);
+    totalInputTokens += response.usage?.input_tokens ?? 0;
+    totalOutputTokens += response.usage?.output_tokens ?? 0;
+    totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
   }
 
   if (llmCallCount >= MAX_TOOL_LOOPS) {
     console.warn(`[chat] Hit max tool loop limit (${MAX_TOOL_LOOPS})`);
   }
 
-  console.log(`[perf] chat() total: ${(performance.now() - chatStart).toFixed(0)}ms (${llmCallCount} LLM calls)`);
+  console.log(`[perf] chat() total: ${(performance.now() - chatStart).toFixed(0)}ms (${llmCallCount} LLM calls, ${totalCachedTokens} cached tokens)`);
+
+  // Log token usage
+  if (userId) {
+    await logTokenUsage({
+      userId,
+      model: MODEL,
+      operation: 'chat',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cachedTokens: totalCachedTokens,
+      llmCalls: llmCallCount,
+    });
+  }
 
   // Extract the final text response
   const textBlocks = response.content.filter(
@@ -926,15 +954,24 @@ export async function refinementChat(
     recommendations: {},
   };
 
+  const systemBlocks = cachedSystem(systemPrompt);
+  const toolsWithCache = cachedTools(activeTools);
+
   let refinementLoopCount = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCachedTokens = 0;
   let response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
-    system: systemPrompt,
-    tools: activeTools,
+    system: systemBlocks,
+    tools: toolsWithCache,
     messages: anthropicMessages,
   });
   refinementLoopCount++;
+  totalInputTokens += response.usage?.input_tokens ?? 0;
+  totalOutputTokens += response.usage?.output_tokens ?? 0;
+  totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
 
   while (response.stop_reason === 'tool_use' && refinementLoopCount < MAX_TOOL_LOOPS) {
     const toolUseBlocks = response.content.filter(
@@ -983,7 +1020,7 @@ export async function refinementChat(
           };
         }
 
-        const refineResult = await getRecommendations(mpn, mergedOverrides, mergedContext);
+        const refineResult = await getRecommendations(mpn, mergedOverrides, mergedContext, undefined, undefined, undefined, userId);
         const recs = refineResult.recommendations;
         toolData.recommendations[mpn] = recs;
 
@@ -1032,14 +1069,30 @@ export async function refinementChat(
     response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
-      system: systemPrompt,
-      tools: activeTools,
+      system: systemBlocks,
+      tools: toolsWithCache,
       messages: anthropicMessages,
     });
+    totalInputTokens += response.usage?.input_tokens ?? 0;
+    totalOutputTokens += response.usage?.output_tokens ?? 0;
+    totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
   }
 
   if (refinementLoopCount >= MAX_TOOL_LOOPS) {
     console.warn(`[refinementChat] Hit max tool loop limit (${MAX_TOOL_LOOPS})`);
+  }
+
+  // Log token usage
+  if (userId) {
+    await logTokenUsage({
+      userId,
+      model: MODEL,
+      operation: 'refinement_chat',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cachedTokens: totalCachedTokens,
+      llmCalls: refinementLoopCount,
+    });
   }
 
   const textBlocks = response.content.filter(

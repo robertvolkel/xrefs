@@ -5,6 +5,8 @@
  * All functions are server-side only (uses process.env).
  */
 
+import { logApiCall } from './apiUsageLogger';
+
 const BASE_URL = 'https://api.digikey.com';
 const TOKEN_URL = `${BASE_URL}/v1/oauth2/token`;
 const SEARCH_URL = `${BASE_URL}/products/v4/search/keyword`;
@@ -174,6 +176,7 @@ export async function keywordSearch(
   keywords: string,
   options: DigikeySearchOptions = {},
   currency?: string,
+  userId?: string,
 ): Promise<DigikeyKeywordResponse> {
   console.time('[perf] digikey:keywordSearch');
   const token = await getAccessToken();
@@ -197,6 +200,11 @@ export async function keywordSearch(
 
   const data = await res.json();
   console.timeEnd('[perf] digikey:keywordSearch');
+
+  if (userId) {
+    await logApiCall({ userId, service: 'digikey', operation: 'keyword_search' });
+  }
+
   return data;
 }
 
@@ -204,6 +212,7 @@ export async function keywordSearch(
 export async function getProductDetails(
   productNumber: string,
   currency?: string,
+  userId?: string,
 ): Promise<DigikeyProductDetailResponse> {
   // Check cache (include currency in key so different currencies don't collide)
   const cacheKey = currency ? `${productNumber}__${currency}` : productNumber;
@@ -235,6 +244,10 @@ export async function getProductDetails(
   if (detailsCache.size > 200) {
     const oldestKey = detailsCache.keys().next().value;
     if (oldestKey) detailsCache.delete(oldestKey);
+  }
+
+  if (userId) {
+    await logApiCall({ userId, service: 'digikey', operation: 'product_details' });
   }
 
   return data;

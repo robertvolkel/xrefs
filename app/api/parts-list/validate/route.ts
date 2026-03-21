@@ -27,7 +27,7 @@ async function processItem(
       ? `${item.manufacturer} ${query}`
       : query;
 
-    const searchResult = await searchParts(searchQuery, currency);
+    const searchResult = await searchParts(searchQuery, currency, userId);
 
     if (searchResult.type === 'none') {
       return { rowIndex: item.rowIndex, status: 'not-found' };
@@ -37,13 +37,13 @@ async function processItem(
     const resolvedPart = searchResult.matches[0];
 
     // Step 2: Get attributes
-    const sourceAttributes = await getAttributes(resolvedPart.mpn, currency);
+    const sourceAttributes = await getAttributes(resolvedPart.mpn, currency, userId);
     if (!sourceAttributes) {
       return { rowIndex: item.rowIndex, status: 'resolved', resolvedPart };
     }
 
     // Step 3: Get recommendations
-    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency, undefined, userPreferences);
+    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency, undefined, userPreferences, userId);
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
 
