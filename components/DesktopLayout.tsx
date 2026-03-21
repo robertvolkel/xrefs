@@ -1,5 +1,8 @@
+import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
+
+export type AttributesTab = 'specs' | 'risk' | 'commercial';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
 import ChatHistoryDrawer from './ChatHistoryDrawer';
@@ -126,6 +129,10 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onSelectConversation, onNewChat, onDeleteConversation,
   } = props;
 
+  // Synced tab state for AttributesPanel + ComparisonView — both panels show same dimension
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
+  useEffect(() => { setAttributesTab('specs'); }, [sourceAttributes?.part.mpn]);
+
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
       <AppSidebar
@@ -241,6 +248,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             attributes={sourceAttributes}
             loading={phase === 'loading-attributes'}
             title="Source Part"
+            activeTab={attributesTab}
+            onTabChange={setAttributesTab}
           />
         </Box>
 
@@ -268,6 +277,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               recommendation={selectedRecommendation!}
               onBack={onBackToRecommendations}
               onManufacturerClick={onManufacturerClick}
+              activeTab={attributesTab}
+              onTabChange={setAttributesTab}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel

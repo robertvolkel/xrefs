@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 
 export async function GET() {
   try {
@@ -22,8 +23,11 @@ export async function GET() {
       );
     }
 
+    // Use service client to bypass RLS for cross-user stats queries
+    const serviceClient = createServiceClient();
+
     // Get activity stats from search_history (aggregated per user)
-    const { data: stats } = await supabase
+    const { data: stats } = await serviceClient
       .from('search_history')
       .select('user_id, created_at');
 
@@ -45,7 +49,7 @@ export async function GET() {
     }
 
     // Get list counts per user from parts_lists
-    const { data: lists } = await supabase
+    const { data: lists } = await serviceClient
       .from('parts_lists')
       .select('user_id');
 

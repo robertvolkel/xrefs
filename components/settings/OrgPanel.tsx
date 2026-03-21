@@ -13,6 +13,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -37,6 +38,8 @@ export default function OrgPanel() {
     newValue: string | boolean;
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [sortKey, setSortKey] = useState<keyof AdminUser>('created_at');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -74,6 +77,27 @@ export default function OrgPanel() {
 
   const isCurrentUser = (u: AdminUser) => u.id === currentUser?.id;
   const isOwner = currentUser?.email === OWNER_EMAIL;
+
+  const handleSort = (key: keyof AdminUser) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'search_count' || key === 'list_count' ? 'desc' : 'asc');
+    }
+  };
+
+  const sortedUsers = [...users].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const av = a[sortKey];
+    const bv = b[sortKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+    if (typeof av === 'boolean' && typeof bv === 'boolean') return (Number(av) - Number(bv)) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return t('orgSettings.never');
@@ -122,15 +146,32 @@ export default function OrgPanel() {
             <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.name')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.email')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.role')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.status')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.lastActive')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }} align="right">{t('orgSettings.searches')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }} align="right">{t('orgSettings.lists')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.joined')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{t('orgSettings.actions')}</TableCell>
+                  {([
+                    { key: 'full_name' as const, label: t('orgSettings.name'), align: 'left' as const },
+                    { key: null, label: t('orgSettings.email'), align: 'left' as const },
+                    { key: 'role' as const, label: t('orgSettings.role'), align: 'left' as const },
+                    { key: 'disabled' as const, label: t('orgSettings.status'), align: 'left' as const },
+                    { key: 'last_active' as const, label: t('orgSettings.lastActive'), align: 'left' as const },
+                    { key: 'search_count' as const, label: t('orgSettings.searches'), align: 'right' as const },
+                    { key: 'list_count' as const, label: t('orgSettings.lists'), align: 'right' as const },
+                    { key: 'created_at' as const, label: t('orgSettings.joined'), align: 'left' as const },
+                    { key: null, label: t('orgSettings.actions'), align: 'left' as const },
+                  ]).map((col, i) => (
+                    <TableCell key={i} align={col.align} sx={{ fontWeight: 600, fontSize: '0.78rem' }}>
+                      {col.key ? (
+                        <TableSortLabel
+                          active={sortKey === col.key}
+                          direction={sortKey === col.key ? sortDir : 'asc'}
+                          onClick={() => handleSort(col.key!)}
+                          sx={{ fontSize: '0.78rem' }}
+                        >
+                          {col.label}
+                        </TableSortLabel>
+                      ) : (
+                        col.label
+                      )}
+                    </TableCell>
+                  ))}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -144,7 +185,7 @@ export default function OrgPanel() {
                         ))}
                       </TableRow>
                     ))
-                  : users.map((u) => (
+                  : sortedUsers.map((u) => (
                       <TableRow
                         key={u.id}
                         sx={{

@@ -373,3 +373,23 @@ export async function getMouserProductsBatch(
 
   return results;
 }
+
+/**
+ * Extract manufacturer MPN from Mouser's SuggestedReplacement field.
+ * Mouser format: "595-SN74HCT04N" (numeric prefix + hyphen + manufacturer MPN).
+ * Returns null if input is empty or cannot be resolved.
+ */
+export function resolveMouserSuggestedMpn(mouserPartNumber: string, sourceMpn?: string): string | null {
+  if (!mouserPartNumber || !mouserPartNumber.trim()) return null;
+
+  const trimmed = mouserPartNumber.trim();
+
+  // Strip Mouser's numeric manufacturer prefix (e.g., "595-" from "595-SN74HCT04N")
+  const stripped = trimmed.replace(/^\d{2,4}-/, '');
+  const resolved = stripped || trimmed; // If regex removed everything, use original
+
+  // Skip self-references
+  if (sourceMpn && resolved.toLowerCase() === sourceMpn.toLowerCase()) return null;
+
+  return resolved;
+}

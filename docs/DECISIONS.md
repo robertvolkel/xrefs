@@ -2535,3 +2535,24 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 - Single tool with mode detection (aggregate vs. detail) rather than two tools — simpler for the LLM to reason about with 8+ tools already defined.
 
 **File modified:** `lib/services/llmOrchestrator.ts` (import, tool definition, handler, system prompt, get_my_lists fix)
+
+
+## Decision #97 — Certified Cross-References & Mouser Suggestion Pipeline (Mar 2026)
+
+**Problem:** Mouser's `SuggestedReplacement` field was stored in `lifecycleInfo` but never injected into the scoring pipeline — dead-end data. Additionally, parts.io FFF/Functional equivalents were shown with separate chips but not unified under a clear "certified" label. Live API testing confirmed Mouser provides suggestions for both obsolete AND active parts (e.g., SN74HC04N → SN74HCT04N), making this data valuable beyond just EOL scenarios.
+
+**Solution:** Three changes:
+
+1. **Mouser suggestions as scored candidates**: New `fetchMouserSuggestions()` extracts `SuggestedReplacement` from the source part's Mouser lifecycle data, resolves the manufacturer MPN (strips Mouser's numeric prefix via regex `/^\d{2,4}-/`), fetches full parametric data via the standard pipeline (Digikey → parts.io gap-fill), and injects the candidate into the scoring pool alongside Digikey/Atlas/parts.io candidates.
+
+2. **Unified "Certified" badge**: New `CertificationSource` type (`'partsio_fff' | 'partsio_functional' | 'mouser'`) and `certifiedBy?: CertificationSource[]` on `XrefRecommendation`. Replaces the separate FFF/Functional chips with a single "Certified" chip (purple for single source, amber for multiple). Tooltip shows all verifying sources. `equivalenceType` preserved for backward compat (derived from `certifiedBy`).
+
+3. **Provenance-preserving deduplication**: A `certificationMap` (Map<string, Set<CertificationSource>>) accumulates ALL sources that independently verified each MPN BEFORE deduplication. When the same MPN appears from multiple sources (e.g., Digikey keyword search + Mouser suggestion + parts.io FFF), one card is shown with merged provenance badges.
+
+**Dedup priority**: Digikey > Atlas > Mouser suggestion > Parts.io (parametric data quality order).
+
+**Rate limit impact**: +1 Digikey call per request (only when Mouser suggestion exists). +0 Mouser calls (prefix strip is pure string). Negligible.
+
+**Future extensibility**: `CertificationSource` union is designed for `sponsored_${vendor}` additions. UI checks prefix for different badge styling.
+
+**Files modified:** `lib/types.ts`, `lib/services/mouserClient.ts` (`resolveMouserSuggestedMpn`), `lib/services/partDataService.ts` (pipeline), `components/RecommendationCard.tsx`, `components/ComparisonView.tsx`, `__tests__/services/certifiedCrossRef.test.ts`

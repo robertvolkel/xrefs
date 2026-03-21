@@ -386,7 +386,9 @@ First multi-supplier pricing source. Provides zero parametric data — purely co
 
 **Rate limit strategy:** Source parts only during batch BOM validation (200 parts ÷ 10/batch = 20 calls = 2% daily quota). Candidates enriched only for scored recommendations (~1 batch call). `hasMouserBudget()` check on every call — graceful skip when daily limit hit.
 
-**Unique data:** `SuggestedReplacement` (Mouser's own replacement MPN for obsolete parts), regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN.
+**Unique data:** `SuggestedReplacement` (Mouser's human-verified replacement MPN — provided for both obsolete AND active parts, injected into scoring pipeline as candidates via Decision #97), regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN.
+
+**Certified Cross-References (Decision #97):** External replacement suggestions from Mouser (`SuggestedReplacement`) and parts.io (FFF/Functional Equivalents) are unified under a `certifiedBy?: CertificationSource[]` field on `XrefRecommendation`. `CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser'`. Mouser suggestions are resolved from Mouser part number format (`resolveMouserSuggestedMpn()` strips numeric prefix), fetched as full parametric candidates, and scored alongside all other candidates. Dedup merges provenance — same MPN from multiple sources shows one card with "Certified (N)" badge. Purple chip for single source, amber for multi-source. Extensible for future `sponsored_${vendor}` sources.
 
 **Columns:** 11 new columns in column system (`mouser:unitPrice`, `mouser:stock`, `mouser:leadTime`, `commercial:bestPrice`, `commercial:totalStock`, `mouser:lifecycle`, `mouser:suggestedReplacement`, `mouser:htsUS/CN/EU`, `mouser:eccn`). Available in column picker, not in default view.
 

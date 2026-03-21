@@ -202,7 +202,27 @@
   },
   "attributes": {
     "parameterHeader": "Parameter",
-    "valueHeader": "Value"
+    "valueHeader": "Value",
+    "tabSpecs": "Specs",
+    "tabRisk": "Risk",
+    "tabCommercial": "Commercial",
+    "noRiskData": "No lifecycle or compliance data available.",
+    "noCommercialData": "No pricing data available.",
+    "lifecycleStatus": "Lifecycle Status",
+    "yteol": "YTEOL",
+    "riskRank": "Risk Rank",
+    "suggestedReplacement": "Suggested Replacement",
+    "rohsStatus": "RoHS",
+    "reachCompliance": "REACH",
+    "eccnCode": "ECCN",
+    "htsCode": "HTS Code",
+    "countryOfOrigin": "Country of Origin",
+    "factoryLeadTime": "Factory Lead Time",
+    "stock": "In Stock",
+    "leadTime": "Lead Time",
+    "unitPrice": "Unit Price",
+    "priceBreaks": "Price Breaks",
+    "quantity": "Qty"
   },
   "chat": {
     "searchPlaceholder": "Enter a part number (e.g. EEF-LX0E471R)",

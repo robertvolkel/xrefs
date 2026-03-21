@@ -6,7 +6,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource } from '../types';
 import { keywordSearch, getProductDetails } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -22,7 +22,7 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
-import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget } from './mouserClient';
+import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
 
 // ============================================================
@@ -481,9 +481,9 @@ export async function getRecommendations(
     }
   }
 
-  // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents in parallel
+  // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents + Mouser suggestions in parallel
   console.time('[perf] fetchCandidates');
-  let [digikeyCandidates, atlasCandidates, partsioEquivalents] = await Promise.all([
+  let [digikeyCandidates, atlasCandidates, partsioEquivalents, mouserSuggestions] = await Promise.all([
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
@@ -503,6 +503,10 @@ export async function getRecommendations(
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
     }),
+    fetchMouserSuggestions(sourceAttrs, currency).catch((error) => {
+      console.warn('Mouser suggestion fetch failed:', error);
+      return [] as PartAttributes[];
+    }),
   ]);
   console.timeEnd('[perf] fetchCandidates');
 
@@ -514,12 +518,21 @@ export async function getRecommendations(
   }
 
   // Build metadata maps BEFORE dedup — survives even when higher-priority source wins
-  const equivalenceMap = new Map<string, 'fff' | 'functional'>();
+  // Certification map accumulates ALL sources that independently verified each MPN
+  const certificationMap = new Map<string, Set<CertificationSource>>();
   for (const c of partsioEquivalents) {
     if (c.equivalenceType) {
-      equivalenceMap.set(c.part.mpn.toLowerCase(), c.equivalenceType);
+      const key = c.part.mpn.toLowerCase();
+      if (!certificationMap.has(key)) certificationMap.set(key, new Set());
+      certificationMap.get(key)!.add(c.equivalenceType === 'fff' ? 'partsio_fff' : 'partsio_functional');
     }
   }
+  for (const c of mouserSuggestions) {
+    const key = c.part.mpn.toLowerCase();
+    if (!certificationMap.has(key)) certificationMap.set(key, new Set());
+    certificationMap.get(key)!.add('mouser');
+  }
+
   const dataSourceMap = new Map<string, 'digikey' | 'atlas' | 'partsio'>();
   const enrichedFromMap = new Map<string, 'partsio'>();
   for (const c of digikeyCandidates) {
@@ -529,11 +542,14 @@ export async function getRecommendations(
   for (const c of atlasCandidates) {
     if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'atlas');
   }
+  for (const c of mouserSuggestions) {
+    if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), c.dataSource ?? 'digikey');
+  }
   for (const c of partsioEquivalents) {
     if (!dataSourceMap.has(c.part.mpn.toLowerCase())) dataSourceMap.set(c.part.mpn.toLowerCase(), 'partsio');
   }
 
-  // Merge candidates, deduplicate by MPN (prefer Digikey for richer data)
+  // Merge candidates, deduplicate by MPN (prefer Digikey > Atlas > Mouser suggestion > Parts.io)
   const seenMpns = new Set<string>();
   const allCandidates: PartAttributes[] = [];
   for (const c of digikeyCandidates) {
@@ -550,6 +566,13 @@ export async function getRecommendations(
       allCandidates.push(c);
     }
   }
+  for (const c of mouserSuggestions) {
+    const key = c.part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      allCandidates.push(c);
+    }
+  }
   for (const c of partsioEquivalents) {
     const key = c.part.mpn.toLowerCase();
     if (!seenMpns.has(key)) {
@@ -557,7 +580,7 @@ export async function getRecommendations(
       allCandidates.push(c);
     }
   }
-  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
+  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${mouserSuggestions.length} Mouser + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
 
   if (allCandidates.length > 0) {
     // Merge preferred manufacturers from user preferences + per-call
@@ -570,13 +593,24 @@ export async function getRecommendations(
     let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, mergedPreferred.length > 0 ? mergedPreferred : undefined);
     console.timeEnd('[perf] findReplacements (scoring)');
 
-    // Propagate dataSource, equivalenceType, and enrichedFrom from pre-dedup maps
-    recs = recs.map(rec => ({
-      ...rec,
-      dataSource: dataSourceMap.get(rec.part.mpn.toLowerCase()),
-      equivalenceType: equivalenceMap.get(rec.part.mpn.toLowerCase()),
-      enrichedFrom: enrichedFromMap.get(rec.part.mpn.toLowerCase()),
-    }));
+    // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps
+    recs = recs.map(rec => {
+      const key = rec.part.mpn.toLowerCase();
+      const certs = certificationMap.get(key);
+      const certifiedBy = certs && certs.size > 0 ? Array.from(certs) : undefined;
+      // Derive equivalenceType from certifiedBy for backward compat
+      const equivalenceType: 'fff' | 'functional' | undefined =
+        certs?.has('partsio_fff') ? 'fff' :
+        certs?.has('partsio_functional') ? 'functional' :
+        undefined;
+      return {
+        ...rec,
+        dataSource: dataSourceMap.get(key),
+        certifiedBy,
+        equivalenceType,
+        enrichedFrom: enrichedFromMap.get(key),
+      };
+    });
 
     // Step 3b: Post-scoring filter for C2 switching regulators —
     // topology and architecture are BLOCKING identity gates. Remove any
@@ -742,6 +776,37 @@ async function fetchPartsioEquivalents(mpn: string): Promise<PartAttributes[]> {
   );
 
   return results.filter((r): r is PartAttributes => r !== null);
+}
+
+// ============================================================
+// MOUSER SUGGESTED REPLACEMENT FETCHER
+// ============================================================
+
+/**
+ * Extract Mouser's SuggestedReplacement from the source part's lifecycle info,
+ * resolve the manufacturer MPN, and fetch full parametric data so it can be scored.
+ * Returns 0 or 1 candidates.
+ */
+async function fetchMouserSuggestions(
+  sourceAttrs: PartAttributes,
+  currency?: string,
+): Promise<PartAttributes[]> {
+  const mouserLifecycle = sourceAttrs.part.lifecycleInfo?.find(l => l.source === 'mouser');
+  if (!mouserLifecycle?.suggestedReplacement) return [];
+
+  const cleanMpn = resolveMouserSuggestedMpn(mouserLifecycle.suggestedReplacement, sourceAttrs.part.mpn);
+  if (!cleanMpn) return [];
+
+  console.log(`[mouser] Fetching suggested replacement: ${cleanMpn} (from ${mouserLifecycle.suggestedReplacement})`);
+
+  try {
+    const attrs = await getAttributes(cleanMpn, currency);
+    if (!attrs) return [];
+    return [attrs];
+  } catch (error) {
+    console.warn('[mouser] Failed to fetch suggested replacement attributes:', cleanMpn, error);
+    return [];
+  }
 }
 
 // ============================================================

@@ -3,7 +3,7 @@ import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, 
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
-import { XrefRecommendation } from '@/lib/types';
+import { XrefRecommendation, CertificationSource } from '@/lib/types';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -14,8 +14,18 @@ interface RecommendationCardProps {
   onTogglePreferred?: () => void;
 }
 
+const CERTIFICATION_LABELS: Record<CertificationSource, string> = {
+  partsio_fff: 'Parts.io (FFF Equivalent)',
+  partsio_functional: 'Parts.io (Functional Equivalent)',
+  mouser: 'Mouser (Suggested Replacement)',
+};
+
+function formatCertificationTooltip(sources: CertificationSource[]): string {
+  return 'Verified by: ' + sources.map(s => CERTIFICATION_LABELS[s] || s).join(', ');
+}
+
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
-  const { part, matchDetails, dataSource, equivalenceType, enrichedFrom } = recommendation;
+  const { part, matchDetails, dataSource, certifiedBy, enrichedFrom } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
@@ -47,11 +57,20 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
-                {equivalenceType === 'fff' && (
-                  <Chip label="FFF Equivalent" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#CE93D8', borderColor: '#CE93D8' }} />
-                )}
-                {equivalenceType === 'functional' && (
-                  <Chip label="Functional Equivalent" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#80CBC4', borderColor: '#80CBC4' }} />
+                {certifiedBy && certifiedBy.length > 0 && (
+                  <Tooltip title={formatCertificationTooltip(certifiedBy)} arrow>
+                    <Chip
+                      label={certifiedBy.length > 1 ? `Certified (${certifiedBy.length})` : 'Certified'}
+                      size="small"
+                      variant="outlined"
+                      sx={{
+                        height: 18,
+                        fontSize: '0.6rem',
+                        color: certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
+                        borderColor: certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
+                      }}
+                    />
+                  </Tooltip>
                 )}
                 {part.datasheetUrl && (
                   <Box

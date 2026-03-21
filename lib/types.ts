@@ -100,6 +100,9 @@ export interface PartAttributes {
   equivalenceType?: 'fff' | 'functional';
 }
 
+/** Source that certified/suggested a cross-reference */
+export type CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser';
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;
@@ -109,6 +112,8 @@ export interface XrefRecommendation {
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   /** Set when candidate came from parts.io FFF/Functional Equivalent fields */
   equivalenceType?: 'fff' | 'functional';
+  /** All external sources that independently verified this as a valid cross-reference */
+  certifiedBy?: CertificationSource[];
   /** Secondary data source used for gap-fill enrichment */
   enrichedFrom?: 'partsio';
 }
