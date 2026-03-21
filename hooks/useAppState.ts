@@ -14,10 +14,9 @@ import {
 import {
   searchParts,
   getPartAttributes,
-  getRecommendations,
   getRecommendationsWithOverrides,
-  getRecommendationsWithContext,
   chatWithOrchestrator,
+  enrichWithMouserBatch,
 } from '@/lib/api';
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
@@ -136,6 +135,77 @@ export function useAppState() {
   const setStatus = useCallback((text: string) => {
     setState((prev) => ({ ...prev, statusText: text }));
   }, []);
+
+  /**
+   * Show recommendations immediately, then fire the LLM assessment in the background.
+   * This avoids blocking the recommendations panel by 3-8s while the orchestrator responds.
+   */
+  const showRecsAndDeferAssessment = useCallback(
+    (
+      recs: XrefRecommendation[],
+      mpn: string,
+      paramCount: number,
+      conversationContext: string,
+      signal: AbortSignal,
+    ) => {
+      // Show recs immediately — panels appear without waiting for LLM
+      const summaryMsg = recs.length > 0
+        ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
+        : `No cross-references found for ${mpn}.`;
+
+      addMessage('assistant', summaryMsg);
+      setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+
+      // Push context to conversation history for the orchestrator
+      conversationRef.current.push({ role: 'user', content: conversationContext });
+      conversationRef.current.push({ role: 'assistant', content: summaryMsg });
+
+      // Fire LLM assessment and Mouser enrichment in background (non-blocking)
+      if (recs.length > 0) {
+        setStatus('Generating engineering assessment...');
+
+        // Background: LLM assessment
+        chatWithOrchestrator(conversationRef.current, recs, signal)
+          .then((response) => {
+            if (signal.aborted) return;
+            setStatus('');
+            if (response?.message) {
+              conversationRef.current.push({ role: 'assistant', content: response.message });
+              addMessage('assistant', response.message);
+            }
+          })
+          .catch(() => {
+            if (!signal.aborted) setStatus('');
+          });
+
+        // Background: Mouser candidate enrichment (pricing/lifecycle)
+        const recMpns = recs.map(r => r.part.mpn);
+        enrichWithMouserBatch(recMpns).then((mouserData) => {
+          if (signal.aborted || Object.keys(mouserData).length === 0) return;
+          setState((prev) => {
+            const enriched = prev.recommendations.map(rec => {
+              const data = mouserData[rec.part.mpn.toLowerCase()];
+              if (!data) return rec;
+              const existingQuotes = rec.part.supplierQuotes ?? [];
+              return {
+                ...rec,
+                part: {
+                  ...rec.part,
+                  supplierQuotes: [...existingQuotes, data.quote],
+                  lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
+                  complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
+                },
+              };
+            });
+            return { ...prev, recommendations: enriched, allRecommendations: enriched };
+          });
+        });
+      } else {
+        setStatus('');
+      }
+    },
+    [addMessage, setStatus]
+  );
 
   // ============================================================
   // LLM-POWERED SEARCH FLOW
@@ -351,29 +421,15 @@ export function useAppState() {
               applicationContext: autoContext,
             }));
 
-            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal);
+            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal, sourceAttrs);
             if (signal.aborted) return;
-            setStatus('Generating engineering assessment...');
-            conversationRef.current.push({
-              role: 'user',
-              content: `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-            });
-            const assessmentResponse = await chatWithOrchestrator(conversationRef.current, recs, signal).catch(() => null);
-            if (signal.aborted) return;
-            setStatus('');
 
-            if (assessmentResponse?.message) {
-              conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-              addMessage('assistant', assessmentResponse.message);
-            } else {
-              const paramCount = sourceAttrs.parameters.length;
-              const msg = recs.length > 0
-                ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
-                : `No cross-references found for ${part.mpn}.`;
-              conversationRef.current.push({ role: 'assistant', content: msg });
-              addMessage('assistant', msg);
-            }
-            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            // Show recs immediately, fire LLM assessment in background
+            showRecsAndDeferAssessment(
+              recs, part.mpn, sourceAttrs.parameters.length,
+              `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
+              signal,
+            );
             return;
           }
         }
@@ -415,9 +471,9 @@ export function useAppState() {
             allRecommendations: recs,
           }));
         } else {
-          // Orchestrator didn't return recs — try direct API
+          // Orchestrator didn't return recs — try direct API (pass sourceAttrs to skip re-fetch)
           setStatus('Evaluating candidates against replacement rules...');
-          const fallbackRecs = await getRecommendations(part.mpn, signal);
+          const fallbackRecs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs ?? undefined);
           if (signal.aborted) return;
           setStatus('');
           if (fallbackRecs.length > 0) {
@@ -441,7 +497,7 @@ export function useAppState() {
           return;
         }
         setStatus('Evaluating candidates against replacement rules...');
-        const recs = await getRecommendations(part.mpn, signal);
+        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs);
         if (signal.aborted) return;
         setStatus('');
         const paramCount = sourceAttrs.parameters.length;
@@ -454,7 +510,7 @@ export function useAppState() {
         }));
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, showRecsAndDeferAssessment]
   );
 
   // ============================================================
@@ -611,7 +667,7 @@ export function useAppState() {
           sourceAttributes: attributes,
         }));
 
-        const recs = await getRecommendations(part.mpn);
+        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, undefined, attributes);
         setStatus('');
         const paramCount = attributes.parameters.length;
         addMessage(
@@ -824,44 +880,17 @@ export function useAppState() {
 
       try {
         const recs = (filledCount > 0 || autoContext)
-          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal)
-          : await getRecommendations(mpn, signal);
+          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal, state.sourceAttributes ?? undefined)
+          : await getRecommendationsWithOverrides(mpn, {}, undefined, signal, state.sourceAttributes ?? undefined);
         if (signal.aborted) return;
 
-        setStatus('Generating engineering assessment...');
-
-        // Sync attribute response to conversation for orchestrator
-        conversationRef.current.push({
-          role: 'user',
-          content: filledCount > 0
-            ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-            : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-        });
-
-        // Call orchestrator for engineering assessment
-        const assessmentResponse = await chatWithOrchestrator(
-          conversationRef.current,
-          recs,
-          signal,
-        ).catch(() => null);
-        if (signal.aborted) return;
-
-        setStatus('');
-
-        if (assessmentResponse?.message) {
-          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-          addMessage('assistant', assessmentResponse.message);
-        } else {
-          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-          const genericMsg = recs.length > 0
-            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`;
-          conversationRef.current.push({ role: 'assistant', content: genericMsg });
-          addMessage('assistant', genericMsg);
-        }
-
-        // Always use overrides-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+        // Show recs immediately, fire LLM assessment in background
+        const contextMsg = filledCount > 0
+          ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+          : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
+        showRecsAndDeferAssessment(
+          recs, mpn, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
+        );
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -872,7 +901,7 @@ export function useAppState() {
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipAttributes = useCallback(async () => {
@@ -948,54 +977,22 @@ export function useAppState() {
         const overrides = pendingOverridesRef.current;
         const hasOverrides = Object.keys(overrides).length > 0;
 
-        let recs: XrefRecommendation[];
-        if (hasOverrides || context) {
-          recs = await getRecommendationsWithOverrides(
-            mpn,
-            hasOverrides ? overrides : {},
-            context,
-            signal,
-          );
-        } else {
-          recs = await getRecommendations(mpn, signal);
-        }
-        if (signal.aborted) return;
-
-        setStatus('Generating engineering assessment...');
-
-        // Sync context response to conversation for orchestrator
-        conversationRef.current.push({
-          role: 'user',
-          content: filledCount > 0
-            ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-            : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-        });
-
-        // Call orchestrator for engineering assessment of the results
-        const assessmentResponse = await chatWithOrchestrator(
-          conversationRef.current,
-          recs,
+        const recs = await getRecommendationsWithOverrides(
+          mpn,
+          hasOverrides ? overrides : {},
+          context,
           signal,
-        ).catch(() => null);
+          state.sourceAttributes ?? undefined,
+        );
         if (signal.aborted) return;
 
-        setStatus('');
-
-        if (assessmentResponse?.message) {
-          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-          addMessage('assistant', assessmentResponse.message);
-        } else {
-          // Fallback to generic message if orchestrator fails
-          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-          const genericMsg = recs.length > 0
-            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`;
-          conversationRef.current.push({ role: 'assistant', content: genericMsg });
-          addMessage('assistant', genericMsg);
-        }
-
-        // Always use context-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+        // Show recs immediately, fire LLM assessment in background
+        const contextMsg = filledCount > 0
+          ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+          : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
+        showRecsAndDeferAssessment(
+          recs, mpn!, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
+        );
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -1008,7 +1005,7 @@ export function useAppState() {
         pendingOverridesRef.current = {};
       }
     },
-    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipContext = useCallback(async () => {

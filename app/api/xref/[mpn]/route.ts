@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ApiResponse, ApplicationContext, XrefRecommendation } from '@/lib/types';
+import { ApiResponse, ApplicationContext, PartAttributes, XrefRecommendation } from '@/lib/types';
 import { getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { logRecommendation } from '@/lib/services/recommendationLogger';
@@ -20,8 +20,8 @@ export async function GET(
 
     const result = await getRecommendations(decodedMpn, undefined, undefined, undefined, undefined, prefs, user!.id);
 
-    // QC log (awaited to ensure it completes within request lifecycle)
-    await logRecommendation({
+    // QC log (fire-and-forget — don't block the response)
+    logRecommendation({
       userId: user!.id,
       sourceMpn: decodedMpn,
       sourceManufacturer: result.sourceAttributes.part.manufacturer,
@@ -34,7 +34,7 @@ export async function GET(
         sourceAttributes: result.sourceAttributes,
         recommendations: result.recommendations,
       },
-    });
+    }).catch((err) => console.error('[qc] Failed to log recommendation:', err));
 
     const warnings = getServiceWarnings();
     return NextResponse.json({
@@ -56,15 +56,16 @@ export async function POST(
     const { mpn } = await params;
     const decodedMpn = decodeURIComponent(mpn);
     const prefs = await fetchUserPreferences(user!.id);
-    const { overrides, applicationContext } = await request.json() as {
+    const { overrides, applicationContext, sourceAttributes } = await request.json() as {
       overrides?: Record<string, string>;
       applicationContext?: ApplicationContext;
+      sourceAttributes?: PartAttributes;
     };
 
-    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id);
+    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id, sourceAttributes);
 
-    // QC log (awaited to ensure it completes within request lifecycle)
-    await logRecommendation({
+    // QC log (fire-and-forget — don't block the response)
+    logRecommendation({
       userId: user!.id,
       sourceMpn: decodedMpn,
       sourceManufacturer: result.sourceAttributes.part.manufacturer,
@@ -79,7 +80,7 @@ export async function POST(
         contextAnswers: applicationContext,
         attributeOverrides: overrides,
       },
-    });
+    }).catch((err) => console.error('[qc] Failed to log recommendation:', err));
 
     const warnings = getServiceWarnings();
     return NextResponse.json({

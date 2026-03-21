@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData } from './types';
 import type { ServiceWarning, ServiceName } from './types';
 
 // Admin types
@@ -99,11 +99,12 @@ export async function getRecommendationsWithOverrides(
   overrides: Record<string, string>,
   applicationContext?: ApplicationContext,
   signal?: AbortSignal,
+  sourceAttributes?: PartAttributes,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes }),
     signal,
   });
 }
@@ -119,6 +120,26 @@ export async function getRecommendationsWithContext(
     body: JSON.stringify({ applicationContext }),
     signal,
   });
+}
+
+/** Fetch Mouser enrichment data (pricing, lifecycle, compliance) for a batch of MPNs */
+export async function enrichWithMouserBatch(
+  mpns: string[],
+): Promise<Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
+  if (mpns.length === 0) return {};
+  try {
+    const result = await fetchApi<{ results: Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
+      `${BASE}/mouser/enrich`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mpns }),
+      },
+    );
+    return result.results ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** Send messages to the Claude LLM orchestrator */

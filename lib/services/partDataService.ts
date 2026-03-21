@@ -243,6 +243,35 @@ async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: s
 }
 
 // ============================================================
+// PARALLEL SOURCE ENRICHMENT
+// ============================================================
+
+/**
+ * Enrich part attributes with parts.io (parametric gap-fill) and Mouser
+ * (commercial data) in parallel. The two enrichments touch disjoint fields:
+ * - parts.io: parameters[], part lifecycle metadata
+ * - Mouser: part.supplierQuotes, part.lifecycleInfo, part.complianceData
+ */
+async function enrichSourceInParallel(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
+  const [partsioResult, mouserResult] = await Promise.all([
+    enrichWithPartsio(attrs, userId),
+    enrichWithMouser(attrs, userId),
+  ]);
+
+  // Merge: start from parts.io result (has parametric gap-fills + lifecycle),
+  // layer on Mouser commercial fields
+  return {
+    ...partsioResult,
+    part: {
+      ...partsioResult.part,
+      supplierQuotes: mouserResult.part.supplierQuotes ?? partsioResult.part.supplierQuotes,
+      lifecycleInfo: mouserResult.part.lifecycleInfo ?? partsioResult.part.lifecycleInfo,
+      complianceData: mouserResult.part.complianceData ?? partsioResult.part.complianceData,
+    },
+  };
+}
+
+// ============================================================
 // ATTRIBUTES
 // ============================================================
 
@@ -251,9 +280,8 @@ export async function getAttributes(mpn: string, currency?: string, userId?: str
     try {
       const response = await getProductDetails(mpn, currency, userId);
       if (response.Product) {
-        const attrs = mapDigikeyProductToAttributes(response.Product);
-        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const }, userId);
-        return await enrichWithMouser(enriched, userId);
+        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
+        return await enrichSourceInParallel(attrs, userId);
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -272,9 +300,8 @@ export async function getAttributes(mpn: string, currency?: string, userId?: str
         (p) => p.ManufacturerProductNumber?.toLowerCase().startsWith(lowerMpn)
       );
       if (match) {
-        const attrs = mapDigikeyProductToAttributes(match);
-        const enriched = await enrichWithPartsio({ ...attrs, dataSource: 'digikey' as const }, userId);
-        return await enrichWithMouser(enriched, userId);
+        const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
+        return await enrichSourceInParallel(attrs, userId);
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
@@ -333,12 +360,13 @@ export async function getRecommendations(
   preferredManufacturers?: string[],
   userPreferences?: UserPreferences,
   userId?: string,
+  prefetchedAttributes?: PartAttributes,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
-  // Step 1: Get source part attributes
+  // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
   console.time('[perf] getAttributes');
-  const sourceAttrs = await getAttributes(mpn, currency, userId);
+  const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId);
   console.timeEnd('[perf] getAttributes');
   if (!sourceAttrs) {
     const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
@@ -707,12 +735,8 @@ export async function getRecommendations(
       );
     }
 
-    // Step 3-mouser: Enrich scored recommendations with Mouser pricing (batch, ~1 API call)
-    if (isMouserConfigured() && hasMouserBudget() && recs.length > 0) {
-      console.time('[perf] enrichRecsWithMouser');
-      recs = await enrichCandidatesWithMouser(recs, userId);
-      console.timeEnd('[perf] enrichRecsWithMouser');
-    }
+    // Mouser candidate enrichment is deferred — the UI fetches it after recs render
+    // via /api/mouser/enrich to avoid blocking the critical path (~0.8s savings)
 
     // Determine primary dataSource for the result set
     const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
@@ -742,7 +766,7 @@ async function fetchPartsioEquivalents(mpn: string, userId?: string): Promise<Pa
   const listing = await getPartsioProductDetails(mpn, userId);
   if (!listing) return [];
 
-  const equivalents = extractEquivalentMpns(listing, mpn, 20);
+  const equivalents = extractEquivalentMpns(listing, mpn, 10);
   if (equivalents.length === 0) return [];
 
   const fffCount = equivalents.filter(e => e.type === 'fff').length;
