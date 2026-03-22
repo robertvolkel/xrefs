@@ -12,7 +12,6 @@ import RecommendationsPanel from './RecommendationsPanel';
 import ComparisonView from './ComparisonView';
 import ManufacturerProfilePanel from './ManufacturerProfilePanel';
 import ParticleWaveBackground from './ParticleWaveBackground';
-import ServiceStatusBanner from './ServiceStatusBanner';
 
 function getGridColumns(
   showAttrs: boolean,
@@ -151,7 +150,6 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         onDeleteConversation={onDeleteConversation}
       />
       <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
-        <ServiceStatusBanner />
         <ParticleWaveBackground visible={!showAttributesPanel} />
         <Box
           sx={{

@@ -290,3 +290,24 @@ export async function getCategories(): Promise<DigikeyCategory[]> {
   categoriesCache = { data: categories, timestamp: Date.now() };
   return categories;
 }
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+import type { ServiceStatusInfo } from '@/lib/types';
+
+export async function checkDigikeyHealth(): Promise<ServiceStatusInfo> {
+  const now = new Date().toISOString();
+  try {
+    if (!process.env.DIGIKEY_CLIENT_ID || !process.env.DIGIKEY_CLIENT_SECRET) {
+      return { service: 'digikey', status: 'unavailable', message: 'Not configured', lastChecked: now };
+    }
+    // Use cached token if valid; otherwise attempt OAuth handshake
+    await getAccessToken();
+    return { service: 'digikey', status: 'operational', lastChecked: now };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
+    return { service: 'digikey', status: 'unavailable', message: msg, lastChecked: now };
+  }
+}

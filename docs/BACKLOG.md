@@ -341,6 +341,17 @@ If two context questions affect the same rule's weight, the second one overwrite
 
 ---
 
+### Recommendation pipeline — further performance opportunities
+**Files:** `lib/services/partDataService.ts`, `hooks/useAppState.ts`
+
+Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Remaining opportunities:
+- **Request coalescing**: If two users search the same MPN within 5s, share results. Currently each request runs the full pipeline independently.
+- **Override cache TTL**: Supabase override fetches use 60s TTL. Overrides rarely change — could extend to 5 minutes with invalidation on admin writes.
+- **Score-first parts.io enrichment**: Currently all 20 Digikey candidates are enriched with parts.io before scoring. Could score with Digikey-only data first, then enrich only top 10 and re-score. Risky — parts.io fills attributes critical for some families (thyristor tq, relay coil specs).
+- **Worker thread scoring**: Matching engine is CPU-bound single-threaded. Node.js `worker_threads` could parallelize candidate evaluation for families with many rules (C4: 24 rules, E1: 23 rules).
+
+---
+
 ### No pagination on lists or conversation history
 **Files:** `components/ChatHistoryDrawer.tsx`, `components/lists/ListsDashboard.tsx`
 

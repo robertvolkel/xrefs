@@ -2556,3 +2556,27 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **Future extensibility**: `CertificationSource` union is designed for `sponsored_${vendor}` additions. UI checks prefix for different badge styling.
 
 **Files modified:** `lib/types.ts`, `lib/services/mouserClient.ts` (`resolveMouserSuggestedMpn`), `lib/services/partDataService.ts` (pipeline), `components/RecommendationCard.tsx`, `components/ComparisonView.tsx`, `__tests__/services/certifiedCrossRef.test.ts`
+
+## Decision #98 — Recommendation Pipeline Performance Optimization (Mar 2026)
+
+**Problem:** Users experienced 15-30+ second latency from search confirmation to recommendations appearing. Root cause analysis revealed three serial mega-phases: (1) `getPartAttributes()` call (~3s), (2) `getRecommendations()` which internally re-fetched the same attributes (~9s total including duplicate fetch, candidate search, enrichment, scoring, and blocking Mouser batch + QC logging), and (3) `chatWithOrchestrator()` for engineering assessment (~3-8s) which blocked the panel from rendering.
+
+**Solution:** Six optimizations targeting different bottlenecks:
+
+1. **Eliminate duplicate `getAttributes()` call** (~3s saved): Added optional `prefetchedAttributes` parameter to `getRecommendations()`. The `/api/xref` POST endpoint accepts `sourceAttributes` in the request body. The UI passes already-fetched attributes from the attributes panel, skipping the entire second Digikey→parts.io→Mouser enrichment chain.
+
+2. **Parallelize source enrichment** (~0.7s saved): New `enrichSourceInParallel()` runs parts.io (parametric gap-fill) and Mouser (commercial data) concurrently via `Promise.all`. Previously sequential — Mouser waited for parts.io to finish despite touching disjoint fields.
+
+3. **Defer LLM assessment** (~3-8s perceived): New `showRecsAndDeferAssessment()` helper in `useAppState` sets `phase: 'viewing'` immediately after recs return. The Claude API call for engineering assessment fires in the background — the message appears in chat when ready, without blocking the recommendations panel.
+
+4. **Defer Mouser candidate enrichment** (~0.8s saved): Removed blocking `enrichCandidatesWithMouser()` from the scoring pipeline. Mouser pricing/lifecycle data is display-only (not used for scoring). The UI fires a background `enrichWithMouserBatch()` call after recs render and merges the data in via setState.
+
+5. **Fire-and-forget QC logging** (~0.2s saved): Removed `await` from `logRecommendation()` in the xref route handler. Added `.catch()` for error handling. The Supabase insert completes asynchronously after the response is sent.
+
+6. **Reduce parts.io equivalent limit** (~0.5s saved): Reduced from 20 to 10 equivalent MPNs fetched from parts.io. Minimal accuracy impact since most equivalents beyond top 5-8 are weak matches.
+
+**Expected result:** Recommendations visible in ~5-8 seconds (down from 15-30+), with LLM assessment and Mouser pricing streaming in afterward.
+
+**Key architectural insight:** The three enrichment sources (Digikey, parts.io, Mouser) touch disjoint fields — Digikey provides core parametric data, parts.io fills parametric gaps, and Mouser adds only commercial data (pricing, lifecycle, HTS). This makes parallel enrichment safe and deferred Mouser loading possible without affecting scoring accuracy.
+
+**Files modified:** `lib/services/partDataService.ts` (enrichSourceInParallel, prefetchedAttributes, deferred Mouser, reduced equivalent limit), `app/api/xref/[mpn]/route.ts` (sourceAttributes in POST body, fire-and-forget logging), `lib/api.ts` (sourceAttributes param, enrichWithMouserBatch), `hooks/useAppState.ts` (showRecsAndDeferAssessment, background Mouser enrichment, pass sourceAttrs through all rec calls)

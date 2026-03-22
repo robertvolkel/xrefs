@@ -257,3 +257,27 @@ export async function getPartsioProductDetails(mpn: string, userId?: string): Pr
     return null;
   }
 }
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+import type { ServiceStatusInfo } from '@/lib/types';
+
+export async function checkPartsioHealth(): Promise<ServiceStatusInfo> {
+  const now = new Date().toISOString();
+  if (!isPartsioConfigured()) {
+    return { service: 'partsio', status: 'unavailable', message: 'Not configured', lastChecked: now };
+  }
+  try {
+    const url = `${BASE_URL}?q=test&key=${process.env.PARTSIO_API_KEY}&limit=1`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      return { service: 'partsio', status: 'unavailable', message: `HTTP ${res.status}`, lastChecked: now };
+    }
+    return { service: 'partsio', status: 'operational', lastChecked: now };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
+    return { service: 'partsio', status: 'unavailable', message: msg, lastChecked: now };
+  }
+}

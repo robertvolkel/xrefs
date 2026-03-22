@@ -8,13 +8,12 @@ import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
-import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined';
-
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
+import ServiceStatusIcon from '@/components/ServiceStatusIcon';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -31,7 +30,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
 
   const isListsActive = pathname === '/lists';
   const isReleasesActive = pathname === '/releases';
-  const isQcActive = pathname === '/qc';
   const isAdminActive = pathname === '/admin';
   const isOrgActive = pathname === '/organization';
 
@@ -150,21 +148,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         {isAdmin && (
           <IconButton
-            onClick={() => router.push('/qc')}
-            size="small"
-            sx={{
-              mb: 1.5,
-              color: isQcActive ? 'text.primary' : 'text.secondary',
-              bgcolor: isQcActive ? 'action.selected' : 'transparent',
-              borderRadius: 1,
-              '&:hover': { color: 'text.primary' },
-            }}
-          >
-            <RateReviewOutlinedIcon fontSize="small" />
-          </IconButton>
-        )}
-        {isAdmin && (
-          <IconButton
             onClick={() => router.push('/admin')}
             size="small"
             sx={{
@@ -220,11 +203,13 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
         >
           <SettingsIcon fontSize="small" />
         </IconButton>
+        <Box sx={{ my: 1 }}>
+          <ServiceStatusIcon />
+        </Box>
         <IconButton
           onClick={handleLogout}
           size="small"
           sx={{
-            mt: 1.5,
             color: 'text.secondary',
             '&:hover': { color: 'text.primary' },
           }}

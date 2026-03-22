@@ -1,5 +1,5 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData } from './types';
-import type { ServiceWarning, ServiceName } from './types';
+import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -44,9 +44,14 @@ export function onServiceRecoveries(listener: ServiceRecoveryListener): () => vo
 const ROUTE_SERVICES: Record<string, ServiceName[]> = {
   '/api/search': ['digikey'],
   '/api/attributes': ['digikey', 'partsio'],
-  '/api/xref': ['digikey', 'partsio'],
+  '/api/xref': ['digikey', 'partsio', 'mouser'],
   '/api/chat': ['anthropic'],
   '/api/modal-chat': ['anthropic'],
+  '/api/mouser/enrich': ['mouser'],
+  '/api/parts-list/validate': ['digikey', 'partsio', 'mouser'],
+  '/api/admin': ['supabase'],
+  '/api/feedback': ['supabase'],
+  '/api/releases': ['supabase'],
 };
 
 function getRouteServices(url: string): ServiceName[] {
@@ -75,6 +80,15 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(json.error ?? 'Unknown API error');
   }
   return json.data;
+}
+
+// ── Health Check ─────────────────────────────────────────────
+
+export async function fetchHealthStatus(): Promise<ServiceStatusInfo[]> {
+  const res = await fetch('/api/health');
+  if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
+  const json = await res.json();
+  return json.services;
 }
 
 export async function searchParts(query: string, signal?: AbortSignal): Promise<SearchResult> {
