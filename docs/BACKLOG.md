@@ -344,11 +344,13 @@ If two context questions affect the same rule's weight, the second one overwrite
 ### Recommendation pipeline — further performance opportunities
 **Files:** `lib/services/partDataService.ts`, `hooks/useAppState.ts`
 
-Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Remaining opportunities:
-- **Request coalescing**: If two users search the same MPN within 5s, share results. Currently each request runs the full pipeline independently.
+Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Decision #99 added persistent L2 cache (Supabase-backed) for cross-user, cross-session caching. Remaining opportunities:
+- ~~**Request coalescing**: If two users search the same MPN within 5s, share results.~~ Largely addressed by L2 cache — second request hits Supabase instead of live API.
 - **Override cache TTL**: Supabase override fetches use 60s TTL. Overrides rarely change — could extend to 5 minutes with invalidation on admin writes.
 - **Score-first parts.io enrichment**: Currently all 20 Digikey candidates are enriched with parts.io before scoring. Could score with Digikey-only data first, then enrich only top 10 and re-score. Risky — parts.io fills attributes critical for some families (thyristor tq, relay coil specs).
 - **Worker thread scoring**: Matching engine is CPU-bound single-threaded. Node.js `worker_threads` could parallelize candidate evaluation for families with many rules (C4: 24 rules, E1: 23 rules).
+- **L2 cache admin UI panel**: Cache stats are exposed via `/api/admin/cache` (GET) and data-sources endpoint. Could add a visual panel in the admin section showing cache size, hit rates, and purge controls.
+- **Periodic cache cleanup**: Expired rows accumulate in `part_data_cache`. Could add a Supabase pg_cron or external cron to call `purgeExpired()` daily. Not critical for correctness (reads check TTL) but prevents table bloat.
 
 ---
 

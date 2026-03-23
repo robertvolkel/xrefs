@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { getAllCategoryParamMaps } from '@/lib/services/digikeyParamMap';
 import { isMouserConfigured, getMouserDailyRemaining } from '@/lib/services/mouserClient';
+import { getCacheStats } from '@/lib/services/partDataCache';
 
 export async function GET() {
   try {
@@ -16,6 +17,9 @@ export async function GET() {
     const digikeySecret = process.env.DIGIKEY_CLIENT_SECRET ?? '';
     const anthropicKey = process.env.ANTHROPIC_API_KEY ?? '';
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+
+    // Fetch cache stats in parallel (non-blocking)
+    const cacheStats = await getCacheStats().catch(() => null);
 
     return NextResponse.json({
       digikey: {
@@ -36,6 +40,7 @@ export async function GET() {
         configured: !!supabaseUrl,
         url: supabaseUrl || null,
       },
+      cache: cacheStats,
       supportedFamilies: families.length,
       paramMapsConfigured: paramMaps.length,
     });

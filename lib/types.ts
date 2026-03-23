@@ -148,7 +148,7 @@ export interface SearchResult {
 
 // ── Service Status ──────────────────────────────────────────
 
-export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'anthropic' | 'supabase';
+export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'anthropic' | 'atlas';
 export type ServiceSeverity = 'degraded' | 'unavailable';
 
 export interface ServiceWarning {

@@ -49,9 +49,6 @@ const ROUTE_SERVICES: Record<string, ServiceName[]> = {
   '/api/modal-chat': ['anthropic'],
   '/api/mouser/enrich': ['mouser'],
   '/api/parts-list/validate': ['digikey', 'partsio', 'mouser'],
-  '/api/admin': ['supabase'],
-  '/api/feedback': ['supabase'],
-  '/api/releases': ['supabase'],
 };
 
 function getRouteServices(url: string): ServiceName[] {
@@ -541,4 +538,42 @@ export async function updateUserPreferences(prefs: Partial<UserPreferences>): Pr
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'Failed to update preferences');
   return json.data;
+}
+
+// ============================================================
+// ADMIN: CACHE MANAGEMENT
+// ============================================================
+
+export interface CacheStats {
+  totalRows: number;
+  totalSizeBytes: number;
+  byService: Record<string, {
+    rows: number;
+    sizeBytes: number;
+    avgHitCount: number;
+    oldestEntry: string | null;
+    newestEntry: string | null;
+  }>;
+  byTier: Record<string, { rows: number; sizeBytes: number }>;
+  expiredRows: number;
+}
+
+export async function getAdminCacheStats(): Promise<CacheStats> {
+  const res = await fetch(`${BASE}/admin/cache`);
+  return res.json();
+}
+
+export async function purgeAdminCache(opts?: {
+  service?: string;
+  mpn?: string;
+  tier?: string;
+  expiredOnly?: boolean;
+}): Promise<{ deleted: number }> {
+  const params = new URLSearchParams();
+  if (opts?.service) params.set('service', opts.service);
+  if (opts?.mpn) params.set('mpn', opts.mpn);
+  if (opts?.tier) params.set('tier', opts.tier);
+  if (opts?.expiredOnly) params.set('expired', 'true');
+  const res = await fetch(`${BASE}/admin/cache?${params}`, { method: 'DELETE' });
+  return res.json();
 }

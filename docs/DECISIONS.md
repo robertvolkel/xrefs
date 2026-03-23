@@ -2580,3 +2580,33 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **Key architectural insight:** The three enrichment sources (Digikey, parts.io, Mouser) touch disjoint fields — Digikey provides core parametric data, parts.io fills parametric gaps, and Mouser adds only commercial data (pricing, lifecycle, HTS). This makes parallel enrichment safe and deferred Mouser loading possible without affecting scoring accuracy.
 
 **Files modified:** `lib/services/partDataService.ts` (enrichSourceInParallel, prefetchedAttributes, deferred Mouser, reduced equivalent limit), `app/api/xref/[mpn]/route.ts` (sourceAttributes in POST body, fire-and-forget logging), `lib/api.ts` (sourceAttributes param, enrichWithMouserBatch), `hooks/useAppState.ts` (showRecsAndDeferAssessment, background Mouser enrichment, pass sourceAttrs through all rec calls)
+
+## Decision #99 — Persistent Part Data Cache (L2) (Mar 2026)
+
+**Decision:** Add a Supabase-backed L2 cache (`part_data_cache` table) between the existing in-memory L1 caches and live API calls. Three-tier TTL model based on data volatility.
+
+**Problem:** All API response caching was in-memory (per-server-instance, 30-min TTL). Cold starts lost everything, there was no cross-user benefit, and the same MPN fetched by different users triggered redundant API calls. Mouser's strict rate limit (950 calls/day shared globally) made this especially costly for BOM validation.
+
+**Cache tiers:**
+- **Parametric** — Technical specs (Digikey: indefinite, parts.io: 90 days). Never changes for a given MPN.
+- **Lifecycle** — YTEOL, risk rank, compliance, suggested replacements (6 months). Changes infrequently.
+- **Commercial** — Pricing, stock, lead times (24 hours). Always fresh within a business day.
+
+**Architecture:**
+- Single `part_data_cache` table with composite unique key `(service, mpn_lower, variant)`.
+- `variant` field distinguishes sub-keys: `'parametric'`, `'lifecycle'`, `'commercial:USD'`, etc.
+- `expires_at` column: `NULL` = indefinite (Digikey parametric), timestamptz for timed TTLs.
+- All writes are fire-and-forget (errors logged, never block the response).
+- Not-found results cached with `{ notFound: true }` sentinel (24h TTL) to avoid re-hitting APIs for nonexistent MPNs.
+- `hit_count` and `last_hit_at` columns for admin monitoring.
+- RLS: admin read-only, all writes via service role client.
+
+**Digikey split:** `DigikeyProduct` contains both parametric and commercial data. Stored as two separate L2 rows: one parametric (full product JSON, indefinite), one commercial (price/stock extract, 24h). On parametric cache hit with stale commercial data, only the commercial row is refreshed.
+
+**Search result warming:** `warmCacheFromSearchResults()` stores each `DigikeyProduct` from keyword search results to L2 as a fire-and-forget side effect. This means recommendation candidates warm the cache for future `getProductDetails()` calls.
+
+**Mouser L2 is highest-value:** Every L2 cache hit bypasses the rate limiter entirely. For batch operations, `getCachedResponseBatch()` uses a single `IN(...)` query to check multiple MPNs at once. A 200-row BOM where 50% of parts were previously searched could save ~100 rate-limited API calls.
+
+**New files:** `lib/services/partDataCache.ts` (core cache service), `scripts/supabase-cache-schema.sql` (migration), `app/api/admin/cache/route.ts` (stats + purge endpoint), `__tests__/services/partDataCache.test.ts`.
+
+**Modified files:** `lib/services/digikeyClient.ts` (L2 for `getProductDetails` + `warmCacheFromSearchResults`), `lib/services/partsioClient.ts` (L2 for `getPartsioProductDetails`), `lib/services/mouserClient.ts` (L2 for single + batch), `lib/services/partDataService.ts` (search result warming call), `app/api/admin/data-sources/route.ts` (cache stats), `lib/api.ts` (admin cache management functions).

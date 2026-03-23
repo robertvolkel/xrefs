@@ -7,7 +7,7 @@
  */
 
 import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource } from '../types';
-import { keywordSearch, getProductDetails } from './digikeyClient';
+import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
   mapDigikeyProductToAttributes,
@@ -865,6 +865,9 @@ async function fetchDigikeyCandidates(
     ...(response.ExactMatches ?? []),
     ...(response.Products ?? []),
   ];
+
+  // Warm L2 cache with search results (fire-and-forget)
+  warmCacheFromSearchResults(allProducts);
 
   // Deduplicate and exclude the source part itself
   const seen = new Set<string>();

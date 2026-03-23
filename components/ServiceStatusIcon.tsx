@@ -12,7 +12,7 @@ const DISPLAY_NAMES: Record<ServiceName, string> = {
   partsio: 'Parts.io',
   anthropic: 'Claude AI',
   mouser: 'Mouser',
-  supabase: 'Database',
+  atlas: 'Atlas',
 };
 
 const STATUS_LABELS: Record<ServiceStatusLevel, string> = {

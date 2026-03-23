@@ -6,6 +6,14 @@
  */
 
 import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponse,
+  setCachedResponse,
+  setCachedResponseBatch,
+  TTL_PARAMETRIC_DIGIKEY,
+  TTL_COMMERCIAL_MS,
+  type CacheReadResult,
+} from './partDataCache';
 
 const BASE_URL = 'https://api.digikey.com';
 const TOKEN_URL = `${BASE_URL}/v1/oauth2/token`;
@@ -208,20 +216,72 @@ export async function keywordSearch(
   return data;
 }
 
+/** Commercial fields extracted from a DigikeyProduct for short-TTL caching */
+interface DigikeyCommercialData {
+  UnitPrice: number;
+  QuantityAvailable: number;
+  ProductStatus: { Id: number; Status: string };
+}
+
+/** Extract commercial fields from a DigikeyProduct */
+function extractCommercial(product: DigikeyProduct): DigikeyCommercialData {
+  return {
+    UnitPrice: product.UnitPrice,
+    QuantityAvailable: product.QuantityAvailable,
+    ProductStatus: product.ProductStatus,
+  };
+}
+
+/** Apply cached commercial data onto a cached DigikeyProduct */
+function applyCommercial(product: DigikeyProduct, commercial: DigikeyCommercialData): DigikeyProduct {
+  return {
+    ...product,
+    UnitPrice: commercial.UnitPrice,
+    QuantityAvailable: commercial.QuantityAvailable,
+    ProductStatus: commercial.ProductStatus,
+  };
+}
+
 /** Get detailed product information including all parametric specs */
 export async function getProductDetails(
   productNumber: string,
   currency?: string,
   userId?: string,
 ): Promise<DigikeyProductDetailResponse> {
-  // Check cache (include currency in key so different currencies don't collide)
+  // --- L1: in-memory cache ---
   const cacheKey = currency ? `${productNumber}__${currency}` : productNumber;
   const cached = detailsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    console.log('[perf] digikey:getProductDetails CACHE HIT');
+    console.log('[perf] digikey:getProductDetails L1 HIT');
     return cached.data;
   }
 
+  // --- L2: Supabase persistent cache ---
+  const currencyKey = currency ?? 'USD';
+  const l2Parametric = await getCachedResponse<DigikeyProduct>('digikey', productNumber, 'parametric');
+
+  if (l2Parametric) {
+    // Parametric hit — check commercial freshness for this currency
+    const l2Commercial = await getCachedResponse<DigikeyCommercialData>(
+      'digikey', productNumber, `commercial:${currencyKey}`,
+    );
+
+    if (l2Commercial) {
+      // Full L2 hit — reconstruct from cache, no API call needed
+      console.log('[perf] digikey:getProductDetails L2 HIT (parametric + commercial)');
+      const product = applyCommercial(l2Parametric.data, l2Commercial.data);
+      const data: DigikeyProductDetailResponse = { Product: product };
+
+      // Promote to L1
+      detailsCache.set(cacheKey, { data, timestamp: Date.now() });
+      return data;
+    }
+
+    // Parametric hit but commercial stale — fetch fresh from API
+    console.log('[perf] digikey:getProductDetails L2 PARTIAL (parametric hit, commercial miss)');
+  }
+
+  // --- L3: Live API call ---
   console.time('[perf] digikey:getProductDetails');
   const token = await getAccessToken();
 
@@ -237,13 +297,20 @@ export async function getProductDetails(
   const data: DigikeyProductDetailResponse = await res.json();
   console.timeEnd('[perf] digikey:getProductDetails');
 
-  // Store in cache
+  // Store in L1
   detailsCache.set(cacheKey, { data, timestamp: Date.now() });
-
-  // Evict old entries if cache too large
   if (detailsCache.size > 200) {
     const oldestKey = detailsCache.keys().next().value;
     if (oldestKey) detailsCache.delete(oldestKey);
+  }
+
+  // Store in L2 (fire-and-forget)
+  const product = data.Product;
+  if (product) {
+    // Parametric: full product (indefinite TTL)
+    setCachedResponse('digikey', productNumber, 'parametric', 'parametric', product, TTL_PARAMETRIC_DIGIKEY);
+    // Commercial: pricing/stock extract (24h TTL)
+    setCachedResponse('digikey', productNumber, `commercial:${currencyKey}`, 'commercial', extractCommercial(product), TTL_COMMERCIAL_MS);
   }
 
   if (userId) {
@@ -251,6 +318,21 @@ export async function getProductDetails(
   }
 
   return data;
+}
+
+/**
+ * Warm the L2 cache from keyword search results. Fire-and-forget.
+ * Stores each product's parametric data to L2 so future getProductDetails() calls
+ * for those MPNs will be cache hits.
+ */
+export function warmCacheFromSearchResults(products: DigikeyProduct[]): void {
+  if (products.length === 0) return;
+
+  const entries = products
+    .filter(p => p.ManufacturerProductNumber)
+    .map(p => ({ mpn: p.ManufacturerProductNumber, data: p as unknown }));
+
+  setCachedResponseBatch('digikey', entries, 'parametric', 'parametric', TTL_PARAMETRIC_DIGIKEY);
 }
 
 // ============================================================

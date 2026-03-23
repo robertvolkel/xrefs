@@ -34,7 +34,8 @@ app/                          # Next.js App Router
   api/admin/qc/feedback/     # QC feedback list (GET with status/search/sort)
   api/admin/qc/feedback/[feedbackId]/ # Feedback status update (PATCH)
   api/admin/qc/settings/     # QC settings (GET/PUT logging toggle)
-  api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase)
+  api/admin/data-sources/    # Data source status (Digikey, Anthropic, Supabase) + cache stats
+  api/admin/cache/           # Cache management (GET stats, DELETE purge)
   api/admin/atlas/           # Atlas manufacturer stats (GET, paginated aggregation + coverage %)
   api/admin/atlas/coverage/  # Atlas per-family attribute gap analysis (GET)
   api/admin/atlas/dictionaries/ # Atlas dictionary override CRUD (GET list, POST create)
@@ -150,6 +151,7 @@ lib/
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
   services/mouserClient.ts    # Mouser API client — search, batch, cache, rate limiter
   services/mouserMapper.ts    # Mouser response → SupplierQuote/LifecycleInfo/ComplianceData
+  services/partDataCache.ts   # L2 persistent cache (Supabase-backed, 3-tier TTL)
   columnDefinitions.ts        # Dynamic column system for parts list table
   viewConfigStorage.ts        # View types (SavedView, ViewState), localStorage persistence, sanitizeTemplateColumns()
   layoutConstants.ts          # Shared CSS values (heights, font sizes, spacing)
@@ -305,6 +307,7 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
 - **partDataService** tries Digikey first; if unavailable, falls back to mock data. After Digikey, enriches with parts.io gap-fill AND Mouser commercial data **in parallel** via `enrichSourceInParallel()` (Digikey values win on conflicts)
+- **Persistent L2 cache** (Decision #99): `part_data_cache` Supabase table sits between in-memory L1 caches (30-min TTL) and live API calls. Three-tier TTL: parametric (indefinite Digikey / 90-day parts.io), lifecycle (6 months), commercial (24 hours). Cross-user, survives cold starts. Digikey keyword search results warm the cache via `warmCacheFromSearchResults()`. Mouser L2 hits bypass rate limiter. Not-found results cached 24h. All writes fire-and-forget. Admin: `GET/DELETE /api/admin/cache`, cache stats in data-sources endpoint.
 - **Recommendation pipeline performance** (Decision #98): UI passes pre-fetched `sourceAttributes` to `/api/xref` POST to skip duplicate `getAttributes()` call. LLM assessment and Mouser candidate enrichment are deferred — recs display immediately, assessment streams into chat afterward, Mouser pricing merges in via background `enrichWithMouserBatch()`. QC logging is fire-and-forget. See `showRecsAndDeferAssessment()` in `useAppState.ts`.
 - **Per-list views** (Decision #81): Views stored per-list in Supabase `parts_lists.view_configs` JSONB. Global views are templates (`useViewTemplates` in localStorage) used to seed new lists. `useListViewConfig` hook manages per-list views with 500ms debounced Supabase persistence. "Save as Template" strips `ss:*` columns via `sanitizeTemplateColumns()`. Lists with null `view_configs` auto-migrate from templates on first load.
 - **Column portability**: Templates may only contain portable column IDs (`sys:*`, `mapped:*`, `dk:*`, `dkp:*`). `ss:*` (raw spreadsheet index) columns are list-specific and stripped by `sanitizeTemplateColumns()` before saving to template library.

@@ -10,6 +10,15 @@
  */
 
 import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponse,
+  getCachedResponseBatch,
+  setCachedResponse,
+  isNotFoundSentinel,
+  NOT_FOUND_SENTINEL,
+  TTL_COMMERCIAL_MS,
+  TTL_NOT_FOUND_MS,
+} from './partDataCache';
 
 const BASE_URL = 'https://api.mouser.com/api/v1/search/partnumber';
 
@@ -268,11 +277,25 @@ function selectBestProduct(products: MouserProduct[], targetMpn: string): Mouser
 export async function getMouserProduct(mpn: string, userId?: string): Promise<MouserProduct | null> {
   if (!isMouserConfigured()) return null;
 
-  // Check cache
+  // --- L1: in-memory cache ---
   const cached = getCached(mpn);
   if (cached !== undefined) return cached;
 
-  // Check rate limit
+  // --- L2: Supabase persistent cache (saves rate limit!) ---
+  const l2 = await getCachedResponse<MouserProduct | typeof NOT_FOUND_SENTINEL>('mouser', mpn, 'commercial');
+  if (l2) {
+    if (isNotFoundSentinel(l2.data)) {
+      console.log('[perf] mouser:getProduct L2 HIT (not found)');
+      setCache(mpn, null);
+      return null;
+    }
+    console.log('[perf] mouser:getProduct L2 HIT');
+    const product = l2.data as MouserProduct;
+    setCache(mpn, product); // Promote to L1
+    return product;
+  }
+
+  // --- L3: Live API call (rate limited) ---
   const hasSlot = await acquireRateSlot();
   if (!hasSlot) {
     console.warn('[mouser] Daily rate limit reached, skipping', mpn);
@@ -289,6 +312,7 @@ export async function getMouserProduct(mpn: string, userId?: string): Promise<Mo
     const parts = data.SearchResults?.Parts ?? [];
     if (parts.length === 0) {
       setCache(mpn, null);
+      setCachedResponse('mouser', mpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
       return null;
     }
 
@@ -298,6 +322,9 @@ export async function getMouserProduct(mpn: string, userId?: string): Promise<Mo
 
     const best = selectBestProduct(parts, mpn);
     setCache(mpn, best);
+    if (best) {
+      setCachedResponse('mouser', mpn, 'commercial', 'commercial', best, TTL_COMMERCIAL_MS);
+    }
     return best;
   } catch (error) {
     console.warn('[mouser] Lookup failed for', mpn, error);
@@ -317,33 +344,58 @@ export async function getMouserProductsBatch(
   const results = new Map<string, MouserProduct>();
   if (!isMouserConfigured() || mpns.length === 0) return results;
 
-  // Separate cached from uncached
-  const uncached: string[] = [];
+  // --- L1: separate cached from uncached ---
+  const afterL1: string[] = [];
   for (const mpn of mpns) {
     const cached = getCached(mpn);
     if (cached !== undefined) {
       if (cached) results.set(mpn.toLowerCase(), cached);
     } else {
-      uncached.push(mpn);
+      afterL1.push(mpn);
     }
   }
 
-  if (uncached.length === 0) return results;
+  if (afterL1.length === 0) return results;
 
-  // Chunk into groups of 10 (Mouser batch limit)
+  // --- L2: batch check Supabase persistent cache ---
+  const l2Results = await getCachedResponseBatch<MouserProduct | typeof NOT_FOUND_SENTINEL>(
+    'mouser', afterL1, 'commercial',
+  );
+
+  const afterL2: string[] = [];
+  for (const mpn of afterL1) {
+    const l2Data = l2Results.get(mpn.toLowerCase());
+    if (l2Data !== undefined) {
+      if (isNotFoundSentinel(l2Data)) {
+        setCache(mpn, null); // Promote not-found to L1
+      } else {
+        const product = l2Data as MouserProduct;
+        results.set(mpn.toLowerCase(), product);
+        setCache(mpn, product); // Promote to L1
+      }
+    } else {
+      afterL2.push(mpn);
+    }
+  }
+
+  if (afterL2.length > 0) {
+    console.log(`[perf] mouser:batch L1=${mpns.length - afterL1.length} L2=${afterL1.length - afterL2.length} API=${afterL2.length}`);
+  }
+
+  if (afterL2.length === 0) return results;
+
+  // --- L3: Live API calls for truly uncached MPNs ---
   let apiCallCount = 0;
   const BATCH_SIZE = 10;
   const chunks: string[][] = [];
-  for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
-    chunks.push(uncached.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < afterL2.length; i += BATCH_SIZE) {
+    chunks.push(afterL2.slice(i, i + BATCH_SIZE));
   }
 
   for (const chunk of chunks) {
-    // Check rate limit per chunk
     const hasSlot = await acquireRateSlot();
     if (!hasSlot) {
       console.warn('[mouser] Daily rate limit reached during batch, processed', results.size, 'of', mpns.length);
-      // Cache remaining as null to avoid re-fetching this session
       for (const mpn of chunk) setCache(mpn, null);
       break;
     }
@@ -353,7 +405,6 @@ export async function getMouserProductsBatch(
       const data = await mouserFetch(query);
       const parts = data.SearchResults?.Parts ?? [];
 
-      // Group results by target MPN
       for (const targetMpn of chunk) {
         const targetLower = targetMpn.toLowerCase();
         const matches = parts.filter(
@@ -365,11 +416,14 @@ export async function getMouserProductsBatch(
           if (best) {
             results.set(targetLower, best);
             setCache(targetMpn, best);
+            setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', best, TTL_COMMERCIAL_MS);
           } else {
             setCache(targetMpn, null);
+            setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
           }
         } else {
           setCache(targetMpn, null);
+          setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
         }
       }
       if (userId) {
@@ -377,7 +431,6 @@ export async function getMouserProductsBatch(
       }
     } catch (error) {
       console.warn('[mouser] Batch lookup failed for chunk:', chunk, error);
-      // Cache failures as null
       for (const mpn of chunk) setCache(mpn, null);
     }
   }

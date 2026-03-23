@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef, ty
 import type { ServiceWarning, ServiceName, ServiceStatusInfo, ServiceStatusLevel } from '@/lib/types';
 import { onServiceWarnings, onServiceRecoveries, fetchHealthStatus } from '@/lib/api';
 
-const ALL_SERVICES: ServiceName[] = ['digikey', 'partsio', 'mouser', 'anthropic', 'supabase'];
+const ALL_SERVICES: ServiceName[] = ['digikey', 'partsio', 'mouser', 'anthropic', 'atlas'];
 
 function makeInitialMap(): Map<ServiceName, ServiceStatusInfo> {
   const map = new Map<ServiceName, ServiceStatusInfo>();

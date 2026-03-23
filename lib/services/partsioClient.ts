@@ -7,6 +7,14 @@
  */
 
 import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponse,
+  setCachedResponse,
+  isNotFoundSentinel,
+  NOT_FOUND_SENTINEL,
+  TTL_PARAMETRIC_PARTSIO_MS,
+  TTL_NOT_FOUND_MS,
+} from './partDataCache';
 
 const BASE_URL = 'http://api.qa.parts.io/solr/partsio/listings';
 
@@ -222,10 +230,25 @@ async function partsioFetch(url: string): Promise<Response> {
 export async function getPartsioProductDetails(mpn: string, userId?: string): Promise<PartsioListing | null> {
   if (!isPartsioConfigured()) return null;
 
-  // Check cache
+  // --- L1: in-memory cache ---
   const cached = getCached(mpn);
   if (cached !== undefined) return cached;
 
+  // --- L2: Supabase persistent cache ---
+  const l2 = await getCachedResponse<PartsioListing | typeof NOT_FOUND_SENTINEL>('partsio', mpn, 'parametric');
+  if (l2) {
+    if (isNotFoundSentinel(l2.data)) {
+      console.log('[perf] partsio:getProductDetails L2 HIT (not found)');
+      setCache(mpn, null); // Promote to L1
+      return null;
+    }
+    console.log('[perf] partsio:getProductDetails L2 HIT');
+    const listing = l2.data as PartsioListing;
+    setCache(mpn, listing); // Promote to L1
+    return listing;
+  }
+
+  // --- L3: Live API call ---
   try {
     const apiKey = process.env.PARTSIO_API_KEY!;
     const params = new URLSearchParams({
@@ -242,6 +265,8 @@ export async function getPartsioProductDetails(mpn: string, userId?: string): Pr
 
     if (!data.response || data.response.length === 0) {
       setCache(mpn, null);
+      // L2: cache not-found with 24h TTL
+      setCachedResponse('partsio', mpn, 'parametric', 'parametric', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
       return null;
     }
 
@@ -251,6 +276,10 @@ export async function getPartsioProductDetails(mpn: string, userId?: string): Pr
 
     const best = selectBestRecord(data.response);
     setCache(mpn, best);
+    // L2: cache full listing with 90-day TTL
+    if (best) {
+      setCachedResponse('partsio', mpn, 'parametric', 'parametric', best, TTL_PARAMETRIC_PARTSIO_MS);
+    }
     return best;
   } catch (error) {
     console.warn('Parts.io lookup failed for', mpn, error);
