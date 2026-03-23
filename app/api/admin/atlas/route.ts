@@ -28,6 +28,7 @@ export async function GET() {
       const { data: page } = await supabase
         .from('atlas_products')
         .select('manufacturer, family_id, category, subcategory, updated_at, parameters')
+        .order('id')
         .range(offset, offset + PAGE_SIZE - 1);
       if (!page || page.length === 0) break;
       rows.push(...page);
