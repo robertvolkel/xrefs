@@ -28,8 +28,8 @@ export async function GET() {
     let serviceClient: ReturnType<typeof createServiceClient> | null = null;
     try {
       serviceClient = createServiceClient();
-    } catch {
-      // SUPABASE_SERVICE_ROLE_KEY not set — stats will be zeros
+    } catch (e) {
+      console.warn('[admin/users] Service client unavailable — activity stats will be zeros:', (e as Error).message);
     }
 
     // Get activity stats from search_history (aggregated per user)
