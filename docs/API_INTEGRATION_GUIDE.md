@@ -12,7 +12,7 @@ All endpoints require a Bearer token in the `Authorization` header:
 Authorization: Bearer YOUR_API_KEY
 ```
 
-Contact the XRefs team to obtain an API key.
+API keys are issued per integration. Each key is a plain string (e.g., `xrefs_abc123...`). To add a key, the XRefs admin appends it to the `XREFS_API_KEYS` environment variable (comma-separated).
 
 ## Base URL
 
@@ -245,6 +245,83 @@ A part with any `ruleResult: "fail"` should be treated as disqualified, regardle
 
 ---
 
+### List Supported Families
+
+List all 43 supported component families with their IDs, rule counts, and categories.
+
+```
+GET /api/families
+```
+
+**Query parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `category` | string | Filter by category name (case-insensitive substring match) |
+
+**Example:**
+
+```bash
+curl "https://your-app.com/api/families?category=Passives" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "familyId": "12",
+      "familyName": "MLCC Capacitors",
+      "category": "Passives",
+      "description": "Multi-Layer Ceramic Capacitors",
+      "ruleCount": 14,
+      "lastUpdated": "2026-01-15"
+    }
+  ]
+}
+```
+
+---
+
+### Get Context Questions
+
+Get per-family application context questions that refine cross-reference scoring.
+
+```
+GET /api/families/{familyId}/context
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "familyId": "12",
+    "questions": [
+      {
+        "id": "q1",
+        "question": "What is the primary application?",
+        "options": [
+          {
+            "value": "decoupling",
+            "label": "Decoupling / Bypass",
+            "effects": [...]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Returns HTTP 404 if the family ID is invalid. Use the family IDs from `GET /api/families`.
+
+---
+
 ## Application Context
 
 The matching engine supports per-family application context questions that refine scoring based on how the part is actually used. For example, an automotive application will prioritize AEC-qualified replacements.
@@ -272,7 +349,12 @@ The matching engine supports per-family application context questions that refin
    | Optocouplers | E1 |
    | Relays | F1, F2 |
 
-2. **Fetch context questions for the family** — There is no dedicated REST endpoint for context questions. Use the MCP server's `get_context_questions` tool, or contact the XRefs team for the question set for your target families.
+2. **Fetch context questions for the family:**
+
+   ```bash
+   curl https://your-app.com/api/families/B5/context \
+     -H "Authorization: Bearer YOUR_API_KEY"
+   ```
 
 3. **Include answers in the replacement request:**
 
@@ -382,14 +464,40 @@ curl -X POST https://your-app.com/api/xref/GRM155R71C104KA88D \
 
 ## MCP Server (for AI Agent Integration)
 
-If your product uses AI agents that support the Model Context Protocol, XRefs also provides an MCP server with five tools:
+If your product uses AI agents that support the [Model Context Protocol](https://modelcontextprotocol.io), you can wrap the XRefs REST API in a lightweight MCP server. This gives your AI agent native tool access to all five operations:
 
-| Tool | Description |
-|------|-------------|
-| `search_parts` | Search for components |
-| `get_part_attributes` | Get parametric data |
-| `find_replacements` | Get scored replacements |
-| `list_supported_families` | List all 43 supported families |
-| `get_context_questions` | Get per-family context questions |
+| MCP Tool | REST Endpoint |
+|----------|---------------|
+| `search_parts` | `POST /api/search` |
+| `get_part_attributes` | `GET /api/attributes/{mpn}` |
+| `find_replacements` | `GET/POST /api/xref/{mpn}` |
+| `list_supported_families` | `GET /api/families` |
+| `get_context_questions` | `GET /api/families/{familyId}/context` |
 
-Contact the XRefs team for MCP server access details.
+### Quick Start
+
+A ready-to-use MCP server wrapper is provided in [`examples/xrefs-mcp-client/`](../examples/xrefs-mcp-client/). It connects to the XRefs REST API using your Bearer token — no upstream API credentials needed.
+
+1. Copy the example directory into your project
+2. Install dependencies: `npm install`
+3. Set environment variables:
+   ```
+   XREFS_API_URL=https://your-xrefs-deployment.com
+   XREFS_API_KEY=xrefs_your_key_here
+   ```
+4. Add to your MCP client config (e.g., Claude Desktop `claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "xrefs": {
+         "command": "node",
+         "args": ["path/to/xrefs-mcp-client/index.js"],
+         "env": {
+           "XREFS_API_URL": "https://your-xrefs-deployment.com",
+           "XREFS_API_KEY": "xrefs_your_key_here"
+         }
+       }
+     }
+   }
+   ```
+5. Your AI agent can now call `search_parts`, `get_part_attributes`, `find_replacements`, `list_supported_families`, and `get_context_questions` as native tools.
