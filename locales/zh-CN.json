@@ -449,7 +449,22 @@
     "sortOrderHelper": "数字越小越靠前（1-20 关键参数，90+ 参考参数）",
     "addOption": "添加选项",
     "disabledByOverride": "已被覆盖禁用",
-    "disableQuestionTooltip": "禁用问题"
+    "disableQuestionTooltip": "禁用问题",
+    "annotations": "批注",
+    "annotationCount": "{{count}} 条批注",
+    "addAnnotation": "添加评论...",
+    "noAnnotations": "暂无批注。添加评论以开始讨论。",
+    "showResolved": "显示 {{count}} 条已解决",
+    "hideResolved": "隐藏已解决",
+    "changeHistory": "更改历史",
+    "noHistory": "暂无更改记录。",
+    "preAudit": "审计前更改",
+    "tsBase": "原始（TS 基础）",
+    "restoreTitle": "恢复版本",
+    "restoreDesc": "这将使用所选版本的值创建新的覆盖。",
+    "restoreReason": "恢复原因",
+    "restore": "恢复",
+    "restoring": "恢复中..."
   },
   "settings": {
     "title": "设置",

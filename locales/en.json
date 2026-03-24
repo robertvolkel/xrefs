@@ -492,7 +492,22 @@
     "sortOrderHelper": "Lower numbers display first (1-20 critical, 90+ reference)",
     "addOption": "Add option",
     "disabledByOverride": "Disabled by override",
-    "disableQuestionTooltip": "Disable question"
+    "disableQuestionTooltip": "Disable question",
+    "annotations": "Annotations",
+    "annotationCount": "{{count}} annotation(s)",
+    "addAnnotation": "Add a comment...",
+    "noAnnotations": "No annotations yet. Add a comment to start a discussion.",
+    "showResolved": "Show {{count}} resolved",
+    "hideResolved": "Hide resolved",
+    "changeHistory": "Change History",
+    "noHistory": "No changes recorded yet.",
+    "preAudit": "Pre-audit change",
+    "tsBase": "Original (TS Base)",
+    "restoreTitle": "Restore Version",
+    "restoreDesc": "This will create a new override with the values from the selected version.",
+    "restoreReason": "Reason for restoring",
+    "restore": "Restore",
+    "restoring": "Restoring..."
   },
   "settings": {
     "title": "Settings",

@@ -19,7 +19,7 @@ import AddIcon from '@mui/icons-material/Add';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useTranslation } from 'react-i18next';
 import { LogicTable, MatchingRule, RuleOverrideRecord } from '@/lib/types';
-import { getRuleOverrides } from '@/lib/api';
+import { getRuleOverrides, getRuleAnnotations } from '@/lib/api';
 import { typeColors, typeTranslationKeys, typeLabels } from './logicConstants';
 import RuleOverrideDrawer from './RuleOverrideDrawer';
 
@@ -30,6 +30,15 @@ const ACTION_DOT_COLORS: Record<string, string> = {
   remove: '#FF5252',  // red
 };
 
+/** Format a date string as "Mar 20, 2026" */
+function formatShortDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
 interface LogicPanelProps {
   table: LogicTable | null;
 }
@@ -37,6 +46,7 @@ interface LogicPanelProps {
 export default function LogicPanel({ table }: LogicPanelProps) {
   const { t } = useTranslation();
   const [overrides, setOverrides] = useState<RuleOverrideRecord[]>([]);
+  const [annotationCounts, setAnnotationCounts] = useState<Map<string, number>>(new Map());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedRule, setSelectedRule] = useState<MatchingRule | null>(null);
   const [isAddMode, setIsAddMode] = useState(false);
@@ -55,7 +65,21 @@ export default function LogicPanel({ table }: LogicPanelProps) {
     setOverrides(data);
   }, [table]);
 
+  // Fetch annotation counts for all rules in this family (single API call)
+  const fetchAnnotationCounts = useCallback(async () => {
+    if (!table) { setAnnotationCounts(new Map()); return; }
+    const allAnnotations = await getRuleAnnotations(table.familyId);
+    const counts = new Map<string, number>();
+    for (const a of allAnnotations) {
+      if (!a.isResolved) {
+        counts.set(a.attributeId, (counts.get(a.attributeId) ?? 0) + 1);
+      }
+    }
+    setAnnotationCounts(counts);
+  }, [table]);
+
   useEffect(() => { fetchOverrides(); }, [fetchOverrides]);
+  useEffect(() => { fetchAnnotationCounts(); }, [fetchAnnotationCounts]);
 
   const handleRowClick = useCallback((rule: MatchingRule) => {
     setSelectedRule(rule);
@@ -74,6 +98,11 @@ export default function LogicPanel({ table }: LogicPanelProps) {
     setSelectedRule(null);
     setIsAddMode(false);
   }, []);
+
+  const handleSaved = useCallback(() => {
+    fetchOverrides();
+    fetchAnnotationCounts();
+  }, [fetchOverrides, fetchAnnotationCounts]);
 
   if (!table) return null;
 
@@ -114,7 +143,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
         <Table size="small" sx={{ '& td, & th': { borderColor: 'divider' } }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, width: 24, p: 0.5 }} />
+              <TableCell sx={{ fontWeight: 600, width: 40, p: 0.5 }} />
               <TableCell sx={{ fontWeight: 600, width: 34 }}>#</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 180 }}>{t('admin.colAttribute', 'Attribute')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 140 }}>{t('admin.colRuleType', 'Rule Type')}</TableCell>
@@ -128,6 +157,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
             {table.rules.map((rule, idx) => {
               const override = overrideMap.get(rule.attributeId);
               const isOverridden = !!override;
+              const annotCount = annotationCounts.get(rule.attributeId) ?? 0;
 
               return (
                 <TableRow
@@ -140,21 +170,40 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                   }}
                   onClick={() => handleRowClick(rule)}
                 >
-                  {/* Override indicator dot */}
+                  {/* Override indicator dot + annotation icon */}
                   <TableCell sx={{ p: 0.5, textAlign: 'center' }}>
-                    {isOverridden && (
-                      <Tooltip title={`Override: ${override.action} — ${override.changeReason}`}>
-                        <Box
-                          sx={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            bgcolor: ACTION_DOT_COLORS[override.action] ?? '#FFB74D',
-                            display: 'inline-block',
-                          }}
-                        />
-                      </Tooltip>
-                    )}
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                      {isOverridden && (
+                        <Tooltip title={
+                          `${override.action} by ${override.createdByName ?? 'Unknown'}` +
+                          ` on ${formatShortDate(override.createdAt)}` +
+                          ` \u2014 ${override.changeReason}`
+                        }>
+                          <Box
+                            sx={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              bgcolor: ACTION_DOT_COLORS[override.action] ?? '#FFB74D',
+                              display: 'inline-block',
+                              flexShrink: 0,
+                            }}
+                          />
+                        </Tooltip>
+                      )}
+                      {annotCount > 0 && (
+                        <Tooltip title={t('adminOverride.annotationCount', { count: annotCount, defaultValue: `${annotCount} annotation${annotCount !== 1 ? 's' : ''}` })}>
+                          <Box sx={{
+                            width: 16, height: 16, borderRadius: '50%', bgcolor: '#FF5252',
+                            color: '#fff', fontSize: '0.6rem', fontWeight: 700,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0, lineHeight: 1,
+                          }}>
+                            {annotCount}
+                          </Box>
+                        </Tooltip>
+                      )}
+                    </Box>
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" color="text.secondary">
@@ -217,7 +266,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
         familyId={table.familyId}
         baseRule={isAddMode ? null : selectedRule}
         existingOverride={selectedRule ? overrideMap.get(selectedRule.attributeId) ?? null : null}
-        onSaved={fetchOverrides}
+        onSaved={handleSaved}
       />
     </Box>
   );

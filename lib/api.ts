@@ -371,7 +371,7 @@ export async function validatePartsList(
 
 // ── Admin Override API ──────────────────────────────────────
 
-import type { RuleOverrideRecord, ContextOverrideRecord } from './types';
+import type { RuleOverrideRecord, RuleOverrideHistoryEntry, RuleAnnotation, ContextOverrideRecord, MatchingRule } from './types';
 
 export async function getRuleOverrides(familyId?: string): Promise<RuleOverrideRecord[]> {
   const qs = familyId ? `?family_id=${familyId}` : '';
@@ -408,6 +408,79 @@ export async function updateRuleOverride(
 
 export async function deleteRuleOverride(id: string): Promise<boolean> {
   const res = await fetch(`${BASE}/admin/overrides/rules/${id}`, { method: 'DELETE' });
+  return res.ok;
+}
+
+// ── Rule Override History & Restore ──────────────────────────
+
+export async function getRuleOverrideHistory(
+  familyId: string,
+  attributeId: string,
+): Promise<{ baseRule: MatchingRule | null; history: RuleOverrideHistoryEntry[] }> {
+  const qs = `?family_id=${encodeURIComponent(familyId)}&attribute_id=${encodeURIComponent(attributeId)}`;
+  const res = await fetch(`${BASE}/admin/overrides/rules/history${qs}`);
+  if (!res.ok) return { baseRule: null, history: [] };
+  const json = await res.json();
+  return json.data ?? { baseRule: null, history: [] };
+}
+
+export async function restoreRuleOverride(
+  overrideId: string,
+  changeReason: string,
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrideId, changeReason }),
+  });
+  return res.ok;
+}
+
+// ── Rule Annotations ─────────────────────────────────────────
+
+export async function getRuleAnnotations(
+  familyId: string,
+  attributeId?: string,
+): Promise<RuleAnnotation[]> {
+  let qs = `?family_id=${encodeURIComponent(familyId)}`;
+  if (attributeId) qs += `&attribute_id=${encodeURIComponent(attributeId)}`;
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations${qs}`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data ?? [];
+}
+
+export async function createRuleAnnotation(
+  familyId: string,
+  attributeId: string,
+  body: string,
+): Promise<RuleAnnotation | null> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ familyId, attributeId, body }),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+export async function updateRuleAnnotation(
+  annotationId: string,
+  updates: { body?: string; isResolved?: boolean },
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations/${annotationId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return res.ok;
+}
+
+export async function deleteRuleAnnotation(annotationId: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations/${annotationId}`, {
+    method: 'DELETE',
+  });
   return res.ok;
 }
 

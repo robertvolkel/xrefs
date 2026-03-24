@@ -966,11 +966,32 @@ export interface RuleOverrideRecord {
   engineeringReason?: string;
   attributeName?: string;
   sortOrder?: number;
+  previousValues?: Record<string, unknown> | null;
   isActive: boolean;
   changeReason: string;
   createdBy: string;
+  createdByName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RuleOverrideHistoryEntry extends RuleOverrideRecord {
+  createdByName: string;
+}
+
+export interface RuleAnnotation {
+  id: string;
+  familyId: string;
+  attributeId: string;
+  body: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+  isResolved: boolean;
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
 }
 
 export type ContextOverrideAction =
