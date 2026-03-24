@@ -7,6 +7,7 @@ import {
   getSharedParamDictionary,
 } from '@/lib/services/atlasMapper';
 import { getDigikeyAttributeIdsForFamily } from '@/lib/services/digikeyParamMap';
+import { reversePartsioParamLookup } from '@/lib/services/partsioParamMap';
 
 /** GET /api/admin/atlas/coverage?manufacturer=RUILON&familyId=B5 */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -50,6 +51,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // 3. Get Digikey param map coverage
     const digikeyAttrs = getDigikeyAttributeIdsForFamily(familyId);
 
+    // 3b. Get Parts.io param map coverage
+    const partsioReverse = reversePartsioParamLookup(familyId);
+    const partsioAttrs = new Set(partsioReverse.keys());
+
     // 4. Query Atlas products for this manufacturer + family
     const supabase = await createClient();
     const { data: products } = await supabase
@@ -85,6 +90,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         atlasProductPct: totalProducts > 0 ? Math.round((productCount / totalProducts) * 100) : 0,
         inAtlasDict: atlasDictAttrs.has(rule.attributeId),
         inDigikey: digikeyAttrs.has(rule.attributeId),
+        inPartsio: partsioAttrs.has(rule.attributeId),
       };
     }).sort((a, b) => b.weight - a.weight || a.sortOrder - b.sortOrder);
 

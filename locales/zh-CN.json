@@ -368,6 +368,7 @@
     "coverageAtlas": "Atlas",
     "coverageDict": "字典",
     "coverageDK": "DK",
+    "coveragePIO": "PIO",
     "productsCount": "{{count}} 个产品",
     "productsOfTotal": "{{covered}} / {{total}} 个产品"
   },

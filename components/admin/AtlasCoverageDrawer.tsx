@@ -32,6 +32,7 @@ interface CoverageAttribute {
   atlasProductPct: number;
   inAtlasDict: boolean;
   inDigikey: boolean;
+  inPartsio: boolean;
 }
 
 interface CoverageData {
@@ -94,7 +95,7 @@ export default function AtlasCoverageDrawer({
       anchor="right"
       open={open}
       onClose={onClose}
-      PaperProps={{ sx: { width: 580, bgcolor: 'background.default' } }}
+      PaperProps={{ sx: { width: 630, bgcolor: 'background.default' } }}
     >
       <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
@@ -130,6 +131,7 @@ export default function AtlasCoverageDrawer({
                   <TableCell sx={{ fontWeight: 600, width: 70, textAlign: 'right' }}>{t('admin.coverageAtlas')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>{t('admin.coverageDict')}</TableCell>
                   <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>{t('admin.coverageDK')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 44, textAlign: 'center' }}>{t('admin.coveragePIO')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -180,6 +182,13 @@ export default function AtlasCoverageDrawer({
                     <TableCell sx={{ textAlign: 'center' }}>
                       {attr.inDigikey ? (
                         <CheckIcon sx={{ fontSize: 14, color: 'info.main' }} />
+                      ) : (
+                        <RemoveIcon sx={{ fontSize: 14, opacity: 0.2 }} />
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ textAlign: 'center' }}>
+                      {attr.inPartsio ? (
+                        <CheckIcon sx={{ fontSize: 14, color: 'warning.main' }} />
                       ) : (
                         <RemoveIcon sx={{ fontSize: 14, opacity: 0.2 }} />
                       )}

@@ -410,6 +410,7 @@
     "coverageAtlas": "Atlas",
     "coverageDict": "Dict",
     "coverageDK": "DK",
+    "coveragePIO": "PIO",
     "coverageSummary": "{{products}} products · {{coverage}}% avg coverage · {{rules}} rules",
     "productsCount": "{{count}} products",
     "productsOfTotal": "{{covered}} of {{total}} products"
