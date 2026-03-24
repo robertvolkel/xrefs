@@ -1,5 +1,5 @@
 /**
- * Parts.io (SiliconExpert/IHS) API Client
+ * Parts.io (Accuris) API Client
  *
  * Fetches parametric data for component enrichment after Digikey.
  * API key auth (query param), limit=10 with best-record selection.

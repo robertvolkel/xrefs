@@ -259,7 +259,7 @@ Digikey API  ──┐
 Atlas API    ──┤
 Customer DB  ──┼──→ DataSourceProvider interface ──→ Part / PartAttributes ──→ Matching Engine
 Findchips API──┤
-SiliconExpert──┘
+Accuris──┘
 ```
 
 **Near-term approach:** Rather than abstracting Digikey immediately (high effort — 3 tightly-coupled files, 35+ category-specific param maps), add Atlas as enrichment layers that decorate results with additional data. Digikey remains the primary source for technical parametric data.

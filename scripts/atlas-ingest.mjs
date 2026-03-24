@@ -23,6 +23,46 @@ import { readFileSync } from 'fs';
 import { resolve, basename } from 'path';
 import { createClient } from '@supabase/supabase-js';
 
+// ─── Load Gaia dictionaries from shared JSON ────────────
+const gaiaData = JSON.parse(readFileSync(resolve(process.cwd(), 'lib/services/atlas-gaia-dicts.json'), 'utf-8'));
+const GAIA_SKIP_STEMS = new Set(gaiaData.skipStems);
+const GAIA_FAMILIES = gaiaData.families;
+const GAIA_SHARED = gaiaData.shared;
+const GAIA_L2 = gaiaData.l2Categories || {};
+
+function humanizeStem(stem) {
+  return stem.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function parseGaiaParam(name) {
+  if (!name.startsWith('gaia-')) return null;
+  const rest = name.slice(5);
+  for (const suffix of ['-Min', '-Max', '-Typ', '-Nom']) {
+    if (rest.endsWith(suffix)) {
+      return { stem: rest.slice(0, -suffix.length), suffix: suffix.slice(1) };
+    }
+  }
+  return { stem: rest, suffix: '' };
+}
+
+function parseGaiaValue(raw) {
+  const trimmed = raw.trim();
+  const rangeMatch = trimmed.match(/^([+-−]?\d+\.?\d*)\s*(?:to|~|–|—)\s*\+?([+-−]?\d+\.?\d*)\s*(.*)$/);
+  if (rangeMatch) {
+    const unit = rangeMatch[3].trim() || undefined;
+    return { displayValue: `${rangeMatch[1]} to ${rangeMatch[2]}${unit ? ' ' + unit : ''}`, numericValue: parseFloat(rangeMatch[1].replace('−', '-')), unit };
+  }
+  const ltMatch = trimmed.match(/^<\s*(\d+\.?\d*)\s*(.*)$/);
+  if (ltMatch) return { displayValue: ltMatch[1], numericValue: parseFloat(ltMatch[1]), unit: ltMatch[2].trim() || undefined };
+  const pmMatch = trimmed.match(/^[±]\s*(\d+\.?\d*)\s*(.*)$/);
+  if (pmMatch) return { displayValue: `±${pmMatch[1]}`, numericValue: parseFloat(pmMatch[1]), unit: pmMatch[2].trim() || undefined };
+  const numUnitMatch = trimmed.match(/^([+-]?\d+\.?\d*)\s+(.+)$/);
+  if (numUnitMatch) return { displayValue: numUnitMatch[1], numericValue: parseFloat(numUnitMatch[1]), unit: numUnitMatch[2].trim() };
+  const numMatch = trimmed.match(/^([+-]?\d+\.?\d*)$/);
+  if (numMatch) return { displayValue: trimmed, numericValue: parseFloat(numMatch[1]) };
+  return { displayValue: trimmed };
+}
+
 // ─── Load environment ─────────────────────────────────────
 
 function loadEnv() {
@@ -919,6 +959,9 @@ function mapModel(model, manufacturerName, sourceFile) {
 
   // Map parameters
   const familyDict = classification.familyId ? FAMILY_PARAMS[classification.familyId] : undefined;
+  const gaiaDict = classification.familyId
+    ? GAIA_FAMILIES[classification.familyId]
+    : GAIA_L2[classification.category];
   const parameters = {};
   let packageValue = null;
 
@@ -929,15 +972,56 @@ function mapModel(model, manufacturerName, sourceFile) {
     if (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName)) continue;
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
+    // ── Gaia parameter handling ──────────────────────────────
+    const gaia = parseGaiaParam(p.name);
+    if (gaia) {
+      if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
+      const gaiaMapping = gaiaDict?.[gaia.stem] ?? GAIA_SHARED[gaia.stem];
+      if (!gaiaMapping) {
+        // Store with auto-humanized name (nothing thrown away)
+        if (!parameters[gaia.stem]) {
+          const parsed = parseGaiaValue(p.value);
+          parameters[gaia.stem] = {
+            value: parsed.displayValue,
+            ...(parsed.numericValue !== undefined && { numericValue: parsed.numericValue }),
+            ...(parsed.unit ? { unit: parsed.unit } : {}),
+          };
+        }
+        continue;
+      }
+      if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) continue;
+      if (gaiaMapping.attributeId.startsWith('_')) continue;
+      if (parameters[gaiaMapping.attributeId]) continue; // dedup
+
+      const parsed = parseGaiaValue(p.value);
+      let displayValue = parsed.displayValue;
+      if (gaiaMapping.attributeId === 'operating_temp') displayValue = normalizeTemp(p.value);
+      if (gaiaMapping.attributeId === 'package_case') packageValue = displayValue;
+
+      parameters[gaiaMapping.attributeId] = {
+        value: displayValue,
+        ...(parsed.numericValue !== undefined && { numericValue: parsed.numericValue }),
+        ...(gaiaMapping.unit ? { unit: gaiaMapping.unit } : parsed.unit ? { unit: parsed.unit } : {}),
+      };
+      continue;
+    }
+
+    // ── Standard dictionary lookup (Chinese + English) ───────
     const mapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName];
     if (!mapping) {
-      if (classification.familyId) {
-        warnings.push(`unmapped: "${p.name}" = "${p.value}"`);
+      // Store with raw param name (nothing thrown away)
+      const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (rawId && !parameters[rawId]) {
+        parameters[rawId] = {
+          value: p.value.trim(),
+          ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
+        };
       }
       continue;
     }
 
     if (mapping.attributeId.startsWith('_')) continue;
+    if (parameters[mapping.attributeId]) continue; // dedup
 
     let displayValue = p.value.trim();
     const numericValue = extractNumeric(displayValue);

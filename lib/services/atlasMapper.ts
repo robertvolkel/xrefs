@@ -11,6 +11,16 @@
  */
 
 import type { Part, PartAttributes, ParametricAttribute, ComponentCategory, PartStatus } from '../types';
+import {
+  parseGaiaParam,
+  parseGaiaValue,
+  humanizeStem,
+  GAIA_SKIP_STEMS,
+  gaiaFamilyDictionaries,
+  gaiaSharedDictionary,
+  gaiaL2Dictionaries,
+  type GaiaParamMapping,
+} from './atlasGaiaDictionaries';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -1201,7 +1211,11 @@ export function mapAtlasModel(
 
   // 4. Map parameters
   const familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
+  const gaiaDict = classification.familyId
+    ? gaiaFamilyDictionaries[classification.familyId]
+    : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
+  const seenAttributeIds = new Set<string>();
   let packageValue: string | undefined;
 
   for (const p of model.parameters) {
@@ -1214,25 +1228,98 @@ export function mapAtlasModel(
     // Skip status (already extracted above)
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
-    // Look up mapping: family-specific first, then shared
+    // ── Gaia parameter handling ──────────────────────────────
+    const gaia = parseGaiaParam(p.name);
+    if (gaia) {
+      if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
+
+      const gaiaMapping: GaiaParamMapping | undefined =
+        gaiaDict?.[gaia.stem] ?? gaiaSharedDictionary[gaia.stem];
+
+      if (!gaiaMapping) {
+        // Store with auto-humanized name (nothing thrown away)
+        if (!seenAttributeIds.has(gaia.stem)) {
+          seenAttributeIds.add(gaia.stem);
+          const parsed = parseGaiaValue(p.value);
+          parameters.push({
+            parameterId: gaia.stem,
+            parameterName: humanizeStem(gaia.stem),
+            value: parsed.displayValue,
+            numericValue: parsed.numericValue,
+            unit: parsed.unit,
+            sortOrder: 200 + parameters.length,
+          });
+        }
+        continue;
+      }
+
+      // Check suffix preference — skip if this isn't the preferred suffix
+      if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
+        continue;
+      }
+
+      // Skip internal-only attributes
+      if (gaiaMapping.attributeId.startsWith('_')) continue;
+
+      // Deduplicate — first occurrence of each attributeId wins
+      if (seenAttributeIds.has(gaiaMapping.attributeId)) continue;
+      seenAttributeIds.add(gaiaMapping.attributeId);
+
+      // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
+      const parsed = parseGaiaValue(p.value);
+      let displayValue = parsed.displayValue;
+      const numericValue = parsed.numericValue;
+      const unit = gaiaMapping.unit || parsed.unit;
+
+      if (gaiaMapping.attributeId === 'operating_temp') {
+        displayValue = normalizeTemperatureRange(p.value);
+      }
+
+      if (gaiaMapping.attributeId === 'package_case') {
+        packageValue = displayValue;
+      }
+
+      parameters.push({
+        parameterId: gaiaMapping.attributeId,
+        parameterName: gaiaMapping.attributeName,
+        value: displayValue,
+        numericValue,
+        unit,
+        sortOrder: gaiaMapping.sortOrder,
+      });
+      continue;
+    }
+
+    // ── Standard dictionary lookup (Chinese + English) ───────
     const mapping = familyDict?.[lowerName] ?? sharedParamDictionary[lowerName];
 
     if (!mapping) {
-      // Unmapped parameter — skip but warn
-      if (classification.familyId) {
-        warnings.push(`unmapped: "${p.name}" = "${p.value}"`);
+      // Store with raw param name (nothing thrown away)
+      const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (rawId && !seenAttributeIds.has(rawId)) {
+        seenAttributeIds.add(rawId);
+        parameters.push({
+          parameterId: rawId,
+          parameterName: p.name.trim(),
+          value: p.value.trim(),
+          numericValue: extractNumeric(p.value),
+          sortOrder: 200 + parameters.length,
+        });
       }
       continue;
     }
 
     // Skip internal-only attributes (prefixed with _)
-    // These are stored for reference but not as ParametricAttribute
     if (mapping.attributeId.startsWith('_')) continue;
+
+    // Deduplicate — gaia may have already provided this attributeId
+    if (seenAttributeIds.has(mapping.attributeId)) continue;
+    seenAttributeIds.add(mapping.attributeId);
 
     // Normalize value based on attributeId
     let displayValue = p.value.trim();
     let numericValue = extractNumeric(displayValue);
-    let unit = mapping.unit;
+    const unit = mapping.unit;
 
     if (mapping.attributeId === 'operating_temp') {
       displayValue = normalizeTemperatureRange(displayValue);

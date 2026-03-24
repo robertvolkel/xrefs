@@ -458,19 +458,19 @@ Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. 
 ---
 
 ### Phase 7: Atlas Integration & Manufacturer Profile API
-**Status:** Partially done (Decisions #66, #67, #68, #69)
+**Status:** Partially done (Decisions #66, #67, #68, #69, #100)
 **Priority:** P2
 
-Atlas product database integrated: 99 manufacturers, 27,030 products ingested into Supabase `atlas_products` table. Parallel search + candidate fetch working. Admin panel for ingestion monitoring built. Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67) — average mapped params went from 0.5–2 to 3–9 per product. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics added: per-manufacturer coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table requirements (Decision #69).
+Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69).
 
 **Remaining:**
 - Manufacturer profile API (company profiles, verification, factory audit, export compliance)
 - Replace `mockManufacturerData.ts` with Atlas-fed profiles
 - ManufacturerProfilePanel enrichment with Atlas company data
-- Further reduce unmapped param warnings (~40K remaining, mostly manufacturer-specific naming variants)
+- Phase 2 English param expansion: add plain English aliases for MFR-specific formats (`RDS(ON) @10VTyp (mΩ)`, `BVDSS (V)`, `BV(V)`, etc.) — ~1,327 distinct names across ~20 MFRs
 - Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
 
-**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
+**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasGaiaDictionaries.ts`, `lib/services/atlas-gaia-dicts.json`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
 
 ---
 

@@ -62,10 +62,11 @@ export async function GET() {
 
     const familyBreakdownMap = new Map<string, {
       manufacturer: string;
-      familyId: string;
+      familyId: string | null;
       category: string;
       subcategory: string;
       count: number;
+      scorableCount: number;
     }>();
 
     const allFamilies = new Set<string>();
@@ -88,12 +89,21 @@ export async function GET() {
       if (row.updated_at > mfr.lastUpdated) mfr.lastUpdated = row.updated_at;
       if (!globalLastUpdated || row.updated_at > globalLastUpdated) globalLastUpdated = row.updated_at;
 
-      // Per-manufacturer-family breakdown
+      // Per-manufacturer-family breakdown (scorable + non-scorable)
       if (row.family_id) {
         const key = `${row.manufacturer}::${row.family_id}`;
         let fb = familyBreakdownMap.get(key);
         if (!fb) {
-          fb = { manufacturer: row.manufacturer, familyId: row.family_id, category: row.category, subcategory: row.subcategory, count: 0 };
+          fb = { manufacturer: row.manufacturer, familyId: row.family_id, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
+          familyBreakdownMap.set(key, fb);
+        }
+        fb.count++;
+        fb.scorableCount++;
+      } else {
+        const key = `${row.manufacturer}::_::${row.category}::${row.subcategory}`;
+        let fb = familyBreakdownMap.get(key);
+        if (!fb) {
+          fb = { manufacturer: row.manufacturer, familyId: null, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
           familyBreakdownMap.set(key, fb);
         }
         fb.count++;
@@ -169,7 +179,7 @@ export async function GET() {
             : 0,
         };
       })
-      .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer) || a.familyId.localeCompare(b.familyId));
+      .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer) || (a.familyId ?? '').localeCompare(b.familyId ?? ''));
 
     // Build family ID → name map for tooltip display
     const familyNames: Record<string, string> = {};

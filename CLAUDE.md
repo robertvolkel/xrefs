@@ -148,6 +148,8 @@ lib/
   services/overrideValidator.ts # Validates override values against type constraints
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
+  services/atlasGaiaDictionaries.ts # Gaia datasheet-extracted param mapping (parse, skip stems, dict exports)
+  services/atlas-gaia-dicts.json # Shared gaia dictionaries (12 families + shared, consumed by TS + MJS)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
   services/mouserClient.ts    # Mouser API client — search, batch, cache, rate limiter
   services/mouserMapper.ts    # Mouser response → SupplierQuote/LifecycleInfo/ComplianceData
@@ -356,7 +358,7 @@ Parameter mapping is complete for **all 19 passive + 9 discrete + 10 Block C IC 
 
 ## Parts.io Integration (Gap-Fill Enrichment)
 
-Secondary data source (SiliconExpert/IHS) that fills parametric gaps after Digikey. See Decision #77.
+Secondary data source (Accuris) that fills parametric gaps after Digikey. See Decision #77.
 
 - Client: `lib/services/partsioClient.ts` — API key auth (query param), `limit=10` with best-record selection, 30-min cache
 - Mapper: `lib/services/partsioMapper.ts` — Converts `PartsioListing` → `ParametricAttribute[]`
@@ -410,8 +412,8 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
-- **Parts.io** (built — Decision #77) — SiliconExpert/IHS gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
-- **Atlas** (built — products + param dictionaries + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 99 manufacturers, 27K products in Supabase `atlas_products`, 17.9K scorable, 28 family translation dictionaries (avg 3–9 params mapped per product). Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69).
+- **Parts.io** (built — Decision #77) — Accuris gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
+- **Atlas** (built — products + param dictionaries + gaia mapping + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 115 manufacturers, 55K products in Supabase `atlas_products`, 38K scorable, 28 family Chinese translation dictionaries + 12 family gaia datasheet-extraction dictionaries via shared JSON (`atlas-gaia-dicts.json`, Decision #100). Gaia mapping handles structured `gaia-{stem}-{Min|Max|Typ}` params with suffix preference and dedup. Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69). Admin panel: all manufacturers expandable (scorable + non-scorable), sortable columns, breakdown shows Scorable column.
 - **Mouser** (built — Decision #83) — First multi-supplier pricing source: quantity-based price breaks, real-time stock, lead times, lifecycle status, suggested replacements, regional HTS codes (8 regions), ECCN. No parametric data. Rate limits: 30/min, 1,000/day.
 - **Distributor APIs** (planned) — Arrow, Nexar/Octopart for additional multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering

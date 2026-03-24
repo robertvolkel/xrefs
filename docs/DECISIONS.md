@@ -1907,7 +1907,7 @@ Restructured the `/settings` page from three sections (Profile stub, Account Set
 
 **Problem:** Digikey provides partial parametric data for all 43 component families, but has known coverage gaps — thyristor tq/dv_dt (~48-51%), relay coil/contact specs (~45%), LDO dropout/regulation (~52%), fuse I²t (~50%). These gaps reduce matching accuracy for families where the missing attributes carry high weights.
 
-**Decision:** Integrate parts.io (SiliconExpert/IHS) as a secondary data source for gap-fill enrichment. After Digikey returns a part, call parts.io for the same MPN and merge deeper technical attributes — Digikey values always win on conflicts, parts.io fills gaps only. Also redesigned the admin Parameter Mappings panel to show both data sources side-by-side.
+**Decision:** Integrate parts.io (Accuris) as a secondary data source for gap-fill enrichment. After Digikey returns a part, call parts.io for the same MPN and merge deeper technical attributes — Digikey values always win on conflicts, parts.io fills gaps only. Also redesigned the admin Parameter Mappings panel to show both data sources side-by-side.
 
 **Validated via real API testing:** 46 MPNs tested across 43 families and 17 parts.io Class types (Mar 2026). Saved in `docs/partsio-api-findings.md`.
 
@@ -2610,3 +2610,33 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **New files:** `lib/services/partDataCache.ts` (core cache service), `scripts/supabase-cache-schema.sql` (migration), `app/api/admin/cache/route.ts` (stats + purge endpoint), `__tests__/services/partDataCache.test.ts`.
 
 **Modified files:** `lib/services/digikeyClient.ts` (L2 for `getProductDetails` + `warmCacheFromSearchResults`), `lib/services/partsioClient.ts` (L2 for `getPartsioProductDetails`), `lib/services/mouserClient.ts` (L2 for single + batch), `lib/services/partDataService.ts` (search result warming call), `app/api/admin/data-sources/route.ts` (cache stats), `lib/api.ts` (admin cache management functions).
+
+---
+
+## Decision #100 — Gaia Datasheet-Extracted Parameter Mapping for Atlas (Mar 2026)
+
+**Decision:** Add a gaia parameter preprocessing layer to the Atlas mapper that handles structured datasheet-extracted parameters (`gaia-{stem}-{Min|Max|Typ}` format), plus a shared JSON dictionary approach to eliminate code duplication between `atlasMapper.ts` and `atlas-ingest.mjs`.
+
+**Problem:** 64% of Atlas products (35K of 55K) had parametric data being thrown away. The Atlas mapper only handled Chinese parameter names via per-family dictionaries. Three unmapped data formats existed: (1) `gaia-*` prefixed params from Gaia datasheet extraction technology — 19K distinct names, structured and consistent across all MFRs; (2) plain English params with MFR-specific abbreviations (1,327 distinct names); (3) Chinese params already handled by existing dictionaries.
+
+**Impact:** YFW rectifier diodes went from 1 mapped param (package only) to 10 params (Vrrm, Io, Vf, Ifsm, Cj, Ir, thermal resistance, operating temp). YFW MOSFETs went from 1 to 17-18 params. All 54,746 products re-ingested with 0 errors.
+
+**Architecture:**
+- New lookup chain: gaia prefix check → family gaia dict → shared gaia dict → existing Chinese/English dict → shared dict → skip/warn
+- `parseGaiaParam()` strips `gaia-` prefix and `-Min/-Max/-Typ/-Nom` suffix, returns `{ stem, suffix }`
+- `parseGaiaValue()` splits embedded unit values (`"5.8 mΩ"`, `"±20 V"`, `"-55 to +150 °C"`) into display + numeric + unit
+- `preferredSuffix` field on mappings controls which variant to use (e.g., `rds_on` wants Max, `ciss` wants Typ)
+- `seenAttributeIds` set prevents duplicates when same stem appears at multiple test conditions
+- Gaia params that map to `_`-prefixed attributeIds are internal-only (stored but not displayed)
+
+**Shared JSON approach:** `lib/services/atlas-gaia-dicts.json` is the single source of truth for gaia dictionaries. Both `atlasMapper.ts` (TS import) and `atlas-ingest.mjs` (file read + JSON parse) consume the same file — no dictionary duplication.
+
+**Families covered (Phase 1):** B1 Rectifiers (~25 stem mappings), B3 Zener (~15), B4 TVS (~20), B5 MOSFETs (~30), B6 BJTs (~25), B7 IGBTs (~9), B8 Thyristors (~15), C1 LDOs (~14), C2 Switching Regs (~10), C4 Op-Amps (~20), D1 Crystals (~11), 71 Inductors (~12), plus shared operating temp mappings.
+
+**Phase 2 (future):** Expand existing per-family dictionaries with plain English alias entries for MFR-specific formats (`RDS(ON) @10VTyp (mΩ)`, `BVDSS (V)`, `BV(V)`, etc.). Same dictionary approach, just more entries — no architectural change needed.
+
+**New files:** `lib/services/atlasGaiaDictionaries.ts` (TS module: parse functions, skip stems, type-safe exports), `lib/services/atlas-gaia-dicts.json` (shared dictionary data).
+
+**Modified files:** `lib/services/atlasMapper.ts` (import gaia module, gaia preprocessing in `mapAtlasModel()` loop with suffix preference + dedup), `scripts/atlas-ingest.mjs` (load shared JSON, inline `parseGaiaParam()`/`parseGaiaValue()`, mirror gaia-first logic in `mapModel()`).
+
+**Also in this session:** Atlas admin panel improvements — all manufacturers now expandable (not just scorable), breakdown table shows "Scorable" column, top-level columns are sortable. Files: `app/api/admin/atlas/route.ts`, `components/admin/AtlasPanel.tsx`.

@@ -98,10 +98,10 @@ function OrgShellInner() {
         </Box>
 
         {/* Content */}
-        <Box sx={{ flex: 1, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {activeSection === 'users' && <OrgPanel />}
           {activeSection === 'data-sources' && (
-            <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
               <DataSourcesPanel />
             </Box>
           )}
