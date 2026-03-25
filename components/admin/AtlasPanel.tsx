@@ -5,6 +5,8 @@ import {
   Box,
   Collapse,
   IconButton,
+  Tab,
+  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -20,6 +22,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { useTranslation } from 'react-i18next';
 import AtlasCoverageDrawer from './AtlasCoverageDrawer';
+import AtlasExplorerTab from './AtlasExplorerTab';
 
 interface AtlasStats {
   summary: {
@@ -176,6 +179,7 @@ function MfrRow({
 
 export default function AtlasPanel() {
   const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState(0);
   const [data, setData] = useState<AtlasStats | null>(null);
   const [sortKey, setSortKey] = useState<MfrSortKey>('productCount');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -221,87 +225,100 @@ export default function AtlasPanel() {
     return list;
   }, [data, sortKey, sortDir]);
 
-  if (!data) {
-    return (
-      <Typography variant="body2" color="text.secondary">
-        {t('common.loading')}
-      </Typography>
-    );
-  }
-
-  const { summary } = data;
-
   return (
-    <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {t('admin.atlas', 'Atlas Manufacturers')}
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-        {t('admin.atlasDesc', 'Chinese manufacturer product catalog.')}
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t('admin.atlasMfrSummary', { mfrCount: summary.totalManufacturers, productCount: summary.totalProducts.toLocaleString(), scorableCount: summary.scorableProducts.toLocaleString(), familyCount: summary.familiesCovered })}
-      </Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Tabs
+        value={activeTab}
+        onChange={(_, v) => setActiveTab(v)}
+        sx={{ mb: 2, minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0.5, textTransform: 'none', fontSize: '0.82rem' } }}
+      >
+        <Tab label={t('admin.atlasOverview')} />
+        <Tab label={t('admin.atlasSearch')} />
+      </Tabs>
 
-      {data.manufacturers.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          {t('admin.atlasNoData')}
-        </Typography>
-      ) : (
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 40 }} />
-                <TableCell sortDirection={sortKey === 'manufacturer' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'manufacturer'} direction={sortKey === 'manufacturer' ? sortDir : 'asc'} onClick={() => handleSort('manufacturer')}>
-                    {t('admin.atlasManufacturer')}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell align="right" sortDirection={sortKey === 'productCount' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'productCount'} direction={sortKey === 'productCount' ? sortDir : 'desc'} onClick={() => handleSort('productCount')}>
-                    {t('admin.atlasProductsCol')}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell align="right" sortDirection={sortKey === 'scorableCount' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'scorableCount'} direction={sortKey === 'scorableCount' ? sortDir : 'desc'} onClick={() => handleSort('scorableCount')}>
-                    {t('admin.atlasScorableCol')}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell align="right" sortDirection={sortKey === 'coveragePct' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'coveragePct'} direction={sortKey === 'coveragePct' ? sortDir : 'desc'} onClick={() => handleSort('coveragePct')}>
-                    {t('admin.atlasCoverageCol')}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sortDirection={sortKey === 'families' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'families'} direction={sortKey === 'families' ? sortDir : 'desc'} onClick={() => handleSort('families')}>
-                    {t('admin.atlasFamiliesCol')}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sortDirection={sortKey === 'lastUpdated' ? sortDir : false}>
-                  <TableSortLabel active={sortKey === 'lastUpdated'} direction={sortKey === 'lastUpdated' ? sortDir : 'desc'} onClick={() => handleSort('lastUpdated')}>
-                    {t('admin.atlasLastUpdatedCol')}
-                  </TableSortLabel>
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {sortedManufacturers.map((mfr) => (
-                <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} onFamilyClick={handleFamilyClick} />
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+      {activeTab === 0 && (
+        <>
+          {!data ? (
+            <Typography variant="body2" color="text.secondary">
+              {t('common.loading')}
+            </Typography>
+          ) : (
+            <Box>
+              <Typography variant="h6" sx={{ mb: 0.5 }}>
+                {t('admin.atlas', 'Atlas Manufacturers')}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                {t('admin.atlasDesc', 'Chinese manufacturer product catalog.')}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                {t('admin.atlasMfrSummary', { mfrCount: data.summary.totalManufacturers, productCount: data.summary.totalProducts.toLocaleString(), scorableCount: data.summary.scorableProducts.toLocaleString(), familyCount: data.summary.familiesCovered })}
+              </Typography>
+
+              {data.manufacturers.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  {t('admin.atlasNoData')}
+                </Typography>
+              ) : (
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: 40 }} />
+                        <TableCell sortDirection={sortKey === 'manufacturer' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'manufacturer'} direction={sortKey === 'manufacturer' ? sortDir : 'asc'} onClick={() => handleSort('manufacturer')}>
+                            {t('admin.atlasManufacturer')}
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'productCount' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'productCount'} direction={sortKey === 'productCount' ? sortDir : 'desc'} onClick={() => handleSort('productCount')}>
+                            {t('admin.atlasProductsCol')}
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'scorableCount' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'scorableCount'} direction={sortKey === 'scorableCount' ? sortDir : 'desc'} onClick={() => handleSort('scorableCount')}>
+                            {t('admin.atlasScorableCol')}
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'coveragePct' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'coveragePct'} direction={sortKey === 'coveragePct' ? sortDir : 'desc'} onClick={() => handleSort('coveragePct')}>
+                            {t('admin.atlasCoverageCol')}
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sortDirection={sortKey === 'families' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'families'} direction={sortKey === 'families' ? sortDir : 'desc'} onClick={() => handleSort('families')}>
+                            {t('admin.atlasFamiliesCol')}
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sortDirection={sortKey === 'lastUpdated' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'lastUpdated'} direction={sortKey === 'lastUpdated' ? sortDir : 'desc'} onClick={() => handleSort('lastUpdated')}>
+                            {t('admin.atlasLastUpdatedCol')}
+                          </TableSortLabel>
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {sortedManufacturers.map((mfr) => (
+                        <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} onFamilyClick={handleFamilyClick} />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+
+              {/* Coverage gap analysis drawer */}
+              <AtlasCoverageDrawer
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                manufacturer={selectedMfr}
+                familyId={selectedFamilyId}
+                familyName={data?.familyNames[selectedFamilyId] ?? selectedFamilyId}
+              />
+            </Box>
+          )}
+        </>
       )}
 
-      {/* Coverage gap analysis drawer */}
-      <AtlasCoverageDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        manufacturer={selectedMfr}
-        familyId={selectedFamilyId}
-        familyName={data?.familyNames[selectedFamilyId] ?? selectedFamilyId}
-      />
+      {activeTab === 1 && <AtlasExplorerTab />}
     </Box>
   );
 }

@@ -152,6 +152,21 @@ function classifyAtlasCategory(c1, c2, c3) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
   }
 
+  // L2 categories (no logic tables)
+  if (lower.includes('microcontroller') || lower.includes('mcu')) return { category: 'Microcontrollers', subcategory: c3, familyId: null };
+  if (lower.includes('microprocessor') || lower.includes('system on chip') || lower.includes('soc')) return { category: 'Processors', subcategory: c3, familyId: null };
+  if (lower.includes('memory') || lower.includes('eeprom') || lower.includes('flash') || lower.includes('sram') || lower.includes('dram')) return { category: 'Memory', subcategory: c3, familyId: null };
+  if (lower.includes('sensor') || lower.includes('accelerometer') || lower.includes('gyroscope') || lower.includes('imu') || lower.includes('thermocouple')) return { category: 'Sensors', subcategory: c3, familyId: null };
+  if (lower.includes('rf ') || lower.includes('wireless') || lower.includes('bluetooth') || lower.includes('wifi') || lower.includes('zigbee') || lower.includes('lora')) return { category: 'RF and Wireless', subcategory: c3, familyId: null };
+  if (lower.includes('led') || lower.includes('photodiode') || lower.includes('laser')) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
+  if (lower.includes('switch') && !lower.includes('switching')) return { category: 'Switches', subcategory: c3, familyId: null };
+  if (lower.includes('transformer')) return { category: 'Transformers', subcategory: c3, familyId: null };
+  if (lower.includes('filter') || lower.includes('emi')) return { category: 'Filters', subcategory: c3, familyId: null };
+  if (lower.includes('battery') && !lower.includes('management')) return { category: 'Battery Products', subcategory: c3, familyId: null };
+  if (lower.includes('motor') || lower.includes('fan')) return { category: 'Motors and Fans', subcategory: c3, familyId: null };
+  if (lower.includes('audio') || lower.includes('speaker') || lower.includes('microphone') || lower.includes('buzzer')) return { category: 'Audio', subcategory: c3, familyId: null };
+  if (lower.includes('power supply') || lower.includes('ac dc') || lower.includes('dc dc')) return { category: 'Power Supplies', subcategory: c3, familyId: null };
+
   // Uncovered
   const c1lower = c1.toLowerCase();
   if (c1lower.includes('capacitor')) return { category: 'Capacitors', subcategory: c3, familyId: null };
@@ -160,6 +175,10 @@ function classifyAtlasCategory(c1, c2, c3) {
   if (c1lower.includes('connector')) return { category: 'Connectors', subcategory: c3, familyId: null };
   if (c1lower.includes('protection') || c1lower.includes('circuit protection')) return { category: 'Protection', subcategory: c3, familyId: null };
   if (c1lower.includes('diode') || c1lower.includes('discrete')) return { category: 'Diodes', subcategory: c3, familyId: null };
+  if (c1lower.includes('switch')) return { category: 'Switches', subcategory: c3, familyId: null };
+  if (c1lower.includes('transformer')) return { category: 'Transformers', subcategory: c3, familyId: null };
+  if (c1lower.includes('sensor')) return { category: 'Sensors', subcategory: c3, familyId: null };
+  if (c1lower.includes('led') || c1lower.includes('optoelectronic')) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
   return { category: 'ICs', subcategory: c3, familyId: null };
 }
 
@@ -169,11 +188,13 @@ function classifyAtlasCategory(c1, c2, c3) {
 const SHARED_PARAMS = {
   '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
+  '主要封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+  '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
 };
 
 const FAMILY_PARAMS = {
@@ -864,6 +885,225 @@ const FAMILY_PARAMS = {
   },
 };
 
+// ── L2 Category Dictionaries (no logic tables, display-only) ─────────
+const L2_PARAMS = {
+  Microcontrollers: {
+    '内核': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    'core': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    'core processor': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    '内核位数': { attributeId: 'core_size', attributeName: 'Core Size', sortOrder: 2 },
+    'core size': { attributeId: 'core_size', attributeName: 'Core Size', sortOrder: 2 },
+    '主频': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    '最高主频': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    'clock speed': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    'speed': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    '程序存储器容量': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'flash容量': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'program memory size': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'flash size': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    '程序存储器类型': { attributeId: 'program_memory_type', attributeName: 'Program Memory Type', sortOrder: 5 },
+    'program memory type': { attributeId: 'program_memory_type', attributeName: 'Program Memory Type', sortOrder: 5 },
+    '片上ram': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'ram容量': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'ram size': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'sram': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'eeprom容量': { attributeId: 'eeprom_size', attributeName: 'EEPROM Size', sortOrder: 7 },
+    'eeprom size': { attributeId: 'eeprom_size', attributeName: 'EEPROM Size', sortOrder: 7 },
+    '连接方式': { attributeId: 'connectivity', attributeName: 'Connectivity', sortOrder: 8 },
+    'connectivity': { attributeId: 'connectivity', attributeName: 'Connectivity', sortOrder: 8 },
+    '外设': { attributeId: 'peripherals', attributeName: 'Peripherals', sortOrder: 9 },
+    'peripherals': { attributeId: 'peripherals', attributeName: 'Peripherals', sortOrder: 9 },
+    'io数量': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'io数': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'number of i/o': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'gpio': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    '数据转换器': { attributeId: 'data_converters', attributeName: 'Data Converters', sortOrder: 11 },
+    'data converters': { attributeId: 'data_converters', attributeName: 'Data Converters', sortOrder: 11 },
+    '振荡器类型': { attributeId: 'oscillator_type', attributeName: 'Oscillator Type', sortOrder: 12 },
+    'oscillator type': { attributeId: 'oscillator_type', attributeName: 'Oscillator Type', sortOrder: 12 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    'voltage - supply (vcc/vdd)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+    'package / case': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+  },
+  Memory: {
+    '存储器类型': { attributeId: 'memory_type', attributeName: 'Memory Type', sortOrder: 1 },
+    '类型': { attributeId: 'memory_type', attributeName: 'Memory Type', sortOrder: 1 },
+    '存储器格式': { attributeId: 'memory_format', attributeName: 'Memory Format', sortOrder: 2 },
+    '格式': { attributeId: 'memory_format', attributeName: 'Memory Format', sortOrder: 2 },
+    '技术': { attributeId: 'memory_technology', attributeName: 'Technology', sortOrder: 3 },
+    '存储容量': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    '容量': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    '存储器组织': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '架构': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '组织': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '接口': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    '接口类型': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    '时钟频率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '速率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '频率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '频率(mhz)': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'MHz', sortOrder: 7 },
+    '写周期时间': { attributeId: 'write_cycle_time', attributeName: 'Write Cycle Time', sortOrder: 8 },
+    '访问时间': { attributeId: 'access_time', attributeName: 'Access Time', sortOrder: 9 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Sensors: {
+    '传感器类型': { attributeId: 'sensor_type', attributeName: 'Sensor Type', sortOrder: 1 },
+    '测量': { attributeId: 'measuring', attributeName: 'Measuring', sortOrder: 2 },
+    '输出类型': { attributeId: 'output_type', attributeName: 'Output Type / Interface', sortOrder: 3 },
+    '精度': { attributeId: 'accuracy', attributeName: 'Accuracy', sortOrder: 5 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 6 },
+    '轴': { attributeId: 'axis', attributeName: 'Axis', sortOrder: 8 },
+    '测量范围': { attributeId: 'measurement_range', attributeName: 'Measurement Range', sortOrder: 9 },
+    '带宽': { attributeId: 'bandwidth', attributeName: 'Bandwidth', unit: 'Hz', sortOrder: 12 },
+    '响应时间': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 14 },
+    '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 16 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 18 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 19 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 19 },
+  },
+  Connectors: {
+    '连接器类型': { attributeId: 'connector_type', attributeName: 'Connector Type', sortOrder: 1 },
+    '触点类型': { attributeId: 'contact_type', attributeName: 'Contact Type', sortOrder: 2 },
+    '针脚数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    'pin数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '行数': { attributeId: 'rows', attributeName: 'Number of Rows', sortOrder: 4 },
+    '间距': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 7 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 10 },
+    '额定电压': { attributeId: 'voltage_rating', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 11 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+  },
+  'LEDs and Optoelectronics': {
+    '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    '波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    '主波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    '光强': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    '发光强度': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    '视角': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    '正向电压': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    '正向压降': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    '测试电流': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Switches: {
+    '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
+    '开关功能': { attributeId: 'switch_function', attributeName: 'Switch Function', sortOrder: 2 },
+    '触点额定值': { attributeId: 'contact_rating', attributeName: 'Contact Rating', sortOrder: 3 },
+    '按动力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    '操作力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 8 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+  },
+  'RF and Wireless': {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '协议': { attributeId: 'protocol', attributeName: 'Protocol', sortOrder: 3 },
+    '调制方式': { attributeId: 'modulation', attributeName: 'Modulation', sortOrder: 4 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 5 },
+    '数据速率': { attributeId: 'data_rate_max', attributeName: 'Data Rate (Max)', sortOrder: 8 },
+    '输出功率': { attributeId: 'output_power', attributeName: 'Output Power', sortOrder: 9 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 10 },
+    '增益': { attributeId: 'gain', attributeName: 'Gain', sortOrder: 11 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 15 },
+  },
+  'Power Supplies': {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '输出路数': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
+    '输入电压': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    '输出电压': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 6 },
+    '输出电流': { attributeId: 'output_current_max', attributeName: 'Output Current (Max)', unit: 'A', sortOrder: 7 },
+    '功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '隔离电压': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 9 },
+    '效率': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+  },
+  Transformers: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '变压器类型': { attributeId: 'transformer_type', attributeName: 'Transformer Type', sortOrder: 2 },
+    '匝比': { attributeId: 'turns_ratio', attributeName: 'Turns Ratio', sortOrder: 3 },
+    '初级电压': { attributeId: 'primary_voltage', attributeName: 'Primary Voltage', unit: 'V', sortOrder: 4 },
+    '隔离电压': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 5 },
+    '电感': { attributeId: 'inductance', attributeName: 'Inductance', sortOrder: 6 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 8 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 9 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 10 },
+  },
+  Filters: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '滤波器阶数': { attributeId: 'filter_order', attributeName: 'Filter Order', sortOrder: 2 },
+    '技术': { attributeId: 'technology', attributeName: 'Technology', sortOrder: 3 },
+    '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 4 },
+    '截止频率': { attributeId: 'cutoff_frequency', attributeName: 'Cutoff Frequency', unit: 'Hz', sortOrder: 5 },
+    '衰减': { attributeId: 'attenuation', attributeName: 'Attenuation', sortOrder: 6 },
+    '插入损耗': { attributeId: 'insertion_loss', attributeName: 'Insertion Loss', sortOrder: 7 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 8 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 9 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Processors: {
+    '可编程类型': { attributeId: 'programmable_type', attributeName: 'Programmable Type', sortOrder: 1 },
+    '逻辑单元数': { attributeId: 'logic_elements', attributeName: 'Logic Elements/Cells', sortOrder: 3 },
+    'ram容量': { attributeId: 'total_ram', attributeName: 'Total RAM Bits', sortOrder: 6 },
+    'io数量': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 7 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 9 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 9 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Audio: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 4 },
+    '频率范围': { attributeId: 'frequency_range', attributeName: 'Frequency Range', sortOrder: 5 },
+    '阻抗': { attributeId: 'impedance', attributeName: 'Impedance', unit: 'Ohm', sortOrder: 6 },
+    '声压级': { attributeId: 'spl', attributeName: 'Sound Pressure Level', sortOrder: 7 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 8 },
+    '输出类型': { attributeId: 'output_type', attributeName: 'Output Type', sortOrder: 10 },
+    '额定功率': { attributeId: 'power_rated', attributeName: 'Rated Power', unit: 'W', sortOrder: 11 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', sortOrder: 12 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 15 },
+  },
+  'Battery Products': {
+    '电池化学成分': { attributeId: 'chemistry', attributeName: 'Chemistry', sortOrder: 1 },
+    '电池尺寸': { attributeId: 'cell_size', attributeName: 'Cell Size', sortOrder: 2 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', unit: 'V', sortOrder: 3 },
+    '标称电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', unit: 'V', sortOrder: 3 },
+    '容量': { attributeId: 'capacity', attributeName: 'Capacity', sortOrder: 4 },
+  },
+  'Motors and Fans': {
+    '风扇类型': { attributeId: 'fan_type', attributeName: 'Fan Type', sortOrder: 1 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', sortOrder: 2 },
+    '功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 3 },
+    '转速': { attributeId: 'rpm', attributeName: 'Speed (RPM)', sortOrder: 4 },
+    '风量': { attributeId: 'airflow', attributeName: 'Air Flow', sortOrder: 5 },
+    '噪音': { attributeId: 'noise', attributeName: 'Noise Level', sortOrder: 7 },
+    '轴承类型': { attributeId: 'bearing_type', attributeName: 'Bearing Type', sortOrder: 8 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+  },
+};
+
 // Parameters to skip (metadata, not parametric)
 const SKIP_PARAMS = new Set([
   'description', '品牌', '原始制造商', '最小包装', '包装', '元件生命周期',
@@ -958,7 +1198,9 @@ function mapModel(model, manufacturerName, sourceFile) {
   };
 
   // Map parameters
-  const familyDict = classification.familyId ? FAMILY_PARAMS[classification.familyId] : undefined;
+  const familyDict = classification.familyId
+    ? FAMILY_PARAMS[classification.familyId]
+    : L2_PARAMS[classification.category];
   const gaiaDict = classification.familyId
     ? GAIA_FAMILIES[classification.familyId]
     : GAIA_L2[classification.category];

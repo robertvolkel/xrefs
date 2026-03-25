@@ -41,8 +41,12 @@ app/                          # Next.js App Router
   api/admin/atlas/dictionaries/ # Atlas dictionary override CRUD (GET list, POST create)
   api/admin/atlas/dictionaries/[overrideId]/ # Dictionary override update/delete (PATCH, DELETE)
   api/admin/taxonomy/        # Digikey category taxonomy with coverage
-  api/admin/overrides/rules/ # Rule override CRUD (GET list, POST create)
-  api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH, DELETE)
+  api/admin/overrides/rules/ # Rule override CRUD (GET list w/ admin names, POST create w/ previous_values)
+  api/admin/overrides/rules/[overrideId]/ # Rule override update/delete (PATCH deactivate-and-create, DELETE soft)
+  api/admin/overrides/rules/history/ # Rule override audit trail (GET full chain for family+attribute)
+  api/admin/overrides/rules/restore/ # Restore rule override to previous version (POST)
+  api/admin/overrides/rules/annotations/ # Rule annotations (GET family/rule, POST create)
+  api/admin/overrides/rules/annotations/[annotationId]/ # Annotation update/delete (PATCH, DELETE own)
   api/admin/overrides/context/ # Context override CRUD (GET list, POST create)
   api/admin/overrides/context/[overrideId]/ # Context override update/delete (PATCH, DELETE)
   api/admin/releases/        # Create release note (POST, admin-only)
@@ -146,6 +150,7 @@ lib/
   services/qcAnalyzer.ts      # Server-side aggregation of QC log snapshots for AI analysis
   services/overrideMerger.ts  # Fetches admin overrides from Supabase, merges onto TS base
   services/overrideValidator.ts # Validates override values against type constraints
+  services/overrideHistoryHelper.ts # Audit trail: previous_values snapshots + admin name resolution
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
   services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
   services/atlasGaiaDictionaries.ts # Gaia datasheet-extracted param mapping (parse, skip stems, dict exports)

@@ -113,6 +113,15 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ---
 
+### ~~Override audit history, revert & annotations~~ COMPLETED
+**Status:** Done — Decision #101
+
+Full audit trail for rule overrides: `previous_values` JSONB snapshot on every change, PATCH converted to deactivate-and-create (immutable history), history API with admin name resolution, version restore from any history entry. Plus admin annotation threads on rules (`rule_annotations` table) for pre-change discussion. LogicPanel shows red badge for rules with unresolved annotations. RuleOverrideDrawer has annotations section (auto-expands) and change history timeline with field-level diffs and restore buttons.
+
+**Remaining:** Same pattern not yet applied to context overrides.
+
+---
+
 ### Override preview: show scoring impact before saving
 **Files:** `components/admin/RuleOverrideDrawer.tsx`
 

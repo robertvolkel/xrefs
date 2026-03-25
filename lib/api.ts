@@ -563,6 +563,83 @@ export async function deleteAtlasDictOverride(id: string): Promise<boolean> {
   return res.ok;
 }
 
+// ── Atlas Explorer API ─────────────────────────────────────
+
+export interface AtlasExplorerResult {
+  id: string;
+  mpn: string;
+  manufacturer: string;
+  description: string | null;
+  category: string;
+  subcategory: string;
+  familyId: string | null;
+  familyName: string | null;
+  status: string;
+  parameterCount: number;
+}
+
+export interface AtlasExplorerDetail {
+  product: {
+    id: string;
+    mpn: string;
+    manufacturer: string;
+    description: string | null;
+    category: string;
+    subcategory: string;
+    familyId: string | null;
+    familyName: string | null;
+    status: string;
+    datasheetUrl: string | null;
+    package: string | null;
+  };
+  schemaComparison: {
+    familyId: string;
+    familyName: string;
+    totalRules: number;
+    matched: number;
+    coverage: number;
+    rules: {
+      attributeId: string;
+      attributeName: string;
+      weight: number;
+      logicType: string;
+      blockOnMissing: boolean;
+      sortOrder: number;
+      atlasValue: string | null;
+      atlasNumericValue: number | null;
+      atlasUnit: string | null;
+    }[];
+  } | null;
+  l2SchemaComparison: {
+    category: string;
+    totalFields: number;
+    matched: number;
+    coverage: number;
+    fields: {
+      attributeId: string;
+      attributeName: string;
+      sortOrder: number;
+      atlasValue: string | null;
+      atlasUnit: string | null;
+    }[];
+  } | null;
+  atlasAttributes: { attributeId: string; value: string; numericValue: number | null; unit: string | null }[];
+  extraAttributes: { attributeId: string; value: string; numericValue: number | null; unit: string | null }[];
+  rawParameters: { name: string; value: string }[] | null;
+}
+
+export async function searchAtlasExplorer(query: string): Promise<{ results: AtlasExplorerResult[]; total: number; capped: boolean }> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer?q=${encodeURIComponent(query)}`);
+  if (!res.ok) throw new Error('Atlas explorer search failed');
+  return res.json();
+}
+
+export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerDetail> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer/${id}`);
+  if (!res.ok) throw new Error('Atlas explorer detail failed');
+  return res.json();
+}
+
 // ── Release Notes API ──────────────────────────────────────
 
 export async function getReleaseNotes(): Promise<ReleaseNote[]> {

@@ -23,12 +23,12 @@ import AtlasPanel from './AtlasPanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import QcFeedbackTab from './QcFeedbackTab';
 import QcLogsTab from './QcLogsTab';
-import { getAtlasDictionaryFamilyIds } from '@/lib/services/atlasMapper';
+import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
 // --- Static data (computed once at module level) ---
 
 const allTables = getAllLogicTables();
-const atlasDictFamilyIds = new Set(getAtlasDictionaryFamilyIds());
+const atlasDictFamilyIds = new Set([...getAtlasDictionaryFamilyIds(), ...getAtlasL2DictionaryCategories()]);
 const l3Categories = [...new Set(allTables.map((t) => t.category))];
 
 // L2 data
@@ -151,7 +151,7 @@ function AdminShellInner() {
   const isQcSection = QC_SECTIONS.includes(activeSection);
 
   // Determine which categories to show based on active section
-  const categoryEntries = activeSection === 'param-mappings'
+  const categoryEntries = (activeSection === 'param-mappings' || activeSection === 'atlas-dictionaries')
     ? paramMappingCategoryEntries
     : l3OnlyCategoryEntries;
 
@@ -180,8 +180,8 @@ function AdminShellInner() {
     (section: AdminSection) => {
       setActiveSection(section);
       router.replace(`/admin?section=${section}`, { scroll: false });
-      // If switching to a non-param-mappings section while L2 is selected, reset to L3
-      if (section !== 'param-mappings' && isL2Category(selectedCategory)) {
+      // If switching to a section that doesn't support L2 while L2 is selected, reset to L3
+      if (section !== 'param-mappings' && section !== 'atlas-dictionaries' && isL2Category(selectedCategory)) {
         setSelectedCategory(l3Categories[0] ?? '');
         setSelectedFamilyId(allTables[0]?.familyId ?? '');
       }
@@ -298,7 +298,9 @@ function AdminShellInner() {
             {activeSection === 'context' && <ContextPanel table={selectedTable} />}
             {activeSection === 'taxonomy' && <TaxonomyPanel />}
             {activeSection === 'atlas' && <AtlasPanel />}
-            {activeSection === 'atlas-dictionaries' && <AtlasDictionaryPanel table={selectedTable} />}
+            {activeSection === 'atlas-dictionaries' && (
+              <AtlasDictionaryPanel table={selectedTable} l2Category={inL2Mode ? selectedCategory : undefined} />
+            )}
           </Box>
         )}
       </Box>

@@ -2640,3 +2640,44 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **Modified files:** `lib/services/atlasMapper.ts` (import gaia module, gaia preprocessing in `mapAtlasModel()` loop with suffix preference + dedup), `scripts/atlas-ingest.mjs` (load shared JSON, inline `parseGaiaParam()`/`parseGaiaValue()`, mirror gaia-first logic in `mapModel()`).
 
 **Also in this session:** Atlas admin panel improvements — all manufacturers now expandable (not just scorable), breakdown table shows "Scorable" column, top-level columns are sortable. Files: `app/api/admin/atlas/route.ts`, `components/admin/AtlasPanel.tsx`.
+
+## Decision #101 — Rule Override Audit History, Revert & Annotations (Mar 2026)
+
+**Decision:** Add full audit trail, version restore, and admin annotation threads to the rule override system.
+
+**Problem:** When admins changed logic table rules via the override system (Decision #60), there was no way to see the history of changes, no field-level diffs ("weight changed from 5 to 8"), and no way to restore a previous version. The PATCH endpoint modified records in-place, destroying previous state. Additionally, admins had no way to leave notes on rules for other admins — they had to commit to a change or communicate out-of-band.
+
+**Architecture — Audit Trail:**
+- Added `previous_values JSONB` column to `rule_overrides` table. Each override record captures a snapshot of the rule state BEFORE the change was applied (computed at write time from the active override or TS base).
+- Converted PATCH to a **deactivate-and-create** pattern: every edit now deactivates the current record and inserts a new immutable record with `previous_values`. No more in-place mutations.
+- POST also captures `previous_values` before deactivating the existing override.
+- The chain of deactivated records + `previous_values` forms a complete, diffable history.
+- Admin names resolved via batch `profiles` lookup (`resolveAdminNames()` helper).
+
+**Architecture — History & Restore:**
+- `GET /api/admin/overrides/rules/history?family_id=X&attribute_id=Y` — Returns ALL records (active + inactive) with admin names + the TS base rule for reference.
+- `POST /api/admin/overrides/rules/restore` — Creates a new active override from any history entry's field values, with its own `previous_values` snapshot.
+- "Restore to TS base" uses the existing DELETE (soft-delete) on the active override.
+
+**Architecture — Annotations:**
+- New `rule_annotations` Supabase table — flat comment list keyed on `family_id + attribute_id` (not on override records). Admins can discuss any rule whether or not it's been overridden.
+- Comments can be resolved/unresolved (like GitHub review comments). Own comments can be edited or hard-deleted. Any admin can resolve.
+- `GET/POST /api/admin/overrides/rules/annotations` (family-level or rule-level), `PATCH/DELETE .../annotations/[annotationId]`.
+
+**UI — LogicPanel:**
+- Override tooltip enhanced: now shows admin name + date + reason (was just action + reason).
+- Red circle badge with white count on rules with unresolved annotations.
+- Single API call fetches all annotations for the family (not N calls per rule).
+
+**UI — RuleOverrideDrawer:**
+- **Annotations section** (auto-expands if unresolved annotations exist): comment input at top, unresolved list below, resolved comments collapsed with toggle.
+- **Change History section** (collapsible): vertical timeline with field-level diff chips (`Weight: 5 → 8`), admin names, relative dates, restore buttons. TS base shown as anchor entry at bottom.
+- Restore flow: click restore → confirm dialog with reason → new override created from historical values.
+
+**Pre-existing overrides:** Records created before this feature have `previous_values = NULL`. The history timeline shows "Pre-audit change" for these entries.
+
+**New files:** `lib/services/overrideHistoryHelper.ts`, `app/api/admin/overrides/rules/history/route.ts`, `app/api/admin/overrides/rules/restore/route.ts`, `app/api/admin/overrides/rules/annotations/route.ts`, `app/api/admin/overrides/rules/annotations/[annotationId]/route.ts`.
+
+**Modified files:** `scripts/supabase-overrides-schema.sql`, `lib/types.ts`, `lib/api.ts`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `components/admin/LogicPanel.tsx`, `components/admin/RuleOverrideDrawer.tsx`, `locales/en.json`, `locales/zh-CN.json`.
+
+**Future:** Same pattern can be applied to `context_overrides` (same schema + API approach). Override preview (scoring impact before saving) and QC feedback→override workflow remain as P1 backlog items.

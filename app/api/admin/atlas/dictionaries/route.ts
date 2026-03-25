@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { AtlasDictOverrideRecord } from '@/lib/types';
 import {
   getAtlasParamDictionary,
+  getAtlasL2ParamDictionary,
   getSharedParamDictionary,
   getSkipParams,
   applyDictOverrides,
@@ -11,30 +12,37 @@ import {
 } from '@/lib/services/atlasMapper';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 
-/** GET /api/admin/atlas/dictionaries?familyId=B5 */
+/** GET /api/admin/atlas/dictionaries?familyId=B5  OR  ?category=Microcontrollers */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
-    const familyId = new URL(request.url).searchParams.get('familyId');
-    if (!familyId) {
+    const url = new URL(request.url);
+    const familyId = url.searchParams.get('familyId');
+    const category = url.searchParams.get('category');
+
+    if (!familyId && !category) {
       return NextResponse.json(
-        { success: false, error: 'familyId query parameter required' },
+        { success: false, error: 'familyId or category query parameter required' },
         { status: 400 },
       );
     }
 
-    const baseDict = getAtlasParamDictionary(familyId);
+    // L3 family dict or L2 category dict
+    const baseDict = familyId
+      ? getAtlasParamDictionary(familyId)
+      : getAtlasL2ParamDictionary(category!);
+    const dictKey = familyId ?? category!;
     const sharedDict = getSharedParamDictionary();
     const skipSet = getSkipParams();
 
-    // Fetch active overrides from Supabase
+    // Fetch active overrides from Supabase (keyed by dictKey = familyId or category)
     const supabase = await createClient();
     const { data: overrideRows } = await supabase
       .from('atlas_dictionary_overrides')
       .select('*')
-      .eq('family_id', familyId)
+      .eq('family_id', dictKey)
       .eq('is_active', true)
       .order('created_at', { ascending: false });
 
@@ -77,11 +85,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Fetch unmapped Atlas params for this family from atlas_products
     let unmapped: { paramName: string; count: number }[] = [];
     try {
-      const { data: products } = await supabase
+      let query = supabase
         .from('atlas_products')
         .select('raw_parameters')
-        .eq('family_id', familyId)
         .limit(500);
+      if (familyId) {
+        query = query.eq('family_id', familyId);
+      } else {
+        query = query.eq('category', category!);
+      }
+      const { data: products } = await query;
 
       if (products && products.length > 0) {
         const paramCounts = new Map<string, number>();
@@ -116,7 +129,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       success: true,
       data: {
-        familyId,
+        familyId: dictKey,
         entries: entries.sort((a, b) => a.sortOrder - b.sortOrder),
         sharedEntries: sharedEntries.sort((a, b) => a.sortOrder - b.sortOrder),
         unmapped,
@@ -219,7 +232,8 @@ function validateDictOverride(body: Record<string, unknown>): { valid: boolean; 
     return { valid: false, error: 'changeReason is required' };
   }
 
-  const baseDict = getAtlasParamDictionary(body.familyId as string);
+  const fid = body.familyId as string;
+  const baseDict = getAtlasParamDictionary(fid) ?? getAtlasL2ParamDictionary(fid);
   const paramName = (body.paramName as string).toLowerCase();
   const existsInBase = baseDict?.[paramName] !== undefined;
 

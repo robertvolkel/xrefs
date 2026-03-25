@@ -413,7 +413,18 @@
     "coveragePIO": "PIO",
     "coverageSummary": "{{products}} products · {{coverage}}% avg coverage · {{rules}} rules",
     "productsCount": "{{count}} products",
-    "productsOfTotal": "{{covered}} of {{total}} products"
+    "productsOfTotal": "{{covered}} of {{total}} products",
+    "atlasOverview": "Overview",
+    "atlasSearch": "Search",
+    "atlasSearchHint": "Search Atlas products by MPN or manufacturer",
+    "atlasNoResults": "No Atlas products found for '{{query}}'",
+    "atlasNoFamily": "No L3 family assigned — schema comparison unavailable.",
+    "atlasSchemaComparison": "Schema Comparison",
+    "atlasExtraAttrs": "{{count}} additional attributes not in schema",
+    "atlasRawParams": "{{count}} original (unmapped) parameters",
+    "atlasCoverage": "{{matched}} of {{total}} schema attributes present ({{pct}}%)",
+    "atlasL2Category": "L2 Schema: {{category}}",
+    "atlasL2Coverage": "{{matched}} of {{total}} L2 attributes present ({{pct}}%) — {{category}}"
   },
   "adminOverride": {
     "addRule": "Add Rule",
