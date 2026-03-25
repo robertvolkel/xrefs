@@ -206,7 +206,7 @@ export default function ComparisonView({
             </Stack>
             <Typography
               variant="body2"
-              color="text.secondary"
+              color="text.primary"
               sx={{
                 fontSize: '0.78rem',
                 ...(onManufacturerClick && {

@@ -102,7 +102,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   </Box>
                 )}
               </Stack>
-              <Typography variant="body2" color="text.secondary" noWrap component="div">
+              <Typography variant="body2" color="text.primary" noWrap component="div">
                 {onManufacturerClick ? (
                   <Box
                     component="span"

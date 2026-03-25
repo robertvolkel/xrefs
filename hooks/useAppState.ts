@@ -136,6 +136,48 @@ export function useAppState() {
     setState((prev) => ({ ...prev, statusText: text }));
   }, []);
 
+  /** Background Mouser enrichment — merges pricing/lifecycle into displayed recs */
+  const triggerMouserEnrichment = useCallback(
+    (recs: XrefRecommendation[], signal: AbortSignal) => {
+      if (recs.length === 0) return;
+      const mpns = recs.map(r => r.part.mpn);
+      enrichWithMouserBatch(mpns).then((mouserData) => {
+        if (signal.aborted || Object.keys(mouserData).length === 0) return;
+        setState((prev) => {
+          const enriched = prev.recommendations.map(rec => {
+            const data = mouserData[rec.part.mpn.toLowerCase()];
+            if (!data) return rec;
+            // Build Digikey quote from flat fields if supplierQuotes is empty
+            const existingQuotes = rec.part.supplierQuotes && rec.part.supplierQuotes.length > 0
+              ? rec.part.supplierQuotes
+              : (rec.part.unitPrice != null || rec.part.quantityAvailable != null)
+                ? [{
+                    supplier: 'digikey' as const,
+                    unitPrice: rec.part.unitPrice,
+                    quantityAvailable: rec.part.quantityAvailable,
+                    priceBreaks: rec.part.unitPrice != null
+                      ? [{ quantity: 1, unitPrice: rec.part.unitPrice, currency: 'USD' }]
+                      : [],
+                    fetchedAt: new Date().toISOString(),
+                  }]
+                : [];
+            return {
+              ...rec,
+              part: {
+                ...rec.part,
+                supplierQuotes: [...existingQuotes, data.quote],
+                lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
+                complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
+              },
+            };
+          });
+          return { ...prev, recommendations: enriched, allRecommendations: enriched };
+        });
+      });
+    },
+    []
+  );
+
   /**
    * Show recommendations immediately, then fire the LLM assessment in the background.
    * This avoids blocking the recommendations panel by 3-8s while the orchestrator responds.
@@ -179,32 +221,12 @@ export function useAppState() {
           });
 
         // Background: Mouser candidate enrichment (pricing/lifecycle)
-        const recMpns = recs.map(r => r.part.mpn);
-        enrichWithMouserBatch(recMpns).then((mouserData) => {
-          if (signal.aborted || Object.keys(mouserData).length === 0) return;
-          setState((prev) => {
-            const enriched = prev.recommendations.map(rec => {
-              const data = mouserData[rec.part.mpn.toLowerCase()];
-              if (!data) return rec;
-              const existingQuotes = rec.part.supplierQuotes ?? [];
-              return {
-                ...rec,
-                part: {
-                  ...rec.part,
-                  supplierQuotes: [...existingQuotes, data.quote],
-                  lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
-                  complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
-                },
-              };
-            });
-            return { ...prev, recommendations: enriched, allRecommendations: enriched };
-          });
-        });
+        triggerMouserEnrichment(recs, signal);
       } else {
         setStatus('');
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, triggerMouserEnrichment]
   );
 
   // ============================================================
@@ -470,6 +492,7 @@ export function useAppState() {
             recommendations: recs,
             allRecommendations: recs,
           }));
+          triggerMouserEnrichment(recs, signal);
         } else {
           // Orchestrator didn't return recs — try direct API (pass sourceAttrs to skip re-fetch)
           setStatus('Evaluating candidates against replacement rules...');
@@ -488,6 +511,7 @@ export function useAppState() {
             recommendations: fallbackRecs,
             allRecommendations: fallbackRecs,
           }));
+          triggerMouserEnrichment(fallbackRecs, signal);
         }
       } else {
         // Orchestrator failed entirely — fall back to direct recs
@@ -508,9 +532,10 @@ export function useAppState() {
           recommendations: recs,
           allRecommendations: recs,
         }));
+        triggerMouserEnrichment(recs, signal);
       }
     },
-    [addMessage, setStatus, showRecsAndDeferAssessment]
+    [addMessage, setStatus, showRecsAndDeferAssessment, triggerMouserEnrichment]
   );
 
   // ============================================================
@@ -563,6 +588,7 @@ export function useAppState() {
   /** Load attributes + recommendations via direct API calls */
   const loadAttributesAndRecommendations = useCallback(
     async (part: PartSummary) => {
+      const signal = freshAbort();
       try {
         setStatus('Fetching specifications from Digikey...');
         const attributes = await getPartAttributes(part.mpn);
@@ -651,6 +677,7 @@ export function useAppState() {
               `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
             );
             setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            triggerMouserEnrichment(recs, signal);
             return;
           }
         }
@@ -680,13 +707,14 @@ export function useAppState() {
           recommendations: recs,
           allRecommendations: recs,
         }));
+        triggerMouserEnrichment(recs, signal);
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while fetching part details. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, triggerMouserEnrichment]
   );
 
   const handleConfirmDeterministic = useCallback(

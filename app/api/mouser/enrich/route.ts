@@ -24,22 +24,22 @@ export async function POST(request: NextRequest) {
     if (authError) return authError;
 
     if (!isMouserConfigured()) {
-      return NextResponse.json({ error: 'Mouser API not configured' }, { status: 503 });
+      return NextResponse.json({ success: false, error: 'Mouser API not configured' }, { status: 503 });
     }
 
     if (!hasMouserBudget()) {
-      return NextResponse.json({ error: 'Mouser daily API limit reached' }, { status: 429 });
+      return NextResponse.json({ success: false, error: 'Mouser daily API limit reached' }, { status: 429 });
     }
 
     const body = await request.json();
     const mpns: string[] = body.mpns;
 
     if (!Array.isArray(mpns) || mpns.length === 0) {
-      return NextResponse.json({ error: 'mpns must be a non-empty array' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'mpns must be a non-empty array' }, { status: 400 });
     }
 
     if (mpns.length > 50) {
-      return NextResponse.json({ error: 'Maximum 50 MPNs per request' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'Maximum 50 MPNs per request' }, { status: 400 });
     }
 
     const products = await getMouserProductsBatch(mpns, user?.id);
@@ -53,8 +53,8 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    return NextResponse.json({ results });
+    return NextResponse.json({ success: true, data: { results } });
   } catch {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }

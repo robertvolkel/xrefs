@@ -84,7 +84,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
             </Stack>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
+            <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
               {attributes.part.manufacturer}
             </Typography>
             {/* Pill segment control */}

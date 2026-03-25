@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Box, Checkbox, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
+import { Box, Checkbox, Chip, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
@@ -27,29 +27,19 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   }, [recommendations, preferredMpn]);
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
-  const [selectedSource, setSelectedSource] = useState('');
+  const [showCnOnly, setShowCnOnly] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
 
-  // Compute available data sources for filter
-  const sourceCounts = useMemo(() => {
-    const counts = { digikey: 0, atlas: 0, partsio: 0 };
-    for (const r of sorted) {
-      if (r.dataSource === 'digikey') counts.digikey++;
-      else if (r.dataSource === 'atlas') counts.atlas++;
-      else if (r.dataSource === 'partsio') counts.partsio++;
-    }
-    return counts;
-  }, [sorted]);
-  const hasMultipleSources = [sourceCounts.digikey, sourceCounts.atlas, sourceCounts.partsio].filter(c => c > 0).length > 1;
+  const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
 
   const activeCount = sorted.filter(r => r.part.status === 'Active').length;
   const hiddenCount = sorted.length - activeCount;
 
   const filtered = sorted
     .filter(r => !selectedMfr || r.part.manufacturer === selectedMfr)
-    .filter(r => !selectedSource || r.dataSource === selectedSource);
+    .filter(r => !showCnOnly || r.dataSource === 'atlas');
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -136,26 +126,21 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             <MenuItem key={mfr} value={mfr} sx={{ fontSize: '0.78rem' }}>{mfr}</MenuItem>
           ))}
         </Select>
-        {hasMultipleSources && (
-          <Select
-            value={selectedSource}
-            onChange={(e) => setSelectedSource(e.target.value)}
-            displayEmpty
-            variant="outlined"
+        {cnCount > 0 && (
+          <Chip
+            label={`CN Parts (${cnCount})`}
             size="small"
+            variant={showCnOnly ? 'filled' : 'outlined'}
+            onClick={() => setShowCnOnly(prev => !prev)}
             sx={{
-              fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
               height: 22,
-              minHeight: 22,
-              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
-              '& .MuiSelect-select': { py: '1px', px: '8px' },
+              fontSize: '0.72rem',
+              cursor: 'pointer',
+              ...(showCnOnly
+                ? { bgcolor: 'warning.dark', color: 'warning.contrastText' }
+                : { borderColor: 'divider' }),
             }}
-          >
-            <MenuItem value="" sx={{ fontSize: '0.78rem' }}>All Sources</MenuItem>
-            {sourceCounts.digikey > 0 && <MenuItem value="digikey" sx={{ fontSize: '0.78rem' }}>Digikey ({sourceCounts.digikey})</MenuItem>}
-            {sourceCounts.atlas > 0 && <MenuItem value="atlas" sx={{ fontSize: '0.78rem' }}>Atlas ({sourceCounts.atlas})</MenuItem>}
-            {sourceCounts.partsio > 0 && <MenuItem value="partsio" sx={{ fontSize: '0.78rem' }}>Parts.io ({sourceCounts.partsio})</MenuItem>}
-          </Select>
+          />
         )}
         <Box sx={{ flex: 1 }} />
         <FormControlLabel
