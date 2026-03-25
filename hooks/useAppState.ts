@@ -523,7 +523,7 @@ export function useAppState() {
         addMessage('user', query);
         setState((prev) => ({ ...prev, phase: 'searching' }));
       }
-      setStatus(`Searching Digikey for "${query}"...`);
+      setStatus(`Searching for "${query}"...`);
 
       try {
         const result = await searchParts(query);

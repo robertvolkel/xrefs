@@ -442,6 +442,119 @@ export async function getMouserProductsBatch(
   return results;
 }
 
+// ============================================================
+// SEARCH (MPN prefix / BeginsWith)
+// ============================================================
+
+import type { SearchResult, PartSummary, ComponentCategory, PartStatus } from '@/lib/types';
+
+/** Map Mouser Category string → ComponentCategory (keyword-based, like digikeyMapper) */
+function mapMouserCategory(category: string): ComponentCategory {
+  const lower = category.toLowerCase();
+  if (lower.includes('capacitor')) return 'Capacitors';
+  if (lower.includes('resistor')) return 'Resistors';
+  if (lower.includes('inductor')) return 'Inductors';
+  if (lower.includes('thyristor') || lower.includes('scr') || lower.includes('triac')) return 'Thyristors';
+  if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
+  if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('igbt')) return 'Transistors';
+  if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
+  if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
+  if (lower.includes('voltage reference')) return 'Voltage References';
+  if (lower.includes('voltage regulator') || lower.includes('ldo') || lower.includes('dc-dc') || lower.includes('dc dc')) return 'Voltage Regulators';
+  if (lower.includes('gate driver')) return 'Gate Drivers';
+  if (lower.includes('op amp') || lower.includes('comparator') || lower.includes('amplifier')) return 'Amplifiers';
+  if (lower.includes('digital to analog') || lower.includes('dac')) return 'DACs';
+  if (lower.includes('analog to digital') || lower.includes('adc')) return 'ADCs';
+  if (lower.includes('optocoupler') || lower.includes('optoisolator')) return 'Optocouplers';
+  if (lower.includes('crystal') && !lower.includes('oscillator')) return 'Crystals';
+  if (lower.includes('oscillator') || lower.includes('timer')) return 'Timers and Oscillators';
+  if (lower.includes('relay')) return 'Relays';
+  if (lower.includes('microcontroller')) return 'Microcontrollers';
+  if (lower.includes('memory') || lower.includes('eeprom')) return 'Memory';
+  if (lower.includes('sensor')) return 'Sensors';
+  if (lower.includes('led') || lower.includes('optoelectronic')) return 'LEDs and Optoelectronics';
+  if (lower.includes('switch')) return 'Switches';
+  if (lower.includes('filter')) return 'Filters';
+  return 'ICs';
+}
+
+/** Map Mouser lifecycle → PartStatus */
+function mapMouserStatus(product: MouserProduct): PartStatus {
+  if (product.IsDiscontinued === 'true' || product.IsDiscontinued === 'True') return 'Discontinued';
+  const lc = (product.LifecycleStatus || '').toLowerCase();
+  if (lc.includes('obsolete')) return 'Obsolete';
+  if (lc.includes('end of life') || lc === 'eol') return 'NRND';
+  if (lc.includes('nrnd') || lc.includes('not recommended')) return 'NRND';
+  if (lc.includes('last time buy')) return 'LastTimeBuy';
+  return 'Active';
+}
+
+/** Convert a Mouser product to a lightweight PartSummary for search results */
+export function mapMouserProductToPartSummary(product: MouserProduct): PartSummary {
+  return {
+    mpn: product.ManufacturerPartNumber,
+    manufacturer: product.Manufacturer || 'Unknown',
+    description: product.Description || '',
+    category: mapMouserCategory(product.Category || ''),
+    status: mapMouserStatus(product),
+    dataSource: 'mouser',
+  };
+}
+
+/**
+ * Search Mouser by MPN prefix (BeginsWith).
+ * Returns up to 10 unique MPNs.
+ * Respects rate limiter. Returns empty on budget exhaustion or error.
+ */
+export async function searchMouserProducts(query: string): Promise<SearchResult> {
+  if (!isMouserConfigured() || !hasMouserBudget() || query.trim().length < 3) {
+    return { type: 'none', matches: [] };
+  }
+
+  try {
+    const hasSlot = await acquireRateSlot();
+    if (!hasSlot) return { type: 'none', matches: [] };
+
+    const apiKey = process.env.MOUSER_API_KEY!;
+    const url = `${BASE_URL}?apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        SearchByPartRequest: {
+          mouserPartNumber: query.trim(),
+          partSearchOptions: 'BeginsWith',
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn(`[mouser] Search failed: HTTP ${res.status}`);
+      return { type: 'none', matches: [] };
+    }
+
+    const data: MouserSearchResponse = await res.json();
+    const parts = data.SearchResults?.Parts ?? [];
+
+    // Dedup by manufacturer MPN (Mouser may return packaging variants)
+    const seen = new Set<string>();
+    const matches: PartSummary[] = [];
+    for (const product of parts) {
+      const key = product.ManufacturerPartNumber.toLowerCase();
+      if (seen.has(key) || matches.length >= 10) continue;
+      seen.add(key);
+      matches.push(mapMouserProductToPartSummary(product));
+    }
+
+    if (matches.length === 0) return { type: 'none', matches: [] };
+    return { type: matches.length === 1 ? 'single' : 'multiple', matches };
+  } catch (error) {
+    console.warn('[mouser] Search failed:', error);
+    return { type: 'none', matches: [] };
+  }
+}
+
 /**
  * Extract manufacturer MPN from Mouser's SuggestedReplacement field.
  * Mouser format: "595-SN74HCT04N" (numeric prefix + hyphen + manufacturer MPN).

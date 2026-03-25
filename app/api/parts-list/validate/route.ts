@@ -27,7 +27,7 @@ async function processItem(
       ? `${item.manufacturer} ${query}`
       : query;
 
-    const searchResult = await searchParts(searchQuery, currency, userId);
+    const searchResult = await searchParts(searchQuery, currency, userId, { skipMouser: true });
 
     if (searchResult.type === 'none') {
       return { rowIndex: item.rowIndex, status: 'not-found' };

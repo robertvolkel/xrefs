@@ -1,6 +1,8 @@
 'use client';
+import { useState, useMemo } from 'react';
 import {
   Box,
+  Link,
   Typography,
   Table,
   TableBody,
@@ -32,6 +34,20 @@ interface AttributesPanelProps {
 export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
+  const [showExtras, setShowExtras] = useState(false);
+
+  // Split Atlas parameters into recognized (in schema) and extras (unrecognized)
+  const { recognized, extras } = useMemo(() => {
+    if (!attributes?.parameters) return { recognized: [], extras: [] };
+    const sorted = [...attributes.parameters].sort((a, b) => a.sortOrder - b.sortOrder);
+    // Only split for Atlas-sourced data that has the recognized flag
+    const hasRecognizedFlag = sorted.some((p) => p.recognized !== undefined);
+    if (!hasRecognizedFlag) return { recognized: sorted, extras: [] };
+    return {
+      recognized: sorted.filter((p) => p.recognized !== false),
+      extras: sorted.filter((p) => p.recognized === false),
+    };
+  }, [attributes?.parameters]);
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — taller to include pill bar */}
@@ -120,9 +136,8 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                         </TableCell>
                       </TableRow>
                     ))
-                  : attributes?.parameters
-                      .sort((a, b) => a.sortOrder - b.sortOrder)
-                      .map((param) => (
+                  : <>
+                      {recognized.map((param) => (
                         <TableRow key={param.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
                           <TableCell
                             sx={{
@@ -154,6 +169,48 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                           </TableCell>
                         </TableRow>
                       ))}
+                      {/* Extra unrecognized attributes toggle */}
+                      {extras.length > 0 && (
+                        <TableRow>
+                          <TableCell colSpan={2} sx={{ borderColor: 'divider', py: 0.5, textAlign: 'right' }}>
+                            <Link
+                              component="button"
+                              variant="caption"
+                              onClick={() => setShowExtras(!showExtras)}
+                              sx={{ color: 'text.disabled', fontSize: '0.7rem', textDecoration: 'none', '&:hover': { color: 'text.secondary' } }}
+                            >
+                              {showExtras ? 'Less' : `More (${extras.length})`}
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {showExtras && extras.map((param) => (
+                        <TableRow key={param.parameterId} sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                          <TableCell
+                            sx={{
+                              color: 'text.disabled',
+                              fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                              borderColor: 'divider',
+                              width: '50%',
+                              py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                            }}
+                          >
+                            {param.parameterName}
+                          </TableCell>
+                          <TableCell
+                            sx={{
+                              fontFamily: 'monospace',
+                              fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+                              borderColor: 'divider',
+                              color: 'text.disabled',
+                              py: { xs: ROW_PY_MOBILE, md: ROW_PY },
+                            }}
+                          >
+                            {param.value}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </>}
               </TableBody>
             </Table>
           </TableContainer>

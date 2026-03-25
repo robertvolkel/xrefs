@@ -83,7 +83,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }));
 
     // Fetch unmapped Atlas params for this family from atlas_products
-    let unmapped: { paramName: string; count: number }[] = [];
+    let unmapped: { paramName: string; count: number; samples: string[] }[] = [];
     try {
       let query = supabase
         .from('atlas_products')
@@ -98,6 +98,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       if (products && products.length > 0) {
         const paramCounts = new Map<string, number>();
+        const paramSamples = new Map<string, string[]>();
         const allMappedKeys = new Set([
           ...Object.keys(mergedDict),
           ...Object.keys(sharedDict),
@@ -108,15 +109,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           if (!rawParams) continue;
           for (const p of rawParams) {
             const lower = p.name.toLowerCase().trim();
-            if (skipSet.has(p.name) || skipSet.has(lower)) continue;
+            // Dictionary entries take priority over skip list
+            if (!allMappedKeys.has(lower) && (skipSet.has(p.name) || skipSet.has(lower))) continue;
             if (lower === '状态' || lower === 'status' || lower === '零件状态') continue;
             if (allMappedKeys.has(lower)) continue;
             paramCounts.set(p.name, (paramCounts.get(p.name) ?? 0) + 1);
+            // Capture up to 3 unique sample values
+            const existing = paramSamples.get(p.name) ?? [];
+            if (existing.length < 3 && p.value && !existing.includes(p.value)) {
+              paramSamples.set(p.name, [...existing, p.value]);
+            }
           }
         }
 
         unmapped = Array.from(paramCounts.entries())
-          .map(([paramName, count]) => ({ paramName, count }))
+          .map(([paramName, count]) => ({
+            paramName,
+            count,
+            samples: paramSamples.get(paramName) ?? [],
+          }))
           .sort((a, b) => b.count - a.count);
       }
     } catch {

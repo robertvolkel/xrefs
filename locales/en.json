@@ -421,7 +421,7 @@
     "atlasNoFamily": "No L3 family assigned — schema comparison unavailable.",
     "atlasSchemaComparison": "Schema Comparison",
     "atlasExtraAttrs": "{{count}} additional attributes not in schema",
-    "atlasRawParams": "{{count}} original (unmapped) parameters",
+    "atlasRawParams": "{{count}} original Atlas parameters",
     "atlasCoverage": "{{matched}} of {{total}} schema attributes present ({{pct}}%)",
     "atlasL2Category": "L2 Schema: {{category}}",
     "atlasL2Coverage": "{{matched}} of {{total}} L2 attributes present ({{pct}}%) — {{category}}"

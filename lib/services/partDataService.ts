@@ -20,9 +20,9 @@ import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
-import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns } from './partsioClient';
+import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
-import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn } from './mouserClient';
+import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
 
 // ============================================================
@@ -58,13 +58,44 @@ function isDigikeyConfigured(): boolean {
 // SEARCH
 // ============================================================
 
-export async function searchParts(query: string, currency?: string, userId?: string): Promise<SearchResult> {
-  // Search Digikey + Atlas in parallel, merge results
-  const [digikeyResult, atlasResult] = await Promise.all([
+const SEARCH_RESULT_CAP = 50;
+
+/**
+ * Lightweight heuristic: does the query look like a part number (MPN) vs a description?
+ * Used to decide whether to call MPN-prefix-only APIs (Parts.io, Mouser).
+ */
+export function looksLikeMpn(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return false;
+  const words = trimmed.split(/\s+/);
+  // 3+ words is almost certainly a description
+  if (words.length >= 3) return false;
+  // Contains common component description terms
+  const descTerms = /\b(capacitor|resistor|inductor|diode|transistor|mosfet|regulator|amplifier|sensor|relay|fuse|crystal|connector|led|switch|filter|oscillator|converter|driver|voltage|current|power|audio|memory|microcontroller)\b/i;
+  if (descTerms.test(trimmed)) return false;
+  // Single word with typical MPN characters (alphanumeric + dashes/dots)
+  if (words.length === 1) return /^[A-Za-z0-9]/.test(trimmed);
+  // 2 words — could be "MFR MPN" (e.g., "TDK CGA5L1X7R2J104K160AC") — allow it
+  return true;
+}
+
+export async function searchParts(
+  query: string,
+  currency?: string,
+  userId?: string,
+  options?: { skipMouser?: boolean },
+): Promise<SearchResult> {
+  const trimmed = query.trim();
+  const isMpn = looksLikeMpn(trimmed);
+  const longEnough = trimmed.length >= 3;
+
+  // Always search: Digikey (keyword search handles both MPNs and descriptions) + Atlas
+  const searches: Promise<SearchResult>[] = [
+    // Digikey
     (async (): Promise<SearchResult> => {
       if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
       try {
-        const response = await keywordSearch(query, { limit: 10 }, currency, userId);
+        const response = await keywordSearch(trimmed, { limit: 10 }, currency, userId);
         return mapKeywordResponseToSearchResult(response);
       } catch (error) {
         console.warn('Digikey search failed:', error);
@@ -72,25 +103,36 @@ export async function searchParts(query: string, currency?: string, userId?: str
         return { type: 'none', matches: [] };
       }
     })(),
-    searchAtlasProducts(query).catch(() => ({ type: 'none' as const, matches: [] })),
-  ]);
+    // Atlas
+    searchAtlasProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+  ];
 
-  // Merge: Digikey results first, then Atlas, deduplicate by MPN
+  // MPN-prefix APIs — only when query looks like a part number
+  if (isMpn && longEnough) {
+    searches.push(
+      searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+    );
+    if (!options?.skipMouser) {
+      searches.push(
+        searchMouserProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+      );
+    }
+  }
+
+  const results = await Promise.allSettled(searches);
+
+  // Merge in priority order: Digikey → Atlas → Parts.io → Mouser
   const seenMpns = new Set<string>();
   const mergedMatches = [];
 
-  for (const part of digikeyResult.matches ?? []) {
-    const key = part.mpn.toLowerCase();
-    if (!seenMpns.has(key)) {
-      seenMpns.add(key);
-      mergedMatches.push(part);
-    }
-  }
-  for (const part of atlasResult.matches ?? []) {
-    const key = part.mpn.toLowerCase();
-    if (!seenMpns.has(key)) {
-      seenMpns.add(key);
-      mergedMatches.push(part);
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    for (const part of result.value.matches ?? []) {
+      const key = part.mpn.toLowerCase();
+      if (!seenMpns.has(key) && mergedMatches.length < SEARCH_RESULT_CAP) {
+        seenMpns.add(key);
+        mergedMatches.push(part);
+      }
     }
   }
 

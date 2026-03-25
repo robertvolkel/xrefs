@@ -43,7 +43,7 @@ interface DictData {
   familyId: string;
   entries: DictEntry[];
   sharedEntries: DictEntry[];
-  unmapped: { paramName: string; count: number }[];
+  unmapped: { paramName: string; count: number; samples?: string[] }[];
   overrides: AtlasDictOverrideRecord[];
   stats: {
     totalEntries: number;
@@ -77,6 +77,7 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
   const [selectedEntry, setSelectedEntry] = useState<DictEntry | null>(null);
   const [isAddMode, setIsAddMode] = useState(false);
   const [addParamName, setAddParamName] = useState('');
+  const [addParamSamples, setAddParamSamples] = useState<string[]>([]);
 
   const familyId = table?.familyId;
 
@@ -99,6 +100,29 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
     fetchData();
   }, [fetchData]);
 
+  // Build schema attributes list for the attribute picker
+  const schemaAttributes = useMemo(() => {
+    const attrs: { attributeId: string; attributeName: string; unit?: string; weight?: number }[] = [];
+    if (table) {
+      // L3: from logic table rules
+      for (const rule of table.rules) {
+        attrs.push({ attributeId: rule.attributeId, attributeName: rule.attributeName, weight: rule.weight });
+      }
+    }
+    // L2 param map attributes would need server-side data; for now L3 is covered
+    return attrs;
+  }, [table]);
+
+  // Set of already-mapped attributeIds (for greying out in the picker)
+  const mappedAttributeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (data) {
+      for (const entry of data.entries) ids.add(entry.attributeId);
+      for (const entry of data.sharedEntries) ids.add(entry.attributeId);
+    }
+    return ids;
+  }, [data]);
+
   // Build override lookup by paramName
   const overrideMap = useMemo(() => {
     const map = new Map<string, AtlasDictOverrideRecord>();
@@ -115,10 +139,11 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
     setDrawerOpen(true);
   }, []);
 
-  const handleAddMapping = useCallback((paramName: string) => {
+  const handleAddMapping = useCallback((paramName: string, samples?: string[]) => {
     setSelectedEntry(null);
     setIsAddMode(true);
     setAddParamName(paramName);
+    setAddParamSamples(samples ?? []);
     setDrawerOpen(true);
   }, []);
 
@@ -127,6 +152,7 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
     setSelectedEntry(null);
     setIsAddMode(false);
     setAddParamName('');
+    setAddParamSamples([]);
   }, []);
 
   const handleSaved = useCallback(() => {
@@ -380,6 +406,11 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
                       <TableCell sx={{ width: 40 }} />
                       <TableCell sx={{ width: 280 }}>
                         <Typography variant="body2">{item.paramName}</Typography>
+                        {item.samples && item.samples.length > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25, fontSize: '0.65rem' }}>
+                            e.g. {item.samples.join(', ')}
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell sx={{ width: 50 }}>
                         <Chip
@@ -405,7 +436,7 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
                           startIcon={<AddCircleOutlineIcon />}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleAddMapping(item.paramName);
+                            handleAddMapping(item.paramName, item.samples);
                           }}
                           sx={{ fontSize: '0.72rem', textTransform: 'none' }}
                         >
@@ -430,6 +461,9 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
         existingOverride={selectedEntry ? overrideMap.get(selectedEntry.paramName) ?? null : null}
         isAddMode={isAddMode}
         addParamName={addParamName}
+        addParamSamples={addParamSamples}
+        schemaAttributes={schemaAttributes}
+        mappedAttributeIds={mappedAttributeIds}
         onSaved={handleSaved}
       />
     </Box>

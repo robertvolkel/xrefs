@@ -99,6 +99,13 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 function classifyAtlasCategory(c1, c2, c3) {
   const lower = c3.toLowerCase();
 
+  // Compute c1 flags up front — used by both L3 and L2 guards
+  const c1lower = c1.toLowerCase();
+  const isIC = c1lower.includes('integrated circuit') || c1lower.includes('(ics)');
+  const isConnector = c1lower.includes('connector');
+  const isOptoOrSensor = c1lower.includes('optoelectronic') || c1lower.includes('sensor');
+  const isRF = c1lower.includes('rf') || c1lower.includes('wireless');
+
   // Passives
   if (lower.includes('ceramic capacitor')) return { category: 'Capacitors', subcategory: 'MLCC', familyId: '12' };
   if (lower.includes('aluminum') && lower.includes('polymer')) return { category: 'Capacitors', subcategory: 'Aluminum Polymer', familyId: '60' };
@@ -112,13 +119,14 @@ function classifyAtlasCategory(c1, c2, c3) {
   if (lower.includes('varistor') || lower.includes('mov')) return { category: 'Protection', subcategory: 'Varistor', familyId: '65' };
   if (lower.includes('ptc resettable') || lower.includes('resettable fuse')) return { category: 'Protection', subcategory: 'PTC Resettable Fuse', familyId: '66' };
 
-  // Discrete — order matters
-  if (lower.includes('scr') && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
+  // Discrete — word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
+  if (/\bscr\b/i.test(lower) && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
   if (lower.includes('triac')) return { category: 'Thyristors', subcategory: 'TRIAC', familyId: 'B8' };
   if (lower.includes('tvs')) return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
   if (lower === 'zener' || lower.includes('zener diode')) return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
   if (lower.includes('bridge rectifier')) return { category: 'Diodes', subcategory: 'Bridge Rectifier', familyId: 'B1' };
-  if (lower.includes('rectifier') || (lower.includes('diode') && !lower.includes('tvs') && !lower.includes('zener'))) {
+  // Generic diodes — skip laser diodes (c1=Optoelectronics) and photodiodes (c1=Sensors)
+  if (!isOptoOrSensor && (lower.includes('rectifier') || (lower.includes('diode') && !lower.includes('tvs') && !lower.includes('zener')))) {
     return { category: 'Diodes', subcategory: 'Rectifier Diode', familyId: 'B1' };
   }
   if (lower.includes('igbt')) return { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' };
@@ -135,7 +143,8 @@ function classifyAtlasCategory(c1, c2, c3) {
   }
   if (lower.includes('gate driver')) return { category: 'Gate Drivers', subcategory: 'Gate Driver', familyId: 'C3' };
   if (lower.includes('comparator')) return { category: 'Amplifiers', subcategory: 'Comparator', familyId: 'C4' };
-  if (lower.includes('amplifier') || lower.includes('op amp') || lower.includes('instrumentation')) {
+  // Op-Amps — skip RF amplifiers
+  if (!isRF && (lower.includes('amplifier') || lower.includes('op amp') || lower.includes('instrumentation'))) {
     return { category: 'Amplifiers', subcategory: 'Op-Amp', familyId: 'C4' };
   }
   if (lower.includes('analog to digital') || lower.includes('adc')) return { category: 'ADCs', subcategory: 'ADC', familyId: 'C9' };
@@ -146,33 +155,34 @@ function classifyAtlasCategory(c1, c2, c3) {
   if (lower.includes('digital isolator') && !lower.includes('gate driver')) return { category: 'Interface ICs', subcategory: 'Digital Isolator', familyId: 'C7' };
   if (lower.includes('oscillator') && !lower.includes('local oscillator')) return { category: 'Timers and Oscillators', subcategory: 'Oscillator', familyId: 'C8' };
   if (lower.includes('programmable timer') || lower.includes('555')) return { category: 'Timers and Oscillators', subcategory: '555 Timer', familyId: 'C8' };
+  // Logic ICs — skip RF multiplexers
   if (lower.includes('gates and inverter') || lower.includes('flip flop') ||
       lower.includes('latch') || lower.includes('counter') || lower.includes('shift register') ||
-      lower.includes('multiplexer') || lower.includes('decoder')) {
+      (!isRF && lower.includes('multiplexer')) || lower.includes('decoder')) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
   }
 
   // L2 categories (no logic tables)
+  // Use c1 guards to prevent cross-domain misclassification.
   if (lower.includes('microcontroller') || lower.includes('mcu')) return { category: 'Microcontrollers', subcategory: c3, familyId: null };
-  if (lower.includes('microprocessor') || lower.includes('system on chip') || lower.includes('soc')) return { category: 'Processors', subcategory: c3, familyId: null };
+  if (isIC && (lower.includes('microprocessor') || lower.includes('system on chip') || /\bsoc\b/.test(lower))) return { category: 'Processors', subcategory: c3, familyId: null };
   if (lower.includes('memory') || lower.includes('eeprom') || lower.includes('flash') || lower.includes('sram') || lower.includes('dram')) return { category: 'Memory', subcategory: c3, familyId: null };
   if (lower.includes('sensor') || lower.includes('accelerometer') || lower.includes('gyroscope') || lower.includes('imu') || lower.includes('thermocouple')) return { category: 'Sensors', subcategory: c3, familyId: null };
   if (lower.includes('rf ') || lower.includes('wireless') || lower.includes('bluetooth') || lower.includes('wifi') || lower.includes('zigbee') || lower.includes('lora')) return { category: 'RF and Wireless', subcategory: c3, familyId: null };
-  if (lower.includes('led') || lower.includes('photodiode') || lower.includes('laser')) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
-  if (lower.includes('switch') && !lower.includes('switching')) return { category: 'Switches', subcategory: c3, familyId: null };
+  if (!isIC && (lower.includes('led') || lower.includes('photodiode') || lower.includes('laser'))) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
+  if (!isIC && !isConnector && lower.includes('switch') && !lower.includes('switching')) return { category: 'Switches', subcategory: c3, familyId: null };
   if (lower.includes('transformer')) return { category: 'Transformers', subcategory: c3, familyId: null };
   if (lower.includes('filter') || lower.includes('emi')) return { category: 'Filters', subcategory: c3, familyId: null };
   if (lower.includes('battery') && !lower.includes('management')) return { category: 'Battery Products', subcategory: c3, familyId: null };
-  if (lower.includes('motor') || lower.includes('fan')) return { category: 'Motors and Fans', subcategory: c3, familyId: null };
-  if (lower.includes('audio') || lower.includes('speaker') || lower.includes('microphone') || lower.includes('buzzer')) return { category: 'Audio', subcategory: c3, familyId: null };
+  if (!isIC && (lower.includes('motor') || lower.includes('fan'))) return { category: 'Motors and Fans', subcategory: c3, familyId: null };
+  if (!isConnector && (lower.includes('audio') || lower.includes('speaker') || lower.includes('microphone') || lower.includes('buzzer'))) return { category: 'Audio', subcategory: c3, familyId: null };
   if (lower.includes('power supply') || lower.includes('ac dc') || lower.includes('dc dc')) return { category: 'Power Supplies', subcategory: c3, familyId: null };
 
-  // Uncovered
-  const c1lower = c1.toLowerCase();
+  // Uncovered — use c1 to pick a reasonable category
   if (c1lower.includes('capacitor')) return { category: 'Capacitors', subcategory: c3, familyId: null };
   if (c1lower.includes('resistor')) return { category: 'Resistors', subcategory: c3, familyId: null };
   if (c1lower.includes('inductor') || c1lower.includes('choke')) return { category: 'Inductors', subcategory: c3, familyId: null };
-  if (c1lower.includes('connector')) return { category: 'Connectors', subcategory: c3, familyId: null };
+  if (isConnector) return { category: 'Connectors', subcategory: c3, familyId: null };
   if (c1lower.includes('protection') || c1lower.includes('circuit protection')) return { category: 'Protection', subcategory: c3, familyId: null };
   if (c1lower.includes('diode') || c1lower.includes('discrete')) return { category: 'Diodes', subcategory: c3, familyId: null };
   if (c1lower.includes('switch')) return { category: 'Switches', subcategory: c3, familyId: null };
@@ -980,12 +990,20 @@ const L2_PARAMS = {
     '触点类型': { attributeId: 'contact_type', attributeName: 'Contact Type', sortOrder: 2 },
     '针脚数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
     'pin数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '端口数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '引脚数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
     '行数': { attributeId: 'rows', attributeName: 'Number of Rows', sortOrder: 4 },
+    '排数': { attributeId: 'rows', attributeName: 'Number of Rows', sortOrder: 4 },
     '间距': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    '脚间距': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    '触头镀层': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 6 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 7 },
+    '高度': { attributeId: 'height_above_board', attributeName: 'Height Above Board', unit: 'mm', sortOrder: 8 },
     '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 10 },
     '额定电压': { attributeId: 'voltage_rating', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    '工作温度范围': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    '适用温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
   },
   'LEDs and Optoelectronics': {
     '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
@@ -1003,12 +1021,24 @@ const L2_PARAMS = {
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
+    '触点形式': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
     '开关功能': { attributeId: 'switch_function', attributeName: 'Switch Function', sortOrder: 2 },
     '触点额定值': { attributeId: 'contact_rating', attributeName: 'Contact Rating', sortOrder: 3 },
+    '执行器类型': { attributeId: 'actuator_type', attributeName: 'Actuator Type', sortOrder: 4 },
     '按动力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
     '操作力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    '照明': { attributeId: 'illumination', attributeName: 'Illumination', sortOrder: 7 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 8 },
+    '长x宽/尺寸': { attributeId: 'outline', attributeName: 'Dimensions', sortOrder: 9 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    '额定电流-dc': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 11 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 11 },
+    '额定电压-dc': { attributeId: 'voltage_rating_dc', attributeName: 'Voltage Rating (DC)', unit: 'V', sortOrder: 12 },
+    '额定电压-ac': { attributeId: 'voltage_rating_ac', attributeName: 'Voltage Rating (AC)', unit: 'V', sortOrder: 13 },
+    '触头镀层': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 14 },
+    '颜色-盖帽': { attributeId: 'illumination_color', attributeName: 'Cap Color', sortOrder: 15 },
+    '开关位数': { attributeId: 'num_positions', attributeName: 'Number of Positions', sortOrder: 16 },
+    '高度': { attributeId: 'actuator_height', attributeName: 'Height', unit: 'mm', sortOrder: 17 },
   },
   'RF and Wireless': {
     '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
@@ -1026,14 +1056,21 @@ const L2_PARAMS = {
   'Power Supplies': {
     '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
     '输出路数': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
+    '输出端数': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
     '输入电压': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    '供电电压': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    '开关频率': { attributeId: 'switching_frequency', attributeName: 'Switching Frequency', sortOrder: 5 },
     '输出电压': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 6 },
     '输出电流': { attributeId: 'output_current_max', attributeName: 'Output Current (Max)', unit: 'A', sortOrder: 7 },
     '功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '额定功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '输出功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
     '隔离电压': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 9 },
     '效率': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
+    '效率(typ)': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    '高度': { attributeId: 'height', attributeName: 'Height', unit: 'mm', sortOrder: 13 },
   },
   Transformers: {
     '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
@@ -1211,7 +1248,9 @@ function mapModel(model, manufacturerName, sourceFile) {
     if (isMissing(p.value)) continue;
 
     const lowerName = p.name.toLowerCase().trim();
-    if (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName)) continue;
+    // Dictionary entries take priority over skip list
+    const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName]);
+    if (!hasDictMapping && (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName))) continue;
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
     // ── Gaia parameter handling ──────────────────────────────

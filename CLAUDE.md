@@ -38,7 +38,10 @@ app/                          # Next.js App Router
   api/admin/cache/           # Cache management (GET stats, DELETE purge)
   api/admin/atlas/           # Atlas manufacturer stats (GET, paginated aggregation + coverage %)
   api/admin/atlas/coverage/  # Atlas per-family attribute gap analysis (GET)
-  api/admin/atlas/dictionaries/ # Atlas dictionary override CRUD (GET list, POST create)
+  api/admin/atlas/explorer/  # Atlas product search (GET ?q=, MPN/manufacturer ilike)
+  api/admin/atlas/explorer/[id]/ # Atlas product detail + schema comparison (GET)
+  api/admin/atlas/dictionaries/ # Atlas dictionary override CRUD (GET list + samples, POST create, supports L2 ?category=)
+  api/admin/atlas/dictionaries/suggest/ # AI-assisted Chinese→English param mapping suggestion (POST, Claude Haiku)
   api/admin/atlas/dictionaries/[overrideId]/ # Dictionary override update/delete (PATCH, DELETE)
   api/admin/taxonomy/        # Digikey category taxonomy with coverage
   api/admin/overrides/rules/ # Rule override CRUD (GET list w/ admin names, POST create w/ previous_values)
@@ -89,10 +92,12 @@ components/                   # React components
     RuleOverrideDrawer.tsx    # Right-side drawer for editing rule overrides
     ContextOverrideDrawer.tsx # Right-side drawer for editing context question overrides
     ParamMappingsPanel.tsx    # Attribute-centric param map: Digikey + Parts.io columns, coverage metrics
-    AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table + coverage %
+    AtlasPanel.tsx            # Atlas manufacturer stats — summary + expandable table + coverage % + Explorer search tab
     AtlasCoverageDrawer.tsx   # Per-family attribute gap analysis drawer (Atlas vs Digikey vs logic table)
-    AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + shared)
-    AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides
+    AtlasExplorerTab.tsx      # Atlas product search — debounced MPN/MFR search, results table, opens drawer
+    AtlasExplorerDrawer.tsx   # Atlas product detail — schema comparison (L3 or L2), extra attrs, raw params
+    AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + L2 category + shared)
+    AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides — schema Autocomplete, AI suggestion, sample values
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   auth/                        # Registration and onboarding
     RegisterForm.tsx          # Step 1 — account creation (name, email, password, invite code)
@@ -152,7 +157,7 @@ lib/
   services/overrideValidator.ts # Validates override values against type constraints
   services/overrideHistoryHelper.ts # Audit trail: previous_values snapshots + admin name resolution
   services/atlasClient.ts     # Atlas Supabase queries — search, attributes, candidate fetch
-  services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 family dictionaries)
+  services/atlasMapper.ts     # Atlas JSON → internal ParametricAttribute[] conversion (28 L3 family + 14 L2 category dictionaries)
   services/atlasGaiaDictionaries.ts # Gaia datasheet-extracted param mapping (parse, skip stems, dict exports)
   services/atlas-gaia-dicts.json # Shared gaia dictionaries (12 families + shared, consumed by TS + MJS)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
@@ -313,6 +318,7 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Two-step panel reveal**: idle → 70/30 (attributes) → 40/30/30 (recommendations)
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
+- **Multi-source search** (Decision #106): `searchParts()` queries Digikey + Atlas + Parts.io + Mouser in parallel. `looksLikeMpn()` heuristic routes MPN-like queries to all 4 sources; descriptions only hit Digikey + Atlas. Priority dedup: Digikey wins, non-Digikey results only for parts not in Digikey. Result cap 50. `PartSummary.dataSource` tags origin. Batch validation skips Mouser (`skipMouser: true`).
 - **partDataService** tries Digikey first; if unavailable, falls back to mock data. After Digikey, enriches with parts.io gap-fill AND Mouser commercial data **in parallel** via `enrichSourceInParallel()` (Digikey values win on conflicts)
 - **Persistent L2 cache** (Decision #99): `part_data_cache` Supabase table sits between in-memory L1 caches (30-min TTL) and live API calls. Three-tier TTL: parametric (indefinite Digikey / 90-day parts.io), lifecycle (6 months), commercial (24 hours). Cross-user, survives cold starts. Digikey keyword search results warm the cache via `warmCacheFromSearchResults()`. Mouser L2 hits bypass rate limiter. Not-found results cached 24h. All writes fire-and-forget. Admin: `GET/DELETE /api/admin/cache`, cache stats in data-sources endpoint.
 - **Recommendation pipeline performance** (Decision #98): UI passes pre-fetched `sourceAttributes` to `/api/xref` POST to skip duplicate `getAttributes()` call. LLM assessment and Mouser candidate enrichment are deferred — recs display immediately, assessment streams into chat afterward, Mouser pricing merges in via background `enrichWithMouserBatch()`. QC logging is fire-and-forget. See `showRecsAndDeferAssessment()` in `useAppState.ts`.
@@ -377,7 +383,7 @@ Secondary data source (Accuris) that fills parametric gaps after Digikey. See De
 
 **Families NOT mapped (no data):** 13 Mica, 55 Chassis Mount, 64 Film, B9 JFETs.
 
-**Top coverage improvements:** B8 Thyristors (+30 weight, ~48%→~65%), F1 Relays (+46, ~45%→~68%), C1 LDOs (+23, ~52%→~65%), E1 Optocouplers (+25, ~45%→~57%), 59 Tantalum (+17, ~58%→~73%).
+**Top coverage improvements:** B8 Thyristors (+42 weight, ~48%→~70%), F1 Relays (+51, ~45%→~71%), C1 LDOs (+23, ~52%→~65%), E1 Optocouplers (+25, ~45%→~57%), C3 Gate Drivers (+17, ~45%→~55%), 59 Tantalum (+17, ~58%→~73%), 71 Power Inductors (+9), B5 MOSFETs (+17). Param map audit (Decision #103) added 10 previously unmapped fields across 8 classes.
 
 **Admin panel:** `ParamMappingsPanel.tsx` restructured to attribute-centric layout with Digikey Field + Parts.io Field columns, coverage metrics (DK% + PIO% + Combined%), and Zone 2 for extra parts.io fields not in schema.
 
@@ -418,7 +424,7 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
 - **Parts.io** (built — Decision #77) — Accuris gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
-- **Atlas** (built — products + param dictionaries + gaia mapping + admin panel + coverage analytics; planned — company profiles) — Chinese component manufacturer dataset: 115 manufacturers, 55K products in Supabase `atlas_products`, 38K scorable, 28 family Chinese translation dictionaries + 12 family gaia datasheet-extraction dictionaries via shared JSON (`atlas-gaia-dicts.json`, Decision #100). Gaia mapping handles structured `gaia-{stem}-{Min|Max|Typ}` params with suffix preference and dedup. Admin dictionary panel with Supabase-backed override layer (Decision #68). Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69). Admin panel: all manufacturers expandable (scorable + non-scorable), sortable columns, breakdown shows Scorable column.
+- **Atlas** (built — products + param dictionaries + gaia mapping + admin panel + coverage analytics + Explorer QC tool; planned — company profiles) — Chinese component manufacturer dataset: 115 manufacturers, 55K products in Supabase `atlas_products`, 38K scorable, 28 L3 family Chinese translation dictionaries + 14 L2 category dictionaries (Decision #102) + 12 family gaia datasheet-extraction dictionaries via shared JSON (`atlas-gaia-dicts.json`, Decision #100). L2 dictionaries map Chinese+English param names to standard L2 attribute IDs for products outside L3 families. `classifyAtlasCategory()` uses c1 guards to prevent cross-domain misclassification (Decision #104) — e.g., laser diodes ≠ rectifiers, RF amplifiers ≠ op-amps, audio connectors ≠ audio devices. Skip list is dictionary-aware (dictionary entries override skip). Gaia mapping handles structured `gaia-{stem}-{Min|Max|Typ}` params with suffix preference and dedup. Admin dictionary panel with Supabase-backed override layer (Decision #68) — supports both L3 families and L2 categories. Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69). Explorer QC tool: search by MPN/manufacturer with coverage % column, detail drawer with L3 or L2 schema comparison (Decision #102). Admin panel: all manufacturers expandable (scorable + non-scorable), sortable columns, breakdown shows Scorable column.
 - **Mouser** (built — Decision #83) — First multi-supplier pricing source: quantity-based price breaks, real-time stock, lead times, lifecycle status, suggested replacements, regional HTS codes (8 regions), ECCN. No parametric data. Rate limits: 30/min, 1,000/day.
 - **Distributor APIs** (planned) — Arrow, Nexar/Octopart for additional multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering

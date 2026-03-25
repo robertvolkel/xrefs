@@ -398,11 +398,12 @@ export default function RuleOverrideDrawer({
       if (annotation) {
         setAnnotations(prev => [annotation, ...prev]);
         setNewComment('');
+        onSaved(); // refresh badge counts in LogicPanel
       }
     } finally {
       setAddingComment(false);
     }
-  }, [newComment, familyId, baseRule]);
+  }, [newComment, familyId, baseRule, onSaved]);
 
   const handleResolveAnnotation = useCallback(async (id: string, isResolved: boolean) => {
     const ok = await updateRuleAnnotation(id, { isResolved });
@@ -410,15 +411,17 @@ export default function RuleOverrideDrawer({
       setAnnotations(prev => prev.map(a =>
         a.id === id ? { ...a, isResolved } : a,
       ));
+      onSaved(); // refresh badge counts in LogicPanel
     }
-  }, []);
+  }, [onSaved]);
 
   const handleDeleteAnnotation = useCallback(async (id: string) => {
     const ok = await deleteRuleAnnotation(id);
     if (ok) {
       setAnnotations(prev => prev.filter(a => a.id !== id));
+      onSaved(); // refresh badge counts in LogicPanel
     }
-  }, []);
+  }, [onSaved]);
 
   const handleEditAnnotation = useCallback(async (id: string) => {
     if (!editingBody.trim()) return;
@@ -463,7 +466,7 @@ export default function RuleOverrideDrawer({
           )}
 
           {/* Form */}
-          <Box sx={{ flex: 1, overflow: 'auto' }}>
+          <Box sx={{ flex: 1, overflow: 'auto', pt: 1 }}>
             <Stack spacing={2.5}>
               {/* Attribute ID (only for add mode) */}
               {isAddMode && (

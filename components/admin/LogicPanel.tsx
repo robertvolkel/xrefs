@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Typography,
   IconButton,
   Tooltip,
@@ -50,6 +51,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedRule, setSelectedRule] = useState<MatchingRule | null>(null);
   const [isAddMode, setIsAddMode] = useState(false);
+  const [weightSort, setWeightSort] = useState<'asc' | 'desc' | null>(null);
 
   // Build override lookup map
   const overrideMap = useMemo(() => {
@@ -111,6 +113,12 @@ export default function LogicPanel({ table }: LogicPanelProps) {
   // Count active overrides for the header badge
   const overrideCount = overrides.length;
 
+  const sortedRules = useMemo(() => {
+    if (!weightSort) return table.rules;
+    const dir = weightSort === 'asc' ? 1 : -1;
+    return [...table.rules].sort((a, b) => dir * (a.weight - b.weight));
+  }, [table.rules, weightSort]);
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
@@ -148,13 +156,21 @@ export default function LogicPanel({ table }: LogicPanelProps) {
               <TableCell sx={{ fontWeight: 600, width: 180 }}>{t('admin.colAttribute', 'Attribute')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 140 }}>{t('admin.colRuleType', 'Rule Type')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 200 }}>{t('admin.colCondition', 'Condition')}</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>{t('admin.colWeight', 'Weight')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>
+                <TableSortLabel
+                  active={weightSort !== null}
+                  direction={weightSort ?? 'desc'}
+                  onClick={() => setWeightSort(prev => prev === null ? 'desc' : prev === 'desc' ? 'asc' : null)}
+                >
+                  {t('admin.colWeight', 'Weight')}
+                </TableSortLabel>
+              </TableCell>
               <TableCell sx={{ fontWeight: 600 }}>{t('admin.colEngineering', 'Engineering Reason')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: 40 }} />
             </TableRow>
           </TableHead>
           <TableBody>
-            {table.rules.map((rule, idx) => {
+            {sortedRules.map((rule, idx) => {
               const override = overrideMap.get(rule.attributeId);
               const isOverridden = !!override;
               const annotCount = annotationCounts.get(rule.attributeId) ?? 0;

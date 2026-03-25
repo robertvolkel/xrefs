@@ -122,6 +122,18 @@ Full audit trail for rule overrides: `previous_values` JSONB snapshot on every c
 
 ---
 
+### ~~Atlas Explorer QC tool + L2 category dictionaries~~ COMPLETED
+**Status:** Done — Decisions #102, #104
+
+Atlas data QC tool: search Atlas products by MPN/manufacturer, click to view detail drawer with schema comparison (L3 from logic table rules, L2 from param maps), extra attributes, and raw parameters. L2 category dictionaries added for all 14 categories. `classifyAtlasCategory()` updated with c1 guards (Decision #104) to prevent cross-domain misclassification — fixed 598 L3 + ~935 L2 misclassified products. Skip list made dictionary-aware. Explorer search results now show coverage % column. Atlas Dictionaries admin section supports L2 categories.
+
+**Remaining:**
+- L2 sub-family param maps for optoelectronics: Laser Diodes, Photodiodes, IR Emitters have distinct parameter sets from standard LEDs. Coverage shows correctly low because no schema exists for these sub-types. Same pattern as Sensors split (Decision #88).
+- Gaia dictionary refinement: Gaia-extracted duplicate stems (`rdc_max`, `ir_max_ma`, `l_100khz_0_1v`, `e`) should be mapped to canonical attributeIds in the Gaia dictionaries so they merge with dictionary-mapped attributes rather than appearing as unrecognized extras.
+- Plain English alias expansion for MFR-specific param names (~1,327 names like `RDS(ON) @10VTyp (mΩ)`) — Phase 2.
+
+---
+
 ### Override preview: show scoring impact before saving
 **Files:** `components/admin/RuleOverrideDrawer.tsx`
 
@@ -263,7 +275,7 @@ Key data gaps: No way to distinguish control modes (PCM vs VM vs hysteretic) fro
 
 Of 20 logic table rules, the following have no Digikey parametric mapping: `dead_time_control`, `dead_time`, `shutdown_enable` (polarity), `fault_reporting`, `rth_ja`, `tj_max`. Non-isolated "Gate Drivers" category has no propagation delay field; isolated "Isolators - Gate Drivers" has no bootstrap-related fields. Compound fields require 5 transformers (peak source/sink, logic threshold, propagation delay, rise/fall time). `isolation_type` enriched from Digikey category name (non-isolated → "Non-Isolated (Bootstrap)"). `driver_configuration` enriched from "Number of Channels"/"Number of Drivers" for isolated drivers. AEC-Q100 available via "Qualification" for isolated drivers only (not for non-isolated "Gate Drivers" category). ~45-50% weight coverage overall.
 
-**Parts.io partial fill (Decision #77):** Only output current confirmed from parts.io — marginal benefit (~+0 weight since Digikey already has it). `dead_time_control`, `dead_time`, timing specs still datasheet-only.
+**Parts.io partial fill (Decisions #77, #103):** `output_polarity` (w9) and `peak_sink_current` (w8) now mapped from parts.io extras (+17 weight). `dead_time_control`, `dead_time`, timing specs still datasheet-only.
 
 ---
 
@@ -470,7 +482,7 @@ Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. 
 **Status:** Partially done (Decisions #66, #67, #68, #69, #100)
 **Priority:** P2
 
-Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69).
+Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69) — now shows PIO column alongside Atlas/Dict/DK (Decision #103).
 
 **Remaining:**
 - Manufacturer profile API (company profiles, verification, factory audit, export compliance)

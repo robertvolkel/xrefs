@@ -42,7 +42,7 @@ export function onServiceRecoveries(listener: ServiceRecoveryListener): () => vo
 
 /** Which services each API route exercises — used for recovery detection. */
 const ROUTE_SERVICES: Record<string, ServiceName[]> = {
-  '/api/search': ['digikey'],
+  '/api/search': ['digikey', 'atlas', 'partsio', 'mouser'],
   '/api/attributes': ['digikey', 'partsio'],
   '/api/xref': ['digikey', 'partsio', 'mouser'],
   '/api/chat': ['anthropic'],
@@ -576,6 +576,9 @@ export interface AtlasExplorerResult {
   familyName: string | null;
   status: string;
   parameterCount: number;
+  coveragePct: number | null;
+  schemaMatchCount: number;
+  schemaTotalCount: number;
 }
 
 export interface AtlasExplorerDetail {
@@ -638,6 +641,34 @@ export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerD
   const res = await fetch(`${BASE}/admin/atlas/explorer/${id}`);
   if (!res.ok) throw new Error('Atlas explorer detail failed');
   return res.json();
+}
+
+export interface DictMappingSuggestion {
+  translation: string | null;
+  suggestedAttributeId: string | null;
+  suggestedAttributeName: string | null;
+  suggestedUnit: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string | null;
+}
+
+export async function suggestDictMapping(
+  paramName: string,
+  samples: string[],
+  familyId: string,
+): Promise<DictMappingSuggestion | null> {
+  try {
+    const res = await fetch(`${BASE}/admin/atlas/dictionaries/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paramName, samples, familyId }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.success ? json.suggestion : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Release Notes API ──────────────────────────────────────

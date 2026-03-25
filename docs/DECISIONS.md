@@ -2681,3 +2681,182 @@ Plus `transformerParamMap` retained as "Transformers (Other)" fallback.
 **Modified files:** `scripts/supabase-overrides-schema.sql`, `lib/types.ts`, `lib/api.ts`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `components/admin/LogicPanel.tsx`, `components/admin/RuleOverrideDrawer.tsx`, `locales/en.json`, `locales/zh-CN.json`.
 
 **Future:** Same pattern can be applied to `context_overrides` (same schema + API approach). Override preview (scoring impact before saving) and QC feedback→override workflow remain as P1 backlog items.
+
+---
+
+## Decision #102 — Atlas Explorer QC Tool + L2 Category Dictionaries (Mar 2026)
+
+**Decision:** Build an Atlas data QC tool (Explorer) in the admin panel and add L2 category Chinese/English translation dictionaries for all 14 L2 categories so Atlas products outside the 43 L3 families get their parameters mapped to standard attribute IDs.
+
+**Problem:** Atlas products that don't match any of the 43 L3 families got `family_id = null` and `category = 'ICs'` (generic fallback). Their Chinese parameter names stayed unmapped because dictionaries only existed for L3 families. Admins had no way to search and inspect individual Atlas products to verify data quality.
+
+**Architecture — Atlas Explorer:**
+- `GET /api/admin/atlas/explorer?q=` — MPN/manufacturer search via Supabase `ilike`, returns up to 50 results with familyName and parameterCount.
+- `GET /api/admin/atlas/explorer/[id]` — Detail endpoint: fetches product, builds L3 `schemaComparison` (from logic table rules) OR L2 `schemaComparison` (from L2 param maps via `getL2ParamMapForCategory()`), plus `extraAttributes` and `rawParameters`.
+- `AtlasExplorerTab.tsx` — Search bar + results table with debounced search (300ms). Columns: MPN, Manufacturer, Family (chip), Category, Status (chip), Params count.
+- `AtlasExplorerDrawer.tsx` — 660px right-side drawer: identity block, coverage bar, schema comparison table (L3: Attribute/Weight/Type/Value; L2: Attribute/Value), collapsible extra attributes, collapsible raw parameters. Row tinting: green=present, red=missing+blockOnMissing (L3), amber=missing (L2).
+- Added as "Search" tab in AtlasPanel (alongside existing "Overview" manufacturer stats tab).
+
+**Architecture — L2 Category Classification:**
+- `classifyAtlasCategory()` in both `atlasMapper.ts` and `atlas-ingest.mjs` now detects all 14 L2 categories (Microcontrollers, Memory, Sensors, RF/Wireless, LEDs, Switches, Connectors, Transformers, Filters, Battery Products, Motors/Fans, Audio, Power Supplies, Processors) between L3 family checks and the generic catch-all. Products that previously fell through to `{ category: 'ICs' }` now get their correct L2 category, enabling dictionary lookup.
+
+**Architecture — L2 Translation Dictionaries:**
+- `atlasL2ParamDictionaries` in `atlasMapper.ts` — Record keyed by `ComponentCategory` string, each mapping Chinese + English param names → internal `attributeId` for that category's L2 param map attributes. All 14 categories covered.
+- `L2_PARAMS` in `atlas-ingest.mjs` mirrors the TS dictionaries (must stay in sync).
+- `mapAtlasModel()` familyDict resolution: `classification.familyId ? atlasParamDictionaries[familyId] : atlasL2ParamDictionaries[classification.category]`.
+- Shared dictionary expanded with `主要封装` (main package) and `电压` (voltage) — common short Chinese variants used across categories.
+- Re-ingestion required for changes to take effect (mapping happens at ingest time).
+
+**Architecture — Atlas Dictionaries Admin for L2:**
+- `GET /api/admin/atlas/dictionaries` now accepts `?category=Microcontrollers` in addition to `?familyId=B5`. L2 queries use `getAtlasL2ParamDictionary()` and query `atlas_products` by `category` (not `family_id`).
+- `AtlasDictionaryPanel.tsx` accepts `l2Category?: string` prop. FamilyPicker shows L2 categories for the atlas-dictionaries section.
+- Validation updated to check both L3 and L2 base dictionaries for modify/remove actions.
+
+**Architecture — L2 Param Map Lookup:**
+- `getL2ParamMapForCategory()` added to `digikeyParamMap.ts` — returns the L2 param map object for a given `ComponentCategory` string. Used by the Explorer detail endpoint for L2 schema comparison.
+
+**Key gotchas:**
+- Explorer API returns raw JSON (not `{ success, data }` envelope) — client uses `fetch()` not `fetchApi()`.
+- Short Chinese param variants (e.g., `容量` for capacity, `频率(mhz)` with unit suffix) must be added to dictionaries — Atlas data often uses abbreviated forms.
+- Sort order column removed from dictionary tables (no user value).
+- Dictionary keys are always lowercase — `lowerName = p.name.toLowerCase().trim()`.
+
+**New files:** `app/api/admin/atlas/explorer/route.ts`, `app/api/admin/atlas/explorer/[id]/route.ts`, `components/admin/AtlasExplorerTab.tsx`, `components/admin/AtlasExplorerDrawer.tsx`.
+
+**Modified files:** `lib/services/atlasMapper.ts`, `lib/services/digikeyParamMap.ts`, `lib/api.ts`, `scripts/atlas-ingest.mjs`, `app/api/admin/atlas/dictionaries/route.ts`, `components/admin/AtlasPanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AdminShell.tsx`, `locales/en.json`.
+
+## Decision #103 — Parts.io Param Map Audit & Atlas Coverage Drawer PIO Column (Mar 2026)
+
+**Decision:** Audit all 17 parts.io class `classExtraFields` for fields that should be mapped to logic table attributeIds, map them, and add a Parts.io (PIO) column to the Atlas Coverage Drawer so admins can see all data source coverage in one view.
+
+**Problem:** The parts.io param maps were built from initial API testing with 1-2 MPNs per class. Fields returned by the API that weren't immediately recognized were placed in `classExtraFields` (unmapped extras shown in the admin panel). Over time, as logic tables expanded to 43 families, many of these "extra" fields turned out to map directly to critical matching rules — but they were silently dropped during enrichment, reducing coverage. The Atlas Coverage Drawer only showed Atlas, Dict, and DK columns, omitting parts.io entirely.
+
+**Audit findings — 10 newly mapped fields:**
+
+| Class | Field | attributeId | Family | Weight |
+|---|---|---|---|---|
+| Inductors | `Saturation Current` | `saturation_current` | 71 Power Inductors | 9 |
+| Transistors | `FET Technology` | `technology` | B5 MOSFETs | 9 |
+| Transistors | `Gate-Source Voltage-Max` | `vgs_max` | B5 MOSFETs | 8 |
+| Drivers And Interfaces | `Output Polarity` | `output_polarity` | C3 Gate Drivers | 9 |
+| Drivers And Interfaces | `Output Low Current-Max` | `peak_sink_current` | C3 Gate Drivers | 8 |
+| Trigger Devices | `Latching Current-Max` | `il` | B8 Thyristors | 6 |
+| Trigger Devices | `I²T For Fusing-Max` | `i2t` | B8 Thyristors | 6 |
+| Crystals/Resonators | `Shunt Capacitance` | `shunt_capacitance_pf` | D1 Crystals | 6 |
+| Signal Circuits | `Supply Current-Max (Isup)` | `icc_active_ma` | C8 Timers/Osc | 6 |
+| Relays | `Mechanical Life` | `mechanical_life_ops` | F1 EMR Relays | 5 |
+| Diodes | `Configuration` | `configuration` | B1-B4 Diodes | 10 |
+
+**Data quality bugs fixed:**
+- `Circuit Protection` > `Fuse Size` was in both `classExtraFields` and `circuitProtectionParamMap` — removed from extras.
+- `Optoelectronics` > `On-State Current-Max` was in both `classExtraFields` and `optoelectronicsParamMap` — removed from extras.
+
+**`specialMergeAttrs` mechanism:** The parts.io mapper has special merge functions (`mergeOperatingTemp()`, `mergeSupplyVoltageRange()`) that run unconditionally and produce `operating_temp` and `supply_voltage` attributes by combining Min/Max fields. These attributes weren't reflected in `reversePartsioParamLookup()`, so the coverage drawer and admin panel didn't know parts.io covers them. Added a `specialMergeAttrs` array that the reverse lookup consults, so coverage reporting is accurate.
+
+**Atlas Coverage Drawer PIO column:** Added `inPartsio` boolean to the coverage API response (`/api/admin/atlas/coverage`) using `reversePartsioParamLookup()`. Drawer now shows 4 source columns: Atlas (product count + %), Dict (checkmark), DK (checkmark), PIO (checkmark, amber color). Drawer widened from 580→630px.
+
+**Impact on matching accuracy:** These fields were already being returned by the parts.io API but silently dropped because no param map entry existed. Now they flow through `enrichWithPartsio()` gap-fill and into the matching engine. Families with the highest incremental coverage: B8 Thyristors (+12 weight from il+i2t), 71 Power Inductors (+9 from saturation_current), B5 MOSFETs (+17 from technology+vgs_max), C3 Gate Drivers (+17 from output_polarity+peak_sink_current).
+
+**Modified files:** `lib/services/partsioParamMap.ts`, `app/api/admin/atlas/coverage/route.ts`, `components/admin/AtlasCoverageDrawer.tsx`, `locales/en.json`, `locales/zh-CN.json`.
+
+---
+
+## Decision #104 — Atlas Classification Audit: c1 Guards + Skip List Fix + Coverage Column (Mar 2026)
+
+**Decision:** Systematically audit all 54,746 Atlas products for classification accuracy using the source c1 (top-level category) field, fix all identified misclassifications, make the skip list dictionary-aware, expand L2 dictionaries, and add a coverage % column to the Explorer search results.
+
+**Problem:** The `classifyAtlasCategory()` function matched only on c3 (leaf category) substrings without checking c1 (top-level category), causing widespread misclassification:
+
+| Bug | Count | Root Cause |
+|-----|-------|------------|
+| LEDs → B8 Thyristors | 494 | `'scr'` is substring of `'discrete'` in "LED Indication - Di**scr**ete" |
+| RF Amplifiers → C4 Op-Amps | 81 | `'amplifier'` matches "RF **Amplifier**s" |
+| Laser/Photo Diodes → B1 Rectifiers | 19 | `'diode'` matches "Laser **Diode**s, Modules" |
+| RF Multiplexers → C5 Logic ICs | 4 | `'multiplexer'` matches "RF **Multiplexer**s" |
+| Power ICs → Switches | 297 | `'switch'` matches "Offline **Switch**es" (fixed in #102) |
+| Audio Connectors → Audio | 214 | `'audio'` matches "**Audio** Connectors" (fixed in #102) |
+| Connector Sockets → Processors | 424 | `'soc'` substring in "Female So**c**kets" (fixed in #102) |
+
+Additionally, the `skipParams` set blocked dictionary lookups for params like `安装类型` (mounting_type), `高度` (height), `引脚数` (pin count) — meaningful for L2 categories but treated as metadata.
+
+**Fix — c1 guards (L3):** Moved `c1lower` computation to the top of `classifyAtlasCategory()`. Added:
+- Word-boundary regex for SCR: `/\bscr\b/i.test(lower)` prevents "discrete" collision
+- `isOptoOrSensor` guard on B1 generic diode classifier — excludes laser diodes and photodiodes
+- `isRF` guard on C4 amplifier classifier — excludes RF amplifiers
+- `isRF` guard on C5 multiplexer check within Logic ICs
+
+**Fix — c1 guards (L2):** (Done in #102) `isIC`, `isConnector` guards for Switches, Audio, Motors, LEDs, Processors.
+
+**Fix — skip list:** Changed skip check from unconditional to dictionary-aware in `mapAtlasModel()` (atlasMapper.ts), `mapModel()` (atlas-ingest.mjs), and unmapped detection (dictionaries API). Pattern: `if (!hasDictMapping && skipParams.has(name)) continue;`
+
+**Fix — L2 dictionaries:** Expanded Switches (7→31 entries: added `触点形式`→circuit, `额定电压-dc`→voltage_rating_dc, `额定电流-dc`→current_rating, `触头镀层`→contact_finish, `高度`→actuator_height, etc.), Connectors (+8: `端口数`, `排数`, `脚间距`, `触头镀层`, `高度`, `工作温度范围`, `适用温度`), Power Supplies (+6: `供电电压`, `额定功率`, `输出功率`, `效率(typ)`, `开关频率`, `高度`).
+
+**Coverage % column:** Explorer search endpoint now computes per-product coverage against the family's schema (L3 logic table rules or L2 param map). Search results table shows coverage % with color coding (green ≥60%, amber ≥30%, red <30%) and tooltip "X of Y schema attributes present". Replaced the raw "Params" count column.
+
+**Verification:** Post-fix audit found 0 misclassified products across all L3 families. All 598 previously misclassified products now route correctly (LEDs to LEDs/Optoelectronics, RF amplifiers to RF/Wireless, laser diodes to LEDs/Optoelectronics, etc.).
+
+**Modified files:** `lib/services/atlasMapper.ts`, `scripts/atlas-ingest.mjs`, `app/api/admin/atlas/explorer/route.ts`, `components/admin/AtlasExplorerTab.tsx`, `lib/api.ts`, `app/api/admin/atlas/dictionaries/route.ts`.
+
+---
+
+## Decision #105 — Atlas Dictionary Mapping Workbench + Attribute Display Cleanup (Mar 2026)
+
+**Decision:** Enhance the Atlas dictionary override workflow for QC team use, fix Atlas attribute display names in the user-facing Attributes Panel, and separate recognized vs. unrecognized attributes.
+
+**Problem 1 — QC workflow gaps:** The DictionaryOverrideDrawer required typing `attributeId` and `attributeName` from memory. Unmapped params in the admin panel showed no sample values to help identify what they are. No AI assistance for translating Chinese parameter names.
+
+**Problem 2 — Display name bug:** `fromParametersJsonb()` only checked L3 family dictionaries for human-readable names. Gaia-extracted attributes (`rdc_max`, `ir_max_ma`, `l_100khz_0_1v`) showed raw IDs in the user-facing Attributes Panel because no fallback chain existed.
+
+**Problem 3 — Unrecognized clutter:** Atlas products showed all parameters equally in the Attributes Panel, mixing recognized schema attributes with auto-generated Gaia stems that duplicate existing mapped values.
+
+**Fix — Dictionary Mapping Workbench:**
+- `DictionaryOverrideDrawer` now uses MUI Autocomplete (strict, no free-text) for attributeId selection, populated from the family's logic table rules (L3) or L2 param map. Options show attributeId, attributeName, weight, unit, and "(mapped)" indicator for already-mapped attributes. Selecting an option auto-fills attributeId, attributeName, and unit.
+- AI-assisted suggestion endpoint: `POST /api/admin/atlas/dictionaries/suggest` sends Chinese param name + sample values + family schema attributes to Claude Haiku. Returns translation, suggested attributeId match, confidence level, and reasoning. Auto-fills on high confidence; shows "Apply suggestion" button on medium/low.
+- Sample values: dictionaries API now returns up to 3 unique sample values per unmapped param. Shown inline in the unmapped params table ("e.g. 50V, 100V, 12V") and in the drawer.
+- Drawer widened from 420→460px. Floating label clipping fixed across all 3 admin drawers (Dictionary, Rule, Context) with `pt: 1` on form containers.
+
+**Fix — Display name resolution:**
+- `fromParametersJsonb()` rewritten with full fallback chain: L3 family dict → L2 category dict → shared dict → logic table rules → L2 param map → `humanizeStem()` fallback. Function signature extended with optional `category` parameter.
+- Added `recognized?: boolean` to `ParametricAttribute` type. Set `true` when name resolved from any lookup source, `false` when falling through to `humanizeStem()`.
+
+**Fix — Recognized/extra split in Attributes Panel:**
+- `AttributesPanel` splits Atlas parameters into recognized (shown normally) and extras (hidden by default).
+- Small grey "More (N)" link at bottom-right expands extras in `text.disabled` color. "Less" collapses them.
+- Non-Atlas data sources (Digikey, parts.io) are unaffected — all their params show as recognized.
+
+**Other:** Renamed "original (unmapped) parameters" to "original Atlas parameters" in Explorer drawer (i18n key `atlasRawParams`).
+
+**New files:** `app/api/admin/atlas/dictionaries/suggest/route.ts`.
+
+**Modified files:** `components/admin/DictionaryOverrideDrawer.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/RuleOverrideDrawer.tsx`, `components/admin/ContextOverrideDrawer.tsx`, `components/AttributesPanel.tsx`, `app/api/admin/atlas/dictionaries/route.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasClient.ts`, `lib/types.ts`, `lib/api.ts`, `locales/en.json`.
+
+---
+
+## Decision #106 — Multi-Source Parallel Part Search (Mar 2026)
+
+**Problem:** `searchParts()` only searched Digikey + Atlas. Users got "part not found" for parts that exist in Parts.io (10x larger DB) or Mouser, limiting source part discoverability.
+
+**Solution:** Search all four data sources in parallel with priority-ordered dedup:
+
+1. **Digikey** (priority) — keyword search, handles both MPNs and descriptions
+2. **Atlas** — Supabase ilike on MPN + manufacturer
+3. **Parts.io** — MPN prefix wildcard (`Manufacturer Part Number=query*`), 10x larger coverage
+4. **Mouser** — MPN prefix (`partSearchOptions: 'BeginsWith'`), rate-limited
+
+**MPN vs description detection:** `looksLikeMpn()` heuristic routes queries — MPN-like queries (alphanumeric, dashes, 1-2 words) hit all 4 sources; description-like queries (3+ words or containing component terms like "capacitor") only hit Digikey + Atlas (the MPN-prefix APIs can't handle descriptions).
+
+**Dedup rule:** Digikey always wins. Non-Digikey results only appear for parts NOT in Digikey. Priority order: Digikey → Atlas → Parts.io → Mouser. Case-insensitive MPN matching. Result cap: 50.
+
+**Rate limit protection:** Batch validation (`/api/parts-list/validate`) passes `{ skipMouser: true }` to preserve Mouser's daily budget (950 calls/day) for enrichment. Mouser search also guards on `hasMouserBudget()`.
+
+**UI:** `PartSummary.dataSource` field tags each result's origin. `PartOptionsSelector` shows a subtle chip ("Atlas", "Parts.io", "Mouser") for non-Digikey results. No indicator for Digikey (default/expected).
+
+**API discoveries (verified via live testing):**
+- Parts.io: `Manufacturer Part Number=LM358*` returns 440 matches (wildcard in field value, not `q=` param)
+- Mouser: POST with `partSearchOptions: 'BeginsWith'` returns 137 matches for "LM358"
+- Parts.io `exactMatch: 'false'` returns empty (wrong approach)
+- Parts.io `q=LM358*` returns 0 (Solr `q` param doesn't work for this API)
+
+**New files:** `__tests__/services/multiSourceSearch.test.ts` (38 tests).
+
+**Modified files:** `lib/types.ts` (`PartSummary.dataSource`), `lib/services/partDataService.ts` (`looksLikeMpn`, `searchParts` rewrite), `lib/services/partsioClient.ts` (`searchPartsioProducts`, `mapPartsioListingToPartSummary`), `lib/services/mouserClient.ts` (`searchMouserProducts`, `mapMouserProductToPartSummary`), `lib/services/digikeyMapper.ts` (tag `dataSource: 'digikey'`), `lib/services/atlasClient.ts` (tag `dataSource: 'atlas'`), `lib/api.ts` (ROUTE_SERVICES), `app/api/parts-list/validate/route.ts` (skipMouser), `hooks/useAppState.ts` (status text), `components/PartOptionsSelector.tsx` (source chip).

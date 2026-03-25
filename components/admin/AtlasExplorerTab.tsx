@@ -13,6 +13,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
@@ -122,7 +123,7 @@ export default function AtlasExplorerTab() {
                   <TableCell sx={{ fontWeight: 600 }}>Family</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>Category</TableCell>
                   <TableCell sx={{ fontWeight: 600, width: 80, textAlign: 'center' }}>Status</TableCell>
-                  <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>Params</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: 80, textAlign: 'center' }}>Coverage</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -176,9 +177,24 @@ export default function AtlasExplorerTab() {
                       />
                     </TableCell>
                     <TableCell sx={{ textAlign: 'center' }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.78rem' }}>
-                        {row.parameterCount}
-                      </Typography>
+                      {row.coveragePct !== null ? (
+                        <Tooltip title={`${row.schemaMatchCount} of ${row.schemaTotalCount} schema attributes present`} arrow>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              color: row.coveragePct >= 60 ? 'success.main' : row.coveragePct >= 30 ? 'warning.main' : 'error.main',
+                            }}
+                          >
+                            {row.coveragePct}%
+                          </Typography>
+                        </Tooltip>
+                      ) : (
+                        <Typography variant="body2" sx={{ fontSize: '0.78rem', opacity: 0.3 }}>
+                          —
+                        </Typography>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

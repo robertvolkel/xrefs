@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Chip,
@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Typography,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
@@ -138,8 +139,11 @@ function L2View({ data, t }: { data: L2ParamMapData; t: ReturnType<typeof useTra
   );
 }
 
+type SortDir = 'asc' | 'desc';
+
 /** L3 full view — rules with weights, coverage metrics, DK+PIO columns */
 function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof useTranslation>['t'] }) {
+  const [weightSort, setWeightSort] = useState<SortDir>('desc');
   const categories = useMemo(
     () => (table ? getDigikeyCategoriesForFamily(table.familyId) : []),
     [table],
@@ -157,8 +161,9 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
 
   const attributeRows = useMemo(() => {
     if (!table) return [];
-    return [...table.rules].sort((a, b) => b.weight - a.weight);
-  }, [table]);
+    const dir = weightSort === 'asc' ? 1 : -1;
+    return [...table.rules].sort((a, b) => dir * (a.weight - b.weight));
+  }, [table, weightSort]);
 
   const coverage = useMemo(() => {
     if (!table) return null;
@@ -254,7 +259,15 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               <TableCell sx={{ fontWeight: 600, width: COL.num }}>#</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrId }}>{t('admin.attributeId')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.attrName }}>{t('admin.attributeName')}</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: COL.weight, textAlign: 'center' }}>{t('admin.weight')}</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: COL.weight, textAlign: 'center' }}>
+                <TableSortLabel
+                  active
+                  direction={weightSort}
+                  onClick={() => setWeightSort(prev => prev === 'desc' ? 'asc' : 'desc')}
+                >
+                  {t('admin.weight')}
+                </TableSortLabel>
+              </TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.digikey }}>{t('admin.digikeyField', 'Digikey Field')}</TableCell>
               <TableCell sx={{ fontWeight: 600, width: COL.partsio }}>{t('admin.partsioField', 'Parts.io Field')}</TableCell>
             </TableRow>

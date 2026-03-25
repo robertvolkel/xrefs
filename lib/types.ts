@@ -86,6 +86,8 @@ export interface ParametricAttribute {
   sortOrder: number;
   /** Which data source supplied this attribute value */
   source?: 'digikey' | 'partsio' | 'atlas' | 'mpn_enrichment';
+  /** Whether this attribute is recognized by the schema (logic table or param map) */
+  recognized?: boolean;
 }
 
 /** Full parametric profile of a part */
@@ -139,6 +141,7 @@ export interface PartSummary {
   category: ComponentCategory;
   status?: PartStatus;
   qualifications?: string[];
+  dataSource?: 'digikey' | 'atlas' | 'partsio' | 'mouser';
 }
 
 export interface SearchResult {

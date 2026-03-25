@@ -288,10 +288,117 @@ export async function getPartsioProductDetails(mpn: string, userId?: string): Pr
 }
 
 // ============================================================
-// HEALTH CHECK
+// SEARCH (MPN prefix wildcard)
 // ============================================================
 
-import type { ServiceStatusInfo } from '@/lib/types';
+import type { SearchResult, PartSummary, ComponentCategory, PartStatus, ServiceStatusInfo } from '@/lib/types';
+
+/** Map Parts.io Class → ComponentCategory (approximate, for search display) */
+const PARTSIO_CLASS_TO_CATEGORY: Record<string, ComponentCategory> = {
+  'Capacitors': 'Capacitors',
+  'Resistors': 'Resistors',
+  'Inductors': 'Inductors',
+  'Filters': 'Filters',
+  'Diodes': 'Diodes',
+  'Transistors': 'Transistors',
+  'Trigger Devices': 'Thyristors',
+  'Amplifier Circuits': 'Amplifiers',
+  'Logic': 'Logic ICs',
+  'Power Circuits': 'Voltage Regulators',
+  'Converters': 'ICs',
+  'Drivers And Interfaces': 'Interface ICs',
+  'Signal Circuits': 'ICs',
+  'Circuit Protection': 'Protection',
+  'Optoelectronics': 'Optocouplers',
+  'Relays': 'Relays',
+  'Crystals/Resonators': 'Crystals',
+};
+
+/** Map Parts.io lifecycle → PartStatus */
+function mapPartsioStatus(lifecycle: string | undefined): PartStatus {
+  if (!lifecycle) return 'Active';
+  const lc = lifecycle.toLowerCase();
+  if (lc.includes('obsolete')) return 'Obsolete';
+  if (lc.includes('discontinued')) return 'Discontinued';
+  if (lc.includes('end of life') || lc === 'eol') return 'NRND';
+  if (lc.includes('last time buy') || lc === 'ltb') return 'LastTimeBuy';
+  return 'Active';
+}
+
+/** Convert a Parts.io listing to a lightweight PartSummary for search results */
+export function mapPartsioListingToPartSummary(listing: PartsioListing): PartSummary {
+  return {
+    mpn: listing['Manufacturer Part Number'],
+    manufacturer: listing.Manufacturer || 'Unknown',
+    description: listing.Description || '',
+    category: PARTSIO_CLASS_TO_CATEGORY[listing.Class] || 'ICs',
+    status: mapPartsioStatus(listing['Part Life Cycle Code']),
+    dataSource: 'partsio',
+  };
+}
+
+/**
+ * Search Parts.io by MPN prefix (wildcard).
+ * Returns up to 10 unique MPNs (deduped, best record per MPN).
+ * Returns { type: 'none', matches: [] } if unconfigured, query too short, or on error.
+ */
+export async function searchPartsioProducts(query: string): Promise<SearchResult> {
+  if (!isPartsioConfigured() || query.trim().length < 3) {
+    return { type: 'none', matches: [] };
+  }
+
+  try {
+    const apiKey = process.env.PARTSIO_API_KEY!;
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      limit: '50',  // Fetch more to allow dedup across manufacturers
+      facets: 'false',
+      'Manufacturer Part Number': `${query.trim()}*`,
+    });
+
+    const url = `${BASE_URL}?${params.toString()}`;
+    const res = await partsioFetch(url);
+    const data: PartsioResponse = await res.json();
+
+    if (!data.response || data.response.length === 0) {
+      return { type: 'none', matches: [] };
+    }
+
+    // Dedup by MPN — keep best record per unique MPN (by Completeness)
+    const byMpn = new Map<string, PartsioListing>();
+    for (const listing of data.response) {
+      const mpn = listing['Manufacturer Part Number'];
+      const key = mpn.toLowerCase();
+      const existing = byMpn.get(key);
+      if (!existing) {
+        byMpn.set(key, listing);
+      } else {
+        const existingScore = existing.Completeness ?? countParametricFields(existing);
+        const currentScore = listing.Completeness ?? countParametricFields(listing);
+        if (currentScore > existingScore) {
+          byMpn.set(key, listing);
+        }
+      }
+    }
+
+    // Take top 10 unique MPNs
+    const matches: PartSummary[] = [];
+    for (const listing of byMpn.values()) {
+      if (matches.length >= 10) break;
+      matches.push(mapPartsioListingToPartSummary(listing));
+    }
+
+    if (matches.length === 0) return { type: 'none', matches: [] };
+    return { type: matches.length === 1 ? 'single' : 'multiple', matches };
+  } catch (error) {
+    console.warn('Parts.io search failed:', error);
+    return { type: 'none', matches: [] };
+  }
+}
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
 
 export async function checkPartsioHealth(): Promise<ServiceStatusInfo> {
   const now = new Date().toISOString();

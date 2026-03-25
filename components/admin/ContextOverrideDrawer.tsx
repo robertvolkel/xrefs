@@ -224,7 +224,7 @@ export default function ContextOverrideDrawer({
         </Stack>
 
         {/* Form */}
-        <Box sx={{ flex: 1, overflow: 'auto' }}>
+        <Box sx={{ flex: 1, overflow: 'auto', pt: 1 }}>
           <Stack spacing={2.5}>
             {/* Question-level fields */}
             {mode === 'add_question' && (
