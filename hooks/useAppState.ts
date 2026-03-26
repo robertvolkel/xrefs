@@ -136,6 +136,17 @@ export function useAppState() {
     setState((prev) => ({ ...prev, statusText: text }));
   }, []);
 
+  /** Rotate through status messages on a timer. Returns cleanup function. */
+  const startStatusRotation = useCallback((messages: { text: string; delayMs: number }[]) => {
+    const timers: NodeJS.Timeout[] = [];
+    if (messages.length > 0) setStatus(messages[0].text);
+    for (let i = 1; i < messages.length; i++) {
+      const msg = messages[i];
+      timers.push(setTimeout(() => setStatus(msg.text), msg.delayMs));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [setStatus]);
+
   /** Background Mouser enrichment — merges pricing/lifecycle into displayed recs */
   const triggerMouserEnrichment = useCallback(
     (recs: XrefRecommendation[], signal: AbortSignal) => {
@@ -318,7 +329,12 @@ export function useAppState() {
     async (part: PartSummary) => {
       const signal = freshAbort();
       addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
-      setStatus('Fetching specifications from Digikey...');
+      const stopRotation = startStatusRotation([
+        { text: 'Checking all data sources...', delayMs: 0 },
+        { text: 'Fetching technical attributes...', delayMs: 1200 },
+        { text: 'Checking price and availability...', delayMs: 2800 },
+        { text: 'Analyzing supply risk...', delayMs: 4500 },
+      ]);
       setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
 
       // Tell the LLM the user confirmed
@@ -329,6 +345,7 @@ export function useAppState() {
 
       // Step 1: Fetch attributes (fast, direct API)
       const sourceAttrs = await getPartAttributes(part.mpn, signal).catch(() => null);
+      stopRotation();
       if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
@@ -354,14 +371,14 @@ export function useAppState() {
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           // Pause and ask user for missing critical attribute values
           setStatus('');
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
+          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
             partMpn: part.mpn,
           });
           conversationRef.current.push({
             role: 'assistant',
-            content: `Loaded attributes for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
+            content: `Loaded details for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
           });
           setState((prev) => ({
             ...prev,
@@ -392,7 +409,7 @@ export function useAppState() {
             if (hasVisibleRemaining) {
               // Some questions still need user input — show form with auto-answers pre-filled
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
@@ -400,7 +417,7 @@ export function useAppState() {
               });
               conversationRef.current.push({
                 role: 'assistant',
-                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
               });
               pendingOverridesRef.current = {};
               setState((prev) => ({
@@ -414,14 +431,14 @@ export function useAppState() {
             if (!hasAutoAnswers) {
               // No auto-answers and no visible questions — show full form
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
               });
               conversationRef.current.push({
                 role: 'assistant',
-                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
               });
               pendingOverridesRef.current = {};
               setState((prev) => ({
@@ -434,7 +451,7 @@ export function useAppState() {
 
             // All questions auto-answered — skip form, get recs with auto-context
             const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
             setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
@@ -457,9 +474,9 @@ export function useAppState() {
         }
 
         if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Finding cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Finding cross-references...`);
         } else {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
         }
         setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({
@@ -590,8 +607,14 @@ export function useAppState() {
     async (part: PartSummary) => {
       const signal = freshAbort();
       try {
-        setStatus('Fetching specifications from Digikey...');
+        const stopRotation = startStatusRotation([
+          { text: 'Checking all data sources...', delayMs: 0 },
+          { text: 'Fetching technical attributes...', delayMs: 1200 },
+          { text: 'Checking price and availability...', delayMs: 2800 },
+          { text: 'Analyzing supply risk...', delayMs: 4500 },
+        ]);
         const attributes = await getPartAttributes(part.mpn);
+        stopRotation();
 
         // Check if this part family is supported
         if (!isFamilySupported(attributes.part.subcategory)) {
@@ -612,7 +635,7 @@ export function useAppState() {
 
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           setStatus('');
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
+          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
             partMpn: part.mpn,
@@ -644,7 +667,7 @@ export function useAppState() {
 
             if (hasVisibleRemaining || !hasAutoAnswers) {
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
@@ -661,7 +684,7 @@ export function useAppState() {
 
             // All questions auto-answered — skip form, get recs with auto-context
             const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
             setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
@@ -683,9 +706,9 @@ export function useAppState() {
         }
 
         if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Searching for cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Searching for cross-references...`);
         } else {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. Searching for cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. Searching for cross-references...`);
         }
         setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({

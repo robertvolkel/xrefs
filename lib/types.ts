@@ -796,6 +796,7 @@ export interface RecommendationResult {
   familyId?: string;
   familyName?: string;
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
+  unsupportedFamily?: boolean;
 }
 
 /** The stage of the recommendation pipeline being questioned */

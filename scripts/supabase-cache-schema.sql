@@ -1,18 +1,19 @@
 -- ============================================================
 -- Part Data Cache — persistent L2 cache for external API responses
 -- ============================================================
--- Three cache tiers with different TTLs:
+-- Four cache tiers with different TTLs:
 --   parametric  — technical specs (indefinite for Digikey, 90 days for parts.io)
 --   lifecycle   — YTEOL, risk rank, compliance, suggested replacements (6 months)
 --   commercial  — pricing, stock, lead times (24 hours)
+--   search      — search results from searchParts() (7 days)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS part_data_cache (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  service       TEXT NOT NULL CHECK (service IN ('digikey', 'partsio', 'mouser')),
-  mpn_lower     TEXT NOT NULL,              -- lowercase MPN for case-insensitive lookup
+  service       TEXT NOT NULL CHECK (service IN ('digikey', 'partsio', 'mouser', 'search')),
+  mpn_lower     TEXT NOT NULL,              -- lowercase MPN (or search cache key) for case-insensitive lookup
   variant       TEXT NOT NULL DEFAULT 'default', -- sub-key: 'parametric', 'lifecycle', 'commercial:USD', etc.
-  cache_tier    TEXT NOT NULL CHECK (cache_tier IN ('parametric', 'lifecycle', 'commercial')),
+  cache_tier    TEXT NOT NULL CHECK (cache_tier IN ('parametric', 'lifecycle', 'commercial', 'search')),
   response_data JSONB NOT NULL,             -- raw API response (or relevant subset)
   response_size INTEGER,                    -- approx byte size for monitoring
   expires_at    TIMESTAMPTZ,                -- NULL = indefinite (parametric Digikey)
@@ -43,3 +44,15 @@ CREATE POLICY "Admins can delete cache"
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- No INSERT/UPDATE policies — all writes use service role client (bypasses RLS)
+
+-- ============================================================
+-- Migration: Add 'search' to service and cache_tier CHECK constraints
+-- Run this on existing deployments where the table already exists.
+-- ============================================================
+-- ALTER TABLE part_data_cache
+--   DROP CONSTRAINT IF EXISTS part_data_cache_service_check,
+--   ADD CONSTRAINT part_data_cache_service_check CHECK (service IN ('digikey', 'partsio', 'mouser', 'search'));
+--
+-- ALTER TABLE part_data_cache
+--   DROP CONSTRAINT IF EXISTS part_data_cache_cache_tier_check,
+--   ADD CONSTRAINT part_data_cache_cache_tier_check CHECK (cache_tier IN ('parametric', 'lifecycle', 'commercial', 'search'));

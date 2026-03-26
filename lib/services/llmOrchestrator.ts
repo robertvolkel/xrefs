@@ -287,6 +287,8 @@ Your role:
 - Provide engineering assessments of replacement candidates
 - Be concise and technical — your users are electronics engineers
 
+If a user asks about anything unrelated to electronic components, respond in 1-2 sentences max. State you can't help with that topic, then describe yourself as: "I'm an electronic component specialist — I help hardware engineers and procurement teams navigate design decisions, pricing, supply risk, and market shifts." Do NOT list bullet points of your capabilities.
+
 Workflow:
 1. When a user provides a part number or description, use the search_parts tool to find matches.
 2. If there's exactly one match, ask the user to confirm. If multiple, present them briefly.
@@ -295,8 +297,8 @@ Workflow:
 
 Search result presentation:
 - The UI renders interactive cards below your message, so DO NOT list or repeat each part's details in your text.
-- For a single match: "I found **[MPN]** from [manufacturer]. Is this the part you need a replacement for?"
-- For multiple matches: "I found [N] similar parts. Which one do you need a replacement for?" — nothing more. The cards show the rest.
+- For a single match: "I found **[MPN]** from [manufacturer]. Is this what you're looking for?"
+- For multiple matches: "I found [N] similar parts. Which one are you looking for?" — nothing more. The cards show the rest.
 
 Engineering Assessment (REQUIRED after find_replacements):
 - State how many candidates were found and how many passed
@@ -305,9 +307,8 @@ Engineering Assessment (REQUIRED after find_replacements):
 - Flag anything requiring manual engineering review
 - 3–5 sentences max. Be direct and technical.
 
-43 supported component families across 6 blocks: Passives (19), Discrete Semiconductors (9), ICs (10), Frequency Control & Protection (2), Optoelectronics (1), Relays (2). Use search_parts to check if a specific part is supported — the search result will indicate the family.
-
-If a part falls outside these families, clearly tell the user that the application does not yet support cross-referencing for that component category. Do NOT suggest "manual sourcing" or imply the search failed — state that the logic rules for that category haven't been built yet.
+Unsupported families:
+43 supported component families across 6 blocks: Passives (19), Discrete Semiconductors (9), ICs (10), Frequency Control & Protection (2), Optoelectronics (1), Relays (2). The find_replacements tool result will include "unsupportedFamily": true when a part's category has no logic table. When you see this flag (or when the result contains zero recommendations and no error), tell the user: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate further, suggest "manual sourcing", or imply the search failed. Still show the confirmation step first — ask the user to confirm the part, then call get_part_attributes and find_replacements as normal, and deliver the message based on the result.
 
 Formatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs.
@@ -316,7 +317,7 @@ Formatting rules:
 - No filler, no repetition. Engineers don't need hand-holding.
 
 Important rules:
-- Always use tools — never guess part numbers or specs.
+- Always use tools — never guess part numbers or specs. If the user asks about a part's specifications, attributes, pricing, or any technical detail, ALWAYS call get_part_attributes. Never answer from general knowledge — your training data may be outdated or inaccurate. The tools return live data from real APIs.
 - After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
 - If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. Never describe a part from general knowledge. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
@@ -503,16 +504,19 @@ async function executeTool(
         });
       }
 
-      return JSON.stringify(recs.slice(0, 20).map(r => ({
-        mpn: r.part.mpn,
-        manufacturer: r.part.manufacturer,
-        matchPercentage: r.matchPercentage,
-        passed: r.matchPercentage > 0,
-        keyDifferences: r.matchDetails
-          .filter(d => d.matchStatus !== 'exact')
-          .slice(0, 5)
-          .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
-      })));
+      return JSON.stringify({
+        ...(result.unsupportedFamily ? { unsupportedFamily: true } : {}),
+        results: recs.slice(0, 20).map(r => ({
+          mpn: r.part.mpn,
+          manufacturer: r.part.manufacturer,
+          matchPercentage: r.matchPercentage,
+          passed: r.matchPercentage > 0,
+          keyDifferences: r.matchDetails
+            .filter(d => d.matchStatus !== 'exact')
+            .slice(0, 5)
+            .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
+        })),
+      });
     }
     case 'filter_recommendations': {
       const filterInput = input as FilterInput;

@@ -16,8 +16,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 // TYPES
 // ============================================================
 
-export type CacheService = 'digikey' | 'partsio' | 'mouser';
-export type CacheTier = 'parametric' | 'lifecycle' | 'commercial';
+export type CacheService = 'digikey' | 'partsio' | 'mouser' | 'search';
+export type CacheTier = 'parametric' | 'lifecycle' | 'commercial' | 'search';
 
 export interface CacheReadResult<T> {
   data: T;
@@ -61,6 +61,9 @@ export const TTL_LIFECYCLE_MS = 180 * 24 * 60 * 60 * 1000;
 
 /** Commercial data (Digikey + Mouser pricing/stock): 24 hours */
 export const TTL_COMMERCIAL_MS = 24 * 60 * 60 * 1000;
+
+/** Search results: 7 days (pricing preview goes stale; detailed pricing from getAttributes) */
+export const TTL_SEARCH_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

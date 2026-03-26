@@ -24,6 +24,7 @@ import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, s
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
+import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS } from './partDataCache';
 
 // ============================================================
 // PARTS.IO LIFECYCLE METADATA HELPER
@@ -60,6 +61,11 @@ function isDigikeyConfigured(): boolean {
 
 const SEARCH_RESULT_CAP = 50;
 
+// ── Search Result Cache (in-memory, 10-min TTL) ─────────────
+const searchCache = new Map<string, { data: SearchResult; timestamp: number }>();
+const SEARCH_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const SEARCH_CACHE_MAX = 100;
+
 /**
  * Lightweight heuristic: does the query look like a part number (MPN) vs a description?
  * Used to decide whether to call MPN-prefix-only APIs (Parts.io, Mouser).
@@ -88,6 +94,22 @@ export async function searchParts(
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
   const longEnough = trimmed.length >= 3;
+
+  // ── Search cache: L1 in-memory ──
+  const cacheKey = `${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipMouser ? '1' : '0'}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
+    console.log(`[perf] searchParts L1 HIT (${cacheKey})`);
+    return cached.data;
+  }
+
+  // ── Search cache: L2 Supabase persistent ──
+  const l2 = await getCachedResponse<SearchResult>('search', cacheKey, 'default');
+  if (l2) {
+    console.log(`[perf] searchParts L2 HIT (${cacheKey})`);
+    searchCache.set(cacheKey, { data: l2.data, timestamp: Date.now() }); // promote to L1
+    return l2.data;
+  }
 
   // Always search: Digikey (keyword search handles both MPNs and descriptions) + Atlas
   const searches: Promise<SearchResult>[] = [
@@ -137,13 +159,24 @@ export async function searchParts(
   }
 
   if (mergedMatches.length > 0) {
-    return {
+    const result: SearchResult = {
       type: mergedMatches.length === 1 ? 'single' : 'multiple',
       matches: mergedMatches,
     };
+
+    // ── Search cache: store in L1 + L2 (skip 'none' — may be transient failure) ──
+    searchCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    if (searchCache.size > SEARCH_CACHE_MAX) {
+      const oldestKey = searchCache.keys().next().value;
+      if (oldestKey) searchCache.delete(oldestKey);
+    }
+    setCachedResponse('search', cacheKey, 'default', 'search', result, TTL_SEARCH_MS);
+    console.log(`[perf] searchParts MISS → stored L1+L2 (${cacheKey})`);
+
+    return result;
   }
 
-  // No results from any source
+  // No results from any source — do NOT cache (may be transient failure)
   return { type: 'none', matches: [] };
 }
 
@@ -524,7 +557,7 @@ export async function getRecommendations(
 
   // No logic table → no recommendations possible
   if (!logicTable) {
-    return { recommendations: [], sourceAttributes: sourceAttrs, dataSource };
+    return { recommendations: [], sourceAttributes: sourceAttrs, dataSource, unsupportedFamily: true };
   }
 
   const familyId = logicTable.familyId;
