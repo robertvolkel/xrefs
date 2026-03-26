@@ -6,7 +6,7 @@
  * All functions are server-side only (uses process.env).
  */
 
-const BASE_URL = 'http://api.qa.parts.io/solr/partsio/listings';
+const BASE_URL = process.env.PARTSIO_API_URL;
 
 // ============================================================
 // RESPONSE TYPES
