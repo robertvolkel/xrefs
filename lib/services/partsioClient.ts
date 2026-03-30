@@ -197,10 +197,12 @@ export function selectBestRecord(listings: PartsioListing[]): PartsioListing | n
 // API FETCH WITH RETRY
 // ============================================================
 
+const PARTSIO_TIMEOUT_MS = 8000;
+
 async function partsioFetch(url: string): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(PARTSIO_TIMEOUT_MS) });
 
     if (res.status === 429) {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '2', 10);

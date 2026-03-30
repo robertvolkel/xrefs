@@ -27,6 +27,8 @@ export interface Part {
   eccnCode?: string;
   htsCode?: string;
   factoryLeadTimeWeeks?: number;
+  // Digikey quantity-based price breaks (from StandardPricing API field)
+  digikeyPriceBreaks?: PriceBreak[];
   // Multi-supplier commercial data
   supplierQuotes?: SupplierQuote[];
   lifecycleInfo?: LifecycleInfo[];
@@ -201,7 +203,41 @@ export type InteractiveElement =
   | { type: 'confirmation'; part: PartSummary }
   | { type: 'options'; parts: PartSummary[] }
   | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
-  | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> };
+  | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> }
+  | { type: 'list-action'; action: PendingListAction; status: 'pending' | 'confirmed' | 'cancelled' };
+
+// ── List Agent Types ─────────────────────────────────────────
+
+export type PendingListAction =
+  | { type: 'delete_rows'; rowIndices: number[]; reason: string }
+  | { type: 'refresh_rows'; rowIndices: number[]; reason: string }
+  | { type: 'set_preferred'; rowIndex: number; mpn: string; reason: string };
+
+export type ListClientAction =
+  | { type: 'sort'; columnId: string; direction: 'asc' | 'desc' }
+  | { type: 'filter'; searchTerm: string }
+  | { type: 'switch_view'; viewName: string };
+
+export interface ListAgentContext {
+  listId: string;
+  listName: string;
+  listDescription: string;
+  listCustomer: string;
+  currency: string;
+  totalRows: number;
+  statusCounts: Record<string, number>;
+  topManufacturers: Array<{ name: string; count: number }>;
+  topFamilies: Array<{ name: string; count: number }>;
+  activeViewName: string;
+  activeViewColumns: string[];
+  viewNames: string[];
+}
+
+export interface ListAgentResponse {
+  message: string;
+  pendingAction?: PendingListAction;
+  clientActions?: ListClientAction[];
+}
 
 export interface MissingAttributeInfo {
   attributeId: string;

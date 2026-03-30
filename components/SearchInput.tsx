@@ -164,7 +164,7 @@ export default function SearchInput({ onSubmit, disabled, landing }: SearchInput
               },
             }}
           >
-            Basic Questions
+            Find Replacements
           </Button>
           <IconButton
             onClick={handleSubmit}

@@ -8,12 +8,13 @@
  */
 
 import { PartsListRow, EnrichedPartData } from './types';
+import { CalculatedFieldDef, getCalculatedValue } from './calculatedFields';
 
 // ============================================================
 // TYPES
 // ============================================================
 
-export type ColumnSource = 'spreadsheet' | 'system' | 'digikey-product' | 'digikey-param';
+export type ColumnSource = 'spreadsheet' | 'system' | 'digikey-product' | 'digikey-param' | 'calculated';
 
 export interface ColumnDefinition {
   /** Unique stable ID, e.g. "ss:3", "sys:row_number", "dk:unitPrice", "dkp:capacitance" */
@@ -40,6 +41,8 @@ export interface ColumnDefinition {
   isLink?: boolean;
   /** Data source for display badge in column picker (DK, PIO, Atlas, Mouser) */
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mouser';
+  /** For calculated columns: the formula definition */
+  calculatedField?: CalculatedFieldDef;
 }
 
 /** Display order for column groups in the column picker */
@@ -54,6 +57,7 @@ export const GROUP_ORDER = [
   'Trade & Export',
   'Documentation',
   'Technical',
+  'Calculated',
 ] as const;
 
 // ============================================================
@@ -222,10 +226,16 @@ export function buildAvailableColumns(
 /**
  * Extract the display value for a given column definition and row.
  * System columns return undefined — they use custom renderers.
+ *
+ * @param columnMap - Optional map of all column definitions (needed for calculated fields
+ *   to resolve operand references). Pass this when the view includes calc:* columns.
+ * @param depth - Recursion depth for calculated field cycle protection.
  */
 export function getCellValue(
   column: ColumnDefinition,
   row: PartsListRow,
+  columnMap?: Map<string, ColumnDefinition>,
+  depth?: number,
 ): string | number | undefined {
   switch (column.source) {
     case 'spreadsheet':
@@ -265,6 +275,20 @@ export function getCellValue(
       // System columns are handled by custom renderers in the table
       return undefined;
 
+    case 'calculated': {
+      if (!column.calculatedField || !columnMap) return undefined;
+      return getCalculatedValue(
+        column.calculatedField,
+        row,
+        (colId, r, d) => {
+          const refCol = columnMap.get(colId);
+          if (!refCol) return undefined;
+          return getCellValue(refCol, r, columnMap, d);
+        },
+        depth ?? 0,
+      );
+    }
+
     default:
       return undefined;
   }
@@ -277,9 +301,10 @@ export function getCellValue(
 export function getSortValue(
   column: ColumnDefinition,
   row: PartsListRow,
+  columnMap?: Map<string, ColumnDefinition>,
 ): string | number | undefined {
   if (column.source !== 'system') {
-    return getCellValue(column, row);
+    return getCellValue(column, row, columnMap);
   }
 
   switch (column.id) {

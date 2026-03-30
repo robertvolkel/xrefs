@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { BatchValidateRequest, BatchValidateItem, UserPreferences } from '@/lib/types';
+import { BatchValidateRequest, BatchValidateItem, UserPreferences, PartSummary, PartAttributes } from '@/lib/types';
 import { searchParts, getAttributes, getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { buildEnrichedData } from '@/lib/services/enrichedDataBuilder';
@@ -29,21 +29,43 @@ async function processItem(
 
     const searchResult = await searchParts(searchQuery, currency, userId, { skipMouser: true });
 
+    let resolvedPart: PartSummary;
+    let prefetchedAttributes: PartAttributes | undefined;
+
     if (searchResult.type === 'none') {
-      return { rowIndex: item.rowIndex, status: 'not-found' };
+      // Fallback: try direct attribute lookup (exact MPN match against Digikey, Atlas, parts.io)
+      // searchParts uses prefix/keyword matching which may miss parts that exact lookup finds
+      const directAttrs = await getAttributes(query, currency, userId);
+      if (!directAttrs) {
+        return { rowIndex: item.rowIndex, status: 'not-found' };
+      }
+      // Build a synthetic resolvedPart from the attributes
+      resolvedPart = {
+        mpn: directAttrs.part.mpn,
+        manufacturer: directAttrs.part.manufacturer,
+        description: directAttrs.part.description,
+        category: directAttrs.part.category,
+        status: directAttrs.part.status,
+        dataSource: directAttrs.dataSource === 'mock' ? undefined : directAttrs.dataSource,
+      };
+      prefetchedAttributes = directAttrs;
+    } else {
+      resolvedPart = searchResult.matches[0];
     }
 
-    // Use the first match (best confidence)
-    const resolvedPart = searchResult.matches[0];
-
     // Step 2: Get attributes
-    const sourceAttributes = await getAttributes(resolvedPart.mpn, currency, userId);
+    const sourceAttributes = prefetchedAttributes ?? await getAttributes(resolvedPart.mpn, currency, userId);
     if (!sourceAttributes) {
       return { rowIndex: item.rowIndex, status: 'resolved', resolvedPart };
     }
 
-    // Step 3: Get recommendations
-    const recResult = await getRecommendations(resolvedPart.mpn, undefined, undefined, currency, undefined, userPreferences, userId);
+    // Step 3: Get recommendations (pass prefetched attrs to avoid redundant lookup)
+    // Skip parts.io candidate enrichment in batch — saves ~20 API calls per part
+    const recResult = await getRecommendations(
+      resolvedPart.mpn, undefined, undefined, currency, undefined,
+      userPreferences, userId, prefetchedAttributes,
+      { skipPartsioEnrichment: true },
+    );
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
 

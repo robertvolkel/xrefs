@@ -6,6 +6,7 @@
  */
 
 import { DEFAULT_VIEW_COLUMNS } from './columnDefinitions';
+import type { CalculatedFieldDef } from './calculatedFields';
 
 // ============================================================
 // TYPES
@@ -22,6 +23,8 @@ export interface SavedView {
   /** Maps ss:N column IDs → header text at creation time.
    *  Used to remap columns when a view is applied to a different list. */
   columnMeta?: Record<string, string>;
+  /** Calculated field definitions owned by this view */
+  calculatedFields?: CalculatedFieldDef[];
 }
 
 export interface ViewState {
@@ -124,15 +127,64 @@ export function isBuiltinView(viewId: string): boolean {
 
 /**
  * Strip list-specific ss:* column IDs from a column list.
- * Templates must only contain portable column IDs (sys:*, mapped:*, dk:*, dkp:*).
+ * Templates must only contain portable column IDs (sys:*, mapped:*, dk:*, dkp:*, calc:*).
  */
 export function sanitizeTemplateColumns(columns: string[]): string[] {
   return columns.filter(id => !id.startsWith('ss:'));
 }
 
+/**
+ * Strip calculated fields whose formulas reference ss:* columns without headerHint.
+ * Calc fields with headerHint are portable (they can remap); those without are list-specific.
+ */
+export function sanitizeTemplateCalcFields(fields: CalculatedFieldDef[] | undefined): CalculatedFieldDef[] | undefined {
+  if (!fields || fields.length === 0) return undefined;
+  const portable = fields.filter(f => {
+    const refs = [f.formula.left, ...('literal' in f.formula.right ? [] : [f.formula.right])];
+    return refs.every(ref => !ref.columnId.startsWith('ss:') || ref.headerHint);
+  });
+  return portable.length > 0 ? portable : undefined;
+}
+
 // ============================================================
 // CROSS-LIST COLUMN REMAPPING
 // ============================================================
+
+/**
+ * Build a header→index lookup map from effective headers.
+ * Shared by column and calc field remapping.
+ */
+function buildHeaderIndex(effectiveHeaders: string[]): Map<string, number> {
+  const map = new Map<string, number>();
+  effectiveHeaders.forEach((h, i) => {
+    const lower = h.toLowerCase();
+    if (!map.has(lower)) map.set(lower, i);
+  });
+  return map;
+}
+
+/** Remap a single ss:* column ID using header metadata. Returns the new ID or undefined to drop. */
+function remapSsColumnId(
+  colId: string,
+  columnMeta: Record<string, string>,
+  effectiveHeaders: string[],
+  headerToIndex: Map<string, number>,
+): string | undefined {
+  const storedHeader = columnMeta[colId];
+  if (!storedHeader) return colId; // No meta — keep as-is
+
+  const idx = parseInt(colId.slice(3), 10);
+  const currentHeader = effectiveHeaders[idx];
+
+  // Header at index N still matches — keep ss:N
+  if (currentHeader && currentHeader.toLowerCase() === storedHeader.toLowerCase()) {
+    return colId;
+  }
+
+  // Header mismatch — find by text
+  const remappedIdx = headerToIndex.get(storedHeader.toLowerCase());
+  return remappedIdx !== undefined ? `ss:${remappedIdx}` : undefined;
+}
 
 /**
  * Remap ss:* column IDs using stored header metadata.
@@ -146,32 +198,66 @@ export function remapSpreadsheetColumns(
 ): string[] {
   if (!columnMeta || effectiveHeaders.length === 0) return cols;
 
-  const headerToIndex = new Map<string, number>();
-  effectiveHeaders.forEach((h, i) => {
-    const lower = h.toLowerCase();
-    if (!headerToIndex.has(lower)) {
-      headerToIndex.set(lower, i);
-    }
-  });
+  const headerToIndex = buildHeaderIndex(effectiveHeaders);
 
   return cols.flatMap(colId => {
     if (!colId.startsWith('ss:')) return [colId];
-    const storedHeader = columnMeta[colId];
-    if (!storedHeader) return [colId]; // No meta for this column, keep as-is
+    const remapped = remapSsColumnId(colId, columnMeta, effectiveHeaders, headerToIndex);
+    return remapped ? [remapped] : [];
+  });
+}
 
-    const idx = parseInt(colId.slice(3), 10);
-    const currentHeader = effectiveHeaders[idx];
+/**
+ * Remap ss:* column references inside calculated field formulas.
+ * Uses the same header-hint mechanism as column remapping.
+ * Returns a new array with remapped formulas (or drops fields whose refs can't be resolved).
+ */
+export function remapCalcFieldRefs(
+  fields: CalculatedFieldDef[] | undefined,
+  effectiveHeaders: string[],
+): CalculatedFieldDef[] | undefined {
+  if (!fields || fields.length === 0 || effectiveHeaders.length === 0) return fields;
 
-    // Header at index N still matches — keep ss:N
-    if (currentHeader && currentHeader.toLowerCase() === storedHeader.toLowerCase()) {
-      return [colId];
+  const headerToIndex = buildHeaderIndex(effectiveHeaders);
+
+  const remapped = fields.map(field => {
+    const { formula } = field;
+    const newLeft = remapColumnRef(formula.left, effectiveHeaders, headerToIndex);
+    if (!newLeft) return null; // Left operand can't be resolved — drop this field
+
+    let newRight = formula.right;
+    if (!('literal' in formula.right)) {
+      const r = remapColumnRef(formula.right, effectiveHeaders, headerToIndex);
+      if (!r) return null;
+      newRight = r;
     }
 
-    // Header mismatch — find the column by header text
-    const remappedIdx = headerToIndex.get(storedHeader.toLowerCase());
-    if (remappedIdx !== undefined) return [`ss:${remappedIdx}`];
-
-    // Column doesn't exist in this list — drop it
-    return [];
+    // Only create a new object if something changed
+    if (newLeft === formula.left && newRight === formula.right) return field;
+    return { ...field, formula: { ...formula, left: newLeft, right: newRight } };
   });
+
+  const valid = remapped.filter((f): f is CalculatedFieldDef => f !== null);
+  return valid.length > 0 ? valid : undefined;
+}
+
+/** Remap an ss:* ColumnRef using its headerHint. Returns null if unresolvable. */
+function remapColumnRef(
+  ref: import('./calculatedFields').ColumnRef,
+  effectiveHeaders: string[],
+  headerToIndex: Map<string, number>,
+): import('./calculatedFields').ColumnRef | null {
+  if (!ref.columnId.startsWith('ss:') || !ref.headerHint) return ref;
+
+  const idx = parseInt(ref.columnId.slice(3), 10);
+  const currentHeader = effectiveHeaders[idx];
+
+  // Header still matches — keep as-is
+  if (currentHeader && currentHeader.toLowerCase() === ref.headerHint.toLowerCase()) return ref;
+
+  // Find by header text
+  const remappedIdx = headerToIndex.get(ref.headerHint.toLowerCase());
+  if (remappedIdx === undefined) return null; // Column doesn't exist in this list
+
+  return { ...ref, columnId: `ss:${remappedIdx}` };
 }

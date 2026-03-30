@@ -11,6 +11,7 @@ import PartConfirmation from './PartConfirmation';
 import PartOptionsSelector from './PartOptionsSelector';
 import MissingAttributesForm from './MissingAttributesForm';
 import ApplicationContextForm from './ApplicationContextForm';
+import ListActionConfirmation from './parts-list/ListActionConfirmation';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -21,6 +22,8 @@ interface MessageBubbleProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  onListActionConfirm?: (messageId: string) => void;
+  onListActionCancel?: (messageId: string) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
 }
@@ -34,6 +37,8 @@ export default function MessageBubble({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  onListActionConfirm,
+  onListActionCancel,
   sourceMpn,
   sourceManufacturer,
 }: MessageBubbleProps) {
@@ -157,6 +162,15 @@ export default function MessageBubble({
             onSkip={onSkipContext}
             sourceMpn={sourceMpn}
             sourceManufacturer={sourceManufacturer}
+          />
+        )}
+
+        {message.interactiveElement?.type === 'list-action' && onListActionConfirm && onListActionCancel && (
+          <ListActionConfirmation
+            action={message.interactiveElement.action}
+            status={message.interactiveElement.status}
+            onConfirm={() => onListActionConfirm(message.id)}
+            onCancel={() => onListActionCancel(message.id)}
           />
         )}
       </Box>

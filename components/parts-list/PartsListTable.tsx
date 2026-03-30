@@ -76,6 +76,8 @@ interface PartsListTableProps {
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
   currency?: string;
+  /** Column map for calculated field operand resolution */
+  columnMap?: Map<string, ColumnDefinition>;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -226,6 +228,7 @@ function CellRenderer({
   currency = 'USD',
   recommendation,
   isSubRow,
+  columnMap,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -234,6 +237,7 @@ function CellRenderer({
   onDeleteRow?: (rowIndex: number) => void;
   onHideRow?: (rowIndex: number) => void;
   currency?: string;
+  columnMap?: Map<string, ColumnDefinition>;
   recommendation?: XrefRecommendation;
   isSubRow?: boolean;
 }) {
@@ -340,7 +344,7 @@ function CellRenderer({
   }
 
   // Data columns: use getCellValue
-  const value = getCellValue(column, row);
+  const value = getCellValue(column, row, columnMap);
   if (value === undefined || value === null || value === '') return null;
 
   // Link columns
@@ -363,8 +367,12 @@ function CellRenderer({
 
   // Numeric columns
   if (column.isNumeric && typeof value === 'number') {
-    if (column.id.includes('Price') || column.id.includes('unitPrice')) {
+    const calcFormat = column.calculatedField?.format;
+    if (calcFormat === 'currency' || column.id.includes('Price') || column.id.includes('unitPrice')) {
       return <>{formatPrice(value, currency)}</>;
+    }
+    if (calcFormat === 'percentage') {
+      return <>{(value * 100).toFixed(1)}%</>;
     }
     return <>{value.toLocaleString()}</>;
   }
@@ -398,6 +406,7 @@ export default function PartsListTable({
   onDeleteRow,
   onHideRow,
   currency = 'USD',
+  columnMap,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -485,6 +494,7 @@ export default function PartsListTable({
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           ...(col.align === 'center' && { width: '100%', justifyContent: 'center' }),
+                          ...(col.align === 'right' && { width: '100%', flexDirection: 'row-reverse' }),
                         }}
                       >
                         {col.label}
@@ -540,6 +550,7 @@ export default function PartsListTable({
                           onDeleteRow={onDeleteRow}
                           onHideRow={onHideRow}
                           currency={currency}
+                          columnMap={columnMap}
                         />
                       </TableCell>
                     ))}

@@ -38,6 +38,17 @@ export async function GET() {
       offset += PAGE_SIZE;
     }
 
+    // Fetch manufacturer enabled/disabled settings
+    const { data: mfrSettings } = await supabase
+      .from('atlas_manufacturer_settings')
+      .select('manufacturer, enabled');
+
+    const disabledSet = new Set(
+      (mfrSettings ?? [])
+        .filter((s: { manufacturer: string; enabled: boolean }) => !s.enabled)
+        .map((s: { manufacturer: string; enabled: boolean }) => s.manufacturer)
+    );
+
     // Query 2: Only fetch parameters for scorable products (for coverage calculation)
     const scorableRows: { manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }[] = [];
     offset = 0;
@@ -183,6 +194,7 @@ export async function GET() {
           coveragePct: cov && cov.totalRules > 0
             ? Math.round((cov.totalCovered / cov.totalRules) * 100)
             : 0,
+          enabled: !disabledSet.has(name),
         };
       })
       .sort((a, b) => b.productCount - a.productCount);
@@ -206,10 +218,15 @@ export async function GET() {
       if (table) familyNames[fid] = table.familyName;
     }
 
+    const enabledMfrs = manufacturers.filter((m) => m.enabled);
+    const enabledProductCount = enabledMfrs.reduce((sum, m) => sum + m.productCount, 0);
+
     return NextResponse.json({
       summary: {
         totalProducts: totalProducts ?? rows.length,
         totalManufacturers: mfrMap.size,
+        enabledManufacturers: enabledMfrs.length,
+        enabledProducts: enabledProductCount,
         scorableProducts: scorableProducts ?? 0,
         searchOnlyProducts: (totalProducts ?? rows.length) - (scorableProducts ?? 0),
         familiesCovered: allFamilies.size,

@@ -149,11 +149,12 @@ export async function loadPartsListSupabase(id: string): Promise<{
   rows: PartsListRow[];
   spreadsheetHeaders: string[];
   viewConfigs: ViewState | null;
+  updatedAt: string | null;
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs')
+    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs, updated_at')
     .eq('id', id)
     .single();
 
@@ -169,6 +170,7 @@ export async function loadPartsListSupabase(id: string): Promise<{
     rows: fromStoredRows(data.rows as StoredRow[]),
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
     viewConfigs: (record.view_configs as ViewState) ?? null,
+    updatedAt: (record.updated_at as string) ?? null,
   };
 }
 

@@ -257,7 +257,31 @@ describe('mapMouserCompliance', () => {
 // ============================================================
 
 describe('buildDigikeyQuote', () => {
-  it('wraps existing Digikey fields into SupplierQuote', () => {
+  it('uses real price breaks when available', () => {
+    const quote = buildDigikeyQuote({
+      unitPrice: 0.73,
+      quantityAvailable: 6458,
+      digikeyPartNumber: 'DK-001',
+      productUrl: 'https://digikey.com/p/1',
+      digikeyPriceBreaks: [
+        { quantity: 1, unitPrice: 0.73, currency: 'USD' },
+        { quantity: 10, unitPrice: 0.65, currency: 'USD' },
+        { quantity: 100, unitPrice: 0.50, currency: 'USD' },
+      ],
+    });
+
+    expect(quote.supplier).toBe('digikey');
+    expect(quote.supplierPartNumber).toBe('DK-001');
+    expect(quote.unitPrice).toBe(0.73);
+    expect(quote.priceBreaks).toHaveLength(3);
+    expect(quote.priceBreaks[0]).toEqual({ quantity: 1, unitPrice: 0.73, currency: 'USD' });
+    expect(quote.priceBreaks[1]).toEqual({ quantity: 10, unitPrice: 0.65, currency: 'USD' });
+    expect(quote.priceBreaks[2]).toEqual({ quantity: 100, unitPrice: 0.50, currency: 'USD' });
+    expect(quote.quantityAvailable).toBe(6458);
+    expect(quote.productUrl).toBe('https://digikey.com/p/1');
+  });
+
+  it('falls back to synthetic single-tier when no price breaks', () => {
     const quote = buildDigikeyQuote({
       unitPrice: 0.73,
       quantityAvailable: 6458,
@@ -266,11 +290,8 @@ describe('buildDigikeyQuote', () => {
     });
 
     expect(quote.supplier).toBe('digikey');
-    expect(quote.supplierPartNumber).toBe('DK-001');
     expect(quote.unitPrice).toBe(0.73);
     expect(quote.priceBreaks).toEqual([{ quantity: 1, unitPrice: 0.73, currency: 'USD' }]);
-    expect(quote.quantityAvailable).toBe(6458);
-    expect(quote.productUrl).toBe('https://digikey.com/p/1');
   });
 
   it('handles missing price', () => {

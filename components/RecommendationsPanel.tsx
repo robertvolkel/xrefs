@@ -4,7 +4,7 @@ import { Box, Checkbox, Chip, CircularProgress, FormControlLabel, MenuItem, Sele
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
-import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
+import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
@@ -51,8 +51,8 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <Box
         sx={{
-          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
-          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          height: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          minHeight: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
           px: 2,
           py: 1.5,
           borderBottom: 1,
@@ -93,7 +93,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         </Typography>
       </Box>
 
-      {/* Filter strip — matches AttributesPanel table header height/background */}
+      {/* Filter strip — height matches AttributesPanel table header (ROW_HEIGHT + 1 for border-box vs table border-collapse) */}
       <Box
         sx={{
           height: 45,

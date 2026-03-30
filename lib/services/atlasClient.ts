@@ -9,6 +9,41 @@ import { createClient } from '../supabase/server';
 import type { PartAttributes, SearchResult, Part, PartSummary, ParametricAttribute } from '../types';
 import { fromParametersJsonb } from './atlasMapper';
 
+// ─── Disabled Manufacturer Cache ─────────────────────────
+const CACHE_TTL_MS = 60_000; // 1 minute, same as override caches
+let disabledMfrsCache: Set<string> | null = null;
+let disabledMfrsCachedAt = 0;
+
+async function getDisabledManufacturers(): Promise<Set<string>> {
+  const now = Date.now();
+  if (disabledMfrsCache !== null && now - disabledMfrsCachedAt < CACHE_TTL_MS) {
+    return disabledMfrsCache;
+  }
+
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from('atlas_manufacturer_settings')
+      .select('manufacturer')
+      .eq('enabled', false);
+
+    const set = new Set((data ?? []).map((r: { manufacturer: string }) => r.manufacturer));
+    disabledMfrsCache = set;
+    disabledMfrsCachedAt = now;
+    return set;
+  } catch {
+    // If table doesn't exist yet or Supabase fails, treat all as enabled
+    disabledMfrsCache = new Set();
+    disabledMfrsCachedAt = now;
+    return disabledMfrsCache;
+  }
+}
+
+export function invalidateManufacturerCache(): void {
+  disabledMfrsCache = null;
+  disabledMfrsCachedAt = 0;
+}
+
 // ─── Types ────────────────────────────────────────────────
 
 interface AtlasProductRow {
@@ -60,12 +95,12 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
   try {
     const supabase = await createClient();
 
-    // Search by MPN (trigram) or manufacturer name
+    // Over-fetch to compensate for disabled manufacturer filtering
     const { data, error } = await supabase
       .from('atlas_products')
       .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
       .or(`mpn.ilike.%${query}%,manufacturer.ilike.%${query}%`)
-      .limit(20);
+      .limit(50);
 
     if (error) {
       console.warn('Atlas search error:', error.message);
@@ -76,7 +111,18 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
       return { type: 'none', matches: [] };
     }
 
-    const matches: PartSummary[] = data.map((row: AtlasProductRow) => ({
+    // Filter out disabled manufacturers, then trim to 20
+    const disabled = await getDisabledManufacturers();
+    const filtered = disabled.size > 0
+      ? (data as AtlasProductRow[]).filter((row) => !disabled.has(row.manufacturer))
+      : (data as AtlasProductRow[]);
+    const trimmed = filtered.slice(0, 20);
+
+    if (trimmed.length === 0) {
+      return { type: 'none', matches: [] };
+    }
+
+    const matches: PartSummary[] = trimmed.map((row) => ({
       mpn: row.mpn,
       manufacturer: row.manufacturer,
       description: row.description || '',
@@ -86,7 +132,7 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
     }));
 
     return {
-      type: data.length === 1 ? 'single' : 'multiple',
+      type: trimmed.length === 1 ? 'single' : 'multiple',
       matches,
     };
   } catch (error) {
@@ -111,6 +157,10 @@ export async function getAtlasAttributes(mpn: string): Promise<PartAttributes | 
 
     if (error || !data) return null;
 
+    // Skip disabled manufacturers
+    const disabled = await getDisabledManufacturers();
+    if (disabled.has((data as AtlasProductRow).manufacturer)) return null;
+
     return rowToPartAttributes(data as AtlasProductRow);
   } catch {
     return null;
@@ -125,11 +175,20 @@ export async function fetchAtlasCandidates(familyId: string): Promise<PartAttrib
   try {
     const supabase = await createClient();
 
-    const { data, error } = await supabase
+    // Filter disabled manufacturers at the database level for candidates
+    const disabled = await getDisabledManufacturers();
+    let query = supabase
       .from('atlas_products')
       .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
-      .eq('family_id', familyId)
-      .limit(50);
+      .eq('family_id', familyId);
+
+    if (disabled.size > 0) {
+      // PostgREST in-filter format: ("Name1","Name2")
+      const list = `(${[...disabled].map((m) => `"${m}"`).join(',')})`;
+      query = query.not('manufacturer', 'in', list);
+    }
+
+    const { data, error } = await query.limit(50);
 
     if (error) {
       console.warn('Atlas candidate fetch error:', error.message);

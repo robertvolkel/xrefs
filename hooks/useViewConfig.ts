@@ -40,8 +40,8 @@ export function useViewTemplates() {
     update(prev => ({ ...prev, activeViewId: viewId }));
   }, [update]);
 
-  const createView = useCallback((name: string, columns: string[], description?: string, columnMeta?: Record<string, string>): SavedView => {
-    const newView: SavedView = { id: generateId(), name, columns, ...(description ? { description } : {}), ...(columnMeta ? { columnMeta } : {}) };
+  const createView = useCallback((name: string, columns: string[], description?: string, columnMeta?: Record<string, string>, calculatedFields?: import('@/lib/calculatedFields').CalculatedFieldDef[]): SavedView => {
+    const newView: SavedView = { id: generateId(), name, columns, ...(description ? { description } : {}), ...(columnMeta ? { columnMeta } : {}), ...(calculatedFields ? { calculatedFields } : {}) };
     update(prev => ({
       ...prev,
       views: [...prev.views, newView],
@@ -50,11 +50,11 @@ export function useViewTemplates() {
     return newView;
   }, [update]);
 
-  const updateView = useCallback((viewId: string, columns: string[], name?: string, description?: string, columnMeta?: Record<string, string>) => {
+  const updateView = useCallback((viewId: string, columns: string[], name?: string, description?: string, columnMeta?: Record<string, string>, calculatedFields?: import('@/lib/calculatedFields').CalculatedFieldDef[]) => {
     update(prev => ({
       ...prev,
       views: prev.views.map(v => v.id === viewId
-        ? { ...v, columns, ...(name ? { name } : {}), ...(description !== undefined ? { description } : {}), ...(columnMeta ? { columnMeta } : {}) }
+        ? { ...v, columns, ...(name ? { name } : {}), ...(description !== undefined ? { description } : {}), ...(columnMeta ? { columnMeta } : {}), calculatedFields: calculatedFields ?? v.calculatedFields }
         : v),
     }));
   }, [update]);
@@ -88,7 +88,7 @@ export function useViewTemplates() {
     update(prev => {
       const source = prev.views.find(v => v.id === viewId);
       if (!source) return prev;
-      newView = { id: generateId(), name: newName, columns: [...source.columns], ...(source.columnMeta ? { columnMeta: { ...source.columnMeta } } : {}) };
+      newView = { id: generateId(), name: newName, columns: [...source.columns], ...(source.columnMeta ? { columnMeta: { ...source.columnMeta } } : {}), ...(source.calculatedFields ? { calculatedFields: source.calculatedFields.map(f => ({ ...f })) } : {}) };
       return {
         ...prev,
         views: [...prev.views, newView],

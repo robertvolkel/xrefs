@@ -234,7 +234,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           sx={{
             overflow: 'auto',
             opacity: showAttributesPanel ? 1 : 0,
-            transition: 'opacity 0.3s ease 0.35s',
+            transition: showAttributesPanel
+              ? 'opacity 0.3s ease 0.35s'   // Entrance: staggered fade-in after grid expands
+              : 'opacity 0.2s ease',          // Exit: fade out immediately before grid collapses
             borderRight: (showRightPanel || chatCollapsed) ? 1 : 0,
             borderColor: 'divider',
             minWidth: 0,
@@ -256,7 +258,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           sx={{
             overflow: 'auto',
             opacity: showRightPanel ? 1 : 0,
-            transition: 'opacity 0.3s ease 0.4s',
+            transition: showRightPanel
+              ? 'opacity 0.3s ease 0.4s'     // Entrance: staggered fade-in after grid expands
+              : 'opacity 0.15s ease',         // Exit: fade out immediately before grid collapses
             borderRight: mfrOpen ? 1 : 0,
             borderColor: 'divider',
             minWidth: 0,

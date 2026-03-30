@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -49,6 +49,7 @@ const ROUTE_SERVICES: Record<string, ServiceName[]> = {
   '/api/modal-chat': ['anthropic'],
   '/api/mouser/enrich': ['mouser'],
   '/api/parts-list/validate': ['digikey', 'partsio', 'mouser'],
+  '/api/list-chat': ['anthropic'],
 };
 
 function getRouteServices(url: string): ServiceName[] {
@@ -179,6 +180,21 @@ export async function modalChat(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, mpn, overrides, applicationContext, recommendations }),
+  });
+}
+
+/** Send messages to the list agent orchestrator */
+export async function listAgentChat(
+  messages: OrchestratorMessage[],
+  listContext: ListAgentContext,
+  listId: string,
+  signal?: AbortSignal,
+): Promise<ListAgentResponse> {
+  return fetchApi<ListAgentResponse>(`${BASE}/list-chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, listContext, listId }),
+    signal,
   });
 }
 

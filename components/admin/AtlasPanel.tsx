@@ -17,6 +17,7 @@ import {
   Tooltip,
   Typography,
   Chip,
+  Switch,
 } from '@mui/material';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -28,6 +29,8 @@ interface AtlasStats {
   summary: {
     totalProducts: number;
     totalManufacturers: number;
+    enabledManufacturers: number;
+    enabledProducts: number;
     scorableProducts: number;
     searchOnlyProducts: number;
     familiesCovered: number;
@@ -41,6 +44,7 @@ interface AtlasStats {
     categories: string[];
     lastUpdated: string;
     coveragePct: number;
+    enabled: boolean;
   }[];
   familyBreakdown: {
     manufacturer: string;
@@ -62,11 +66,13 @@ function MfrRow({
   breakdown,
   familyNames,
   onFamilyClick,
+  onToggle,
 }: {
   row: AtlasStats['manufacturers'][number];
   breakdown: AtlasStats['familyBreakdown'];
   familyNames: Record<string, string>;
   onFamilyClick: (manufacturer: string, familyId: string) => void;
+  onToggle: (manufacturer: string, enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -77,7 +83,7 @@ function MfrRow({
       <TableRow
         hover
         onClick={() => setOpen(!open)}
-        sx={{ cursor: 'pointer', '& > td': { borderBottom: open ? 0 : undefined } }}
+        sx={{ cursor: 'pointer', '& > td': { borderBottom: open ? 0 : undefined }, opacity: row.enabled ? 1 : 0.5 }}
       >
         <TableCell sx={{ width: 40, p: 0, pl: 1 }}>
           <IconButton size="small" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
@@ -85,9 +91,21 @@ function MfrRow({
           </IconButton>
         </TableCell>
         <TableCell>
-          <Typography variant="body2" fontWeight={500}>
-            {row.manufacturer}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Switch
+              size="small"
+              checked={row.enabled}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onToggle(row.manufacturer, e.target.checked)}
+              sx={{ ml: -1 }}
+            />
+            <Typography variant="body2" fontWeight={500}>
+              {row.manufacturer}
+            </Typography>
+            {!row.enabled && (
+              <Chip label="Disabled" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.68rem', opacity: 0.7 }} />
+            )}
+          </Box>
         </TableCell>
         <TableCell align="right">
           <Typography variant="body2">{row.productCount.toLocaleString()}</Typography>
@@ -200,6 +218,42 @@ export default function AtlasPanel() {
     setSortKey(key);
   }, [sortKey]);
 
+  const handleToggle = useCallback(async (manufacturer: string, enabled: boolean) => {
+    if (!data) return;
+
+    // Optimistic update
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        manufacturers: prev.manufacturers.map((m) =>
+          m.manufacturer === manufacturer ? { ...m, enabled } : m
+        ),
+      };
+    });
+
+    try {
+      const res = await fetch('/api/admin/atlas/manufacturers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manufacturer, enabled }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+    } catch {
+      // Revert on failure
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          manufacturers: prev.manufacturers.map((m) =>
+            m.manufacturer === manufacturer ? { ...m, enabled: !enabled } : m
+          ),
+        };
+      });
+    }
+  }, [data]);
+
   useEffect(() => {
     fetch('/api/admin/atlas')
       .then((r) => r.json())
@@ -251,7 +305,10 @@ export default function AtlasPanel() {
                 {t('admin.atlasDesc', 'Chinese manufacturer product catalog.')}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                {t('admin.atlasMfrSummary', { mfrCount: data.summary.totalManufacturers, productCount: data.summary.totalProducts.toLocaleString(), scorableCount: data.summary.scorableProducts.toLocaleString(), familyCount: data.summary.familiesCovered })}
+                {data.summary.enabledManufacturers < data.summary.totalManufacturers
+                  ? `${data.summary.enabledManufacturers} of ${data.summary.totalManufacturers} manufacturers enabled · ${data.summary.enabledProducts.toLocaleString()} of ${data.summary.totalProducts.toLocaleString()} products active · ${data.summary.scorableProducts.toLocaleString()} scorable · ${data.summary.familiesCovered} families`
+                  : `${data.summary.totalManufacturers} manufacturers · ${data.summary.totalProducts.toLocaleString()} products · ${data.summary.scorableProducts.toLocaleString()} scorable · ${data.summary.familiesCovered} families`
+                }
               </Typography>
 
               {data.manufacturers.length === 0 ? (
@@ -298,7 +355,7 @@ export default function AtlasPanel() {
                     </TableHead>
                     <TableBody>
                       {sortedManufacturers.map((mfr) => (
-                        <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} onFamilyClick={handleFamilyClick} />
+                        <MfrRow key={mfr.manufacturer} row={mfr} breakdown={data.familyBreakdown} familyNames={data.familyNames} onFamilyClick={handleFamilyClick} onToggle={handleToggle} />
                       ))}
                     </TableBody>
                   </Table>

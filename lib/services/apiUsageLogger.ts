@@ -22,7 +22,8 @@ export type ApiOperation =
   | 'keyword_search'
   | 'product_details'
   | 'batch_search'
-  | 'gap_fill';
+  | 'gap_fill'
+  | 'list_chat';
 
 interface LogTokenUsageParams {
   userId: string;
