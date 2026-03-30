@@ -1,10 +1,20 @@
 /**
- * Parts.io (SiliconExpert/IHS) API Client
+ * Parts.io (Accuris) API Client
  *
  * Fetches parametric data for component enrichment after Digikey.
  * API key auth (query param), limit=10 with best-record selection.
  * All functions are server-side only (uses process.env).
  */
+
+import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponse,
+  setCachedResponse,
+  isNotFoundSentinel,
+  NOT_FOUND_SENTINEL,
+  TTL_PARAMETRIC_PARTSIO_MS,
+  TTL_NOT_FOUND_MS,
+} from './partDataCache';
 
 const BASE_URL = process.env.PARTSIO_API_URL;
 
@@ -217,13 +227,28 @@ async function partsioFetch(url: string): Promise<Response> {
  * Fetch the most complete parts.io listing for an MPN.
  * Returns null if not found, not configured, or on error.
  */
-export async function getPartsioProductDetails(mpn: string): Promise<PartsioListing | null> {
+export async function getPartsioProductDetails(mpn: string, userId?: string): Promise<PartsioListing | null> {
   if (!isPartsioConfigured()) return null;
 
-  // Check cache
+  // --- L1: in-memory cache ---
   const cached = getCached(mpn);
   if (cached !== undefined) return cached;
 
+  // --- L2: Supabase persistent cache ---
+  const l2 = await getCachedResponse<PartsioListing | typeof NOT_FOUND_SENTINEL>('partsio', mpn, 'parametric');
+  if (l2) {
+    if (isNotFoundSentinel(l2.data)) {
+      console.log('[perf] partsio:getProductDetails L2 HIT (not found)');
+      setCache(mpn, null); // Promote to L1
+      return null;
+    }
+    console.log('[perf] partsio:getProductDetails L2 HIT');
+    const listing = l2.data as PartsioListing;
+    setCache(mpn, listing); // Promote to L1
+    return listing;
+  }
+
+  // --- L3: Live API call ---
   try {
     const apiKey = process.env.PARTSIO_API_KEY!;
     const params = new URLSearchParams({
@@ -240,14 +265,155 @@ export async function getPartsioProductDetails(mpn: string): Promise<PartsioList
 
     if (!data.response || data.response.length === 0) {
       setCache(mpn, null);
+      // L2: cache not-found with 24h TTL
+      setCachedResponse('partsio', mpn, 'parametric', 'parametric', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
       return null;
+    }
+
+    if (userId) {
+      await logApiCall({ userId, service: 'partsio', operation: 'gap_fill' });
     }
 
     const best = selectBestRecord(data.response);
     setCache(mpn, best);
+    // L2: cache full listing with 90-day TTL
+    if (best) {
+      setCachedResponse('partsio', mpn, 'parametric', 'parametric', best, TTL_PARAMETRIC_PARTSIO_MS);
+    }
     return best;
   } catch (error) {
     console.warn('Parts.io lookup failed for', mpn, error);
     return null;
+  }
+}
+
+// ============================================================
+// SEARCH (MPN prefix wildcard)
+// ============================================================
+
+import type { SearchResult, PartSummary, ComponentCategory, PartStatus, ServiceStatusInfo } from '@/lib/types';
+
+/** Map Parts.io Class → ComponentCategory (approximate, for search display) */
+const PARTSIO_CLASS_TO_CATEGORY: Record<string, ComponentCategory> = {
+  'Capacitors': 'Capacitors',
+  'Resistors': 'Resistors',
+  'Inductors': 'Inductors',
+  'Filters': 'Filters',
+  'Diodes': 'Diodes',
+  'Transistors': 'Transistors',
+  'Trigger Devices': 'Thyristors',
+  'Amplifier Circuits': 'Amplifiers',
+  'Logic': 'Logic ICs',
+  'Power Circuits': 'Voltage Regulators',
+  'Converters': 'ICs',
+  'Drivers And Interfaces': 'Interface ICs',
+  'Signal Circuits': 'ICs',
+  'Circuit Protection': 'Protection',
+  'Optoelectronics': 'Optocouplers',
+  'Relays': 'Relays',
+  'Crystals/Resonators': 'Crystals',
+};
+
+/** Map Parts.io lifecycle → PartStatus */
+function mapPartsioStatus(lifecycle: string | undefined): PartStatus {
+  if (!lifecycle) return 'Active';
+  const lc = lifecycle.toLowerCase();
+  if (lc.includes('obsolete')) return 'Obsolete';
+  if (lc.includes('discontinued')) return 'Discontinued';
+  if (lc.includes('end of life') || lc === 'eol') return 'NRND';
+  if (lc.includes('last time buy') || lc === 'ltb') return 'LastTimeBuy';
+  return 'Active';
+}
+
+/** Convert a Parts.io listing to a lightweight PartSummary for search results */
+export function mapPartsioListingToPartSummary(listing: PartsioListing): PartSummary {
+  return {
+    mpn: listing['Manufacturer Part Number'],
+    manufacturer: listing.Manufacturer || 'Unknown',
+    description: listing.Description || '',
+    category: PARTSIO_CLASS_TO_CATEGORY[listing.Class] || 'ICs',
+    status: mapPartsioStatus(listing['Part Life Cycle Code']),
+    dataSource: 'partsio',
+  };
+}
+
+/**
+ * Search Parts.io by MPN prefix (wildcard).
+ * Returns up to 10 unique MPNs (deduped, best record per MPN).
+ * Returns { type: 'none', matches: [] } if unconfigured, query too short, or on error.
+ */
+export async function searchPartsioProducts(query: string): Promise<SearchResult> {
+  if (!isPartsioConfigured() || query.trim().length < 3) {
+    return { type: 'none', matches: [] };
+  }
+
+  try {
+    const apiKey = process.env.PARTSIO_API_KEY!;
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      limit: '50',  // Fetch more to allow dedup across manufacturers
+      facets: 'false',
+      'Manufacturer Part Number': `${query.trim()}*`,
+    });
+
+    const url = `${BASE_URL}?${params.toString()}`;
+    const res = await partsioFetch(url);
+    const data: PartsioResponse = await res.json();
+
+    if (!data.response || data.response.length === 0) {
+      return { type: 'none', matches: [] };
+    }
+
+    // Dedup by MPN — keep best record per unique MPN (by Completeness)
+    const byMpn = new Map<string, PartsioListing>();
+    for (const listing of data.response) {
+      const mpn = listing['Manufacturer Part Number'];
+      const key = mpn.toLowerCase();
+      const existing = byMpn.get(key);
+      if (!existing) {
+        byMpn.set(key, listing);
+      } else {
+        const existingScore = existing.Completeness ?? countParametricFields(existing);
+        const currentScore = listing.Completeness ?? countParametricFields(listing);
+        if (currentScore > existingScore) {
+          byMpn.set(key, listing);
+        }
+      }
+    }
+
+    // Take top 10 unique MPNs
+    const matches: PartSummary[] = [];
+    for (const listing of byMpn.values()) {
+      if (matches.length >= 10) break;
+      matches.push(mapPartsioListingToPartSummary(listing));
+    }
+
+    if (matches.length === 0) return { type: 'none', matches: [] };
+    return { type: matches.length === 1 ? 'single' : 'multiple', matches };
+  } catch (error) {
+    console.warn('Parts.io search failed:', error);
+    return { type: 'none', matches: [] };
+  }
+}
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+export async function checkPartsioHealth(): Promise<ServiceStatusInfo> {
+  const now = new Date().toISOString();
+  if (!isPartsioConfigured()) {
+    return { service: 'partsio', status: 'unavailable', message: 'Not configured', lastChecked: now };
+  }
+  try {
+    const url = `${BASE_URL}?q=test&key=${process.env.PARTSIO_API_KEY}&limit=1`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      return { service: 'partsio', status: 'unavailable', message: `HTTP ${res.status}`, lastChecked: now };
+    }
+    return { service: 'partsio', status: 'operational', lastChecked: now };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unknown error';
+    return { service: 'partsio', status: 'unavailable', message: msg, lastChecked: now };
   }
 }

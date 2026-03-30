@@ -110,3 +110,50 @@ CREATE POLICY "Admins can insert context overrides"
 CREATE POLICY "Admins can update context overrides"
   ON context_overrides FOR UPDATE TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+
+-- ─── Audit: Previous Values Snapshot ──────────────────────
+-- Captures rule state before each override for audit trail.
+-- NULL for 'add' actions (nothing existed before) and pre-existing rows.
+
+ALTER TABLE rule_overrides ADD COLUMN IF NOT EXISTS previous_values JSONB;
+
+
+-- ─── Rule Annotations ─────────────────────────────────────
+-- Lightweight comment threads on logic table rules for admin
+-- collaboration. Keyed on family+attribute (not on override records),
+-- so admins can discuss any rule whether or not it's been overridden.
+
+CREATE TABLE IF NOT EXISTS rule_annotations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id TEXT NOT NULL,
+  attribute_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_by UUID NOT NULL REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  is_resolved BOOLEAN NOT NULL DEFAULT false,
+  resolved_by UUID REFERENCES auth.users(id),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_rule_annotations_family_attr
+  ON rule_annotations (family_id, attribute_id);
+
+ALTER TABLE rule_annotations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can read rule annotations"
+  ON rule_annotations FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE POLICY "Admins can insert rule annotations"
+  ON rule_annotations FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE POLICY "Admins can update rule annotations"
+  ON rule_annotations FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE POLICY "Admins can delete own annotations"
+  ON rule_annotations FOR DELETE TO authenticated
+  USING (created_by = auth.uid());

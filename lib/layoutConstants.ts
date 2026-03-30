@@ -9,6 +9,10 @@ export const CONTENT_MAX_WIDTH = 720;
 export const SIDEBAR_WIDTH = 60;
 export const PAGE_HEADER_HEIGHT = 56;
 
+// Attributes panel — taller header to accommodate pill tab bar
+export const ATTRIBUTES_HEADER_HEIGHT = 116;
+export const ATTRIBUTES_HEADER_HEIGHT_MOBILE = 88;
+
 // Mobile values
 export const HEADER_HEIGHT_MOBILE = 56;
 export const ROW_FONT_SIZE_MOBILE = '0.85rem';

@@ -29,7 +29,7 @@
 | Crystals/Resonators | Quartz Crystals | D1 |
 
 ### 3. Confirmed field names (from real API, not spreadsheet)
-Note: Some differ from IHS spreadsheet. These are the ACTUAL field names.
+Note: Some differ from Accuris spreadsheet. These are the ACTUAL field names.
 
 **Capacitors:**
 - `Capacitance` (number, µF), `Rated (DC) Voltage (URdc)` (number, V) — NOTE: parens differ from spreadsheet

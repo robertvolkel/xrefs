@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { OWNER_EMAIL } from '@/lib/constants';
 
 export async function PATCH(
@@ -70,6 +71,70 @@ async function handleRoleUpdate(adminId: string, targetId: string, role: string)
   }
 
   return NextResponse.json({ success: true });
+}
+
+/**
+ * DELETE /api/admin/users/[userId]
+ * Permanently deletes a user from auth.users (and cascades to profiles).
+ * Owner-only. Frees the email for re-registration.
+ */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ userId: string }> },
+) {
+  try {
+    const { user, error: authError } = await requireAdmin();
+    if (authError) return authError;
+
+    // Owner-only — too destructive for regular admins
+    if (user!.email !== OWNER_EMAIL) {
+      return NextResponse.json(
+        { success: false, error: 'Only the account owner can permanently delete users' },
+        { status: 403 },
+      );
+    }
+
+    const { userId } = await params;
+
+    if (user!.id === userId) {
+      return NextResponse.json(
+        { success: false, error: 'Cannot delete your own account' },
+        { status: 400 },
+      );
+    }
+
+    // Delete related data first (tables without cascade)
+    const supabase = createServiceClient();
+
+    // Clean up user data from tables that reference user_id
+    await Promise.all([
+      supabase.from('search_history').delete().eq('user_id', userId),
+      supabase.from('parts_lists').delete().eq('user_id', userId),
+      supabase.from('conversations').delete().eq('user_id', userId),
+      supabase.from('recommendation_log').delete().eq('user_id', userId),
+      supabase.from('qc_feedback').delete().eq('user_id', userId),
+    ]);
+
+    // Delete profile row
+    await supabase.from('profiles').delete().eq('id', userId);
+
+    // Delete from auth.users — this frees the email
+    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
+
+    if (authDeleteError) {
+      return NextResponse.json(
+        { success: false, error: `Auth deletion failed: ${authDeleteError.message}` },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 },
+    );
+  }
 }
 
 async function handleDisableToggle(adminId: string, targetId: string, disabled: boolean) {

@@ -20,17 +20,36 @@ export async function GET() {
       .select('*', { count: 'exact', head: true })
       .not('family_id', 'is', null);
 
-    // Per-manufacturer stats — paginate to get all rows (Supabase default limit is 1000)
+    // Per-manufacturer stats — two queries: lightweight stats + coverage-only for scorable
     const PAGE_SIZE = 1000;
-    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string; parameters: Record<string, unknown> | null }[] = [];
+
+    // Query 1: Lightweight stats (no parameters JSONB — much faster)
+    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }[] = [];
     let offset = 0;
     while (true) {
       const { data: page } = await supabase
         .from('atlas_products')
-        .select('manufacturer, family_id, category, subcategory, updated_at, parameters')
+        .select('manufacturer, family_id, category, subcategory, updated_at')
+        .order('id')
         .range(offset, offset + PAGE_SIZE - 1);
       if (!page || page.length === 0) break;
       rows.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+
+    // Query 2: Only fetch parameters for scorable products (for coverage calculation)
+    const scorableRows: { manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }[] = [];
+    offset = 0;
+    while (true) {
+      const { data: page } = await supabase
+        .from('atlas_products')
+        .select('manufacturer, family_id, parameters')
+        .not('family_id', 'is', null)
+        .order('id')
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (!page || page.length === 0) break;
+      scorableRows.push(...(page as typeof scorableRows));
       if (page.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;
     }
@@ -61,10 +80,11 @@ export async function GET() {
 
     const familyBreakdownMap = new Map<string, {
       manufacturer: string;
-      familyId: string;
+      familyId: string | null;
       category: string;
       subcategory: string;
       count: number;
+      scorableCount: number;
     }>();
 
     const allFamilies = new Set<string>();
@@ -87,12 +107,21 @@ export async function GET() {
       if (row.updated_at > mfr.lastUpdated) mfr.lastUpdated = row.updated_at;
       if (!globalLastUpdated || row.updated_at > globalLastUpdated) globalLastUpdated = row.updated_at;
 
-      // Per-manufacturer-family breakdown
+      // Per-manufacturer-family breakdown (scorable + non-scorable)
       if (row.family_id) {
         const key = `${row.manufacturer}::${row.family_id}`;
         let fb = familyBreakdownMap.get(key);
         if (!fb) {
-          fb = { manufacturer: row.manufacturer, familyId: row.family_id, category: row.category, subcategory: row.subcategory, count: 0 };
+          fb = { manufacturer: row.manufacturer, familyId: row.family_id, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
+          familyBreakdownMap.set(key, fb);
+        }
+        fb.count++;
+        fb.scorableCount++;
+      } else {
+        const key = `${row.manufacturer}::_::${row.category}::${row.subcategory}`;
+        let fb = familyBreakdownMap.get(key);
+        if (!fb) {
+          fb = { manufacturer: row.manufacturer, familyId: null, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
           familyBreakdownMap.set(key, fb);
         }
         fb.count++;
@@ -114,8 +143,8 @@ export async function GET() {
     const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
     const fbCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
 
-    for (const row of rows) {
-      if (!row.family_id || !row.parameters) continue;
+    for (const row of scorableRows) {
+      if (!row.parameters) continue;
 
       const ruleAttrs = familyRuleAttrs.get(row.family_id);
       if (!ruleAttrs || ruleAttrs.size === 0) continue;
@@ -168,7 +197,7 @@ export async function GET() {
             : 0,
         };
       })
-      .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer) || a.familyId.localeCompare(b.familyId));
+      .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer) || (a.familyId ?? '').localeCompare(b.familyId ?? ''));
 
     // Build family ID → name map for tooltip display
     const familyNames: Record<string, string> = {};

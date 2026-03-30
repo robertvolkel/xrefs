@@ -1,17 +1,21 @@
 'use client';
 
-import { List, ListItemButton, ListItemIcon, ListItemText } from '@mui/material';
+import { List, ListItemButton, ListItemIcon, ListItemText, Divider } from '@mui/material';
 import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
 import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
+import FlagIcon from '@mui/icons-material/Flag';
+import HistoryIcon from '@mui/icons-material/History';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries';
+export type AdminSection = 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'qc-feedback' | 'qc-logs';
 
-const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[] = [
+type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
+
+const dataLogicSections: SectionItem[] = [
   { id: 'param-mappings', icon: CompareArrowsOutlinedIcon, labelKey: 'admin.paramMappings' },
   { id: 'logic', icon: AccountTreeOutlinedIcon, labelKey: 'admin.logicRules' },
   { id: 'context', icon: HelpOutlineOutlinedIcon, labelKey: 'admin.contextQuestions' },
@@ -20,16 +24,24 @@ const sections: { id: AdminSection; icon: React.ElementType; labelKey: string }[
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
 ];
 
+const qcSections: SectionItem[] = [
+  { id: 'qc-feedback', icon: FlagIcon, labelKey: 'adminQc.tabFeedback' },
+  { id: 'qc-logs', icon: HistoryIcon, labelKey: 'adminQc.tabLogs' },
+];
+
 interface AdminSectionNavProps {
   activeSection: AdminSection;
   onSectionChange: (section: AdminSection) => void;
 }
 
-export default function AdminSectionNav({ activeSection, onSectionChange }: AdminSectionNavProps) {
-  const { t } = useTranslation();
-
+function SectionList({ sections, activeSection, onSectionChange, t }: {
+  sections: SectionItem[];
+  activeSection: AdminSection;
+  onSectionChange: (section: AdminSection) => void;
+  t: (key: string) => string;
+}) {
   return (
-    <List disablePadding sx={{ pt: 1 }}>
+    <>
       {sections.map(({ id, icon: Icon, labelKey }) => (
         <ListItemButton
           key={id}
@@ -53,6 +65,18 @@ export default function AdminSectionNav({ activeSection, onSectionChange }: Admi
           />
         </ListItemButton>
       ))}
+    </>
+  );
+}
+
+export default function AdminSectionNav({ activeSection, onSectionChange }: AdminSectionNavProps) {
+  const { t } = useTranslation();
+
+  return (
+    <List disablePadding sx={{ pt: 1 }}>
+      <SectionList sections={dataLogicSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
+      <Divider sx={{ my: 1 }} />
+      <SectionList sections={qcSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>
   );
 }

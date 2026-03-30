@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, ManufacturerProfile, PartAttributes, PartSummary, XrefRecommendation } from '@/lib/types';
+import type { AttributesTab } from './DesktopLayout';
 import { TAB_BAR_HEIGHT } from '@/lib/layoutConstants';
 import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
 import MobileTabBar, { MobileTab, MOBILE_TAB_ICONS } from './MobileTabBar';
@@ -105,7 +106,10 @@ export default function MobileAppLayout({
 }: MobileAppLayoutProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [badges, setBadges] = useState<Record<number, boolean>>({});
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
   const prevTabCountRef = useRef(1);
+  // Reset attributes tab when source part changes
+  useEffect(() => { setAttributesTab('specs'); }, [sourceAttributes?.part.mpn]);
 
   // Build available tabs based on phase
   const tabs: MobileTab[] = useMemo(() => {
@@ -246,6 +250,8 @@ export default function MobileAppLayout({
               attributes={sourceAttributes}
               loading={phase === 'loading-attributes'}
               title="Source Part"
+              activeTab={attributesTab}
+              onTabChange={setAttributesTab}
             />
           </Box>
         )}
@@ -271,6 +277,8 @@ export default function MobileAppLayout({
                 recommendation={selectedRecommendation!}
                 onBack={onBackToRecommendations}
                 onManufacturerClick={onManufacturerClick}
+                activeTab={attributesTab}
+                onTabChange={setAttributesTab}
               />
             ) : recommendations.length > 0 ? (
               <RecommendationsPanel

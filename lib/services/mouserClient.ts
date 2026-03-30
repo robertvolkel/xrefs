@@ -9,6 +9,17 @@
  * This client is purely for commercial intelligence (Pillar 2) and compliance (Pillar 3).
  */
 
+import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponse,
+  getCachedResponseBatch,
+  setCachedResponse,
+  isNotFoundSentinel,
+  NOT_FOUND_SENTINEL,
+  TTL_COMMERCIAL_MS,
+  TTL_NOT_FOUND_MS,
+} from './partDataCache';
+
 const BASE_URL = 'https://api.mouser.com/api/v1/search/partnumber';
 
 // ============================================================
@@ -263,14 +274,28 @@ function selectBestProduct(products: MouserProduct[], targetMpn: string): Mouser
  * Fetch Mouser product details for a single MPN.
  * Returns null if not found, not configured, rate limited, or on error.
  */
-export async function getMouserProduct(mpn: string): Promise<MouserProduct | null> {
+export async function getMouserProduct(mpn: string, userId?: string): Promise<MouserProduct | null> {
   if (!isMouserConfigured()) return null;
 
-  // Check cache
+  // --- L1: in-memory cache ---
   const cached = getCached(mpn);
   if (cached !== undefined) return cached;
 
-  // Check rate limit
+  // --- L2: Supabase persistent cache (saves rate limit!) ---
+  const l2 = await getCachedResponse<MouserProduct | typeof NOT_FOUND_SENTINEL>('mouser', mpn, 'commercial');
+  if (l2) {
+    if (isNotFoundSentinel(l2.data)) {
+      console.log('[perf] mouser:getProduct L2 HIT (not found)');
+      setCache(mpn, null);
+      return null;
+    }
+    console.log('[perf] mouser:getProduct L2 HIT');
+    const product = l2.data as MouserProduct;
+    setCache(mpn, product); // Promote to L1
+    return product;
+  }
+
+  // --- L3: Live API call (rate limited) ---
   const hasSlot = await acquireRateSlot();
   if (!hasSlot) {
     console.warn('[mouser] Daily rate limit reached, skipping', mpn);
@@ -287,11 +312,19 @@ export async function getMouserProduct(mpn: string): Promise<MouserProduct | nul
     const parts = data.SearchResults?.Parts ?? [];
     if (parts.length === 0) {
       setCache(mpn, null);
+      setCachedResponse('mouser', mpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
       return null;
+    }
+
+    if (userId) {
+      await logApiCall({ userId, service: 'mouser', operation: 'batch_search' });
     }
 
     const best = selectBestProduct(parts, mpn);
     setCache(mpn, best);
+    if (best) {
+      setCachedResponse('mouser', mpn, 'commercial', 'commercial', best, TTL_COMMERCIAL_MS);
+    }
     return best;
   } catch (error) {
     console.warn('[mouser] Lookup failed for', mpn, error);
@@ -306,36 +339,63 @@ export async function getMouserProduct(mpn: string): Promise<MouserProduct | nul
  */
 export async function getMouserProductsBatch(
   mpns: string[],
+  userId?: string,
 ): Promise<Map<string, MouserProduct>> {
   const results = new Map<string, MouserProduct>();
   if (!isMouserConfigured() || mpns.length === 0) return results;
 
-  // Separate cached from uncached
-  const uncached: string[] = [];
+  // --- L1: separate cached from uncached ---
+  const afterL1: string[] = [];
   for (const mpn of mpns) {
     const cached = getCached(mpn);
     if (cached !== undefined) {
       if (cached) results.set(mpn.toLowerCase(), cached);
     } else {
-      uncached.push(mpn);
+      afterL1.push(mpn);
     }
   }
 
-  if (uncached.length === 0) return results;
+  if (afterL1.length === 0) return results;
 
-  // Chunk into groups of 10 (Mouser batch limit)
+  // --- L2: batch check Supabase persistent cache ---
+  const l2Results = await getCachedResponseBatch<MouserProduct | typeof NOT_FOUND_SENTINEL>(
+    'mouser', afterL1, 'commercial',
+  );
+
+  const afterL2: string[] = [];
+  for (const mpn of afterL1) {
+    const l2Data = l2Results.get(mpn.toLowerCase());
+    if (l2Data !== undefined) {
+      if (isNotFoundSentinel(l2Data)) {
+        setCache(mpn, null); // Promote not-found to L1
+      } else {
+        const product = l2Data as MouserProduct;
+        results.set(mpn.toLowerCase(), product);
+        setCache(mpn, product); // Promote to L1
+      }
+    } else {
+      afterL2.push(mpn);
+    }
+  }
+
+  if (afterL2.length > 0) {
+    console.log(`[perf] mouser:batch L1=${mpns.length - afterL1.length} L2=${afterL1.length - afterL2.length} API=${afterL2.length}`);
+  }
+
+  if (afterL2.length === 0) return results;
+
+  // --- L3: Live API calls for truly uncached MPNs ---
+  let apiCallCount = 0;
   const BATCH_SIZE = 10;
   const chunks: string[][] = [];
-  for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
-    chunks.push(uncached.slice(i, i + BATCH_SIZE));
+  for (let i = 0; i < afterL2.length; i += BATCH_SIZE) {
+    chunks.push(afterL2.slice(i, i + BATCH_SIZE));
   }
 
   for (const chunk of chunks) {
-    // Check rate limit per chunk
     const hasSlot = await acquireRateSlot();
     if (!hasSlot) {
       console.warn('[mouser] Daily rate limit reached during batch, processed', results.size, 'of', mpns.length);
-      // Cache remaining as null to avoid re-fetching this session
       for (const mpn of chunk) setCache(mpn, null);
       break;
     }
@@ -345,7 +405,6 @@ export async function getMouserProductsBatch(
       const data = await mouserFetch(query);
       const parts = data.SearchResults?.Parts ?? [];
 
-      // Group results by target MPN
       for (const targetMpn of chunk) {
         const targetLower = targetMpn.toLowerCase();
         const matches = parts.filter(
@@ -357,19 +416,161 @@ export async function getMouserProductsBatch(
           if (best) {
             results.set(targetLower, best);
             setCache(targetMpn, best);
+            setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', best, TTL_COMMERCIAL_MS);
           } else {
             setCache(targetMpn, null);
+            setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
           }
         } else {
           setCache(targetMpn, null);
+          setCachedResponse('mouser', targetMpn, 'commercial', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
         }
+      }
+      if (userId) {
+        apiCallCount++;
       }
     } catch (error) {
       console.warn('[mouser] Batch lookup failed for chunk:', chunk, error);
-      // Cache failures as null
       for (const mpn of chunk) setCache(mpn, null);
     }
   }
 
+  if (userId && apiCallCount > 0) {
+    await logApiCall({ userId, service: 'mouser', operation: 'batch_search', requestCount: apiCallCount });
+  }
+
   return results;
+}
+
+// ============================================================
+// SEARCH (MPN prefix / BeginsWith)
+// ============================================================
+
+import type { SearchResult, PartSummary, ComponentCategory, PartStatus } from '@/lib/types';
+
+/** Map Mouser Category string → ComponentCategory (keyword-based, like digikeyMapper) */
+function mapMouserCategory(category: string): ComponentCategory {
+  const lower = category.toLowerCase();
+  if (lower.includes('capacitor')) return 'Capacitors';
+  if (lower.includes('resistor')) return 'Resistors';
+  if (lower.includes('inductor')) return 'Inductors';
+  if (lower.includes('thyristor') || lower.includes('scr') || lower.includes('triac')) return 'Thyristors';
+  if (lower.includes('diode') || lower.includes('rectifier')) return 'Diodes';
+  if (lower.includes('transistor') || lower.includes('mosfet') || lower.includes('igbt')) return 'Transistors';
+  if (lower.includes('connector') || lower.includes('header') || lower.includes('socket')) return 'Connectors';
+  if (lower.includes('varistor') || lower.includes('thermistor') || lower.includes('fuse')) return 'Protection';
+  if (lower.includes('voltage reference')) return 'Voltage References';
+  if (lower.includes('voltage regulator') || lower.includes('ldo') || lower.includes('dc-dc') || lower.includes('dc dc')) return 'Voltage Regulators';
+  if (lower.includes('gate driver')) return 'Gate Drivers';
+  if (lower.includes('op amp') || lower.includes('comparator') || lower.includes('amplifier')) return 'Amplifiers';
+  if (lower.includes('digital to analog') || lower.includes('dac')) return 'DACs';
+  if (lower.includes('analog to digital') || lower.includes('adc')) return 'ADCs';
+  if (lower.includes('optocoupler') || lower.includes('optoisolator')) return 'Optocouplers';
+  if (lower.includes('crystal') && !lower.includes('oscillator')) return 'Crystals';
+  if (lower.includes('oscillator') || lower.includes('timer')) return 'Timers and Oscillators';
+  if (lower.includes('relay')) return 'Relays';
+  if (lower.includes('microcontroller')) return 'Microcontrollers';
+  if (lower.includes('memory') || lower.includes('eeprom')) return 'Memory';
+  if (lower.includes('sensor')) return 'Sensors';
+  if (lower.includes('led') || lower.includes('optoelectronic')) return 'LEDs and Optoelectronics';
+  if (lower.includes('switch')) return 'Switches';
+  if (lower.includes('filter')) return 'Filters';
+  return 'ICs';
+}
+
+/** Map Mouser lifecycle → PartStatus */
+function mapMouserStatus(product: MouserProduct): PartStatus {
+  if (product.IsDiscontinued === 'true' || product.IsDiscontinued === 'True') return 'Discontinued';
+  const lc = (product.LifecycleStatus || '').toLowerCase();
+  if (lc.includes('obsolete')) return 'Obsolete';
+  if (lc.includes('end of life') || lc === 'eol') return 'NRND';
+  if (lc.includes('nrnd') || lc.includes('not recommended')) return 'NRND';
+  if (lc.includes('last time buy')) return 'LastTimeBuy';
+  return 'Active';
+}
+
+/** Convert a Mouser product to a lightweight PartSummary for search results */
+export function mapMouserProductToPartSummary(product: MouserProduct): PartSummary {
+  return {
+    mpn: product.ManufacturerPartNumber,
+    manufacturer: product.Manufacturer || 'Unknown',
+    description: product.Description || '',
+    category: mapMouserCategory(product.Category || ''),
+    status: mapMouserStatus(product),
+    dataSource: 'mouser',
+  };
+}
+
+/**
+ * Search Mouser by MPN prefix (BeginsWith).
+ * Returns up to 10 unique MPNs.
+ * Respects rate limiter. Returns empty on budget exhaustion or error.
+ */
+export async function searchMouserProducts(query: string): Promise<SearchResult> {
+  if (!isMouserConfigured() || !hasMouserBudget() || query.trim().length < 3) {
+    return { type: 'none', matches: [] };
+  }
+
+  try {
+    const hasSlot = await acquireRateSlot();
+    if (!hasSlot) return { type: 'none', matches: [] };
+
+    const apiKey = process.env.MOUSER_API_KEY!;
+    const url = `${BASE_URL}?apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        SearchByPartRequest: {
+          mouserPartNumber: query.trim(),
+          partSearchOptions: 'BeginsWith',
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn(`[mouser] Search failed: HTTP ${res.status}`);
+      return { type: 'none', matches: [] };
+    }
+
+    const data: MouserSearchResponse = await res.json();
+    const parts = data.SearchResults?.Parts ?? [];
+
+    // Dedup by manufacturer MPN (Mouser may return packaging variants)
+    const seen = new Set<string>();
+    const matches: PartSummary[] = [];
+    for (const product of parts) {
+      const key = product.ManufacturerPartNumber.toLowerCase();
+      if (seen.has(key) || matches.length >= 10) continue;
+      seen.add(key);
+      matches.push(mapMouserProductToPartSummary(product));
+    }
+
+    if (matches.length === 0) return { type: 'none', matches: [] };
+    return { type: matches.length === 1 ? 'single' : 'multiple', matches };
+  } catch (error) {
+    console.warn('[mouser] Search failed:', error);
+    return { type: 'none', matches: [] };
+  }
+}
+
+/**
+ * Extract manufacturer MPN from Mouser's SuggestedReplacement field.
+ * Mouser format: "595-SN74HCT04N" (numeric prefix + hyphen + manufacturer MPN).
+ * Returns null if input is empty or cannot be resolved.
+ */
+export function resolveMouserSuggestedMpn(mouserPartNumber: string, sourceMpn?: string): string | null {
+  if (!mouserPartNumber || !mouserPartNumber.trim()) return null;
+
+  const trimmed = mouserPartNumber.trim();
+
+  // Strip Mouser's numeric manufacturer prefix (e.g., "595-" from "595-SN74HCT04N")
+  const stripped = trimmed.replace(/^\d{2,4}-/, '');
+  const resolved = stripped || trimmed; // If regex removed everything, use original
+
+  // Skip self-references
+  if (sourceMpn && resolved.toLowerCase() === sourceMpn.toLowerCase()) return null;
+
+  return resolved;
 }

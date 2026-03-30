@@ -113,6 +113,27 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ---
 
+### ~~Override audit history, revert & annotations~~ COMPLETED
+**Status:** Done — Decision #101
+
+Full audit trail for rule overrides: `previous_values` JSONB snapshot on every change, PATCH converted to deactivate-and-create (immutable history), history API with admin name resolution, version restore from any history entry. Plus admin annotation threads on rules (`rule_annotations` table) for pre-change discussion. LogicPanel shows red badge for rules with unresolved annotations. RuleOverrideDrawer has annotations section (auto-expands) and change history timeline with field-level diffs and restore buttons.
+
+**Remaining:** Same pattern not yet applied to context overrides.
+
+---
+
+### ~~Atlas Explorer QC tool + L2 category dictionaries~~ COMPLETED
+**Status:** Done — Decisions #102, #104
+
+Atlas data QC tool: search Atlas products by MPN/manufacturer, click to view detail drawer with schema comparison (L3 from logic table rules, L2 from param maps), extra attributes, and raw parameters. L2 category dictionaries added for all 14 categories. `classifyAtlasCategory()` updated with c1 guards (Decision #104) to prevent cross-domain misclassification — fixed 598 L3 + ~935 L2 misclassified products. Skip list made dictionary-aware. Explorer search results now show coverage % column. Atlas Dictionaries admin section supports L2 categories.
+
+**Remaining:**
+- L2 sub-family param maps for optoelectronics: Laser Diodes, Photodiodes, IR Emitters have distinct parameter sets from standard LEDs. Coverage shows correctly low because no schema exists for these sub-types. Same pattern as Sensors split (Decision #88).
+- Gaia dictionary refinement: Gaia-extracted duplicate stems (`rdc_max`, `ir_max_ma`, `l_100khz_0_1v`, `e`) should be mapped to canonical attributeIds in the Gaia dictionaries so they merge with dictionary-mapped attributes rather than appearing as unrecognized extras.
+- Plain English alias expansion for MFR-specific param names (~1,327 names like `RDS(ON) @10VTyp (mΩ)`) — Phase 2.
+
+---
+
 ### Override preview: show scoring impact before saving
 **Files:** `components/admin/RuleOverrideDrawer.tsx`
 
@@ -254,7 +275,7 @@ Key data gaps: No way to distinguish control modes (PCM vs VM vs hysteretic) fro
 
 Of 20 logic table rules, the following have no Digikey parametric mapping: `dead_time_control`, `dead_time`, `shutdown_enable` (polarity), `fault_reporting`, `rth_ja`, `tj_max`. Non-isolated "Gate Drivers" category has no propagation delay field; isolated "Isolators - Gate Drivers" has no bootstrap-related fields. Compound fields require 5 transformers (peak source/sink, logic threshold, propagation delay, rise/fall time). `isolation_type` enriched from Digikey category name (non-isolated → "Non-Isolated (Bootstrap)"). `driver_configuration` enriched from "Number of Channels"/"Number of Drivers" for isolated drivers. AEC-Q100 available via "Qualification" for isolated drivers only (not for non-isolated "Gate Drivers" category). ~45-50% weight coverage overall.
 
-**Parts.io partial fill (Decision #77):** Only output current confirmed from parts.io — marginal benefit (~+0 weight since Digikey already has it). `dead_time_control`, `dead_time`, timing specs still datasheet-only.
+**Parts.io partial fill (Decisions #77, #103):** `output_polarity` (w9) and `peak_sink_current` (w8) now mapped from parts.io extras (+17 weight). `dead_time_control`, `dead_time`, timing specs still datasheet-only.
 
 ---
 
@@ -341,6 +362,19 @@ If two context questions affect the same rule's weight, the second one overwrite
 
 ---
 
+### Recommendation pipeline — further performance opportunities
+**Files:** `lib/services/partDataService.ts`, `hooks/useAppState.ts`
+
+Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Decision #99 added persistent L2 cache (Supabase-backed) for cross-user, cross-session caching. Remaining opportunities:
+- ~~**Request coalescing**: If two users search the same MPN within 5s, share results.~~ Largely addressed by L2 cache — second request hits Supabase instead of live API.
+- **Override cache TTL**: Supabase override fetches use 60s TTL. Overrides rarely change — could extend to 5 minutes with invalidation on admin writes.
+- **Score-first parts.io enrichment**: Currently all 20 Digikey candidates are enriched with parts.io before scoring. Could score with Digikey-only data first, then enrich only top 10 and re-score. Risky — parts.io fills attributes critical for some families (thyristor tq, relay coil specs).
+- **Worker thread scoring**: Matching engine is CPU-bound single-threaded. Node.js `worker_threads` could parallelize candidate evaluation for families with many rules (C4: 24 rules, E1: 23 rules).
+- **L2 cache admin UI panel**: Cache stats are exposed via `/api/admin/cache` (GET) and data-sources endpoint. Could add a visual panel in the admin section showing cache size, hit rates, and purge controls.
+- **Periodic cache cleanup**: Expired rows accumulate in `part_data_cache`. Could add a Supabase pg_cron or external cron to call `purgeExpired()` daily. Not critical for correctness (reads check TTL) but prevents table bloat.
+
+---
+
 ### No pagination on lists or conversation history
 **Files:** `components/ChatHistoryDrawer.tsx`, `components/lists/ListsDashboard.tsx`
 
@@ -395,13 +429,15 @@ The following items track the phased evolution from cross-reference engine to co
 
 ~~Add `preferences` JSONB column to `profiles` table. Define `UserPreferences` type. Add optional role/industry to registration. Build `GET/PUT /api/profile/preferences` endpoint.~~ Done (Decision #82) — full UserPreferences type, registration with optional businessRole/industry. Settings reorganized into 3 sections: My Account (ProfilePanel), Preferences (PreferencesPanel), General Settings (AccountPanel). Currency enabled in General Settings, wired to `UserPreferences.defaultCurrency`.
 
+**Update (Decision #94):** Registration redesigned as 2-step wizard (credentials → onboarding agent). Settings restructured to 4 sections: My Account, My Profile (free-form profile prompt), Company Settings (renamed from Preferences), General Settings. Profile prompt replaces structured role/industry dropdowns — LLM extraction populates structured fields on save. BusinessRole expanded to 9 values with backward-compatible migration. Manufacturing regions replaced by curated 25-country list + shipping destinations.
+
 ---
 
 ### Phase 2: LLM Context Injection
 ~~**Status:** Not started~~
 **Status:** Done (Decision #82)
 
-~~Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.~~ Done — `buildUserContextSection()`, behavioral instructions, + 4 history tools (`get_my_recent_searches`, `get_my_lists`, `get_my_past_recommendations`, `get_my_conversations`).
+~~Modify orchestrator to accept user context. Build dynamic system prompt section from preferences. Thread preferences through `/api/chat` and `/api/modal-chat`.~~ Done — `buildUserContextSection()`, behavioral instructions, + 5 history tools (`get_my_recent_searches`, `get_my_lists`, `get_list_parts`, `get_my_past_recommendations`, `get_my_conversations`). **Update (Decision #96):** Added `get_list_parts` tool — queries row-level data within BOMs (aggregate breakdowns or filtered detail rows). `get_my_lists` now returns list IDs.
 
 ---
 
@@ -443,19 +479,19 @@ Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. 
 ---
 
 ### Phase 7: Atlas Integration & Manufacturer Profile API
-**Status:** Partially done (Decisions #66, #67, #68, #69)
+**Status:** Partially done (Decisions #66, #67, #68, #69, #100)
 **Priority:** P2
 
-Atlas product database integrated: 99 manufacturers, 27,030 products ingested into Supabase `atlas_products` table. Parallel search + candidate fetch working. Admin panel for ingestion monitoring built. Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67) — average mapped params went from 0.5–2 to 3–9 per product. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics added: per-manufacturer coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table requirements (Decision #69).
+Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69) — now shows PIO column alongside Atlas/Dict/DK (Decision #103).
 
 **Remaining:**
 - Manufacturer profile API (company profiles, verification, factory audit, export compliance)
 - Replace `mockManufacturerData.ts` with Atlas-fed profiles
 - ManufacturerProfilePanel enrichment with Atlas company data
-- Further reduce unmapped param warnings (~40K remaining, mostly manufacturer-specific naming variants)
+- Phase 2 English param expansion: add plain English aliases for MFR-specific formats (`RDS(ON) @10VTyp (mΩ)`, `BVDSS (V)`, `BV(V)`, etc.) — ~1,327 distinct names across ~20 MFRs
 - Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
 
-**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
+**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasGaiaDictionaries.ts`, `lib/services/atlas-gaia-dicts.json`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
 
 ---
 
@@ -488,3 +524,53 @@ Customer data imports (BOMs, pricing files, AVLs). Negotiated pricing overlays. 
 **Priority:** P3
 
 Watchlists, event detection, proactive alerts, portfolio risk dashboard. Requires background job system beyond current Next.js architecture.
+
+---
+
+## Onboarding & Profile Follow-ups (Decision #94)
+
+### Profile prompt → matching engine effects
+**Status:** Not started
+**Priority:** P2
+
+The new profile fields (`productionVolume`, `projectPhase`, `goals`, `productionTypes`) are extracted from the profile prompt and stored as structured data, but `contextResolver.ts` does not yet generate `AttributeEffect[]` from them. Potential effects:
+- `productionVolume: 'prototype'` → suppress cost-optimization weights, emphasize availability
+- `projectPhase: 'sustaining_eol'` → escalate lifecycle/EOL risk rules
+- `goals: 'reduce_sole_source'` → boost multi-source availability scoring
+
+### Re-launch onboarding from settings
+**Status:** Not started
+**Priority:** P3
+
+Allow users to re-run the onboarding agent conversation from Settings → My Profile (e.g., a "Guided setup" button that replaces the text area with the chat flow temporarily). Currently onboarding only appears once at registration.
+
+### i18n for onboarding and new settings sections
+**Status:** Not started
+**Priority:** P3
+
+The onboarding agent messages, chip labels, and new settings section labels (My Profile, Company Settings) are hardcoded in English. Add translation keys to `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
+
+---
+
+## Code Audit Follow-ups (Decision #95)
+
+### Unit tests for new profile/preferences services
+**Status:** Not started
+**Priority:** P2
+
+Three new services have zero test coverage:
+- `lib/services/profileExtractor.ts` — `validateExtraction()` is pure and highly testable (enum validation, array filtering, goal cap at 3)
+- `lib/services/userPreferencesService.ts` — `migratePreferences()` is pure (role mapping, industry normalization)
+- `lib/services/contextResolver.ts` — `resolveUserEffects()` is pure (compliance escalation, industry-based rule boosting)
+
+### Fix fire-and-forget migration write-back
+**Status:** Not started
+**Priority:** P2
+
+`userPreferencesService.ts:67-77` — the Supabase migration auto-write-back uses `.then(() => {})`, silently swallowing errors. Should at minimum log errors: `.then(({ error }) => { if (error) console.error(...) })`.
+
+### Remove dead "Other" role text field in OnboardingAgent
+**Status:** Not started
+**Priority:** P2
+
+`components/auth/OnboardingAgent.tsx:542-545` — hidden `<Box sx={{ display: 'none' }} />` placeholder and `otherRoleText` state are dead code. Either implement the "Other" free-text input or remove the state + placeholder.

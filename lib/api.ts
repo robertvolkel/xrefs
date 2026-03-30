@@ -1,5 +1,5 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences } from './types';
-import type { ServiceWarning, ServiceName } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData } from './types';
+import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -12,6 +12,10 @@ export interface AdminUser {
   search_count: number;
   list_count: number;
   last_active: string | null;
+  total_tokens: number;
+  estimated_cost: number;
+  dk_calls: number;
+  mouser_calls: number;
 }
 
 const BASE = '/api';
@@ -38,11 +42,13 @@ export function onServiceRecoveries(listener: ServiceRecoveryListener): () => vo
 
 /** Which services each API route exercises — used for recovery detection. */
 const ROUTE_SERVICES: Record<string, ServiceName[]> = {
-  '/api/search': ['digikey'],
+  '/api/search': ['digikey', 'atlas', 'partsio', 'mouser'],
   '/api/attributes': ['digikey', 'partsio'],
-  '/api/xref': ['digikey', 'partsio'],
+  '/api/xref': ['digikey', 'partsio', 'mouser'],
   '/api/chat': ['anthropic'],
   '/api/modal-chat': ['anthropic'],
+  '/api/mouser/enrich': ['mouser'],
+  '/api/parts-list/validate': ['digikey', 'partsio', 'mouser'],
 };
 
 function getRouteServices(url: string): ServiceName[] {
@@ -73,6 +79,15 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   return json.data;
 }
 
+// ── Health Check ─────────────────────────────────────────────
+
+export async function fetchHealthStatus(): Promise<ServiceStatusInfo[]> {
+  const res = await fetch('/api/health');
+  if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
+  const json = await res.json();
+  return json.services;
+}
+
 export async function searchParts(query: string, signal?: AbortSignal): Promise<SearchResult> {
   return fetchApi<SearchResult>(`${BASE}/search`, {
     method: 'POST',
@@ -95,11 +110,12 @@ export async function getRecommendationsWithOverrides(
   overrides: Record<string, string>,
   applicationContext?: ApplicationContext,
   signal?: AbortSignal,
+  sourceAttributes?: PartAttributes,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes }),
     signal,
   });
 }
@@ -115,6 +131,26 @@ export async function getRecommendationsWithContext(
     body: JSON.stringify({ applicationContext }),
     signal,
   });
+}
+
+/** Fetch Mouser enrichment data (pricing, lifecycle, compliance) for a batch of MPNs */
+export async function enrichWithMouserBatch(
+  mpns: string[],
+): Promise<Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
+  if (mpns.length === 0) return {};
+  try {
+    const result = await fetchApi<{ results: Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
+      `${BASE}/mouser/enrich`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mpns }),
+      },
+    );
+    return result.results ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** Send messages to the Claude LLM orchestrator */
@@ -170,6 +206,12 @@ export async function toggleUserDisabled(userId: string, disabled: boolean): Pro
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'Failed to update user status');
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to delete user');
 }
 
 // ── QC Feedback API ──────────────────────────────────────
@@ -329,7 +371,7 @@ export async function validatePartsList(
 
 // ── Admin Override API ──────────────────────────────────────
 
-import type { RuleOverrideRecord, ContextOverrideRecord } from './types';
+import type { RuleOverrideRecord, RuleOverrideHistoryEntry, RuleAnnotation, ContextOverrideRecord, MatchingRule } from './types';
 
 export async function getRuleOverrides(familyId?: string): Promise<RuleOverrideRecord[]> {
   const qs = familyId ? `?family_id=${familyId}` : '';
@@ -366,6 +408,79 @@ export async function updateRuleOverride(
 
 export async function deleteRuleOverride(id: string): Promise<boolean> {
   const res = await fetch(`${BASE}/admin/overrides/rules/${id}`, { method: 'DELETE' });
+  return res.ok;
+}
+
+// ── Rule Override History & Restore ──────────────────────────
+
+export async function getRuleOverrideHistory(
+  familyId: string,
+  attributeId: string,
+): Promise<{ baseRule: MatchingRule | null; history: RuleOverrideHistoryEntry[] }> {
+  const qs = `?family_id=${encodeURIComponent(familyId)}&attribute_id=${encodeURIComponent(attributeId)}`;
+  const res = await fetch(`${BASE}/admin/overrides/rules/history${qs}`);
+  if (!res.ok) return { baseRule: null, history: [] };
+  const json = await res.json();
+  return json.data ?? { baseRule: null, history: [] };
+}
+
+export async function restoreRuleOverride(
+  overrideId: string,
+  changeReason: string,
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrideId, changeReason }),
+  });
+  return res.ok;
+}
+
+// ── Rule Annotations ─────────────────────────────────────────
+
+export async function getRuleAnnotations(
+  familyId: string,
+  attributeId?: string,
+): Promise<RuleAnnotation[]> {
+  let qs = `?family_id=${encodeURIComponent(familyId)}`;
+  if (attributeId) qs += `&attribute_id=${encodeURIComponent(attributeId)}`;
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations${qs}`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.data ?? [];
+}
+
+export async function createRuleAnnotation(
+  familyId: string,
+  attributeId: string,
+  body: string,
+): Promise<RuleAnnotation | null> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ familyId, attributeId, body }),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.data ?? null;
+}
+
+export async function updateRuleAnnotation(
+  annotationId: string,
+  updates: { body?: string; isResolved?: boolean },
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations/${annotationId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return res.ok;
+}
+
+export async function deleteRuleAnnotation(annotationId: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/overrides/rules/annotations/${annotationId}`, {
+    method: 'DELETE',
+  });
   return res.ok;
 }
 
@@ -448,6 +563,114 @@ export async function deleteAtlasDictOverride(id: string): Promise<boolean> {
   return res.ok;
 }
 
+// ── Atlas Explorer API ─────────────────────────────────────
+
+export interface AtlasExplorerResult {
+  id: string;
+  mpn: string;
+  manufacturer: string;
+  description: string | null;
+  category: string;
+  subcategory: string;
+  familyId: string | null;
+  familyName: string | null;
+  status: string;
+  parameterCount: number;
+  coveragePct: number | null;
+  schemaMatchCount: number;
+  schemaTotalCount: number;
+}
+
+export interface AtlasExplorerDetail {
+  product: {
+    id: string;
+    mpn: string;
+    manufacturer: string;
+    description: string | null;
+    category: string;
+    subcategory: string;
+    familyId: string | null;
+    familyName: string | null;
+    status: string;
+    datasheetUrl: string | null;
+    package: string | null;
+  };
+  schemaComparison: {
+    familyId: string;
+    familyName: string;
+    totalRules: number;
+    matched: number;
+    coverage: number;
+    rules: {
+      attributeId: string;
+      attributeName: string;
+      weight: number;
+      logicType: string;
+      blockOnMissing: boolean;
+      sortOrder: number;
+      atlasValue: string | null;
+      atlasNumericValue: number | null;
+      atlasUnit: string | null;
+    }[];
+  } | null;
+  l2SchemaComparison: {
+    category: string;
+    totalFields: number;
+    matched: number;
+    coverage: number;
+    fields: {
+      attributeId: string;
+      attributeName: string;
+      sortOrder: number;
+      atlasValue: string | null;
+      atlasUnit: string | null;
+    }[];
+  } | null;
+  atlasAttributes: { attributeId: string; value: string; numericValue: number | null; unit: string | null }[];
+  extraAttributes: { attributeId: string; value: string; numericValue: number | null; unit: string | null }[];
+  rawParameters: { name: string; value: string }[] | null;
+}
+
+export async function searchAtlasExplorer(query: string): Promise<{ results: AtlasExplorerResult[]; total: number; capped: boolean }> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer?q=${encodeURIComponent(query)}`);
+  if (!res.ok) throw new Error('Atlas explorer search failed');
+  return res.json();
+}
+
+export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerDetail> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer/${id}`);
+  if (!res.ok) throw new Error('Atlas explorer detail failed');
+  return res.json();
+}
+
+export interface DictMappingSuggestion {
+  translation: string | null;
+  suggestedAttributeId: string | null;
+  suggestedAttributeName: string | null;
+  suggestedUnit: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string | null;
+}
+
+export async function suggestDictMapping(
+  paramName: string,
+  samples: string[],
+  familyId: string,
+): Promise<DictMappingSuggestion | null> {
+  try {
+    const res = await fetch(`${BASE}/admin/atlas/dictionaries/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paramName, samples, familyId }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.success ? json.suggestion : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Release Notes API ──────────────────────────────────────
 
 export async function getReleaseNotes(): Promise<ReleaseNote[]> {
@@ -496,4 +719,42 @@ export async function updateUserPreferences(prefs: Partial<UserPreferences>): Pr
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'Failed to update preferences');
   return json.data;
+}
+
+// ============================================================
+// ADMIN: CACHE MANAGEMENT
+// ============================================================
+
+export interface CacheStats {
+  totalRows: number;
+  totalSizeBytes: number;
+  byService: Record<string, {
+    rows: number;
+    sizeBytes: number;
+    avgHitCount: number;
+    oldestEntry: string | null;
+    newestEntry: string | null;
+  }>;
+  byTier: Record<string, { rows: number; sizeBytes: number }>;
+  expiredRows: number;
+}
+
+export async function getAdminCacheStats(): Promise<CacheStats> {
+  const res = await fetch(`${BASE}/admin/cache`);
+  return res.json();
+}
+
+export async function purgeAdminCache(opts?: {
+  service?: string;
+  mpn?: string;
+  tier?: string;
+  expiredOnly?: boolean;
+}): Promise<{ deleted: number }> {
+  const params = new URLSearchParams();
+  if (opts?.service) params.set('service', opts.service);
+  if (opts?.mpn) params.set('mpn', opts.mpn);
+  if (opts?.tier) params.set('tier', opts.tier);
+  if (opts?.expiredOnly) params.set('expired', 'true');
+  const res = await fetch(`${BASE}/admin/cache?${params}`, { method: 'DELETE' });
+  return res.json();
 }

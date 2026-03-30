@@ -14,10 +14,9 @@ import {
 import {
   searchParts,
   getPartAttributes,
-  getRecommendations,
   getRecommendationsWithOverrides,
-  getRecommendationsWithContext,
   chatWithOrchestrator,
+  enrichWithMouserBatch,
 } from '@/lib/api';
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
@@ -137,6 +136,110 @@ export function useAppState() {
     setState((prev) => ({ ...prev, statusText: text }));
   }, []);
 
+  /** Rotate through status messages on a timer. Returns cleanup function. */
+  const startStatusRotation = useCallback((messages: { text: string; delayMs: number }[]) => {
+    const timers: NodeJS.Timeout[] = [];
+    if (messages.length > 0) setStatus(messages[0].text);
+    for (let i = 1; i < messages.length; i++) {
+      const msg = messages[i];
+      timers.push(setTimeout(() => setStatus(msg.text), msg.delayMs));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [setStatus]);
+
+  /** Background Mouser enrichment — merges pricing/lifecycle into displayed recs */
+  const triggerMouserEnrichment = useCallback(
+    (recs: XrefRecommendation[], signal: AbortSignal) => {
+      if (recs.length === 0) return;
+      const mpns = recs.map(r => r.part.mpn);
+      enrichWithMouserBatch(mpns).then((mouserData) => {
+        if (signal.aborted || Object.keys(mouserData).length === 0) return;
+        setState((prev) => {
+          const enriched = prev.recommendations.map(rec => {
+            const data = mouserData[rec.part.mpn.toLowerCase()];
+            if (!data) return rec;
+            // Build Digikey quote from flat fields if supplierQuotes is empty
+            const existingQuotes = rec.part.supplierQuotes && rec.part.supplierQuotes.length > 0
+              ? rec.part.supplierQuotes
+              : (rec.part.unitPrice != null || rec.part.quantityAvailable != null)
+                ? [{
+                    supplier: 'digikey' as const,
+                    unitPrice: rec.part.unitPrice,
+                    quantityAvailable: rec.part.quantityAvailable,
+                    priceBreaks: rec.part.unitPrice != null
+                      ? [{ quantity: 1, unitPrice: rec.part.unitPrice, currency: 'USD' }]
+                      : [],
+                    fetchedAt: new Date().toISOString(),
+                  }]
+                : [];
+            return {
+              ...rec,
+              part: {
+                ...rec.part,
+                supplierQuotes: [...existingQuotes, data.quote],
+                lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
+                complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
+              },
+            };
+          });
+          return { ...prev, recommendations: enriched, allRecommendations: enriched };
+        });
+      });
+    },
+    []
+  );
+
+  /**
+   * Show recommendations immediately, then fire the LLM assessment in the background.
+   * This avoids blocking the recommendations panel by 3-8s while the orchestrator responds.
+   */
+  const showRecsAndDeferAssessment = useCallback(
+    (
+      recs: XrefRecommendation[],
+      mpn: string,
+      paramCount: number,
+      conversationContext: string,
+      signal: AbortSignal,
+    ) => {
+      // Show recs immediately — panels appear without waiting for LLM
+      const summaryMsg = recs.length > 0
+        ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
+        : `No cross-references found for ${mpn}.`;
+
+      addMessage('assistant', summaryMsg);
+      setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+
+      // Push context to conversation history for the orchestrator
+      conversationRef.current.push({ role: 'user', content: conversationContext });
+      conversationRef.current.push({ role: 'assistant', content: summaryMsg });
+
+      // Fire LLM assessment and Mouser enrichment in background (non-blocking)
+      if (recs.length > 0) {
+        setStatus('Generating engineering assessment...');
+
+        // Background: LLM assessment
+        chatWithOrchestrator(conversationRef.current, recs, signal)
+          .then((response) => {
+            if (signal.aborted) return;
+            setStatus('');
+            if (response?.message) {
+              conversationRef.current.push({ role: 'assistant', content: response.message });
+              addMessage('assistant', response.message);
+            }
+          })
+          .catch(() => {
+            if (!signal.aborted) setStatus('');
+          });
+
+        // Background: Mouser candidate enrichment (pricing/lifecycle)
+        triggerMouserEnrichment(recs, signal);
+      } else {
+        setStatus('');
+      }
+    },
+    [addMessage, setStatus, triggerMouserEnrichment]
+  );
+
   // ============================================================
   // LLM-POWERED SEARCH FLOW
   // ============================================================
@@ -226,7 +329,12 @@ export function useAppState() {
     async (part: PartSummary) => {
       const signal = freshAbort();
       addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
-      setStatus('Fetching specifications from Digikey...');
+      const stopRotation = startStatusRotation([
+        { text: 'Checking all data sources...', delayMs: 0 },
+        { text: 'Fetching technical attributes...', delayMs: 1200 },
+        { text: 'Checking price and availability...', delayMs: 2800 },
+        { text: 'Analyzing supply risk...', delayMs: 4500 },
+      ]);
       setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
 
       // Tell the LLM the user confirmed
@@ -237,6 +345,7 @@ export function useAppState() {
 
       // Step 1: Fetch attributes (fast, direct API)
       const sourceAttrs = await getPartAttributes(part.mpn, signal).catch(() => null);
+      stopRotation();
       if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
@@ -262,14 +371,14 @@ export function useAppState() {
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           // Pause and ask user for missing critical attribute values
           setStatus('');
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
+          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
             partMpn: part.mpn,
           });
           conversationRef.current.push({
             role: 'assistant',
-            content: `Loaded attributes for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
+            content: `Loaded details for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
           });
           setState((prev) => ({
             ...prev,
@@ -300,7 +409,7 @@ export function useAppState() {
             if (hasVisibleRemaining) {
               // Some questions still need user input — show form with auto-answers pre-filled
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
@@ -308,7 +417,7 @@ export function useAppState() {
               });
               conversationRef.current.push({
                 role: 'assistant',
-                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
               });
               pendingOverridesRef.current = {};
               setState((prev) => ({
@@ -322,14 +431,14 @@ export function useAppState() {
             if (!hasAutoAnswers) {
               // No auto-answers and no visible questions — show full form
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
               });
               conversationRef.current.push({
                 role: 'assistant',
-                content: `Loaded attributes for ${part.mpn}. Asking application context questions before finding replacements.`,
+                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
               });
               pendingOverridesRef.current = {};
               setState((prev) => ({
@@ -342,7 +451,7 @@ export function useAppState() {
 
             // All questions auto-answered — skip form, get recs with auto-context
             const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
             setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
@@ -351,37 +460,23 @@ export function useAppState() {
               applicationContext: autoContext,
             }));
 
-            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal);
+            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal, sourceAttrs);
             if (signal.aborted) return;
-            setStatus('Generating engineering assessment...');
-            conversationRef.current.push({
-              role: 'user',
-              content: `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-            });
-            const assessmentResponse = await chatWithOrchestrator(conversationRef.current, recs, signal).catch(() => null);
-            if (signal.aborted) return;
-            setStatus('');
 
-            if (assessmentResponse?.message) {
-              conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-              addMessage('assistant', assessmentResponse.message);
-            } else {
-              const paramCount = sourceAttrs.parameters.length;
-              const msg = recs.length > 0
-                ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
-                : `No cross-references found for ${part.mpn}.`;
-              conversationRef.current.push({ role: 'assistant', content: msg });
-              addMessage('assistant', msg);
-            }
-            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            // Show recs immediately, fire LLM assessment in background
+            showRecsAndDeferAssessment(
+              recs, part.mpn, sourceAttrs.parameters.length,
+              `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
+              signal,
+            );
             return;
           }
         }
 
         if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Finding cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Finding cross-references...`);
         } else {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
         }
         setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({
@@ -414,10 +509,11 @@ export function useAppState() {
             recommendations: recs,
             allRecommendations: recs,
           }));
+          triggerMouserEnrichment(recs, signal);
         } else {
-          // Orchestrator didn't return recs — try direct API
+          // Orchestrator didn't return recs — try direct API (pass sourceAttrs to skip re-fetch)
           setStatus('Evaluating candidates against replacement rules...');
-          const fallbackRecs = await getRecommendations(part.mpn, signal);
+          const fallbackRecs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs ?? undefined);
           if (signal.aborted) return;
           setStatus('');
           if (fallbackRecs.length > 0) {
@@ -432,6 +528,7 @@ export function useAppState() {
             recommendations: fallbackRecs,
             allRecommendations: fallbackRecs,
           }));
+          triggerMouserEnrichment(fallbackRecs, signal);
         }
       } else {
         // Orchestrator failed entirely — fall back to direct recs
@@ -441,7 +538,7 @@ export function useAppState() {
           return;
         }
         setStatus('Evaluating candidates against replacement rules...');
-        const recs = await getRecommendations(part.mpn, signal);
+        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs);
         if (signal.aborted) return;
         setStatus('');
         const paramCount = sourceAttrs.parameters.length;
@@ -452,9 +549,10 @@ export function useAppState() {
           recommendations: recs,
           allRecommendations: recs,
         }));
+        triggerMouserEnrichment(recs, signal);
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, showRecsAndDeferAssessment, triggerMouserEnrichment]
   );
 
   // ============================================================
@@ -467,7 +565,7 @@ export function useAppState() {
         addMessage('user', query);
         setState((prev) => ({ ...prev, phase: 'searching' }));
       }
-      setStatus(`Searching Digikey for "${query}"...`);
+      setStatus(`Searching for "${query}"...`);
 
       try {
         const result = await searchParts(query);
@@ -507,9 +605,16 @@ export function useAppState() {
   /** Load attributes + recommendations via direct API calls */
   const loadAttributesAndRecommendations = useCallback(
     async (part: PartSummary) => {
+      const signal = freshAbort();
       try {
-        setStatus('Fetching specifications from Digikey...');
+        const stopRotation = startStatusRotation([
+          { text: 'Checking all data sources...', delayMs: 0 },
+          { text: 'Fetching technical attributes...', delayMs: 1200 },
+          { text: 'Checking price and availability...', delayMs: 2800 },
+          { text: 'Analyzing supply risk...', delayMs: 4500 },
+        ]);
         const attributes = await getPartAttributes(part.mpn);
+        stopRotation();
 
         // Check if this part family is supported
         if (!isFamilySupported(attributes.part.subcategory)) {
@@ -530,7 +635,7 @@ export function useAppState() {
 
         if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
           setStatus('');
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
+          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
             type: 'attribute-query',
             missingAttributes: missingAttrs,
             partMpn: part.mpn,
@@ -562,7 +667,7 @@ export function useAppState() {
 
             if (hasVisibleRemaining || !hasAutoAnswers) {
               setStatus('');
-              addMessage('assistant', `Loaded attributes for **${part.mpn}**.`, {
+              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
                 type: 'context-questions',
                 questions: contextConfig.questions,
                 familyId: logicTableForContext.familyId,
@@ -579,7 +684,7 @@ export function useAppState() {
 
             // All questions auto-answered — skip form, get recs with auto-context
             const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded attributes for **${part.mpn}**. Finding cross-references...`);
+            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
             setStatus('Evaluating candidates against replacement rules...');
             setState((prev) => ({
               ...prev,
@@ -595,14 +700,15 @@ export function useAppState() {
               `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
             );
             setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+            triggerMouserEnrichment(recs, signal);
             return;
           }
         }
 
         if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Searching for cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Searching for cross-references...`);
         } else {
-          addMessage('assistant', `Loaded attributes for **${part.mpn}**. Searching for cross-references...`);
+          addMessage('assistant', `Loaded details for **${part.mpn}**. Searching for cross-references...`);
         }
         setStatus('Evaluating candidates against replacement rules...');
         setState((prev) => ({
@@ -611,7 +717,7 @@ export function useAppState() {
           sourceAttributes: attributes,
         }));
 
-        const recs = await getRecommendations(part.mpn);
+        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, undefined, attributes);
         setStatus('');
         const paramCount = attributes.parameters.length;
         addMessage(
@@ -624,13 +730,14 @@ export function useAppState() {
           recommendations: recs,
           allRecommendations: recs,
         }));
+        triggerMouserEnrichment(recs, signal);
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while fetching part details. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, triggerMouserEnrichment]
   );
 
   const handleConfirmDeterministic = useCallback(
@@ -824,44 +931,17 @@ export function useAppState() {
 
       try {
         const recs = (filledCount > 0 || autoContext)
-          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal)
-          : await getRecommendations(mpn, signal);
+          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal, state.sourceAttributes ?? undefined)
+          : await getRecommendationsWithOverrides(mpn, {}, undefined, signal, state.sourceAttributes ?? undefined);
         if (signal.aborted) return;
 
-        setStatus('Generating engineering assessment...');
-
-        // Sync attribute response to conversation for orchestrator
-        conversationRef.current.push({
-          role: 'user',
-          content: filledCount > 0
-            ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-            : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-        });
-
-        // Call orchestrator for engineering assessment
-        const assessmentResponse = await chatWithOrchestrator(
-          conversationRef.current,
-          recs,
-          signal,
-        ).catch(() => null);
-        if (signal.aborted) return;
-
-        setStatus('');
-
-        if (assessmentResponse?.message) {
-          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-          addMessage('assistant', assessmentResponse.message);
-        } else {
-          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-          const genericMsg = recs.length > 0
-            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`;
-          conversationRef.current.push({ role: 'assistant', content: genericMsg });
-          addMessage('assistant', genericMsg);
-        }
-
-        // Always use overrides-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+        // Show recs immediately, fire LLM assessment in background
+        const contextMsg = filledCount > 0
+          ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+          : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
+        showRecsAndDeferAssessment(
+          recs, mpn, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
+        );
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -872,7 +952,7 @@ export function useAppState() {
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipAttributes = useCallback(async () => {
@@ -948,54 +1028,22 @@ export function useAppState() {
         const overrides = pendingOverridesRef.current;
         const hasOverrides = Object.keys(overrides).length > 0;
 
-        let recs: XrefRecommendation[];
-        if (hasOverrides || context) {
-          recs = await getRecommendationsWithOverrides(
-            mpn,
-            hasOverrides ? overrides : {},
-            context,
-            signal,
-          );
-        } else {
-          recs = await getRecommendations(mpn, signal);
-        }
-        if (signal.aborted) return;
-
-        setStatus('Generating engineering assessment...');
-
-        // Sync context response to conversation for orchestrator
-        conversationRef.current.push({
-          role: 'user',
-          content: filledCount > 0
-            ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-            : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-        });
-
-        // Call orchestrator for engineering assessment of the results
-        const assessmentResponse = await chatWithOrchestrator(
-          conversationRef.current,
-          recs,
+        const recs = await getRecommendationsWithOverrides(
+          mpn,
+          hasOverrides ? overrides : {},
+          context,
           signal,
-        ).catch(() => null);
+          state.sourceAttributes ?? undefined,
+        );
         if (signal.aborted) return;
 
-        setStatus('');
-
-        if (assessmentResponse?.message) {
-          conversationRef.current.push({ role: 'assistant', content: assessmentResponse.message });
-          addMessage('assistant', assessmentResponse.message);
-        } else {
-          // Fallback to generic message if orchestrator fails
-          const paramCount = state.sourceAttributes?.parameters.length ?? 0;
-          const genericMsg = recs.length > 0
-            ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-            : `No cross-references found for ${mpn}.`;
-          conversationRef.current.push({ role: 'assistant', content: genericMsg });
-          addMessage('assistant', genericMsg);
-        }
-
-        // Always use context-adjusted recs from direct API, not orchestrator's
-        setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+        // Show recs immediately, fire LLM assessment in background
+        const contextMsg = filledCount > 0
+          ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
+          : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
+        showRecsAndDeferAssessment(
+          recs, mpn!, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
+        );
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -1008,7 +1056,7 @@ export function useAppState() {
         pendingOverridesRef.current = {};
       }
     },
-    [addMessage, setStatus, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipContext = useCallback(async () => {

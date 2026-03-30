@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useMemo, useCallback, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, Switch, Stack, Chip } from '@mui/material';
 import { useTranslation } from 'react-i18next';
+import { getQcSettings, updateQcSettings } from '@/lib/api';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import {
@@ -20,12 +21,14 @@ import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
 import AtlasPanel from './AtlasPanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
-import { getAtlasDictionaryFamilyIds } from '@/lib/services/atlasMapper';
+import QcFeedbackTab from './QcFeedbackTab';
+import QcLogsTab from './QcLogsTab';
+import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
 // --- Static data (computed once at module level) ---
 
 const allTables = getAllLogicTables();
-const atlasDictFamilyIds = new Set(getAtlasDictionaryFamilyIds());
+const atlasDictFamilyIds = new Set([...getAtlasDictionaryFamilyIds(), ...getAtlasL2DictionaryCategories()]);
 const l3Categories = [...new Set(allTables.map((t) => t.category))];
 
 // L2 data
@@ -102,8 +105,10 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries';
+  return s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'qc-feedback' || s === 'qc-logs';
 }
+
+const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs'];
 
 /** Check if a category name is an L2 category */
 function isL2Category(cat: string): boolean {
@@ -123,8 +128,30 @@ function AdminShellInner() {
   const [selectedCategory, setSelectedCategory] = useState(l3Categories[0] ?? '');
   const [selectedFamilyId, setSelectedFamilyId] = useState(allTables[0]?.familyId ?? '');
 
+  // QC logging toggle state
+  const [loggingEnabled, setLoggingEnabled] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    getQcSettings()
+      .then((s) => setLoggingEnabled(s.qcLoggingEnabled))
+      .catch(() => {})
+      .finally(() => setSettingsLoaded(true));
+  }, []);
+
+  const handleToggleLogging = async (enabled: boolean) => {
+    setLoggingEnabled(enabled);
+    try {
+      await updateQcSettings({ qcLoggingEnabled: enabled });
+    } catch {
+      setLoggingEnabled(!enabled);
+    }
+  };
+
+  const isQcSection = QC_SECTIONS.includes(activeSection);
+
   // Determine which categories to show based on active section
-  const categoryEntries = activeSection === 'param-mappings'
+  const categoryEntries = (activeSection === 'param-mappings' || activeSection === 'atlas-dictionaries')
     ? paramMappingCategoryEntries
     : l3OnlyCategoryEntries;
 
@@ -153,8 +180,8 @@ function AdminShellInner() {
     (section: AdminSection) => {
       setActiveSection(section);
       router.replace(`/admin?section=${section}`, { scroll: false });
-      // If switching to a non-param-mappings section while L2 is selected, reset to L3
-      if (section !== 'param-mappings' && isL2Category(selectedCategory)) {
+      // If switching to a section that doesn't support L2 while L2 is selected, reset to L3
+      if (section !== 'param-mappings' && section !== 'atlas-dictionaries' && isL2Category(selectedCategory)) {
         setSelectedCategory(l3Categories[0] ?? '');
         setSelectedFamilyId(allTables[0]?.familyId ?? '');
       }
@@ -194,6 +221,7 @@ function AdminShellInner() {
         sx={{
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'space-between',
           px: 3,
           height: PAGE_HEADER_HEIGHT,
           borderBottom: 1,
@@ -204,6 +232,26 @@ function AdminShellInner() {
         <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('admin.title')}
         </Typography>
+
+        {isQcSection && settingsLoaded && (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
+              {t('adminQc.toggleLabel')}
+            </Typography>
+            <Switch
+              checked={loggingEnabled}
+              onChange={(e) => handleToggleLogging(e.target.checked)}
+              size="small"
+            />
+            <Chip
+              label={loggingEnabled ? t('adminQc.collecting') : t('adminQc.paused')}
+              size="small"
+              color={loggingEnabled ? 'success' : 'default'}
+              variant="outlined"
+              sx={{ height: 22, fontSize: '0.7rem' }}
+            />
+          </Stack>
+        )}
       </Box>
 
       {/* Body */}
@@ -236,16 +284,25 @@ function AdminShellInner() {
         )}
 
         {/* Content */}
-        <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
-          {activeSection === 'param-mappings' && (
-            <ParamMappingsPanel table={selectedTable} l2ParamMap={selectedL2ParamMap} />
-          )}
-          {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
-          {activeSection === 'context' && <ContextPanel table={selectedTable} />}
-          {activeSection === 'taxonomy' && <TaxonomyPanel />}
-          {activeSection === 'atlas' && <AtlasPanel />}
-          {activeSection === 'atlas-dictionaries' && <AtlasDictionaryPanel table={selectedTable} />}
-        </Box>
+        {isQcSection ? (
+          <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            {activeSection === 'qc-feedback' && <QcFeedbackTab />}
+            {activeSection === 'qc-logs' && <QcLogsTab />}
+          </Box>
+        ) : (
+          <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
+            {activeSection === 'param-mappings' && (
+              <ParamMappingsPanel table={selectedTable} l2ParamMap={selectedL2ParamMap} />
+            )}
+            {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
+            {activeSection === 'context' && <ContextPanel table={selectedTable} />}
+            {activeSection === 'taxonomy' && <TaxonomyPanel />}
+            {activeSection === 'atlas' && <AtlasPanel />}
+            {activeSection === 'atlas-dictionaries' && (
+              <AtlasDictionaryPanel table={selectedTable} l2Category={inL2Mode ? selectedCategory : undefined} />
+            )}
+          </Box>
+        )}
       </Box>
     </Box>
   );

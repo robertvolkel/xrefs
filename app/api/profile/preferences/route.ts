@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { UserPreferences } from '@/lib/types';
+import { migratePreferences } from '@/lib/services/userPreferencesService';
+import { extractProfileFields } from '@/lib/services/profileExtractor';
 
 export async function GET(): Promise<NextResponse> {
   try {
@@ -22,9 +24,24 @@ export async function GET(): Promise<NextResponse> {
       );
     }
 
+    const raw = (data?.preferences as UserPreferences) ?? {};
+    const { migrated, changed } = migratePreferences(raw);
+
+    // Auto-write-back migrated values
+    if (changed) {
+      await supabase
+        .from('profiles')
+        .update({
+          preferences: migrated,
+          business_role: migrated.businessRole ?? null,
+          industry: migrated.industries?.[0] ?? migrated.industry ?? null,
+        })
+        .eq('id', user!.id);
+    }
+
     return NextResponse.json({
       success: true,
-      data: (data?.preferences as UserPreferences) ?? {},
+      data: migrated,
     });
   } catch (error) {
     console.error('GET preferences error:', error);
@@ -52,7 +69,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       .single();
 
     const currentPrefs = (existing?.preferences as UserPreferences) ?? {};
-    const merged: UserPreferences = { ...currentPrefs, ...updates };
+    let merged: UserPreferences = { ...currentPrefs, ...updates };
+
+    // If profilePrompt changed, extract structured fields via LLM
+    if (
+      updates.profilePrompt !== undefined &&
+      updates.profilePrompt !== currentPrefs.profilePrompt
+    ) {
+      const extracted = await extractProfileFields(updates.profilePrompt, user!.id);
+      merged = { ...merged, ...extracted };
+    }
 
     // Write merged preferences + denormalized columns
     const { error } = await supabase
@@ -60,7 +86,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       .update({
         preferences: merged,
         business_role: merged.businessRole ?? null,
-        industry: merged.industry ?? null,
+        industry: merged.industries?.[0] ?? merged.industry ?? null,
         company: merged.company ?? null,
       })
       .eq('id', user!.id);

@@ -13,6 +13,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import { useTranslation } from 'react-i18next';
 import { PartsListRow, XrefRecommendation, PartAttributes } from '@/lib/types';
+import type { AttributesTab } from '../DesktopLayout';
 import ModalChatPanel from './ModalChatPanel';
 import RecommendationsPanel from '../RecommendationsPanel';
 import AttributesPanel from '../AttributesPanel';
@@ -51,6 +52,7 @@ export default function PartDetailModal({
 }: PartDetailModalProps) {
   const { t } = useTranslation();
   const [recsLoading, setRecsLoading] = useState(false);
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
   const handleLoadingChange = useCallback((loading: boolean) => setRecsLoading(loading), []);
 
   if (!row) return null;
@@ -108,6 +110,8 @@ export default function PartDetailModal({
               <AttributesPanel
                 attributes={row.sourceAttributes}
                 title={t('partDetail.sourcePartTitle')}
+                activeTab={attributesTab}
+                onTabChange={setAttributesTab}
               />
             </Box>
             <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'auto' }}>
@@ -116,6 +120,8 @@ export default function PartDetailModal({
                 replacementAttributes={comparisonAttrs}
                 recommendation={selectedRec}
                 onBack={onBackToRecs}
+                activeTab={attributesTab}
+                onTabChange={setAttributesTab}
               />
             </Box>
           </>

@@ -7,7 +7,7 @@ import { runWithServiceTracking, getServiceWarnings } from '@/lib/services/servi
 export async function POST(request: NextRequest): Promise<NextResponse<ApiResponse<SearchResult>>> {
   return runWithServiceTracking(async () => {
     try {
-      const { error: authError } = await requireAuth();
+      const { user, error: authError } = await requireAuth();
       if (authError) return authError;
       const body = await request.json();
       const query: string = body.query;
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
         return NextResponse.json({ success: false, error: 'Query is required' }, { status: 400 });
       }
 
-      const result = await searchParts(query.trim());
+      const result = await searchParts(query.trim(), undefined, user?.id);
       const warnings = getServiceWarnings();
       return NextResponse.json({
         success: true,

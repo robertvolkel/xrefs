@@ -43,7 +43,7 @@ interface DictData {
   familyId: string;
   entries: DictEntry[];
   sharedEntries: DictEntry[];
-  unmapped: { paramName: string; count: number }[];
+  unmapped: { paramName: string; count: number; samples?: string[] }[];
   overrides: AtlasDictOverrideRecord[];
   stats: {
     totalEntries: number;
@@ -62,9 +62,10 @@ const dividerSx = { borderLeft: '1px solid', borderLeftColor: 'divider' } as con
 
 interface AtlasDictionaryPanelProps {
   table: LogicTable | null;
+  l2Category?: string;
 }
 
-export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProps) {
+export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDictionaryPanelProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<DictData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -76,24 +77,51 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
   const [selectedEntry, setSelectedEntry] = useState<DictEntry | null>(null);
   const [isAddMode, setIsAddMode] = useState(false);
   const [addParamName, setAddParamName] = useState('');
+  const [addParamSamples, setAddParamSamples] = useState<string[]>([]);
 
   const familyId = table?.familyId;
 
   const fetchData = useCallback(() => {
-    if (!familyId) return;
+    if (!familyId && !l2Category) return;
     setLoading(true);
-    fetch(`/api/admin/atlas/dictionaries?familyId=${familyId}`)
+    const param = familyId
+      ? `familyId=${familyId}`
+      : `category=${encodeURIComponent(l2Category!)}`;
+    fetch(`/api/admin/atlas/dictionaries?${param}`)
       .then((r) => r.json())
       .then((json) => {
         if (json.success) setData(json.data);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [familyId]);
+  }, [familyId, l2Category]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Build schema attributes list for the attribute picker
+  const schemaAttributes = useMemo(() => {
+    const attrs: { attributeId: string; attributeName: string; unit?: string; weight?: number }[] = [];
+    if (table) {
+      // L3: from logic table rules
+      for (const rule of table.rules) {
+        attrs.push({ attributeId: rule.attributeId, attributeName: rule.attributeName, weight: rule.weight });
+      }
+    }
+    // L2 param map attributes would need server-side data; for now L3 is covered
+    return attrs;
+  }, [table]);
+
+  // Set of already-mapped attributeIds (for greying out in the picker)
+  const mappedAttributeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (data) {
+      for (const entry of data.entries) ids.add(entry.attributeId);
+      for (const entry of data.sharedEntries) ids.add(entry.attributeId);
+    }
+    return ids;
+  }, [data]);
 
   // Build override lookup by paramName
   const overrideMap = useMemo(() => {
@@ -111,10 +139,11 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
     setDrawerOpen(true);
   }, []);
 
-  const handleAddMapping = useCallback((paramName: string) => {
+  const handleAddMapping = useCallback((paramName: string, samples?: string[]) => {
     setSelectedEntry(null);
     setIsAddMode(true);
     setAddParamName(paramName);
+    setAddParamSamples(samples ?? []);
     setDrawerOpen(true);
   }, []);
 
@@ -123,6 +152,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
     setSelectedEntry(null);
     setIsAddMode(false);
     setAddParamName('');
+    setAddParamSamples([]);
   }, []);
 
   const handleSaved = useCallback(() => {
@@ -130,14 +160,16 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
     fetchData();
   }, [handleDrawerClose, fetchData]);
 
-  if (!table) return null;
+  const displayName = table
+    ? t(`logicTable.${table.familyId}.name`, table.familyName)
+    : l2Category ?? '';
+
+  if (!table && !l2Category) return null;
 
   if (loading && !data) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {t(`logicTable.${table.familyId}.name`, table.familyName)}
-        </Typography>
+        <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
         <Typography variant="body2" color="text.secondary">
           {t('common.loading')}
         </Typography>
@@ -148,9 +180,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
   if (!data || data.entries.length === 0) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {t(`logicTable.${table.familyId}.name`, table.familyName)}
-        </Typography>
+        <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           {t('admin.noDictionary', 'No Atlas translation dictionary for this family.')}
         </Typography>
@@ -162,9 +192,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {t(`logicTable.${table.familyId}.name`, table.familyName)}
-      </Typography>
+      <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
         {t('admin.atlasDictDesc', 'Translation dictionaries mapping Atlas parameter names to internal attributes.')}
       </Typography>
@@ -202,9 +230,6 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
               </TableCell>
               <TableCell sx={{ fontWeight: 600, width: 80 }}>
                 {t('admin.unit', 'Unit')}
-              </TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 60, textAlign: 'center' }}>
-                {t('admin.sortOrder', 'Sort')}
               </TableCell>
               <TableCell sx={{ width: 40 }} />
             </TableRow>
@@ -277,11 +302,6 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                       {entry.unit || '\u2014'}
                     </Typography>
                   </TableCell>
-                  <TableCell sx={{ textAlign: 'center' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {entry.sortOrder}
-                    </Typography>
-                  </TableCell>
                   <TableCell sx={{ p: 0.5 }}>
                     <IconButton
                       size="small"
@@ -351,9 +371,6 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                           {entry.unit || '\u2014'}
                         </Typography>
                       </TableCell>
-                      <TableCell sx={{ width: 60, textAlign: 'center' }}>
-                        <Typography variant="body2">{entry.sortOrder}</Typography>
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -389,6 +406,11 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                       <TableCell sx={{ width: 40 }} />
                       <TableCell sx={{ width: 280 }}>
                         <Typography variant="body2">{item.paramName}</Typography>
+                        {item.samples && item.samples.length > 0 && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25, fontSize: '0.65rem' }}>
+                            e.g. {item.samples.join(', ')}
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell sx={{ width: 50 }}>
                         <Chip
@@ -414,7 +436,7 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
                           startIcon={<AddCircleOutlineIcon />}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleAddMapping(item.paramName);
+                            handleAddMapping(item.paramName, item.samples);
                           }}
                           sx={{ fontSize: '0.72rem', textTransform: 'none' }}
                         >
@@ -434,11 +456,14 @@ export default function AtlasDictionaryPanel({ table }: AtlasDictionaryPanelProp
       <DictionaryOverrideDrawer
         open={drawerOpen}
         onClose={handleDrawerClose}
-        familyId={familyId ?? ''}
+        familyId={familyId ?? l2Category ?? ''}
         baseEntry={selectedEntry}
         existingOverride={selectedEntry ? overrideMap.get(selectedEntry.paramName) ?? null : null}
         isAddMode={isAddMode}
         addParamName={addParamName}
+        addParamSamples={addParamSamples}
+        schemaAttributes={schemaAttributes}
+        mappedAttributeIds={mappedAttributeIds}
         onSaved={handleSaved}
       />
     </Box>

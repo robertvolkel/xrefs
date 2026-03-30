@@ -9,12 +9,12 @@ export async function GET(
   { params }: { params: Promise<{ mpn: string }> }
 ): Promise<NextResponse<ApiResponse<PartAttributes>>> {
   return runWithServiceTracking(async () => {
-    const { error: authError } = await requireAuth();
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
     const { mpn } = await params;
 
-    const attributes = await getAttributes(decodeURIComponent(mpn));
+    const attributes = await getAttributes(decodeURIComponent(mpn), undefined, user?.id);
     const warnings = getServiceWarnings();
     if (!attributes) {
       return NextResponse.json({

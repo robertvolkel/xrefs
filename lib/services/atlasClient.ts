@@ -41,7 +41,7 @@ function rowToPartAttributes(row: AtlasProductRow): PartAttributes {
     manufacturerCountry: row.manufacturer_country || 'CN',
   };
 
-  const parameters: ParametricAttribute[] = fromParametersJsonb(row.parameters, row.family_id);
+  const parameters: ParametricAttribute[] = fromParametersJsonb(row.parameters, row.family_id, row.category);
 
   return {
     part,
@@ -82,6 +82,7 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
       description: row.description || '',
       category: row.category as PartSummary['category'],
       status: (row.status || 'Active') as PartSummary['status'],
+      dataSource: 'atlas' as const,
     }));
 
     return {

@@ -33,6 +33,14 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
+                {part.dataSource && part.dataSource !== 'digikey' && (
+                  <Chip
+                    label={part.dataSource === 'atlas' ? 'Atlas' : part.dataSource === 'partsio' ? 'Parts.io' : 'Mouser'}
+                    size="small"
+                    variant="outlined"
+                    sx={{ height: 18, fontSize: '0.6rem', color: 'text.disabled', borderColor: 'divider' }}
+                  />
+                )}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {part.manufacturer} &mdash; {part.description}

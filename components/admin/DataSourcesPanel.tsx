@@ -7,9 +7,8 @@ import { useTranslation } from 'react-i18next';
 interface DataSourcesInfo {
   digikey: { configured: boolean; clientIdPrefix: string; baseUrl: string };
   anthropic: { configured: boolean; model: string };
-  supabase: { configured: boolean; url: string | null };
-  supportedFamilies: number;
-  paramMapsConfigured: number;
+  partsio: { configured: boolean; baseUrl: string };
+  mouser: { configured: boolean; dailyCallsRemaining: number; baseUrl: string };
 }
 
 function StatusChip({ configured }: { configured: boolean }) {
@@ -87,7 +86,7 @@ export default function DataSourcesPanel() {
         {t('admin.dataSourcesDesc', 'External services and data providers powering the cross-reference engine.')}
       </Typography>
 
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 560 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
         <SourceCard title={t('admin.dsDigikey', 'Digikey Product Information API')}>
           <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.digikey.configured} />} />
           <InfoRow label={t('admin.dsClientId', 'Client ID')} value={data.digikey.clientIdPrefix || '\u2014'} />
@@ -102,16 +101,17 @@ export default function DataSourcesPanel() {
           <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsLlmUsage', 'LLM Orchestrator (tool calling)')} />
         </SourceCard>
 
-        <SourceCard title={t('admin.dsSupabase', 'Supabase')}>
-          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.supabase.configured} />} />
-          <InfoRow label={t('admin.dsUrl', 'URL')} value={data.supabase.url ?? '\u2014'} />
-          <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsSupabaseUsage', 'Auth, profiles, conversations')} />
+        <SourceCard title={t('admin.dsPartsio', 'Parts.io (Accuris)')}>
+          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.partsio.configured} />} />
+          <InfoRow label={t('admin.dsBaseUrl', 'Base URL')} value={data.partsio.baseUrl} />
+          <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsPartsioUsage', 'Parametric gap-fill enrichment')} />
         </SourceCard>
 
-        <SourceCard title={t('admin.dsCoverage', 'Coverage')}>
-          <InfoRow label={t('admin.supportedFamilies')} value={String(data.supportedFamilies)} />
-          <InfoRow label={t('admin.paramMapsConfigured')} value={String(data.paramMapsConfigured)} />
-          <InfoRow label={t('admin.dsFallback', 'Fallback')} value={t('admin.dsMockData', 'Mock data (9 parts)')} />
+        <SourceCard title={t('admin.dsMouser', 'Mouser')}>
+          <InfoRow label={t('admin.dsStatus', 'Status')} value={<StatusChip configured={data.mouser.configured} />} />
+          <InfoRow label={t('admin.dsBaseUrl', 'Base URL')} value={data.mouser.baseUrl} />
+          <InfoRow label={t('admin.dsDailyRemaining', 'Daily Calls Remaining')} value={String(data.mouser.dailyCallsRemaining)} />
+          <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsMouserUsage', 'Pricing, stock, lifecycle, compliance')} />
         </SourceCard>
       </Box>
     </Box>

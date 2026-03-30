@@ -11,6 +11,18 @@
  */
 
 import type { Part, PartAttributes, ParametricAttribute, ComponentCategory, PartStatus } from '../types';
+import {
+  parseGaiaParam,
+  parseGaiaValue,
+  humanizeStem,
+  GAIA_SKIP_STEMS,
+  gaiaFamilyDictionaries,
+  gaiaSharedDictionary,
+  gaiaL2Dictionaries,
+  type GaiaParamMapping,
+} from './atlasGaiaDictionaries';
+import { getLogicTable } from '../logicTables';
+import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -46,6 +58,15 @@ interface FamilyClassification {
 export function classifyAtlasCategory(c1: string, c2: string, c3: string): FamilyClassification {
   const lower = c3.toLowerCase();
 
+  // Compute c1 flags up front — used by both L3 and L2 guards to prevent
+  // cross-domain misclassification (e.g., laser diodes ≠ rectifier diodes,
+  // RF amplifiers ≠ op-amps, "discrete" contains "scr" substring).
+  const c1lower = c1.toLowerCase();
+  const isIC = c1lower.includes('integrated circuit') || c1lower.includes('(ics)');
+  const isConnector = c1lower.includes('connector');
+  const isOptoOrSensor = c1lower.includes('optoelectronic') || c1lower.includes('sensor');
+  const isRF = c1lower.includes('rf') || c1lower.includes('wireless');
+
   // ─── Passives ───
   if (lower.includes('ceramic capacitor')) return { category: 'Capacitors', subcategory: 'MLCC', familyId: '12' };
   if (lower.includes('aluminum') && lower.includes('polymer')) return { category: 'Capacitors', subcategory: 'Aluminum Polymer', familyId: '60' };
@@ -60,8 +81,8 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   if (lower.includes('ptc resettable') || lower.includes('resettable fuse')) return { category: 'Protection', subcategory: 'PTC Resettable Fuse', familyId: '66' };
 
   // ─── Discrete Semiconductors ───
-  // Thyristors — check BEFORE diodes/transistors to avoid false matches
-  if (lower.includes('scr') && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
+  // Thyristors — use word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
+  if (/\bscr\b/i.test(lower) && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
   if (lower.includes('triac')) return { category: 'Thyristors', subcategory: 'TRIAC', familyId: 'B8' };
   // TVS — check BEFORE generic diodes
   if (lower.includes('tvs')) return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
@@ -69,8 +90,8 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   if (lower === 'zener' || lower.includes('zener diode')) return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
   // Bridge Rectifiers
   if (lower.includes('bridge rectifier')) return { category: 'Diodes', subcategory: 'Bridge Rectifier', familyId: 'B1' };
-  // Generic rectifiers/diodes
-  if (lower.includes('rectifier') || (lower.includes('diode') && !lower.includes('tvs') && !lower.includes('zener'))) {
+  // Generic rectifiers/diodes — skip laser diodes (c1=Optoelectronics) and photodiodes (c1=Sensors)
+  if (!isOptoOrSensor && (lower.includes('rectifier') || (lower.includes('diode') && !lower.includes('tvs') && !lower.includes('zener')))) {
     return { category: 'Diodes', subcategory: 'Rectifier Diode', familyId: 'B1' };
   }
   // IGBTs — check BEFORE generic transistors
@@ -93,9 +114,9 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   }
   // Gate Drivers
   if (lower.includes('gate driver')) return { category: 'Gate Drivers', subcategory: 'Gate Driver', familyId: 'C3' };
-  // Op-Amps / Comparators / Amplifiers
+  // Op-Amps / Comparators / Amplifiers — skip RF amplifiers
   if (lower.includes('comparator')) return { category: 'Amplifiers', subcategory: 'Comparator', familyId: 'C4' };
-  if (lower.includes('amplifier') || lower.includes('op amp') || lower.includes('instrumentation')) {
+  if (!isRF && (lower.includes('amplifier') || lower.includes('op amp') || lower.includes('instrumentation'))) {
     return { category: 'Amplifiers', subcategory: 'Op-Amp', familyId: 'C4' };
   }
   // ADCs
@@ -112,22 +133,51 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   // Oscillators
   if (lower.includes('oscillator') && !lower.includes('local oscillator')) return { category: 'Timers and Oscillators', subcategory: 'Oscillator', familyId: 'C8' };
   if (lower.includes('programmable timer') || lower.includes('555')) return { category: 'Timers and Oscillators', subcategory: '555 Timer', familyId: 'C8' };
-  // Logic ICs
+  // Logic ICs — skip RF multiplexers
   if (lower.includes('gates and inverter') || lower.includes('flip flop') ||
       lower.includes('latch') || lower.includes('counter') || lower.includes('shift register') ||
-      lower.includes('multiplexer') || lower.includes('decoder')) {
+      (!isRF && lower.includes('multiplexer')) || lower.includes('decoder')) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
   }
 
+  // ─── L2 categories (no logic tables, display-only param maps) ───
+  // Must come AFTER all L3 checks, BEFORE the generic catch-all.
+  // Use c1 guards to prevent cross-domain misclassification.
+  // e.g., "AC DC Converters, Offline Switches" has c1="Integrated Circuits" — NOT a physical switch.
+  //       "Audio Connectors" has c1="Connectors" — NOT an audio device.
+  //       "Female Sockets" contains "soc" substring — NOT a System-on-Chip.
+
+  // IC-only categories: only classify as these when c1 confirms it's an IC
+  if (lower.includes('microcontroller') || lower.includes('mcu')) return { category: 'Microcontrollers', subcategory: c3, familyId: null };
+  if (isIC && (lower.includes('microprocessor') || lower.includes('system on chip') || /\bsoc\b/.test(lower))) return { category: 'Processors', subcategory: c3, familyId: null };
+  if (lower.includes('memory') || lower.includes('eeprom') || lower.includes('flash') || lower.includes('sram') || lower.includes('dram')) return { category: 'Memory', subcategory: c3, familyId: null };
+  if (lower.includes('sensor') || lower.includes('accelerometer') || lower.includes('gyroscope') || lower.includes('imu') || lower.includes('thermocouple')) return { category: 'Sensors', subcategory: c3, familyId: null };
+  if (lower.includes('rf ') || lower.includes('wireless') || lower.includes('bluetooth') || lower.includes('wifi') || lower.includes('zigbee') || lower.includes('lora')) return { category: 'RF and Wireless', subcategory: c3, familyId: null };
+  // LEDs/optoelectronics — not IC LED drivers
+  if (!isIC && (lower.includes('led') || lower.includes('photodiode') || lower.includes('laser'))) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
+  // Physical switches — not IC power switches
+  if (!isIC && !isConnector && lower.includes('switch') && !lower.includes('switching')) return { category: 'Switches', subcategory: c3, familyId: null };
+  if (lower.includes('transformer')) return { category: 'Transformers', subcategory: c3, familyId: null };
+  if (lower.includes('filter') || lower.includes('emi')) return { category: 'Filters', subcategory: c3, familyId: null };
+  if (lower.includes('battery') && !lower.includes('management')) return { category: 'Battery Products', subcategory: c3, familyId: null };
+  // Motors/Fans — not IC motor drivers
+  if (!isIC && (lower.includes('motor') || lower.includes('fan'))) return { category: 'Motors and Fans', subcategory: c3, familyId: null };
+  // Audio — not audio connectors
+  if (!isConnector && (lower.includes('audio') || lower.includes('speaker') || lower.includes('microphone') || lower.includes('buzzer'))) return { category: 'Audio', subcategory: c3, familyId: null };
+  if (lower.includes('power supply') || lower.includes('ac dc') || lower.includes('dc dc')) return { category: 'Power Supplies', subcategory: c3, familyId: null };
+
   // ─── Uncovered families — ingest for search, no familyId ───
   // Use c1/c2 to pick a reasonable ComponentCategory
-  const c1lower = c1.toLowerCase();
   if (c1lower.includes('capacitor')) return { category: 'Capacitors', subcategory: c3, familyId: null };
   if (c1lower.includes('resistor')) return { category: 'Resistors', subcategory: c3, familyId: null };
   if (c1lower.includes('inductor') || c1lower.includes('choke')) return { category: 'Inductors', subcategory: c3, familyId: null };
-  if (c1lower.includes('connector')) return { category: 'Connectors', subcategory: c3, familyId: null };
+  if (isConnector) return { category: 'Connectors', subcategory: c3, familyId: null };
   if (c1lower.includes('protection') || c1lower.includes('circuit protection')) return { category: 'Protection', subcategory: c3, familyId: null };
   if (c1lower.includes('diode') || c1lower.includes('discrete')) return { category: 'Diodes', subcategory: c3, familyId: null };
+  if (c1lower.includes('switch')) return { category: 'Switches', subcategory: c3, familyId: null };
+  if (c1lower.includes('transformer')) return { category: 'Transformers', subcategory: c3, familyId: null };
+  if (c1lower.includes('sensor')) return { category: 'Sensors', subcategory: c3, familyId: null };
+  if (c1lower.includes('led') || c1lower.includes('optoelectronic')) return { category: 'LEDs and Optoelectronics', subcategory: c3, familyId: null };
   return { category: 'ICs', subcategory: c3, familyId: null };
 }
 
@@ -927,11 +977,13 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
 const sharedParamDictionary: Record<string, AtlasParamMapping> = {
   '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
+  '主要封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
   '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   'operating temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+  '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
 };
 
 /**
@@ -1064,6 +1116,378 @@ function normalizeVoltageRange(value: string): string {
   return value;
 }
 
+// ─── L2 Category Standard Dictionaries ───────────────────
+// Maps Chinese + English Atlas param names → L2 attribute IDs for categories
+// without logic tables. Attribute IDs MUST match the L2 param maps in digikeyParamMap.ts.
+// Start with common patterns; refine with real Atlas data via Explorer raw params.
+
+const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>> = {
+  Microcontrollers: {
+    '内核': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    'core': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    'core processor': { attributeId: 'core_processor', attributeName: 'Core Processor', sortOrder: 1 },
+    '内核位数': { attributeId: 'core_size', attributeName: 'Core Size', sortOrder: 2 },
+    'core size': { attributeId: 'core_size', attributeName: 'Core Size', sortOrder: 2 },
+    '主频': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    '最高主频': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    'clock speed': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    'speed': { attributeId: 'clock_speed', attributeName: 'Clock Speed', unit: 'Hz', sortOrder: 3 },
+    '程序存储器容量': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'flash容量': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'program memory size': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    'flash size': { attributeId: 'program_memory_size', attributeName: 'Program Memory Size', sortOrder: 4 },
+    '程序存储器类型': { attributeId: 'program_memory_type', attributeName: 'Program Memory Type', sortOrder: 5 },
+    'program memory type': { attributeId: 'program_memory_type', attributeName: 'Program Memory Type', sortOrder: 5 },
+    '片上ram': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'ram容量': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'ram size': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'sram': { attributeId: 'ram_size', attributeName: 'RAM Size', sortOrder: 6 },
+    'eeprom容量': { attributeId: 'eeprom_size', attributeName: 'EEPROM Size', sortOrder: 7 },
+    'eeprom size': { attributeId: 'eeprom_size', attributeName: 'EEPROM Size', sortOrder: 7 },
+    '连接方式': { attributeId: 'connectivity', attributeName: 'Connectivity', sortOrder: 8 },
+    'connectivity': { attributeId: 'connectivity', attributeName: 'Connectivity', sortOrder: 8 },
+    '外设': { attributeId: 'peripherals', attributeName: 'Peripherals', sortOrder: 9 },
+    'peripherals': { attributeId: 'peripherals', attributeName: 'Peripherals', sortOrder: 9 },
+    'io数量': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'io数': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'number of i/o': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    'gpio': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 10 },
+    '数据转换器': { attributeId: 'data_converters', attributeName: 'Data Converters', sortOrder: 11 },
+    'data converters': { attributeId: 'data_converters', attributeName: 'Data Converters', sortOrder: 11 },
+    '振荡器类型': { attributeId: 'oscillator_type', attributeName: 'Oscillator Type', sortOrder: 12 },
+    'oscillator type': { attributeId: 'oscillator_type', attributeName: 'Oscillator Type', sortOrder: 12 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    'voltage - supply (vcc/vdd)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 13 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+    'package / case': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 15 },
+  },
+  Memory: {
+    '存储器类型': { attributeId: 'memory_type', attributeName: 'Memory Type', sortOrder: 1 },
+    '类型': { attributeId: 'memory_type', attributeName: 'Memory Type', sortOrder: 1 },
+    'memory type': { attributeId: 'memory_type', attributeName: 'Memory Type', sortOrder: 1 },
+    '存储器格式': { attributeId: 'memory_format', attributeName: 'Memory Format', sortOrder: 2 },
+    '格式': { attributeId: 'memory_format', attributeName: 'Memory Format', sortOrder: 2 },
+    'memory format': { attributeId: 'memory_format', attributeName: 'Memory Format', sortOrder: 2 },
+    '技术': { attributeId: 'memory_technology', attributeName: 'Technology', sortOrder: 3 },
+    'technology': { attributeId: 'memory_technology', attributeName: 'Technology', sortOrder: 3 },
+    '存储容量': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    '容量': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    'memory size': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    'capacity': { attributeId: 'memory_size', attributeName: 'Memory Size', sortOrder: 4 },
+    '存储器组织': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '架构': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '组织': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    'memory organization': { attributeId: 'memory_organization', attributeName: 'Memory Organization', sortOrder: 5 },
+    '接口': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    '接口类型': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    'memory interface': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    'interface': { attributeId: 'memory_interface', attributeName: 'Interface', sortOrder: 6 },
+    '时钟频率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '速率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '频率': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '频率(mhz)': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'MHz', sortOrder: 7 },
+    'clock frequency': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    'speed': { attributeId: 'clock_frequency', attributeName: 'Clock Frequency', unit: 'Hz', sortOrder: 7 },
+    '写周期时间': { attributeId: 'write_cycle_time', attributeName: 'Write Cycle Time', sortOrder: 8 },
+    'write cycle time': { attributeId: 'write_cycle_time', attributeName: 'Write Cycle Time', sortOrder: 8 },
+    '访问时间': { attributeId: 'access_time', attributeName: 'Access Time', sortOrder: 9 },
+    'access time': { attributeId: 'access_time', attributeName: 'Access Time', sortOrder: 9 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    'voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 10 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    'temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    '主要封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Sensors: {
+    '传感器类型': { attributeId: 'sensor_type', attributeName: 'Sensor Type', sortOrder: 1 },
+    'sensor type': { attributeId: 'sensor_type', attributeName: 'Sensor Type', sortOrder: 1 },
+    '测量': { attributeId: 'measuring', attributeName: 'Measuring', sortOrder: 2 },
+    '输出类型': { attributeId: 'output_type', attributeName: 'Output Type / Interface', sortOrder: 3 },
+    'output type': { attributeId: 'output_type', attributeName: 'Output Type / Interface', sortOrder: 3 },
+    '精度': { attributeId: 'accuracy', attributeName: 'Accuracy', sortOrder: 5 },
+    'accuracy': { attributeId: 'accuracy', attributeName: 'Accuracy', sortOrder: 5 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 6 },
+    'sensitivity': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 6 },
+    '轴': { attributeId: 'axis', attributeName: 'Axis', sortOrder: 8 },
+    'axis': { attributeId: 'axis', attributeName: 'Axis', sortOrder: 8 },
+    '测量范围': { attributeId: 'measurement_range', attributeName: 'Measurement Range', sortOrder: 9 },
+    '带宽': { attributeId: 'bandwidth', attributeName: 'Bandwidth', unit: 'Hz', sortOrder: 12 },
+    'bandwidth': { attributeId: 'bandwidth', attributeName: 'Bandwidth', unit: 'Hz', sortOrder: 12 },
+    '响应时间': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
+    'response time': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 14 },
+    '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 16 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 18 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 18 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 19 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 19 },
+  },
+  Connectors: {
+    '连接器类型': { attributeId: 'connector_type', attributeName: 'Connector Type', sortOrder: 1 },
+    'connector type': { attributeId: 'connector_type', attributeName: 'Connector Type', sortOrder: 1 },
+    '触点类型': { attributeId: 'contact_type', attributeName: 'Contact Type', sortOrder: 2 },
+    'contact type': { attributeId: 'contact_type', attributeName: 'Contact Type', sortOrder: 2 },
+    '针脚数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    'pin数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '端口数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '引脚数': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    'number of positions': { attributeId: 'positions', attributeName: 'Number of Positions', sortOrder: 3 },
+    '行数': { attributeId: 'rows', attributeName: 'Number of Rows', sortOrder: 4 },
+    '排数': { attributeId: 'rows', attributeName: 'Number of Rows', sortOrder: 4 },
+    '间距': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    '脚间距': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    'pitch': { attributeId: 'pitch', attributeName: 'Pitch', sortOrder: 5 },
+    '触头镀层': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 6 },
+    'contact finish': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 6 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 7 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 7 },
+    '高度': { attributeId: 'height_above_board', attributeName: 'Height Above Board', unit: 'mm', sortOrder: 8 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 10 },
+    'current rating': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 10 },
+    '额定电压': { attributeId: 'voltage_rating', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 11 },
+    'voltage rating': { attributeId: 'voltage_rating', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 11 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    '工作温度范围': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    '适用温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+  },
+  'LEDs and Optoelectronics': {
+    '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    'color': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    '波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    '主波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'wavelength': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    '光强': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    '发光强度': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'luminous intensity': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    '视角': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'viewing angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    '正向电压': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    '正向压降': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'forward voltage': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    '测试电流': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'test current': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Switches: {
+    '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
+    'circuit': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
+    '触点形式': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
+    '开关功能': { attributeId: 'switch_function', attributeName: 'Switch Function', sortOrder: 2 },
+    'switch function': { attributeId: 'switch_function', attributeName: 'Switch Function', sortOrder: 2 },
+    '触点额定值': { attributeId: 'contact_rating', attributeName: 'Contact Rating', sortOrder: 3 },
+    'contact rating': { attributeId: 'contact_rating', attributeName: 'Contact Rating', sortOrder: 3 },
+    '执行器类型': { attributeId: 'actuator_type', attributeName: 'Actuator Type', sortOrder: 4 },
+    'actuator type': { attributeId: 'actuator_type', attributeName: 'Actuator Type', sortOrder: 4 },
+    '按动力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    '操作力': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    'operating force': { attributeId: 'operating_force', attributeName: 'Operating Force', sortOrder: 6 },
+    '照明': { attributeId: 'illumination', attributeName: 'Illumination', sortOrder: 7 },
+    'illumination': { attributeId: 'illumination', attributeName: 'Illumination', sortOrder: 7 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 8 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 8 },
+    '长x宽/尺寸': { attributeId: 'outline', attributeName: 'Dimensions', sortOrder: 9 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    // Sub-family specific params (DIP, Rocker/Toggle)
+    '额定电流-dc': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 11 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 11 },
+    'current rating': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 11 },
+    '额定电压-dc': { attributeId: 'voltage_rating_dc', attributeName: 'Voltage Rating (DC)', unit: 'V', sortOrder: 12 },
+    'voltage rating dc': { attributeId: 'voltage_rating_dc', attributeName: 'Voltage Rating (DC)', unit: 'V', sortOrder: 12 },
+    '额定电压-ac': { attributeId: 'voltage_rating_ac', attributeName: 'Voltage Rating (AC)', unit: 'V', sortOrder: 13 },
+    'voltage rating ac': { attributeId: 'voltage_rating_ac', attributeName: 'Voltage Rating (AC)', unit: 'V', sortOrder: 13 },
+    '触头镀层': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 14 },
+    'contact finish': { attributeId: 'contact_finish', attributeName: 'Contact Finish', sortOrder: 14 },
+    '颜色-盖帽': { attributeId: 'illumination_color', attributeName: 'Cap Color', sortOrder: 15 },
+    '开关位数': { attributeId: 'num_positions', attributeName: 'Number of Positions', sortOrder: 16 },
+    'number of positions': { attributeId: 'num_positions', attributeName: 'Number of Positions', sortOrder: 16 },
+    '高度': { attributeId: 'actuator_height', attributeName: 'Height', unit: 'mm', sortOrder: 17 },
+  },
+  'RF and Wireless': {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    'type': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '协议': { attributeId: 'protocol', attributeName: 'Protocol', sortOrder: 3 },
+    'protocol': { attributeId: 'protocol', attributeName: 'Protocol', sortOrder: 3 },
+    '调制方式': { attributeId: 'modulation', attributeName: 'Modulation', sortOrder: 4 },
+    'modulation': { attributeId: 'modulation', attributeName: 'Modulation', sortOrder: 4 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 5 },
+    'frequency': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 5 },
+    '数据速率': { attributeId: 'data_rate_max', attributeName: 'Data Rate (Max)', sortOrder: 8 },
+    'data rate': { attributeId: 'data_rate_max', attributeName: 'Data Rate (Max)', sortOrder: 8 },
+    '输出功率': { attributeId: 'output_power', attributeName: 'Output Power', sortOrder: 9 },
+    'output power': { attributeId: 'output_power', attributeName: 'Output Power', sortOrder: 9 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 10 },
+    'sensitivity': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 10 },
+    '增益': { attributeId: 'gain', attributeName: 'Gain', sortOrder: 11 },
+    'gain': { attributeId: 'gain', attributeName: 'Gain', sortOrder: 11 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 15 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 15 },
+  },
+  'Power Supplies': {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    'type': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '输出路数': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
+    '输出端数': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
+    'number of outputs': { attributeId: 'num_outputs', attributeName: 'Number of Outputs', sortOrder: 2 },
+    '输入电压': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    '供电电压': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    'input voltage': { attributeId: 'input_voltage', attributeName: 'Input Voltage', unit: 'V', sortOrder: 3 },
+    '输出电压': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 6 },
+    'output voltage': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 6 },
+    '输出电流': { attributeId: 'output_current_max', attributeName: 'Output Current (Max)', unit: 'A', sortOrder: 7 },
+    'output current': { attributeId: 'output_current_max', attributeName: 'Output Current (Max)', unit: 'A', sortOrder: 7 },
+    '功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '额定功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '输出功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    'power': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 8 },
+    '隔离电压': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 9 },
+    'isolation voltage': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 9 },
+    '效率': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
+    '效率(typ)': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
+    'efficiency': { attributeId: 'efficiency', attributeName: 'Efficiency', sortOrder: 10 },
+    '开关频率': { attributeId: 'switching_frequency', attributeName: 'Switching Frequency', sortOrder: 5 },
+    'switching frequency': { attributeId: 'switching_frequency', attributeName: 'Switching Frequency', sortOrder: 5 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    '高度': { attributeId: 'height', attributeName: 'Height', unit: 'mm', sortOrder: 13 },
+  },
+  Transformers: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    'type': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '变压器类型': { attributeId: 'transformer_type', attributeName: 'Transformer Type', sortOrder: 2 },
+    '匝比': { attributeId: 'turns_ratio', attributeName: 'Turns Ratio', sortOrder: 3 },
+    'turns ratio': { attributeId: 'turns_ratio', attributeName: 'Turns Ratio', sortOrder: 3 },
+    '初级电压': { attributeId: 'primary_voltage', attributeName: 'Primary Voltage', unit: 'V', sortOrder: 4 },
+    'primary voltage': { attributeId: 'primary_voltage', attributeName: 'Primary Voltage', unit: 'V', sortOrder: 4 },
+    '隔离电压': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 5 },
+    'isolation voltage': { attributeId: 'isolation_voltage', attributeName: 'Isolation Voltage', sortOrder: 5 },
+    '电感': { attributeId: 'inductance', attributeName: 'Inductance', sortOrder: 6 },
+    'inductance': { attributeId: 'inductance', attributeName: 'Inductance', sortOrder: 6 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 8 },
+    'frequency': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 8 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 9 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 9 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 10 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 10 },
+  },
+  Filters: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    'type': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '滤波器阶数': { attributeId: 'filter_order', attributeName: 'Filter Order', sortOrder: 2 },
+    'filter order': { attributeId: 'filter_order', attributeName: 'Filter Order', sortOrder: 2 },
+    '技术': { attributeId: 'technology', attributeName: 'Technology', sortOrder: 3 },
+    '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 4 },
+    '截止频率': { attributeId: 'cutoff_frequency', attributeName: 'Cutoff Frequency', unit: 'Hz', sortOrder: 5 },
+    'cutoff frequency': { attributeId: 'cutoff_frequency', attributeName: 'Cutoff Frequency', unit: 'Hz', sortOrder: 5 },
+    '衰减': { attributeId: 'attenuation', attributeName: 'Attenuation', sortOrder: 6 },
+    'attenuation': { attributeId: 'attenuation', attributeName: 'Attenuation', sortOrder: 6 },
+    '插入损耗': { attributeId: 'insertion_loss', attributeName: 'Insertion Loss', sortOrder: 7 },
+    'insertion loss': { attributeId: 'insertion_loss', attributeName: 'Insertion Loss', sortOrder: 7 },
+    '额定电流': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 8 },
+    'current rating': { attributeId: 'current_rating', attributeName: 'Current Rating', unit: 'A', sortOrder: 8 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 9 },
+    'voltage rating': { attributeId: 'voltage_rated', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 9 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 10 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Processors: {
+    '可编程类型': { attributeId: 'programmable_type', attributeName: 'Programmable Type', sortOrder: 1 },
+    'programmable type': { attributeId: 'programmable_type', attributeName: 'Programmable Type', sortOrder: 1 },
+    '逻辑单元数': { attributeId: 'logic_elements', attributeName: 'Logic Elements/Cells', sortOrder: 3 },
+    'logic elements': { attributeId: 'logic_elements', attributeName: 'Logic Elements/Cells', sortOrder: 3 },
+    'ram容量': { attributeId: 'total_ram', attributeName: 'Total RAM Bits', sortOrder: 6 },
+    'total ram bits': { attributeId: 'total_ram', attributeName: 'Total RAM Bits', sortOrder: 6 },
+    'io数量': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 7 },
+    'number of i/o': { attributeId: 'io_count', attributeName: 'Number of I/O', sortOrder: 7 },
+    '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 9 },
+    '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 9 },
+    'supply voltage': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 9 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 11 },
+    '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+  },
+  Audio: {
+    '类型': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    'type': { attributeId: 'type', attributeName: 'Type', sortOrder: 1 },
+    '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 4 },
+    'frequency': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 4 },
+    '频率范围': { attributeId: 'frequency_range', attributeName: 'Frequency Range', sortOrder: 5 },
+    'frequency range': { attributeId: 'frequency_range', attributeName: 'Frequency Range', sortOrder: 5 },
+    '阻抗': { attributeId: 'impedance', attributeName: 'Impedance', unit: 'Ohm', sortOrder: 6 },
+    'impedance': { attributeId: 'impedance', attributeName: 'Impedance', unit: 'Ohm', sortOrder: 6 },
+    '声压级': { attributeId: 'spl', attributeName: 'Sound Pressure Level', sortOrder: 7 },
+    'sound pressure level': { attributeId: 'spl', attributeName: 'Sound Pressure Level', sortOrder: 7 },
+    '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 8 },
+    'sensitivity': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 8 },
+    '输出类型': { attributeId: 'output_type', attributeName: 'Output Type', sortOrder: 10 },
+    'output type': { attributeId: 'output_type', attributeName: 'Output Type', sortOrder: 10 },
+    '额定功率': { attributeId: 'power_rated', attributeName: 'Rated Power', unit: 'W', sortOrder: 11 },
+    'rated power': { attributeId: 'power_rated', attributeName: 'Rated Power', unit: 'W', sortOrder: 11 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', sortOrder: 12 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 14 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 15 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 15 },
+  },
+  'Battery Products': {
+    '电池化学成分': { attributeId: 'chemistry', attributeName: 'Chemistry', sortOrder: 1 },
+    'battery chemistry': { attributeId: 'chemistry', attributeName: 'Chemistry', sortOrder: 1 },
+    '电池尺寸': { attributeId: 'cell_size', attributeName: 'Cell Size', sortOrder: 2 },
+    'cell size': { attributeId: 'cell_size', attributeName: 'Cell Size', sortOrder: 2 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', unit: 'V', sortOrder: 3 },
+    '标称电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', unit: 'V', sortOrder: 3 },
+    'rated voltage': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', unit: 'V', sortOrder: 3 },
+    '容量': { attributeId: 'capacity', attributeName: 'Capacity', sortOrder: 4 },
+    'capacity': { attributeId: 'capacity', attributeName: 'Capacity', sortOrder: 4 },
+  },
+  'Motors and Fans': {
+    '风扇类型': { attributeId: 'fan_type', attributeName: 'Fan Type', sortOrder: 1 },
+    'fan type': { attributeId: 'fan_type', attributeName: 'Fan Type', sortOrder: 1 },
+    '额定电压': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', sortOrder: 2 },
+    'rated voltage': { attributeId: 'voltage_rated', attributeName: 'Rated Voltage', sortOrder: 2 },
+    '功率': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 3 },
+    'power': { attributeId: 'power_watts', attributeName: 'Power', unit: 'W', sortOrder: 3 },
+    '转速': { attributeId: 'rpm', attributeName: 'Speed (RPM)', sortOrder: 4 },
+    'rpm': { attributeId: 'rpm', attributeName: 'Speed (RPM)', sortOrder: 4 },
+    '风量': { attributeId: 'airflow', attributeName: 'Air Flow', sortOrder: 5 },
+    'air flow': { attributeId: 'airflow', attributeName: 'Air Flow', sortOrder: 5 },
+    '噪音': { attributeId: 'noise', attributeName: 'Noise Level', sortOrder: 7 },
+    'noise': { attributeId: 'noise', attributeName: 'Noise Level', sortOrder: 7 },
+    '轴承类型': { attributeId: 'bearing_type', attributeName: 'Bearing Type', sortOrder: 8 },
+    'bearing type': { attributeId: 'bearing_type', attributeName: 'Bearing Type', sortOrder: 8 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temp Range', sortOrder: 12 },
+  },
+};
+
 // ─── Dictionary Accessor Functions ────────────────────────
 
 /** Returns the base (TS) dictionary for a family, or undefined if none exists. */
@@ -1079,6 +1503,16 @@ export function getSharedParamDictionary(): Record<string, AtlasParamMapping> {
 /** Returns all family IDs that have a translation dictionary. */
 export function getAtlasDictionaryFamilyIds(): string[] {
   return Object.keys(atlasParamDictionaries);
+}
+
+/** Returns the L2 category dictionary, or undefined if none exists. */
+export function getAtlasL2ParamDictionary(category: string): Record<string, AtlasParamMapping> | undefined {
+  return atlasL2ParamDictionaries[category];
+}
+
+/** Returns all L2 category names that have a translation dictionary. */
+export function getAtlasL2DictionaryCategories(): string[] {
+  return Object.keys(atlasL2ParamDictionaries);
 }
 
 /** Returns the set of parameter names that should always be skipped. */
@@ -1200,8 +1634,14 @@ export function mapAtlasModel(
   };
 
   // 4. Map parameters
-  const familyDict = classification.familyId ? atlasParamDictionaries[classification.familyId] : undefined;
+  const familyDict = classification.familyId
+    ? atlasParamDictionaries[classification.familyId]
+    : atlasL2ParamDictionaries[classification.category];
+  const gaiaDict = classification.familyId
+    ? gaiaFamilyDictionaries[classification.familyId]
+    : gaiaL2Dictionaries[classification.category];
   const parameters: ParametricAttribute[] = [];
+  const seenAttributeIds = new Set<string>();
   let packageValue: string | undefined;
 
   for (const p of model.parameters) {
@@ -1209,30 +1649,104 @@ export function mapAtlasModel(
 
     const lowerName = p.name.toLowerCase().trim();
 
-    // Skip metadata fields
-    if (skipParams.has(p.name) || skipParams.has(lowerName)) continue;
+    // Skip metadata fields — but dictionary entries take priority over skip list
+    const hasDictMapping = !!(familyDict?.[lowerName] ?? sharedParamDictionary[lowerName]);
+    if (!hasDictMapping && (skipParams.has(p.name) || skipParams.has(lowerName))) continue;
     // Skip status (already extracted above)
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
-    // Look up mapping: family-specific first, then shared
+    // ── Gaia parameter handling ──────────────────────────────
+    const gaia = parseGaiaParam(p.name);
+    if (gaia) {
+      if (GAIA_SKIP_STEMS.has(gaia.stem)) continue;
+
+      const gaiaMapping: GaiaParamMapping | undefined =
+        gaiaDict?.[gaia.stem] ?? gaiaSharedDictionary[gaia.stem];
+
+      if (!gaiaMapping) {
+        // Store with auto-humanized name (nothing thrown away)
+        if (!seenAttributeIds.has(gaia.stem)) {
+          seenAttributeIds.add(gaia.stem);
+          const parsed = parseGaiaValue(p.value);
+          parameters.push({
+            parameterId: gaia.stem,
+            parameterName: humanizeStem(gaia.stem),
+            value: parsed.displayValue,
+            numericValue: parsed.numericValue,
+            unit: parsed.unit,
+            sortOrder: 200 + parameters.length,
+          });
+        }
+        continue;
+      }
+
+      // Check suffix preference — skip if this isn't the preferred suffix
+      if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
+        continue;
+      }
+
+      // Skip internal-only attributes
+      if (gaiaMapping.attributeId.startsWith('_')) continue;
+
+      // Deduplicate — first occurrence of each attributeId wins
+      if (seenAttributeIds.has(gaiaMapping.attributeId)) continue;
+      seenAttributeIds.add(gaiaMapping.attributeId);
+
+      // Parse value (gaia values embed units: "5.8 mΩ", "100 V")
+      const parsed = parseGaiaValue(p.value);
+      let displayValue = parsed.displayValue;
+      const numericValue = parsed.numericValue;
+      const unit = gaiaMapping.unit || parsed.unit;
+
+      if (gaiaMapping.attributeId === 'operating_temp') {
+        displayValue = normalizeTemperatureRange(p.value);
+      }
+
+      if (gaiaMapping.attributeId === 'package_case') {
+        packageValue = displayValue;
+      }
+
+      parameters.push({
+        parameterId: gaiaMapping.attributeId,
+        parameterName: gaiaMapping.attributeName,
+        value: displayValue,
+        numericValue,
+        unit,
+        sortOrder: gaiaMapping.sortOrder,
+      });
+      continue;
+    }
+
+    // ── Standard dictionary lookup (Chinese + English) ───────
     const mapping = familyDict?.[lowerName] ?? sharedParamDictionary[lowerName];
 
     if (!mapping) {
-      // Unmapped parameter — skip but warn
-      if (classification.familyId) {
-        warnings.push(`unmapped: "${p.name}" = "${p.value}"`);
+      // Store with raw param name (nothing thrown away)
+      const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (rawId && !seenAttributeIds.has(rawId)) {
+        seenAttributeIds.add(rawId);
+        parameters.push({
+          parameterId: rawId,
+          parameterName: p.name.trim(),
+          value: p.value.trim(),
+          numericValue: extractNumeric(p.value),
+          sortOrder: 200 + parameters.length,
+        });
       }
       continue;
     }
 
     // Skip internal-only attributes (prefixed with _)
-    // These are stored for reference but not as ParametricAttribute
     if (mapping.attributeId.startsWith('_')) continue;
+
+    // Deduplicate — gaia may have already provided this attributeId
+    if (seenAttributeIds.has(mapping.attributeId)) continue;
+    seenAttributeIds.add(mapping.attributeId);
 
     // Normalize value based on attributeId
     let displayValue = p.value.trim();
     let numericValue = extractNumeric(displayValue);
-    let unit = mapping.unit;
+    const unit = mapping.unit;
 
     if (mapping.attributeId === 'operating_temp') {
       displayValue = normalizeTemperatureRange(displayValue);
@@ -1358,30 +1872,84 @@ export function toParametersJsonb(parameters: ParametricAttribute[]): Record<str
 
 /**
  * Converts JSONB parameters back to ParametricAttribute[] (for query results).
- * Uses the family-specific dictionary for attributeNames and sortOrder.
+ * Resolves human-readable attributeNames via fallback chain:
+ * L3 family dict → L2 category dict → shared dict → logic table rules → L2 param map → humanizeStem()
  */
 export function fromParametersJsonb(
   jsonb: Record<string, { value: string; numericValue?: number; unit?: string }>,
   familyId?: string | null,
+  category?: string | null,
 ): ParametricAttribute[] {
   const result: ParametricAttribute[] = [];
   let sortCounter = 0;
 
-  for (const [attributeId, data] of Object.entries(jsonb)) {
-    // Try to find attribute name from family dict
-    let attributeName = attributeId;
-    let sortOrder = sortCounter++;
+  // Build a lookup map: attributeId → { name, sortOrder } from all available sources
+  const nameLookup = new Map<string, { name: string; sortOrder: number }>();
 
-    if (familyId) {
-      const dict = atlasParamDictionaries[familyId];
-      if (dict) {
-        const entry = Object.values(dict).find(m => m.attributeId === attributeId);
-        if (entry) {
-          attributeName = entry.attributeName;
-          sortOrder = entry.sortOrder;
+  // 1. L3 family dictionary (reverse lookup: find entries that map TO each attributeId)
+  if (familyId) {
+    const dict = atlasParamDictionaries[familyId];
+    if (dict) {
+      for (const entry of Object.values(dict)) {
+        if (!nameLookup.has(entry.attributeId)) {
+          nameLookup.set(entry.attributeId, { name: entry.attributeName, sortOrder: entry.sortOrder });
         }
       }
     }
+  }
+
+  // 2. L2 category dictionary
+  if (category && !familyId) {
+    const l2Dict = atlasL2ParamDictionaries[category];
+    if (l2Dict) {
+      for (const entry of Object.values(l2Dict)) {
+        if (!nameLookup.has(entry.attributeId)) {
+          nameLookup.set(entry.attributeId, { name: entry.attributeName, sortOrder: entry.sortOrder });
+        }
+      }
+    }
+  }
+
+  // 3. Shared dictionary
+  for (const entry of Object.values(sharedParamDictionary)) {
+    if (!nameLookup.has(entry.attributeId)) {
+      nameLookup.set(entry.attributeId, { name: entry.attributeName, sortOrder: entry.sortOrder });
+    }
+  }
+
+  // 4. Logic table rules (L3 families have human-readable attributeNames)
+  if (familyId) {
+    const table = getLogicTable(familyId);
+    if (table) {
+      for (const rule of table.rules) {
+        if (!nameLookup.has(rule.attributeId)) {
+          nameLookup.set(rule.attributeId, { name: rule.attributeName, sortOrder: rule.sortOrder ?? sortCounter++ });
+        }
+      }
+    }
+  }
+
+  // 5. L2 param map (display-only categories)
+  if (category && !familyId) {
+    const l2Map = getL2ParamMapForCategory(category);
+    if (l2Map) {
+      for (const entry of Object.values(l2Map)) {
+        const mappings: ParamMapping[] = Array.isArray(entry) ? entry : [entry as ParamMapping];
+        for (const m of mappings) {
+          if (!nameLookup.has(m.attributeId)) {
+            nameLookup.set(m.attributeId, { name: m.attributeName, sortOrder: m.sortOrder });
+          }
+        }
+      }
+    }
+  }
+
+  for (const [attributeId, data] of Object.entries(jsonb)) {
+    const lookup = nameLookup.get(attributeId);
+    const recognized = !!lookup;
+    // Fallback: humanize the attributeId (e.g., rdc_max → Rdc Max)
+    const attributeName = lookup?.name ?? humanizeStem(attributeId);
+    const sortOrder = lookup?.sortOrder ?? sortCounter++;
 
     result.push({
       parameterId: attributeId,
@@ -1391,6 +1959,7 @@ export function fromParametersJsonb(
       unit: data.unit,
       sortOrder,
       source: 'atlas',
+      recognized,
     });
   }
 

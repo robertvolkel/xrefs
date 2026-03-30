@@ -1616,6 +1616,7 @@ export function mapDigikeyProductToSummary(product: DigikeyProduct): PartSummary
     category: mapCategory(categoryName),
     status: mapStatus(product.ProductStatus?.Status ?? 'Active'),
     qualifications: extractQualifications(product.Parameters ?? []),
+    dataSource: 'digikey',
   };
 }
 

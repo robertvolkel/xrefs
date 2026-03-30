@@ -8084,6 +8084,30 @@ export function getL2FamiliesForCategory(category: string): L2FamilyInfo[] {
   return l2FamilyIndex.filter(f => f.category === category);
 }
 
+// --- L2 Category → Param Map lookup (for Atlas Explorer schema comparison) ---
+
+const categoryToL2ParamMap: Record<string, Record<string, ParamMapEntry>> = {
+  'Microcontrollers': mcuParamMap,
+  'Memory': memoryParamMap,
+  'Sensors': sensorParamMap,
+  'Connectors': connectorParamMap,
+  'LEDs and Optoelectronics': ledParamMap,
+  'Switches': switchParamMap,
+  'RF and Wireless': rfWirelessParamMap,
+  'Power Supplies': powerSupplyParamMap,
+  'Transformers': transformerParamMap,
+  'Filters': filterParamMap,
+  'Processors': processorParamMap,
+  'Audio': audioParamMap,
+  'Battery Products': batteryParamMap,
+  'Motors and Fans': motorFanParamMap,
+};
+
+/** Get the L2 param map for a ComponentCategory (returns null for L3/unknown categories) */
+export function getL2ParamMapForCategory(category: string): Record<string, ParamMapEntry> | null {
+  return categoryToL2ParamMap[category] ?? null;
+}
+
 /** Get the set of attributeIds that Digikey can provide for a family. */
 export function getDigikeyAttributeIdsForFamily(familyId: string): Set<string> {
   const categories = getDigikeyCategoriesForFamily(familyId);

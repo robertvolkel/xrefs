@@ -138,6 +138,10 @@ const inductorsParamMap: Record<string, ParamMapEntry> = {
   'Inductor Application': {
     attributeId: 'inductor_type', attributeName: 'Inductor Application', sortOrder: 9,
   },
+  // Previously unmapped extra — w9 critical power inductor spec
+  'Saturation Current': {
+    attributeId: 'saturation_current', attributeName: 'Saturation Current', unit: 'A', sortOrder: 10,
+  },
 };
 
 /**
@@ -216,6 +220,11 @@ const diodesParamMap: Record<string, ParamMapEntry> = {
   'Leakage Current-Max': {
     attributeId: 'ir_leakage', attributeName: 'Reverse Leakage Current', unit: 'µA', sortOrder: 14,
   },
+  // Shared diode fields (B1-B4) — previously unmapped extras
+  'Configuration': {
+    attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 15,
+  },
+  // Note: Operating Temperature-Max/-Min handled by mergeOperatingTemp() in partsioMapper.ts
 };
 
 /**
@@ -264,6 +273,13 @@ const transistorsParamMap: Record<string, ParamMapEntry> = {
   'Polarity/Channel Type': {
     attributeId: 'channel_type', attributeName: 'Polarity / Channel Type', sortOrder: 12,
   },
+  // Previously unmapped extras — MOSFET specs
+  'Gate-Source Voltage-Max': {
+    attributeId: 'vgs_max', attributeName: 'Gate-Source Voltage (max)', unit: 'V', sortOrder: 13,
+  },
+  'FET Technology': {
+    attributeId: 'technology', attributeName: 'FET Technology', sortOrder: 14,
+  },
 };
 
 /**
@@ -307,6 +323,13 @@ const triggerDevicesParamMap: Record<string, ParamMapEntry> = {
   },
   'Leakage Current-Max': {
     attributeId: 'idrm', attributeName: 'Off-State Leakage Current', unit: 'mA', sortOrder: 12,
+  },
+  // Previously unmapped extras
+  'Latching Current-Max': {
+    attributeId: 'il', attributeName: 'Latching Current', unit: 'mA', sortOrder: 13,
+  },
+  'I²T For Fusing-Max': {
+    attributeId: 'i2t', attributeName: 'Surge Current Integral (I²t)', unit: 'A²s', sortOrder: 14,
   },
 };
 
@@ -480,6 +503,13 @@ const driversAndInterfacesParamMap: Record<string, ParamMapEntry> = {
   'High Side Driver': {
     attributeId: 'driver_configuration', attributeName: 'Driver Configuration', sortOrder: 7,
   },
+  // Previously unmapped extras — Gate Driver (C3) specs
+  'Output Polarity': {
+    attributeId: 'output_polarity', attributeName: 'Output Polarity', sortOrder: 8,
+  },
+  'Output Low Current-Max': {
+    attributeId: 'peak_sink_current', attributeName: 'Peak Sink Current', unit: 'A', sortOrder: 9,
+  },
 };
 
 /**
@@ -499,6 +529,10 @@ const signalCircuitsParamMap: Record<string, ParamMapEntry> = {
   },
   'Supply Voltage-Max (Vsup)': {
     attributeId: 'supply_voltage_max', attributeName: 'Supply Voltage Max', unit: 'V', sortOrder: 4,
+  },
+  // Previously unmapped extra — Timer/Oscillator supply current
+  'Supply Current-Max (Isup)': {
+    attributeId: 'icc_active_ma', attributeName: 'Supply Current (active)', unit: 'mA', sortOrder: 5,
   },
 };
 
@@ -632,6 +666,10 @@ const relaysParamMap: Record<string, ParamMapEntry> = {
   'Insulation Resistance': {
     attributeId: 'insulation_resistance', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 17,
   },
+  // Previously unmapped extra — relay durability spec (w5)
+  'Mechanical Life': {
+    attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life (operations)', sortOrder: 18,
+  },
 };
 
 /**
@@ -663,6 +701,10 @@ const crystalsResonatorsParamMap: Record<string, ParamMapEntry> = {
   },
   'Crystal/Resonator Type': {
     attributeId: 'crystal_type', attributeName: 'Crystal / Resonator Type', sortOrder: 8,
+  },
+  // Previously unmapped extra — critical for VCXO pullability (w6, escalated to mandatory+block for VCXO)
+  'Shunt Capacitance': {
+    attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance (C0)', unit: 'pF', sortOrder: 9,
   },
 };
 
@@ -755,7 +797,7 @@ const classExtraFields: Record<string, string[]> = {
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Inductors': [
-    'Test Frequency', 'Saturation Current',
+    'Test Frequency',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Filters': [
@@ -763,19 +805,17 @@ const classExtraFields: Record<string, string[]> = {
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Diodes': [
-    'Diode Element Material', 'Configuration', 'Number of Elements',
-    'Operating Temperature-Max', 'Operating Temperature-Min',
+    'Diode Element Material', 'Number of Elements',
     'Working Test Current', 'Breakdown Voltage-Nom',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Transistors': [
-    'FET Technology', 'Operating Mode',
-    'Power Dissipation Ambient-Max', 'Gate-Source Voltage-Max',
+    'Operating Mode',
+    'Power Dissipation Ambient-Max',
     'Operating Temperature-Max', 'Operating Temperature-Min',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Trigger Devices': [
-    'Latching Current-Max', 'I²T For Fusing-Max',
     'Operating Temperature-Max', 'Operating Temperature-Min',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
@@ -803,31 +843,31 @@ const classExtraFields: Record<string, string[]> = {
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Drivers And Interfaces': [
-    'Output Polarity', 'Differential Output', 'Input Characteristics',
-    'Out Swing-Min', 'Output Low Current-Max',
+    'Differential Output', 'Input Characteristics',
+    'Out Swing-Min',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Signal Circuits': [
     'Analog IC - Other Type', 'Temperature Grade',
-    'Supply Current-Max (Isup)', 'Supply Voltage-Nom (Vsup)',
+    'Supply Voltage-Nom (Vsup)',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Circuit Protection': [
-    'Circuit Protection Type', 'Mounting Feature', 'Fuse Size',
+    'Circuit Protection Type', 'Mounting Feature',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Optoelectronics': [
-    'Current Transfer Ratio-Nom', 'On-State Current-Max',
+    'Current Transfer Ratio-Nom',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Relays': [
     'Coil Voltage(DC)-Max', 'End Contact Plating',
-    'Mechanical Life', 'Weight',
+    'Weight',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
   'Crystals/Resonators': [
     'Operating Temperature-Max', 'Operating Temperature-Min',
-    'Shunt Capacitance', 'Motional Capacitance',
+    'Motional Capacitance',
     'Current Datasheet Url', 'YTEOL', 'Risk Rank',
   ],
 };
@@ -846,6 +886,16 @@ export function getPartsioClassForFamily(familyId: string): string | null {
   return familyToPartsioClass[familyId] ?? null;
 }
 
+/**
+ * Attributes produced by special merge functions in partsioMapper.ts
+ * (not in param maps but still output by the mapper).
+ * Applied to ALL classes — mergeOperatingTemp() and mergeSupplyVoltageRange() run unconditionally.
+ */
+const specialMergeAttrs: { attributeId: string; fieldDesc: string }[] = [
+  { attributeId: 'operating_temp', fieldDesc: 'Operating Temperature-Min/-Max' },
+  { attributeId: 'supply_voltage', fieldDesc: 'Supply Voltage-Min/-Max (Vsup)' },
+];
+
 /** Reverse lookup: attributeId → parts.io field name, for a given family */
 export function reversePartsioParamLookup(familyId: string): Map<string, string> {
   const result = new Map<string, string>();
@@ -861,6 +911,12 @@ export function reversePartsioParamLookup(familyId: string): Map<string, string>
       result.set(m.attributeId, fieldName);
     }
   }
+
+  // Include attributes from special merge functions in partsioMapper.ts
+  for (const { attributeId, fieldDesc } of specialMergeAttrs) {
+    if (!result.has(attributeId)) result.set(attributeId, fieldDesc);
+  }
+
   return result;
 }
 

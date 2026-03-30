@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { validateRuleOverride } from '@/lib/services/overrideValidator';
 import { invalidateOverrideCache } from '@/lib/services/overrideMerger';
+import { snapshotRuleState, resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import { RuleOverrideRecord } from '@/lib/types';
 
 /** GET /api/admin/overrides/rules?family_id=12 */
@@ -34,7 +35,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const items: RuleOverrideRecord[] = (data ?? []).map(mapRowToRecord);
+    const rows = data ?? [];
+    const items: RuleOverrideRecord[] = rows.map(mapRowToRecord);
+
+    // Resolve admin display names
+    const userIds = items.map(i => i.createdBy);
+    const nameMap = await resolveAdminNames(userIds);
+    for (const item of items) {
+      item.createdByName = nameMap.get(item.createdBy) ?? 'Unknown';
+    }
 
     return NextResponse.json({ success: true, data: items });
   } catch (error) {
@@ -63,6 +72,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const supabase = await createClient();
 
+    // Fetch current active override (if any) for previous_values snapshot
+    const { data: currentActive } = await supabase
+      .from('rule_overrides')
+      .select('*')
+      .eq('family_id', body.familyId)
+      .eq('attribute_id', body.attributeId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    // Compute previous_values snapshot before deactivating
+    const previousValues = snapshotRuleState(
+      body.familyId,
+      body.attributeId,
+      currentActive as Record<string, unknown> | null,
+      body.action,
+    );
+
     // Deactivate any existing active override for this family+attribute
     await supabase
       .from('rule_overrides')
@@ -77,6 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       action: body.action,
       change_reason: body.changeReason,
       created_by: user!.id,
+      previous_values: previousValues,
     };
 
     // Only include non-undefined fields
@@ -118,7 +145,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 // ── Helpers ─────────────────────────────────────────────────
 
-function mapRowToRecord(row: Record<string, unknown>): RuleOverrideRecord {
+export function mapRowToRecord(row: Record<string, unknown>): RuleOverrideRecord {
   return {
     id: row.id as string,
     familyId: row.family_id as string,
@@ -133,6 +160,7 @@ function mapRowToRecord(row: Record<string, unknown>): RuleOverrideRecord {
     engineeringReason: row.engineering_reason as string | undefined,
     attributeName: row.attribute_name as string | undefined,
     sortOrder: row.sort_order as number | undefined,
+    previousValues: row.previous_values as Record<string, unknown> | null | undefined,
     isActive: row.is_active as boolean,
     changeReason: row.change_reason as string,
     createdBy: row.created_by as string,
