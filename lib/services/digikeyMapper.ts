@@ -9,6 +9,7 @@ import {
   Part,
   PartAttributes,
   ParametricAttribute,
+  PriceBreak,
   PartSummary,
   SearchResult,
   ComponentCategory,
@@ -42,7 +43,7 @@ function getDeepestCategoryId(category: DigikeyCategory | undefined): number | u
 // ============================================================
 
 /** Map Digikey category names to our ComponentCategory */
-function mapCategory(categoryName: string): ComponentCategory {
+export function mapCategory(categoryName: string): ComponentCategory {
   const lower = categoryName.toLowerCase();
   if (lower.includes('capacitor')) return 'Capacitors';
   if (lower.includes('resistor')) return 'Resistors';
@@ -146,7 +147,7 @@ function mapCategory(categoryName: string): ComponentCategory {
 }
 
 /** Infer subcategory from Digikey category name */
-function mapSubcategory(categoryName: string): string {
+export function mapSubcategory(categoryName: string): string {
   const lower = categoryName.toLowerCase();
   if (lower.includes('ceramic capacitor') || lower.includes('mlcc')) return 'MLCC';
   if (lower.includes('aluminum') && lower.includes('polymer')) return 'Aluminum Polymer';
@@ -159,6 +160,8 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('chip resistor') || lower.includes('surface mount')) {
     if (lower.includes('resistor')) return 'Thick Film';
   }
+  // Generic resistor fallback — classifier detects variant (53/54/55) from attributes
+  if (lower.includes('resistor')) return 'Resistor';
   if (lower.includes('fixed inductor')) return 'Fixed Inductor';
   if (lower.includes('ferrite bead')) return 'Ferrite Bead and Chip';
   if (lower.includes('common mode choke')) return 'Common Mode Choke';
@@ -316,6 +319,26 @@ function mapSubcategory(categoryName: string): string {
   if (lower.includes('battery') || lower.includes('charger')) return 'Battery Product';
   // Development Tools
   if (lower.includes('development') || lower.includes('programmer') || lower.includes('eval')) return 'Development Tool';
+
+  // === Parts.io Class name fallbacks ===
+  // These only fire when no more specific Digikey-oriented check matched above.
+  // For multi-family classes, map to the most common base family;
+  // familyClassifier.ts handles variant detection from attributes.
+  if (lower === 'capacitors') return 'MLCC';
+  if (lower === 'inductors') return 'Fixed Inductor';
+  if (lower === 'filters') return 'Ferrite Bead and Chip';
+  if (lower === 'diodes') return 'Rectifier Diode';
+  if (lower === 'transistors') return 'MOSFET';
+  if (lower === 'trigger devices') return 'SCR';
+  if (lower === 'amplifier circuits') return 'Operational Amplifier';
+  if (lower === 'power circuits') return 'LDO';
+  if (lower === 'converters') return 'ADC';
+  if (lower === 'drivers and interfaces') return 'Gate Driver';
+  if (lower === 'signal circuits') return 'Oscillator';
+  if (lower === 'circuit protection') return 'Varistor';
+  if (lower === 'optoelectronics') return 'Optocoupler';
+  if (lower === 'crystals/resonators') return 'Crystal';
+  if (lower === 'relays') return 'Power Relay';
 
   return categoryName;
 }
@@ -960,6 +983,16 @@ function extractQualifications(parameters: DigikeyParameter[]): string[] {
 // MAIN MAPPERS
 // ============================================================
 
+/** Map Digikey StandardPricing to internal PriceBreak[] */
+function mapDigikeyPriceBreaks(product: DigikeyProduct): PriceBreak[] | undefined {
+  if (!product.StandardPricing?.length) return undefined;
+  return product.StandardPricing.map(pb => ({
+    quantity: pb.BreakQuantity,
+    unitPrice: pb.UnitPrice,
+    currency: 'USD',
+  }));
+}
+
 /** Map a DigikeyProduct to our Part type */
 export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
   const categoryName = getDeepestCategoryName(product.Category);
@@ -982,6 +1015,7 @@ export function mapDigikeyProductToPart(product: DigikeyProduct): Part {
     digikeyCategoryId: getDeepestCategoryId(product.Category),
     digikeyLeafCategory: categoryName,
     qualifications: extractQualifications(product.Parameters ?? []),
+    digikeyPriceBreaks: mapDigikeyPriceBreaks(product),
   };
 }
 

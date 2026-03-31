@@ -170,21 +170,31 @@ export function mapMouserCompliance(product: MouserProduct): ComplianceData | nu
 
 /**
  * Build a Digikey SupplierQuote from existing Part fields.
- * Normalizes Digikey's single-price into the N-supplier model.
+ * Uses real quantity-based price breaks from Digikey's StandardPricing
+ * when available; falls back to a single qty-1 break from UnitPrice.
  */
 export function buildDigikeyQuote(part: {
   unitPrice?: number;
   quantityAvailable?: number;
   digikeyPartNumber?: string;
   productUrl?: string;
+  digikeyPriceBreaks?: PriceBreak[];
 }): SupplierQuote {
+  // Prefer real price breaks from Digikey API; fall back to synthetic single-tier
+  let priceBreaks: PriceBreak[];
+  if (part.digikeyPriceBreaks && part.digikeyPriceBreaks.length > 0) {
+    priceBreaks = part.digikeyPriceBreaks;
+  } else if (part.unitPrice != null) {
+    priceBreaks = [{ quantity: 1, unitPrice: part.unitPrice, currency: 'USD' }];
+  } else {
+    priceBreaks = [];
+  }
+
   return {
     supplier: 'digikey',
     supplierPartNumber: part.digikeyPartNumber,
     unitPrice: part.unitPrice,
-    priceBreaks: part.unitPrice != null
-      ? [{ quantity: 1, unitPrice: part.unitPrice, currency: 'USD' }]
-      : [],
+    priceBreaks,
     quantityAvailable: part.quantityAvailable,
     productUrl: part.productUrl,
     fetchedAt: new Date().toISOString(),

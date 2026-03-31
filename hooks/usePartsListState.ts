@@ -63,6 +63,8 @@ interface PartsListState {
   spreadsheetHeaders: string[];
   /** Per-list view configurations (null = not yet loaded / use templates) */
   listViewConfigs: ViewState | null;
+  /** Timestamp of last completed validation/refresh */
+  lastRefreshedAt: Date | null;
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -85,6 +87,7 @@ const INITIAL_STATE: PartsListState = {
   savedLists: [],
   spreadsheetHeaders: [],
   listViewConfigs: null,
+  lastRefreshedAt: null,
 };
 
 // ============================================================
@@ -127,6 +130,7 @@ export function usePartsListState() {
           validationProgress: progress,
           phase: done ? 'results' : 'validating',
           error: error || prev.error,
+          ...(done ? { lastRefreshedAt: new Date() } : {}),
         };
       });
 
@@ -353,6 +357,7 @@ export function usePartsListState() {
       parsedData: null,
       columnMapping: null,
       error: null,
+      lastRefreshedAt: loaded.updatedAt ? new Date(loaded.updatedAt) : new Date(),
     }));
   }, []);
 
@@ -690,10 +695,12 @@ export function usePartsListState() {
                 };
               }
               const pending = newRows.filter(r => indexSet.has(r.rowIndex) && r.status === 'pending').length;
+              const done = pending === 0;
               return {
                 ...prev,
                 rows: newRows,
-                phase: pending === 0 ? 'results' : 'validating',
+                phase: done ? 'results' : 'validating',
+                ...(done ? { lastRefreshedAt: new Date() } : {}),
               };
             });
           } catch { /* skip malformed lines */ }
@@ -701,7 +708,7 @@ export function usePartsListState() {
       }
 
       // Final state + persist
-      setState(prev => ({ ...prev, phase: 'results' }));
+      setState(prev => ({ ...prev, phase: 'results', lastRefreshedAt: new Date() }));
       const listId = activeListIdRef.current;
       if (listId) {
         setState(prev => {

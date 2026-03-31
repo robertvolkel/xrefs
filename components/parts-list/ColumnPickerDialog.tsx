@@ -25,9 +25,13 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SearchIcon from '@mui/icons-material/Search';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
 import { useTranslation } from 'react-i18next';
 import { ColumnDefinition, GROUP_ORDER } from '@/lib/columnDefinitions';
 import { SavedView } from '@/lib/viewConfigStorage';
+import type { CalculatedFieldDef } from '@/lib/calculatedFields';
+import CalculatedFieldEditor from './CalculatedFieldEditor';
 
 // ============================================================
 // SOURCE BADGE
@@ -70,7 +74,7 @@ interface ColumnPickerDialogProps {
   availableColumns: ColumnDefinition[];
   initialView?: SavedView;
   isBuiltinView?: boolean;
-  onSave: (name: string, columns: string[], description: string) => void;
+  onSave: (name: string, columns: string[], description: string, calculatedFields?: CalculatedFieldDef[]) => void;
   onCancel: () => void;
 }
 
@@ -89,13 +93,19 @@ export default function ColumnPickerDialog({
   const [description, setDescription] = useState(initialView?.description ?? '');
   const [activeColumnIds, setActiveColumnIds] = useState<string[]>(initialView?.columns ?? []);
   const [search, setSearch] = useState('');
+  const [calcFields, setCalcFields] = useState<CalculatedFieldDef[]>(initialView?.calculatedFields ?? []);
+  const [editingCalcField, setEditingCalcField] = useState<CalculatedFieldDef | null>(null);
+  const [showCalcEditor, setShowCalcEditor] = useState(false);
 
   // Reset state when dialog opens with new data
   const handleEntered = () => {
     setName(initialView?.name ?? '');
     setDescription(initialView?.description ?? '');
     setActiveColumnIds(initialView?.columns ?? []);
+    setCalcFields(initialView?.calculatedFields ?? []);
     setSearch('');
+    setShowCalcEditor(false);
+    setEditingCalcField(null);
     // Create mode → Settings tab first; Edit mode → Columns tab
     setTab(mode === 'create' ? 0 : 1);
   };
@@ -138,13 +148,31 @@ export default function ColumnPickerDialog({
     return filtered;
   }, [grouped, search]);
 
+  // Build ColumnDefinitions for this dialog's calculated fields
+  const calcColumnDefs = useMemo(() => {
+    const map = new Map<string, ColumnDefinition>();
+    for (const cf of calcFields) {
+      const id = `calc:${cf.id}`;
+      map.set(id, {
+        id,
+        label: cf.label,
+        source: 'calculated',
+        group: 'Calculated',
+        align: cf.align ?? 'right',
+        isNumeric: true,
+        calculatedField: cf,
+      });
+    }
+    return map;
+  }, [calcFields]);
+
   // Resolve active columns to their definitions (for the right panel)
   const activeColumns = useMemo(() => {
     const colMap = new Map(availableColumns.map(c => [c.id, c]));
     return activeColumnIds
-      .map(id => colMap.get(id))
+      .map(id => colMap.get(id) ?? calcColumnDefs.get(id))
       .filter((c): c is ColumnDefinition => c !== undefined);
-  }, [activeColumnIds, availableColumns]);
+  }, [activeColumnIds, availableColumns, calcColumnDefs]);
 
   const activeSet = useMemo(() => new Set(activeColumnIds), [activeColumnIds]);
 
@@ -176,6 +204,11 @@ export default function ColumnPickerDialog({
 
   const removeColumn = (id: string) => {
     setActiveColumnIds(prev => prev.filter(c => c !== id));
+    // Also remove the calc field definition if it's a calculated column
+    if (id.startsWith('calc:')) {
+      const cfId = id.slice(5);
+      setCalcFields(prev => prev.filter(f => f.id !== cfId));
+    }
   };
 
   const SKIP_CONFIRM_KEY = 'xrefs_skip_view_save_confirm';
@@ -184,7 +217,7 @@ export default function ColumnPickerDialog({
 
   const doSave = () => {
     const trimmedName = name.trim() || 'Untitled View';
-    onSave(trimmedName, activeColumnIds, description.trim());
+    onSave(trimmedName, activeColumnIds, description.trim(), calcFields.length > 0 ? calcFields : undefined);
   };
 
   const handleSave = () => {
@@ -267,20 +300,100 @@ export default function ColumnPickerDialog({
               }}
             >
               <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
-                <TextField
-                  placeholder={t('columnPicker.searchPlaceholder')}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  size="small"
-                  fullWidth
-                  slotProps={{
-                    input: {
-                      startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 18 }} />,
-                    },
-                  }}
-                />
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <TextField
+                    placeholder={t('columnPicker.searchPlaceholder')}
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    size="small"
+                    fullWidth
+                    slotProps={{
+                      input: {
+                        startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 18 }} />,
+                      },
+                    }}
+                  />
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+                    onClick={() => { setEditingCalcField(null); setShowCalcEditor(true); }}
+                    sx={{ textTransform: 'none', whiteSpace: 'nowrap', flexShrink: 0, fontSize: '0.75rem' }}
+                  >
+                    Calculated
+                  </Button>
+                </Box>
               </Box>
+
+              {/* Inline calc field editor (shown at top when active) */}
+              {showCalcEditor && (
+                <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', flexShrink: 0, bgcolor: 'action.hover' }}>
+                  <CalculatedFieldEditor
+                    availableColumns={availableColumns}
+                    existingField={editingCalcField ?? undefined}
+                    onSave={(field) => {
+                      const colId = `calc:${field.id}`;
+                      if (editingCalcField) {
+                        setCalcFields(prev => prev.map(f => f.id === field.id ? field : f));
+                      } else {
+                        setCalcFields(prev => [...prev, field]);
+                        setActiveColumnIds(prev => [...prev, colId]);
+                      }
+                      setShowCalcEditor(false);
+                      setEditingCalcField(null);
+                    }}
+                    onCancel={() => { setShowCalcEditor(false); setEditingCalcField(null); }}
+                  />
+                </Box>
+              )}
+
               <Box sx={{ flex: 1, overflowY: 'auto', px: 1, py: 0.5 }}>
+                {/* Calculated fields (shown first when any exist) */}
+                {calcFields.length > 0 && (
+                  <Box sx={{ mb: 1 }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontWeight: 600, display: 'block', px: 1, pt: 1, pb: 0.5 }}
+                    >
+                      Calculated
+                    </Typography>
+                    {calcFields.map(cf => {
+                      const colId = `calc:${cf.id}`;
+                      return (
+                        <ListItem
+                          key={colId}
+                          dense
+                          disablePadding
+                          sx={{ px: 1, py: 0, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1 }}
+                          onClick={() => toggleColumn(colId)}
+                        >
+                          <ListItemIcon sx={{ minWidth: 32 }}>
+                            <Checkbox
+                              edge="start"
+                              checked={activeSet.has(colId)}
+                              size="small"
+                              tabIndex={-1}
+                              disableRipple
+                            />
+                          </ListItemIcon>
+                          <ListItemText
+                            primary={cf.label}
+                            primaryTypographyProps={{ fontSize: '0.82rem' }}
+                          />
+                          <IconButton
+                            size="small"
+                            onClick={(e) => { e.stopPropagation(); setEditingCalcField(cf); setShowCalcEditor(true); }}
+                            sx={{ p: 0.25 }}
+                          >
+                            <EditIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                        </ListItem>
+                      );
+                    })}
+                  </Box>
+                )}
+
                 {Array.from(filteredGroups.entries()).map(([group, cols]) => (
                   <Box key={group} sx={{ mb: 1 }}>
                     <Typography
@@ -347,6 +460,14 @@ export default function ColumnPickerDialog({
                     dense
                     secondaryAction={
                       <Box sx={{ display: 'flex', gap: 0 }}>
+                        {col.calculatedField && (
+                          <IconButton
+                            size="small"
+                            onClick={() => { setEditingCalcField(col.calculatedField!); setShowCalcEditor(true); }}
+                          >
+                            <EditIcon sx={{ fontSize: 14 }} />
+                          </IconButton>
+                        )}
                         <IconButton
                           size="small"
                           onClick={() => moveUp(col.id)}
@@ -369,7 +490,7 @@ export default function ColumnPickerDialog({
                         </IconButton>
                       </Box>
                     }
-                    sx={{ py: 0.5, pr: 12 }}
+                    sx={{ py: 0.5, pr: col.calculatedField ? 14 : 12 }}
                   >
                     <ListItemText
                       primary={

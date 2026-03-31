@@ -11,6 +11,8 @@ import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './
 import {
   mapKeywordResponseToSearchResult,
   mapDigikeyProductToAttributes,
+  mapCategory,
+  mapSubcategory,
 } from './digikeyMapper';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
@@ -45,6 +47,125 @@ function extractPartsioLifecycle(listing: PartsioListing): Partial<Part> {
   const leadTime = listing['Factory Lead Time'] as { Weeks?: number } | undefined;
   if (leadTime?.Weeks) result.factoryLeadTimeWeeks = leadTime.Weeks;
   return result;
+}
+
+// ============================================================
+// PARTS.IO FAMILY DISAMBIGUATION
+// ============================================================
+
+/**
+ * When parts.io provides only a broad Class name (e.g., "Capacitors"),
+ * mapSubcategory() returns a default base family. This function refines
+ * the subcategory using parametric data and description keywords.
+ *
+ * Only called when listing.Category is empty and we fell back to Class.
+ */
+function disambiguatePartsioSubcategory(
+  listing: PartsioListing,
+  defaultSubcategory: string,
+): string {
+  const desc = (listing.Description || '').toLowerCase();
+  const cls = (listing.Class || '').toLowerCase();
+
+  // --- Capacitors: MLCC vs Tantalum vs Al Electrolytic vs Film vs Supercap ---
+  if (cls === 'capacitors') {
+    const dielectric = String(listing['Dielectric Material'] ?? listing['Dielectric'] ?? '').toLowerCase();
+    const tempChar = String(listing['Temperature Characteristics Code'] ?? listing['Temperature Coefficient'] ?? '').toLowerCase();
+
+    if (dielectric.includes('ceramic') || /\b(x[57]r|c0g|np0|y5v|x[78][rs])\b/.test(tempChar) || /\b(x[57]r|c0g|np0|y5v)\b/.test(desc)) return 'MLCC';
+    if (dielectric.includes('tantalum') || desc.includes('tantalum')) return 'Tantalum';
+    if ((dielectric.includes('aluminum') && dielectric.includes('polymer')) || desc.includes('aluminum polymer') || desc.includes('polymer capacitor')) return 'Aluminum Polymer';
+    if (dielectric.includes('aluminum') || desc.includes('electrolytic') || desc.includes('aluminum')) return 'Aluminum Electrolytic';
+    if (dielectric.includes('film') || dielectric.includes('polypropylene') || dielectric.includes('polyester') || desc.includes('film capacitor')) return 'Film Capacitor';
+    if (dielectric.includes('mica') || desc.includes('mica')) return 'Mica Capacitor';
+    if (desc.includes('supercap') || desc.includes('edlc') || desc.includes('double layer') || desc.includes('ultracap')) return 'Supercapacitor';
+    return defaultSubcategory; // MLCC default
+  }
+
+  // --- Transistors: MOSFET vs BJT vs IGBT ---
+  if (cls === 'transistors') {
+    if (desc.includes('igbt')) return 'IGBT';
+    if (desc.includes('jfet') || desc.includes('j-fet') || desc.includes('junction field')) return 'MOSFET'; // B9 classified from B5
+    if (/\bn-ch|n-channel|p-ch|p-channel|mosfet|sic fet|gan fet\b/.test(desc)) return 'MOSFET';
+    if (/\bnpn|pnp|bjt|bipolar transistor\b/.test(desc)) return 'BJT';
+    const polarity = String(listing['Polarity/Channel Type'] ?? '').toLowerCase();
+    if (polarity.includes('channel')) return 'MOSFET';
+    if (polarity.includes('npn') || polarity.includes('pnp')) return 'BJT';
+    return defaultSubcategory; // MOSFET default
+  }
+
+  // --- Diodes: Rectifier vs Schottky vs Zener vs TVS ---
+  if (cls === 'diodes') {
+    if (desc.includes('tvs') || desc.includes('transient') || desc.includes('esd protection')) return 'TVS Diode';
+    if (desc.includes('zener') || desc.includes('voltage reference diode')) return 'Zener Diode';
+    if (desc.includes('schottky') || desc.includes('sbd') || desc.includes('sic diode')) return 'Schottky Diode';
+    if (desc.includes('bridge')) return 'Diodes - Bridge Rectifiers';
+    return defaultSubcategory; // Rectifier Diode default
+  }
+
+  // --- Power Circuits: LDO vs Switching Regulator vs Voltage Reference ---
+  if (cls === 'power circuits') {
+    if (desc.includes('voltage reference') || desc.includes('vref') || /\bref\d{2,4}\b/.test(desc)) return 'Voltage Reference';
+    if (desc.includes('switching') || desc.includes('buck') || desc.includes('boost') || desc.includes('dc-dc') || desc.includes('dc dc')) return 'Switching Regulator';
+    if (desc.includes('ldo') || desc.includes('linear regulator') || desc.includes('low dropout')) return 'LDO';
+    return defaultSubcategory; // LDO default
+  }
+
+  // --- Converters: ADC vs DAC ---
+  if (cls === 'converters') {
+    if (desc.includes('dac') || desc.includes('digital to analog') || desc.includes('digital-to-analog') || desc.includes('d/a')) return 'DAC';
+    if (desc.includes('adc') || desc.includes('analog to digital') || desc.includes('analog-to-digital') || desc.includes('a/d')) return 'ADC';
+    return defaultSubcategory; // ADC default
+  }
+
+  // --- Drivers And Interfaces: Gate Driver vs Interface IC ---
+  if (cls === 'drivers and interfaces') {
+    if (desc.includes('gate driver') || desc.includes('mosfet driver') || desc.includes('igbt driver') || desc.includes('half-bridge driver')) return 'Gate Driver';
+    if (desc.includes('rs-485') || desc.includes('rs485') || desc.includes('rs-422')) return 'Interface Transceiver';
+    if (desc.includes('can ') || desc.includes('can-fd') || desc.includes('can bus') || desc.includes(' can ')) return 'Interface Transceiver';
+    if (desc.includes('i2c') || desc.includes('i²c') || desc.includes('smbus')) return 'I2C/SMBus Interface';
+    if (desc.includes('usb') || desc.includes('uart') || desc.includes('spi')) return 'Interface Transceiver';
+    return defaultSubcategory; // Gate Driver default
+  }
+
+  // --- Filters: Ferrite Bead vs Common Mode Choke ---
+  if (cls === 'filters') {
+    if (desc.includes('common mode') || desc.includes('cmc')) return 'Common Mode Choke';
+    if (desc.includes('ferrite') || desc.includes('bead')) return 'Ferrite Bead and Chip';
+    return defaultSubcategory; // Ferrite Bead default
+  }
+
+  // --- Circuit Protection: Varistor vs Fuse ---
+  if (cls === 'circuit protection') {
+    if (desc.includes('fuse') && !desc.includes('resettable')) return 'Fuse';
+    if (desc.includes('ptc') || desc.includes('resettable') || desc.includes('polyfuse') || desc.includes('pptc')) return 'PTC Resettable Fuse';
+    if (desc.includes('varistor') || desc.includes('mov')) return 'Varistor';
+    if (desc.includes('thermistor') && desc.includes('ntc')) return 'NTC Thermistor';
+    if (desc.includes('thermistor') && desc.includes('ptc')) return 'PTC Thermistor';
+    return defaultSubcategory; // Varistor default
+  }
+
+  // --- Optoelectronics: Optocoupler vs Solid State Relay ---
+  if (cls === 'optoelectronics') {
+    if (desc.includes('solid state relay') || desc.includes('ssr') || desc.includes('photomos')) return 'Solid State Relay';
+    if (desc.includes('optocoupler') || desc.includes('photocoupler') || desc.includes('optoisolator')) return 'Optocoupler';
+    return defaultSubcategory; // Optocoupler default
+  }
+
+  // --- Trigger Devices: SCR vs TRIAC vs DIAC ---
+  if (cls === 'trigger devices') {
+    if (desc.includes('triac')) return 'TRIAC';
+    if (desc.includes('diac') || desc.includes('sidac')) return 'DIAC';
+    return defaultSubcategory; // SCR default
+  }
+
+  // --- Signal Circuits: 555 Timer vs Oscillator ---
+  if (cls === 'signal circuits') {
+    if (desc.includes('555') || desc.includes('timer')) return '555 Timer';
+    return defaultSubcategory; // Oscillator default
+  }
+
+  return defaultSubcategory;
 }
 
 // ============================================================
@@ -398,6 +519,13 @@ export async function getAttributes(mpn: string, currency?: string, userId?: str
       const listing = await getPartsioProductDetails(mpn, userId);
       if (listing) {
         const parameters = mapPartsioProductToAttributes(listing);
+        // Map parts.io Category/Class through Digikey's mapper for consistent subcategory naming
+        const rawCategory = listing.Category || listing.Class || '';
+        let subcategory = mapSubcategory(rawCategory);
+        // When Category was empty and we used the broad Class name, refine using parametric hints
+        if (!listing.Category && listing.Class) {
+          subcategory = disambiguatePartsioSubcategory(listing, subcategory);
+        }
         return {
           part: {
             mpn: listing['Manufacturer Part Number'] || mpn,
@@ -405,8 +533,8 @@ export async function getAttributes(mpn: string, currency?: string, userId?: str
             description: listing.Description || '',
             detailedDescription: listing.Description || '',
             status: (listing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
-            category: 'Capacitors',
-            subcategory: listing.Category || listing.Class || '',
+            category: mapCategory(rawCategory),
+            subcategory,
             datasheetUrl: listing['Current Datasheet Url'],
             ...extractPartsioLifecycle(listing),
           } as Part,
@@ -436,6 +564,7 @@ export async function getRecommendations(
   userPreferences?: UserPreferences,
   userId?: string,
   prefetchedAttributes?: PartAttributes,
+  options?: { skipPartsioEnrichment?: boolean },
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -615,7 +744,8 @@ export async function getRecommendations(
   console.timeEnd('[perf] fetchCandidates');
 
   // Step 3a: Enrich Digikey candidates with parts.io gap-fill (parallel, ~one round-trip)
-  if (isPartsioConfigured() && digikeyCandidates.length > 0) {
+  // Skipped in batch validation (adds ~5-15% weight coverage but 20 API calls per part)
+  if (isPartsioConfigured() && digikeyCandidates.length > 0 && !options?.skipPartsioEnrichment) {
     console.time('[perf] enrichDigikeyCandidates');
     digikeyCandidates = await Promise.all(digikeyCandidates.map(c => enrichWithPartsio(c, userId)));
     console.timeEnd('[perf] enrichDigikeyCandidates');
@@ -1002,7 +1132,7 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
 
   // Capacitance or resistance value
   const cap = paramMap.get('capacitance');
-  const res = paramMap.get('resistance');
+  const res = paramMap.get('resistance') ?? paramMap.get('resistance_r25');
   if (cap) parts.push(cap.value);
   else if (res) parts.push(res.value);
 

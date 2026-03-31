@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
@@ -308,7 +308,7 @@ Engineering Assessment (REQUIRED after find_replacements):
 - 3–5 sentences max. Be direct and technical.
 
 Unsupported families:
-43 supported component families across 6 blocks: Passives (19), Discrete Semiconductors (9), ICs (10), Frequency Control & Protection (2), Optoelectronics (1), Relays (2). The find_replacements tool result will include "unsupportedFamily": true when a part's category has no logic table. When you see this flag (or when the result contains zero recommendations and no error), tell the user: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate further, suggest "manual sourcing", or imply the search failed. Still show the confirmation step first — ask the user to confirm the part, then call get_part_attributes and find_replacements as normal, and deliver the message based on the result.
+You do NOT know which component families are supported — only the tools know. NEVER preemptively tell a user that a part or category is unsupported. Always follow the normal workflow: search → confirm → call get_part_attributes and find_replacements. If find_replacements returns "unsupportedFamily": true, tell the user exactly this: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
 
 Formatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs.
@@ -1110,4 +1110,466 @@ export async function refinementChat(
   }
 
   return result;
+}
+
+// ==============================================================
+// List Agent
+// ==============================================================
+
+function buildListContextSection(ctx: ListAgentContext): string {
+  const statusLines = Object.entries(ctx.statusCounts)
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ');
+  const topMfrs = ctx.topManufacturers.map(m => `${m.name} (${m.count})`).join(', ');
+  const topFams = ctx.topFamilies.map(f => `${f.name} (${f.count})`).join(', ');
+
+  return `\n\n## List Context
+<list-context>
+List: "${ctx.listName}"
+Customer: ${ctx.listCustomer || 'Not specified'}
+Currency: ${ctx.currency}
+Description/Objective: ${ctx.listDescription || 'Not specified'}
+Total rows: ${ctx.totalRows}
+Status breakdown: ${statusLines}
+Top manufacturers: ${topMfrs || 'None'}
+Families present: ${topFams || 'Unknown'}
+Current view: "${ctx.activeViewName}" — columns: [${ctx.activeViewColumns.join(', ')}]
+Available views: [${ctx.viewNames.join(', ')}]
+</list-context>`;
+}
+
+const LIST_AGENT_SYSTEM_PROMPT = `You are an expert assistant for a parts list. You know this list deeply and can answer questions, filter data, and take actions on behalf of the user.
+
+Your role:
+- Answer questions about the parts in this list (status, manufacturers, scores, recommendations)
+- Help filter, sort, and navigate the list using natural language
+- Perform bulk actions (delete, refresh, set preferred) with user confirmation
+- Be concise and technical — your users are electronics engineers
+
+Tool usage:
+- Use get_list_summary for high-level stats about the list
+- Use query_list to find specific rows — NEVER request all rows at once; use filters
+- Use get_row_detail for a deep dive on a single row (attributes, recommendations, match details)
+- sort_list, filter_list, and switch_view change the UI display immediately — no confirmation needed
+- For actions that modify data (delete_rows, refresh_rows, set_preferred), use the write tools. These will prompt the user for confirmation before executing. Always explain what will happen and why before calling these tools.
+
+Formatting rules:
+- Use bullet points (- item) for lists
+- Use **bold** for part numbers, manufacturers, and key specs
+- Use markdown tables when comparing rows
+- Keep messages scannable: short sentences, line breaks between sections`;
+
+const listAgentTools: Anthropic.Tool[] = [
+  // --- Read-only tools ---
+  {
+    name: 'get_list_summary',
+    description: 'Get aggregate statistics about the parts list: total rows, status counts, top manufacturers, score distribution, recommendation coverage.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'query_list',
+    description: 'Find rows matching filter criteria. Returns compact row summaries (rowIndex, MPN, manufacturer, status, recommendation count, preferred alternate, top suggestion). Use this to answer questions about specific subsets of the list.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        status: { type: 'string', description: 'Filter by status: pending, validating, resolved, not-found, error' },
+        manufacturer: { type: 'string', description: 'Filter by manufacturer name (case-insensitive substring match)' },
+        search: { type: 'string', description: 'Search MPN, manufacturer, or description (case-insensitive substring)' },
+        has_preferred: { type: 'boolean', description: 'If true, only rows with a preferred alternate. If false, only rows without.' },
+        min_score: { type: 'number', description: 'Minimum match score percentage (0-100) for top recommendation' },
+        max_score: { type: 'number', description: 'Maximum match score percentage (0-100) for top recommendation' },
+        limit: { type: 'number', description: 'Maximum rows to return (default 20, max 50)' },
+      },
+    },
+  },
+  {
+    name: 'get_row_detail',
+    description: 'Get full detail for a specific row by its row index. Returns MPN, manufacturer, status, source attributes, all recommendations with match scores and per-rule details, preferred alternate, and enriched data.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        row_index: { type: 'number', description: 'The row index to get details for' },
+      },
+      required: ['row_index'],
+    },
+  },
+  // --- Client-side view tools ---
+  {
+    name: 'sort_list',
+    description: 'Sort the table by a column. Executes immediately on the UI without confirmation.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        column: { type: 'string', description: 'Column to sort by: status, mpn, manufacturer, description, hits, suggestion' },
+        direction: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction' },
+      },
+      required: ['column', 'direction'],
+    },
+  },
+  {
+    name: 'filter_list',
+    description: 'Set the search/filter term on the table. Filters rows by text match across visible columns. Pass empty string to clear the filter. Executes immediately on the UI without confirmation.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        search_term: { type: 'string', description: 'Text to filter by (case-insensitive). Empty string clears the filter.' },
+      },
+      required: ['search_term'],
+    },
+  },
+  {
+    name: 'switch_view',
+    description: 'Switch to a different saved view by name. Executes immediately on the UI without confirmation.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        view_name: { type: 'string', description: 'Name of the view to switch to' },
+      },
+      required: ['view_name'],
+    },
+  },
+  // --- Write tools (require confirmation) ---
+  {
+    name: 'delete_rows',
+    description: 'Delete rows from the list by their row indices. This is a destructive action — the user will be asked to confirm before it executes. Always explain what will be deleted and why before calling this tool.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        row_indices: { type: 'array', items: { type: 'number' }, description: 'Array of row indices to delete' },
+        reason: { type: 'string', description: 'Human-readable reason for the deletion (shown to user in confirmation)' },
+      },
+      required: ['row_indices', 'reason'],
+    },
+  },
+  {
+    name: 'refresh_rows',
+    description: 'Re-validate rows (re-run search, attribute fetch, and recommendation engine). Use when parts are pending, had errors, or the user wants updated results. The user will be asked to confirm before it executes.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        row_indices: { type: 'array', items: { type: 'number' }, description: 'Array of row indices to refresh' },
+        reason: { type: 'string', description: 'Human-readable reason for the refresh (shown to user in confirmation)' },
+      },
+      required: ['row_indices', 'reason'],
+    },
+  },
+  {
+    name: 'set_preferred',
+    description: 'Set the preferred alternate replacement for a specific row. The user will be asked to confirm before it executes.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        row_index: { type: 'number', description: 'Row index to set preferred alternate for' },
+        mpn: { type: 'string', description: 'MPN of the preferred replacement part' },
+        reason: { type: 'string', description: 'Human-readable reason (shown to user in confirmation)' },
+      },
+      required: ['row_index', 'mpn', 'reason'],
+    },
+  },
+];
+
+// Column name → column ID mapping for sort_list
+const SORT_COLUMN_MAP: Record<string, string> = {
+  status: 'sys:status',
+  mpn: 'sys:mpn',
+  manufacturer: 'sys:manufacturer',
+  description: 'sys:description',
+  hits: 'sys:hits',
+  suggestion: 'sys:top_suggestion',
+};
+
+function executeListReadTool(
+  name: string,
+  input: Record<string, unknown>,
+  rows: StoredRow[],
+): string | null {
+  switch (name) {
+    case 'get_list_summary': {
+      const statusCounts: Record<string, number> = {};
+      const mfrCounts: Record<string, number> = {};
+      const familyCounts: Record<string, number> = {};
+      let withPreferred = 0;
+      let withRecs = 0;
+      let totalScore = 0;
+      let scoredCount = 0;
+
+      for (const row of rows) {
+        statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
+        const mfr = row.resolvedPart?.manufacturer ?? row.rawManufacturer;
+        if (mfr) mfrCounts[mfr] = (mfrCounts[mfr] ?? 0) + 1;
+        const cat = row.resolvedPart?.category ?? '';
+        if (cat) familyCounts[cat] = (familyCounts[cat] ?? 0) + 1;
+        if (row.preferredMpn) withPreferred++;
+        const recCount = row.recommendationCount ?? 0;
+        if (recCount > 0) withRecs++;
+        const topScore = row.suggestedReplacement?.matchPercentage;
+        if (topScore != null) { totalScore += topScore; scoredCount++; }
+      }
+
+      const topMfrs = Object.entries(mfrCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([name, count]) => ({ name, count }));
+
+      const topFamilies = Object.entries(familyCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([name, count]) => ({ name, count }));
+
+      return JSON.stringify({
+        totalRows: rows.length,
+        statusCounts,
+        topManufacturers: topMfrs,
+        topFamilies,
+        withPreferred,
+        withRecommendations: withRecs,
+        averageTopScore: scoredCount > 0 ? Math.round(totalScore / scoredCount) : null,
+      });
+    }
+
+    case 'query_list': {
+      const { status, manufacturer, search, has_preferred, min_score, max_score, limit: rawLimit } = input;
+      const limit = Math.min(Math.max(Number(rawLimit) || 20, 1), 50);
+
+      let filtered = rows;
+      if (status) filtered = filtered.filter(r => r.status === status);
+      if (manufacturer) {
+        const mfr = String(manufacturer).toLowerCase();
+        filtered = filtered.filter(r => {
+          const resolved = r.resolvedPart?.manufacturer?.toLowerCase() ?? '';
+          const raw = r.rawManufacturer?.toLowerCase() ?? '';
+          return resolved.includes(mfr) || raw.includes(mfr);
+        });
+      }
+      if (search) {
+        const q = String(search).toLowerCase();
+        filtered = filtered.filter(r =>
+          r.rawMpn.toLowerCase().includes(q)
+          || r.rawManufacturer?.toLowerCase().includes(q)
+          || r.rawDescription?.toLowerCase().includes(q)
+          || r.resolvedPart?.mpn.toLowerCase().includes(q)
+          || r.resolvedPart?.manufacturer?.toLowerCase().includes(q)
+        );
+      }
+      if (has_preferred === true) filtered = filtered.filter(r => !!r.preferredMpn);
+      if (has_preferred === false) filtered = filtered.filter(r => !r.preferredMpn);
+      if (min_score != null) {
+        const min = Number(min_score);
+        filtered = filtered.filter(r => (r.suggestedReplacement?.matchPercentage ?? 0) >= min);
+      }
+      if (max_score != null) {
+        const max = Number(max_score);
+        filtered = filtered.filter(r => (r.suggestedReplacement?.matchPercentage ?? 100) <= max);
+      }
+
+      return JSON.stringify({
+        matchCount: filtered.length,
+        rows: filtered.slice(0, limit).map(r => ({
+          rowIndex: r.rowIndex,
+          rawMpn: r.rawMpn,
+          manufacturer: r.resolvedPart?.manufacturer ?? r.rawManufacturer,
+          status: r.status,
+          recommendationCount: r.recommendationCount ?? 0,
+          preferredMpn: r.preferredMpn ?? null,
+          topSuggestion: r.suggestedReplacement
+            ? { mpn: r.suggestedReplacement.part.mpn, manufacturer: r.suggestedReplacement.part.manufacturer, matchPercentage: r.suggestedReplacement.matchPercentage }
+            : null,
+        })),
+      });
+    }
+
+    case 'get_row_detail': {
+      const idx = Number(input.row_index);
+      const row = rows.find(r => r.rowIndex === idx);
+      if (!row) return JSON.stringify({ error: `Row ${idx} not found` });
+
+      return JSON.stringify({
+        rowIndex: row.rowIndex,
+        rawMpn: row.rawMpn,
+        manufacturer: row.resolvedPart?.manufacturer ?? row.rawManufacturer,
+        description: row.resolvedPart?.description ?? row.rawDescription,
+        status: row.status,
+        preferredMpn: row.preferredMpn ?? null,
+        resolvedPart: row.resolvedPart ? {
+          mpn: row.resolvedPart.mpn,
+          manufacturer: row.resolvedPart.manufacturer,
+          category: row.resolvedPart.category,
+        } : null,
+        recommendations: (row.topNonFailingRecs ?? []).map(rec => ({
+          mpn: rec.part.mpn,
+          manufacturer: rec.part.manufacturer,
+          matchPercentage: rec.matchPercentage,
+          failedRules: rec.matchDetails?.filter(d => d.matchStatus === 'worse' || d.matchStatus === 'different').map(d => d.parameterName) ?? [],
+        })),
+        topSuggestion: row.suggestedReplacement ? {
+          mpn: row.suggestedReplacement.part.mpn,
+          manufacturer: row.suggestedReplacement.part.manufacturer,
+          matchPercentage: row.suggestedReplacement.matchPercentage,
+        } : null,
+        errorMessage: row.errorMessage ?? null,
+      });
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * List Agent orchestrator — scoped to a single parts list.
+ * Read tools execute server-side against rows.
+ * Client-side tools (sort/filter/view) return as clientActions.
+ * Write tools (delete/refresh/set_preferred) return as pendingAction for user confirmation.
+ */
+export async function listChat(
+  messages: OrchestratorMessage[],
+  apiKey: string,
+  listContext: ListAgentContext,
+  rows: StoredRow[],
+  userId?: string,
+  locale?: string,
+  userPreferences?: UserPreferences,
+  userName?: string,
+): Promise<ListAgentResponse> {
+  const client = new Anthropic({ apiKey });
+
+  const anthropicMessages: Anthropic.MessageParam[] = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const systemPrompt = LIST_AGENT_SYSTEM_PROMPT
+    + buildUserContextSection(userPreferences ?? {}, userName)
+    + buildListContextSection(listContext)
+    + buildLocaleInstruction(locale);
+
+  const systemBlocks = cachedSystem(systemPrompt);
+  const toolsWithCache = cachedTools(listAgentTools);
+
+  const chatStart = performance.now();
+  let llmCallCount = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCachedTokens = 0;
+
+  let pendingAction: PendingListAction | undefined;
+  const clientActions: ListClientAction[] = [];
+
+  llmCallCount++;
+  let response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: systemBlocks,
+    tools: toolsWithCache,
+    messages: anthropicMessages,
+  });
+  totalInputTokens += response.usage?.input_tokens ?? 0;
+  totalOutputTokens += response.usage?.output_tokens ?? 0;
+  totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
+
+  while (response.stop_reason === 'tool_use' && llmCallCount < MAX_TOOL_LOOPS) {
+    const toolUseBlocks = response.content.filter(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
+    );
+
+    anthropicMessages.push({
+      role: 'assistant',
+      content: response.content,
+    });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map((toolUse) => {
+      const input = toolUse.input as Record<string, unknown>;
+      const name = toolUse.name;
+
+      // --- Client-side view tools → accumulate clientActions ---
+      if (name === 'sort_list') {
+        const columnId = SORT_COLUMN_MAP[String(input.column)] ?? String(input.column);
+        clientActions.push({ type: 'sort', columnId, direction: input.direction as 'asc' | 'desc' });
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Sorted by ${input.column} ${input.direction}` };
+      }
+      if (name === 'filter_list') {
+        clientActions.push({ type: 'filter', searchTerm: String(input.search_term) });
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: input.search_term ? `Filtered to "${input.search_term}"` : 'Filter cleared' };
+      }
+      if (name === 'switch_view') {
+        clientActions.push({ type: 'switch_view', viewName: String(input.view_name) });
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Switched to view "${input.view_name}"` };
+      }
+
+      // --- Write tools → capture pendingAction, don't execute ---
+      if (name === 'delete_rows') {
+        pendingAction = { type: 'delete_rows', rowIndices: input.row_indices as number[], reason: String(input.reason) };
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Action queued: delete ${(input.row_indices as number[]).length} rows. The user must confirm before this executes.` };
+      }
+      if (name === 'refresh_rows') {
+        pendingAction = { type: 'refresh_rows', rowIndices: input.row_indices as number[], reason: String(input.reason) };
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Action queued: refresh ${(input.row_indices as number[]).length} rows. The user must confirm before this executes.` };
+      }
+      if (name === 'set_preferred') {
+        pendingAction = { type: 'set_preferred', rowIndex: Number(input.row_index), mpn: String(input.mpn), reason: String(input.reason) };
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Action queued: set preferred alternate to ${input.mpn} for row ${input.row_index}. The user must confirm before this executes.` };
+      }
+
+      // --- Read-only tools → execute server-side ---
+      const readResult = executeListReadTool(name, input, rows);
+      if (readResult !== null) {
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: readResult };
+      }
+
+      return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Unknown tool: ${name}` };
+    });
+
+    anthropicMessages.push({
+      role: 'user',
+      content: toolResults,
+    });
+
+    // If a write tool was called, do one more LLM call to get the confirmation message, then stop
+    llmCallCount++;
+    response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      system: systemBlocks,
+      tools: toolsWithCache,
+      messages: anthropicMessages,
+    });
+    totalInputTokens += response.usage?.input_tokens ?? 0;
+    totalOutputTokens += response.usage?.output_tokens ?? 0;
+    totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
+
+    // Stop loop after a write tool — let Claude generate the confirmation text
+    if (pendingAction) break;
+  }
+
+  if (llmCallCount >= MAX_TOOL_LOOPS) {
+    console.warn(`[listChat] Hit max tool loop limit (${MAX_TOOL_LOOPS})`);
+  }
+
+  console.log(`[perf] listChat() total: ${(performance.now() - chatStart).toFixed(0)}ms (${llmCallCount} LLM calls, ${totalCachedTokens} cached tokens)`);
+
+  if (userId) {
+    await logTokenUsage({
+      userId,
+      model: MODEL,
+      operation: 'list_chat',
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cachedTokens: totalCachedTokens,
+      llmCalls: llmCallCount,
+    });
+  }
+
+  const textBlocks = response.content.filter(
+    (block): block is Anthropic.TextBlock => block.type === 'text'
+  );
+  const message = textBlocks.map(b => b.text).join('\n');
+
+  return {
+    message,
+    pendingAction,
+    clientActions: clientActions.length > 0 ? clientActions : undefined,
+  };
 }

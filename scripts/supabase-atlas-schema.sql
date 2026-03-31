@@ -83,3 +83,28 @@ CREATE POLICY "Admins can update atlas products"
 CREATE POLICY "Admins can delete atlas products"
   ON atlas_products FOR DELETE TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+-- ─── Atlas Manufacturer Settings ────────────────────────────
+-- Stores admin-toggled enable/disable state per manufacturer.
+-- Opt-out model: if no row exists, the manufacturer is enabled.
+
+CREATE TABLE IF NOT EXISTS atlas_manufacturer_settings (
+  manufacturer TEXT PRIMARY KEY,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by UUID REFERENCES auth.users(id)
+);
+
+ALTER TABLE atlas_manufacturer_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Authenticated users can read atlas manufacturer settings"
+  ON atlas_manufacturer_settings FOR SELECT TO authenticated
+  USING (true);
+
+CREATE POLICY "Admins can insert atlas manufacturer settings"
+  ON atlas_manufacturer_settings FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE POLICY "Admins can update atlas manufacturer settings"
+  ON atlas_manufacturer_settings FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));

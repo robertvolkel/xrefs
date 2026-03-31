@@ -26,7 +26,8 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { SavedView, remapSpreadsheetColumns, sanitizeTemplateColumns } from '@/lib/viewConfigStorage';
+import { SavedView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import PartsListHeader from './PartsListHeader';
 import PartsListActionBar from './PartsListActionBar';
 import ViewControls from './ViewControls';
@@ -35,12 +36,15 @@ import PartsListTable from './PartsListTable';
 import PartDetailModal from './PartDetailModal';
 import ColumnPickerDialog from './ColumnPickerDialog';
 import NewListDialog from '@/components/lists/NewListDialog';
+import ListAgentFooter from './ListAgentFooter';
+import ListAgentDrawer from './ListAgentDrawer';
+import { useListAgent } from '@/hooks/useListAgent';
 
 export default function PartsListShell() {
   const { t } = useTranslation();
 
   const {
-    phase, parsedData, columnMapping, rows, validationProgress, error,
+    phase, parsedData, columnMapping, rows, validationProgress, error, lastRefreshedAt,
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
     spreadsheetHeaders, activeListId, listViewConfigs,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
@@ -63,7 +67,8 @@ export default function PartsListShell() {
 
   const handleSaveAsTemplate = useCallback((view: SavedView) => {
     const safeColumns = sanitizeTemplateColumns(view.columns);
-    templates.createView(view.name, safeColumns, view.description);
+    const safeCalcFields = sanitizeTemplateCalcFields(view.calculatedFields);
+    templates.createView(view.name, safeColumns, view.description, undefined, safeCalcFields);
   }, [templates]);
 
   // --- Extracted hooks ---
@@ -97,6 +102,16 @@ export default function PartsListShell() {
   const [sortColumnId, setSortColumnId] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // --- List Agent ---
+
+  const listAgent = useListAgent({
+    rows, listId: activeListId, listName, listDescription: listDescription ?? '',
+    listCustomer: listCustomer ?? '', listCurrency: listCurrency ?? 'USD',
+    activeView, views,
+    setSearchTerm, setSortColumnId, setSortDirection,
+    selectView, handleRefreshRows, handleDeleteRows, handleSetPreferred,
+  });
 
   // Resolve view columns: handle Original view, replace mapped:* placeholders
   const resolvedViewColumns = useMemo(() => {
@@ -144,13 +159,40 @@ export default function PartsListShell() {
     });
   }, [activeView, effectiveHeaders, rows, inferredMapping]);
 
+  // Build ColumnDefinition objects for this view's calculated fields
+  const calcColumnDefs = useMemo(() => {
+    const fields = activeView.calculatedFields;
+    if (!fields || fields.length === 0) return new Map<string, ColumnDefinition>();
+    const map = new Map<string, ColumnDefinition>();
+    for (const cf of fields) {
+      const id = `calc:${cf.id}`;
+      map.set(id, {
+        id,
+        label: cf.label,
+        source: 'calculated',
+        group: 'Calculated',
+        align: cf.align ?? 'right',
+        isNumeric: true,
+        calculatedField: cf,
+      });
+    }
+    return map;
+  }, [activeView.calculatedFields]);
+
   const activeColumns: ColumnDefinition[] = useMemo(() => {
     const colMap = new Map(availableColumns.map(c => [c.id, c]));
     const viewCols = resolvedViewColumns
-      .map(id => colMap.get(id))
+      .map(id => colMap.get(id) ?? calcColumnDefs.get(id))
       .filter((c): c is ColumnDefinition => c !== undefined);
     return [...viewCols, ROW_ACTIONS_COLUMN];
-  }, [resolvedViewColumns, availableColumns]);
+  }, [resolvedViewColumns, availableColumns, calcColumnDefs]);
+
+  // Column map for calculated field resolution (all columns including calc)
+  const columnMap = useMemo(() => {
+    const map = new Map(availableColumns.map(c => [c.id, c]));
+    for (const [id, def] of calcColumnDefs) map.set(id, def);
+    return map;
+  }, [availableColumns, calcColumnDefs]);
 
   const hiddenRows = useMemo(
     () => getHiddenRows(activeView.id, activeListId ?? ''),
@@ -167,11 +209,11 @@ export default function PartsListShell() {
     if (!trimmed) return visibleRows;
     return visibleRows.filter(row =>
       activeColumns.some(col => {
-        const val = getCellValue(col, row);
+        const val = getCellValue(col, row, columnMap);
         return val != null && String(val).toLowerCase().includes(trimmed);
       }),
     );
-  }, [visibleRows, searchTerm, activeColumns]);
+  }, [visibleRows, searchTerm, activeColumns, columnMap]);
 
   const handleSort = useCallback((columnId: string) => {
     setSortColumnId(prev => {
@@ -187,8 +229,8 @@ export default function PartsListShell() {
     const col = activeColumns.find(c => c.id === sortColumnId);
     if (!col) return searchedRows;
     return [...searchedRows].sort((a, b) => {
-      const aVal = getSortValue(col, a);
-      const bVal = getSortValue(col, b);
+      const aVal = getSortValue(col, a, columnMap);
+      const bVal = getSortValue(col, b, columnMap);
       if (aVal == null && bVal == null) return 0;
       if (aVal == null) return 1;
       if (bVal == null) return -1;
@@ -197,7 +239,7 @@ export default function PartsListShell() {
       else cmp = String(aVal).localeCompare(String(bVal));
       return sortDirection === 'desc' ? -cmp : cmp;
     });
-  }, [searchedRows, sortColumnId, sortDirection, activeColumns]);
+  }, [searchedRows, sortColumnId, sortDirection, activeColumns, columnMap]);
 
   const handleHideRow = useCallback((rowIndex: number) => {
     hideRowInView(activeView.id, activeListId ?? '', rowIndex);
@@ -208,7 +250,7 @@ export default function PartsListShell() {
   // --- Render ---
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', bgcolor: 'background.default' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', bgcolor: 'background.default', position: 'relative' }}>
       <PartsListHeader
         listName={listName}
         onEditName={() => setEditNameOpen(true)}
@@ -258,6 +300,7 @@ export default function PartsListShell() {
           onDeleteRow={(idx) => deletion.promptDelete([idx])}
           onHideRow={handleHideRow}
           currency={listCurrency}
+          columnMap={columnMap}
         />
       )}
 
@@ -292,7 +335,7 @@ export default function PartsListShell() {
         availableColumns={availableColumns}
         initialView={pickerMode === 'edit' ? { ...activeView, columns: resolvedViewColumns } : undefined}
         isBuiltinView={pickerMode === 'edit' && activeView.id === 'raw'}
-        onSave={(name, columns, description) => {
+        onSave={(name, columns, description, calcFields) => {
           // Build columnMeta: map each ss:N to its current header text
           const meta: Record<string, string> = {};
           for (const colId of columns) {
@@ -305,10 +348,10 @@ export default function PartsListShell() {
           }
           const columnMeta = Object.keys(meta).length > 0 ? meta : undefined;
 
-          if (pickerMode === 'create') createView(name, columns, description, columnMeta);
+          if (pickerMode === 'create') createView(name, columns, description, columnMeta, calcFields);
           else {
             const newName = activeView.id !== 'raw' ? name : undefined;
-            updateView(activeView.id, columns, newName, description, columnMeta);
+            updateView(activeView.id, columns, newName, description, columnMeta, calcFields);
           }
           setPickerOpen(false);
         }}
@@ -334,6 +377,28 @@ export default function PartsListShell() {
         }}
         onCancel={() => setEditNameOpen(false)}
       />
+
+      {/* List Agent */}
+      {showTable && (
+        <>
+          <ListAgentDrawer
+            open={listAgent.isOpen}
+            messages={listAgent.messages}
+            isLoading={listAgent.isLoading}
+            onClose={listAgent.toggleOpen}
+            onSendMessage={listAgent.handleSendMessage}
+            onActionConfirm={listAgent.handleActionConfirm}
+            onActionCancel={listAgent.handleActionCancel}
+          />
+          <ListAgentFooter
+            isOpen={listAgent.isOpen}
+            onToggle={listAgent.toggleOpen}
+            isLoading={listAgent.isLoading}
+            lastRefreshedAt={lastRefreshedAt}
+            itemCount={rows.length}
+          />
+        </>
+      )}
 
       {/* Delete rows confirmation dialog */}
       <Dialog

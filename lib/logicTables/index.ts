@@ -107,6 +107,7 @@ const subcategoryToFamily: Record<string, string> = {
   'Ceramic': '12',
   'Multilayer Ceramic': '12',
   'Ceramic Capacitor': '12',
+  'Ceramic Capacitors': '12',
   // Mica Capacitors (Family 13)
   'Mica Capacitor': '13',
   'Silver Mica': '13',
@@ -116,6 +117,8 @@ const subcategoryToFamily: Record<string, string> = {
   'Thick Film': '52',
   'Thin Film': '52',
   'Resistor': '52',
+  'Resistors': '52',
+  'Fixed Resistors': '52',
   'Chip Resistor - Surface Mount': '52',
   // Through-Hole Resistors (Family 53) — direct subcategory matches
   'Through Hole Resistor': '53',
@@ -129,54 +132,67 @@ const subcategoryToFamily: Record<string, string> = {
   // Aluminum Electrolytic (Family 58) — also base for family 60 via classifier
   'Aluminum Electrolytic': '58',
   'Electrolytic': '58',
+  'Aluminum Electrolytic Capacitors': '58',
   // Tantalum Capacitors (Family 59)
   'Tantalum': '59',
   'Tantalum Capacitor': '59',
   'Tantalum Polymer': '59',
+  'Tantalum Capacitors': '59',
+  'Tantalum - Polymer Capacitors': '59',
   // Aluminum Polymer Capacitors (Family 60) — direct subcategory matches
   'Aluminum Polymer': '60',
   'Polymer Capacitor': '60',
+  'Aluminum - Polymer Capacitors': '60',
   // Supercapacitors (Family 61)
   'Supercapacitor': '61',
   'EDLC': '61',
   'Ultracapacitor': '61',
   'Electric Double Layer': '61',
+  'Electric Double Layer Capacitors': '61',
   // Film Capacitors (Family 64)
   'Film Capacitor': '64',
   'Film': '64',
   'Polypropylene': '64',
   'Polyester': '64',
+  'Film Capacitors': '64',
   // Varistors / MOVs (Family 65)
   'Varistor': '65',
   'MOV': '65',
   'Metal Oxide Varistor': '65',
   'TVS - Varistor': '65',
+  'Varistors': '65',
   // PTC Resettable Fuses (Family 66)
   'PTC Resettable Fuse': '66',
   'Resettable Fuse': '66',
   'Polymeric PTC': '66',
   'PolySwitch': '66',
   'PPTC': '66',
+  'PTC Resettable Fuses': '66',
   // NTC Thermistors (Family 67)
   'NTC Thermistor': '67',
   'NTC': '67',
   'Thermistor': '67',
+  'NTC Thermistors': '67',
   // PTC Thermistors (Family 68)
   'PTC Thermistor': '68',
   'PTC': '68',
+  'PTC Thermistors': '68',
   // Common Mode Chokes (Family 69)
   'Common Mode Choke': '69',
   'CMC': '69',
   'Common Mode Filter': '69',
+  'Common Mode Chokes': '69',
   // Ferrite Beads (Family 70)
   'Ferrite Bead': '70',
   'Ferrite': '70',
   'Ferrite Bead and Chip': '70',
+  'Ferrite Beads and Chips': '70',
   // Power Inductors (Family 71) — also base for family 72 via classifier
   'Power Inductor': '71',
   'Inductor': '71',
   'Shielded Inductor': '71',
   'Fixed Inductor': '71',
+  'Fixed Inductors': '71',
   // RF/Signal Inductors (Family 72) — direct subcategory matches
   'RF Inductor': '72',
   'Signal Inductor': '72',
@@ -189,6 +205,8 @@ const subcategoryToFamily: Record<string, string> = {
   'Diodes - Rectifiers - Single': 'B1',
   'Diodes - Rectifiers - Array': 'B1',
   'Diodes - Bridge Rectifiers': 'B1',
+  'Single Diodes': 'B1',
+  'Bridge Rectifiers': 'B1',
   'Fast Recovery Diode': 'B1',
   'Ultrafast Recovery Diode': 'B1',
   'Standard Recovery Diode': 'B1',
@@ -200,12 +218,16 @@ const subcategoryToFamily: Record<string, string> = {
   'SiC Schottky Diode': 'B2',
   'SiC Diode': 'B2',
   'Diodes - Schottky': 'B2',
+  'Schottky Diodes': 'B2',
+  'Schottky Diode Arrays': 'B2',
   // Zener Diodes / Voltage Reference Diodes (Family B3)
   'Zener Diode': 'B3',
   'Voltage Reference Diode': 'B3',
   'Zener': 'B3',
   'Diodes - Zener - Single': 'B3',
   'Diodes - Zener - Array': 'B3',
+  'Single Zener Diodes': 'B3',
+  'Zener Diode Arrays': 'B3',
   'Zener Voltage Regulator': 'B3',
   // TVS Diodes / Transient Voltage Suppressors (Family B4)
   'TVS Diode': 'B4',
@@ -213,6 +235,7 @@ const subcategoryToFamily: Record<string, string> = {
   'Transient Voltage Suppressor': 'B4',
   'TVS - Diodes': 'B4',
   'Diodes - TVS': 'B4',
+  'TVS Diodes': 'B4',
   'ESD Protection Diode': 'B4',
   'ESD Suppressor': 'B4',
   'Surge Suppressor': 'B4',
@@ -226,6 +249,7 @@ const subcategoryToFamily: Record<string, string> = {
   'GaN MOSFET': 'B5',
   'FETs - MOSFETs - Single': 'B5',
   'FETs - MOSFETs - Arrays': 'B5',
+  'FETs, MOSFETs': 'B5',
   // BJTs (Family B6)
   'BJT': 'B6',
   'NPN Transistor': 'B6',
@@ -238,6 +262,7 @@ const subcategoryToFamily: Record<string, string> = {
   'Transistors - Bipolar (BJT) - Array': 'B6',
   'Small Signal Transistor': 'B6',
   'General Purpose Transistor': 'B6',
+  'Bipolar Transistors': 'B6',
   // IGBTs (Family B7)
   'IGBT': 'B7',
   'Insulated Gate Bipolar Transistor': 'B7',
@@ -245,6 +270,7 @@ const subcategoryToFamily: Record<string, string> = {
   'IGBT Module': 'B7',
   'Transistors - IGBTs - Single': 'B7',
   'Transistors - IGBTs - Arrays': 'B7',
+  'IGBTs': 'B7',
   // Thyristors / TRIACs / SCRs (Family B8)
   'SCR': 'B8',
   'Silicon Controlled Rectifier': 'B8',
@@ -256,6 +282,8 @@ const subcategoryToFamily: Record<string, string> = {
   'Thyristors - SCRs': 'B8',
   'Thyristors - TRIACs': 'B8',
   'Thyristors - DIACs, SIDACs': 'B8',
+  'SCRs': 'B8',
+  'TRIACs': 'B8',
   // JFETs (Family B9)
   'JFET': 'B9',
   'J-FET': 'B9',
@@ -286,6 +314,8 @@ const subcategoryToFamily: Record<string, string> = {
   'Forward Converter': 'C2',
   'Voltage Regulators - DC DC Switching Regulators': 'C2',
   'Voltage Regulators - DC DC Switching Controllers': 'C2',
+  'DC DC Switching Regulators': 'C2',
+  'DC DC Switching Controllers': 'C2',
   // Gate Drivers (Family C3)
   'Gate Driver': 'C3',
   'MOSFET Driver': 'C3',
@@ -310,6 +340,7 @@ const subcategoryToFamily: Record<string, string> = {
   'Operational Amplifiers': 'C4',
   'Comparators': 'C4',
   'Instrumentation, OP Amp, Buffer Amps': 'C4',
+  'Instrumentation, Op Amps, Buffer Amps': 'C4',
   // Logic ICs — 74-Series Standard Logic (Family C5)
   'Logic Gate': 'C5',
   'Logic IC': 'C5',
@@ -465,6 +496,9 @@ const subcategoryToFamily: Record<string, string> = {
   'DPDT Relay': 'F1',
   'Form C Relay': 'F1',
   'Normally Open Relay': 'F1',
+  'Power Relays, Over 2 Amps': 'F1',
+  'Signal Relays, Up to 2 Amps': 'F1',
+  'Automotive Relays': 'F1',
   // Solid State Relays — SSR (Family F2)
   'Solid State Relay': 'F2',
   'SSR': 'F2',
@@ -475,6 +509,8 @@ const subcategoryToFamily: Record<string, string> = {
   'SSR MOSFET': 'F2',
   'AC Solid State Relay': 'F2',
   'DC Solid State Relay': 'F2',
+  'Solid State Relays': 'F2',
+  'Solid State Relays - Industrial Mount': 'F2',
 };
 
 /** Last-updated dates for each family's logic table (from git history) */

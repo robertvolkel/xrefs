@@ -13,6 +13,9 @@ export const PAGE_HEADER_HEIGHT = 56;
 export const ATTRIBUTES_HEADER_HEIGHT = 116;
 export const ATTRIBUTES_HEADER_HEIGHT_MOBILE = 88;
 
+// List agent footer
+export const LIST_AGENT_FOOTER_HEIGHT = 34;
+
 // Mobile values
 export const HEADER_HEIGHT_MOBILE = 56;
 export const ROW_FONT_SIZE_MOBILE = '0.85rem';

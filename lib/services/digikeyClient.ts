@@ -32,12 +32,19 @@ export interface DigikeyCategory {
   ChildCategories?: DigikeyCategory[];
 }
 
+export interface DigikeyPriceBreak {
+  BreakQuantity: number;
+  UnitPrice: number;
+  TotalPrice: number;
+}
+
 export interface DigikeyProduct {
   Description: { ProductDescription: string; DetailedDescription: string };
   Manufacturer: { Id: number; Name: string };
   ManufacturerProductNumber: string;
   DigiKeyPartNumber: string;
   UnitPrice: number;
+  StandardPricing?: DigikeyPriceBreak[];
   ProductUrl: string;
   DatasheetUrl: string;
   PhotoUrl: string;
