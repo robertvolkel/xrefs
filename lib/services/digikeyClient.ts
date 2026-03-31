@@ -38,6 +38,12 @@ export interface DigikeyPriceBreak {
   TotalPrice: number;
 }
 
+export interface DigikeyProductVariation {
+  DigiKeyProductNumber: string;
+  PackageType?: { Id: number; Name: string };
+  StandardPricing?: DigikeyPriceBreak[];
+}
+
 export interface DigikeyProduct {
   Description: { ProductDescription: string; DetailedDescription: string };
   Manufacturer: { Id: number; Name: string };
@@ -45,6 +51,7 @@ export interface DigikeyProduct {
   DigiKeyPartNumber: string;
   UnitPrice: number;
   StandardPricing?: DigikeyPriceBreak[];
+  ProductVariations?: DigikeyProductVariation[];
   ProductUrl: string;
   DatasheetUrl: string;
   PhotoUrl: string;
@@ -228,6 +235,8 @@ interface DigikeyCommercialData {
   UnitPrice: number;
   QuantityAvailable: number;
   ProductStatus: { Id: number; Status: string };
+  StandardPricing?: DigikeyPriceBreak[];
+  ProductVariations?: DigikeyProductVariation[];
 }
 
 /** Extract commercial fields from a DigikeyProduct */
@@ -236,6 +245,8 @@ function extractCommercial(product: DigikeyProduct): DigikeyCommercialData {
     UnitPrice: product.UnitPrice,
     QuantityAvailable: product.QuantityAvailable,
     ProductStatus: product.ProductStatus,
+    StandardPricing: product.StandardPricing,
+    ProductVariations: product.ProductVariations,
   };
 }
 
@@ -246,6 +257,8 @@ function applyCommercial(product: DigikeyProduct, commercial: DigikeyCommercialD
     UnitPrice: commercial.UnitPrice,
     QuantityAvailable: commercial.QuantityAvailable,
     ProductStatus: commercial.ProductStatus,
+    StandardPricing: commercial.StandardPricing,
+    ProductVariations: commercial.ProductVariations,
   };
 }
 

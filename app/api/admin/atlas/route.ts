@@ -3,45 +3,66 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { getLogicTable } from '@/lib/logicTables';
 
+// ── In-memory cache (120s TTL) ──────────────────────────────
+let cachedResponse: string | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 120_000;
+
+export function invalidateAtlasCache() {
+  cachedResponse = null;
+  cacheTimestamp = 0;
+}
+
+async function fetchAllPages<T>(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  columns: string,
+  filter?: (q: ReturnType<typeof supabase.from>) => typeof q,
+): Promise<T[]> {
+  const PAGE_SIZE = 1000;
+  const results: T[] = [];
+  let offset = 0;
+  while (true) {
+    let query = supabase.from(table).select(columns).order('id').range(offset, offset + PAGE_SIZE - 1);
+    if (filter) query = filter(query) as typeof query;
+    const { data: page } = await query;
+    if (!page || page.length === 0) break;
+    results.push(...(page as T[]));
+    if (page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return results;
+}
+
 export async function GET() {
   try {
     const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
-    const supabase = await createClient();
-
-    // Global stats
-    const { count: totalProducts } = await supabase
-      .from('atlas_products')
-      .select('*', { count: 'exact', head: true });
-
-    const { count: scorableProducts } = await supabase
-      .from('atlas_products')
-      .select('*', { count: 'exact', head: true })
-      .not('family_id', 'is', null);
-
-    // Per-manufacturer stats — two queries: lightweight stats + coverage-only for scorable
-    const PAGE_SIZE = 1000;
-
-    // Query 1: Lightweight stats (no parameters JSONB — much faster)
-    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }[] = [];
-    let offset = 0;
-    while (true) {
-      const { data: page } = await supabase
-        .from('atlas_products')
-        .select('manufacturer, family_id, category, subcategory, updated_at')
-        .order('id')
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (!page || page.length === 0) break;
-      rows.push(...page);
-      if (page.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
+    // Return cached response if fresh
+    if (cachedResponse && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+      return new NextResponse(cachedResponse, {
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    // Fetch manufacturer enabled/disabled settings
-    const { data: mfrSettings } = await supabase
-      .from('atlas_manufacturer_settings')
-      .select('manufacturer, enabled');
+    const supabase = await createClient();
+
+    // Fetch all data in parallel: lightweight rows, scorable rows with JSONB, manufacturer settings
+    const [rows, scorableRows, { data: mfrSettings }] = await Promise.all([
+      fetchAllPages<{ manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }>(
+        supabase,
+        'atlas_products',
+        'manufacturer, family_id, category, subcategory, updated_at',
+      ),
+      fetchAllPages<{ manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }>(
+        supabase,
+        'atlas_products',
+        'manufacturer, family_id, parameters',
+        (q) => q.not('family_id', 'is', null),
+      ),
+      supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
+    ]);
 
     const disabledSet = new Set(
       (mfrSettings ?? [])
@@ -49,27 +70,13 @@ export async function GET() {
         .map((s: { manufacturer: string; enabled: boolean }) => s.manufacturer)
     );
 
-    // Query 2: Only fetch parameters for scorable products (for coverage calculation)
-    const scorableRows: { manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }[] = [];
-    offset = 0;
-    while (true) {
-      const { data: page } = await supabase
-        .from('atlas_products')
-        .select('manufacturer, family_id, parameters')
-        .not('family_id', 'is', null)
-        .order('id')
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (!page || page.length === 0) break;
-      scorableRows.push(...(page as typeof scorableRows));
-      if (page.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
-    }
-
     if (rows.length === 0) {
-      return NextResponse.json({
+      const emptyResponse = JSON.stringify({
         summary: {
           totalProducts: 0,
           totalManufacturers: 0,
+          enabledManufacturers: 0,
+          enabledProducts: 0,
           scorableProducts: 0,
           searchOnlyProducts: 0,
           familiesCovered: 0,
@@ -77,6 +84,11 @@ export async function GET() {
         },
         manufacturers: [],
         familyBreakdown: [],
+      });
+      cachedResponse = emptyResponse;
+      cacheTimestamp = Date.now();
+      return new NextResponse(emptyResponse, {
+        headers: { 'Content-Type': 'application/json' },
       });
     }
 
@@ -221,20 +233,28 @@ export async function GET() {
     const enabledMfrs = manufacturers.filter((m) => m.enabled);
     const enabledProductCount = enabledMfrs.reduce((sum, m) => sum + m.productCount, 0);
 
-    return NextResponse.json({
+    const responseBody = JSON.stringify({
       summary: {
-        totalProducts: totalProducts ?? rows.length,
+        totalProducts: rows.length,
         totalManufacturers: mfrMap.size,
         enabledManufacturers: enabledMfrs.length,
         enabledProducts: enabledProductCount,
-        scorableProducts: scorableProducts ?? 0,
-        searchOnlyProducts: (totalProducts ?? rows.length) - (scorableProducts ?? 0),
+        scorableProducts: scorableRows.length,
+        searchOnlyProducts: rows.length - scorableRows.length,
         familiesCovered: allFamilies.size,
         lastUpdated: globalLastUpdated,
       },
       manufacturers,
       familyBreakdown,
       familyNames,
+    });
+
+    // Cache the response
+    cachedResponse = responseBody;
+    cacheTimestamp = Date.now();
+
+    return new NextResponse(responseBody, {
+      headers: { 'Content-Type': 'application/json' },
     });
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

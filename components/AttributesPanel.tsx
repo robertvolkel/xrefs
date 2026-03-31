@@ -113,13 +113,13 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
             <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 24, background: 'linear-gradient(to top, rgba(0,0,0,0.12), transparent)', pointerEvents: 'none', zIndex: 1 }} />
           )}
           <TableContainer ref={scrollRef} sx={{ height: '100%', overflowY: 'auto' }}>
-            <Table size="small" stickyHeader>
+            <Table size="small" stickyHeader sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
-                  <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '50%' }}>
                     {t('attributes.parameterHeader')}
                   </TableCell>
-                  <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: '50%' }}>
                     {t('attributes.valueHeader')}
                   </TableCell>
                 </TableRow>

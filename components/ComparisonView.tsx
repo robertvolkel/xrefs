@@ -188,6 +188,9 @@ export default function ComparisonView({
                 {replPart.mpn}
               </Typography>
               <Chip label={replPart.status} size="small" color={replPart.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              {replPart.qualifications?.map(q => (
+                <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
+              ))}
               {recommendation.certifiedBy && recommendation.certifiedBy.length > 0 && (
                 <Tooltip title={'Verified by: ' + recommendation.certifiedBy.map(s => CERT_LABELS[s] || s).join(', ')} arrow>
                   <Chip
@@ -248,7 +251,7 @@ export default function ComparisonView({
             )}
           <Box ref={scrollRef} sx={{ height: '100%', overflowY: 'auto', overflowX: 'auto' }}>
             <TableContainer>
-              <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' } }}>
+              <Table size="small" stickyHeader sx={{ minWidth: { xs: 420, md: 'auto' }, tableLayout: 'fixed' }}>
                 <TableHead>
                   <TableRow sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
@@ -257,7 +260,7 @@ export default function ComparisonView({
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                       {t('comparison.valueHeader')}
                     </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: 32 }} />
+                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32 }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -309,7 +312,7 @@ export default function ComparisonView({
                           </Stack>
                         </TableCell>
                         <TableCell
-                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, width: 32 }}
+                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32, lineHeight: 0 }}
                         >
                           {row.note ? (
                             <Tooltip title={row.note} placement="left" arrow>

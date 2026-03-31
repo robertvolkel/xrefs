@@ -124,9 +124,13 @@ function evaluateIdentity(
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: !sourceParam ? 'pass' : 'fail',
+      result: !sourceParam ? 'pass' : 'review',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
+      note: sourceParam && !candidateParam
+        ? (rule.blockOnMissing
+          ? `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`
+          : `${rule.attributeName} not specified in replacement — verify from datasheet`)
+        : undefined,
     };
   }
 
@@ -190,9 +194,13 @@ function evaluateIdentityRange(
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: !sourceParam ? 'pass' : 'fail',
+      result: !sourceParam ? 'pass' : 'review',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
+      note: sourceParam && !candidateParam
+        ? (rule.blockOnMissing
+          ? `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`
+          : `${rule.attributeName} not specified in replacement — verify from datasheet`)
+        : undefined,
     };
   }
 
@@ -247,9 +255,13 @@ function evaluateIdentityUpgrade(
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: !sourceParam ? 'pass' : 'fail',
+      result: !sourceParam ? 'pass' : 'review',
       matchStatus: !sourceParam ? 'exact' : 'different',
-      note: sourceParam && !candidateParam ? `${rule.attributeName} not specified in replacement` : undefined,
+      note: sourceParam && !candidateParam
+        ? (rule.blockOnMissing
+          ? `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`
+          : `${rule.attributeName} not specified in replacement — verify from datasheet`)
+        : undefined,
     };
   }
 
@@ -405,20 +417,7 @@ function evaluateThreshold(
         matchStatus: 'exact',
       };
     }
-    // Candidate missing + blockOnMissing → hard fail (e.g., tst at >100kHz, body diode trr at ≥50kHz)
-    if (rule.blockOnMissing) {
-      return {
-        attributeId: rule.attributeId,
-        attributeName: rule.attributeName,
-        sourceValue,
-        candidateValue,
-        logicType: rule.logicType,
-        result: 'fail',
-        matchStatus: 'different',
-        note: `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`,
-      };
-    }
-    // Candidate missing → review (default)
+    // Candidate missing → review (blockOnMissing controls note severity only)
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,
@@ -427,7 +426,9 @@ function evaluateThreshold(
       logicType: rule.logicType,
       result: 'review',
       matchStatus: 'different',
-      note: `${rule.attributeName} not specified in replacement — verify from datasheet`,
+      note: rule.blockOnMissing
+        ? `Missing critical specification — ${rule.attributeName} not specified in replacement datasheet`
+        : `${rule.attributeName} not specified in replacement — verify from datasheet`,
     };
   }
 
@@ -697,7 +698,7 @@ function evaluateVrefCheck(
       sourceValue,
       candidateValue,
       logicType: rule.logicType,
-      result: rule.blockOnMissing ? 'fail' : 'review',
+      result: 'review',
       matchStatus: 'different',
       note: rule.blockOnMissing
         ? 'Missing critical specification — Vref not specified, cannot verify output voltage achievability'

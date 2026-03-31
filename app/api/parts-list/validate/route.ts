@@ -64,7 +64,7 @@ async function processItem(
     const recResult = await getRecommendations(
       resolvedPart.mpn, undefined, undefined, currency, undefined,
       userPreferences, userId, prefetchedAttributes,
-      { skipPartsioEnrichment: true },
+      { skipPartsioEnrichment: true, filterForBatch: true },
     );
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;

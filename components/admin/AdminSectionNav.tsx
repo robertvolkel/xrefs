@@ -9,9 +9,11 @@ import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
 import HistoryIcon from '@mui/icons-material/History';
+import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
+import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'qc-feedback' | 'qc-logs';
+export type AdminSection = 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'qc-feedback' | 'qc-logs';
 
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
@@ -22,6 +24,11 @@ const dataLogicSections: SectionItem[] = [
   { id: 'atlas', icon: PublicOutlinedIcon, labelKey: 'admin.atlasProducts' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'taxonomy', icon: CategoryOutlinedIcon, labelKey: 'admin.taxonomyNav' },
+];
+
+const logicDocsSections: SectionItem[] = [
+  { id: 'search-logic', icon: SearchOutlinedIcon, labelKey: 'admin.searchLogicNav' },
+  { id: 'list-logic', icon: ListAltOutlinedIcon, labelKey: 'admin.listLogicNav' },
 ];
 
 const qcSections: SectionItem[] = [
@@ -75,6 +82,8 @@ export default function AdminSectionNav({ activeSection, onSectionChange }: Admi
   return (
     <List disablePadding sx={{ pt: 1 }}>
       <SectionList sections={dataLogicSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
+      <Divider sx={{ my: 1 }} />
+      <SectionList sections={logicDocsSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
       <SectionList sections={qcSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>

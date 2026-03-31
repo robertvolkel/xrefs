@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateManufacturerCache } from '@/lib/services/atlasClient';
+import { invalidateAtlasCache } from '../route';
 
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
   try {
@@ -24,7 +25,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const supabase = await createClient();
+    const supabase = createServiceClient();
 
     const { error } = await supabase
       .from('atlas_manufacturer_settings')
@@ -39,7 +40,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       );
 
     if (error) {
-      console.error('Atlas manufacturer settings upsert error:', error.message);
+      console.error('Atlas manufacturer settings upsert error:', error.message, error.details, error.hint);
       return NextResponse.json(
         { success: false, error: 'Failed to update manufacturer setting' },
         { status: 500 },
@@ -47,6 +48,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateManufacturerCache();
+    invalidateAtlasCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {

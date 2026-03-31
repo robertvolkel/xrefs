@@ -200,7 +200,8 @@ The core pipeline is in `lib/services/partDataService.ts → getRecommendations(
 
 Each rule has a **weight** (0-10). The matching engine evaluates each rule and produces:
 - `matchPercentage = (earnedWeight / totalWeight) * 100`
-- A part **fails** if any rule result is `'fail'`
+- A part **fails** if any rule result is `'fail'` (actual value mismatch only — missing data never causes fail)
+- Missing candidate data → `'review'` (flagged for human verification, never rejected). `blockOnMissing` flag controls note severity only, not the result (Decision #109).
 - `application_review` rules get 50% credit (can't be automated)
 - `operational` mismatches get 80% credit (non-electrical)
 
@@ -359,6 +360,7 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - Mapper: `lib/services/digikeyMapper.ts` — Converts Digikey API responses to internal types
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
+- **v4 API pricing gotcha**: `StandardPricing` (tiered price breaks) is nested under `ProductVariations[0].StandardPricing`, NOT at the top level of the product response. `mapDigikeyPriceBreaks()` checks both locations. Commercial cache preserves `ProductVariations` alongside `UnitPrice`/`QuantityAvailable`/`ProductStatus` (Decision #109).
 
 **L3 families (43):** Full parameter mapping with logic tables for cross-reference matching:
 

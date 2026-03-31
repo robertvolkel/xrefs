@@ -983,10 +983,17 @@ function extractQualifications(parameters: DigikeyParameter[]): string[] {
 // MAIN MAPPERS
 // ============================================================
 
-/** Map Digikey StandardPricing to internal PriceBreak[] */
+/** Map Digikey StandardPricing to internal PriceBreak[].
+ *  v4 API nests pricing under ProductVariations[]; top-level StandardPricing
+ *  may be absent. Check both locations.
+ */
 function mapDigikeyPriceBreaks(product: DigikeyProduct): PriceBreak[] | undefined {
-  if (!product.StandardPricing?.length) return undefined;
-  return product.StandardPricing.map(pb => ({
+  // Prefer top-level StandardPricing; fall back to first ProductVariation
+  const pricing = product.StandardPricing?.length
+    ? product.StandardPricing
+    : product.ProductVariations?.[0]?.StandardPricing;
+  if (!pricing?.length) return undefined;
+  return pricing.map(pb => ({
     quantity: pb.BreakQuantity,
     unitPrice: pb.UnitPrice,
     currency: 'USD',

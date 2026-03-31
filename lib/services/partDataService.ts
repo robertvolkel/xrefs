@@ -24,7 +24,7 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
-import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts } from './mouserClient';
+import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS } from './partDataCache';
 
@@ -400,42 +400,47 @@ async function enrichWithMouser(attrs: PartAttributes, userId?: string): Promise
  * Uses pipe-separated batch API for efficiency (10 MPNs per call).
  */
 async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
-  if (!isMouserConfigured() || !hasMouserBudget() || recs.length === 0) return recs;
+  if (recs.length === 0) return recs;
 
-  try {
-    const mpns = recs.map(r => r.part.mpn);
-    const mouserProducts = await getMouserProductsBatch(mpns, userId);
+  // Always build Digikey quotes; add Mouser if configured
+  const mouserAvailable = isMouserConfigured() && hasMouserBudget();
+  let mouserProducts: Map<string, MouserProduct> | undefined;
 
-    return recs.map(rec => {
-      const mouserProduct = mouserProducts.get(rec.part.mpn.toLowerCase());
-      const dkQuote = buildDigikeyQuote(rec.part);
-      const quotes = [dkQuote];
-      const lifecycleInfos: LifecycleInfo[] = [];
-      const complianceEntries: ComplianceData[] = [];
-
-      if (mouserProduct) {
-        quotes.push(mapMouserToQuote(mouserProduct));
-        const lifecycle = mapMouserLifecycle(mouserProduct);
-        if (lifecycle) lifecycleInfos.push(lifecycle);
-        const compliance = mapMouserCompliance(mouserProduct);
-        if (compliance) complianceEntries.push(compliance);
-      }
-
-      return {
-        ...rec,
-        part: {
-          ...rec.part,
-          supplierQuotes: quotes,
-          lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
-          complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
-        },
-      };
-    });
-  } catch (error) {
-    console.warn('[mouser] Candidate enrichment failed:', error);
-    reportServiceFailure('mouser', 'degraded', 'Candidate enrichment failed');
-    return recs;
+  if (mouserAvailable) {
+    try {
+      const mpns = recs.map(r => r.part.mpn);
+      mouserProducts = await getMouserProductsBatch(mpns, userId);
+    } catch (error) {
+      console.warn('[mouser] Candidate enrichment failed:', error);
+      reportServiceFailure('mouser', 'degraded', 'Candidate enrichment failed');
+    }
   }
+
+  return recs.map(rec => {
+    const dkQuote = buildDigikeyQuote(rec.part);
+    const quotes = [dkQuote];
+    const lifecycleInfos: LifecycleInfo[] = [];
+    const complianceEntries: ComplianceData[] = [];
+
+    const mouserProduct = mouserProducts?.get(rec.part.mpn.toLowerCase());
+    if (mouserProduct) {
+      quotes.push(mapMouserToQuote(mouserProduct));
+      const lifecycle = mapMouserLifecycle(mouserProduct);
+      if (lifecycle) lifecycleInfos.push(lifecycle);
+      const compliance = mapMouserCompliance(mouserProduct);
+      if (compliance) complianceEntries.push(compliance);
+    }
+
+    return {
+      ...rec,
+      part: {
+        ...rec.part,
+        supplierQuotes: quotes,
+        lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
+        complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
+      },
+    };
+  });
 }
 
 // ============================================================
@@ -455,12 +460,18 @@ async function enrichSourceInParallel(attrs: PartAttributes, userId?: string): P
   ]);
 
   // Merge: start from parts.io result (has parametric gap-fills + lifecycle),
-  // layer on Mouser commercial fields
+  // layer on Mouser commercial fields.
+  // If Mouser enrichment was skipped (unconfigured/no budget), still build the
+  // Digikey SupplierQuote so tiered pricing is always available in the UI.
+  const supplierQuotes = mouserResult.part.supplierQuotes
+    ?? partsioResult.part.supplierQuotes
+    ?? [buildDigikeyQuote(partsioResult.part)];
+
   return {
     ...partsioResult,
     part: {
       ...partsioResult.part,
-      supplierQuotes: mouserResult.part.supplierQuotes ?? partsioResult.part.supplierQuotes,
+      supplierQuotes,
       lifecycleInfo: mouserResult.part.lifecycleInfo ?? partsioResult.part.lifecycleInfo,
       complianceData: mouserResult.part.complianceData ?? partsioResult.part.complianceData,
     },
@@ -564,7 +575,7 @@ export async function getRecommendations(
   userPreferences?: UserPreferences,
   userId?: string,
   prefetchedAttributes?: PartAttributes,
-  options?: { skipPartsioEnrichment?: boolean },
+  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean },
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -817,6 +828,21 @@ export async function getRecommendations(
   }
   console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${mouserSuggestions.length} Mouser + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
 
+  // Pre-filter: remove obsolete/discontinued candidates before scoring (batch only)
+  if (options?.filterForBatch) {
+    const preFilterCount = allCandidates.length;
+    const filtered = allCandidates.filter(c => {
+      const s = c.part.status;
+      return s !== 'Obsolete' && s !== 'Discontinued';
+    });
+    // Mutate in place to keep the same array reference used below
+    allCandidates.length = 0;
+    allCandidates.push(...filtered);
+    if (preFilterCount !== allCandidates.length) {
+      console.log(`[perf] pre-filter: removed ${preFilterCount - allCandidates.length} obsolete/discontinued candidates`);
+    }
+  }
+
   if (allCandidates.length > 0) {
     // Merge preferred manufacturers from user preferences + per-call
     const mergedPreferred = [
@@ -940,6 +966,15 @@ export async function getRecommendations(
       );
     }
 
+    // Batch filter: keep only actionable recommendations (Decision #109)
+    if (options?.filterForBatch) {
+      const preCount = recs.length;
+      recs = filterRecsForBatch(recs);
+      if (preCount !== recs.length) {
+        console.log(`[perf] batch filter: ${preCount} → ${recs.length} recs (removed ${preCount - recs.length} non-actionable)`);
+      }
+    }
+
     // Mouser candidate enrichment is deferred — the UI fetches it after recs render
     // via /api/mouser/enrich to avoid blocking the critical path (~0.8s savings)
 
@@ -952,6 +987,40 @@ export async function getRecommendations(
 
   // Step 4: No candidates found from any source
   return { recommendations: [], sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
+}
+
+// ============================================================
+// BATCH RECOMMENDATION FILTER (Decision #109)
+// ============================================================
+
+/**
+ * Filter recommendations for batch/list validation — keep only actionable results.
+ *
+ * Keep if ANY of:
+ * - No failing rules (clean match)
+ * - All fails are due to missing attributes (could pass if found manually)
+ * - At most 1 real mismatch (fail where both attributes exist)
+ * - Certified by parts.io (human-verified, kept regardless of fails)
+ *
+ * Always exclude: Obsolete or Discontinued parts (pre-filtered before scoring,
+ * but double-check here for safety).
+ */
+function filterRecsForBatch(recs: XrefRecommendation[]): XrefRecommendation[] {
+  return recs.filter(rec => {
+    // Always exclude obsolete/discontinued
+    const status = rec.part.status;
+    if (status === 'Obsolete' || status === 'Discontinued') return false;
+
+    // Always keep parts.io certified crosses
+    if (rec.certifiedBy?.some(s => s.startsWith('partsio_'))) return true;
+
+    // Count real mismatches (fail + attribute exists) vs missing-attribute fails
+    const fails = rec.matchDetails.filter(d => d.ruleResult === 'fail');
+    const realMismatches = fails.filter(d => d.replacementValue !== 'N/A');
+
+    // Keep if: no fails, all fails are missing-attribute, or at most 1 real mismatch
+    return realMismatches.length <= 1;
+  });
 }
 
 // ============================================================
