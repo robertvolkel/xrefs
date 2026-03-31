@@ -17,14 +17,15 @@ async function fetchAllPages<T>(
   supabase: Awaited<ReturnType<typeof createClient>>,
   table: string,
   columns: string,
-  filter?: (q: ReturnType<typeof supabase.from>) => typeof q,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  filter?: (q: any) => any,
 ): Promise<T[]> {
   const PAGE_SIZE = 1000;
   const results: T[] = [];
   let offset = 0;
   while (true) {
     let query = supabase.from(table).select(columns).order('id').range(offset, offset + PAGE_SIZE - 1);
-    if (filter) query = filter(query) as typeof query;
+    if (filter) query = filter(query);
     const { data: page } = await query;
     if (!page || page.length === 0) break;
     results.push(...(page as T[]));
