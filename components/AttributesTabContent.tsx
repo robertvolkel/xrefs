@@ -46,9 +46,9 @@ export const pillGroupSx = {
   },
 };
 
-type DataSource = 'digikey' | 'partsio' | 'mouser';
+type DataSource = 'digikey' | 'partsio' | 'mouser' | 'atlas';
 
-const SOURCE_LABELS: Record<DataSource, string> = { digikey: 'D', partsio: 'P', mouser: 'M' };
+const SOURCE_LABELS: Record<DataSource, string> = { digikey: 'D', partsio: 'P', mouser: 'M', atlas: 'A' };
 
 /* ── Small circular source badge (D / P / M) ── */
 function SourceBadge({ source }: { source: DataSource }) {
@@ -88,7 +88,7 @@ export function FieldRow({ label, value, source, children }: { label: string; va
 }
 
 /* ── Risk tab content ── */
-export function RiskContent({ part, t, dataSource }: { part: Part; t: T; dataSource?: string }) {
+export function RiskContent({ part, t, dataSource }: { part: Part; t: T; dataSource?: DataSource }) {
   const hasLifecycle = part.status || part.yteol != null || part.riskRank != null;
   const hasCompliance = !!part.reachCompliance || !!part.eccnCode || !!part.htsCode || !!part.countryOfOrigin;
   const hasSuggestedReplacement = part.lifecycleInfo?.some(l => l.suggestedReplacement);
@@ -114,7 +114,7 @@ export function RiskContent({ part, t, dataSource }: { part: Part; t: T; dataSou
             Lifecycle
           </Typography>
           {part.status && (
-            <FieldRow label={t('attributes.lifecycleStatus')} source={dataSource ?? 'digikey'}>
+            <FieldRow label={t('attributes.lifecycleStatus')} source={dataSource ?? 'digikey' as DataSource}>
               <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
             </FieldRow>
           )}
