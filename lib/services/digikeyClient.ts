@@ -112,6 +112,7 @@ async function getAccessToken(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal: AbortSignal.timeout(10_000),
     body: new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
@@ -148,10 +149,18 @@ function buildHeaders(token: string, currency?: string): Record<string, string> 
   return headers;
 }
 
+const DIGIKEY_TIMEOUT_MS = 10_000;
+
 async function digikeyFetch(url: string, options: RequestInit, currency?: string): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url, options);
+    let res: Response;
+    try {
+      res = await fetch(url, { ...options, signal: AbortSignal.timeout(DIGIKEY_TIMEOUT_MS) });
+    } catch (error) {
+      // Timeout or network error — don't retry, fail fast
+      throw new Error(`Digikey request failed: ${error instanceof Error ? error.message : 'timeout'}`);
+    }
 
     if (res.status === 429) {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '2', 10);

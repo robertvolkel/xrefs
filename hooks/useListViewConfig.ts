@@ -41,7 +41,11 @@ export function useListViewConfig(
     initializedListRef.current = listId;
 
     if (viewConfigs) {
-      setState(viewConfigs);
+      // Apply the starred default view on list load (not the last-active view)
+      const initialState = viewConfigs.defaultViewId && viewConfigs.defaultViewId !== viewConfigs.activeViewId
+        ? { ...viewConfigs, activeViewId: viewConfigs.defaultViewId }
+        : viewConfigs;
+      setState(initialState);
     } else {
       // Migration: copy global templates into this list
       const templates = loadViewState();

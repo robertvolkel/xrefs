@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -28,6 +28,8 @@ import {
 } from '@/lib/columnDefinitions';
 import { SavedView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
+import AddIcon from '@mui/icons-material/Add';
+import PostAddIcon from '@mui/icons-material/PostAdd';
 import PartsListHeader from './PartsListHeader';
 import PartsListActionBar from './PartsListActionBar';
 import ViewControls from './ViewControls';
@@ -35,9 +37,11 @@ import ColumnMappingDialog from './ColumnMappingDialog';
 import PartsListTable from './PartsListTable';
 import PartDetailModal from './PartDetailModal';
 import ColumnPickerDialog from './ColumnPickerDialog';
+import AddPartDialog from './AddPartDialog';
 import NewListDialog from '@/components/lists/NewListDialog';
 import ListAgentFooter from './ListAgentFooter';
 import ListAgentDrawer from './ListAgentDrawer';
+import NotificationSnackbar from '@/components/NotificationSnackbar';
 import { useListAgent } from '@/hooks/useListAgent';
 
 export default function PartsListShell() {
@@ -55,6 +59,8 @@ export default function PartsListShell() {
     handleModalConfirmReplacement, handleModalRecsRefreshed,
     handleSetPreferred,
     handleUpdateListDetails, handleRefreshRows, handleDeleteRows,
+    handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
+    handleRetryMouserEnrichment, getMouserEnrichResult,
   } = usePartsListState();
 
   const {
@@ -73,9 +79,18 @@ export default function PartsListShell() {
 
   // --- Extracted hooks ---
 
+  // Prefer the starred default from ViewState (loaded from Supabase view_configs JSONB),
+  // fall back to the list-level default (parts_lists.default_view_id column).
+  // Use listViewConfigs directly (not the hook's defaultViewId) to avoid timing issues
+  // where the hook hasn't re-initialized yet on first render.
+  const effectiveDefaultViewId = listViewConfigs?.defaultViewId || listDefaultViewId;
+
   usePartsListAutoLoad({
-    phase, rows, activeListId, listDefaultViewId, views, selectView,
+    phase, rows, activeListId,
+    listDefaultViewId: effectiveDefaultViewId,
+    views, selectView,
     handleFileSelected, handleParsedDataReady, handleLoadList, handleRefreshRows,
+    handleCreateEmptyList,
   });
 
   const {
@@ -96,6 +111,75 @@ export default function PartsListShell() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<'create' | 'edit'>('edit');
   const [editNameOpen, setEditNameOpen] = useState(false);
+  const [addPartOpen, setAddPartOpen] = useState(false);
+  const [highlightedRowIndex, setHighlightedRowIndex] = useState<number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (highlightedRowIndex != null) {
+      highlightTimerRef.current = setTimeout(() => setHighlightedRowIndex(null), 2000);
+      return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current); };
+    }
+  }, [highlightedRowIndex]);
+
+  // --- Notification snackbar ---
+
+  const [notification, setNotification] = useState<{
+    message: string;
+    severity: 'warning' | 'error' | 'info';
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
+  const prevPhaseRef = useRef(phase);
+
+  useEffect(() => {
+    const wasValidating = prevPhaseRef.current === 'validating';
+    prevPhaseRef.current = phase;
+    if (!wasValidating || phase !== 'results') return;
+
+    // Check for validation failures
+    const errorCount = rows.filter(r => r.status === 'error').length;
+    const notFoundCount = rows.filter(r => r.status === 'not-found').length;
+    const resolvedCount = rows.filter(r => r.status === 'resolved').length;
+
+    if (errorCount > 0) {
+      setNotification({
+        message: t('partsList.notifications.validationErrors', { count: errorCount }),
+        severity: 'warning',
+      });
+      return;
+    }
+
+    // Check Mouser enrichment after a short delay (it runs async after validation)
+    const timer = setTimeout(() => {
+      const result = getMouserEnrichResult();
+      if (result && result.requested > 0 && result.enriched === 0) {
+        setNotification({
+          message: t('partsList.notifications.mouserUnavailable'),
+          severity: 'warning',
+          actionLabel: t('partsList.notifications.retry'),
+          onAction: () => {
+            setNotification(null);
+            handleRetryMouserEnrichment().then(retryResult => {
+              if (retryResult.enriched > 0) {
+                setNotification({
+                  message: t('partsList.notifications.mouserLoaded', { count: retryResult.enriched }),
+                  severity: 'success' as 'info',
+                });
+              }
+            }).catch(() => {});
+          },
+        });
+      } else if (resolvedCount > 0 && notFoundCount > 0) {
+        setNotification({
+          message: t('partsList.notifications.someNotFound', { count: notFoundCount }),
+          severity: 'info',
+        });
+      }
+    }, 3000); // Wait for Mouser enrichment to finish
+
+    return () => clearTimeout(timer);
+  }, [phase, rows, t, getMouserEnrichResult, handleRetryMouserEnrichment]);
 
   // --- Sort/search/filter pipeline (stays in shell) ---
 
@@ -279,10 +363,31 @@ export default function PartsListShell() {
           onSearchChange={setSearchTerm}
           onRefresh={handleRefreshSelected}
           onDelete={() => deletion.promptDelete([...selectedRows])}
+          onAddPart={() => setAddPartOpen(true)}
         />
       )}
 
-      {showTable && (
+      {showTable && rows.length === 0 && phase === 'results' && (
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <PostAddIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
+          <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+            {t('partsList.emptyListHeading')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            {t('partsList.emptyListSubheading')}
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setAddPartOpen(true)}
+            sx={{ borderRadius: 20, textTransform: 'none' }}
+          >
+            {t('partsList.addPart')}
+          </Button>
+        </Box>
+      )}
+
+      {showTable && (rows.length > 0 || phase === 'validating') && (
         <PartsListTable
           rows={sortedRows}
           validationProgress={validationProgress}
@@ -301,6 +406,9 @@ export default function PartsListShell() {
           onHideRow={handleHideRow}
           currency={listCurrency}
           columnMap={columnMap}
+          onCellEdit={handleCellEdit}
+          highlightedRowIndex={highlightedRowIndex}
+          onCancelValidation={handleCancelValidation}
         />
       )}
 
@@ -356,6 +464,18 @@ export default function PartsListShell() {
           setPickerOpen(false);
         }}
         onCancel={() => setPickerOpen(false)}
+      />
+
+      <AddPartDialog
+        open={addPartOpen}
+        onAdd={(mpn, mfr, resolvedPart, extra) => {
+          const idx = handleAddPart(mpn, mfr, resolvedPart, extra);
+          setAddPartOpen(false);
+          if (idx != null) setHighlightedRowIndex(idx);
+        }}
+        onCancel={() => setAddPartOpen(false)}
+        spreadsheetHeaders={effectiveHeaders}
+        inferredMapping={inferredMapping}
       />
 
       <NewListDialog
@@ -442,6 +562,15 @@ export default function PartsListShell() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <NotificationSnackbar
+        open={notification !== null}
+        message={notification?.message ?? ''}
+        severity={notification?.severity}
+        onClose={() => setNotification(null)}
+        actionLabel={notification?.actionLabel}
+        onAction={notification?.onAction}
+      />
     </Box>
   );
 }

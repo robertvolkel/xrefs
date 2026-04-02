@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -364,15 +364,33 @@ export async function analyzeQcLogs(params: {
   return res.body;
 }
 
+/** Quick search for Add Part dialog — resolves MPN identity without full validation. */
+export async function searchPartQuick(
+  mpn: string,
+  manufacturer?: string,
+): Promise<{ matches: PartSummary[]; manufacturerMismatch: boolean }> {
+  const res = await fetch(`${BASE}/parts-list/search-quick`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mpn, manufacturer }),
+  });
+  if (!res.ok) {
+    return { matches: [], manufacturerMismatch: false };
+  }
+  return res.json();
+}
+
 /** Validate a batch of parts. Returns a ReadableStream for streaming NDJSON. */
 export async function validatePartsList(
-  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string }>,
+  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string; skipSearch?: boolean }>,
   currency?: string,
+  signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch(`${BASE}/parts-list/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, currency }),
+    signal,
   });
   if (!res.ok || !res.body) {
     let detail = `HTTP ${res.status}`;

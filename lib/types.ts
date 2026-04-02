@@ -734,6 +734,8 @@ export interface BatchValidateRequest {
     mpn: string;
     manufacturer?: string;
     description?: string;
+    /** When true, skip searchParts() and go straight to getAttributes(). Use when MPN was already confirmed via search picker. */
+    skipSearch?: boolean;
   }>;
   /** Currency code for pricing (e.g. 'USD', 'CNY'). Passed to Digikey API. */
   currency?: string;

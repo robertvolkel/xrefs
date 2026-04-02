@@ -1,9 +1,10 @@
 'use client';
 
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
+  Button,
   Checkbox,
   Chip,
   IconButton,
@@ -78,6 +79,12 @@ interface PartsListTableProps {
   currency?: string;
   /** Column map for calculated field operand resolution */
   columnMap?: Map<string, ColumnDefinition>;
+  /** Called when user edits a spreadsheet cell inline */
+  onCellEdit?: (rowIndex: number, columnId: string, newValue: string) => void;
+  /** Row index to briefly highlight (new part just added) */
+  highlightedRowIndex?: number | null;
+  /** Called to cancel in-progress validation */
+  onCancelValidation?: () => void;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -207,6 +214,87 @@ function OverflowTooltip({
 }
 
 // ============================================================
+// EDITABLE CELL
+// ============================================================
+
+function EditableCell({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (newValue: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = useCallback(() => {
+    setEditing(false);
+    if (draft !== value) {
+      onCommit(draft);
+    }
+  }, [draft, value, onCommit]);
+
+  const cancel = useCallback(() => {
+    setEditing(false);
+    setDraft(value);
+  }, [value]);
+
+  if (!editing) {
+    return (
+      <Box
+        onDoubleClick={(e) => { e.stopPropagation(); setDraft(value); setEditing(true); }}
+        sx={{
+          cursor: 'text',
+          minHeight: 20,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          '&:hover': { outline: '1px dashed', outlineColor: 'divider', outlineOffset: 1, borderRadius: 0.5 },
+        }}
+        title={value || undefined}
+      >
+        {value || '\u00A0'}
+      </Box>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        e.stopPropagation();
+      }}
+      onClick={e => e.stopPropagation()}
+      style={{
+        width: '100%',
+        background: 'transparent',
+        border: '1px solid var(--mui-palette-primary-main, #90caf9)',
+        borderRadius: 3,
+        color: 'inherit',
+        font: 'inherit',
+        fontSize: 'inherit',
+        padding: '1px 4px',
+        outline: 'none',
+        boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
+// ============================================================
 // CELL RENDERER
 // ============================================================
 
@@ -229,6 +317,7 @@ function CellRenderer({
   recommendation,
   isSubRow,
   columnMap,
+  onCellEdit,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -240,6 +329,7 @@ function CellRenderer({
   columnMap?: Map<string, ColumnDefinition>;
   recommendation?: XrefRecommendation;
   isSubRow?: boolean;
+  onCellEdit?: (rowIndex: number, columnId: string, newValue: string) => void;
 }) {
   const { t } = useTranslation();
 
@@ -345,6 +435,17 @@ function CellRenderer({
 
   // Data columns: use getCellValue
   const value = getCellValue(column, row, columnMap);
+
+  // Editable spreadsheet cells — render EditableCell even when empty
+  if (column.editable && onCellEdit) {
+    return (
+      <EditableCell
+        value={String(value ?? '')}
+        onCommit={(newValue) => onCellEdit(row.rowIndex, column.id, newValue)}
+      />
+    );
+  }
+
   if (value === undefined || value === null || value === '') return null;
 
   // Link columns
@@ -407,6 +508,9 @@ export default function PartsListTable({
   onHideRow,
   currency = 'USD',
   columnMap,
+  onCellEdit,
+  highlightedRowIndex,
+  onCancelValidation,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -439,11 +543,22 @@ export default function PartsListTable({
               value={validationProgress * 100}
               sx={{ mb: 1, borderRadius: 1 }}
             />
-            <Typography variant="caption" color="text.secondary">
-              {processed === 0
-                ? t('partsList.startingValidation', { total })
-                : t('partsList.validatingProgress', { processed, total })}
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                {processed === 0
+                  ? t('partsList.startingValidation', { total })
+                  : t('partsList.validatingProgress', { processed, total })}
+              </Typography>
+              {onCancelValidation && (
+                <Button
+                  size="small"
+                  onClick={onCancelValidation}
+                  sx={{ minWidth: 0, px: 1, py: 0, fontSize: '0.7rem', textTransform: 'none', borderRadius: 1 }}
+                >
+                  {t('common.stop')}
+                </Button>
+              )}
+            </Box>
           </>
         ) : null}
       </Box>
@@ -517,7 +632,16 @@ export default function PartsListTable({
                   {/* Parent row */}
                   <TableRow
                     hover
-                    sx={hasSubRows ? { '& td': { borderBottom: 'none' } } : undefined}
+                    sx={{
+                      ...(hasSubRows ? { '& td': { borderBottom: 'none' } } : undefined),
+                      ...(row.rowIndex === highlightedRowIndex ? {
+                        '@keyframes highlightFade': {
+                          from: { backgroundColor: 'rgba(144, 202, 249, 0.15)' },
+                          to: { backgroundColor: 'transparent' },
+                        },
+                        animation: 'highlightFade 1.5s ease-out',
+                      } : undefined),
+                    }}
                   >
                     {hasSelection && (
                       <TableCell sx={{ px: 0.5, width: 40 }}>
@@ -551,6 +675,7 @@ export default function PartsListTable({
                           onHideRow={onHideRow}
                           currency={currency}
                           columnMap={columnMap}
+                          onCellEdit={onCellEdit}
                         />
                       </TableCell>
                     ))}

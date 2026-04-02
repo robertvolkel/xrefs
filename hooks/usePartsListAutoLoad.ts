@@ -17,6 +17,7 @@ interface AutoLoadParams {
   handleParsedDataReady: (parsed: ParsedSpreadsheet, name?: string, description?: string, customer?: string, defaultViewId?: string) => void;
   handleLoadList: (id: string) => void;
   handleRefreshRows: (indices: number[]) => void;
+  handleCreateEmptyList: (name: string, description: string, customer?: string, defaultViewId?: string) => void;
 }
 
 /**
@@ -34,6 +35,7 @@ export function usePartsListAutoLoad({
   handleParsedDataReady,
   handleLoadList,
   handleRefreshRows,
+  handleCreateEmptyList,
 }: AutoLoadParams) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -58,7 +60,9 @@ export function usePartsListAutoLoad({
 
     const pending = consumePendingFile();
     if (pending) {
-      if (pending.parsedData) {
+      if (pending.isEmpty) {
+        handleCreateEmptyList(pending.name, pending.description, pending.customer, pending.defaultViewId);
+      } else if (pending.parsedData) {
         handleParsedDataReady(pending.parsedData, pending.name, pending.description, pending.customer, pending.defaultViewId);
       } else if (pending.file) {
         handleFileSelected(pending.file, pending.name, pending.description, pending.customer, pending.defaultViewId);

@@ -453,10 +453,10 @@ async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: s
  * - parts.io: parameters[], part lifecycle metadata
  * - Mouser: part.supplierQuotes, part.lifecycleInfo, part.complianceData
  */
-async function enrichSourceInParallel(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
+async function enrichSourceInParallel(attrs: PartAttributes, userId?: string, skipMouser?: boolean): Promise<PartAttributes> {
   const [partsioResult, mouserResult] = await Promise.all([
     enrichWithPartsio(attrs, userId),
-    enrichWithMouser(attrs, userId),
+    skipMouser ? attrs : enrichWithMouser(attrs, userId),
   ]);
 
   // Merge: start from parts.io result (has parametric gap-fills + lifecycle),
@@ -482,13 +482,16 @@ async function enrichSourceInParallel(attrs: PartAttributes, userId?: string): P
 // ATTRIBUTES
 // ============================================================
 
-export async function getAttributes(mpn: string, currency?: string, userId?: string): Promise<PartAttributes | null> {
+export async function getAttributes(
+  mpn: string, currency?: string, userId?: string,
+  options?: { skipMouser?: boolean },
+): Promise<PartAttributes | null> {
   if (isDigikeyConfigured()) {
     try {
       const response = await getProductDetails(mpn, currency, userId);
       if (response.Product) {
         const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId);
+        return await enrichSourceInParallel(attrs, userId, options?.skipMouser);
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -508,7 +511,7 @@ export async function getAttributes(mpn: string, currency?: string, userId?: str
       );
       if (match) {
         const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId);
+        return await enrichSourceInParallel(attrs, userId, options?.skipMouser);
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
@@ -575,13 +578,13 @@ export async function getRecommendations(
   userPreferences?: UserPreferences,
   userId?: string,
   prefetchedAttributes?: PartAttributes,
-  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean },
+  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipMouser?: boolean },
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
   // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
   console.time('[perf] getAttributes');
-  const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId);
+  const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId, { skipMouser: options?.skipMouser });
   console.timeEnd('[perf] getAttributes');
   if (!sourceAttrs) {
     const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
@@ -747,7 +750,7 @@ export async function getRecommendations(
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
     }),
-    fetchMouserSuggestions(sourceAttrs, currency, userId).catch((error) => {
+    fetchMouserSuggestions(sourceAttrs, currency, userId, options?.skipMouser).catch((error) => {
       console.warn('Mouser suggestion fetch failed:', error);
       return [] as PartAttributes[];
     }),
@@ -1091,6 +1094,7 @@ async function fetchMouserSuggestions(
   sourceAttrs: PartAttributes,
   currency?: string,
   userId?: string,
+  skipMouser?: boolean,
 ): Promise<PartAttributes[]> {
   const mouserLifecycle = sourceAttrs.part.lifecycleInfo?.find(l => l.source === 'mouser');
   if (!mouserLifecycle?.suggestedReplacement) return [];
@@ -1101,7 +1105,7 @@ async function fetchMouserSuggestions(
   console.log(`[mouser] Fetching suggested replacement: ${cleanMpn} (from ${mouserLifecycle.suggestedReplacement})`);
 
   try {
-    const attrs = await getAttributes(cleanMpn, currency, userId);
+    const attrs = await getAttributes(cleanMpn, currency, userId, { skipMouser });
     if (!attrs) return [];
     return [attrs];
   } catch (error) {

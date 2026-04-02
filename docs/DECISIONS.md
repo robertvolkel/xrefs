@@ -2933,3 +2933,164 @@ Additionally, the `skipParams` set blocked dictionary lookups for params like `�
 **Solution:** Added `tableLayout: 'fixed'` to both `Table` components (AttributesPanel + ComparisonView). This forces the browser to strictly enforce column widths and row heights instead of auto-sizing based on content. Also tightened `px` on the 3rd column (status dot) and added `lineHeight: 0` to prevent inline-flex dot from adding vertical space.
 
 **Modified files:** `lib/services/matchingEngine.ts`, `lib/services/digikeyClient.ts`, `lib/services/digikeyMapper.ts`, `lib/services/partDataService.ts`, `components/ComparisonView.tsx`, `components/AttributesPanel.tsx`, `__tests__/services/matchingEngine.test.ts`.
+
+## Decision #110 — List Performance, Batch Recommendation Filter, and Admin Logic Docs (Mar 2026)
+
+**Three changes addressing list refresh performance, recommendation quality, and admin documentation.**
+
+### 1. List refresh performance
+
+**Problem:** Refreshing 8 parts took ~2 minutes. Root causes: (a) parts.io fetch had no timeout — if unreachable (VPN off), each call hung for OS-level TCP timeout (~60s) with 3 retries; (b) candidate enrichment fired 20 parallel parts.io API calls per part; (c) "Refreshed at" timestamp showed page-load time, not actual data refresh time.
+
+**Solution:**
+- **8s timeout on parts.io fetch** (`lib/services/partsioClient.ts`): `AbortSignal.timeout(8000)` on every fetch call. Each retry gets its own timeout.
+- **Skip parts.io candidate enrichment in batch** (`lib/services/partDataService.ts`): New `skipPartsioEnrichment` option gates the 20-call enrichment step. Batch validation sets it; single-part search still enriches fully. Parts.io gap-fill adds ~5-15% weight coverage — acceptable tradeoff for batch speed.
+- **Timestamp from Supabase** (`lib/supabasePartsListStorage.ts`): `loadPartsListSupabase()` now returns `updated_at`. `handleLoadList` uses this instead of `new Date()` for `lastRefreshedAt`. Fresh validation/refresh still stamps "now".
+
+### 2. Batch recommendation filter (Decision #109 follow-up)
+
+**Problem:** Lists pulled in ALL scored recommendations (up to 67+ per part) — expensive, noisy, and most aren't actionable. Users want only viable recommendations in lists; full results available on-demand per part.
+
+**Solution:** New `filterForBatch` option on `getRecommendations()`, applied only in batch validation:
+
+**Pre-scoring:** Obsolete and Discontinued candidates removed before scoring (saves computation).
+
+**Post-scoring filter (`filterRecsForBatch`):** A recommendation is kept if ANY of:
+- No failing rules (clean match)
+- All fails are due to missing attributes (replacementValue is "N/A" — could pass if spec found manually)
+- At most 1 real mismatch (fail where both attributes exist)
+- Certified by parts.io (FFF or Functional — human-verified, always kept regardless of fails)
+
+Always excluded: Obsolete or Discontinued parts (even if certified). NRND and LastTimeBuy are kept.
+
+Single-part search on the main page is unaffected — still returns all results.
+
+### 3. Admin logic documentation panels
+
+**Problem:** Admins had no reference for how the search and list pipelines work — what APIs are called, what's cached, how recommendations are calculated, what filters apply.
+
+**Solution:** Two new admin sections between Digikey Taxonomy and Feedback:
+- **Search Logic** (`components/admin/SearchLogicPanel.tsx`): 9 sections covering source resolution, enrichment, caching (L2 TTLs), family classification, candidate sourcing (4 parallel sources), scoring, post-scoring filters, LLM assessment, admin overrides.
+- **List Logic** (`components/admin/ListLogicPanel.tsx`): 9 sections covering per-row processing, direct lookup fallback, parts.io disambiguation, performance optimizations vs search, batch filter rules, caching, data persistence, footer timestamp, parts.io timeout.
+
+Hardcoded markdown content maintained alongside code changes — no LLM generation, instant render.
+
+**Also:** "Risk" tab pill renamed to "Risk & Compliance" in both AttributesPanel and ComparisonView (`locales/en.json`).
+
+**New files:** `components/admin/SearchLogicPanel.tsx`, `components/admin/ListLogicPanel.tsx`.
+
+**Modified files:** `lib/services/partsioClient.ts`, `lib/services/partDataService.ts`, `lib/supabasePartsListStorage.ts`, `hooks/usePartsListState.ts`, `app/api/parts-list/validate/route.ts`, `components/admin/AdminSectionNav.tsx`, `components/admin/AdminShell.tsx`, `locales/en.json`.
+
+## Decision #111 — List Agent: Conversational Control for Parts Lists (Mar 2026)
+
+**Problem:** Users interact with parts lists exclusively through manual UI controls (search box, sort clicks, checkboxes, action buttons). For large BOMs, common operations like "delete all unresolved rows" or "show me only TDK parts" require multiple clicks and manual selection.
+
+**Solution:** A per-list conversational agent that lets users control their list with natural language. Built as a third orchestrator function (`listChat()`) in `llmOrchestrator.ts`, alongside the existing `chat()` (search) and `refinementChat()` (modal per-part).
+
+**Architecture:**
+- **9 tools** in three categories:
+  - **Read-only** (execute server-side): `get_list_summary`, `query_list` (with status/manufacturer/search/score filters), `get_row_detail`
+  - **Client-side view** (execute immediately, no confirmation): `sort_list`, `filter_list`, `switch_view`
+  - **Write** (require user confirmation): `delete_rows`, `refresh_rows`, `set_preferred`
+- **Write-tool interception:** When the LLM calls a write tool, the server does NOT execute it. Instead, it returns a synthetic tool result ("Action queued for user confirmation") and captures a `PendingListAction` descriptor. Claude then generates a confirmation message. The client renders this as a confirmation widget with [Confirm]/[Cancel] buttons (new `InteractiveElement` type: `'list-action'`).
+- **System prompt** includes three sections: role/instructions, user context (reuses `buildUserContextSection()` from main chat — role, industry, goals, compliance, preferred manufacturers), and list context (name, description/objective, customer, currency, status counts, top manufacturers/families, available views).
+- **Row data stays server-side:** The API route loads rows from Supabase for tool execution. Row data is never sent to Claude in bulk — only compact query results from tools.
+- **Conversation is ephemeral** (MVP): Lost when navigating away. Persistence can be added later.
+
+**UI:** Sticky bottom footer bar (34px, `LIST_AGENT_FOOTER_HEIGHT`) with clickable trigger on the right ("Ask about this list"). Footer also shows item count and last refresh timestamp. Opens a bottom-anchored drawer (`ListAgentDrawer`, 50vh) sliding up with message list + text input.
+
+**Scope:** List operations only. The list agent does NOT have search/xref tools — users go to the main chat for that. This keeps the tool set focused and avoids confusing the LLM with irrelevant capabilities.
+
+**New types:** `PendingListAction` (delete_rows | refresh_rows | set_preferred), `ListClientAction` (sort | filter | switch_view), `ListAgentContext`, `ListAgentResponse`. Extended `InteractiveElement` union with `'list-action'` variant.
+
+**New files:** `hooks/useListAgent.ts`, `app/api/list-chat/route.ts`, `components/parts-list/ListAgentFooter.tsx`, `components/parts-list/ListAgentDrawer.tsx`, `components/parts-list/ListActionConfirmation.tsx`.
+
+**Modified files:** `lib/types.ts`, `lib/services/llmOrchestrator.ts`, `lib/api.ts`, `lib/services/apiUsageLogger.ts`, `lib/layoutConstants.ts`, `components/MessageBubble.tsx`, `components/parts-list/PartsListShell.tsx`.
+
+---
+
+## Decision #112 — Atlas Description Extraction via LLM with Quote Grounding (Mar 2026)
+
+**Problem:** 12,510 Atlas products (22.9%) have structured description text containing parametric specs (voltages, currents, temp ranges, AEC qualifications, etc.) that are never extracted into attributes. Current attribute coverage for these products averages ~15% of their family's schema. The data is right there but unused.
+
+**Solution:** Batch LLM extraction using Claude Haiku. For each product with a description, the script sends the description + the family's attribute schema to Haiku, which returns structured JSON with extracted values. A quote grounding mechanism prevents hallucinations: Haiku must return the exact source substring for each extraction, and any extraction where the quoted text isn't found in the original description is rejected.
+
+**Why LLM over regex:** Descriptions are rich with family-specific specs (MOSFET VDS/RDS(ON), LDO quiescent current/soft-start, inductor shielding/core material). Building regex per attribute per family doesn't scale. Haiku handles the full breadth for ~$12-15 total across all products.
+
+**Anti-hallucination — Quote Grounding:** Each extraction must include `{ value, source }` where `source` is the exact substring from the description. The parser verifies `source` is a case-insensitive substring of the original description. If not found, the extraction is rejected. In testing across multiple families, this produced 0 false positives.
+
+**Gap-fill only:** Extracted values never override existing gaia/standard parameter values. Only attributes not already present on the product are added.
+
+**Idempotent:** Processed products are tagged with `_source: 'desc_extract'` marker. Re-runs skip already-processed products.
+
+**Integration with ingest:** After `atlas-ingest.mjs` upserts products to Supabase, it automatically runs the extraction script as a post-ingest step (non-fatal — if ANTHROPIC_API_KEY is missing or extraction fails, the ingest still completes).
+
+**Coverage impact (estimated):** 15% → ~23% average attribute coverage for products with descriptions (+8pp). Biggest wins: inductors 11%→29%, fuses 0%→21%, LDOs 22%→30%.
+
+**New files:** `lib/services/descriptionExtractor.ts` (schema prompt builder, quote-grounded parser, gap-fill merger), `scripts/atlas-extract-descriptions.ts` (batch script with concurrency control), `__tests__/services/descriptionExtractor.test.ts` (22 tests).
+
+**Modified files:** `scripts/atlas-ingest.mjs` (auto-run extraction post-ingest).
+
+---
+
+## Decision #113 — Manual Part Addition & Empty List Creation (Mar 2026)
+
+**Problem:** Users could only create lists by uploading a file or pasting data. No way to create an empty list and add parts one by one, or to manually add individual parts to an existing list. Some users want to build lists incrementally rather than batch-uploading.
+
+**Solution:** Two new capabilities:
+
+1. **Empty List Creation** — Third tab ("Empty List") in `InputMethodDialog`. Flows through existing two-step dialog chain (choose method → name/configure). Creates a Supabase-persisted list with zero rows and default headers `['MPN', 'Manufacturer']`. Uses new `setPendingEmptyList()` in `pendingFile.ts` and `handleCreateEmptyList()` in `usePartsListState`.
+
+2. **Manual Part Addition** — `AddPartDialog` component accessible from the action bar's "Add Part" button (always enabled, no selection required). Required fields: MPN only (manufacturer optional but encouraged). For lists with existing spreadsheet columns from uploads, shows a collapsible "Additional Columns" section with fields for each extra header. On submit, creates a `PartsListRow` with correct `rawCells` alignment (uses `columnMapping` indices for uploaded lists, default [0, 1] for empty lists) and runs inline validation via the existing streaming `validatePartsList` API.
+
+**Why inline validation instead of `handleRefreshRows`:** The `handleRefreshRows` callback reads `state.rows` from a closure snapshot, which doesn't include the just-added row. `handleAddPart` builds validation items directly from its function arguments, avoiding the stale-closure race.
+
+**Empty state UX:** When a list has zero rows (phase='results'), the table area shows a centered empty state with icon, "No parts yet" heading, and prominent "Add Part" CTA button. The action bar still renders above it so the button is accessible from both locations.
+
+**Design choice — Dialog not Drawer:** Matches existing data-entry patterns (NewListDialog, InputMethodDialog). Drawers are reserved for detail/comparison views.
+
+**New files:** `components/parts-list/AddPartDialog.tsx`.
+
+**Modified files:** `lib/pendingFile.ts`, `hooks/usePartsListState.ts`, `hooks/usePartsListAutoLoad.ts`, `components/lists/InputMethodDialog.tsx`, `components/lists/ListsDashboard.tsx`, `components/parts-list/PartsListActionBar.tsx`, `components/parts-list/PartsListShell.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
+
+---
+
+## Decision #114 — Atlas Description Cleanup & Display Fixes (Apr 2026)
+
+**Problem:** Three display issues with Atlas-only parts: (1) Chat responses dump raw, messy Atlas descriptions verbatim ("DATA:Inductance@100KHz/1V(μH)：15uH..."). (2) AEC-Q200 badge doesn't show next to the Active status chip even when the qualification is in the parameters. (3) Risk & Compliance tab hardcodes source as "D" (Digikey) even for Atlas-only parts.
+
+**Solution:**
+
+**Description cleanup (Issue 1):** Batch script (`scripts/atlas-clean-descriptions.ts`) calls Claude Haiku to rewrite raw descriptions into standardized one-liners (max 200 chars) stored in a new `clean_description` column on `atlas_products`. Format: `[Component type]: [key specs]; [features]; [applications]; [qualifications/temp]`. Cleanup rules: fix OCR errors, standardize units, remove marketing fluff, translate Chinese specs. `atlasClient.ts` uses `clean_description` when available, falls back to raw `description`. Runs automatically post-ingest after the attribute extraction step.
+
+**AEC badge (Issue 2):** `rowToPartAttributes()` in `atlasClient.ts` now checks parameters JSONB for `aec_q200`/`aec_q101`/`aec_q100` with value `"Yes"` and populates `part.qualifications`. The badge then renders automatically in `AttributesPanel.tsx` header.
+
+**Source attribution (Issue 3):** `RiskContent` in `AttributesTabContent.tsx` now accepts a `dataSource` prop instead of hardcoding `source="digikey"`. `AttributesPanel.tsx` passes `attributes.dataSource` through.
+
+**New files:** `scripts/atlas-clean-descriptions.ts`.
+
+**Modified files:** `lib/services/atlasClient.ts` (clean_description usage, AEC qualifications extraction, select queries updated), `components/AttributesTabContent.tsx` (dataSource prop on RiskContent), `components/AttributesPanel.tsx` (pass dataSource to RiskContent), `scripts/atlas-ingest.mjs` (auto-run cleanup post-ingest).
+
+**DB migration:** `ALTER TABLE atlas_products ADD COLUMN IF NOT EXISTS clean_description TEXT;`
+
+---
+
+## Decision #115 — Add Part UX: Search Picker, Speed Fix, Inline Editing (Apr 2026)
+
+**Problem:** Three issues with the "Add Part to List" flow: (1) Resolution took 60+ seconds due to Mouser API calls hanging with no timeout. (2) MPN and manufacturer inputs were not validated — the manufacturer field was silently ignored, and incorrect MPNs went straight to the list with no feedback. (3) User-provided spreadsheet columns were read-only after entry; no way to fix typos or update values without re-adding.
+
+**Solution:**
+
+**Mouser timeout fix (root cause of 60s delay):** `mouserFetch()` in `mouserClient.ts` had no timeout on `fetch()` and retried 3x on 429. If the Mouser API was slow or unreachable, each attempt hung indefinitely. Two sequential Mouser calls (source part enrichment + suggested replacement lookup) added up to 60s+. Fix: Added 8-second `AbortSignal.timeout()` per attempt. Also added `skipMouser` option to `getAttributes()` and `enrichSourceInParallel()` — batch validation now skips Mouser entirely since it provides only commercial data (pricing/lifecycle), not parametric data needed for scoring. Passed through `getRecommendations()` options and `fetchMouserSuggestions()`.
+
+**Search picker in AddPartDialog:** Replaced the direct-add flow with a two-step Search → Select pattern. User enters MPN (+ optional MFR), clicks "Search". A new lightweight endpoint (`/api/parts-list/search-quick`) runs `searchParts()` only (~500ms, no attributes/recommendations, skipMouser). Results appear as a clickable picker list showing MPN, manufacturer, description, and data source badge. Exact MPN matches get a green checkmark. User selects the correct part, which is added with the verified identity. "Add with original input anyway" link for edge cases. "Back" button to modify the query. If no results, warning with option to add as not-found. This covers both incorrect MPNs (user sees closest matches) and wrong manufacturers (correct manufacturer shown in results).
+
+**Two-phase validation:** The selected `PartSummary` from the search step is passed to `handleAddPart()`, which shows the resolved MPN/MFR in the table immediately (status: 'validating'). Full validation (attributes + recommendations) runs in the background and merges in when complete.
+
+**New part at top:** `handleAddPart()` now prepends `[newRow, ...prev.rows]` instead of appending, so the just-added part is immediately visible without scrolling.
+
+**Inline cell editing:** Spreadsheet columns (`ss:*`) are now double-click-to-edit in the table. `EditableCell` component renders a dashed hover hint, switches to a native `<input>` on double-click, commits on Enter/blur, cancels on Escape. MPN or manufacturer edits trigger debounced (500ms) re-validation via `handleRefreshRows`. Other column edits just save to Supabase. `editable: true` flag on `ColumnDefinition` for all `source: 'spreadsheet'` columns.
+
+**New files:** `app/api/parts-list/search-quick/route.ts`.
+
+**Modified files:** `lib/services/mouserClient.ts` (fetch timeout), `lib/services/partDataService.ts` (skipMouser option on getAttributes/enrichSourceInParallel/getRecommendations/fetchMouserSuggestions), `app/api/parts-list/validate/route.ts` (pass skipMouser), `lib/api.ts` (searchPartQuick wrapper), `lib/columnDefinitions.ts` (editable flag), `components/parts-list/AddPartDialog.tsx` (rewritten: search picker flow), `components/parts-list/PartsListTable.tsx` (EditableCell component, onCellEdit prop), `components/parts-list/PartsListShell.tsx` (wire handleCellEdit + updated onAdd), `hooks/usePartsListState.ts` (handleAddPart two-phase + prepend, handleCellEdit), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
