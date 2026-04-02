@@ -91,7 +91,7 @@ interface AtlasProduct {
   mpn: string;
   family_id: string | null;
   description: string;
-  parameters: Record<string, { value?: string; numericValue?: number; unit?: string }>;
+  parameters: Record<string, { value?: string; numericValue?: number; unit?: string; _source?: string }>;
 }
 
 async function fetchProducts(): Promise<AtlasProduct[]> {
