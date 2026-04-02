@@ -64,16 +64,24 @@ interface AtlasProductRow {
 // ─── Helpers ──────────────────────────────────────────────
 
 function rowToPartAttributes(row: AtlasProductRow): PartAttributes {
+  // Extract AEC qualifications from parameters JSONB
+  const qualifications: string[] = [];
+  const params = row.parameters || {};
+  if (params.aec_q200?.value === 'Yes') qualifications.push('AEC-Q200');
+  if (params.aec_q101?.value === 'Yes') qualifications.push('AEC-Q101');
+  if (params.aec_q100?.value === 'Yes') qualifications.push('AEC-Q100');
+
   const part: Part = {
     mpn: row.mpn,
     manufacturer: row.manufacturer,
-    description: row.description || '',
+    description: (row as Record<string, unknown>).clean_description as string || row.description || '',
     detailedDescription: row.description || '',
     category: row.category as Part['category'],
     subcategory: row.subcategory,
     status: (row.status || 'Active') as Part['status'],
     datasheetUrl: row.datasheet_url || undefined,
     manufacturerCountry: row.manufacturer_country || 'CN',
+    ...(qualifications.length > 0 && { qualifications }),
   };
 
   const parameters: ParametricAttribute[] = fromParametersJsonb(row.parameters, row.family_id, row.category);
@@ -98,7 +106,7 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
     // Over-fetch to compensate for disabled manufacturer filtering
     const { data, error } = await supabase
       .from('atlas_products')
-      .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
+      .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
       .or(`mpn.ilike.%${query}%,manufacturer.ilike.%${query}%`)
       .limit(50);
 
@@ -125,7 +133,7 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
     const matches: PartSummary[] = trimmed.map((row) => ({
       mpn: row.mpn,
       manufacturer: row.manufacturer,
-      description: row.description || '',
+      description: (row as Record<string, unknown>).clean_description as string || row.description || '',
       category: row.category as PartSummary['category'],
       status: (row.status || 'Active') as PartSummary['status'],
       dataSource: 'atlas' as const,
@@ -179,7 +187,7 @@ export async function fetchAtlasCandidates(familyId: string): Promise<PartAttrib
     const disabled = await getDisabledManufacturers();
     let query = supabase
       .from('atlas_products')
-      .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
+      .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
       .eq('family_id', familyId);
 
     if (disabled.size > 0) {

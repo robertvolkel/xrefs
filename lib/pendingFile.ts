@@ -3,6 +3,7 @@ import { ParsedSpreadsheet } from './types';
 export interface PendingFileData {
   file?: File;
   parsedData?: ParsedSpreadsheet;
+  isEmpty?: boolean;
   name: string;
   description: string;
   customer: string;
@@ -17,6 +18,10 @@ export function setPendingFile(file: File, name: string, description: string, cu
 
 export function setPendingParsedData(parsed: ParsedSpreadsheet, name: string, description: string, customer: string = '', defaultViewId: string = '') {
   pending = { parsedData: parsed, name, description, customer, defaultViewId };
+}
+
+export function setPendingEmptyList(name: string, description: string, customer: string = '', defaultViewId: string = '') {
+  pending = { isEmpty: true, name, description, customer, defaultViewId };
 }
 
 /** Check if there's a pending file without consuming it */

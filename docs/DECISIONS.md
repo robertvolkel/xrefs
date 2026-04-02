@@ -1539,7 +1539,7 @@ Admin-only announcement feed visible to all authenticated users at `/releases`. 
 
 3. **Parallel search and candidate fetch:** `searchParts()` runs Digikey + Atlas in parallel via `Promise.all()`, merges with MPN-based dedup (Digikey preferred when both have the same MPN). `getRecommendations()` does the same for candidate fetching — `fetchDigikeyCandidates()` and `fetchAtlasCandidates(familyId)` run in parallel.
 
-4. **Attribute fallback chain:** Digikey product details → Digikey keyword search → Atlas → Mock. Atlas is the third-priority source, used when Digikey doesn't carry the part.
+4. **Attribute fallback chain:** Digikey product details → Digikey keyword search → Parts.io → Atlas → null. Parts.io is preferred over Atlas as a fallback because it has 600M parts with richer English parametric data vs Atlas's 55K Chinese manufacturer products. Atlas catches parts not in either Digikey or Parts.io.
 
 5. **Family classification at ingestion time:** The ingestion script maps each product's `subcategory` to a `family_id` using `mapSubcategoryToFamilyId()` from `lib/logicTables/index.ts`. Products without a matching family get `family_id = null` (search-only, not scorable).
 

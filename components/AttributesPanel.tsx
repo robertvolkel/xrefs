@@ -218,7 +218,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
       )}
 
       {activeTab === 'risk' && attributes && (
-        <RiskContent part={attributes.part} t={t} />
+        <RiskContent part={attributes.part} t={t} dataSource={attributes.dataSource} />
       )}
 
       {activeTab === 'commercial' && attributes && (

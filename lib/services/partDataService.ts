@@ -2,6 +2,7 @@
  * Part Data Service — Unified data layer
  *
  * Tries Digikey API first, then parts.io gap-fill, then Atlas.
+ * Attribute fallback chain: Digikey → Parts.io → Atlas → null.
  * Returns null/empty when no real data source has results.
  * All functions are async and server-side only.
  */
@@ -519,15 +520,7 @@ export async function getAttributes(
     }
   }
 
-  // Fallback: try Atlas database
-  try {
-    const atlasAttrs = await getAtlasAttributes(mpn);
-    if (atlasAttrs) return atlasAttrs;
-  } catch {
-    console.warn('Atlas attribute lookup failed for', mpn);
-  }
-
-  // Fallback: try parts.io directly (covers parts.io-only candidates like FFF/FE equivalents)
+  // Fallback: try parts.io directly (600M parts, richer parametric data than Atlas)
   if (isPartsioConfigured()) {
     try {
       const listing = await getPartsioProductDetails(mpn, userId);
@@ -560,6 +553,14 @@ export async function getAttributes(
       console.warn('Parts.io attribute lookup failed for', mpn);
       reportServiceFailure('partsio', 'degraded', 'Attribute lookup failed');
     }
+  }
+
+  // Fallback: try Atlas database (Chinese manufacturer coverage)
+  try {
+    const atlasAttrs = await getAtlasAttributes(mpn);
+    if (atlasAttrs) return atlasAttrs;
+  } catch {
+    console.warn('Atlas attribute lookup failed for', mpn);
   }
 
   return null;

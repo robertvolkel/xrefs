@@ -1498,4 +1498,30 @@ async function processFile(filePath) {
   console.log(`\n${'═'.repeat(60)}`);
   console.log(`GRAND TOTAL: ${grandTotal} models, ${grandMapped} mapped, ${grandSkipped} skipped, ${grandErrors} errors`);
   console.log(`${'═'.repeat(60)}`);
+
+  // Run description extraction on newly ingested products
+  if (!dryRun && grandMapped > 0 && process.env.ANTHROPIC_API_KEY) {
+    console.log(`\nRunning description extraction on ingested products...`);
+    const { execSync } = await import('child_process');
+    try {
+      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
+      execSync(`npx tsx scripts/atlas-extract-descriptions.ts ${familyArg} --concurrency 10`, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+      });
+    } catch (err) {
+      console.error('Description extraction failed (non-fatal):', err.message);
+    }
+
+    console.log(`\nRunning description cleanup on ingested products...`);
+    try {
+      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
+      execSync(`npx tsx scripts/atlas-clean-descriptions.ts ${familyArg} --concurrency 10`, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+      });
+    } catch (err) {
+      console.error('Description cleanup failed (non-fatal):', err.message);
+    }
+  }
 })();

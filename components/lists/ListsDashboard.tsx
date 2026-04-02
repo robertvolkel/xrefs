@@ -26,7 +26,7 @@ import {
   deletePartsListSupabase,
   updatePartsListDetailsSupabase,
 } from '@/lib/supabasePartsListStorage';
-import { setPendingFile, setPendingParsedData } from '@/lib/pendingFile';
+import { setPendingFile, setPendingParsedData, setPendingEmptyList } from '@/lib/pendingFile';
 import { ParsedSpreadsheet } from '@/lib/types';
 import { useViewTemplates } from '@/hooks/useViewConfig';
 import ParticleWaveBackground from '../ParticleWaveBackground';
@@ -70,6 +70,7 @@ export default function ListsDashboard() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedFromPaste, setParsedFromPaste] = useState<ParsedSpreadsheet | null>(null);
+  const [isEmptyListMode, setIsEmptyListMode] = useState(false);
 
   // Load lists on mount
   useEffect(() => {
@@ -143,8 +144,19 @@ export default function ListsDashboard() {
     setDialogOpen(true);
   }, []);
 
+  const handleInputMethodEmpty = useCallback(() => {
+    setInputMethodOpen(false);
+    setIsEmptyListMode(true);
+    setDialogOpen(true);
+  }, []);
+
   const handleDialogConfirm = (name: string, description: string, _currency: string, customer: string, defaultViewId: string) => {
-    if (parsedFromPaste) {
+    if (isEmptyListMode) {
+      setPendingEmptyList(name, description, customer, defaultViewId);
+      setDialogOpen(false);
+      setIsEmptyListMode(false);
+      router.push('/parts-list');
+    } else if (parsedFromPaste) {
       setPendingParsedData(parsedFromPaste, name, description, customer, defaultViewId);
       setDialogOpen(false);
       setParsedFromPaste(null);
@@ -161,6 +173,7 @@ export default function ListsDashboard() {
     setDialogOpen(false);
     setSelectedFile(null);
     setParsedFromPaste(null);
+    setIsEmptyListMode(false);
   };
 
   const handleCardClick = (id: string) => {
@@ -405,6 +418,7 @@ export default function ListsDashboard() {
         open={inputMethodOpen}
         onFileSelected={handleInputMethodFile}
         onTextParsed={handleInputMethodPaste}
+        onEmptyList={handleInputMethodEmpty}
         onCancel={() => setInputMethodOpen(false)}
       />
 

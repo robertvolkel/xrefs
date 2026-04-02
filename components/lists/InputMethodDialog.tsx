@@ -16,7 +16,9 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import ContentPasteIcon from '@mui/icons-material/ContentPaste';
+import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import PostAddIcon from '@mui/icons-material/PostAdd';
 import { ParsedSpreadsheet } from '@/lib/types';
 import { parseTextInput } from '@/lib/textParser';
 
@@ -24,6 +26,7 @@ interface InputMethodDialogProps {
   open: boolean;
   onFileSelected: (file: File) => void;
   onTextParsed: (parsed: ParsedSpreadsheet) => void;
+  onEmptyList: () => void;
   onCancel: () => void;
 }
 
@@ -33,6 +36,7 @@ export default function InputMethodDialog({
   open,
   onFileSelected,
   onTextParsed,
+  onEmptyList,
   onCancel,
 }: InputMethodDialogProps) {
   const { t } = useTranslation();
@@ -126,10 +130,12 @@ export default function InputMethodDialog({
       } catch {
         // Error already shown via preview
       }
+    } else if (tab === 2) {
+      onEmptyList();
     }
   };
 
-  const canProceed = tab === 0 ? selectedFile !== null : pastePreview !== null;
+  const canProceed = tab === 0 ? selectedFile !== null : tab === 1 ? pastePreview !== null : true;
 
   return (
     <Dialog
@@ -161,6 +167,12 @@ export default function InputMethodDialog({
             icon={<ContentPasteIcon sx={{ fontSize: 18 }} />}
             iconPosition="start"
             label={t('inputMethod.pasteTab')}
+            sx={{ textTransform: 'none', minHeight: 40, py: 0 }}
+          />
+          <Tab
+            icon={<EditNoteOutlinedIcon sx={{ fontSize: 18 }} />}
+            iconPosition="start"
+            label={t('inputMethod.emptyListTab')}
             sx={{ textTransform: 'none', minHeight: 40, py: 0 }}
           />
         </Tabs>
@@ -251,6 +263,16 @@ export default function InputMethodDialog({
                 {pasteError}
               </Typography>
             )}
+          </Box>
+        )}
+
+        {/* Empty List tab */}
+        {tab === 2 && (
+          <Box sx={{ py: 5, textAlign: 'center' }}>
+            <PostAddIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 1, opacity: 0.5 }} />
+            <Typography variant="body2" color="text.secondary">
+              {t('inputMethod.emptyListDescription')}
+            </Typography>
           </Box>
         )}
       </DialogContent>
