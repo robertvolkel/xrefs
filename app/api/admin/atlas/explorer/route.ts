@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase
       .from('atlas_products')
-      .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, parameters')
+      .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, parameters')
       .or(`mpn.ilike.%${q}%,manufacturer.ilike.%${q}%`)
       .limit(50);
 
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
         id: row.id as string,
         mpn: row.mpn as string,
         manufacturer: row.manufacturer as string,
-        description: (row.description as string | null) ?? null,
+        description: (row.clean_description as string | null) || (row.description as string | null) || null,
         category: row.category as string,
         subcategory: row.subcategory as string,
         familyId,

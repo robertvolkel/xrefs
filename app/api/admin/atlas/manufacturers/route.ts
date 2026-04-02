@@ -27,24 +27,37 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
 
     const supabase = createServiceClient();
 
-    const { error } = await supabase
-      .from('atlas_manufacturer_settings')
-      .upsert(
-        {
-          manufacturer,
-          enabled,
-          updated_at: new Date().toISOString(),
-          updated_by: user!.id,
-        },
-        { onConflict: 'manufacturer' },
-      );
+    // Try atlas_manufacturers first (new canonical table), fallback to legacy
+    const { error: newTableErr } = await supabase
+      .from('atlas_manufacturers')
+      .update({
+        enabled,
+        updated_at: new Date().toISOString(),
+        updated_by: user!.id,
+      })
+      .eq('name_display', manufacturer);
 
-    if (error) {
-      console.error('Atlas manufacturer settings upsert error:', error.message, error.details, error.hint);
-      return NextResponse.json(
-        { success: false, error: 'Failed to update manufacturer setting' },
-        { status: 500 },
-      );
+    if (newTableErr) {
+      // Fallback to legacy atlas_manufacturer_settings
+      const { error } = await supabase
+        .from('atlas_manufacturer_settings')
+        .upsert(
+          {
+            manufacturer,
+            enabled,
+            updated_at: new Date().toISOString(),
+            updated_by: user!.id,
+          },
+          { onConflict: 'manufacturer' },
+        );
+
+      if (error) {
+        console.error('Atlas manufacturer settings upsert error:', error.message, error.details, error.hint);
+        return NextResponse.json(
+          { success: false, error: 'Failed to update manufacturer setting' },
+          { status: 500 },
+        );
+      }
     }
 
     invalidateManufacturerCache();

@@ -85,11 +85,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
             : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
-          {coverage !== null && (
-            <Typography component="span" sx={{ fontSize: '0.95rem' }}>
-              {' / '}{coverage}% {t('recommendations.paramCoverage', 'param coverage')}
-            </Typography>
-          )}
         </Typography>
       </Box>
 

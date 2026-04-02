@@ -3094,3 +3094,71 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 **New files:** `app/api/parts-list/search-quick/route.ts`.
 
 **Modified files:** `lib/services/mouserClient.ts` (fetch timeout), `lib/services/partDataService.ts` (skipMouser option on getAttributes/enrichSourceInParallel/getRecommendations/fetchMouserSuggestions), `app/api/parts-list/validate/route.ts` (pass skipMouser), `lib/api.ts` (searchPartQuick wrapper), `lib/columnDefinitions.ts` (editable flag), `components/parts-list/AddPartDialog.tsx` (rewritten: search picker flow), `components/parts-list/PartsListTable.tsx` (EditableCell component, onCellEdit prop), `components/parts-list/PartsListShell.tsx` (wire handleCellEdit + updated onAdd), `hooks/usePartsListState.ts` (handleAddPart two-phase + prepend, handleCellEdit), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
+
+---
+
+## Decision #116 — Atlas Manufacturer Profiles & Canonical Identity Table (Apr 2026)
+
+**Problem:** Atlas manufacturer data was scattered — `atlas_products.manufacturer` held display names with no canonical identity, aliases, or profile metadata. The `atlas_manufacturer_settings` table only tracked enabled/disabled state. No way to store certifications, locations, or other profile data needed for manufacturer intelligence.
+
+**Solution:** Created `atlas_manufacturers` Supabase table as the canonical manufacturer identity layer, seeded from a 1,011-manufacturer master list (Excel import).
+
+**Schema:** `atlas_id` (PK), `slug` (unique, URL-safe), `name_en`, `name_zh`, `name_display` (join key to `atlas_products`), `aliases` (JSONB array), `partsio_id`, `partsio_name`, plus JSONB profile columns (`certifications`, `locations`, etc.) populated in later phases.
+
+**Import script:** `scripts/atlas-manufacturers-import.mjs` with `--dry-run`, `--verbose`, `--migrate`, `--fix-products` flags. Handles the name format mismatch: master list has "ENGLISH Chinese" combined format while `atlas_products` uses English-only names — the API does fallback lookup on `name_en`.
+
+**Legacy absorption:** The `atlas_manufacturer_settings.enabled` field was absorbed into the new table. `atlasClient.ts` reads from both tables with legacy fallback for backward compatibility during migration.
+
+---
+
+## Decision #117 — Admin Panel Restructuring & Shared Layout (Apr 2026)
+
+**Problem:** The admin panel was a single-page shell (`AdminShell.tsx`) with all sections rendered in one route. Atlas-related sections (manufacturers, dictionaries, explorer) were lumped under a single "Atlas" nav item. No way to deep-link to a specific manufacturer or have sub-routes with persistent navigation.
+
+**Solution:** Reorganized admin into a proper route hierarchy with shared layout.
+
+**Nav restructuring:** "Atlas MFRs" and "Atlas Dictionaries" promoted to top-level nav items above a divider. The old "atlas" section redirects to "manufacturers" for backwards compatibility.
+
+**Shared admin layout:** Created `app/admin/layout.tsx` — sidebar navigation and history drawer persist across `/admin` and `/admin/manufacturers/[slug]` sub-routes. No re-mount on navigation between admin pages.
+
+**ManufacturersPanel replaces AtlasPanel:** Shows all 1,011 manufacturers (dimmed if no products in Atlas). Clickable rows navigate to `/admin/manufacturers/[slug]`. Three tabs: Atlas MFRs (full list), Search (`AtlasExplorerTab` reused), Flagged (flagged products list).
+
+---
+
+## Decision #118 — Manufacturer Detail Pages (Apr 2026)
+
+**Problem:** Admin users needed to drill into individual manufacturers to see their products, coverage gaps, flagged items, and profile data. The flat list view in ManufacturersPanel wasn't sufficient for per-manufacturer analysis.
+
+**Solution:** Sub-route at `/admin/manufacturers/[slug]` with `ManufacturerDetailPage` component.
+
+**5 tabs:** Products (default, paginated table with flag button per row, clicking opens `AtlasExplorerDrawer`), Flagged Products (per-manufacturer filtered), Coverage (family breakdown with `AtlasCoverageDrawer`), Cross-References (placeholder for future), Profile (manufacturer metadata).
+
+**Reuse over rewrite:** All existing drawers (`AtlasCoverageDrawer`, `AtlasExplorerDrawer`) reused unchanged — zero functionality loss from the restructuring.
+
+**API endpoints:** `GET/PATCH /api/admin/manufacturers/[slug]` for manufacturer metadata, `GET /api/admin/manufacturers/[slug]/products` for paginated product listing.
+
+---
+
+## Decision #119 — Atlas Product Flagging System (Apr 2026)
+
+**Problem:** During Atlas data quality review (via Explorer or manufacturer detail pages), admins had no way to flag products with bad data, missing attributes, or misclassifications for later triage. Issues were tracked informally or forgotten.
+
+**Solution:** New `atlas_product_flags` table for data quality flagging, intentionally separate from the QC recommendation feedback system (different domain — source data quality vs matching engine quality).
+
+**Schema:** `product_id` (FK to `atlas_products`), `mpn`, `manufacturer` (denormalized for display without joins), `comment` (text), `status` (`open` | `resolved` | `dismissed`), `created_by`, `resolved_by`, timestamps.
+
+**UI:** Flag button (`FlagOutlined` icon) on search results and manufacturer detail Products tab. Simple dialog with MPN + manufacturer context pre-filled and a multiline comment field. Flagged tab on both `ManufacturersPanel` (global view) and `ManufacturerDetailPage` (per-manufacturer filtered).
+
+**API:** `GET/POST /api/admin/atlas/flags` for listing and creating flags, `PATCH /api/admin/atlas/flags/[flagId]` for status updates.
+
+---
+
+## Decision #120 — Manufacturers List API Caching (Apr 2026)
+
+**Problem:** The ManufacturersPanel needs to load all 1,011 manufacturers with product counts aggregated from 54K+ Atlas products. Supabase caps single queries at 1,000 rows, and computing aggregations on every page load is wasteful since this data only changes on ingestion or logic table updates.
+
+**Solution:** Server-side 30-minute cache on the manufacturers list API response. Uses `fetchAllPages()` pattern to paginate through all products (1,000 rows per page) when building the cache.
+
+**Cache invalidation:** `invalidateManufacturersListCache()` called on manufacturer enable/disable toggle to ensure the UI reflects the change immediately.
+
+**Tradeoff:** Stale data for up to 30 minutes after ingestion. Acceptable because ingestion is a manual admin operation, and the admin can force-refresh if needed.

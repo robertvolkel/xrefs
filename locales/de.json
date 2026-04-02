@@ -258,6 +258,7 @@
     "dataSources": "Datenquellen",
     "paramMappings": "Parameterzuordnungen",
     "logicRules": "Querverweislogik",
+    "manufacturers": "Hersteller",
     "atlas": "Atlas",
     "atlasDesc": "Produktkatalog chinesischer Hersteller.",
     "contextQuestions": "Anwendungskontext",

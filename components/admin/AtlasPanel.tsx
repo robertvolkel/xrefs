@@ -38,6 +38,10 @@ interface AtlasStats {
   };
   manufacturers: {
     manufacturer: string;
+    nameEn: string | null;
+    nameZh: string | null;
+    slug: string | null;
+    mfrId: number | null;
     productCount: number;
     scorableCount: number;
     families: string[];
@@ -91,9 +95,16 @@ function MfrRow({
           </IconButton>
         </TableCell>
         <TableCell>
-          <Typography variant="body2" fontWeight={500}>
-            {row.manufacturer}
-          </Typography>
+          <Box>
+            <Typography variant="body2" fontWeight={500}>
+              {row.nameEn || row.manufacturer}
+            </Typography>
+            {row.nameZh && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -0.25, fontSize: '0.7rem' }}>
+                {row.nameZh}
+              </Typography>
+            )}
+          </Box>
         </TableCell>
         <TableCell align="right">
           <Typography variant="body2">{row.productCount.toLocaleString()}</Typography>

@@ -599,6 +599,50 @@ export interface ManufacturerLocation {
   type: 'fab' | 'assembly_test' | 'both';
 }
 
+// ── Atlas Manufacturer (DB/Admin-facing canonical record) ────
+
+/** Full atlas_manufacturers row — the canonical manufacturer identity record */
+export interface AtlasManufacturer {
+  id: number;
+  atlasId: number;
+  slug: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameDisplay: string;
+  aliases: string[];
+  partsioId: number | null;
+  partsioName: string | null;
+  websiteUrl: string | null;
+  logoUrl: string | null;
+  headquarters: string | null;
+  country: string;
+  foundedYear: number | null;
+  summary: string | null;
+  isSecondSource: boolean;
+  certifications: ManufacturerCertification[];
+  manufacturingLocations: ManufacturerLocation[];
+  productCategories: string[];
+  authorizedDistributors: AuthorizedDistributor[];
+  complianceFlags: string[];
+  designResources: DesignResource[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Lightweight summary for manufacturer list views (admin panel) */
+export interface AtlasManufacturerSummary {
+  id: number;
+  slug: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameDisplay: string;
+  enabled: boolean;
+  productCount: number;
+  scorableCount: number;
+  coveragePct: number;
+}
+
 // ============================================================
 // PARTS LIST TYPES
 // ============================================================

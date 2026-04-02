@@ -49,8 +49,8 @@ export async function GET() {
 
     const supabase = await createClient();
 
-    // Fetch all data in parallel: lightweight rows, scorable rows with JSONB, manufacturer settings
-    const [rows, scorableRows, { data: mfrSettings }] = await Promise.all([
+    // Fetch all data in parallel: lightweight rows, scorable rows with JSONB, manufacturer records, legacy settings
+    const [rows, scorableRows, { data: mfrRecords, error: mfrRecordsErr }, { data: mfrSettings }] = await Promise.all([
       fetchAllPages<{ manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }>(
         supabase,
         'atlas_products',
@@ -62,14 +62,29 @@ export async function GET() {
         'manufacturer, family_id, parameters',
         (q) => q.not('family_id', 'is', null),
       ),
+      supabase.from('atlas_manufacturers').select('name_display, name_en, name_zh, slug, id, enabled'),
       supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
     ]);
 
-    const disabledSet = new Set(
-      (mfrSettings ?? [])
-        .filter((s: { manufacturer: string; enabled: boolean }) => !s.enabled)
-        .map((s: { manufacturer: string; enabled: boolean }) => s.manufacturer)
-    );
+    // Build manufacturer identity lookup from atlas_manufacturers (new table)
+    const mfrIdentity = new Map<string, { nameEn: string; nameZh: string | null; slug: string; id: number; enabled: boolean }>();
+    if (!mfrRecordsErr && mfrRecords) {
+      for (const r of mfrRecords as { name_display: string; name_en: string; name_zh: string | null; slug: string; id: number; enabled: boolean }[]) {
+        mfrIdentity.set(r.name_display, { nameEn: r.name_en, nameZh: r.name_zh, slug: r.slug, id: r.id, enabled: r.enabled });
+      }
+    }
+
+    // Disabled set: prefer atlas_manufacturers, fallback to legacy atlas_manufacturer_settings
+    const disabledSet = new Set<string>();
+    if (mfrIdentity.size > 0) {
+      for (const [name, info] of mfrIdentity) {
+        if (!info.enabled) disabledSet.add(name);
+      }
+    } else {
+      for (const s of (mfrSettings ?? []) as { manufacturer: string; enabled: boolean }[]) {
+        if (!s.enabled) disabledSet.add(s.manufacturer);
+      }
+    }
 
     if (rows.length === 0) {
       const emptyResponse = JSON.stringify({
@@ -197,8 +212,13 @@ export async function GET() {
     const manufacturers = [...mfrMap.entries()]
       .map(([name, m]) => {
         const cov = mfrCoverage.get(name);
+        const identity = mfrIdentity.get(name);
         return {
           manufacturer: name,
+          nameEn: identity?.nameEn ?? null,
+          nameZh: identity?.nameZh ?? null,
+          slug: identity?.slug ?? null,
+          mfrId: identity?.id ?? null,
           productCount: m.productCount,
           scorableCount: m.scorableCount,
           families: [...m.families].sort(),

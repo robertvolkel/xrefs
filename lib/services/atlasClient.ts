@@ -22,17 +22,36 @@ async function getDisabledManufacturers(): Promise<Set<string>> {
 
   try {
     const supabase = await createClient();
-    const { data } = await supabase
+
+    // Use legacy table as primary (proven, always works)
+    const { data: legacyData } = await supabase
       .from('atlas_manufacturer_settings')
       .select('manufacturer')
       .eq('enabled', false);
 
-    const set = new Set((data ?? []).map((r: { manufacturer: string }) => r.manufacturer));
+    const set = new Set((legacyData ?? []).map((r: { manufacturer: string }) => r.manufacturer));
+
+    // Also check atlas_manufacturers if available (new canonical table)
+    try {
+      const { data: newData, error: newErr } = await supabase
+        .from('atlas_manufacturers')
+        .select('name_display')
+        .eq('enabled', false);
+
+      if (!newErr && newData) {
+        for (const r of newData as { name_display: string }[]) {
+          set.add(r.name_display);
+        }
+      }
+    } catch {
+      // New table not available yet — no problem
+    }
+
     disabledMfrsCache = set;
     disabledMfrsCachedAt = now;
     return set;
   } catch {
-    // If table doesn't exist yet or Supabase fails, treat all as enabled
+    // If tables don't exist yet or Supabase fails, treat all as enabled
     disabledMfrsCache = new Set();
     disabledMfrsCachedAt = now;
     return disabledMfrsCache;

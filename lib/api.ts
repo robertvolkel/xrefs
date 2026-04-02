@@ -677,6 +677,48 @@ export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerD
   return res.json();
 }
 
+// ── Atlas Product Flags ─────────────────────────────────────
+
+export interface AtlasProductFlag {
+  id: string;
+  productId: string;
+  mpn: string;
+  manufacturer: string;
+  comment: string;
+  status: 'open' | 'resolved' | 'dismissed';
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
+export async function getAtlasFlags(status?: string): Promise<{ flags: AtlasProductFlag[] }> {
+  const params = status && status !== 'all' ? `?status=${status}` : '';
+  const res = await fetch(`${BASE}/admin/atlas/flags${params}`);
+  if (!res.ok) throw new Error('Failed to fetch flags');
+  return res.json();
+}
+
+export async function createAtlasFlag(flag: { productId: string; mpn: string; manufacturer: string; comment: string }): Promise<{ success: boolean; id: string }> {
+  const res = await fetch(`${BASE}/admin/atlas/flags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(flag),
+  });
+  if (!res.ok) throw new Error('Failed to create flag');
+  return res.json();
+}
+
+export async function updateAtlasFlag(flagId: string, status: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/atlas/flags/${flagId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error('Failed to update flag');
+}
+
 export interface DictMappingSuggestion {
   translation: string | null;
   suggestedAttributeId: string | null;
