@@ -51,6 +51,7 @@ interface AtlasProductRow {
   mpn: string;
   manufacturer: string;
   description: string | null;
+  clean_description?: string | null;
   category: string;
   subcategory: string;
   family_id: string | null;
@@ -74,7 +75,7 @@ function rowToPartAttributes(row: AtlasProductRow): PartAttributes {
   const part: Part = {
     mpn: row.mpn,
     manufacturer: row.manufacturer,
-    description: (row as Record<string, unknown>).clean_description as string || row.description || '',
+    description: row.clean_description || row.description || '',
     detailedDescription: row.description || '',
     category: row.category as Part['category'],
     subcategory: row.subcategory,
@@ -133,7 +134,7 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
     const matches: PartSummary[] = trimmed.map((row) => ({
       mpn: row.mpn,
       manufacturer: row.manufacturer,
-      description: (row as Record<string, unknown>).clean_description as string || row.description || '',
+      description: row.clean_description || row.description || '',
       category: row.category as PartSummary['category'],
       status: (row.status || 'Active') as PartSummary['status'],
       dataSource: 'atlas' as const,
