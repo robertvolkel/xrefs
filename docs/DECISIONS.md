@@ -3091,9 +3091,25 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 
 **Inline cell editing:** Spreadsheet columns (`ss:*`) are now double-click-to-edit in the table. `EditableCell` component renders a dashed hover hint, switches to a native `<input>` on double-click, commits on Enter/blur, cancels on Escape. MPN or manufacturer edits trigger debounced (500ms) re-validation via `handleRefreshRows`. Other column edits just save to Supabase. `editable: true` flag on `ColumnDefinition` for all `source: 'spreadsheet'` columns.
 
-**New files:** `app/api/parts-list/search-quick/route.ts`.
+**Digikey timeout:** `digikeyFetch()` in `digikeyClient.ts` also had no timeout. Added 10-second `AbortSignal.timeout()` per attempt with fail-fast (no retry on timeout). OAuth token fetch also gets 10s timeout.
 
-**Modified files:** `lib/services/mouserClient.ts` (fetch timeout), `lib/services/partDataService.ts` (skipMouser option on getAttributes/enrichSourceInParallel/getRecommendations/fetchMouserSuggestions), `app/api/parts-list/validate/route.ts` (pass skipMouser), `lib/api.ts` (searchPartQuick wrapper), `lib/columnDefinitions.ts` (editable flag), `components/parts-list/AddPartDialog.tsx` (rewritten: search picker flow), `components/parts-list/PartsListTable.tsx` (EditableCell component, onCellEdit prop), `components/parts-list/PartsListShell.tsx` (wire handleCellEdit + updated onAdd), `hooks/usePartsListState.ts` (handleAddPart two-phase + prepend, handleCellEdit), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
+**`skipSearch` flag:** When the user picks a part from the search picker, the exact MPN is already known. The validate route now accepts `skipSearch: true` on batch items — skips `searchParts()` entirely and goes straight to `getAttributes()`, saving ~10-15s of redundant multi-source search.
+
+**Cancel validation (Stop button):** `validationManager.ts` now creates an `AbortController` per validation run. New `cancelValidation()` export aborts the stream and saves partial results. `handleRefreshRows` and `handleAddPart` also use a shared `validationAbortRef` for their direct validation streams. Stop button shown next to progress text in `PartsListTable`. Abort errors handled gracefully (no error message shown).
+
+**Notification snackbar:** New `NotificationSnackbar.tsx` component (MUI Snackbar + Alert with optional action button). `PartsListShell` detects failures after validation: error rows → "X parts could not be resolved", Mouser enrichment failure → "Mouser pricing unavailable" with **Retry** button, some not-found → informational notice. Retry triggers `handleRetryMouserEnrichment()` which re-runs `enrichWithMouserBatch` for rows missing Mouser data.
+
+**Progressive Mouser enrichment:** Instead of only enriching Mouser data when validation completes, the enrichment `useEffect` now fires every 10 resolved rows during validation. Mouser columns fill in progressively alongside DK data rather than all at once at the end.
+
+**Row highlight animation:** New part appears at top with a CSS `@keyframes highlightFade` animation (blue glow fading over 1.5s). `highlightedRowIndex` state in `PartsListShell`, cleared after 2s via timer.
+
+**Validation concurrency:** Bumped from `CONCURRENCY = 3` to 5 in the validate route — API calls are I/O-bound so more parallelism improves throughput.
+
+**Default view star fix:** Starring a view saved `defaultViewId` to the ViewState JSON, but the auto-load read from a separate `parts_lists.default_view_id` column. Fixed in `useListViewConfig.ts`: when initializing for a list, `activeViewId` is now overridden with `defaultViewId` if one is starred. Also `PartsListShell` passes `listViewConfigs?.defaultViewId` to auto-load as fallback.
+
+**New files:** `app/api/parts-list/search-quick/route.ts`, `components/NotificationSnackbar.tsx`.
+
+**Modified files:** `lib/services/mouserClient.ts` (fetch timeout), `lib/services/digikeyClient.ts` (fetch timeout), `lib/services/partDataService.ts` (skipMouser option on getAttributes/enrichSourceInParallel/getRecommendations/fetchMouserSuggestions), `app/api/parts-list/validate/route.ts` (skipSearch, skipMouser, concurrency 5), `lib/api.ts` (searchPartQuick wrapper, signal on validatePartsList), `lib/columnDefinitions.ts` (editable flag), `lib/validationManager.ts` (AbortController, cancelValidation), `lib/types.ts` (skipSearch on BatchValidateRequest), `components/parts-list/AddPartDialog.tsx` (rewritten: search picker flow), `components/parts-list/PartsListTable.tsx` (EditableCell, onCellEdit, Stop button, highlight animation), `components/parts-list/PartsListShell.tsx` (notification state, progressive Mouser enrichment, cancel wiring, default view fix), `hooks/usePartsListState.ts` (handleAddPart sync + fire-and-forget, handleCellEdit, handleCancelValidation, handleRetryMouserEnrichment, progressive Mouser enrichment), `hooks/useListViewConfig.ts` (apply defaultViewId on init), `hooks/usePartsListAutoLoad.ts` (effectiveDefaultViewId), `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`.
 
 ---
 
