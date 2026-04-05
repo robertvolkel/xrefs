@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
+  Button,
   Chip,
   Collapse,
   Drawer,
@@ -16,19 +17,22 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { LogicType } from '@/lib/types';
 import { typeColors, typeLabels } from './logicConstants';
-import { getAtlasExplorerDetail, type AtlasExplorerDetail } from '@/lib/api';
+import { getAtlasExplorerDetail, updateAtlasProduct, type AtlasExplorerDetail } from '@/lib/api';
 
 interface AtlasExplorerDrawerProps {
   open: boolean;
   onClose: () => void;
   productId: string | null;
+  onProductUpdated?: () => void;
 }
 
 function getRowBg(hasValue: boolean, blockOnMissing: boolean): string | undefined {
@@ -37,12 +41,18 @@ function getRowBg(hasValue: boolean, blockOnMissing: boolean): string | undefine
   return 'rgba(255, 183, 77, 0.04)';
 }
 
-export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasExplorerDrawerProps) {
+export default function AtlasExplorerDrawer({ open, onClose, productId, onProductUpdated }: AtlasExplorerDrawerProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<AtlasExplorerDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
+
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editDescription, setEditDescription] = useState('');
+  const [editParams, setEditParams] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
     if (!productId) return;
@@ -50,6 +60,7 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
     setData(null);
     setExtrasOpen(false);
     setRawOpen(false);
+    setEditing(false);
     try {
       const detail = await getAtlasExplorerDetail(productId);
       setData(detail);
@@ -63,6 +74,59 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
   useEffect(() => {
     if (open && productId) fetchData();
   }, [open, productId, fetchData]);
+
+  const handleStartEdit = () => {
+    if (!data) return;
+    setEditDescription(data.product.description ?? '');
+    setEditParams({});
+    setEditing(true);
+  };
+
+  const handleCancel = () => {
+    setEditing(false);
+    setEditParams({});
+  };
+
+  const handleSave = async () => {
+    if (!data || !productId) return;
+    setSaving(true);
+
+    const updates: { description?: string; parameters?: Record<string, { value: string }> } = {};
+
+    // Description changed?
+    if (editDescription !== (data.product.description ?? '')) {
+      updates.description = editDescription;
+    }
+
+    // Parameters changed?
+    if (Object.keys(editParams).length > 0) {
+      updates.parameters = {};
+      for (const [attrId, value] of Object.entries(editParams)) {
+        updates.parameters[attrId] = { value };
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      const ok = await updateAtlasProduct(productId, updates);
+      if (ok) {
+        await fetchData();
+        onProductUpdated?.();
+      }
+    } else {
+      setEditing(false);
+    }
+
+    setSaving(false);
+  };
+
+  const getEditParamValue = (attributeId: string, currentValue: string | null): string => {
+    if (attributeId in editParams) return editParams[attributeId];
+    return currentValue ?? '';
+  };
+
+  const setParamEdit = (attributeId: string, value: string) => {
+    setEditParams(prev => ({ ...prev, [attributeId]: value }));
+  };
 
   const sc = data?.schemaComparison;
   const l2 = data?.l2SchemaComparison;
@@ -80,9 +144,38 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
           <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 600 }}>
             {data?.product.mpn ?? '...'}
           </Typography>
-          <IconButton onClick={onClose} size="small">
-            <CloseIcon />
-          </IconButton>
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            {data && !editing && (
+              <IconButton onClick={handleStartEdit} size="small" title="Edit">
+                <EditIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            )}
+            {editing && (
+              <>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={handleCancel}
+                  disabled={saving}
+                  sx={{ fontSize: '0.75rem', minWidth: 'auto', px: 1 }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleSave}
+                  disabled={saving}
+                  sx={{ fontSize: '0.75rem', minWidth: 'auto', px: 1.5 }}
+                >
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
+              </>
+            )}
+            <IconButton onClick={onClose} size="small">
+              <CloseIcon />
+            </IconButton>
+          </Stack>
         </Stack>
 
         {loading && !data && (
@@ -117,10 +210,24 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
                   <Typography variant="caption" color="text.secondary">{data.product.package}</Typography>
                 )}
               </Stack>
-              {data.product.description && (
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mt: 0.5 }}>
-                  {data.product.description}
-                </Typography>
+              {editing ? (
+                <TextField
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  multiline
+                  minRows={1}
+                  maxRows={4}
+                  fullWidth
+                  size="small"
+                  placeholder="Product description"
+                  sx={{ mt: 0.5, '& .MuiInputBase-input': { fontSize: '0.75rem' } }}
+                />
+              ) : (
+                data.product.description && (
+                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mt: 0.5 }}>
+                    {data.product.description}
+                  </Typography>
+                )
               )}
               {data.product.datasheetUrl && (
                 <Link
@@ -217,7 +324,16 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
                             />
                           </TableCell>
                           <TableCell>
-                            {rule.atlasValue !== null ? (
+                            {editing ? (
+                              <TextField
+                                value={getEditParamValue(rule.attributeId, rule.atlasValue)}
+                                onChange={(e) => setParamEdit(rule.attributeId, e.target.value)}
+                                size="small"
+                                variant="standard"
+                                placeholder="—"
+                                sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem', py: 0 } }}
+                              />
+                            ) : rule.atlasValue !== null ? (
                               <Typography variant="body2" sx={{ fontSize: '0.78rem' }}>
                                 {rule.atlasValue}
                                 {rule.atlasUnit && (
@@ -269,7 +385,16 @@ export default function AtlasExplorerDrawer({ open, onClose, productId }: AtlasE
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            {field.atlasValue !== null ? (
+                            {editing ? (
+                              <TextField
+                                value={getEditParamValue(field.attributeId, field.atlasValue)}
+                                onChange={(e) => setParamEdit(field.attributeId, e.target.value)}
+                                size="small"
+                                variant="standard"
+                                placeholder="—"
+                                sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem', py: 0 } }}
+                              />
+                            ) : field.atlasValue !== null ? (
                               <Typography variant="body2" sx={{ fontSize: '0.78rem' }}>
                                 {field.atlasValue}
                                 {field.atlasUnit && (

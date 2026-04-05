@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -677,6 +677,18 @@ export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerD
   return res.json();
 }
 
+export async function updateAtlasProduct(
+  id: string,
+  updates: { description?: string; parameters?: Record<string, { value: string; numericValue?: number; unit?: string }> },
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return res.ok;
+}
+
 // ── Atlas Product Flags ─────────────────────────────────────
 
 export interface AtlasProductFlag {
@@ -833,4 +845,51 @@ export async function purgeAdminCache(opts?: {
   if (opts?.expiredOnly) params.set('expired', 'true');
   const res = await fetch(`${BASE}/admin/cache?${params}`, { method: 'DELETE' });
   return res.json();
+}
+
+// --- Manufacturer Cross-References ---
+
+export async function getMfrCrossRefs(
+  slug: string,
+  opts?: { page?: number; limit?: number; search?: string }
+): Promise<{ crossRefs: ManufacturerCrossReference[]; total: number; page: number; totalPages: number }> {
+  const params = new URLSearchParams();
+  if (opts?.page) params.set('page', String(opts.page));
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.search) params.set('search', opts.search);
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references?${params}`);
+  if (!res.ok) throw new Error('Failed to fetch cross-references');
+  return res.json();
+}
+
+export async function uploadMfrCrossRefs(
+  slug: string,
+  rows: Array<{
+    xref_mpn: string;
+    xref_manufacturer?: string;
+    xref_description?: string;
+    original_mpn: string;
+    original_manufacturer?: string;
+    equivalence_type?: string;
+  }>
+): Promise<{ success: boolean; inserted: number; skipped: number; batchId: string; atlasEnriched: number }> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to upload cross-references');
+  }
+  return res.json();
+}
+
+export async function deleteMfrCrossRefs(slug: string, ids: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error('Failed to delete cross-references');
 }

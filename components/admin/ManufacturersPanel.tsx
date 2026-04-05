@@ -38,6 +38,7 @@ interface MfrListItem {
   scorableCount: number;
   families: string[];
   coveragePct: number;
+  crossRefCount: number;
 }
 
 interface MfrListData {
@@ -52,7 +53,7 @@ interface MfrListData {
   };
 }
 
-type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'families';
+type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'crossRefCount' | 'families';
 type SortDir = 'asc' | 'desc';
 
 export default function ManufacturersPanel() {
@@ -140,6 +141,7 @@ export default function ManufacturersPanel() {
         case 'productCount': return dir * (a.productCount - b.productCount);
         case 'scorableCount': return dir * (a.scorableCount - b.scorableCount);
         case 'coveragePct': return dir * (a.coveragePct - b.coveragePct);
+        case 'crossRefCount': return dir * (a.crossRefCount - b.crossRefCount);
         case 'families': return dir * (a.families.length - b.families.length);
         default: return 0;
       }
@@ -217,6 +219,11 @@ export default function ManufacturersPanel() {
                             {t('admin.atlasCoverageCol')}
                           </TableSortLabel>
                         </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'crossRefCount' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'crossRefCount'} direction={sortKey === 'crossRefCount' ? sortDir : 'desc'} onClick={() => handleSort('crossRefCount')}>
+                            MFR Crosses
+                          </TableSortLabel>
+                        </TableCell>
                         <TableCell sortDirection={sortKey === 'families' ? sortDir : false}>
                           <TableSortLabel active={sortKey === 'families'} direction={sortKey === 'families' ? sortDir : 'desc'} onClick={() => handleSort('families')}>
                             {t('admin.atlasFamiliesCol')}
@@ -263,6 +270,11 @@ export default function ManufacturersPanel() {
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ opacity: mfr.coveragePct > 0 ? 1 : 0.3 }}>
                               {mfr.coveragePct > 0 ? `${mfr.coveragePct}%` : '\u2014'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ opacity: mfr.crossRefCount > 0 ? 1 : 0.3, color: mfr.crossRefCount > 0 ? '#66BB6A' : undefined }}>
+                              {mfr.crossRefCount > 0 ? mfr.crossRefCount.toLocaleString() : '\u2014'}
                             </Typography>
                           </TableCell>
                           <TableCell>

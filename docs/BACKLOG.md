@@ -492,10 +492,11 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 
 **Remaining:**
 - Connect `atlas_manufacturers` to user-facing ManufacturerProfilePanel (replace mock data in `mockManufacturerData.ts`)
-- Cross-References tab: implement manufacturer-certified replacement upload + injection into recommendation pipeline
+- ~~Cross-References tab: implement manufacturer-certified replacement upload + injection into recommendation pipeline~~ DONE (Decision #122) — upload zone + column mapping + paginated table + pipeline integration + recommendation categorization (Logic Driven / MFR Certified / 3rd Party)
 - Atlas product flagging: add server-side filtering by manufacturer to flags API (currently client-side)
-- Atlas description cleanup: ~6,200 products still missing `clean_description` (script rate-limited)
-- Phase 2 English param expansion: add plain English aliases for MFR-specific formats (`RDS(ON) @10VTyp (mΩ)`, `BVDSS (V)`, `BV(V)`, etc.) — ~1,327 distinct names across ~20 MFRs
+- ~~Atlas description cleanup~~ DONE
+- ~~Phase 2 English param expansion~~ DONE — added ~150 English MFR-specific format entries to TS dictionaries (atlasMapper.ts) + gaia dicts (atlas-gaia-dicts.json). +55 rule mappings across 16 manufacturer/family combos (Convert, CREATEK, 3PEAK, TECH PUBLIC, MingDa)
+- Separate applications from Atlas descriptions (Decision #124) — add `applications` column, batch script to split existing `clean_description` via Haiku, update cleanup prompt, show in Explorer Drawer. ~55K products, ~30-40 min implementation
 - Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
 
 **Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasGaiaDictionaries.ts`, `lib/services/atlas-gaia-dicts.json`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `components/admin/ManufacturersPanel.tsx`, `components/admin/ManufacturerDetailPage.tsx`, `scripts/atlas-ingest.mjs`, `scripts/atlas-manufacturers-import.mjs`
@@ -515,6 +516,7 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 - Mouser: Add Mouser suggested replacements as candidate source in `getRecommendations()` for obsolete/EOL parts
 - Mouser: "Commercial" view template with DK/Mouser price/stock/lead time columns pre-configured
 - Mouser: Lifecycle status reconciliation (worst-status-wins across Digikey, Parts.io, Mouser)
+- BOM quantity-aware pricing (Decision #121 Phase 2): qty column auto-detection in `excelParser.ts`, `mapped:quantity` / `rawQuantity` on `PartsListRow`, effective price lookup per supplier tier, extended cost columns in parts list table
 
 ---
 

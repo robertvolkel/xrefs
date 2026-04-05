@@ -44,6 +44,7 @@ const CERT_LABELS: Record<CertificationSource, string> = {
   partsio_fff: 'Parts.io (FFF)',
   partsio_functional: 'Parts.io (Functional)',
   mouser: 'Mouser',
+  manufacturer: 'Manufacturer Certified',
 };
 const DOT_GREY = '#90A4AE';
 

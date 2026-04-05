@@ -80,8 +80,9 @@ describe('CertificationSource type', () => {
       'partsio_fff',
       'partsio_functional',
       'mouser',
+      'manufacturer',
     ];
-    expect(sources).toHaveLength(3);
+    expect(sources).toHaveLength(4);
   });
 });
 

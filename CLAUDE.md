@@ -59,9 +59,10 @@ app/                          # Next.js App Router
   api/releases/              # List release notes (GET, all authenticated)
   api/mouser/enrich/         # On-demand Mouser enrichment (POST, batch MPNs)
   api/list-chat/             # List agent conversation (POST, list-scoped LLM with 9 tools)
-  api/admin/manufacturers/    # Manufacturer list endpoint (GET with 30min cache)
+  api/admin/manufacturers/    # Manufacturer list endpoint (GET, RPC-based aggregation, 30min cache)
   api/admin/manufacturers/[slug]/ # Manufacturer detail + update (GET/PATCH)
   api/admin/manufacturers/[slug]/products/ # Paginated products for MFR (GET)
+  api/admin/manufacturers/[slug]/cross-references/ # MFR cross-reference CRUD (GET list, POST bulk upload, DELETE soft)
   api/admin/atlas/flags/      # Atlas product flags CRUD (GET/POST)
   api/admin/atlas/flags/[flagId]/ # Flag status update (PATCH)
   api/feedback/              # User feedback submission (POST)
@@ -115,6 +116,8 @@ components/                   # React components
     ManufacturersPanel.tsx    # Manufacturer list + search + flagged tabs
     ManufacturerDetailPage.tsx # MFR detail (5 tabs: Products, Flagged, Coverage, Cross-Refs, Profile)
     FlaggedProductsTab.tsx    # Flagged products list with status filters
+    CrossReferencesTab.tsx    # MFR cross-ref upload (drag-drop + column mapping) + paginated table
+    CrossRefColumnMappingDialog.tsx # Column mapping dialog for cross-ref upload (6 fields)
     SearchLogicPanel.tsx      # Admin docs: how single-part search pipeline works (hardcoded markdown)
     ListLogicPanel.tsx        # Admin docs: how batch list validation pipeline works (hardcoded markdown)
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
@@ -184,6 +187,7 @@ lib/
   services/descriptionExtractor.ts # LLM description extraction — schema prompt builder, quote-grounded parser, gap-fill merger
   services/mouserClient.ts    # Mouser API client — search, batch, cache, rate limiter
   services/mouserMapper.ts    # Mouser response → SupplierQuote/LifecycleInfo/ComplianceData
+  services/manufacturerCrossRefService.ts # MFR cross-ref lookup (60s cached Supabase query)
   services/partDataCache.ts   # L2 persistent cache (Supabase-backed, 3-tier TTL)
   columnDefinitions.ts        # Dynamic column system for parts list table
   viewConfigStorage.ts        # View types (SavedView, ViewState), localStorage persistence, sanitizeTemplateColumns()
@@ -351,7 +355,7 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Column portability**: Templates may only contain portable column IDs (`sys:*`, `mapped:*`, `dk:*`, `dkp:*`). `ss:*` (raw spreadsheet index) columns are list-specific and stripped by `sanitizeTemplateColumns()` before saving to template library.
 - **mapped:cpn**: Optional Customer Part Number / Internal Part Number column. Auto-detected from headers in `excelParser.ts`. `cpnColumn` on `ColumnMapping`, `rawCpn` on `PartsListRow`. Resolved at render time like `mapped:manufacturer`.
 - **Manual part addition** (Decisions #113, #115): Empty lists can be created via third "Empty List" tab in `InputMethodDialog`. Individual parts added via `AddPartDialog` — two-step Search → Select flow: user enters MPN + optional MFR, clicks Search, picks from a results list (multi-source: Digikey/Atlas/Parts.io), then the verified `PartSummary` is passed to `handleAddPart()`. New part inserted at top of list with highlight animation. Two-phase validation: row appears immediately with resolved identity (status: 'validating'), full attributes + recommendations merge in background. Quick search via `/api/parts-list/search-quick` (search only, ~500ms, skipMouser). `skipSearch` flag on validate route skips redundant search when MPN already confirmed. Inline cell editing: `ss:*` columns are double-click-to-edit; MPN/MFR edits trigger debounced re-validation. Mouser API timeout (8s per attempt) and Digikey API timeout (10s per attempt) prevent batch validation from hanging. Batch validation passes `skipMouser: true` to `getAttributes()` and `getRecommendations()` since Mouser provides only commercial data. Progressive Mouser enrichment runs every 10 resolved rows during validation (not only at end). Cancel validation via Stop button (AbortController on all streams). Notification snackbar alerts on data source failures with Retry button for Mouser. Validation concurrency: 5 parallel items.
-- **Supabase 1000-row limit**: Supabase/PostgREST caps single queries at 1000 rows by default. Use `fetchAllPages()` pattern (paginate in chunks of 1000 with `.range()`) for large tables like atlas_products. See `/api/admin/manufacturers/route.ts` and `/api/admin/atlas/route.ts`.
+- **Supabase 1000-row limit**: Supabase/PostgREST caps single queries at 1000 rows by default. Use `fetchAllPages()` pattern (paginate in chunks of 1000 with `.range()`) for detail pages, or push aggregation to SQL via RPC functions for list pages (Decision #123). See `/api/admin/atlas/route.ts` (fetchAllPages) and `/api/admin/manufacturers/route.ts` (RPC `get_manufacturer_product_stats`).
 - **Manufacturer name mismatch**: `atlas_products.manufacturer` uses English-only names (e.g., "ISC") while `atlas_manufacturers.name_display` has combined "ENGLISH Chinese" format (e.g., "ISC 无锡固电"). API lookups do fallback: `productAgg.get(m.name_display) || productAgg.get(m.name_en)`.
 - **List Agent** (Decision #111): Per-list conversational agent (`listChat()` in orchestrator, `/api/list-chat` route). 9 tools: 3 read-only (`get_list_summary`, `query_list`, `get_row_detail`), 3 client-side view (`sort_list`, `filter_list`, `switch_view`), 3 write with confirmation (`delete_rows`, `refresh_rows`, `set_preferred`). Write tools intercepted server-side — return `PendingListAction` descriptor rendered as confirmation button via `InteractiveElement` type `'list-action'`. System prompt includes user context (reuses `buildUserContextSection()`) + list context (name, description, customer, status counts, manufacturers, families). UI: sticky footer bar (34px) + bottom-anchored 50vh drawer. Conversation is ephemeral (MVP).
 
@@ -387,7 +391,7 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - Mapper: `lib/services/digikeyMapper.ts` — Converts Digikey API responses to internal types
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
-- **v4 API pricing gotcha**: `StandardPricing` (tiered price breaks) is nested under `ProductVariations[0].StandardPricing`, NOT at the top level of the product response. `mapDigikeyPriceBreaks()` checks both locations. Commercial cache preserves `ProductVariations` alongside `UnitPrice`/`QuantityAvailable`/`ProductStatus` (Decision #109).
+- **v4 API pricing** (Decision #121): `StandardPricing` array on `DigikeyProduct` provides quantity-based price breaks (e.g., 1/10/25/100/500/1000). `mapDigikeyPriceBreaks()` in `digikeyMapper.ts` converts to `PriceBreak[]`, carried on `Part.digikeyPriceBreaks`. `buildDigikeyQuote()` uses real tiers when available, falls back to synthetic single-tier for backward compat. Commercial tab `SupplierCard` renders price break tables for both Digikey and Mouser.
 
 **L3 families (43):** Full parameter mapping with logic tables for cross-reference matching:
 
@@ -435,7 +439,7 @@ First multi-supplier pricing source. Provides zero parametric data — purely co
 
 **Unique data:** `SuggestedReplacement` (Mouser's human-verified replacement MPN — provided for both obsolete AND active parts, injected into scoring pipeline as candidates via Decision #97), regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN.
 
-**Certified Cross-References (Decision #97):** External replacement suggestions from Mouser (`SuggestedReplacement`) and parts.io (FFF/Functional Equivalents) are unified under a `certifiedBy?: CertificationSource[]` field on `XrefRecommendation`. `CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser'`. Mouser suggestions are resolved from Mouser part number format (`resolveMouserSuggestedMpn()` strips numeric prefix), fetched as full parametric candidates, and scored alongside all other candidates. Dedup merges provenance — same MPN from multiple sources shows one card with "Certified (N)" badge. Purple chip for single source, amber for multi-source. Extensible for future `sponsored_${vendor}` sources.
+**Certified Cross-References (Decision #97, extended #122):** External replacement suggestions from Mouser (`SuggestedReplacement`), parts.io (FFF/Functional Equivalents), and manufacturer-uploaded cross-references are unified under a `certifiedBy?: CertificationSource[]` field on `XrefRecommendation`. `CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser' | 'manufacturer'`. All sources are resolved to full parametric candidates and scored by the matching engine. **Manufacturer cross-references** (Decision #122): uploaded via Admin > Manufacturers > Cross-References tab (Excel/CSV with flexible column mapping), stored in `manufacturer_cross_references` Supabase table, fetched in parallel during recommendation pipeline via `fetchManufacturerCrossRefs()`. **Recommendation categorization** (Decision #122): Three categories — Logic Driven (blue), Manufacturer Certified (green), 3rd Party Certified (amber). `deriveRecommendationCategories()` derives from existing fields. Filter chips in RecommendationsPanel, colored category chips on each card.
 
 **Columns:** 11 new columns in column system (`mouser:unitPrice`, `mouser:stock`, `mouser:leadTime`, `commercial:bestPrice`, `commercial:totalStock`, `mouser:lifecycle`, `mouser:suggestedReplacement`, `mouser:htsUS/CN/EU`, `mouser:eccn`). Available in column picker, not in default view.
 

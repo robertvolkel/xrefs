@@ -28,6 +28,7 @@ import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS } from './partDataCache';
+import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
 
 // ============================================================
 // PARTS.IO LIFECYCLE METADATA HELPER
@@ -731,7 +732,7 @@ export async function getRecommendations(
 
   // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents + Mouser suggestions in parallel
   console.time('[perf] fetchCandidates');
-  let [digikeyCandidates, atlasCandidates, partsioEquivalents, mouserSuggestions] = await Promise.all([
+  let [digikeyCandidates, atlasCandidates, partsioEquivalents, mouserSuggestions, mfrCrossRefs] = await Promise.all([
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
@@ -755,6 +756,10 @@ export async function getRecommendations(
       console.warn('Mouser suggestion fetch failed:', error);
       return [] as PartAttributes[];
     }),
+    fetchManufacturerCrossRefs(mpn).catch((error) => {
+      console.warn('Manufacturer cross-ref fetch failed:', error);
+      return [];
+    }),
   ]);
   console.timeEnd('[perf] fetchCandidates');
 
@@ -764,6 +769,27 @@ export async function getRecommendations(
     console.time('[perf] enrichDigikeyCandidates');
     digikeyCandidates = await Promise.all(digikeyCandidates.map(c => enrichWithPartsio(c, userId)));
     console.timeEnd('[perf] enrichDigikeyCandidates');
+  }
+
+  // Step 3b: Resolve manufacturer cross-ref MPNs to full PartAttributes
+  const mfrCrossRefCandidates: PartAttributes[] = [];
+  if (mfrCrossRefs.length > 0) {
+    console.time('[perf] resolveMfrCrossRefs');
+    const resolved = await Promise.all(
+      mfrCrossRefs.map(async (xref) => {
+        try {
+          const attrs = await getAttributes(xref.xref_mpn, userId, currency);
+          return attrs;
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const attrs of resolved) {
+      if (attrs) mfrCrossRefCandidates.push(attrs);
+    }
+    console.timeEnd('[perf] resolveMfrCrossRefs');
+    console.log(`[perf] manufacturer cross-refs: ${mfrCrossRefs.length} found, ${mfrCrossRefCandidates.length} resolved`);
   }
 
   // Build metadata maps BEFORE dedup — survives even when higher-priority source wins
@@ -780,6 +806,11 @@ export async function getRecommendations(
     const key = c.part.mpn.toLowerCase();
     if (!certificationMap.has(key)) certificationMap.set(key, new Set());
     certificationMap.get(key)!.add('mouser');
+  }
+  for (const c of mfrCrossRefCandidates) {
+    const key = c.part.mpn.toLowerCase();
+    if (!certificationMap.has(key)) certificationMap.set(key, new Set());
+    certificationMap.get(key)!.add('manufacturer');
   }
 
   const dataSourceMap = new Map<string, 'digikey' | 'atlas' | 'partsio'>();
@@ -830,7 +861,14 @@ export async function getRecommendations(
       allCandidates.push(c);
     }
   }
-  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${mouserSuggestions.length} Mouser + ${partsioEquivalents.length} Parts.io = ${allCandidates.length} total`);
+  for (const c of mfrCrossRefCandidates) {
+    const key = c.part.mpn.toLowerCase();
+    if (!seenMpns.has(key)) {
+      seenMpns.add(key);
+      allCandidates.push(c);
+    }
+  }
+  console.log(`[perf] candidates: ${digikeyCandidates.length} Digikey + ${atlasCandidates.length} Atlas + ${mouserSuggestions.length} Mouser + ${partsioEquivalents.length} Parts.io + ${mfrCrossRefCandidates.length} MfrXref = ${allCandidates.length} total`);
 
   // Pre-filter: remove obsolete/discontinued candidates before scoring (batch only)
   if (options?.filterForBatch) {

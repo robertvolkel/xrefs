@@ -35,7 +35,8 @@ import { useTranslation } from 'react-i18next';
 import AtlasCoverageDrawer from './AtlasCoverageDrawer';
 import AtlasExplorerDrawer from './AtlasExplorerDrawer';
 import FlaggedProductsTab from './FlaggedProductsTab';
-import { createAtlasFlag, getAtlasFlags } from '@/lib/api';
+import CrossReferencesTab from './CrossReferencesTab';
+import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs } from '@/lib/api';
 import type { AtlasManufacturer } from '@/lib/types';
 
 interface MfrDetailData {
@@ -104,6 +105,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [flagSubmitting, setFlagSubmitting] = useState(false);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [flaggedCount, setFlaggedCount] = useState(0);
+  const [crossRefCount, setCrossRefCount] = useState(0);
 
   // Fetch manufacturer data
   useEffect(() => {
@@ -128,7 +130,10 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
       ).length;
       setFlaggedCount(count);
     }).catch(() => {});
-  }, [data, flaggedIds]); // re-fetch when new flags are added
+    getMfrCrossRefs(slug, { page: 1, limit: 1 }).then((resp) => {
+      setCrossRefCount(resp.total);
+    }).catch(() => {});
+  }, [data, slug, flaggedIds]); // re-fetch when new flags are added
 
   // Fetch products when tab/filters change
   const fetchProducts = useCallback(() => {
@@ -264,7 +269,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
           <Tab label={`Products (${stats.totalProducts})`} />
           <Tab label={`Flagged Products${flaggedCount > 0 ? ` (${flaggedCount})` : ''}`} />
           <Tab label="Coverage" />
-          <Tab label="Cross-References" />
+          <Tab label={`Cross-References${crossRefCount > 0 ? ` (${crossRefCount})` : ''}`} />
           <Tab label="Profile" />
         </Tabs>
       </Box>
@@ -370,7 +375,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                         <TableCell>Category</TableCell>
                         <TableCell>Status</TableCell>
                         <TableCell align="right">Coverage</TableCell>
-                        <TableCell sx={{ width: 50 }} />
+                        <TableCell sx={{ width: 40 }} />
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -382,12 +387,14 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                           sx={{ cursor: 'pointer' }}
                         >
                           <TableCell>
-                            <Typography variant="body2" fontWeight={500}>{p.mpn}</Typography>
+                            <Typography variant="body2" fontWeight={500} noWrap>{p.mpn}</Typography>
                           </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
-                              {p.description || '\u2014'}
-                            </Typography>
+                          <TableCell sx={{ maxWidth: 0 }}>
+                            <Tooltip title={p.description || ''} arrow enterDelay={300}>
+                              <Typography variant="body2" noWrap sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {p.description || '\u2014'}
+                              </Typography>
+                            </Tooltip>
                           </TableCell>
                           <TableCell>
                             {p.familyId ? (
@@ -463,6 +470,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
               open={explorerOpen}
               onClose={() => setExplorerOpen(false)}
               productId={selectedProductId}
+              onProductUpdated={fetchProducts}
             />
           </Box>
         )}
@@ -551,16 +559,9 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
           </Box>
         )}
 
-        {/* ── Cross-References Tab (Future) ── */}
+        {/* ── Cross-References Tab ── */}
         {activeTab === 3 && (
-          <Box>
-            <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic' }}>
-              No cross-references uploaded yet.
-            </Typography>
-            <Typography variant="caption" color="text.disabled" sx={{ mt: 1, display: 'block' }}>
-              This tab will house manufacturer-certified replacement mappings — cross-references that the manufacturer provides to us.
-            </Typography>
-          </Box>
+          <CrossReferencesTab slug={slug} manufacturerName={mfr?.nameDisplay || slug} />
         )}
 
       </Box>

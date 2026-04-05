@@ -3,7 +3,7 @@ import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, 
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
-import { XrefRecommendation, CertificationSource } from '@/lib/types';
+import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -14,14 +14,16 @@ interface RecommendationCardProps {
   onTogglePreferred?: () => void;
 }
 
-const CERTIFICATION_LABELS: Record<CertificationSource, string> = {
-  partsio_fff: 'Parts.io (FFF Equivalent)',
-  partsio_functional: 'Parts.io (Functional Equivalent)',
-  mouser: 'Mouser (Suggested Replacement)',
+const THIRD_PARTY_LABELS: Record<string, string> = {
+  partsio_fff: 'Pin to Pin (Parts.io)',
+  partsio_functional: 'Functional (Parts.io)',
+  mouser: 'Mouser Suggested',
 };
 
-function formatCertificationTooltip(sources: CertificationSource[]): string {
-  return 'Verified by: ' + sources.map(s => CERTIFICATION_LABELS[s] || s).join(', ');
+function formatThirdPartyTooltip(sources: CertificationSource[]): string {
+  const thirdParty = sources.filter(s => s !== 'manufacturer');
+  if (thirdParty.length === 0) return '';
+  return thirdParty.map(s => THIRD_PARTY_LABELS[s] || s).join(', ');
 }
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
@@ -57,21 +59,22 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
-                {certifiedBy && certifiedBy.length > 0 && (
-                  <Tooltip title={formatCertificationTooltip(certifiedBy)} arrow>
-                    <Chip
-                      label={certifiedBy.length > 1 ? `Certified (${certifiedBy.length})` : 'Certified'}
-                      size="small"
-                      variant="outlined"
-                      sx={{
-                        height: 18,
-                        fontSize: '0.6rem',
-                        color: certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
-                        borderColor: certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
-                      }}
-                    />
-                  </Tooltip>
-                )}
+                {(() => {
+                  const cats = deriveRecommendationCategories(recommendation);
+                  const thirdPartySources = certifiedBy?.filter(s => s !== 'manufacturer') || [];
+                  return (
+                    <>
+                      {cats.includes('manufacturer_certified') && (
+                        <Chip label="MFR Certified" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#66BB6A', borderColor: '#66BB6A' }} />
+                      )}
+                      {cats.includes('third_party_certified') && (
+                        <Tooltip title={formatThirdPartyTooltip(thirdPartySources)} arrow>
+                          <Chip label="3rd Party" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
+                        </Tooltip>
+                      )}
+                    </>
+                  );
+                })()}
                 {part.datasheetUrl && (
                   <Box
                     component="span"

@@ -3178,3 +3178,60 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 **Cache invalidation:** `invalidateManufacturersListCache()` called on manufacturer enable/disable toggle to ensure the UI reflects the change immediately.
 
 **Tradeoff:** Stale data for up to 30 minutes after ingestion. Acceptable because ingestion is a manual admin operation, and the admin can force-refresh if needed.
+
+---
+
+## Decision #121 — Digikey Quantity-Based Price Breaks (Apr 2026)
+
+**Problem:** Digikey API v4 returns quantity-based price breaks in `StandardPricing` array but we only captured the flat `UnitPrice` (qty 1). Mouser already showed real tiers — Digikey always showed a single row.
+
+**Solution:** Added `DigikeyPriceBreak` interface and `StandardPricing?` field to `DigikeyProduct`. `mapDigikeyPriceBreaks()` in `digikeyMapper.ts` converts to internal `PriceBreak[]`, carried on `Part.digikeyPriceBreaks`. `buildDigikeyQuote()` uses real tiers when available, falls back to synthetic single-tier for backward compat. No UI changes — `SupplierCard` already renders `quote.priceBreaks` as a table.
+
+**Files:** `digikeyClient.ts` (interface), `digikeyMapper.ts` (mapping), `types.ts` (`Part.digikeyPriceBreaks`), `mouserMapper.ts` (`buildDigikeyQuote` updated).
+
+**Phase 2 planned:** BOM quantity-aware pricing — qty column auto-detection, `mapped:quantity` on `PartsListRow`, effective price per tier, extended cost columns.
+
+## Decision #122 — Manufacturer Cross-Reference Upload & Recommendation Categorization (Apr 2026)
+
+**Problem:** Two gaps: (1) No way to upload manufacturer-certified cross-references — manufacturers send Excel/CSV files with their own verified replacements that couldn't be ingested into the system. (2) Recommendations panel showed a flat list with a generic "Certified" chip — no clear categorization of where a recommendation comes from (matching engine vs manufacturer vs 3rd party).
+
+**Solution — Feature 1: Manufacturer Cross-Reference Upload:**
+- New Supabase table `manufacturer_cross_references` storing bidirectional mappings: original MPN → xref (replacement) MPN with manufacturer slug, descriptions, equivalence type (pin-to-pin / functional), and upload batch tracking.
+- Cross-References tab in Admin > Manufacturers detail page (was placeholder) now has drag-drop upload zone + flexible column mapping dialog (6 fields: Xref MPN, Xref MFR, Xref Description, Original MPN, Original MFR, Type) + paginated table of uploaded cross-refs with search and delete.
+- Atlas description enrichment on upload: if the xref MPN exists in Atlas with a `clean_description` that's more complete than the uploaded one, the Atlas version is used.
+- Pipeline integration: `fetchManufacturerCrossRefs()` runs in parallel with Digikey/Atlas/Parts.io/Mouser candidate fetches. Each cross-ref MPN is resolved to full `PartAttributes` and scored by the matching engine like any other candidate. Tagged with `certifiedBy: ['manufacturer']`.
+
+**Solution — Feature 2: Recommendation Categorization:**
+- Three categories: **Logic Driven** (blue, scored by matching engine), **MFR Certified** (green, from manufacturer upload), **3rd Party Certified** (amber, from Parts.io FFF/Functional or Mouser suggestions).
+- `deriveRecommendationCategories()` utility derives categories from existing fields — a recommendation can belong to multiple categories.
+- RecommendationsPanel shows category filter chips (All / Logic Driven / MFR Certified / 3rd Party) when certified or 3rd-party results exist.
+- RecommendationCard shows colored category chips replacing the generic "Certified" chip. 3rd Party chip has tooltip with sub-source detail.
+
+**CertificationSource** extended: `'partsio_fff' | 'partsio_functional' | 'mouser' | 'manufacturer'`.
+
+**New files:** `scripts/supabase-mfr-xrefs-schema.sql`, `app/api/admin/manufacturers/[slug]/cross-references/route.ts`, `lib/services/manufacturerCrossRefService.ts`, `components/admin/CrossReferencesTab.tsx`, `components/admin/CrossRefColumnMappingDialog.tsx`.
+
+**Modified:** `lib/types.ts`, `lib/services/partDataService.ts`, `lib/api.ts`, `components/admin/ManufacturerDetailPage.tsx`, `components/RecommendationsPanel.tsx`, `components/RecommendationCard.tsx`, `components/ComparisonView.tsx`.
+
+## Decision #123 — Manufacturers List Page Performance (Apr 2026)
+
+**Problem:** The Admin > Manufacturers list page took 20-30 seconds to load. The `/api/admin/manufacturers` endpoint fetched ALL ~55K rows from `atlas_products` twice — once for counts (lightweight) and once with full JSONB `parameters` column for coverage calculation — then aggregated everything in JavaScript loops. The 30-min in-memory cache masked the problem on repeat visits but first load (or cache expiry) was brutal.
+
+**Solution:** Replaced the 55K-row client-side aggregation with a Supabase RPC function `get_manufacturer_product_stats()` that does `GROUP BY manufacturer, family_id` in SQL, returning ~2-3K aggregated rows. The RPC uses a CTE: `groups` for counts, `param_union` for collecting distinct parameter keys per group via `LATERAL jsonb_object_keys()`. Coverage calculation in JS now iterates ~2-3K grouped rows (intersecting `param_keys` arrays with logic table rule attributes) instead of 55K individual products. Composite index `(manufacturer, family_id)` added.
+
+**Performance:** First load drops from ~25s to ~1-2s. Graceful fallback: if the RPC function doesn't exist yet, the route returns manufacturers with zero stats instead of crashing.
+
+**Files:** `scripts/supabase-mfr-stats-rpc.sql` (RPC function + index), `app/api/admin/manufacturers/route.ts` (rewritten to use RPC).
+
+## Decision #124 — Separate Applications from Atlas Descriptions (Apr 2026)
+
+**Problem:** The `atlas-clean-descriptions.ts` LLM cleanup prompt intentionally embeds application/market information into the `clean_description` one-liner (e.g., "...shielded, low-noise composite core; **automotive lighting, HVAC, industrial motor control**; AEC-Q200"). Applications should be a separate field — displayable independently in the Explorer Drawer and eventually on the user-facing side.
+
+**Planned solution:**
+1. Add `applications TEXT` column to `atlas_products` via migration
+2. New batch script `scripts/atlas-split-applications.ts` — Claude Haiku splits each existing `clean_description` into pure technical description + applications string. ~55K products, modeled on existing cleanup script pattern (pagination, 20 concurrent requests)
+3. Update cleanup prompt in `atlas-clean-descriptions.ts` to exclude applications from future descriptions
+4. Show `applications` field in Atlas Explorer Drawer (below description in header section)
+5. Add `applications` to API response and types
+
+**Status:** Planned, not yet implemented. See `docs/BACKLOG.md`.
