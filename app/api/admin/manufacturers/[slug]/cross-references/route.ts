@@ -171,11 +171,6 @@ export async function POST(
       }
     }
 
-    if (insertError) {
-      console.error('Cross-ref insert error:', insertError.message);
-      return NextResponse.json({ error: 'Failed to insert cross-references' }, { status: 500 });
-    }
-
     // Invalidate cache
     invalidateMfrCrossRefCache();
     invalidateManufacturersListCache();
