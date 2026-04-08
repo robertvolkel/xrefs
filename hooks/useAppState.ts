@@ -4,6 +4,7 @@ import {
   AppPhase,
   ApplicationContext,
   ChatMessage,
+  ChoiceOption,
   ConversationSnapshot,
   PartSummary,
   PartAttributes,
@@ -71,6 +72,8 @@ export function useAppState() {
   const allRecsRef = useRef<XrefRecommendation[]>([]);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
+  // Track whether context questions have been asked (ref avoids stale closure)
+  const contextAskedRef = useRef(false);
   // Track original search query for search history logging
   const queryRef = useRef<string>('');
   const loggedRef = useRef(false);
@@ -241,6 +244,153 @@ export function useAppState() {
   );
 
   // ============================================================
+  // NEXT-STEP CHOICES (after attributes loaded)
+  // ============================================================
+
+  /** After attributes are loaded, pause and offer the user action choices instead of auto-finding recs. */
+  const presentNextStepChoices = useCallback(
+    (mpn: string, sourceAttrs: PartAttributes, context?: ApplicationContext | null) => {
+      const choices: ChoiceOption[] = [
+        { id: 'find_xrefs', label: 'Find cross-references', action: 'find_replacements' },
+      ];
+      addMessage('assistant', `Loaded details for **${mpn}**.`, { type: 'choices', choices });
+      conversationRef.current.push({
+        role: 'assistant',
+        content: `Loaded details for ${mpn}. Waiting for user to choose next action.`,
+      });
+      setState((prev) => ({
+        ...prev,
+        phase: 'awaiting-action' as AppPhase,
+        sourceAttributes: sourceAttrs,
+        ...(context ? { applicationContext: context } : {}),
+      }));
+      setStatus('');
+    },
+    [addMessage, setStatus]
+  );
+
+  /** Find replacements for the current source part — triggered by user choosing "Find cross-references".
+   *  Checks for missing attributes and context questions first, deferring to forms if needed. */
+  const handleFindReplacements = useCallback(
+    async () => {
+      const signal = freshAbort();
+      const mpn = state.sourcePart?.mpn;
+      const sourceAttrs = state.sourceAttributes;
+      if (!mpn || !sourceAttrs) return;
+
+      // Step 1: Check for missing critical attributes
+      const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
+      const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
+      const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
+
+      if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
+        addMessage('assistant', `I'm missing some information that's important for finding accurate replacements.`, {
+          type: 'attribute-query',
+          missingAttributes: missingAttrs,
+          partMpn: mpn,
+        });
+        conversationRef.current.push({
+          role: 'assistant',
+          content: `Asking for missing attribute values before finding replacements for ${mpn}.`,
+        });
+        setState((prev) => ({ ...prev, phase: 'awaiting-attributes' }));
+        return; // handleAttributeResponse → handleFindReplacements (re-enters)
+      }
+
+      // Step 2: Check for application context questions (if not already asked)
+      if (!contextAskedRef.current && logicTable) {
+        const contextConfig = getContextQuestionsForFamily(logicTable.familyId);
+        if (contextConfig && contextConfig.questions.length > 0) {
+          const autoAnswers = deriveAutoAnswers(sourceAttrs, logicTable.familyId);
+          const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
+          const autoAnswerIds = new Set(Object.keys(autoAnswers));
+
+          const hasVisibleRemaining = contextConfig.questions.some((q) => {
+            if (autoAnswerIds.has(q.questionId)) return false;
+            if (!q.condition) return true;
+            const depAnswer = autoAnswers[q.condition.questionId];
+            return depAnswer !== undefined && q.condition.values.includes(depAnswer);
+          });
+
+          if (hasVisibleRemaining || !hasAutoAnswers) {
+            addMessage('assistant', 'To find the best match, tell me about your application.', {
+              type: 'context-questions',
+              questions: contextConfig.questions,
+              familyId: logicTable.familyId,
+              initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
+            });
+            conversationRef.current.push({
+              role: 'assistant',
+              content: `Asking application context questions before finding replacements for ${mpn}.`,
+            });
+            pendingOverridesRef.current = {};
+            contextAskedRef.current = true;
+            setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
+            return; // handleContextResponse → handleFindReplacements (re-enters)
+          }
+
+          // All questions auto-answered
+          if (hasAutoAnswers) {
+            const autoContext: ApplicationContext = { familyId: logicTable.familyId, answers: autoAnswers };
+            setState((prev) => ({ ...prev, applicationContext: autoContext }));
+            // Continue to find recs with this context
+            addMessage('assistant', `Finding cross-references for **${mpn}**...`);
+            setStatus('Evaluating candidates against replacement rules...');
+            setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
+
+            try {
+              const overrides = pendingOverridesRef.current;
+              const hasOverrides = Object.keys(overrides).length > 0;
+              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs);
+              if (signal.aborted) return;
+              showRecsAndDeferAssessment(recs, mpn, sourceAttrs.parameters.length, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal);
+            } catch {
+              setStatus('');
+              addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
+              conversationRef.current.push({ role: 'assistant', content: 'Failed to find replacements due to an error.' });
+              setState((prev) => ({ ...prev, phase: 'awaiting-action' as AppPhase }));
+            } finally {
+              pendingOverridesRef.current = {};
+            }
+            return;
+          }
+        }
+      }
+
+      // Step 3: Find replacements
+      addMessage('assistant', `Finding cross-references for **${mpn}**...`);
+      setStatus('Evaluating candidates against replacement rules...');
+      setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
+
+      try {
+        const overrides = pendingOverridesRef.current;
+        const hasOverrides = Object.keys(overrides).length > 0;
+        const recs = await getRecommendationsWithOverrides(
+          mpn,
+          hasOverrides ? overrides : {},
+          state.applicationContext ?? undefined,
+          signal,
+          sourceAttrs,
+        );
+        if (signal.aborted) return;
+
+        const contextMsg = state.applicationContext
+          ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
+          : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
+        showRecsAndDeferAssessment(recs, mpn, sourceAttrs.parameters.length, contextMsg, signal);
+      } catch {
+        setStatus('');
+        addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
+        conversationRef.current.push({ role: 'assistant', content: 'Failed to find replacements due to an error.' });
+        setState((prev) => ({ ...prev, phase: 'awaiting-action' as AppPhase }));
+      } finally {
+        pendingOverridesRef.current = {};
+      }
+    },
+    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes, state.applicationContext]
+  );
+
+  // ============================================================
   // LLM-POWERED SEARCH FLOW
   // ============================================================
 
@@ -274,6 +424,7 @@ export function useAppState() {
         const searchResult = response.searchResult;
 
         // When a new search is initiated, clear stale data from previous part
+        if (searchResult) contextAskedRef.current = false;
         const partResetFields = searchResult ? {
           sourcePart: null as AppState['sourcePart'],
           sourceAttributes: null as AppState['sourceAttributes'],
@@ -284,9 +435,13 @@ export function useAppState() {
           applicationContext: null as AppState['applicationContext'],
         } : {};
 
-        if (searchResult && searchResult.type === 'single') {
-          const part = searchResult.matches[0];
-          addMessage('assistant', response.message, { type: 'confirmation', part });
+        if (response.choices && response.choices.length > 0) {
+          // LLM declared custom choices — render them instead of generic confirm/options
+          addMessage('assistant', response.message, { type: 'choices', choices: response.choices });
+          setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult: searchResult ?? null }));
+        } else if (searchResult && searchResult.type === 'single') {
+          // Single match — show as a clickable part card (same as multi-match)
+          addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'multiple') {
           addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
@@ -328,7 +483,6 @@ export function useAppState() {
   const handleConfirmWithLLM = useCallback(
     async (part: PartSummary) => {
       const signal = freshAbort();
-      addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
       const stopRotation = startStatusRotation([
         { text: 'Checking all data sources...', delayMs: 0 },
         { text: 'Fetching technical attributes...', delayMs: 1200 },
@@ -363,196 +517,18 @@ export function useAppState() {
           return;
         }
 
-        // Step 2: Check for missing attributes against the logic table
-        const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
-        const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
-        const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
-
-        if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
-          // Pause and ask user for missing critical attribute values
-          setStatus('');
-          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
-            type: 'attribute-query',
-            missingAttributes: missingAttrs,
-            partMpn: part.mpn,
-          });
-          conversationRef.current.push({
-            role: 'assistant',
-            content: `Loaded details for ${part.mpn}. Asking for missing attribute values before finding replacements.`,
-          });
-          setState((prev) => ({
-            ...prev,
-            phase: 'awaiting-attributes',
-            sourceAttributes: sourceAttrs,
-          }));
-          return; // Wait for handleAttributeResponse
-        }
-
-        // Step 2b: Check for application context questions
-        const logicTableForContext = logicTable;
-        if (logicTableForContext) {
-          const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
-          if (contextConfig && contextConfig.questions.length > 0) {
-            // Auto-answer disambiguation questions when the attribute is already known
-            const autoAnswers = deriveAutoAnswers(sourceAttrs, logicTableForContext.familyId);
-            const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
-            const autoAnswerIds = new Set(Object.keys(autoAnswers));
-
-            // Check if any remaining (non-auto-answered) questions would be visible
-            const hasVisibleRemaining = contextConfig.questions.some((q) => {
-              if (autoAnswerIds.has(q.questionId)) return false;
-              if (!q.condition) return true;
-              const depAnswer = autoAnswers[q.condition.questionId];
-              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
-            });
-
-            if (hasVisibleRemaining) {
-              // Some questions still need user input — show form with auto-answers pre-filled
-              setStatus('');
-              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
-                type: 'context-questions',
-                questions: contextConfig.questions,
-                familyId: logicTableForContext.familyId,
-                initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
-              });
-              conversationRef.current.push({
-                role: 'assistant',
-                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
-              });
-              pendingOverridesRef.current = {};
-              setState((prev) => ({
-                ...prev,
-                phase: 'awaiting-context',
-                sourceAttributes: sourceAttrs,
-              }));
-              return; // Wait for handleContextResponse
-            }
-
-            if (!hasAutoAnswers) {
-              // No auto-answers and no visible questions — show full form
-              setStatus('');
-              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
-                type: 'context-questions',
-                questions: contextConfig.questions,
-                familyId: logicTableForContext.familyId,
-              });
-              conversationRef.current.push({
-                role: 'assistant',
-                content: `Loaded details for ${part.mpn}. Asking application context questions before finding replacements.`,
-              });
-              pendingOverridesRef.current = {};
-              setState((prev) => ({
-                ...prev,
-                phase: 'awaiting-context',
-                sourceAttributes: sourceAttrs,
-              }));
-              return;
-            }
-
-            // All questions auto-answered — skip form, get recs with auto-context
-            const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
-            setStatus('Evaluating candidates against replacement rules...');
-            setState((prev) => ({
-              ...prev,
-              phase: 'finding-matches',
-              sourceAttributes: sourceAttrs,
-              applicationContext: autoContext,
-            }));
-
-            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext, signal, sourceAttrs);
-            if (signal.aborted) return;
-
-            // Show recs immediately, fire LLM assessment in background
-            showRecsAndDeferAssessment(
-              recs, part.mpn, sourceAttrs.parameters.length,
-              `${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`,
-              signal,
-            );
-            return;
-          }
-        }
-
-        if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Finding cross-references...`);
-        } else {
-          addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
-        }
-        setStatus('Evaluating candidates against replacement rules...');
-        setState((prev) => ({
-          ...prev,
-          phase: 'finding-matches',
-          sourceAttributes: sourceAttrs,
-        }));
+        // Show attributes and offer next action — context questions + missing attrs
+        // are deferred until the user clicks "Find cross-references"
+        presentNextStepChoices(part.mpn, sourceAttrs);
+        return;
       }
 
-      // Step 3: Fire orchestrator for recommendations
-      const response = await chatWithOrchestrator(
-        conversationRef.current,
-        allRecsRef.current.length > 0 ? allRecsRef.current : undefined,
-        signal,
-      ).catch(() => null);
-      if (signal.aborted) return;
-      setStatus('');
-      if (response) {
-        conversationRef.current.push({ role: 'assistant', content: response.message });
-
-        const recs = response.recommendations?.[part.mpn];
-        if (recs && recs.length > 0) {
-          const paramCount = sourceAttrs?.parameters.length ?? 0;
-          const assessmentMsg = response.message || `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`;
-          addMessage('assistant', assessmentMsg);
-          setState((prev) => ({
-            ...prev,
-            phase: 'viewing',
-            sourceAttributes: sourceAttrs ?? response.attributes?.[part.mpn] ?? prev.sourceAttributes,
-            recommendations: recs,
-            allRecommendations: recs,
-          }));
-          triggerMouserEnrichment(recs, signal);
-        } else {
-          // Orchestrator didn't return recs — try direct API (pass sourceAttrs to skip re-fetch)
-          setStatus('Evaluating candidates against replacement rules...');
-          const fallbackRecs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs ?? undefined);
-          if (signal.aborted) return;
-          setStatus('');
-          if (fallbackRecs.length > 0) {
-            addMessage('assistant', response.message || `Found **${fallbackRecs.length} potential replacement${fallbackRecs.length !== 1 ? 's' : ''}** for ${part.mpn}.`);
-          } else {
-            addMessage('assistant', response.message || `No cross-references found for ${part.mpn}.`);
-          }
-          setState((prev) => ({
-            ...prev,
-            phase: 'viewing',
-            sourceAttributes: sourceAttrs ?? response.attributes?.[part.mpn] ?? prev.sourceAttributes,
-            recommendations: fallbackRecs,
-            allRecommendations: fallbackRecs,
-          }));
-          triggerMouserEnrichment(fallbackRecs, signal);
-        }
-      } else {
-        // Orchestrator failed entirely — fall back to direct recs
-        if (!sourceAttrs) {
-          // Attributes also failed — full fallback
-          await loadAttributesAndRecommendations(part);
-          return;
-        }
-        setStatus('Evaluating candidates against replacement rules...');
-        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, signal, sourceAttrs);
-        if (signal.aborted) return;
-        setStatus('');
-        const paramCount = sourceAttrs.parameters.length;
-        addMessage('assistant', `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`);
-        setState((prev) => ({
-          ...prev,
-          phase: 'viewing',
-          recommendations: recs,
-          allRecommendations: recs,
-        }));
-        triggerMouserEnrichment(recs, signal);
+      // Attributes failed — full fallback
+      if (!sourceAttrs) {
+        await loadAttributesAndRecommendations(part);
       }
     },
-    [addMessage, setStatus, showRecsAndDeferAssessment, triggerMouserEnrichment]
+    [addMessage, setStatus, presentNextStepChoices]
   );
 
   // ============================================================
@@ -605,7 +581,7 @@ export function useAppState() {
   /** Load attributes + recommendations via direct API calls */
   const loadAttributesAndRecommendations = useCallback(
     async (part: PartSummary) => {
-      const signal = freshAbort();
+      freshAbort(); // Cancel any in-flight requests
       try {
         const stopRotation = startStatusRotation([
           { text: 'Checking all data sources...', delayMs: 0 },
@@ -628,121 +604,20 @@ export function useAppState() {
           return;
         }
 
-        // Check for missing attributes against the logic table
-        const logicTable = getLogicTableForSubcategory(attributes.part.subcategory, attributes);
-        const missingAttrs = logicTable ? detectMissingAttributes(attributes, logicTable) : [];
-        const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
-
-        if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
-          setStatus('');
-          addMessage('assistant', `Loaded details for **${part.mpn}**. I'm missing some information that's important for finding accurate replacements.`, {
-            type: 'attribute-query',
-            missingAttributes: missingAttrs,
-            partMpn: part.mpn,
-          });
-          setState((prev) => ({
-            ...prev,
-            phase: 'awaiting-attributes',
-            sourceAttributes: attributes,
-          }));
-          return; // Wait for handleAttributeResponse
-        }
-
-        // Check for application context questions
-        const logicTableForContext = logicTable;
-        if (logicTableForContext) {
-          const contextConfig = getContextQuestionsForFamily(logicTableForContext.familyId);
-          if (contextConfig && contextConfig.questions.length > 0) {
-            // Auto-answer disambiguation questions when the attribute is already known
-            const autoAnswers = deriveAutoAnswers(attributes, logicTableForContext.familyId);
-            const hasAutoAnswers = Object.keys(autoAnswers).length > 0;
-            const autoAnswerIds = new Set(Object.keys(autoAnswers));
-
-            const hasVisibleRemaining = contextConfig.questions.some((q) => {
-              if (autoAnswerIds.has(q.questionId)) return false;
-              if (!q.condition) return true;
-              const depAnswer = autoAnswers[q.condition.questionId];
-              return depAnswer !== undefined && q.condition.values.includes(depAnswer);
-            });
-
-            if (hasVisibleRemaining || !hasAutoAnswers) {
-              setStatus('');
-              addMessage('assistant', `Loaded details for **${part.mpn}**.`, {
-                type: 'context-questions',
-                questions: contextConfig.questions,
-                familyId: logicTableForContext.familyId,
-                initialAnswers: hasAutoAnswers ? autoAnswers : undefined,
-              });
-              pendingOverridesRef.current = {};
-              setState((prev) => ({
-                ...prev,
-                phase: 'awaiting-context',
-                sourceAttributes: attributes,
-              }));
-              return; // Wait for handleContextResponse
-            }
-
-            // All questions auto-answered — skip form, get recs with auto-context
-            const autoContext: ApplicationContext = { familyId: logicTableForContext.familyId, answers: autoAnswers };
-            addMessage('assistant', `Loaded details for **${part.mpn}**. Finding cross-references...`);
-            setStatus('Evaluating candidates against replacement rules...');
-            setState((prev) => ({
-              ...prev,
-              phase: 'finding-matches',
-              sourceAttributes: attributes,
-              applicationContext: autoContext,
-            }));
-            const recs = await getRecommendationsWithOverrides(part.mpn, {}, autoContext);
-            setStatus('');
-            const paramCount = attributes.parameters.length;
-            addMessage(
-              'assistant',
-              `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
-            );
-            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
-            triggerMouserEnrichment(recs, signal);
-            return;
-          }
-        }
-
-        if (missingAttrs.length > 6) {
-          addMessage('assistant', `Loaded details for **${part.mpn}**. We have limited data for this part — replacement accuracy may be reduced. Searching for cross-references...`);
-        } else {
-          addMessage('assistant', `Loaded details for **${part.mpn}**. Searching for cross-references...`);
-        }
-        setStatus('Evaluating candidates against replacement rules...');
-        setState((prev) => ({
-          ...prev,
-          phase: 'finding-matches',
-          sourceAttributes: attributes,
-        }));
-
-        const recs = await getRecommendationsWithOverrides(part.mpn, {}, undefined, undefined, attributes);
-        setStatus('');
-        const paramCount = attributes.parameters.length;
-        addMessage(
-          'assistant',
-          `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${part.mpn}`
-        );
-        setState((prev) => ({
-          ...prev,
-          phase: 'viewing',
-          recommendations: recs,
-          allRecommendations: recs,
-        }));
-        triggerMouserEnrichment(recs, signal);
+        // Show attributes and offer next action — context questions + missing attrs
+        // are deferred until the user clicks "Find cross-references"
+        presentNextStepChoices(part.mpn, attributes);
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while fetching part details. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus, triggerMouserEnrichment]
+    [addMessage, setStatus, presentNextStepChoices]
   );
 
   const handleConfirmDeterministic = useCallback(
     async (part: PartSummary) => {
-      addMessage('user', `Yes, **${part.mpn}** from ${part.manufacturer}.`);
       setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
       await loadAttributesAndRecommendations(part);
     },
@@ -793,6 +668,36 @@ export function useAppState() {
     setState((prev) => ({ ...prev, phase: 'idle', searchResult: null }));
   }, [addMessage, setStatus, state.llmAvailable]);
 
+  const handleChoiceSelect = useCallback(
+    async (choice: ChoiceOption) => {
+      if (choice.action === 'confirm_part' && choice.mpn) {
+        // Short-circuit: resolve part from current search result and confirm directly.
+        // Don't addMessage here — handleConfirmPart already adds a user message.
+        const searchMatches = state.searchResult?.matches ?? [];
+        const part = searchMatches.find(p => p.mpn === choice.mpn);
+        if (part) {
+          await handleConfirmPart(part);
+          return;
+        }
+      }
+
+      if (choice.action === 'find_replacements') {
+        // Trigger replacement search for the current source part
+        addMessage('user', choice.label);
+        conversationRef.current.push({ role: 'user', content: 'Find cross-references for this part.' });
+        await handleFindReplacements();
+        return;
+      }
+
+      // Show user's choice in chat
+      addMessage('user', choice.label);
+      // Send choice label to LLM as a user message
+      conversationRef.current.push({ role: 'user', content: choice.label });
+      await handleSearchWithLLM(choice.label);
+    },
+    [addMessage, state.searchResult, handleConfirmPart, handleFindReplacements, handleSearchWithLLM]
+  );
+
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {
     setStatus('Fetching replacement specs from Digikey...');
     try {
@@ -829,6 +734,7 @@ export function useAppState() {
     abortRef.current?.abort();
     abortRef.current = null;
     conversationRef.current = [];
+    contextAskedRef.current = false;
     setStatus('');
     setState(initialState);
   }, [setStatus]);
@@ -839,7 +745,6 @@ export function useAppState() {
 
   const handleAttributeResponse = useCallback(
     async (responses: Record<string, string>) => {
-      const signal = freshAbort();
       // Filter out empty values
       const overrides = Object.fromEntries(
         Object.entries(responses).filter(([, v]) => v.trim() !== '')
@@ -921,38 +826,13 @@ export function useAppState() {
         }
       }
 
-      addMessage('assistant', `Finding cross-references for **${mpn}**...`);
-      setStatus('Evaluating candidates against replacement rules...');
-      setState((prev) => ({
-        ...prev,
-        phase: 'finding-matches' as AppPhase,
-        ...(autoContext ? { applicationContext: autoContext } : {}),
-      }));
-
-      try {
-        const recs = (filledCount > 0 || autoContext)
-          ? await getRecommendationsWithOverrides(mpn, filledCount > 0 ? overrides : {}, autoContext, signal, state.sourceAttributes ?? undefined)
-          : await getRecommendationsWithOverrides(mpn, {}, undefined, signal, state.sourceAttributes ?? undefined);
-        if (signal.aborted) return;
-
-        // Show recs immediately, fire LLM assessment in background
-        const contextMsg = filledCount > 0
-          ? `Attribute overrides provided: ${Object.values(overrides).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-          : `Proceeding without overrides. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
-        showRecsAndDeferAssessment(
-          recs, mpn, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
-        );
-      } catch {
-        setStatus('');
-        addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
-        conversationRef.current.push({
-          role: 'assistant',
-          content: 'Failed to find replacements due to an error.',
-        });
-        setState((prev) => ({ ...prev, phase: 'idle' }));
+      // Attributes answered — now find replacements (will check context questions)
+      if (autoContext) {
+        setState((prev) => ({ ...prev, applicationContext: autoContext }));
       }
+      await handleFindReplacements();
     },
-    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, handleFindReplacements, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipAttributes = useCallback(async () => {
@@ -965,7 +845,6 @@ export function useAppState() {
 
   const handleContextResponse = useCallback(
     async (answers: Record<string, string>) => {
-      const signal = freshAbort();
       // Filter out empty answers
       const filteredAnswers = Object.fromEntries(
         Object.entries(answers).filter(([, v]) => v.trim() !== '')
@@ -1007,56 +886,21 @@ export function useAppState() {
       const mpn = state.sourcePart?.mpn;
       if (!mpn) return;
 
-      // Build ApplicationContext if user provided answers
+      // Build ApplicationContext — always set a value so handleFindReplacements
+      // knows context was handled (even if skipped with empty answers)
       const familyId = state.sourceAttributes?.part.subcategory
         ? getLogicTableForSubcategory(state.sourceAttributes.part.subcategory, state.sourceAttributes)?.familyId
         : undefined;
 
-      const context: ApplicationContext | undefined = filledCount > 0 && familyId
+      const context: ApplicationContext = familyId
         ? { familyId, answers: filteredAnswers }
-        : undefined;
+        : { familyId: '', answers: {} };
 
-      setState((prev) => ({
-        ...prev,
-        phase: 'finding-matches' as AppPhase,
-        applicationContext: context ?? null,
-      }));
-      addMessage('assistant', `Finding cross-references for **${mpn}**...`);
-      setStatus('Evaluating candidates against replacement rules...');
-
-      try {
-        const overrides = pendingOverridesRef.current;
-        const hasOverrides = Object.keys(overrides).length > 0;
-
-        const recs = await getRecommendationsWithOverrides(
-          mpn,
-          hasOverrides ? overrides : {},
-          context,
-          signal,
-          state.sourceAttributes ?? undefined,
-        );
-        if (signal.aborted) return;
-
-        // Show recs immediately, fire LLM assessment in background
-        const contextMsg = filledCount > 0
-          ? `Application context provided: ${Object.values(filteredAnswers).join(', ')}. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`
-          : `Using default matching criteria. ${recs.length} replacement candidates have been evaluated and are displayed. Please provide your engineering assessment.`;
-        showRecsAndDeferAssessment(
-          recs, mpn!, state.sourceAttributes?.parameters.length ?? 0, contextMsg, signal,
-        );
-      } catch {
-        setStatus('');
-        addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
-        conversationRef.current.push({
-          role: 'assistant',
-          content: 'Failed to find replacements due to an error.',
-        });
-        setState((prev) => ({ ...prev, phase: 'idle' }));
-      } finally {
-        pendingOverridesRef.current = {};
-      }
+      // Context answered/skipped — now find replacements
+      setState((prev) => ({ ...prev, applicationContext: context }));
+      await handleFindReplacements();
     },
-    [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes]
+    [addMessage, setStatus, handleFindReplacements, state.sourcePart, state.sourceAttributes]
   );
 
   const handleSkipContext = useCallback(async () => {
@@ -1142,6 +986,7 @@ export function useAppState() {
     handleSearch,
     handleConfirmPart,
     handleRejectPart,
+    handleChoiceSelect,
     handleSelectRecommendation,
     handleBackToRecommendations,
     handleReset,

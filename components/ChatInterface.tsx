@@ -1,7 +1,7 @@
 'use client';
 import { useRef, useEffect } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
-import { AppPhase, ChatMessage, PartSummary } from '@/lib/types';
+import { AppPhase, ChatMessage, ChoiceOption, PartSummary } from '@/lib/types';
 import MessageBubble from './MessageBubble';
 import SearchInput from './SearchInput';
 import { CONTENT_MAX_WIDTH, HEADER_HEIGHT, HEADER_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -18,6 +18,7 @@ interface ChatInterfaceProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  onChoiceSelect?: (choice: ChoiceOption) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
 }
@@ -34,6 +35,7 @@ export default function ChatInterface({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  onChoiceSelect,
   sourceMpn,
   sourceManufacturer,
 }: ChatInterfaceProps) {
@@ -122,6 +124,7 @@ export default function ChatInterface({
               onConfirm={onConfirm}
               onReject={onReject}
               onSelectPart={onConfirm}
+              onChoiceSelect={onChoiceSelect}
               onAttributeResponse={onAttributeResponse}
               onSkipAttributes={onSkipAttributes}
               onContextResponse={onContextResponse}

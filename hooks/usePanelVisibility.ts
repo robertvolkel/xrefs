@@ -33,6 +33,7 @@ export function usePanelVisibility(
     'loading-attributes',
     'awaiting-attributes',
     'awaiting-context',
+    'awaiting-action',
     'finding-matches',
     'viewing',
     'comparing',

@@ -59,6 +59,7 @@ export default function AppShell() {
         onSkipAttributes={appState.handleSkipAttributes}
         onContextResponse={appState.handleContextResponse}
         onSkipContext={appState.handleSkipContext}
+        onChoiceSelect={appState.handleChoiceSelect}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
@@ -95,6 +96,7 @@ export default function AppShell() {
         onSkipAttributes={appState.handleSkipAttributes}
         onContextResponse={appState.handleContextResponse}
         onSkipContext={appState.handleSkipContext}
+        onChoiceSelect={appState.handleChoiceSelect}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}

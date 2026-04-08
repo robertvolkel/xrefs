@@ -98,6 +98,7 @@ export interface DesktopLayoutProps {
   onSkipAttributes: () => void;
   onContextResponse: (answers: Record<string, string>) => void;
   onSkipContext: () => void;
+  onChoiceSelect: (choice: import('@/lib/types').ChoiceOption) => void;
   onSelectRecommendation: (rec: XrefRecommendation) => void;
   onBackToRecommendations: () => void;
 
@@ -121,7 +122,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     chatCollapsed, mfrOpen, mfrProfile,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
-    onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext,
+    onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext, onChoiceSelect,
     onSelectRecommendation, onBackToRecommendations,
     onManufacturerClick, onExpandChat,
     onToggleHistory, onCloseHistory,
@@ -223,6 +224,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onSkipAttributes={onSkipAttributes}
               onContextResponse={onContextResponse}
               onSkipContext={onSkipContext}
+              onChoiceSelect={onChoiceSelect}
               sourceMpn={sourceAttributes?.part.mpn}
               sourceManufacturer={sourceAttributes?.part.manufacturer}
             />
