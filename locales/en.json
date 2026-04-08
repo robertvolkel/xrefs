@@ -4,6 +4,8 @@
     "save": "Save",
     "delete": "Delete",
     "search": "Search",
+    "back": "Back",
+    "stop": "Stop",
     "loading": "Loading...",
     "comingSoon": "Coming soon",
     "required": "Required"
@@ -91,7 +93,9 @@
     "pastePreview": "{{rows}} rows detected, {{cols}} columns",
     "nextButton": "Next",
     "noDataError": "No data found in pasted text",
-    "fileSelected": "{{name}} selected"
+    "fileSelected": "{{name}} selected",
+    "emptyListTab": "Empty List",
+    "emptyListDescription": "Start with an empty list and add parts manually"
   },
   "newListDialog": {
     "createTitle": "Create a new list",
@@ -135,7 +139,31 @@
     "exploreReplacements": "Explore replacements",
     "startingValidation": "Starting validation of {{total}} parts...",
     "validatingProgress": "Validating... {{processed}} of {{total}} parts processed",
-    "errorProgress": "({{processed}} of {{total}} parts processed before failure)"
+    "errorProgress": "({{processed}} of {{total}} parts processed before failure)",
+    "addPart": "Add Part",
+    "emptyListHeading": "No parts yet",
+    "emptyListSubheading": "Add your first part to get started",
+    "searchCount": "{{filtered}} of {{total}} parts",
+    "notifications": {
+      "validationErrors": "{{count}} parts could not be resolved — data source may be unavailable",
+      "mouserUnavailable": "Mouser pricing unavailable — API may be down or rate limited",
+      "mouserLoaded": "Mouser pricing loaded for {{count}} parts",
+      "someNotFound": "{{count}} parts could not be found in any data source",
+      "retry": "Retry"
+    }
+  },
+  "addPartDialog": {
+    "title": "Add Part",
+    "mpnLabel": "Part Number (MPN)",
+    "mpnPlaceholder": "e.g., LM317T",
+    "manufacturerLabel": "Manufacturer",
+    "manufacturerPlaceholder": "e.g., Texas Instruments",
+    "additionalColumns": "Additional Columns",
+    "addButton": "Add Part",
+    "searchButton": "Search",
+    "selectPart": "Select the correct part to add:",
+    "noResults": "No matching parts found. You can still add this part — it will be marked as not found.",
+    "addAnyway": "Add with original input anyway"
   },
   "status": {
     "pending": "Pending",
@@ -204,7 +232,7 @@
     "parameterHeader": "Parameter",
     "valueHeader": "Value",
     "tabSpecs": "Specs",
-    "tabRisk": "Risk",
+    "tabRisk": "Risk & Compliance",
     "tabCommercial": "Commercial",
     "noRiskData": "No lifecycle or compliance data available.",
     "noCommercialData": "No pricing data available.",
@@ -310,6 +338,8 @@
     "notApplicable": "Not Applicable",
     "addReviewFlag": "Add Review Flag",
     "taxonomyNav": "Digikey Taxonomy",
+    "searchLogicNav": "Search Logic",
+    "listLogicNav": "List Logic",
     "taxonomy": "Digikey Taxonomy",
     "taxonomyDescription": "Digikey product categories cross-referenced with supported component families.",
     "coverageSummary": "Coverage: {{covered}} ({{percentage}}%) of {{total}} Digikey subcategories.",
@@ -392,6 +422,9 @@
     "overrideCount_other": "{{count}} overrides",
     "addRule": "Add Rule",
     "addQuestion": "Add Question",
+    "manufacturers": "Atlas MFRs",
+    "mfrSearchPlaceholder": "Search manufacturers...",
+    "mfrNoResults": "No manufacturers match your search.",
     "atlasManufacturer": "Manufacturer",
     "atlasProductsCol": "Products",
     "atlasScorableCol": "Scorable",

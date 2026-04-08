@@ -105,7 +105,20 @@ export interface PartAttributes {
 }
 
 /** Source that certified/suggested a cross-reference */
-export type CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser';
+export type CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser' | 'manufacturer';
+
+/** High-level recommendation category for UI grouping/filtering */
+export type RecommendationCategory = 'logic_driven' | 'manufacturer_certified' | 'third_party_certified';
+
+/** Derive which categories a recommendation belongs to (can be multiple) */
+export function deriveRecommendationCategories(rec: XrefRecommendation): RecommendationCategory[] {
+  const cats: RecommendationCategory[] = [];
+  if (rec.matchPercentage > 0) cats.push('logic_driven');
+  if (rec.certifiedBy?.includes('manufacturer')) cats.push('manufacturer_certified');
+  if (rec.certifiedBy?.some(s => s === 'partsio_fff' || s === 'partsio_functional' || s === 'mouser'))
+    cats.push('third_party_certified');
+  return cats.length > 0 ? cats : ['logic_driven'];
+}
 
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
@@ -599,6 +612,50 @@ export interface ManufacturerLocation {
   type: 'fab' | 'assembly_test' | 'both';
 }
 
+// ── Atlas Manufacturer (DB/Admin-facing canonical record) ────
+
+/** Full atlas_manufacturers row — the canonical manufacturer identity record */
+export interface AtlasManufacturer {
+  id: number;
+  atlasId: number;
+  slug: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameDisplay: string;
+  aliases: string[];
+  partsioId: number | null;
+  partsioName: string | null;
+  websiteUrl: string | null;
+  logoUrl: string | null;
+  headquarters: string | null;
+  country: string;
+  foundedYear: number | null;
+  summary: string | null;
+  isSecondSource: boolean;
+  certifications: ManufacturerCertification[];
+  manufacturingLocations: ManufacturerLocation[];
+  productCategories: string[];
+  authorizedDistributors: AuthorizedDistributor[];
+  complianceFlags: string[];
+  designResources: DesignResource[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Lightweight summary for manufacturer list views (admin panel) */
+export interface AtlasManufacturerSummary {
+  id: number;
+  slug: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameDisplay: string;
+  enabled: boolean;
+  productCount: number;
+  scorableCount: number;
+  coveragePct: number;
+}
+
 // ============================================================
 // PARTS LIST TYPES
 // ============================================================
@@ -727,6 +784,32 @@ export interface ParsedSpreadsheet {
   fileName: string;
 }
 
+/** Manufacturer-certified cross-reference record (from Supabase) */
+export interface ManufacturerCrossReference {
+  id: string;
+  manufacturer_slug: string;
+  xref_mpn: string;
+  xref_manufacturer?: string;
+  xref_description?: string;
+  original_mpn: string;
+  original_manufacturer?: string;
+  equivalence_type: 'pin_to_pin' | 'functional';
+  upload_batch_id?: string;
+  uploaded_by?: string;
+  uploaded_at?: string;
+  is_active: boolean;
+}
+
+/** Column mapping for cross-reference upload spreadsheets */
+export interface CrossRefColumnMapping {
+  xrefMpnColumn: number;
+  xrefMfrColumn?: number;
+  xrefDescColumn?: number;
+  originalMpnColumn: number;
+  originalMfrColumn?: number;
+  equivalenceTypeColumn?: number;
+}
+
 /** Request body for the batch validate API */
 export interface BatchValidateRequest {
   items: Array<{
@@ -734,6 +817,8 @@ export interface BatchValidateRequest {
     mpn: string;
     manufacturer?: string;
     description?: string;
+    /** When true, skip searchParts() and go straight to getAttributes(). Use when MPN was already confirmed via search picker. */
+    skipSearch?: boolean;
   }>;
   /** Currency code for pricing (e.g. 'USD', 'CNY'). Passed to Digikey API. */
   currency?: string;

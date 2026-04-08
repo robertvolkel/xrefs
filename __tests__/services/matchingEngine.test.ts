@@ -101,11 +101,11 @@ describe('matchingEngine', () => {
       expect(result.results[0].result).toBe('pass');
     });
 
-    it('fails when candidate is missing but source has value', () => {
+    it('returns review when candidate is missing but source has value', () => {
       const src = attrs([param('capacitance', '100nF', 1e-7)]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(table([r]), src, cand);
-      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].result).toBe('review');
     });
 
     it('passes when both are missing', () => {
@@ -201,11 +201,11 @@ describe('matchingEngine', () => {
       expect(result.results[0].result).toBe('pass');
     });
 
-    it('fails when candidate is missing', () => {
+    it('returns review when candidate is missing', () => {
       const src = attrs([param('dielectric', 'X7R')]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(table([r]), src, cand);
-      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].result).toBe('review');
     });
   });
 
@@ -710,7 +710,7 @@ describe('matchingEngine', () => {
   // THRESHOLD RULES — blockOnMissing
   // ----------------------------------------------------------
   describe('threshold rule (blockOnMissing)', () => {
-    it('returns fail when candidate is missing and blockOnMissing is true', () => {
+    it('returns review when candidate is missing and blockOnMissing is true', () => {
       const r = rule({
         attributeId: 'tst',
         logicType: 'threshold',
@@ -720,7 +720,7 @@ describe('matchingEngine', () => {
       const src = attrs([param('tst', '200ns', 200)]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(table([r]), src, cand);
-      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].result).toBe('review');
       expect(result.results[0].note).toContain('Missing critical specification');
     });
 
@@ -840,11 +840,11 @@ describe('matchingEngine', () => {
       expect(result.results[0].result).toBe('pass');
     });
 
-    it('fails when candidate is missing (lacks critical spec)', () => {
+    it('returns review when candidate is missing (lacks critical spec)', () => {
       const src = attrs([param('vp', '-2V to -6V')]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(table([r]), src, cand);
-      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].result).toBe('review');
     });
 
     it('falls back to string comparison when unparsable', () => {
@@ -1006,12 +1006,12 @@ describe('matchingEngine', () => {
       expect(result.results[0].result).toBe('review');
     });
 
-    it('fails when candidate Vref missing and blockOnMissing', () => {
+    it('returns review when candidate Vref missing and blockOnMissing', () => {
       const blockRule = rule({ attributeId: 'vref', logicType: 'vref_check', weight: 9, blockOnMissing: true });
       const src = attrs([param('vref', '0.8V', 0.8), param('output_voltage', '3.3V', 3.3)]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(table([blockRule]), src, cand);
-      expect(result.results[0].result).toBe('fail');
+      expect(result.results[0].result).toBe('review');
     });
 
     it('returns review when source output_voltage is missing (cannot compute)', () => {
@@ -1475,13 +1475,13 @@ describe('matchingEngine', () => {
       expect(result.passed).toBe(false);
     });
 
-    it('logic_function blockOnMissing — candidate missing logic_function fails', () => {
+    it('logic_function blockOnMissing — candidate missing logic_function returns review', () => {
       const t = table([rule({ attributeId: 'logic_function', logicType: 'identity', weight: 10, blockOnMissing: true })]);
       const source = attrs([param('logic_function', '04')]);
       const cand = attrs([], 'CAND-001');
       const result = evaluateCandidate(t, source, cand);
       const r = result.results.find(r => r.attributeId === 'logic_function');
-      expect(r?.result).toBe('fail');
+      expect(r?.result).toBe('review');
     });
 
     // ----------------------------------------------------------

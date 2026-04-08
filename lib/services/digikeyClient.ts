@@ -38,6 +38,12 @@ export interface DigikeyPriceBreak {
   TotalPrice: number;
 }
 
+export interface DigikeyProductVariation {
+  DigiKeyProductNumber: string;
+  PackageType?: { Id: number; Name: string };
+  StandardPricing?: DigikeyPriceBreak[];
+}
+
 export interface DigikeyProduct {
   Description: { ProductDescription: string; DetailedDescription: string };
   Manufacturer: { Id: number; Name: string };
@@ -45,6 +51,7 @@ export interface DigikeyProduct {
   DigiKeyPartNumber: string;
   UnitPrice: number;
   StandardPricing?: DigikeyPriceBreak[];
+  ProductVariations?: DigikeyProductVariation[];
   ProductUrl: string;
   DatasheetUrl: string;
   PhotoUrl: string;
@@ -105,6 +112,7 @@ async function getAccessToken(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal: AbortSignal.timeout(10_000),
     body: new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
@@ -141,10 +149,18 @@ function buildHeaders(token: string, currency?: string): Record<string, string> 
   return headers;
 }
 
+const DIGIKEY_TIMEOUT_MS = 10_000;
+
 async function digikeyFetch(url: string, options: RequestInit, currency?: string): Promise<Response> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url, options);
+    let res: Response;
+    try {
+      res = await fetch(url, { ...options, signal: AbortSignal.timeout(DIGIKEY_TIMEOUT_MS) });
+    } catch (error) {
+      // Timeout or network error — don't retry, fail fast
+      throw new Error(`Digikey request failed: ${error instanceof Error ? error.message : 'timeout'}`);
+    }
 
     if (res.status === 429) {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '2', 10);
@@ -228,6 +244,8 @@ interface DigikeyCommercialData {
   UnitPrice: number;
   QuantityAvailable: number;
   ProductStatus: { Id: number; Status: string };
+  StandardPricing?: DigikeyPriceBreak[];
+  ProductVariations?: DigikeyProductVariation[];
 }
 
 /** Extract commercial fields from a DigikeyProduct */
@@ -236,6 +254,8 @@ function extractCommercial(product: DigikeyProduct): DigikeyCommercialData {
     UnitPrice: product.UnitPrice,
     QuantityAvailable: product.QuantityAvailable,
     ProductStatus: product.ProductStatus,
+    StandardPricing: product.StandardPricing,
+    ProductVariations: product.ProductVariations,
   };
 }
 
@@ -246,6 +266,8 @@ function applyCommercial(product: DigikeyProduct, commercial: DigikeyCommercialD
     UnitPrice: commercial.UnitPrice,
     QuantityAvailable: commercial.QuantityAvailable,
     ProductStatus: commercial.ProductStatus,
+    StandardPricing: commercial.StandardPricing,
+    ProductVariations: commercial.ProductVariations,
   };
 }
 

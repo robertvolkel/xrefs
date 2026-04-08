@@ -4,6 +4,8 @@
     "save": "Speichern",
     "delete": "Löschen",
     "search": "Suchen",
+    "back": "Zurück",
+    "stop": "Stopp",
     "loading": "Wird geladen...",
     "comingSoon": "Demnächst verfügbar",
     "required": "Pflichtfeld"
@@ -121,7 +123,31 @@
     "exploreReplacements": "Ersatzteile suchen",
     "startingValidation": "Validierung von {{total}} Bauteilen wird gestartet...",
     "validatingProgress": "Validierung... {{processed}} von {{total}} Bauteilen verarbeitet",
-    "errorProgress": "({{processed}} von {{total}} Bauteilen vor Fehler verarbeitet)"
+    "errorProgress": "({{processed}} von {{total}} Bauteilen vor Fehler verarbeitet)",
+    "addPart": "Bauteil hinzufügen",
+    "emptyListHeading": "Noch keine Bauteile",
+    "emptyListSubheading": "Fügen Sie Ihr erstes Bauteil hinzu",
+    "searchCount": "{{filtered}} von {{total}} Bauteilen",
+    "notifications": {
+      "validationErrors": "{{count}} Bauteile konnten nicht aufgelöst werden — Datenquelle möglicherweise nicht verfügbar",
+      "mouserUnavailable": "Mouser-Preise nicht verfügbar — API möglicherweise ausgefallen oder ratenbegrenzt",
+      "mouserLoaded": "Mouser-Preise für {{count}} Bauteile geladen",
+      "someNotFound": "{{count}} Bauteile konnten in keiner Datenquelle gefunden werden",
+      "retry": "Wiederholen"
+    }
+  },
+  "addPartDialog": {
+    "title": "Bauteil hinzufügen",
+    "mpnLabel": "Teilenummer (MPN)",
+    "mpnPlaceholder": "z.B. LM317T",
+    "manufacturerLabel": "Hersteller",
+    "manufacturerPlaceholder": "z.B. Texas Instruments",
+    "additionalColumns": "Zusätzliche Spalten",
+    "addButton": "Bauteil hinzufügen",
+    "searchButton": "Suchen",
+    "selectPart": "Wählen Sie das richtige Bauteil zum Hinzufügen:",
+    "noResults": "Keine passenden Bauteile gefunden. Sie können das Bauteil trotzdem hinzufügen — es wird als nicht gefunden markiert.",
+    "addAnyway": "Trotzdem mit Originaleingabe hinzufügen"
   },
   "status": {
     "pending": "Ausstehend",
@@ -232,6 +258,7 @@
     "dataSources": "Datenquellen",
     "paramMappings": "Parameterzuordnungen",
     "logicRules": "Querverweislogik",
+    "manufacturers": "Hersteller",
     "atlas": "Atlas",
     "atlasDesc": "Produktkatalog chinesischer Hersteller.",
     "contextQuestions": "Anwendungskontext",

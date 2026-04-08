@@ -10,6 +10,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ClearIcon from '@mui/icons-material/Clear';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -23,6 +24,7 @@ interface PartsListActionBarProps {
   onSearchChange: (term: string) => void;
   onRefresh: () => void;
   onDelete: () => void;
+  onAddPart: () => void;
 }
 
 export default function PartsListActionBar({
@@ -33,6 +35,7 @@ export default function PartsListActionBar({
   onSearchChange,
   onRefresh,
   onDelete,
+  onAddPart,
 }: PartsListActionBarProps) {
   const { t } = useTranslation();
 
@@ -84,6 +87,15 @@ export default function PartsListActionBar({
           </Button>
         </span>
       </Tooltip>
+
+      <Button
+        size="small"
+        startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+        onClick={onAddPart}
+        sx={{ fontSize: '0.78rem', textTransform: 'none', color: 'text.secondary' }}
+      >
+        {t('partsList.addPart')}
+      </Button>
 
       <TextField
         size="small"

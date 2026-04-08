@@ -8,9 +8,10 @@ import {
   XrefRecommendation,
   PartAttributes,
   BatchValidateItem,
+  PartSummary,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { getPartAttributes, getRecommendations, validatePartsList } from '@/lib/api';
+import { getPartAttributes, getRecommendations, validatePartsList, enrichWithMouserBatch } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
 import {
@@ -26,6 +27,7 @@ import {
   getActiveValidation,
   subscribe as subscribeValidation,
   clearValidation,
+  cancelValidation,
 } from '@/lib/validationManager';
 
 // ============================================================
@@ -104,6 +106,7 @@ export function usePartsListState() {
   const listCustomerRef = useRef<string | null>(null);
   const listDefaultViewIdRef = useRef<string | null>(null);
   const activeListIdRef = useRef<string | null>(null);
+  const validationAbortRef = useRef<AbortController | null>(null);
 
   // Load saved lists on mount
   useEffect(() => {
@@ -648,7 +651,12 @@ export function usePartsListState() {
     });
 
     try {
-      const stream = await validatePartsList(items, listCurrencyRef.current);
+      // Create abort controller for this validation
+      validationAbortRef.current?.abort();
+      const abortController = new AbortController();
+      validationAbortRef.current = abortController;
+
+      const stream = await validatePartsList(items, listCurrencyRef.current, abortController.signal);
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -717,10 +725,12 @@ export function usePartsListState() {
         });
       }
     } catch (error) {
+      // Ignore abort errors (user cancelled)
+      const isAbort = error instanceof DOMException && error.name === 'AbortError';
       setState(prev => ({
         ...prev,
         phase: 'results',
-        error: error instanceof Error ? error.message : 'Refresh failed',
+        error: isAbort ? null : (error instanceof Error ? error.message : 'Refresh failed'),
       }));
     }
   }, [state.rows]);
@@ -751,6 +761,248 @@ export function usePartsListState() {
   }, []);
 
   // ----------------------------------------------------------
+  // Create empty list (no file upload)
+  // ----------------------------------------------------------
+
+  const handleCreateEmptyList = useCallback(async (
+    name: string,
+    description: string,
+    customer?: string,
+    defaultViewId?: string,
+  ) => {
+    const headers = ['MPN', 'Manufacturer'];
+    listNameRef.current = name;
+    listDescriptionRef.current = description;
+    listCustomerRef.current = customer ?? null;
+    listDefaultViewIdRef.current = defaultViewId ?? null;
+    activeListIdRef.current = null;
+
+    setState(prev => ({
+      ...prev,
+      phase: 'results',
+      rows: [],
+      listName: name,
+      listDescription: description,
+      listCustomer: customer ?? null,
+      listDefaultViewId: defaultViewId ?? null,
+      spreadsheetHeaders: headers,
+      parsedData: null,
+      columnMapping: { mpnColumn: 0, manufacturerColumn: 1, descriptionColumn: -1 },
+      error: null,
+      validationProgress: 1,
+    }));
+
+    try {
+      const listId = await savePartsListSupabase(name, [], description, headers, customer, defaultViewId);
+      if (listId) {
+        activeListIdRef.current = listId;
+        setState(prev => ({ ...prev, activeListId: listId }));
+      }
+    } catch {
+      // Save failed — list works locally but won't persist
+    }
+
+    // Refresh saved lists so dashboard card appears
+    const lists = await getSavedListsSupabase();
+    setState(prev => ({ ...prev, savedLists: lists }));
+  }, []);
+
+  // ----------------------------------------------------------
+  // Add a single part manually
+  // ----------------------------------------------------------
+
+  const handleAddPart = useCallback((
+    mpn: string,
+    manufacturer: string,
+    resolvedPart?: PartSummary,
+    extraCells?: Record<number, string>,
+  ): number | undefined => {
+    const trimmedMpn = mpn.trim();
+    const trimmedMfr = manufacturer.trim();
+    if (!trimmedMpn) return undefined;
+
+    // Compute new row index
+    let maxIndex = -1;
+    setState(prev => {
+      maxIndex = prev.rows.length > 0
+        ? Math.max(...prev.rows.map(r => r.rowIndex))
+        : -1;
+      return prev;
+    });
+    const newRowIndex = maxIndex + 1;
+
+    // Build rawCells array matching spreadsheet headers
+    const headers = state.spreadsheetHeaders.length > 0 ? state.spreadsheetHeaders : ['MPN', 'Manufacturer'];
+    const rawCells = Array(headers.length).fill('');
+
+    // Place MPN and MFR at correct positions
+    const mapping = state.columnMapping;
+    const mpnIdx = mapping && mapping.mpnColumn >= 0 ? mapping.mpnColumn : 0;
+    const mfrIdx = mapping && mapping.manufacturerColumn >= 0 ? mapping.manufacturerColumn : 1;
+    rawCells[mpnIdx] = trimmedMpn;
+    if (mfrIdx < rawCells.length) rawCells[mfrIdx] = trimmedMfr;
+
+    // Place extra column values
+    if (extraCells) {
+      for (const [idx, val] of Object.entries(extraCells)) {
+        const i = Number(idx);
+        if (i >= 0 && i < rawCells.length) rawCells[i] = val;
+      }
+    }
+
+    const newRow: PartsListRow = {
+      rowIndex: newRowIndex,
+      rawMpn: trimmedMpn,
+      rawManufacturer: trimmedMfr,
+      rawDescription: '',
+      rawCells,
+      status: 'validating',
+      // If we already resolved the part from quick search, show it immediately
+      resolvedPart: resolvedPart ?? undefined,
+    };
+
+    // Add to state at the top so the new part is immediately visible
+    setState(prev => ({
+      ...prev,
+      rows: [newRow, ...prev.rows],
+      phase: 'validating',
+    }));
+
+    // Persist the new row immediately
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setState(prev => {
+        updatePartsListSupabase(listId, prev.rows).catch(() => {});
+        return prev;
+      });
+    }
+
+    // Phase 2: Full validation in background (fire-and-forget — dialog closes immediately)
+    (async () => {
+      try {
+        // Create abort controller for this single-part validation
+        validationAbortRef.current?.abort();
+        const abortController = new AbortController();
+        validationAbortRef.current = abortController;
+
+        const stream = await validatePartsList(
+          [{ rowIndex: newRowIndex, mpn: resolvedPart?.mpn ?? trimmedMpn, manufacturer: trimmedMfr || undefined, skipSearch: !!resolvedPart }],
+          listCurrencyRef.current,
+          abortController.signal,
+        );
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const item: BatchValidateItem = JSON.parse(line);
+              setState(prev => {
+                const newRows = [...prev.rows];
+                const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
+                if (idx >= 0) {
+                  newRows[idx] = {
+                    ...newRows[idx],
+                    status: item.status,
+                    resolvedPart: item.resolvedPart,
+                    sourceAttributes: item.sourceAttributes,
+                    suggestedReplacement: item.suggestedReplacement,
+                    allRecommendations: item.allRecommendations,
+                    enrichedData: item.enrichedData,
+                    errorMessage: item.errorMessage,
+                    recommendationCount: item.allRecommendations?.length,
+                  };
+                }
+                return { ...prev, rows: newRows, phase: 'results', lastRefreshedAt: new Date() };
+              });
+            } catch { /* skip malformed lines */ }
+          }
+        }
+
+        // Final state + persist
+        setState(prev => ({ ...prev, phase: 'results', lastRefreshedAt: new Date() }));
+        if (listId) {
+          setState(prev => {
+            updatePartsListSupabase(listId, prev.rows).catch(() => {});
+            return prev;
+          });
+        }
+      } catch (error) {
+        const isAbort = error instanceof DOMException && error.name === 'AbortError';
+        if (!isAbort) {
+          setState(prev => ({
+            ...prev,
+            phase: 'results',
+            error: error instanceof Error ? error.message : 'Validation failed',
+          }));
+        }
+      }
+    })();
+
+    return newRowIndex;
+  }, [state.spreadsheetHeaders, state.columnMapping]);
+
+  // ----------------------------------------------------------
+  // Inline cell editing
+  // ----------------------------------------------------------
+
+  const cellEditTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCellEdit = useCallback((rowIndex: number, columnId: string, newValue: string) => {
+    // Parse spreadsheet column index from "ss:3" → 3
+    const match = columnId.match(/^ss:(\d+)$/);
+    if (!match) return;
+    const ssIndex = Number(match[1]);
+
+    const mapping = state.columnMapping;
+    const isMpnColumn = mapping && ssIndex === mapping.mpnColumn;
+    const isMfrColumn = mapping && ssIndex === mapping.manufacturerColumn;
+
+    setState(prev => {
+      const newRows = [...prev.rows];
+      const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
+      if (idx < 0) return prev;
+
+      const row = { ...newRows[idx] };
+      const rawCells = [...(row.rawCells ?? [])];
+      rawCells[ssIndex] = newValue;
+      row.rawCells = rawCells;
+
+      if (isMpnColumn) row.rawMpn = newValue;
+      if (isMfrColumn) row.rawManufacturer = newValue;
+
+      newRows[idx] = row;
+      return { ...prev, rows: newRows };
+    });
+
+    // Persist to Supabase
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setState(prev => {
+        updatePartsListSupabase(listId, prev.rows).catch(() => {});
+        return prev;
+      });
+    }
+
+    // If MPN or MFR changed, debounce re-validation
+    if (isMpnColumn || isMfrColumn) {
+      if (cellEditTimerRef.current) clearTimeout(cellEditTimerRef.current);
+      cellEditTimerRef.current = setTimeout(() => {
+        handleRefreshRows([rowIndex]);
+      }, 500);
+    }
+  }, [state.columnMapping, handleRefreshRows]);
+
+  // ----------------------------------------------------------
   // Reset
   // ----------------------------------------------------------
 
@@ -764,6 +1016,119 @@ export function usePartsListState() {
     clearValidation();
     setState(prev => ({ ...INITIAL_STATE, savedLists: prev.savedLists }));
   }, []);
+
+  // ----------------------------------------------------------
+  // Cancel validation
+  // ----------------------------------------------------------
+
+  const handleCancelValidation = useCallback(() => {
+    // Abort background validation manager stream
+    cancelValidation();
+    // Abort direct validation streams (handleRefreshRows, handleAddPart)
+    validationAbortRef.current?.abort();
+    validationAbortRef.current = null;
+    setState(prev => ({ ...prev, phase: 'results' }));
+  }, []);
+
+  // ----------------------------------------------------------
+  // Post-validation Mouser enrichment
+  // ----------------------------------------------------------
+
+  /** Shared Mouser enrichment logic — returns { requested, enriched } counts */
+  const runMouserEnrichment = useCallback(async (): Promise<{ requested: number; enriched: number }> => {
+    const rowsNeedingMouser = state.rows.filter(r =>
+      r.status === 'resolved' &&
+      r.enrichedData &&
+      r.resolvedPart?.mpn &&
+      !r.enrichedData.supplierQuotes?.some(q => q.supplier === 'mouser')
+    );
+
+    if (rowsNeedingMouser.length === 0) return { requested: 0, enriched: 0 };
+
+    const mpns = rowsNeedingMouser.map(r => r.resolvedPart!.mpn);
+    const results = await enrichWithMouserBatch(mpns);
+    const enrichedCount = Object.keys(results).length;
+
+    if (enrichedCount > 0) {
+      setState(prev => {
+        const newRows = prev.rows.map(row => {
+          const mpnLower = row.resolvedPart?.mpn?.toLowerCase();
+          if (!mpnLower || !results[mpnLower] || !row.enrichedData) return row;
+
+          const mouser = results[mpnLower];
+          return {
+            ...row,
+            enrichedData: {
+              ...row.enrichedData,
+              supplierQuotes: [...(row.enrichedData.supplierQuotes ?? []), mouser.quote],
+              lifecycleInfo: [...(row.enrichedData.lifecycleInfo ?? []), ...(mouser.lifecycle ? [mouser.lifecycle] : [])],
+              complianceData: [...(row.enrichedData.complianceData ?? []), ...(mouser.compliance ? [mouser.compliance] : [])],
+            },
+          };
+        });
+        return { ...prev, rows: newRows };
+      });
+
+      const listId = activeListIdRef.current;
+      if (listId) {
+        setState(prev => {
+          updatePartsListSupabase(listId, prev.rows).catch(() => {});
+          return prev;
+        });
+      }
+    }
+
+    return { requested: mpns.length, enriched: enrichedCount };
+  }, [state.rows]);
+
+  // Progressive Mouser enrichment — runs during validation (every 10 resolved rows) + on completion
+  const mouserEnrichResultRef = useRef<{ requested: number; enriched: number } | null>(null);
+  const mouserEnrichRunningRef = useRef(false);
+  const lastMouserBatchCountRef = useRef(0);
+
+  useEffect(() => {
+    // Reset tracking when validation starts
+    if (state.phase === 'validating' || state.phase === 'empty') {
+      lastMouserBatchCountRef.current = 0;
+      mouserEnrichResultRef.current = null;
+    }
+
+    // Don't run if already in progress or if no rows
+    if (mouserEnrichRunningRef.current) return;
+    if (state.phase !== 'validating' && state.phase !== 'results') return;
+
+    const resolvedCount = state.rows.filter(r => r.status === 'resolved' && r.enrichedData).length;
+    const isDone = state.phase === 'results';
+    const batchThreshold = 10;
+
+    // During validation: trigger every 10 resolved rows. On completion: trigger for remaining.
+    const newSinceLastBatch = resolvedCount - lastMouserBatchCountRef.current;
+    if (!isDone && newSinceLastBatch < batchThreshold) return;
+    if (resolvedCount === 0) return;
+
+    mouserEnrichRunningRef.current = true;
+    lastMouserBatchCountRef.current = resolvedCount;
+
+    runMouserEnrichment()
+      .then(result => {
+        // Accumulate results across batches
+        const prev = mouserEnrichResultRef.current;
+        mouserEnrichResultRef.current = {
+          requested: (prev?.requested ?? 0) + result.requested,
+          enriched: (prev?.enriched ?? 0) + result.enriched,
+        };
+      })
+      .catch(() => {})
+      .finally(() => { mouserEnrichRunningRef.current = false; });
+  }, [state.phase, state.rows, runMouserEnrichment]);
+
+  /** Manual retry — called from snackbar "Retry" button */
+  const handleRetryMouserEnrichment = useCallback(async () => {
+    return runMouserEnrichment();
+  }, [runMouserEnrichment]);
+
+  /** Get the latest Mouser enrichment result for notification logic */
+  const getMouserEnrichResult = useCallback(() => mouserEnrichResultRef.current, []);
 
   // ----------------------------------------------------------
   // Derived values
@@ -793,5 +1158,11 @@ export function usePartsListState() {
     handleUpdateListDetails,
     handleRefreshRows,
     handleDeleteRows,
+    handleCreateEmptyList,
+    handleAddPart,
+    handleCellEdit,
+    handleCancelValidation,
+    handleRetryMouserEnrichment,
+    getMouserEnrichResult,
   };
 }

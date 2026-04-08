@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -364,15 +364,33 @@ export async function analyzeQcLogs(params: {
   return res.body;
 }
 
+/** Quick search for Add Part dialog — resolves MPN identity without full validation. */
+export async function searchPartQuick(
+  mpn: string,
+  manufacturer?: string,
+): Promise<{ matches: PartSummary[]; manufacturerMismatch: boolean }> {
+  const res = await fetch(`${BASE}/parts-list/search-quick`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mpn, manufacturer }),
+  });
+  if (!res.ok) {
+    return { matches: [], manufacturerMismatch: false };
+  }
+  return res.json();
+}
+
 /** Validate a batch of parts. Returns a ReadableStream for streaming NDJSON. */
 export async function validatePartsList(
-  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string }>,
+  items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string; skipSearch?: boolean }>,
   currency?: string,
+  signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch(`${BASE}/parts-list/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items, currency }),
+    signal,
   });
   if (!res.ok || !res.body) {
     let detail = `HTTP ${res.status}`;
@@ -659,6 +677,60 @@ export async function getAtlasExplorerDetail(id: string): Promise<AtlasExplorerD
   return res.json();
 }
 
+export async function updateAtlasProduct(
+  id: string,
+  updates: { description?: string; parameters?: Record<string, { value: string; numericValue?: number; unit?: string }> },
+): Promise<boolean> {
+  const res = await fetch(`${BASE}/admin/atlas/explorer/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return res.ok;
+}
+
+// ── Atlas Product Flags ─────────────────────────────────────
+
+export interface AtlasProductFlag {
+  id: string;
+  productId: string;
+  mpn: string;
+  manufacturer: string;
+  comment: string;
+  status: 'open' | 'resolved' | 'dismissed';
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
+export async function getAtlasFlags(status?: string): Promise<{ flags: AtlasProductFlag[] }> {
+  const params = status && status !== 'all' ? `?status=${status}` : '';
+  const res = await fetch(`${BASE}/admin/atlas/flags${params}`);
+  if (!res.ok) throw new Error('Failed to fetch flags');
+  return res.json();
+}
+
+export async function createAtlasFlag(flag: { productId: string; mpn: string; manufacturer: string; comment: string }): Promise<{ success: boolean; id: string }> {
+  const res = await fetch(`${BASE}/admin/atlas/flags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(flag),
+  });
+  if (!res.ok) throw new Error('Failed to create flag');
+  return res.json();
+}
+
+export async function updateAtlasFlag(flagId: string, status: string): Promise<void> {
+  const res = await fetch(`${BASE}/admin/atlas/flags/${flagId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error('Failed to update flag');
+}
+
 export interface DictMappingSuggestion {
   translation: string | null;
   suggestedAttributeId: string | null;
@@ -773,4 +845,51 @@ export async function purgeAdminCache(opts?: {
   if (opts?.expiredOnly) params.set('expired', 'true');
   const res = await fetch(`${BASE}/admin/cache?${params}`, { method: 'DELETE' });
   return res.json();
+}
+
+// --- Manufacturer Cross-References ---
+
+export async function getMfrCrossRefs(
+  slug: string,
+  opts?: { page?: number; limit?: number; search?: string }
+): Promise<{ crossRefs: ManufacturerCrossReference[]; total: number; page: number; totalPages: number }> {
+  const params = new URLSearchParams();
+  if (opts?.page) params.set('page', String(opts.page));
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.search) params.set('search', opts.search);
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references?${params}`);
+  if (!res.ok) throw new Error('Failed to fetch cross-references');
+  return res.json();
+}
+
+export async function uploadMfrCrossRefs(
+  slug: string,
+  rows: Array<{
+    xref_mpn: string;
+    xref_manufacturer?: string;
+    xref_description?: string;
+    original_mpn: string;
+    original_manufacturer?: string;
+    equivalence_type?: string;
+  }>
+): Promise<{ success: boolean; inserted: number; skipped: number; batchId: string; atlasEnriched: number }> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to upload cross-references');
+  }
+  return res.json();
+}
+
+export async function deleteMfrCrossRefs(slug: string, ids: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/cross-references`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error('Failed to delete cross-references');
 }

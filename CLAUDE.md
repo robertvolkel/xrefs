@@ -25,6 +25,7 @@ app/                          # Next.js App Router
   api/chat/                   # LLM orchestrator conversation
   api/modal-chat/             # Refinement chat (per-part in parts list modal)
   api/parts-list/validate/    # Batch validation (streaming NDJSON, direct getAttributes fallback on search miss)
+  api/parts-list/search-quick/ # Lightweight MPN search for Add Part dialog (search only, no attrs/recs)
   api/auth/register/          # User registration with invite code
   api/admin/users/            # Admin user management (role changes owner-only)
   api/admin/qc/               # QC log list (GET with filters, sort, pagination)
@@ -57,7 +58,16 @@ app/                          # Next.js App Router
   api/admin/releases/[id]/   # Update/delete release note (PATCH/DELETE, admin-only)
   api/releases/              # List release notes (GET, all authenticated)
   api/mouser/enrich/         # On-demand Mouser enrichment (POST, batch MPNs)
+  api/list-chat/             # List agent conversation (POST, list-scoped LLM with 9 tools)
+  api/admin/manufacturers/    # Manufacturer list endpoint (GET, RPC-based aggregation, 30min cache)
+  api/admin/manufacturers/[slug]/ # Manufacturer detail + update (GET/PATCH)
+  api/admin/manufacturers/[slug]/products/ # Paginated products for MFR (GET)
+  api/admin/manufacturers/[slug]/cross-references/ # MFR cross-reference CRUD (GET list, POST bulk upload, DELETE soft)
+  api/admin/atlas/flags/      # Atlas product flags CRUD (GET/POST)
+  api/admin/atlas/flags/[flagId]/ # Flag status update (PATCH)
   api/feedback/              # User feedback submission (POST)
+  admin/layout.tsx            # Shared admin layout (sidebar persists across routes)
+  admin/manufacturers/[slug]/ # Manufacturer detail page (sub-route)
   lists/                      # Lists dashboard page
   parts-list/                 # Parts list editor page
   logic/                      # Admin logic table viewer page
@@ -76,7 +86,11 @@ components/                   # React components
     PartsListShell.tsx        # Parts list orchestrator — composes hooks, sort/filter pipeline
     PartsListTable.tsx        # Sortable table with validation progress + selection
     ViewControls.tsx          # View dropdown, kebab menu, default star, delete confirm
-    PartsListActionBar.tsx    # Selection count, refresh/delete buttons, search field
+    PartsListActionBar.tsx    # Selection count, refresh/delete/add-part buttons, search field
+    AddPartDialog.tsx         # Manual part entry — Search → Select picker flow, MPN search with multi-source results
+    ListAgentFooter.tsx       # Sticky bottom bar (34px) with toggle trigger + item count + refresh time
+    ListAgentDrawer.tsx       # Bottom-anchored 50vh drawer with chat messages + input
+    ListActionConfirmation.tsx # Confirm/Cancel widget for write actions (delete, refresh, set preferred)
   lists/                      # Lists dashboard components
   admin/                      # Admin panel components
     AdminShell.tsx            # Admin orchestrator — section selection, family picker state
@@ -99,6 +113,13 @@ components/                   # React components
     AtlasExplorerDrawer.tsx   # Atlas product detail — schema comparison (L3 or L2), extra attrs, raw params
     AtlasDictionaryPanel.tsx  # Atlas translation dictionary viewer/editor (per-family + L2 category + shared)
     AtlasDictOverrideDrawer.tsx # Right-side drawer for editing dictionary overrides — schema Autocomplete, AI suggestion, sample values
+    ManufacturersPanel.tsx    # Manufacturer list + search + flagged tabs
+    ManufacturerDetailPage.tsx # MFR detail (5 tabs: Products, Flagged, Coverage, Cross-Refs, Profile)
+    FlaggedProductsTab.tsx    # Flagged products list with status filters
+    CrossReferencesTab.tsx    # MFR cross-ref upload (drag-drop + column mapping) + paginated table
+    CrossRefColumnMappingDialog.tsx # Column mapping dialog for cross-ref upload (6 fields)
+    SearchLogicPanel.tsx      # Admin docs: how single-part search pipeline works (hardcoded markdown)
+    ListLogicPanel.tsx        # Admin docs: how batch list validation pipeline works (hardcoded markdown)
     logicConstants.ts         # Shared typeColors/typeLabels for rule type chips
   auth/                        # Registration and onboarding
     RegisterForm.tsx          # Step 1 — account creation (name, email, password, invite code)
@@ -129,6 +150,7 @@ hooks/
   useRowDeletion.ts           # Two-step delete confirmation (permanent vs. hide)
   useColumnCatalog.ts         # Header inference, column building, mapping fallback
   useModalChat.ts             # Refinement chat state
+  useListAgent.ts             # List agent conversation, action dispatch, confirmation flow
   useViewConfig.ts            # Global view template management (renamed to useViewTemplates)
   useListViewConfig.ts        # Per-list view management (Supabase-backed, debounced save)
 
@@ -162,8 +184,10 @@ lib/
   services/atlasGaiaDictionaries.ts # Gaia datasheet-extracted param mapping (parse, skip stems, dict exports)
   services/atlas-gaia-dicts.json # Shared gaia dictionaries (12 families + shared, consumed by TS + MJS)
   services/atlasDictOverrides.ts # Server-only Supabase fetch/cache for dictionary overrides
+  services/descriptionExtractor.ts # LLM description extraction — schema prompt builder, quote-grounded parser, gap-fill merger
   services/mouserClient.ts    # Mouser API client — search, batch, cache, rate limiter
   services/mouserMapper.ts    # Mouser response → SupplierQuote/LifecycleInfo/ComplianceData
+  services/manufacturerCrossRefService.ts # MFR cross-ref lookup (60s cached Supabase query)
   services/partDataCache.ts   # L2 persistent cache (Supabase-backed, 3-tier TTL)
   columnDefinitions.ts        # Dynamic column system for parts list table
   viewConfigStorage.ts        # View types (SavedView, ViewState), localStorage persistence, sanitizeTemplateColumns()
@@ -177,7 +201,10 @@ mcp-server/                   # MCP server for external AI agent integration (De
 
 __tests__/services/           # Jest unit tests for core business logic
 docs/                         # Cross-reference logic documents (.docx)
-scripts/                      # Utility scripts (Digikey param discovery, Supabase schema)
+scripts/                      # Utility scripts (Digikey param discovery, Supabase schema, Atlas ingest/extract)
+  supabase-atlas-manufacturers-schema.sql # atlas_manufacturers table schema
+  supabase-atlas-flags-schema.sql # atlas_product_flags table schema
+  atlas-manufacturers-import.mjs # Excel import for manufacturer master list
 locales/                      # i18n translations (en, de, zh-CN)
 theme/theme.ts                # MUI M3 dark theme configuration
 jest.config.ts                # Jest config (next/jest.js, SWC transforms, path aliases)
@@ -200,7 +227,8 @@ The core pipeline is in `lib/services/partDataService.ts → getRecommendations(
 
 Each rule has a **weight** (0-10). The matching engine evaluates each rule and produces:
 - `matchPercentage = (earnedWeight / totalWeight) * 100`
-- A part **fails** if any rule result is `'fail'`
+- A part **fails** if any rule result is `'fail'` (actual value mismatch only — missing data never causes fail)
+- Missing candidate data → `'review'` (flagged for human verification, never rejected). `blockOnMissing` flag controls note severity only, not the result (Decision #109).
 - `application_review` rules get 50% credit (can't be automated)
 - `operational` mismatches get 80% credit (non-electrical)
 
@@ -320,12 +348,16 @@ See `docs/DECISIONS.md` for architectural decisions and `docs/BACKLOG.md` for kn
 - **Particle wave background**: Canvas animation in `ParticleWaveBackground.tsx` shows in idle state, fades out when attributes panel appears. Grid container is transparent; individual panels have opaque `bgcolor` so they cover the canvas.
 - **useAppState** tries Claude API first; if no API key, falls back to deterministic mode
 - **Multi-source search** (Decision #106): `searchParts()` queries Digikey + Atlas + Parts.io + Mouser in parallel. `looksLikeMpn()` heuristic routes MPN-like queries to all 4 sources; descriptions only hit Digikey + Atlas. Priority dedup: Digikey wins, non-Digikey results only for parts not in Digikey. Result cap 50. `PartSummary.dataSource` tags origin. Batch validation skips Mouser (`skipMouser: true`).
-- **partDataService** tries Digikey first; if unavailable, falls back to Atlas → parts.io → null. After Digikey, enriches with parts.io gap-fill AND Mouser commercial data **in parallel** via `enrichSourceInParallel()` (Digikey values win on conflicts). When parts.io is the primary source (no Digikey/Atlas match), `disambiguatePartsioSubcategory()` refines broad Class names (e.g., "Capacitors") into specific families using description keywords and parametric hints. Batch validation has an additional fallback: if `searchParts()` returns 'none', tries `getAttributes()` directly (exact MPN lookup) before marking "not-found" (Decision #108).
+- **partDataService** tries Digikey first; if unavailable, falls back to parts.io → Atlas → null. After Digikey, enriches with parts.io gap-fill AND Mouser commercial data **in parallel** via `enrichSourceInParallel()` (Digikey values win on conflicts). When parts.io is the primary source (no Digikey/Atlas match), `disambiguatePartsioSubcategory()` refines broad Class names (e.g., "Capacitors") into specific families using description keywords and parametric hints. Batch validation has an additional fallback: if `searchParts()` returns 'none', tries `getAttributes()` directly (exact MPN lookup) before marking "not-found" (Decision #108).
 - **Persistent L2 cache** (Decision #99): `part_data_cache` Supabase table sits between in-memory L1 caches (30-min TTL) and live API calls. Three-tier TTL: parametric (indefinite Digikey / 90-day parts.io), lifecycle (6 months), commercial (24 hours). Cross-user, survives cold starts. Digikey keyword search results warm the cache via `warmCacheFromSearchResults()`. Mouser L2 hits bypass rate limiter. Not-found results cached 24h. All writes fire-and-forget. Admin: `GET/DELETE /api/admin/cache`, cache stats in data-sources endpoint.
 - **Recommendation pipeline performance** (Decision #98): UI passes pre-fetched `sourceAttributes` to `/api/xref` POST to skip duplicate `getAttributes()` call. LLM assessment and Mouser candidate enrichment are deferred — recs display immediately, assessment streams into chat afterward, Mouser pricing merges in via background `enrichWithMouserBatch()`. QC logging is fire-and-forget. See `showRecsAndDeferAssessment()` in `useAppState.ts`.
-- **Per-list views** (Decision #81): Views stored per-list in Supabase `parts_lists.view_configs` JSONB. Global views are templates (`useViewTemplates` in localStorage) used to seed new lists. `useListViewConfig` hook manages per-list views with 500ms debounced Supabase persistence. "Save as Template" strips `ss:*` columns via `sanitizeTemplateColumns()`. Lists with null `view_configs` auto-migrate from templates on first load.
+- **Per-list views** (Decision #81): Views stored per-list in Supabase `parts_lists.view_configs` JSONB. Global views are templates (`useViewTemplates` in localStorage) used to seed new lists. `useListViewConfig` hook manages per-list views with 500ms debounced Supabase persistence. "Save as Template" strips `ss:*` columns via `sanitizeTemplateColumns()`. Lists with null `view_configs` auto-migrate from templates on first load. Default (starred) view: `defaultViewId` in ViewState JSONB, applied by `useListViewConfig` on initialization (overrides `activeViewId`). Star icon in `ViewControls.tsx` calls `setDefaultView(activeView.id)`.
 - **Column portability**: Templates may only contain portable column IDs (`sys:*`, `mapped:*`, `dk:*`, `dkp:*`). `ss:*` (raw spreadsheet index) columns are list-specific and stripped by `sanitizeTemplateColumns()` before saving to template library.
 - **mapped:cpn**: Optional Customer Part Number / Internal Part Number column. Auto-detected from headers in `excelParser.ts`. `cpnColumn` on `ColumnMapping`, `rawCpn` on `PartsListRow`. Resolved at render time like `mapped:manufacturer`.
+- **Manual part addition** (Decisions #113, #115): Empty lists can be created via third "Empty List" tab in `InputMethodDialog`. Individual parts added via `AddPartDialog` — two-step Search → Select flow: user enters MPN + optional MFR, clicks Search, picks from a results list (multi-source: Digikey/Atlas/Parts.io), then the verified `PartSummary` is passed to `handleAddPart()`. New part inserted at top of list with highlight animation. Two-phase validation: row appears immediately with resolved identity (status: 'validating'), full attributes + recommendations merge in background. Quick search via `/api/parts-list/search-quick` (search only, ~500ms, skipMouser). `skipSearch` flag on validate route skips redundant search when MPN already confirmed. Inline cell editing: `ss:*` columns are double-click-to-edit; MPN/MFR edits trigger debounced re-validation. Mouser API timeout (8s per attempt) and Digikey API timeout (10s per attempt) prevent batch validation from hanging. Batch validation passes `skipMouser: true` to `getAttributes()` and `getRecommendations()` since Mouser provides only commercial data. Progressive Mouser enrichment runs every 10 resolved rows during validation (not only at end). Cancel validation via Stop button (AbortController on all streams). Notification snackbar alerts on data source failures with Retry button for Mouser. Validation concurrency: 5 parallel items.
+- **Supabase 1000-row limit**: Supabase/PostgREST caps single queries at 1000 rows by default. Use `fetchAllPages()` pattern (paginate in chunks of 1000 with `.range()`) for detail pages, or push aggregation to SQL via RPC functions for list pages (Decision #123). See `/api/admin/atlas/route.ts` (fetchAllPages) and `/api/admin/manufacturers/route.ts` (RPC `get_manufacturer_product_stats`).
+- **Manufacturer name mismatch**: `atlas_products.manufacturer` uses English-only names (e.g., "ISC") while `atlas_manufacturers.name_display` has combined "ENGLISH Chinese" format (e.g., "ISC 无锡固电"). API lookups do fallback: `productAgg.get(m.name_display) || productAgg.get(m.name_en)`.
+- **List Agent** (Decision #111): Per-list conversational agent (`listChat()` in orchestrator, `/api/list-chat` route). 9 tools: 3 read-only (`get_list_summary`, `query_list`, `get_row_detail`), 3 client-side view (`sort_list`, `filter_list`, `switch_view`), 3 write with confirmation (`delete_rows`, `refresh_rows`, `set_preferred`). Write tools intercepted server-side — return `PendingListAction` descriptor rendered as confirmation button via `InteractiveElement` type `'list-action'`. System prompt includes user context (reuses `buildUserContextSection()`) + list context (name, description, customer, status counts, manufacturers, families). UI: sticky footer bar (34px) + bottom-anchored 50vh drawer. Conversation is ephemeral (MVP).
 
 ## QC & Feedback System
 
@@ -359,6 +391,7 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - Mapper: `lib/services/digikeyMapper.ts` — Converts Digikey API responses to internal types
 - Param Map: `lib/services/digikeyParamMap.ts` — Maps Digikey `ParameterText` strings to internal `attributeId` values
 - Discovery script: `scripts/discover-digikey-params.mjs` — For verifying parameter mappings
+- **v4 API pricing** (Decision #121): `StandardPricing` array on `DigikeyProduct` provides quantity-based price breaks (e.g., 1/10/25/100/500/1000). `mapDigikeyPriceBreaks()` in `digikeyMapper.ts` converts to `PriceBreak[]`, carried on `Part.digikeyPriceBreaks`. `buildDigikeyQuote()` uses real tiers when available, falls back to synthetic single-tier for backward compat. Commercial tab `SupplierCard` renders price break tables for both Digikey and Mouser.
 
 **L3 families (43):** Full parameter mapping with logic tables for cross-reference matching:
 
@@ -406,7 +439,7 @@ First multi-supplier pricing source. Provides zero parametric data — purely co
 
 **Unique data:** `SuggestedReplacement` (Mouser's human-verified replacement MPN — provided for both obsolete AND active parts, injected into scoring pipeline as candidates via Decision #97), regional HTS codes (US, CN, CA, JP, KR, EU/TARIC, MX, BR), ECCN.
 
-**Certified Cross-References (Decision #97):** External replacement suggestions from Mouser (`SuggestedReplacement`) and parts.io (FFF/Functional Equivalents) are unified under a `certifiedBy?: CertificationSource[]` field on `XrefRecommendation`. `CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser'`. Mouser suggestions are resolved from Mouser part number format (`resolveMouserSuggestedMpn()` strips numeric prefix), fetched as full parametric candidates, and scored alongside all other candidates. Dedup merges provenance — same MPN from multiple sources shows one card with "Certified (N)" badge. Purple chip for single source, amber for multi-source. Extensible for future `sponsored_${vendor}` sources.
+**Certified Cross-References (Decision #97, extended #122):** External replacement suggestions from Mouser (`SuggestedReplacement`), parts.io (FFF/Functional Equivalents), and manufacturer-uploaded cross-references are unified under a `certifiedBy?: CertificationSource[]` field on `XrefRecommendation`. `CertificationSource = 'partsio_fff' | 'partsio_functional' | 'mouser' | 'manufacturer'`. All sources are resolved to full parametric candidates and scored by the matching engine. **Manufacturer cross-references** (Decision #122): uploaded via Admin > Manufacturers > Cross-References tab (Excel/CSV with flexible column mapping), stored in `manufacturer_cross_references` Supabase table, fetched in parallel during recommendation pipeline via `fetchManufacturerCrossRefs()`. **Recommendation categorization** (Decision #122): Three categories — Logic Driven (blue), Manufacturer Certified (green), 3rd Party Certified (amber). `deriveRecommendationCategories()` derives from existing fields. Filter chips in RecommendationsPanel, colored category chips on each card.
 
 **Columns:** 11 new columns in column system (`mouser:unitPrice`, `mouser:stock`, `mouser:leadTime`, `commercial:bestPrice`, `commercial:totalStock`, `mouser:lifecycle`, `mouser:suggestedReplacement`, `mouser:htsUS/CN/EU`, `mouser:eccn`). Available in column picker, not in default view.
 
@@ -425,7 +458,9 @@ The app is evolving from a cross-reference tool into a component intelligence pl
 The platform will pull from multiple data sources:
 - **Digikey** (built) — Primary source for technical parametric data, pricing, availability
 - **Parts.io** (built — Decision #77) — Accuris gap-fill enrichment: 17 class param maps across 39 families, fills datasheet-only specs that Digikey lacks (thyristor tq/dv_dt, relay coil/contact specs, LDO dropout/regulation, fuse I²t, etc.)
-- **Atlas** (built — products + param dictionaries + gaia mapping + admin panel + coverage analytics + Explorer QC tool; planned — company profiles) — Chinese component manufacturer dataset: 115 manufacturers, 55K products in Supabase `atlas_products`, 38K scorable, 28 L3 family Chinese translation dictionaries + 14 L2 category dictionaries (Decision #102) + 12 family gaia datasheet-extraction dictionaries via shared JSON (`atlas-gaia-dicts.json`, Decision #100). L2 dictionaries map Chinese+English param names to standard L2 attribute IDs for products outside L3 families. `classifyAtlasCategory()` uses c1 guards to prevent cross-domain misclassification (Decision #104) — e.g., laser diodes ≠ rectifiers, RF amplifiers ≠ op-amps, audio connectors ≠ audio devices. Skip list is dictionary-aware (dictionary entries override skip). Gaia mapping handles structured `gaia-{stem}-{Min|Max|Typ}` params with suffix preference and dedup. Admin dictionary panel with Supabase-backed override layer (Decision #68) — supports both L3 families and L2 categories. Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69). Explorer QC tool: search by MPN/manufacturer with coverage % column, detail drawer with L3 or L2 schema comparison (Decision #102). Admin panel: all manufacturers expandable (scorable + non-scorable), sortable columns, breakdown shows Scorable column. Manufacturer enable/disable toggle (Decision #107): admin can disable manufacturers with poor attribute coverage — disabled manufacturers excluded from search, attribute lookup, and recommendation candidates. `atlas_manufacturer_settings` Supabase table, 60s cached filter in `atlasClient.ts`, optimistic toggle UI in AtlasPanel.
+- **Atlas** (built — products + param dictionaries + gaia mapping + description extraction + admin panel + coverage analytics + Explorer QC tool; planned — company profiles) — Chinese component manufacturer dataset: 115 manufacturers, 55K products in Supabase `atlas_products`, 38K scorable, 28 L3 family Chinese translation dictionaries + 14 L2 category dictionaries (Decision #102) + 12 family gaia datasheet-extraction dictionaries via shared JSON (`atlas-gaia-dicts.json`, Decision #100). L2 dictionaries map Chinese+English param names to standard L2 attribute IDs for products outside L3 families. `classifyAtlasCategory()` uses c1 guards to prevent cross-domain misclassification (Decision #104) — e.g., laser diodes ≠ rectifiers, RF amplifiers ≠ op-amps, audio connectors ≠ audio devices. Skip list is dictionary-aware (dictionary entries override skip). Gaia mapping handles structured `gaia-{stem}-{Min|Max|Typ}` params with suffix preference and dedup. LLM description extraction (Decision #112): Claude Haiku extracts structured attributes from product descriptions with quote grounding anti-hallucination — `descriptionExtractor.ts` builds family-aware schema prompts from logic tables, parser rejects any extraction whose source substring isn't found in the original description. Batch script `scripts/atlas-extract-descriptions.ts` runs post-ingest automatically. ~12,510 eligible products, +8pp estimated coverage improvement. LLM description cleanup (Decision #114): `scripts/atlas-clean-descriptions.ts` rewrites raw descriptions into standardized one-liners (max 200 chars) stored in `clean_description` column — runs post-ingest after extraction. `atlasClient.ts` uses `clean_description` when available. AEC qualifications (`aec_q200`/`aec_q101`/`aec_q100`) extracted from parameters JSONB into `part.qualifications` for badge display. Risk & Compliance tab source badge uses `dataSource` instead of hardcoded Digikey. Admin dictionary panel with Supabase-backed override layer (Decision #68) — supports both L3 families and L2 categories. Coverage % column + per-family gap analysis drawer comparing Atlas vs Digikey vs logic table (Decision #69). Explorer QC tool: search by MPN/manufacturer with coverage % column, detail drawer with L3 or L2 schema comparison (Decision #102). Admin panel: all manufacturers expandable (scorable + non-scorable), sortable columns, breakdown shows Scorable column. Manufacturer enable/disable toggle (Decision #107): admin can disable manufacturers with poor attribute coverage — disabled manufacturers excluded from search, attribute lookup, and recommendation candidates. `atlas_manufacturer_settings` Supabase table, 60s cached filter in `atlasClient.ts`, optimistic toggle UI in AtlasPanel.
+- **atlas_manufacturers table**: Canonical manufacturer identity — 1,011 records from master list with atlas_id, slug, name_en, name_zh, name_display (join key), aliases, partsio_id/name, and JSONB profile columns. Import via `scripts/atlas-manufacturers-import.mjs`. Admin detail pages at `/admin/manufacturers/[slug]`.
+- **Atlas product flagging**: `atlas_product_flags` table for data quality issues. Flag button in search results and manufacturer Products tab. Flagged tab on ManufacturersPanel and per-MFR detail page.
 - **Mouser** (built — Decision #83) — First multi-supplier pricing source: quantity-based price breaks, real-time stock, lead times, lifecycle status, suggested replacements, regional HTS codes (8 regions), ECCN. No parametric data. Rate limits: 30/min, 1,000/day.
 - **Distributor APIs** (planned) — Arrow, Nexar/Octopart for additional multi-supplier pricing
 - **Customer Data** (planned) — BOMs, negotiated pricing, AVLs, internal part numbering

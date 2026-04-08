@@ -10,6 +10,54 @@ interface AtlasParam {
   unit?: string;
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { error: authError } = await requireAdmin();
+    if (authError) return authError;
+
+    const { id } = await params;
+    const body = await request.json();
+
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+    // Description update
+    if ('description' in body && typeof body.description === 'string') {
+      updates.description = body.description;
+      updates.clean_description = body.description;
+    }
+
+    // Parameters merge (patch individual keys into existing JSONB)
+    if (body.parameters && typeof body.parameters === 'object') {
+      const supabaseRead = await createClient();
+      const { data: existing } = await supabaseRead
+        .from('atlas_products')
+        .select('parameters')
+        .eq('id', id)
+        .single();
+
+      const merged = { ...((existing?.parameters as Record<string, unknown>) ?? {}), ...body.parameters };
+      updates.parameters = merged;
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from('atlas_products')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

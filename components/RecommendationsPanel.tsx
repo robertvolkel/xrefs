@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { Box, Checkbox, Chip, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 
@@ -29,17 +29,31 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const [selectedMfr, setSelectedMfr] = useState('');
   const [showCnOnly, setShowCnOnly] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
 
   const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
+
+  // Category counts
+  const categoryCounts = useMemo(() => {
+    const counts = { logic_driven: 0, manufacturer_certified: 0, third_party_certified: 0 };
+    for (const rec of sorted) {
+      const cats = deriveRecommendationCategories(rec);
+      for (const c of cats) counts[c]++;
+    }
+    return counts;
+  }, [sorted]);
+  const hasMultipleCategories = Object.values(categoryCounts).filter(c => c > 0).length > 1
+    || categoryCounts.manufacturer_certified > 0 || categoryCounts.third_party_certified > 0;
 
   const activeCount = sorted.filter(r => r.part.status === 'Active').length;
   const hiddenCount = sorted.length - activeCount;
 
   const filtered = sorted
     .filter(r => !selectedMfr || r.part.manufacturer === selectedMfr)
-    .filter(r => !showCnOnly || r.dataSource === 'atlas');
+    .filter(r => !showCnOnly || r.dataSource === 'atlas')
+    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -85,11 +99,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
             : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
-          {coverage !== null && (
-            <Typography component="span" sx={{ fontSize: '0.95rem' }}>
-              {' / '}{coverage}% {t('recommendations.paramCoverage', 'param coverage')}
-            </Typography>
-          )}
         </Typography>
       </Box>
 
@@ -156,6 +165,45 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           sx={{ mr: 0, flexShrink: 0, '& .MuiFormControlLabel-label': { fontSize: '0.72rem' } }}
         />
       </Box>
+
+      {/* Category filter chips — shown when certified/3rd-party recommendations exist */}
+      {hasMultipleCategories && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 2,
+            py: 0.75,
+            borderBottom: 1,
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+          }}
+        >
+          {([
+            { key: 'all' as const, label: `All (${sorted.length})`, color: undefined },
+            { key: 'logic_driven' as const, label: `Logic Driven (${categoryCounts.logic_driven})`, color: '#42A5F5' },
+            ...(categoryCounts.manufacturer_certified > 0 ? [{ key: 'manufacturer_certified' as const, label: `MFR Certified (${categoryCounts.manufacturer_certified})`, color: '#66BB6A' }] : []),
+            ...(categoryCounts.third_party_certified > 0 ? [{ key: 'third_party_certified' as const, label: `3rd Party (${categoryCounts.third_party_certified})`, color: '#FFA726' }] : []),
+          ] as const).map(({ key, label, color }) => (
+            <Chip
+              key={key}
+              label={label}
+              size="small"
+              variant={selectedCategory === key ? 'filled' : 'outlined'}
+              onClick={() => setSelectedCategory(key)}
+              sx={{
+                height: 22,
+                fontSize: '0.68rem',
+                cursor: 'pointer',
+                ...(selectedCategory === key
+                  ? { bgcolor: color || 'action.selected', color: color ? '#fff' : undefined }
+                  : { borderColor: color || 'divider', color: color || 'text.secondary' }),
+              }}
+            />
+          ))}
+        </Box>
+      )}
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
         {filtered.map((rec) => {

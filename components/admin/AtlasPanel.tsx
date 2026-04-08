@@ -38,6 +38,10 @@ interface AtlasStats {
   };
   manufacturers: {
     manufacturer: string;
+    nameEn: string | null;
+    nameZh: string | null;
+    slug: string | null;
+    mfrId: number | null;
     productCount: number;
     scorableCount: number;
     families: string[];
@@ -91,19 +95,14 @@ function MfrRow({
           </IconButton>
         </TableCell>
         <TableCell>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <Switch
-              size="small"
-              checked={row.enabled}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onToggle(row.manufacturer, e.target.checked)}
-              sx={{ ml: -1 }}
-            />
+          <Box>
             <Typography variant="body2" fontWeight={500}>
-              {row.manufacturer}
+              {row.nameEn || row.manufacturer}
             </Typography>
-            {!row.enabled && (
-              <Chip label="Disabled" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.68rem', opacity: 0.7 }} />
+            {row.nameZh && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: -0.25, fontSize: '0.7rem' }}>
+                {row.nameZh}
+              </Typography>
             )}
           </Box>
         </TableCell>
@@ -132,11 +131,19 @@ function MfrRow({
             {new Date(row.lastUpdated).toLocaleDateString()}
           </Typography>
         </TableCell>
+        <TableCell align="center" sx={{ width: 60 }}>
+          <Switch
+            size="small"
+            checked={row.enabled}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => onToggle(row.manufacturer, e.target.checked)}
+          />
+        </TableCell>
       </TableRow>
 
       {/* Expanded family breakdown */}
       <TableRow>
-        <TableCell colSpan={7} sx={{ py: 0, px: 0 }}>
+        <TableCell colSpan={8} sx={{ py: 0, px: 0 }}>
           <Collapse in={open} timeout="auto" unmountOnExit>
             <Box sx={{ mx: 4, my: 1.5 }}>
               <Table size="small">
@@ -240,7 +247,8 @@ export default function AtlasPanel() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
-    } catch {
+    } catch (err) {
+      console.error('Atlas manufacturer toggle failed:', err);
       // Revert on failure
       setData((prev) => {
         if (!prev) return prev;
@@ -350,6 +358,9 @@ export default function AtlasPanel() {
                           <TableSortLabel active={sortKey === 'lastUpdated'} direction={sortKey === 'lastUpdated' ? sortDir : 'desc'} onClick={() => handleSort('lastUpdated')}>
                             {t('admin.atlasLastUpdatedCol')}
                           </TableSortLabel>
+                        </TableCell>
+                        <TableCell align="center" sx={{ width: 60 }}>
+                          {t('admin.atlasEnabledCol', 'Enabled')}
                         </TableCell>
                       </TableRow>
                     </TableHead>

@@ -227,6 +227,23 @@ const FAMILY_PARAMS = {
     '输出类型': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 1 },
     '最小阴极电流调节': { attributeId: '_min_cathode_current', attributeName: 'Min Cathode Current', sortOrder: 90 },
     '商品目录': { attributeId: '_catalog', attributeName: 'Catalog', sortOrder: 99 },
+    // 3PEAK English MFR-specific formats
+    'output voltage': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
+    'isink(min)(ma)': { attributeId: '_isink_min', attributeName: 'Min Sink Current', unit: 'mA', sortOrder: 91 },
+    'isink(max)(ma)': { attributeId: '_isink_max', attributeName: 'Max Sink Current', unit: 'mA', sortOrder: 92 },
+    'accuracy': { attributeId: 'initial_accuracy', attributeName: 'Initial Accuracy', unit: '%', sortOrder: 8 },
+    'accuracy(max)': { attributeId: 'initial_accuracy', attributeName: 'Initial Accuracy', unit: '%', sortOrder: 8 },
+    'tc(ppm/℃)': { attributeId: 'tc', attributeName: 'Temperature Coefficient', unit: 'ppm/°C', sortOrder: 9 },
+    'tc(-40 to 85℃)(ppm/℃)': { attributeId: 'tc', attributeName: 'TC (-40 to 85°C)', unit: 'ppm/°C', sortOrder: 9 },
+    'tc(-40 to 125℃)(ppm/℃)': { attributeId: 'tc', attributeName: 'TC (-40 to 125°C)', unit: 'ppm/°C', sortOrder: 9 },
+    'output capacitor load(μf)': { attributeId: '_cout_load', attributeName: 'Output Cap Load', unit: 'µF', sortOrder: 93 },
+    'vin(min)(v)': { attributeId: '_vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 94 },
+    'vin(max)(v)': { attributeId: '_vin_max', attributeName: 'Max Input Voltage', unit: 'V', sortOrder: 95 },
+    'iq(max)(μa)': { attributeId: '_iq', attributeName: 'Quiescent Current', unit: 'µA', sortOrder: 96 },
+    '0.1 to 10hz output voltage noise(uvpp)': { attributeId: 'output_noise', attributeName: '0.1-10Hz Noise', unit: 'µVpp', sortOrder: 10 },
+    '10 to 10khz voltage noise(μvrms)': { attributeId: 'output_noise', attributeName: '10-10kHz Noise', unit: 'µVrms', sortOrder: 10 },
+    'line regulation(max)(ppm/v)': { attributeId: '_line_reg', attributeName: 'Line Regulation', unit: 'ppm/V', sortOrder: 97 },
+    'load regulation(max)(ppm/ma)': { attributeId: '_load_reg', attributeName: 'Load Regulation', unit: 'ppm/mA', sortOrder: 98 },
   },
   C1: {
     '最小输入电压 (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 6 },
@@ -260,6 +277,27 @@ const FAMILY_PARAMS = {
     '最小工作电压(v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 6 },
     '最大绝对输入电压(v)': { attributeId: '_abs_max_input', attributeName: 'Abs Max Input', unit: 'V', sortOrder: 91 },
     '商品目录': { attributeId: '_catalog', attributeName: 'Catalog', sortOrder: 99 },
+    // 3PEAK/Convert/MingDa/TECH PUBLIC English MFR-specific formats
+    'iout(max) (a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 7 },
+    'maximum output current(ma)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'mA', sortOrder: 7 },
+    'iout(ma)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'mA', sortOrder: 7 },
+    'vin(max) (v)': { attributeId: 'vin_max', attributeName: 'Max Input Voltage', unit: 'V', sortOrder: 5 },
+    'vin(min) (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 6 },
+    'vin(max)(v)': { attributeId: 'vin_max', attributeName: 'Max Input Voltage', unit: 'V', sortOrder: 5 },
+    'vin(min)(v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 6 },
+    'input voltage(v)': { attributeId: 'vin_max', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 5 },
+    'vout(max) (v)': { attributeId: '_output_voltage_max', attributeName: 'Max Output Voltage', unit: 'V', sortOrder: 3 },
+    'vout(min) (v)': { attributeId: '_output_voltage_min', attributeName: 'Min Output Voltage', unit: 'V', sortOrder: 2 },
+    'vdrop(typ) (mv)': { attributeId: 'vdropout', attributeName: 'Dropout Voltage', unit: 'mV', sortOrder: 8 },
+    'dropout(mv)': { attributeId: 'vdropout', attributeName: 'Dropout Voltage', unit: 'mV', sortOrder: 8 },
+    'dropput(mv)': { attributeId: 'vdropout', attributeName: 'Dropout Voltage', unit: 'mV', sortOrder: 8 },
+    'noise (uvrms)': { attributeId: '_noise', attributeName: 'Output Noise', unit: 'µVrms', sortOrder: 92 },
+    'noise(μvrms)': { attributeId: '_noise', attributeName: 'Output Noise', unit: 'µVrms', sortOrder: 92 },
+    'psrr(db)': { attributeId: 'psrr', attributeName: 'PSRR', unit: 'dB', sortOrder: 12 },
+    'iq(ma)': { attributeId: 'iq', attributeName: 'Quiescent Current', unit: 'mA', sortOrder: 9 },
+    'accuracy(max)': { attributeId: 'vout_accuracy', attributeName: 'Output Voltage Accuracy', unit: '%', sortOrder: 10 },
+    'temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
+    'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
   },
   C2: {
     '最小输入电压 (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 5 },
@@ -280,6 +318,25 @@ const FAMILY_PARAMS = {
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
     '商品目录': { attributeId: '_catalog', attributeName: 'Catalog', sortOrder: 99 },
+    // 3PEAK/Convert/TECH PUBLIC English MFR-specific formats
+    'vin(max) (v)': { attributeId: 'vin_max', attributeName: 'Max Input Voltage', unit: 'V', sortOrder: 4 },
+    'vin(min) (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 5 },
+    'vin(max)(v)': { attributeId: 'vin_max', attributeName: 'Max Input Voltage', unit: 'V', sortOrder: 4 },
+    'vin(min)(v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 5 },
+    'vin(v)': { attributeId: 'vin_max', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 4 },
+    'freq(max) (khz)': { attributeId: 'fsw', attributeName: 'Switching Frequency', unit: 'kHz', sortOrder: 10 },
+    'topology': { attributeId: 'topology', attributeName: 'Topology', sortOrder: 1 },
+    'control mode': { attributeId: '_control_mode', attributeName: 'Control Mode', sortOrder: 92 },
+    'duty cycle (max) (%)': { attributeId: '_duty_max', attributeName: 'Max Duty Cycle', unit: '%', sortOrder: 93 },
+    'duty cycle (max)(%)': { attributeId: '_duty_max', attributeName: 'Max Duty Cycle', unit: '%', sortOrder: 93 },
+    'source/sink current (a)': { attributeId: '_gate_drive', attributeName: 'Source/Sink Current', unit: 'A', sortOrder: 94 },
+    'iout (a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
+    'max output current(a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
+    'vout (v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
+    'output(v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
+    'channels': { attributeId: '_channels', attributeName: 'Number of Channels', sortOrder: 95 },
+    'uvlo on/off (v)': { attributeId: '_uvlo', attributeName: 'UVLO On/Off', unit: 'V', sortOrder: 96 },
+    'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
   },
   C9: {
     'resolution (bits)': { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
@@ -300,6 +357,33 @@ const FAMILY_PARAMS = {
     'operating temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 18 },
+    // 3PEAK English MFR-specific formats
+    "resolution''": { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
+    "resolution'": { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
+    'resolution': { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
+    "vdd(v)\"": { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 8 },
+    "vdd(v)'": { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 8 },
+    "ch''": { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 4 },
+    "ch'": { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 4 },
+    'ch': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 4 },
+    'vin(v)': { attributeId: '_vin', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 92 },
+    'inl(lsb,max)': { attributeId: 'inl_lsb', attributeName: 'INL', unit: 'LSB', sortOrder: 93 },
+    'dnl(lsb,max)': { attributeId: 'dnl_lsb', attributeName: 'DNL', unit: 'LSB', sortOrder: 94 },
+    'dnl(lsb)': { attributeId: 'dnl_lsb', attributeName: 'DNL', unit: 'LSB', sortOrder: 94 },
+    'offset error(lsb, max)': { attributeId: '_offset_error', attributeName: 'Offset Error', unit: 'LSB', sortOrder: 95 },
+    'gain error(lsb)': { attributeId: '_gain_error', attributeName: 'Gain Error', unit: 'LSB', sortOrder: 96 },
+    'voltage input range(v)': { attributeId: '_input_range', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 97 },
+    'idd(ma)': { attributeId: '_idd', attributeName: 'Supply Current (Idd)', unit: 'mA', sortOrder: 98 },
+    'speed(msps)': { attributeId: 'sampling_rate', attributeName: 'Sampling Rate', unit: 'MSPS', sortOrder: 3 },
+    'update rate(msps)': { attributeId: 'sampling_rate', attributeName: 'Update Rate', unit: 'MSPS', sortOrder: 3 },
+    'sinad(db)': { attributeId: '_sinad', attributeName: 'SINAD', unit: 'dB', sortOrder: 99 },
+    'interface': { attributeId: 'interface', attributeName: 'Interface', sortOrder: 6 },
+    'clock source': { attributeId: '_clock_source', attributeName: 'Clock Source', sortOrder: 100 },
+    'datum': { attributeId: '_reference', attributeName: 'Reference', sortOrder: 101 },
+    'vref': { attributeId: '_vref', attributeName: 'Reference Type', sortOrder: 102 },
+    'power(mw)': { attributeId: '_power', attributeName: 'Power Consumption', unit: 'mW', sortOrder: 103 },
+    'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    'insulation rating(vrms)': { attributeId: '_isolation_rating', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 104 },
   },
 
   // ─── Passives ──────────────────────────────────────────
@@ -384,6 +468,16 @@ const FAMILY_PARAMS = {
     '静态功率': { attributeId: '_static_power', attributeName: 'Static Power', sortOrder: 91 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 7 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 8 },
+    // CREATEK English MFR-specific formats
+    'vac(v)': { attributeId: '_max_ac_voltage', attributeName: 'Max AC Voltage', unit: 'V', sortOrder: 4 },
+    'vdc(v)': { attributeId: 'max_continuous_voltage', attributeName: 'Max DC Voltage', unit: 'V', sortOrder: 3 },
+    'v(1ma)(v)': { attributeId: 'varistor_voltage', attributeName: 'Varistor Voltage (V1mA)', unit: 'V', sortOrder: 1 },
+    'ip(a)': { attributeId: 'peak_surge_current', attributeName: 'Peak Surge Current', unit: 'A', sortOrder: 6 },
+    'vc(v)': { attributeId: 'clamping_voltage', attributeName: 'Clamping Voltage', unit: 'V', sortOrder: 2 },
+    '8/20us(a)': { attributeId: 'peak_surge_current', attributeName: 'Surge Current (8/20µs)', unit: 'A', sortOrder: 6 },
+    '10/1000μs(j)': { attributeId: 'energy_rating', attributeName: 'Energy Rating', unit: 'J', sortOrder: 5 },
+    'rated power(w)': { attributeId: '_rated_power', attributeName: 'Rated Power', unit: 'W', sortOrder: 92 },
+    'diameter': { attributeId: '_disc_diameter', attributeName: 'Disc Diameter', unit: 'mm', sortOrder: 93 },
   },
 
   // ─── 66 PTC Resettable Fuses ───────────────────────────
@@ -410,6 +504,11 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 9 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 9 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    // CREATEK English MFR-specific formats
+    'vmax(v)': { attributeId: 'max_voltage', attributeName: 'Max Voltage', unit: 'V', sortOrder: 3 },
+    'ihold(a)': { attributeId: 'hold_current', attributeName: 'Hold Current', unit: 'A', sortOrder: 1 },
+    'itrip(a)': { attributeId: 'trip_current', attributeName: 'Trip Current', unit: 'A', sortOrder: 2 },
+    'pd(w)': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 8 },
   },
 
   // ─── 67 NTC Thermistors ────────────────────────────────
@@ -512,6 +611,22 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
+    // CREATEK English MFR-specific formats
+    'ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 8 },
+    'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'if(ma)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'mA', sortOrder: 4 },
+    'if(a)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'A', sortOrder: 4 },
+    'i(av)(a)': { attributeId: 'io_avg', attributeName: 'Average Forward Current', unit: 'A', sortOrder: 4 },
+    'if(av)(v)': { attributeId: 'io_avg', attributeName: 'Average Forward Current', unit: 'A', sortOrder: 4 },
+    'io(ma)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'mA', sortOrder: 4 },
+    'id* (a)  @25°c': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'A', sortOrder: 4 },
+    'pd(mw)': { attributeId: '_pd', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 91 },
+    'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'vrwm(v)': { attributeId: 'vrwm', attributeName: 'Standoff Voltage', unit: 'V', sortOrder: 2 },
+    'polarity': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 10 },
+    'vds (v)': { attributeId: 'vrrm', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 2 },
+    'cj (pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
   },
 
   // ─── B3 Zener Diodes ───────────────────────────────────
@@ -540,6 +655,11 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 9 },
+    // CREATEK English MFR-specific formats
+    'vz type(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
+    'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'pd(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
   },
 
   // ─── B4 TVS Diodes ─────────────────────────────────────
@@ -571,6 +691,16 @@ const FAMILY_PARAMS = {
     'esd per iec contact': { attributeId: 'esd_rating', attributeName: 'ESD Rating (IEC)', unit: 'kV', sortOrder: 10 },
     'vrwm(v)': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', sortOrder: 8 },
+    'ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    // CREATEK English MFR-specific formats
+    'ipp(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp)', unit: 'A', sortOrder: 6 },
+    'ppp(w)': { attributeId: 'ppk', attributeName: 'Peak Pulse Power (Ppk)', unit: 'W', sortOrder: 5 },
+    'vbr min(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr max(v)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'vc max(v)': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
+    'dir.': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
+    'config.': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 13 },
+    'c typ.(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance (Cj)', unit: 'pF', sortOrder: 7 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
@@ -642,6 +772,15 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 17 },
+    // Convert/CREATEK English MFR-specific formats
+    'vds(v)': { attributeId: 'vds_max', attributeName: 'Vds Max', unit: 'V', sortOrder: 6 },
+    'vgs(v)': { attributeId: 'vgs_max', attributeName: 'Vgs Max', unit: 'V', sortOrder: 7 },
+    'vgs(th)(v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
+    'id(a)  @25°c': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
+    'rds(on)@vgs=4.5v(ω)': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'Ω', sortOrder: 11 },
+    'rds(on)@vgs=10v(ω)': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'Ω', sortOrder: 11 },
+    'rds(on) (mω) 4.5v typ': { attributeId: '_rds_on_4v5_typ', attributeName: 'Rds(on) @4.5V Typ', unit: 'mOhm', sortOrder: 95 },
+    'rd(mω) typ': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'mΩ', sortOrder: 11 },
   },
 
   // ─── B6 BJTs ───────────────────────────────────────────
@@ -667,6 +806,12 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    // CREATEK English MFR-specific formats
+    'polarity': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
+    'vcbo(v)': { attributeId: '_vcbo', attributeName: 'Vcbo', unit: 'V', sortOrder: 4 },
+    'vceo(v)': { attributeId: 'vceo_max', attributeName: 'Vceo', unit: 'V', sortOrder: 3 },
+    'vebo(v)': { attributeId: '_vebo', attributeName: 'Vebo', unit: 'V', sortOrder: 92 },
+    'ic(ma)': { attributeId: '_ic', attributeName: 'Collector Current (Ic)', unit: 'mA', sortOrder: 5 },
   },
 
   // ─── B7 IGBTs ──────────────────────────────────────────
@@ -703,6 +848,12 @@ const FAMILY_PARAMS = {
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '产品外形': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 15 },
+    // Convert English MFR-specific formats
+    'ic(a)@100℃': { attributeId: 'ic_max', attributeName: 'Ic (Continuous)', unit: 'A', sortOrder: 6 },
+    'vth(v)typ': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 9 },
+    'vce(v)_15_typ': { attributeId: '_vce_sat_typ', attributeName: 'Vce(sat) Typ', unit: 'V', sortOrder: 91 },
+    'vce(v)_15_max': { attributeId: 'vce_sat', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    'vf(v)': { attributeId: '_diode_vf', attributeName: 'Co-packed Diode Vf', unit: 'V', sortOrder: 94 },
   },
 
   // ─── B8 SCRs / TRIACs ─────────────────────────────────
@@ -764,6 +915,10 @@ const FAMILY_PARAMS = {
     '温度范围 (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     'junction temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // 3PEAK English MFR-specific formats
+    'isolation rating(vrms)': { attributeId: '_isolation_rating', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 101 },
+    'output voltage max(v)': { attributeId: '_vout_max', attributeName: 'Max Output Voltage', unit: 'V', sortOrder: 100 },
+    'output voltage min(v)': { attributeId: '_vout_min', attributeName: 'Min Output Voltage', unit: 'V', sortOrder: 102 },
   },
 
   // ─── C4 Op-Amps / Comparators ──────────────────────────
@@ -813,6 +968,46 @@ const FAMILY_PARAMS = {
     '封装形式': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '温度范围 (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // 3PEAK English MFR-specific formats
+    'en@1khz ( nv/√hz )': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
+    'en@1khz( nv/√hz )': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
+    'en@1khz(nv/√hz)': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
+    'en@1khz(nv/√hz)(typ.)': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
+    'vos(max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos(mv)(max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos  (µv, max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'µV', sortOrder: 7 },
+    'vos  (mv, max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos tc  (µv/°c, max)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
+    'vos tc  (µv/°c, typ.)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
+    'vos tc (µv/°c)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
+    'gbwp': { attributeId: 'gain_bandwidth', attributeName: 'Gain Bandwidth', unit: 'MHz', sortOrder: 5 },
+    'iq(max.)(per ch)(μa)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq(typ.)(per ch)(ma)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq per channel(μa)(max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq(typ.)(1 channel)(ma)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq (µa, typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq (ma, max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq(μa,typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iout(ma)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
+    'sink/source current(ma)(typ.)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
+    'ib(pa)(typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
+    'ib (µa, typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'µA', sortOrder: 9 },
+    'ib (na, typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'nA', sortOrder: 9 },
+    'open loop gain(db)(typ.)': { attributeId: '_avol', attributeName: 'Open Loop Gain', unit: 'dB', sortOrder: 95 },
+    'cmrr (db, min)': { attributeId: 'cmrr', attributeName: 'CMRR', unit: 'dB', sortOrder: 10 },
+    'common mode voltage  (v)': { attributeId: '_vicm', attributeName: 'Common Mode Voltage Range', unit: 'V', sortOrder: 96 },
+    'supply voltage(v)(min)': { attributeId: '_supply_voltage_min', attributeName: 'Supply Voltage Min', unit: 'V', sortOrder: 91 },
+    'supply voltage(v)(max)': { attributeId: '_supply_voltage_max', attributeName: 'Supply Voltage Max', unit: 'V', sortOrder: 92 },
+    'vdd (v)': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    'vdd  (v)': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },
+    'slew rate': { attributeId: 'slew_rate', attributeName: 'Slew Rate', unit: 'V/us', sortOrder: 6 },
+    'slew rate  (v/µs)': { attributeId: 'slew_rate', attributeName: 'Slew Rate', unit: 'V/us', sortOrder: 6 },
+    'gmin(v/v)': { attributeId: '_gmin', attributeName: 'Min Stable Gain', unit: 'V/V', sortOrder: 97 },
+    'tpd-': { attributeId: 'response_time', attributeName: 'Propagation Delay', sortOrder: 13 },
+    'rail-rail in': { attributeId: 'rail_to_rail', attributeName: 'Rail-to-Rail Input', sortOrder: 17 },
+    'rail-rail out': { attributeId: 'rail_to_rail', attributeName: 'Rail-to-Rail Output', sortOrder: 17 },
+    'temp range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    'insulation rating(vrms)': { attributeId: '_isolation', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 98 },
   },
 
   // ─── C7 Interface ICs ──────────────────────────────────
@@ -845,12 +1040,56 @@ const FAMILY_PARAMS = {
     'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '温度范围 (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // 3PEAK English MFR-specific formats
+    'max data rate(mbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'Mbps', sortOrder: 5 },
+    'max data rate(kbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'kbps', sortOrder: 5 },
+    'data rate (max)(kbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'kbps', sortOrder: 5 },
+    'iec-61000-4-2 contact(kv)': { attributeId: 'esd_rating', attributeName: 'ESD Rating (IEC)', unit: 'kV', sortOrder: 10 },
+    'esd hbm(kv)': { attributeId: 'esd_rating', attributeName: 'ESD HBM', unit: 'kV', sortOrder: 10 },
+    'surge voltage capability(vpk)': { attributeId: '_surge_rating', attributeName: 'Surge Voltage', unit: 'Vpk', sortOrder: 105 },
+    'cmti(kv/μs)(static)': { attributeId: '_cmti', attributeName: 'CMTI (Static)', unit: 'kV/µs', sortOrder: 104 },
+    'cmti(kv/μs)(dynamic)': { attributeId: '_cmti_dynamic', attributeName: 'CMTI (Dynamic)', unit: 'kV/µs', sortOrder: 106 },
+    'isolation rating(vrms)': { attributeId: '_isolation_rating', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 97 },
+    'isolation rating(v rms)': { attributeId: '_isolation_rating', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 97 },
+    'nubmer of channel': { attributeId: '_channels', attributeName: 'Channels', sortOrder: 101 },
+    'forward/reverse channels': { attributeId: '_reverse_channels', attributeName: 'Forward/Reverse Channels', sortOrder: 102 },
+    'default output': { attributeId: '_default_output', attributeName: 'Default Output', sortOrder: 103 },
+    'drivers per package': { attributeId: '_drivers', attributeName: 'Drivers per Package', sortOrder: 107 },
+    'receivers per package': { attributeId: '_receivers', attributeName: 'Receivers per Package', sortOrder: 108 },
+    'vcc (min)(v)': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage Min', unit: 'V', sortOrder: 94 },
+    'vcc(max)(v)': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage Max', unit: 'V', sortOrder: 94 },
+    'vcc(v)': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
+    'icc(max)(ma)': { attributeId: '_icc', attributeName: 'Supply Current', unit: 'mA', sortOrder: 109 },
+    'protocol': { attributeId: 'protocol', attributeName: 'Protocol', sortOrder: 1 },
+    'bus fault protection voltage': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Protection', unit: 'V', sortOrder: 8 },
+    'bus fault protection voltage(v)': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Protection', unit: 'V', sortOrder: 8 },
+    'mode': { attributeId: '_operating_mode', attributeName: 'Operating Mode', sortOrder: 92 },
+    'operating temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   },
 
   // ─── C5 Logic ICs ──────────────────────────────────────
   C5: {
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // 3PEAK/Convert English MFR-specific formats
+    'technology family': { attributeId: 'logic_family', attributeName: 'Logic Family', sortOrder: 1 },
+    'function': { attributeId: 'logic_function', attributeName: 'Logic Function', sortOrder: 2 },
+    'number of channels': { attributeId: 'gate_count', attributeName: 'Number of Gates', sortOrder: 4 },
+    'inputs per channel': { attributeId: '_inputs_per_gate', attributeName: 'Inputs per Gate', sortOrder: 90 },
+    'input type': { attributeId: '_input_type', attributeName: 'Input Type', sortOrder: 91 },
+    'output type': { attributeId: 'output_type', attributeName: 'Output Type', sortOrder: 5 },
+    'supply voltage (min)(v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage Min', unit: 'V', sortOrder: 6 },
+    'supply voltage (max)(v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage Max', unit: 'V', sortOrder: 6 },
+    'iol (ma)': { attributeId: 'drive_current', attributeName: 'Output Drive (IOL)', unit: 'mA', sortOrder: 7 },
+    'ioh (ma)': { attributeId: 'drive_current', attributeName: 'Output Drive (IOH)', unit: 'mA', sortOrder: 7 },
+    'ch': { attributeId: 'gate_count', attributeName: 'Channels', sortOrder: 4 },
+    'vdd(v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 6 },
+    'vih(min)(v)': { attributeId: 'vih', attributeName: 'Input High Voltage', unit: 'V', sortOrder: 8 },
+    'vil(max)(v)': { attributeId: 'vil', attributeName: 'Input Low Voltage', unit: 'V', sortOrder: 9 },
+    'ron(ω)': { attributeId: '_ron', attributeName: 'On-Resistance', unit: 'Ω', sortOrder: 92 },
+    'ton(ns)': { attributeId: 'tpd', attributeName: 'Propagation Delay', unit: 'ns', sortOrder: 10 },
+    'toff(ns)': { attributeId: '_toff', attributeName: 'Turn-Off Time', unit: 'ns', sortOrder: 93 },
+    'leakage current(na)': { attributeId: 'input_leakage', attributeName: 'Leakage Current', unit: 'nA', sortOrder: 94 },
   },
 
   // ─── C8 Timers / Oscillators ───────────────────────────
@@ -892,6 +1131,15 @@ const FAMILY_PARAMS = {
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     'temp range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // 3PEAK English MFR-specific formats
+    "resolution'": { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
+    'update rate(msps)': { attributeId: '_update_rate', attributeName: 'Update Rate', unit: 'MSPS', sortOrder: 96 },
+    "ch'": { attributeId: 'channel_count', attributeName: 'Channels', sortOrder: 4 },
+    'datum': { attributeId: '_reference', attributeName: 'Reference', sortOrder: 97 },
+    'sfdr(db)': { attributeId: '_sfdr', attributeName: 'SFDR', unit: 'dB', sortOrder: 98 },
+    "vdd(v)'": { attributeId: '_supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 8 },
+    'power(mw)': { attributeId: '_power', attributeName: 'Power Consumption', unit: 'mW', sortOrder: 99 },
+    'inl(lsb)': { attributeId: 'inl_lsb', attributeName: 'INL', unit: 'LSB', sortOrder: 10 },
   },
 };
 
@@ -1498,4 +1746,30 @@ async function processFile(filePath) {
   console.log(`\n${'═'.repeat(60)}`);
   console.log(`GRAND TOTAL: ${grandTotal} models, ${grandMapped} mapped, ${grandSkipped} skipped, ${grandErrors} errors`);
   console.log(`${'═'.repeat(60)}`);
+
+  // Run description extraction on newly ingested products
+  if (!dryRun && grandMapped > 0 && process.env.ANTHROPIC_API_KEY) {
+    console.log(`\nRunning description extraction on ingested products...`);
+    const { execSync } = await import('child_process');
+    try {
+      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
+      execSync(`npx tsx scripts/atlas-extract-descriptions.ts ${familyArg} --concurrency 10`, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+      });
+    } catch (err) {
+      console.error('Description extraction failed (non-fatal):', err.message);
+    }
+
+    console.log(`\nRunning description cleanup on ingested products...`);
+    try {
+      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
+      execSync(`npx tsx scripts/atlas-clean-descriptions.ts ${familyArg} --concurrency 10`, {
+        stdio: 'inherit',
+        cwd: process.cwd(),
+      });
+    } catch (err) {
+      console.error('Description cleanup failed (non-fatal):', err.message);
+    }
+  }
 })();

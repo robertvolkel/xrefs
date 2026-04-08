@@ -3,73 +3,96 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { getLogicTable } from '@/lib/logicTables';
 
+// ── In-memory cache (120s TTL) ──────────────────────────────
+let cachedResponse: string | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 120_000;
+
+export function invalidateAtlasCache() {
+  cachedResponse = null;
+  cacheTimestamp = 0;
+}
+
+async function fetchAllPages<T>(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  columns: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  filter?: (q: any) => any,
+): Promise<T[]> {
+  const PAGE_SIZE = 1000;
+  const results: T[] = [];
+  let offset = 0;
+  while (true) {
+    let query = supabase.from(table).select(columns).order('id').range(offset, offset + PAGE_SIZE - 1);
+    if (filter) query = filter(query);
+    const { data: page } = await query;
+    if (!page || page.length === 0) break;
+    results.push(...(page as T[]));
+    if (page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return results;
+}
+
 export async function GET() {
   try {
     const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
-    const supabase = await createClient();
-
-    // Global stats
-    const { count: totalProducts } = await supabase
-      .from('atlas_products')
-      .select('*', { count: 'exact', head: true });
-
-    const { count: scorableProducts } = await supabase
-      .from('atlas_products')
-      .select('*', { count: 'exact', head: true })
-      .not('family_id', 'is', null);
-
-    // Per-manufacturer stats — two queries: lightweight stats + coverage-only for scorable
-    const PAGE_SIZE = 1000;
-
-    // Query 1: Lightweight stats (no parameters JSONB — much faster)
-    const rows: { manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }[] = [];
-    let offset = 0;
-    while (true) {
-      const { data: page } = await supabase
-        .from('atlas_products')
-        .select('manufacturer, family_id, category, subcategory, updated_at')
-        .order('id')
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (!page || page.length === 0) break;
-      rows.push(...page);
-      if (page.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
+    // Return cached response if fresh
+    if (cachedResponse && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+      return new NextResponse(cachedResponse, {
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    // Fetch manufacturer enabled/disabled settings
-    const { data: mfrSettings } = await supabase
-      .from('atlas_manufacturer_settings')
-      .select('manufacturer, enabled');
+    const supabase = await createClient();
 
-    const disabledSet = new Set(
-      (mfrSettings ?? [])
-        .filter((s: { manufacturer: string; enabled: boolean }) => !s.enabled)
-        .map((s: { manufacturer: string; enabled: boolean }) => s.manufacturer)
-    );
+    // Fetch all data in parallel: lightweight rows, scorable rows with JSONB, manufacturer records, legacy settings
+    const [rows, scorableRows, { data: mfrRecords, error: mfrRecordsErr }, { data: mfrSettings }] = await Promise.all([
+      fetchAllPages<{ manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }>(
+        supabase,
+        'atlas_products',
+        'manufacturer, family_id, category, subcategory, updated_at',
+      ),
+      fetchAllPages<{ manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }>(
+        supabase,
+        'atlas_products',
+        'manufacturer, family_id, parameters',
+        (q) => q.not('family_id', 'is', null),
+      ),
+      supabase.from('atlas_manufacturers').select('name_display, name_en, name_zh, slug, id, enabled'),
+      supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
+    ]);
 
-    // Query 2: Only fetch parameters for scorable products (for coverage calculation)
-    const scorableRows: { manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }[] = [];
-    offset = 0;
-    while (true) {
-      const { data: page } = await supabase
-        .from('atlas_products')
-        .select('manufacturer, family_id, parameters')
-        .not('family_id', 'is', null)
-        .order('id')
-        .range(offset, offset + PAGE_SIZE - 1);
-      if (!page || page.length === 0) break;
-      scorableRows.push(...(page as typeof scorableRows));
-      if (page.length < PAGE_SIZE) break;
-      offset += PAGE_SIZE;
+    // Build manufacturer identity lookup from atlas_manufacturers (new table)
+    const mfrIdentity = new Map<string, { nameEn: string; nameZh: string | null; slug: string; id: number; enabled: boolean }>();
+    if (!mfrRecordsErr && mfrRecords) {
+      for (const r of mfrRecords as { name_display: string; name_en: string; name_zh: string | null; slug: string; id: number; enabled: boolean }[]) {
+        mfrIdentity.set(r.name_display, { nameEn: r.name_en, nameZh: r.name_zh, slug: r.slug, id: r.id, enabled: r.enabled });
+      }
+    }
+
+    // Disabled set: prefer atlas_manufacturers, fallback to legacy atlas_manufacturer_settings
+    const disabledSet = new Set<string>();
+    if (mfrIdentity.size > 0) {
+      for (const [name, info] of mfrIdentity) {
+        if (!info.enabled) disabledSet.add(name);
+      }
+    } else {
+      for (const s of (mfrSettings ?? []) as { manufacturer: string; enabled: boolean }[]) {
+        if (!s.enabled) disabledSet.add(s.manufacturer);
+      }
     }
 
     if (rows.length === 0) {
-      return NextResponse.json({
+      const emptyResponse = JSON.stringify({
         summary: {
           totalProducts: 0,
           totalManufacturers: 0,
+          enabledManufacturers: 0,
+          enabledProducts: 0,
           scorableProducts: 0,
           searchOnlyProducts: 0,
           familiesCovered: 0,
@@ -77,6 +100,11 @@ export async function GET() {
         },
         manufacturers: [],
         familyBreakdown: [],
+      });
+      cachedResponse = emptyResponse;
+      cacheTimestamp = Date.now();
+      return new NextResponse(emptyResponse, {
+        headers: { 'Content-Type': 'application/json' },
       });
     }
 
@@ -184,8 +212,13 @@ export async function GET() {
     const manufacturers = [...mfrMap.entries()]
       .map(([name, m]) => {
         const cov = mfrCoverage.get(name);
+        const identity = mfrIdentity.get(name);
         return {
           manufacturer: name,
+          nameEn: identity?.nameEn ?? null,
+          nameZh: identity?.nameZh ?? null,
+          slug: identity?.slug ?? null,
+          mfrId: identity?.id ?? null,
           productCount: m.productCount,
           scorableCount: m.scorableCount,
           families: [...m.families].sort(),
@@ -221,20 +254,28 @@ export async function GET() {
     const enabledMfrs = manufacturers.filter((m) => m.enabled);
     const enabledProductCount = enabledMfrs.reduce((sum, m) => sum + m.productCount, 0);
 
-    return NextResponse.json({
+    const responseBody = JSON.stringify({
       summary: {
-        totalProducts: totalProducts ?? rows.length,
+        totalProducts: rows.length,
         totalManufacturers: mfrMap.size,
         enabledManufacturers: enabledMfrs.length,
         enabledProducts: enabledProductCount,
-        scorableProducts: scorableProducts ?? 0,
-        searchOnlyProducts: (totalProducts ?? rows.length) - (scorableProducts ?? 0),
+        scorableProducts: scorableRows.length,
+        searchOnlyProducts: rows.length - scorableRows.length,
         familiesCovered: allFamilies.size,
         lastUpdated: globalLastUpdated,
       },
       manufacturers,
       familyBreakdown,
       familyNames,
+    });
+
+    // Cache the response
+    cachedResponse = responseBody;
+    cacheTimestamp = Date.now();
+
+    return new NextResponse(responseBody, {
+      headers: { 'Content-Type': 'application/json' },
     });
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

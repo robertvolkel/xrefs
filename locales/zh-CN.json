@@ -4,6 +4,8 @@
     "save": "保存",
     "delete": "删除",
     "search": "搜索",
+    "back": "返回",
+    "stop": "停止",
     "loading": "加载中...",
     "comingSoon": "即将推出",
     "required": "必填"
@@ -121,7 +123,31 @@
     "exploreReplacements": "查找替代品",
     "startingValidation": "正在开始验证 {{total}} 个零件...",
     "validatingProgress": "验证中... 已处理 {{processed}}/{{total}} 个零件",
-    "errorProgress": "（失败前已处理 {{processed}}/{{total}} 个零件）"
+    "errorProgress": "（失败前已处理 {{processed}}/{{total}} 个零件）",
+    "addPart": "添加零件",
+    "emptyListHeading": "暂无零件",
+    "emptyListSubheading": "添加您的第一个零件以开始",
+    "searchCount": "{{total}} 个零件中的 {{filtered}} 个",
+    "notifications": {
+      "validationErrors": "{{count}} 个零件无法解析——数据源可能不可用",
+      "mouserUnavailable": "Mouser 定价不可用——API 可能已关闭或达到速率限制",
+      "mouserLoaded": "已加载 {{count}} 个零件的 Mouser 定价",
+      "someNotFound": "{{count}} 个零件在任何数据源中均未找到",
+      "retry": "重试"
+    }
+  },
+  "addPartDialog": {
+    "title": "添加零件",
+    "mpnLabel": "零件编号 (MPN)",
+    "mpnPlaceholder": "例如 LM317T",
+    "manufacturerLabel": "制造商",
+    "manufacturerPlaceholder": "例如 Texas Instruments",
+    "additionalColumns": "其他列",
+    "addButton": "添加零件",
+    "searchButton": "搜索",
+    "selectPart": "选择要添加的正确零件：",
+    "noResults": "未找到匹配的零件。您仍然可以添加此零件——它将被标记为未找到。",
+    "addAnyway": "仍然使用原始输入添加"
   },
   "status": {
     "pending": "待处理",
@@ -350,6 +376,9 @@
     "overrideCount_other": "{{count}} 个覆盖",
     "addRule": "添加规则",
     "addQuestion": "添加问题",
+    "manufacturers": "制造商",
+    "mfrSearchPlaceholder": "搜索制造商...",
+    "mfrNoResults": "没有找到匹配的制造商。",
     "atlasManufacturer": "制造商",
     "atlasProductsCol": "产品",
     "atlasScorableCol": "可评分",

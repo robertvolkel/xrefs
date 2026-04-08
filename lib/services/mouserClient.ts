@@ -195,6 +195,8 @@ async function acquireRateSlot(): Promise<boolean> {
 // API FETCH WITH RETRY
 // ============================================================
 
+const MOUSER_TIMEOUT_MS = 8_000;
+
 async function mouserFetch(mpnQuery: string): Promise<MouserSearchResponse> {
   const apiKey = process.env.MOUSER_API_KEY!;
   const url = `${BASE_URL}?apiKey=${encodeURIComponent(apiKey)}`;
@@ -204,6 +206,7 @@ async function mouserFetch(mpnQuery: string): Promise<MouserSearchResponse> {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(MOUSER_TIMEOUT_MS),
       body: JSON.stringify({
         SearchByPartRequest: {
           mouserPartNumber: mpnQuery,

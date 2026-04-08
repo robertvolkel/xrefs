@@ -19,10 +19,12 @@ import ParamMappingsPanel, { L2ParamMapData } from './ParamMappingsPanel';
 import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
-import AtlasPanel from './AtlasPanel';
+import ManufacturersPanel from './ManufacturersPanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import QcFeedbackTab from './QcFeedbackTab';
 import QcLogsTab from './QcLogsTab';
+import SearchLogicPanel from './SearchLogicPanel';
+import ListLogicPanel from './ListLogicPanel';
 import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
 // --- Static data (computed once at module level) ---
@@ -105,7 +107,7 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'qc-feedback' || s === 'qc-logs';
+  return s === 'manufacturers' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'search-logic' || s === 'list-logic' || s === 'qc-feedback' || s === 'qc-logs';
 }
 
 const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs'];
@@ -121,8 +123,10 @@ function AdminShellInner() {
   const { t } = useTranslation();
 
   const sectionParam = searchParams.get('section');
+  // Redirect legacy 'atlas' section to 'manufacturers'
+  const resolvedSection = sectionParam === 'atlas' ? 'manufacturers' : sectionParam;
   const [activeSection, setActiveSection] = useState<AdminSection>(
-    isValidSection(sectionParam) ? sectionParam : 'param-mappings',
+    isValidSection(resolvedSection) ? resolvedSection : 'param-mappings',
   );
 
   const [selectedCategory, setSelectedCategory] = useState(l3Categories[0] ?? '');
@@ -289,6 +293,11 @@ function AdminShellInner() {
             {activeSection === 'qc-feedback' && <QcFeedbackTab />}
             {activeSection === 'qc-logs' && <QcLogsTab />}
           </Box>
+        ) : activeSection === 'search-logic' || activeSection === 'list-logic' ? (
+          <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            {activeSection === 'search-logic' && <SearchLogicPanel />}
+            {activeSection === 'list-logic' && <ListLogicPanel />}
+          </Box>
         ) : (
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
             {activeSection === 'param-mappings' && (
@@ -297,7 +306,7 @@ function AdminShellInner() {
             {activeSection === 'logic' && <LogicPanel table={selectedTable} />}
             {activeSection === 'context' && <ContextPanel table={selectedTable} />}
             {activeSection === 'taxonomy' && <TaxonomyPanel />}
-            {activeSection === 'atlas' && <AtlasPanel />}
+            {activeSection === 'manufacturers' && <ManufacturersPanel />}
             {activeSection === 'atlas-dictionaries' && (
               <AtlasDictionaryPanel table={selectedTable} l2Category={inL2Mode ? selectedCategory : undefined} />
             )}

@@ -43,6 +43,8 @@ export interface ColumnDefinition {
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mouser';
   /** For calculated columns: the formula definition */
   calculatedField?: CalculatedFieldDef;
+  /** Whether this cell can be edited inline (only ss:* columns) */
+  editable?: boolean;
 }
 
 /** Display order for column groups in the column picker */
@@ -197,6 +199,7 @@ export function buildAvailableColumns(
       spreadsheetIndex: index,
       group: 'Your Data',
       defaultWidth: '120px',
+      editable: true,
     });
   });
 

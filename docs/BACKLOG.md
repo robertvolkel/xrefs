@@ -479,19 +479,27 @@ Atlas badge (globe icon) on recommendation cards when `dataSource === 'atlas'`. 
 ---
 
 ### Phase 7: Atlas Integration & Manufacturer Profile API
-**Status:** Partially done (Decisions #66, #67, #68, #69, #100)
+**Status:** Partially done (Decisions #66, #67, #68, #69, #100, #112, #114)
 **Priority:** P2
 
-Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69) — now shows PIO column alongside Atlas/Dict/DK (Decision #103).
+Atlas product database integrated: 115 manufacturers, 54,746 products ingested into Supabase `atlas_products` table (37,719 scorable). Parallel search + candidate fetch working. Admin panel for ingestion monitoring built with sortable columns and full manufacturer expansion (scorable + non-scorable products). Per-family Chinese→English parameter translation dictionaries added for all 28 families (Decision #67). Gaia datasheet-extracted parameter mapping added (Decision #100) — 12 family gaia dictionaries covering B1/B3/B4/B5/B6/B7/B8/C1/C2/C4/D1/71. Example: YFW rectifier diodes went from 1 mapped param to 10; MOSFETs from 1 to 17-18. Atlas Dictionary admin panel built with Supabase-backed override layer (Decision #68). Coverage analytics with per-family gap analysis drawer (Decision #69) — now shows PIO column alongside Atlas/Dict/DK (Decision #103). LLM description extraction (Decision #112) — Claude Haiku extracts structured attributes from product descriptions with quote grounding anti-hallucination; runs automatically post-ingest; ~12,510 products eligible, estimated +8pp coverage improvement. Description cleanup + display fixes (Decision #114) — raw descriptions rewritten into standardized one-liners via Haiku (`clean_description` column), AEC qualification badges populated from extracted parameters, Risk & Compliance source attribution fixed for Atlas parts.
+
+**Completed (2026-04-02):**
+- ~~Manufacturer profile admin pages~~ — `atlas_manufacturers` table (1,011 records), admin detail pages at `/admin/manufacturers/[slug]` with 5 tabs (Products, Flagged, Coverage, Cross-Refs, Profile), `ManufacturersPanel` with search + flagged tabs
+- ~~Atlas manufacturer identity table~~ — `atlas_manufacturers` canonical identity with slug, name_en, name_zh, name_display, aliases, partsio_id/name, JSONB profile columns. Import via `scripts/atlas-manufacturers-import.mjs`
+- ~~Admin nav restructuring for manufacturers~~ — Manufacturers section in admin sidebar with list + detail sub-routes via shared admin layout
+- ~~Product flagging for Atlas products~~ — `atlas_product_flags` table, flag button in search results and manufacturer Products tab, flagged tab on ManufacturersPanel and per-MFR detail page
 
 **Remaining:**
-- Manufacturer profile API (company profiles, verification, factory audit, export compliance)
-- Replace `mockManufacturerData.ts` with Atlas-fed profiles
-- ManufacturerProfilePanel enrichment with Atlas company data
-- Phase 2 English param expansion: add plain English aliases for MFR-specific formats (`RDS(ON) @10VTyp (mΩ)`, `BVDSS (V)`, `BV(V)`, etc.) — ~1,327 distinct names across ~20 MFRs
+- Connect `atlas_manufacturers` to user-facing ManufacturerProfilePanel (replace mock data in `mockManufacturerData.ts`)
+- ~~Cross-References tab: implement manufacturer-certified replacement upload + injection into recommendation pipeline~~ DONE (Decision #122) — upload zone + column mapping + paginated table + pipeline integration + recommendation categorization (Logic Driven / MFR Certified / 3rd Party)
+- Atlas product flagging: add server-side filtering by manufacturer to flags API (currently client-side)
+- ~~Atlas description cleanup~~ DONE
+- ~~Phase 2 English param expansion~~ DONE — added ~150 English MFR-specific format entries to TS dictionaries (atlasMapper.ts) + gaia dicts (atlas-gaia-dicts.json). +55 rule mappings across 16 manufacturer/family combos (Convert, CREATEK, 3PEAK, TECH PUBLIC, MingDa)
+- Separate applications from Atlas descriptions (Decision #124) — add `applications` column, batch script to split existing `clean_description` via Haiku, update cleanup prompt, show in Explorer Drawer. ~55K products, ~30-40 min implementation
 - Atlas badge in `PartsListTable` "Top Suggestion" column (from Phase 6 remaining)
 
-**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasGaiaDictionaries.ts`, `lib/services/atlas-gaia-dicts.json`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `scripts/atlas-ingest.mjs`
+**Key files:** `lib/services/atlasClient.ts`, `lib/services/atlasMapper.ts`, `lib/services/atlasGaiaDictionaries.ts`, `lib/services/atlas-gaia-dicts.json`, `lib/services/atlasDictOverrides.ts`, `lib/types.ts`, `components/ManufacturerProfilePanel.tsx`, `components/admin/AtlasDictionaryPanel.tsx`, `components/admin/AtlasCoverageDrawer.tsx`, `components/admin/ManufacturersPanel.tsx`, `components/admin/ManufacturerDetailPage.tsx`, `scripts/atlas-ingest.mjs`, `scripts/atlas-manufacturers-import.mjs`
 
 ---
 
@@ -508,6 +516,7 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 - Mouser: Add Mouser suggested replacements as candidate source in `getRecommendations()` for obsolete/EOL parts
 - Mouser: "Commercial" view template with DK/Mouser price/stock/lead time columns pre-configured
 - Mouser: Lifecycle status reconciliation (worst-status-wins across Digikey, Parts.io, Mouser)
+- BOM quantity-aware pricing (Decision #121 Phase 2): qty column auto-detection in `excelParser.ts`, `mapped:quantity` / `rawQuantity` on `PartsListRow`, effective price lookup per supplier tier, extended cost columns in parts list table
 
 ---
 

@@ -24,6 +24,7 @@ interface ActiveValidation {
   progress: number;
   done: boolean;
   error: string | null;
+  abortController: AbortController;
 }
 
 let active: ActiveValidation | null = null;
@@ -61,6 +62,20 @@ function notify() {
   }
 }
 
+/** Cancel the current validation. Aborts the fetch stream and marks as done. */
+export function cancelValidation() {
+  if (active && !active.done) {
+    active.abortController.abort();
+    active.done = true;
+    active.progress = 1;
+    notify();
+    // Save partial results
+    updatePartsListSupabase(active.listId, active.rows).catch((err) => {
+      console.error('[ValidationManager] Cancel save failed:', err);
+    });
+  }
+}
+
 /**
  * Start background validation. The list must already be saved to Supabase.
  * This function runs the streaming validation and periodically saves results.
@@ -70,12 +85,15 @@ export async function startBackgroundValidation(
   initialRows: PartsListRow[],
   currency?: string,
 ): Promise<void> {
+  const abortController = new AbortController();
+
   active = {
     listId,
     rows: [...initialRows],
     progress: 0,
     done: false,
     error: null,
+    abortController,
   };
 
   const items = initialRows.map((r) => ({
@@ -86,7 +104,7 @@ export async function startBackgroundValidation(
   }));
 
   try {
-    const stream = await validatePartsList(items, currency);
+    const stream = await validatePartsList(items, currency, abortController.signal);
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -150,7 +168,11 @@ export async function startBackgroundValidation(
   } catch (error) {
     if (active && active.listId === listId) {
       active.done = true;
-      active.error = error instanceof Error ? error.message : 'Validation failed';
+      // Distinguish abort from real errors
+      const isAbort = error instanceof DOMException && error.name === 'AbortError';
+      if (!isAbort) {
+        active.error = error instanceof Error ? error.message : 'Validation failed';
+      }
       notify();
       // Save partial results
       updatePartsListSupabase(listId, active.rows).catch((err) => {
@@ -162,5 +184,8 @@ export async function startBackgroundValidation(
 
 /** Clear the active validation state (e.g., on reset) */
 export function clearValidation() {
+  if (active && !active.done) {
+    active.abortController.abort();
+  }
   active = null;
 }
