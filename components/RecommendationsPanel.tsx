@@ -1,6 +1,9 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Box, Checkbox, Chip, CircularProgress, FormControlLabel, MenuItem, Select, Typography } from '@mui/material';
+import { Badge, Box, Checkbox, Chip, CircularProgress, FormControlLabel, IconButton, MenuItem, Popover, Select, Tooltip, Typography } from '@mui/material';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
@@ -18,22 +21,59 @@ interface RecommendationsPanelProps {
 export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(() => {
-    const byScore = [...recommendations].sort((a, b) => b.matchPercentage - a.matchPercentage);
-    if (!preferredMpn) return byScore;
-    const prefIdx = byScore.findIndex(r => r.part.mpn === preferredMpn);
-    if (prefIdx <= 0) return byScore; // Already first or not found
-    const [preferred] = byScore.splice(prefIdx, 1);
-    return [preferred, ...byScore];
+    // Category priority: MFR Certified (0) > 3rd Party Certified (1) > Logic Driven only (2)
+    const categoryPriority = (rec: XrefRecommendation): number => {
+      const cats = deriveRecommendationCategories(rec);
+      if (cats.includes('manufacturer_certified')) return 0;
+      if (cats.includes('third_party_certified')) return 1;
+      return 2;
+    };
+    const byCategoryThenScore = [...recommendations].sort((a, b) => {
+      const catDiff = categoryPriority(a) - categoryPriority(b);
+      if (catDiff !== 0) return catDiff;
+      return b.matchPercentage - a.matchPercentage;
+    });
+    if (!preferredMpn) return byCategoryThenScore;
+    const prefIdx = byCategoryThenScore.findIndex(r => r.part.mpn === preferredMpn);
+    if (prefIdx <= 0) return byCategoryThenScore; // Already first or not found
+    const [preferred] = byCategoryThenScore.splice(prefIdx, 1);
+    return [preferred, ...byCategoryThenScore];
   }, [recommendations, preferredMpn]);
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
   const [showCnOnly, setShowCnOnly] = useState(false);
   const [showCommercial, setShowCommercial] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
+  const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
+  const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
+  const displayedManufacturers = showCnOnly ? manufacturers.filter(m => cnManufacturers.has(m)) : manufacturers;
 
   const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (!activeOnly) count++;
+    if (selectedMfr) count++;
+    if (showCnOnly) count++;
+    if (selectedCategory !== 'all') count++;
+    return count;
+  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory]);
+
+  const handleClearFilters = () => {
+    setActiveOnly(true);
+    setSelectedMfr('');
+    setShowCnOnly(false);
+    setSelectedCategory('all');
+  };
+
+  const handleToggleCnOnly = (checked: boolean) => {
+    setShowCnOnly(checked);
+    if (checked && selectedMfr && !cnManufacturers.has(selectedMfr)) {
+      setSelectedMfr('');
+    }
+  };
 
   // Category counts
   const categoryCounts = useMemo(() => {
@@ -79,20 +119,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             {t('recommendations.header')}
           </Typography>
-          {hiddenCount > 0 && (
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={activeOnly}
-                  onChange={(e) => setActiveOnly(e.target.checked)}
-                  size="small"
-                  sx={{ p: 0.5 }}
-                />
-              }
-              label={t('recommendations.activeOnly')}
-              sx={{ mr: 0, '& .MuiFormControlLabel-label': { fontSize: '0.72rem' } }}
-            />
-          )}
         </Box>
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
           {activeOnly && hiddenCount > 0
@@ -102,7 +128,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         </Typography>
       </Box>
 
-      {/* Filter strip — height matches AttributesPanel table header (ROW_HEIGHT + 1 for border-box vs table border-collapse) */}
+      {/* Filter row — single compact row with filter icon + active filter chips + price toggle */}
       <Box
         sx={{
           height: 45,
@@ -112,98 +138,163 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           borderColor: 'divider',
           display: 'flex',
           alignItems: 'center',
-          gap: 1.5,
-          px: 2,
+          gap: 0.75,
+          px: 1,
         }}
       >
+        <Tooltip title="Filters">
+          <IconButton
+            size="small"
+            onClick={(e) => setFilterAnchor(e.currentTarget)}
+            sx={{ p: 0.5 }}
+          >
+            <Badge
+              badgeContent={activeFilterCount}
+              color="primary"
+              invisible={activeFilterCount === 0}
+              sx={{ '& .MuiBadge-badge': { fontSize: '0.65rem', height: 16, minWidth: 16 } }}
+            >
+              <FilterListIcon sx={{ fontSize: 18 }} />
+            </Badge>
+          </IconButton>
+        </Tooltip>
+
+        {/* Inline dismissible chips for active filters */}
+        {!activeOnly && (
+          <Chip label="Include inactive" size="small" onDelete={() => setActiveOnly(true)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
+        {selectedMfr && (
+          <Chip label={selectedMfr} size="small" onDelete={() => setSelectedMfr('')}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
+        {showCnOnly && (
+          <Chip label="CN MFRs" size="small" onDelete={() => setShowCnOnly(false)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
+        {selectedCategory !== 'all' && (
+          <Chip
+            label={selectedCategory === 'logic_driven' ? 'Logic Driven' : selectedCategory === 'manufacturer_certified' ? 'MFR Certified' : '3rd Party'}
+            size="small"
+            onDelete={() => setSelectedCategory('all')}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
+          />
+        )}
+
+        <Box sx={{ flex: 1 }} />
+
+        <Tooltip title={showCommercial ? 'Hide price & stock' : 'Show price & stock'}>
+          <IconButton
+            size="small"
+            onClick={() => setShowCommercial(prev => !prev)}
+            sx={{ p: 0.5, color: showCommercial ? 'primary.main' : 'text.secondary' }}
+          >
+            {showCommercial ? <AttachMoneyIcon sx={{ fontSize: 18 }} /> : <AttachMoneyOutlinedIcon sx={{ fontSize: 18 }} />}
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {/* Filter popover */}
+      <Popover
+        open={Boolean(filterAnchor)}
+        anchorEl={filterAnchor}
+        onClose={() => setFilterAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { width: 280, p: 2 } } }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+          <Typography sx={{ fontSize: '0.82rem', fontWeight: 600 }}>Filters</Typography>
+          {activeFilterCount > 0 && (
+            <Typography
+              component="span"
+              onClick={handleClearFilters}
+              sx={{ fontSize: '0.72rem', color: 'primary.main', cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}
+            >
+              Clear all
+            </Typography>
+          )}
+        </Box>
+
+        {/* STATUS section */}
+        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+          Status
+        </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
+          }
+          label={`Active only${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}`}
+          sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+        />
+
+        {/* MANUFACTURER section */}
+        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+          Manufacturer
+        </Typography>
+        {cnCount > 0 && (
+          <FormControlLabel
+            control={
+              <Checkbox checked={showCnOnly} onChange={(e) => handleToggleCnOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
+            }
+            label={`CN manufacturers only (${cnCount})`}
+            sx={{ ml: 0, mb: 0.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+          />
+        )}
         <Select
           value={selectedMfr}
           onChange={(e) => setSelectedMfr(e.target.value)}
           displayEmpty
           variant="outlined"
           size="small"
+          fullWidth
           sx={{
-            fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-            height: 22,
-            minHeight: 22,
+            fontSize: ROW_FONT_SIZE,
+            height: 28,
+            mb: 1.5,
             '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
-            '& .MuiSelect-select': { py: '1px', px: '8px' },
+            '& .MuiSelect-select': { py: '2px', px: '8px' },
           }}
         >
           <MenuItem value="" sx={{ fontSize: '0.78rem' }}>{t('recommendations.allManufacturers', 'All Manufacturers')}</MenuItem>
-          {manufacturers.map((mfr) => (
+          {displayedManufacturers.map((mfr) => (
             <MenuItem key={mfr} value={mfr} sx={{ fontSize: '0.78rem' }}>{mfr}</MenuItem>
           ))}
         </Select>
-        {cnCount > 0 && (
-          <Chip
-            label={`CN Parts (${cnCount})`}
-            size="small"
-            variant={showCnOnly ? 'filled' : 'outlined'}
-            onClick={() => setShowCnOnly(prev => !prev)}
-            sx={{
-              height: 22,
-              fontSize: '0.72rem',
-              cursor: 'pointer',
-              ...(showCnOnly
-                ? { bgcolor: 'warning.dark', color: 'warning.contrastText' }
-                : { borderColor: 'divider' }),
-            }}
-          />
-        )}
-        <Box sx={{ flex: 1 }} />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={showCommercial}
-              onChange={(e) => setShowCommercial(e.target.checked)}
-              size="small"
-              sx={{ p: 0.5 }}
-            />
-          }
-          label={t('recommendations.showPriceStock', 'Show price & stock')}
-          sx={{ mr: 0, flexShrink: 0, '& .MuiFormControlLabel-label': { fontSize: '0.72rem' } }}
-        />
-      </Box>
 
-      {/* Category filter chips — shown when certified/3rd-party recommendations exist */}
-      {hasMultipleCategories && (
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.75,
-            px: 2,
-            py: 0.75,
-            borderBottom: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.paper',
-          }}
-        >
-          {([
-            { key: 'all' as const, label: `All (${sorted.length})`, color: undefined },
-            { key: 'logic_driven' as const, label: `Logic Driven (${categoryCounts.logic_driven})`, color: '#42A5F5' },
-            ...(categoryCounts.manufacturer_certified > 0 ? [{ key: 'manufacturer_certified' as const, label: `MFR Certified (${categoryCounts.manufacturer_certified})`, color: '#66BB6A' }] : []),
-            ...(categoryCounts.third_party_certified > 0 ? [{ key: 'third_party_certified' as const, label: `3rd Party (${categoryCounts.third_party_certified})`, color: '#FFA726' }] : []),
-          ] as const).map(({ key, label, color }) => (
-            <Chip
-              key={key}
-              label={label}
-              size="small"
-              variant={selectedCategory === key ? 'filled' : 'outlined'}
-              onClick={() => setSelectedCategory(key)}
-              sx={{
-                height: 22,
-                fontSize: '0.68rem',
-                cursor: 'pointer',
-                ...(selectedCategory === key
-                  ? { bgcolor: color || 'action.selected', color: color ? '#fff' : undefined }
-                  : { borderColor: color || 'divider', color: color || 'text.secondary' }),
-              }}
-            />
-          ))}
-        </Box>
-      )}
+        {/* CROSS REFERENCE SOURCE section */}
+        {hasMultipleCategories && (
+          <>
+            <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+              Cross Reference Source
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {([
+                { key: 'all' as const, label: `All (${sorted.length})`, color: undefined },
+                { key: 'logic_driven' as const, label: `Logic Driven (${categoryCounts.logic_driven})`, color: '#42A5F5' },
+                ...(categoryCounts.manufacturer_certified > 0 ? [{ key: 'manufacturer_certified' as const, label: `MFR Certified (${categoryCounts.manufacturer_certified})`, color: '#66BB6A' }] : []),
+                ...(categoryCounts.third_party_certified > 0 ? [{ key: 'third_party_certified' as const, label: `3rd Party (${categoryCounts.third_party_certified})`, color: '#FFA726' }] : []),
+              ] as const).map(({ key, label, color }) => (
+                <Chip
+                  key={key}
+                  label={label}
+                  size="small"
+                  variant={selectedCategory === key ? 'filled' : 'outlined'}
+                  onClick={() => setSelectedCategory(key)}
+                  sx={{
+                    height: 22,
+                    fontSize: '0.68rem',
+                    cursor: 'pointer',
+                    ...(selectedCategory === key
+                      ? { bgcolor: color || 'action.selected', color: color ? '#fff' : undefined }
+                      : { borderColor: color || 'divider', color: color || 'text.secondary' }),
+                  }}
+                />
+              ))}
+            </Box>
+          </>
+        )}
+      </Popover>
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
         {filtered.map((rec) => {
