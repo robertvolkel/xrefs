@@ -253,10 +253,10 @@ export function useAppState() {
       const choices: ChoiceOption[] = [
         { id: 'find_xrefs', label: 'Find cross-references', action: 'find_replacements' },
       ];
-      addMessage('assistant', `Loaded details for **${mpn}**.`, { type: 'choices', choices });
+      addMessage('assistant', `Loaded details for **${mpn}**. Is there anything specific you'd like to know about this part?`, { type: 'choices', choices });
       conversationRef.current.push({
         role: 'assistant',
-        content: `Loaded details for ${mpn}. Waiting for user to choose next action.`,
+        content: `Loaded details for ${mpn}. Is there anything specific you'd like to know about this part? Waiting for user to choose next action.`,
       });
       setState((prev) => ({
         ...prev,
@@ -399,7 +399,10 @@ export function useAppState() {
       const signal = freshAbort();
       addMessage('user', query);
       setStatus('Thinking...');
-      setState((prev) => ({ ...prev, phase: 'searching' }));
+      setState((prev) => ({
+        ...prev,
+        phase: prev.sourceAttributes ? prev.phase : 'searching',
+      }));
 
       // Add to conversation history
       conversationRef.current.push({ role: 'user', content: query });
@@ -539,7 +542,10 @@ export function useAppState() {
     async (query: string, skipUserMessage = false) => {
       if (!skipUserMessage) {
         addMessage('user', query);
-        setState((prev) => ({ ...prev, phase: 'searching' }));
+        setState((prev) => ({
+          ...prev,
+          phase: prev.sourceAttributes ? prev.phase : 'searching',
+        }));
       }
       setStatus(`Searching for "${query}"...`);
 

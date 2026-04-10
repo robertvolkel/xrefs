@@ -159,9 +159,12 @@ export interface PartSummary {
   dataSource?: 'digikey' | 'atlas' | 'partsio' | 'mouser';
 }
 
+export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';
+
 export interface SearchResult {
   type: 'single' | 'multiple' | 'none';
   matches: PartSummary[];
+  sourcesContributed?: SearchDataSource[];
 }
 
 // ── Service Status ──────────────────────────────────────────

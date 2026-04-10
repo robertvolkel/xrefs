@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateMfrCrossRefCache } from '@/lib/services/manufacturerCrossRefService';
+import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 import { invalidateManufacturersListCache } from '../../route';
 
 export async function GET(
@@ -174,6 +175,7 @@ export async function POST(
     // Invalidate cache
     invalidateMfrCrossRefCache();
     invalidateManufacturersListCache();
+    invalidateRecommendationsCache();
 
     return NextResponse.json({
       success: true,
@@ -218,6 +220,7 @@ export async function DELETE(
     // Invalidate cache
     invalidateMfrCrossRefCache();
     invalidateManufacturersListCache();
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true, deleted: ids.length });
   } catch {

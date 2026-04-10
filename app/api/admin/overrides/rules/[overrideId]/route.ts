@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { invalidateOverrideCache } from '@/lib/services/overrideMerger';
+import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 import { snapshotRuleState } from '@/lib/services/overrideHistoryHelper';
 
 /** Fields that can be patched on a rule override. */
@@ -104,6 +105,7 @@ export async function PATCH(
     }
 
     invalidateOverrideCache(current.family_id as string);
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -148,6 +150,7 @@ export async function DELETE(
     }
 
     if (row) invalidateOverrideCache(row.family_id as string);
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {
