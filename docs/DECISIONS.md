@@ -3275,3 +3275,20 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 Category is derived from `deriveRecommendationCategories()` — a recommendation with `certifiedBy: ['manufacturer']` gets priority 0, 3rd-party sources get priority 1, everything else gets priority 2. Preferred MPN (user-starred) still floats to the very top regardless of category.
 
 **Files:** `components/RecommendationsPanel.tsx`
+
+## Decision #128 — Recommendations L2 Cache & Search Cache Bypass Fix (Apr 2026)
+
+**Problem:** Repeat searches took ~10s and repeat recommendations took ~30s despite the L2 Supabase cache. Three root causes:
+1. **Sticky search cache bypass:** Decision #126's `shouldBypassSearchCache()` checked if each configured source (Digikey, Parts.io, Mouser) was in `sourcesContributed`. But the write path only tagged sources with `matches.length > 0`. If Mouser returned 0 results for an obscure MPN (very common), it never got tagged → every repeat search bypassed the cache permanently.
+2. **No recommendations-level cache:** `getRecommendations()` re-ran the full pipeline (Digikey category search, candidate enrichment, scoring) on every call — 5-30s even when sub-calls hit their own L2 caches.
+3. **Manufacturer xref `getAttributes()` called Mouser:** Each of the 34K newly-uploaded 3PEAK cross-reference MPNs triggered a fresh Mouser API call during xref candidate resolution, burning daily quota and adding 1-3s per uncached xref. Also had an arg-order bug (userId passed as currency).
+
+**Solution:**
+1. **Fix `sourcesContributed` tracking:** Tag any successfully-queried source regardless of match count. A 0-result fulfilled query proves the source was reachable. Tighten `shouldBypassSearchCache()` to only bypass legacy entries (missing `sourcesContributed`) — per-source checks removed.
+2. **Add `'recommendations'` cache tier:** Reuses `service='search'` with `variant='rec:<version>:<mpn>:<sha1-16>'` in `part_data_cache` table. Cache key is a SHA-1 hash of all scoring inputs (overrides, context, prefs, currency, options) + `RECS_CACHE_SCHEMA_VERSION`. 30-day TTL — parametric data and scoring are stable; pricing/stock refreshed on display via existing `triggerMouserEnrichment()`. Global (cross-user) cache: two users with same inputs share one entry.
+3. **Admin-write invalidation:** `invalidateRecommendationsCache()` purges the entire `recommendations` tier. Called from 8 admin routes: xref upload/delete, manufacturer enable/disable, rule override CRUD, context override CRUD, rule restore.
+4. **Skip Mouser on xref candidates:** Pass `{ skipMouser: true }` to `getAttributes()` in manufacturer xref resolution. Fixed arg-order bug in same edit.
+
+**Also fixed:** `get_cross_ref_counts()` RPC function replaces client-side row counting for the Manufacturers panel MFR Crosses column, fixing the Supabase 1000-row limit that caused 3PEAK's 34K cross-references to show as "—".
+
+**Files:** `lib/services/partDataService.ts`, `lib/services/partDataCache.ts`, `scripts/supabase-cache-schema.sql`, `scripts/supabase-mfr-xref-counts-rpc.sql`, `app/api/admin/manufacturers/route.ts`, `app/api/admin/manufacturers/[slug]/route.ts`, `app/api/admin/manufacturers/[slug]/cross-references/route.ts`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `app/api/admin/overrides/rules/restore/route.ts`, `app/api/admin/overrides/context/route.ts`, `app/api/admin/overrides/context/[overrideId]/route.ts`
