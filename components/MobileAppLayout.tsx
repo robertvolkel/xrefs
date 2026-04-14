@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
-import { AppPhase, ChatMessage, ManufacturerProfile, PartAttributes, PartSummary, XrefRecommendation } from '@/lib/types';
+import { AppPhase, ChatMessage, ChoiceOption, ManufacturerProfile, PartAttributes, PartSummary, XrefRecommendation } from '@/lib/types';
 import type { AttributesTab } from './DesktopLayout';
 import { TAB_BAR_HEIGHT } from '@/lib/layoutConstants';
 import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
@@ -73,6 +73,7 @@ interface MobileAppLayoutProps {
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
+  onChoiceSelect?: (choice: ChoiceOption) => void;
   onSelectRecommendation: (rec: XrefRecommendation) => void;
   onBackToRecommendations: () => void;
   onManufacturerClick: (manufacturer: string) => void;
@@ -99,6 +100,7 @@ export default function MobileAppLayout({
   onSkipAttributes,
   onContextResponse,
   onSkipContext,
+  onChoiceSelect,
   onSelectRecommendation,
   onBackToRecommendations,
   onManufacturerClick,
@@ -231,6 +233,7 @@ export default function MobileAppLayout({
             onSkipAttributes={onSkipAttributes}
             onContextResponse={onContextResponse}
             onSkipContext={onSkipContext}
+            onChoiceSelect={onChoiceSelect}
             sourceMpn={sourceAttributes?.part.mpn}
             sourceManufacturer={sourceAttributes?.part.manufacturer}
           />

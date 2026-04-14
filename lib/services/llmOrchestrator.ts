@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
@@ -291,14 +291,17 @@ If a user asks about anything unrelated to electronic components, respond in 1-2
 
 Workflow:
 1. When a user provides a part number or description, use the search_parts tool to find matches.
-2. If there's exactly one match, ask the user to confirm. If multiple, present them briefly.
-3. When the user confirms a part, use get_part_attributes AND find_replacements. Call BOTH tools.
-4. After receiving replacement results, provide an engineering assessment (see below).
+2. If there's exactly one match, write a brief message and the UI will show a clickable part card. If multiple, present them briefly — the UI shows cards for all matches.
+3. When the user clicks a part card, the UI automatically loads attributes and shows them in a side panel. You do NOT need to call get_part_attributes — the frontend handles this.
+4. After the user chooses to find cross-references, the UI runs the matching engine and provides results. You will then be asked for an engineering assessment (see below).
 
 Search result presentation:
-- The UI renders interactive cards below your message, so DO NOT list or repeat each part's details in your text.
-- For a single match: "I found **[MPN]** from [manufacturer]. Is this what you're looking for?"
-- For multiple matches: "I found [N] similar parts. Which one are you looking for?" — nothing more. The cards show the rest.
+- The UI renders interactive part cards below your message automatically based on search results. The user must click a card to see full details in the attributes panel.
+- NEVER describe a part's specifications (capacitance, voltage, package, etc.) in your text. The part card and attributes panel handle that. Your text should only identify the part and invite the user to click.
+- For a single match: write a brief message identifying the part and tell the user to click the card. Examples: "I found **MPN** from **manufacturer**. Click below to see full details." or if there's a discrepancy: "I found the kit version of this part. Click below if that's what you need."
+- For multiple matches: "I found [N] similar parts. Click the one you're looking for." — nothing more. The cards show the rest.
+- Do NOT use present_choices for part selection — clickable part cards handle that. present_choices is ONLY for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search").
+- IMPORTANT: When using present_choices, you MUST still write a text message explaining the situation. The buttons appear below your text. Never call present_choices without also providing a text response — an empty message with only buttons is confusing.
 
 Engineering Assessment (REQUIRED after find_replacements):
 - State how many candidates were found and how many passed
@@ -317,11 +320,12 @@ Formatting rules:
 - No filler, no repetition. Engineers don't need hand-holding.
 
 Important rules:
-- Always use tools — never guess part numbers or specs. If the user asks about a part's specifications, attributes, pricing, or any technical detail, ALWAYS call get_part_attributes. Never answer from general knowledge — your training data may be outdated or inaccurate. The tools return live data from real APIs.
-- After confirming a part, ALWAYS call both get_part_attributes and find_replacements.
-- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first, then ask the user to confirm. NEVER skip confirmation. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
-- If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. Never describe a part from general knowledge. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
+- Always use tools — never guess part numbers or specs. If the user asks about a part's specifications, attributes, pricing, or any technical detail, ALWAYS use search_parts first so the UI can show a part card. Never answer from general knowledge — your training data may be outdated or inaccurate. The tools return live data from real APIs.
+- NEVER describe a part's specifications in your text response. The UI displays attributes in a dedicated panel when the user clicks a part card. Writing specs in chat is redundant and a worse experience.
+- If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first. NEVER skip the search step. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
+- If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
 - If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.
+- When the user asks for "details", "specs", or "info" about a part that was previously found in search results, use search_parts to present the part card again. The UI will handle loading attributes when the user clicks on it.
 
 When User Context is provided:
 - Adapt your communication style to the user's role: more technical depth for engineers, more commercial focus for procurement, more strategic framing for executives
@@ -380,6 +384,31 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ['mpn'],
+    },
+  },
+  {
+    name: 'present_choices',
+    description: 'Present interactive choices to the user as clickable buttons. Use this ONLY for non-part workflow decisions — e.g., choosing between actions like "get attributes" vs "search for alternatives", or "continue" vs "start over". Do NOT use this for part selection or confirmation — the UI renders clickable part cards automatically from search results.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        choices: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Unique key for this choice' },
+              label: { type: 'string', description: 'Button text shown to the user' },
+              action: { type: 'string', enum: ['confirm_part', 'search', 'other'], description: 'What this choice does. Use confirm_part when this choice confirms a specific part.' },
+              mpn: { type: 'string', description: 'Part MPN if this choice confirms a specific part' },
+              manufacturer: { type: 'string', description: 'Manufacturer of the part (if mpn is set)' },
+            },
+            required: ['id', 'label'],
+          },
+          description: 'The choices to present as clickable buttons.',
+        },
+      },
+      required: ['choices'],
     },
   },
 ];
@@ -455,6 +484,7 @@ interface ToolResultData {
   searchResult?: SearchResult;
   attributes: Record<string, PartAttributes>;
   recommendations: Record<string, XrefRecommendation[]>;
+  choices?: ChoiceOption[];
 }
 
 /** Execute a tool call and return the result + parsed data */
@@ -535,6 +565,11 @@ async function executeTool(
           status: r.part.status,
         })),
       });
+    }
+    case 'present_choices': {
+      const { choices } = input as { choices: ChoiceOption[] };
+      data.choices = choices;
+      return JSON.stringify({ presented: true });
     }
     // ── History tools ──────────────────────────────────────────
     case 'get_my_recent_searches': {
@@ -851,6 +886,9 @@ export async function chat(
   }
   if (Object.keys(toolData.recommendations).length > 0) {
     result.recommendations = toolData.recommendations;
+  }
+  if (toolData.choices && toolData.choices.length > 0) {
+    result.choices = toolData.choices;
   }
 
   return result;

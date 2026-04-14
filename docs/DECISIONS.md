@@ -3235,3 +3235,43 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 5. Add `applications` to API response and types
 
 **Status:** Planned, not yet implemented. See `docs/BACKLOG.md`.
+
+## Decision #125 — Recommendations Panel Filter Consolidation (Apr 2026)
+
+**Problem:** The RecommendationsPanel had two rows of filter controls (manufacturer dropdown, CN Parts chip, price/stock checkbox, category filter chips) consuming ~80px of vertical space. Adding more filters would make this worse.
+
+**Solution:** Consolidated into a single 45px filter row:
+- **Filter icon button** (left): `FilterList` icon with `Badge` showing count of active non-default filters. Opens a `Popover` with three sections: Status (Active Only), Manufacturer (CN checkbox pre-filters dropdown + manufacturer select), and Cross Reference Source (category chips).
+- **Inline dismissible chips** (middle): Show active filters (e.g., "Rubycon", "CN MFRs") with `x` to clear individually.
+- **Price/stock toggle** (right): `AttachMoney` icon button — display toggle, not a filter.
+- CN checkbox above manufacturer dropdown filters the dropdown to only show CN manufacturers. If a non-CN manufacturer was previously selected, it resets.
+- "Clear all" link in popover resets all filters.
+
+**Files:** `components/RecommendationsPanel.tsx`
+
+## Decision #126 — Search Cache Source Provenance (Apr 2026)
+
+**Problem:** When data sources (Digikey, Parts.io, Mouser) are temporarily down during a search, partial results from available sources are cached for 7 days. If the failed sources recover minutes later, subsequent searches return the stale partial cache instead of re-querying the now-available sources.
+
+**Solution:** Tag cached search results with which sources contributed, and bypass cache when a previously-missing source is now available:
+1. Added `sourcesContributed?: SearchDataSource[]` to `SearchResult` type — tracks which sources returned results for each cached search.
+2. New `shouldBypassSearchCache()` function checks on every cache hit whether a configured source is missing from the `sourcesContributed` list. If so, the cache entry is bypassed and all sources are re-queried.
+3. Legacy cache entries (without `sourcesContributed`) are treated as stale and force a re-query — self-healing on first access.
+4. Atlas excluded from bypass checks (Supabase-backed, always available — 0 results is valid, not a failure).
+5. Parts.io and Mouser only checked for MPN-like queries (matching when they would have been called).
+6. No schema migration — `sourcesContributed` stored inside `response_data` JSONB in the existing `part_data_cache` table.
+
+**Files:** `lib/types.ts`, `lib/services/partDataService.ts`
+
+## Decision #127 — Recommendation Sort Order: Certified First (Apr 2026)
+
+**Problem:** Recommendations were sorted purely by match score. When manufacturer-certified or 3rd-party-certified cross-references existed, they were mixed in with logic-driven results, making them easy to miss.
+
+**Solution:** Sort recommendations by category priority first, then by match score within each group:
+1. **Manufacturer Certified** (green) — highest priority, always listed first
+2. **3rd Party Certified** (amber) — Mouser/Parts.io suggestions, listed second
+3. **Logic Driven** (blue) — matching engine results, listed last
+
+Category is derived from `deriveRecommendationCategories()` — a recommendation with `certifiedBy: ['manufacturer']` gets priority 0, 3rd-party sources get priority 1, everything else gets priority 2. Preferred MPN (user-starred) still floats to the very top regardless of category.
+
+**Files:** `components/RecommendationsPanel.tsx`

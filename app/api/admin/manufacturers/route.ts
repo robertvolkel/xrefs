@@ -43,29 +43,26 @@ export async function GET() {
 
     const supabase = await createClient();
 
-    // Two parallel queries:
+    // Three parallel queries:
     // 1. Manufacturers master list (~1K rows, lightweight)
     // 2. RPC: GROUP BY (manufacturer, family_id) with counts + param keys (~2-3K rows)
-    //    This replaces fetching all 55K+ individual product rows
+    // 3. RPC: Cross-ref counts per slug (avoids 1000-row PostgREST limit)
     const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
       supabase
         .from('atlas_manufacturers')
         .select('name_display, name_en, name_zh, slug, id, enabled, website_url')
         .order('name_en'),
       supabase.rpc('get_manufacturer_product_stats'),
-      supabase
-        .from('manufacturer_cross_references')
-        .select('manufacturer_slug')
-        .eq('is_active', true),
+      supabase.rpc('get_cross_ref_counts'),
     ]);
     const statsRows = rpcResult.data as StatsRow[] | null;
     const statsErr = rpcResult.error;
 
-    // Count cross-refs per slug
+    // Cross-ref counts per slug (from RPC — avoids Supabase 1000-row limit)
     const crossRefCounts = new Map<string, number>();
     if (xrefCounts) {
-      for (const row of xrefCounts as { manufacturer_slug: string }[]) {
-        crossRefCounts.set(row.manufacturer_slug, (crossRefCounts.get(row.manufacturer_slug) || 0) + 1);
+      for (const row of xrefCounts as { manufacturer_slug: string; count: number }[]) {
+        crossRefCounts.set(row.manufacturer_slug, Number(row.count));
       }
     }
 

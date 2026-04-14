@@ -159,9 +159,12 @@ export interface PartSummary {
   dataSource?: 'digikey' | 'atlas' | 'partsio' | 'mouser';
 }
 
+export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';
+
 export interface SearchResult {
   type: 'single' | 'multiple' | 'none';
   matches: PartSummary[];
+  sourcesContributed?: SearchDataSource[];
 }
 
 // ── Service Status ──────────────────────────────────────────
@@ -198,6 +201,7 @@ export type AppPhase =
   | 'loading-attributes'
   | 'awaiting-attributes'
   | 'awaiting-context'
+  | 'awaiting-action'
   | 'finding-matches'
   | 'viewing'
   | 'comparing'
@@ -212,9 +216,18 @@ export interface ChatMessage {
   interactiveElement?: InteractiveElement;
 }
 
+export interface ChoiceOption {
+  id: string;
+  label: string;
+  action?: 'confirm_part' | 'find_replacements' | 'search' | 'other';
+  mpn?: string;
+  manufacturer?: string;
+}
+
 export type InteractiveElement =
   | { type: 'confirmation'; part: PartSummary }
   | { type: 'options'; parts: PartSummary[] }
+  | { type: 'choices'; choices: ChoiceOption[] }
   | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
   | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> }
   | { type: 'list-action'; action: PendingListAction; status: 'pending' | 'confirmed' | 'cancelled' };
@@ -533,6 +546,7 @@ export interface OrchestratorResponse {
   searchResult?: SearchResult;
   attributes?: Record<string, PartAttributes>;
   recommendations?: Record<string, XrefRecommendation[]>;
+  choices?: ChoiceOption[];
 }
 
 // ============================================================

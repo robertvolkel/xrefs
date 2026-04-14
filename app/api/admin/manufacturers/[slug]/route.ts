@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
 import { invalidateManufacturerCache } from '@/lib/services/atlasClient';
+import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 import { invalidateManufacturersListCache } from '../route';
 
 export async function GET(
@@ -199,6 +200,11 @@ export async function PATCH(
     // Invalidate caches
     invalidateManufacturerCache();
     invalidateManufacturersListCache();
+    // Only invalidate recommendations cache when enabled status changes —
+    // profile/website edits don't affect scoring.
+    if ('enabled' in updates) {
+      invalidateRecommendationsCache();
+    }
 
     return NextResponse.json({ success: true });
   } catch {

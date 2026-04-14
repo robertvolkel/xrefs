@@ -17,7 +17,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 // ============================================================
 
 export type CacheService = 'digikey' | 'partsio' | 'mouser' | 'search';
-export type CacheTier = 'parametric' | 'lifecycle' | 'commercial' | 'search';
+export type CacheTier = 'parametric' | 'lifecycle' | 'commercial' | 'search' | 'recommendations';
 
 export interface CacheReadResult<T> {
   data: T;
@@ -64,6 +64,17 @@ export const TTL_COMMERCIAL_MS = 24 * 60 * 60 * 1000;
 
 /** Search results: 7 days (pricing preview goes stale; detailed pricing from getAttributes) */
 export const TTL_SEARCH_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Recommendations: 30 days. Parametric data and scoring logic are stable;
+ *  pricing/stock are refreshed on display via triggerMouserEnrichment().
+ *  Invalidated explicitly by admin writes that affect scoring (xref uploads,
+ *  rule overrides, context overrides, manufacturer enable/disable). */
+export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Bump this when scoring logic changes (logic table edits, scoring engine
+ *  changes, new rule types). Cached results from older versions become
+ *  unreachable automatically — no need for manual purges. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v1';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
@@ -314,6 +325,19 @@ export async function invalidateCache(opts?: InvalidateCacheOptions): Promise<nu
     console.warn('[partDataCache] invalidateCache error:', err);
     return 0;
   }
+}
+
+/**
+ * Nuke the entire recommendations cache tier. Called from admin write routes
+ * that mutate scoring inputs (xref uploads, rule overrides, context overrides,
+ * manufacturer enable/disable). Fire-and-forget — errors logged, never thrown.
+ */
+export function invalidateRecommendationsCache(): void {
+  invalidateCache({ tier: 'recommendations' })
+    .then((count) => {
+      if (count > 0) console.log(`[partDataCache] Invalidated ${count} recommendation cache entries`);
+    })
+    .catch((err) => console.warn('[partDataCache] invalidateRecommendationsCache error:', err));
 }
 
 /**

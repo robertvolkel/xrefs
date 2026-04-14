@@ -6,9 +6,10 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChatMessage, PartSummary } from '@/lib/types';
+import { ChatMessage, ChoiceOption, PartSummary } from '@/lib/types';
 import PartConfirmation from './PartConfirmation';
 import PartOptionsSelector from './PartOptionsSelector';
+import ChoiceButtons from './ChoiceButtons';
 import MissingAttributesForm from './MissingAttributesForm';
 import ApplicationContextForm from './ApplicationContextForm';
 import ListActionConfirmation from './parts-list/ListActionConfirmation';
@@ -18,6 +19,7 @@ interface MessageBubbleProps {
   onConfirm?: (part: PartSummary) => void;
   onReject?: () => void;
   onSelectPart?: (part: PartSummary) => void;
+  onChoiceSelect?: (choice: ChoiceOption) => void;
   onAttributeResponse?: (responses: Record<string, string>) => void;
   onSkipAttributes?: () => void;
   onContextResponse?: (answers: Record<string, string>) => void;
@@ -33,6 +35,7 @@ export default function MessageBubble({
   onConfirm,
   onReject,
   onSelectPart,
+  onChoiceSelect,
   onAttributeResponse,
   onSkipAttributes,
   onContextResponse,
@@ -142,6 +145,13 @@ export default function MessageBubble({
           <PartOptionsSelector
             parts={message.interactiveElement.parts}
             onSelect={onSelectPart}
+          />
+        )}
+
+        {message.interactiveElement?.type === 'choices' && onChoiceSelect && (
+          <ChoiceButtons
+            choices={message.interactiveElement.choices}
+            onSelect={onChoiceSelect}
           />
         )}
 

@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -27,7 +27,8 @@ import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, s
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
 import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
-import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS } from './partDataCache';
+import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
+import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
 
 // ============================================================
@@ -208,6 +209,73 @@ export function looksLikeMpn(query: string): boolean {
   return true;
 }
 
+/**
+ * Check if a cached search result is from an older cache format and should be
+ * re-queried once to backfill source tags. Returns true only for:
+ *   - legacy entries missing `sourcesContributed` (written before this field existed)
+ *   - entries with an empty `sourcesContributed` (defensive — should be impossible
+ *     given the write-path guard that only caches when matches exist)
+ *
+ * Sticky-bypass fix: previously this function returned true whenever any
+ * configured source was absent from `sourcesContributed`. Combined with the
+ * write path only tagging sources with matches > 0, this permanently bypassed
+ * cache for any MPN that returned 0 results from any single source (very common
+ * for Mouser on obscure MPNs). The write path now tags any successfully-queried
+ * source regardless of match count, so per-source checks are obsolete.
+ */
+function shouldBypassSearchCache(cached: SearchResult): boolean {
+  const contributed = cached.sourcesContributed;
+  if (!contributed || contributed.length === 0) return true;
+  return false;
+}
+
+// ============================================================
+// RECOMMENDATIONS CACHE KEY HELPERS
+// ============================================================
+
+/**
+ * Stable stringify: produces deterministic JSON regardless of key insertion
+ * order. Used to build recommendation cache keys reproducibly across calls.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify((value as Record<string, unknown>)[k])).join(',') + '}';
+}
+
+/**
+ * Build a deterministic cache variant key for getRecommendations(). Hash covers
+ * every input that affects scoring/output so two requests with different context
+ * or prefs cannot collide. Includes RECS_CACHE_SCHEMA_VERSION so a code-level
+ * scoring change auto-invalidates everything by bumping the constant.
+ */
+function buildRecommendationsVariant(
+  mpn: string,
+  attributeOverrides: Record<string, string> | undefined,
+  applicationContext: ApplicationContext | undefined,
+  currency: string | undefined,
+  preferredManufacturers: string[] | undefined,
+  userPreferences: UserPreferences | undefined,
+  options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipMouser?: boolean } | undefined,
+): string {
+  const sortedPreferred = preferredManufacturers ? [...preferredManufacturers].sort() : undefined;
+  const payload = {
+    overrides: attributeOverrides ?? null,
+    ctx: applicationContext ?? null,
+    ccy: currency ?? 'USD',
+    pref: sortedPreferred ?? null,
+    userPrefs: userPreferences ?? null,
+    opts: {
+      skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
+      filterForBatch: !!options?.filterForBatch,
+      skipMouser: !!options?.skipMouser,
+    },
+  };
+  const hash = createHash('sha1').update(stableStringify(payload)).digest('hex').slice(0, 16);
+  return `rec:${RECS_CACHE_SCHEMA_VERSION}:${mpn.toLowerCase()}:${hash}`;
+}
+
 export async function searchParts(
   query: string,
   currency?: string,
@@ -222,57 +290,82 @@ export async function searchParts(
   const cacheKey = `${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipMouser ? '1' : '0'}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
-    console.log(`[perf] searchParts L1 HIT (${cacheKey})`);
-    return cached.data;
+    if (!shouldBypassSearchCache(cached.data)) {
+      console.log(`[perf] searchParts L1 HIT (${cacheKey})`);
+      return cached.data;
+    }
+    console.log(`[perf] searchParts L1 BYPASS — legacy entry (${cacheKey})`);
+    searchCache.delete(cacheKey);
   }
 
   // ── Search cache: L2 Supabase persistent ──
   const l2 = await getCachedResponse<SearchResult>('search', cacheKey, 'default');
-  if (l2) {
+  if (l2 && !shouldBypassSearchCache(l2.data)) {
     console.log(`[perf] searchParts L2 HIT (${cacheKey})`);
     searchCache.set(cacheKey, { data: l2.data, timestamp: Date.now() }); // promote to L1
     return l2.data;
   }
+  if (l2) {
+    console.log(`[perf] searchParts L2 BYPASS — legacy entry (${cacheKey})`);
+  }
 
   // Always search: Digikey (keyword search handles both MPNs and descriptions) + Atlas
-  const searches: Promise<SearchResult>[] = [
+  type LabeledSearch = { source: SearchDataSource; promise: Promise<SearchResult> };
+  const searches: LabeledSearch[] = [
     // Digikey
-    (async (): Promise<SearchResult> => {
-      if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
-      try {
-        const response = await keywordSearch(trimmed, { limit: 10 }, currency, userId);
-        return mapKeywordResponseToSearchResult(response);
-      } catch (error) {
-        console.warn('Digikey search failed:', error);
-        reportServiceFailure('digikey', 'unavailable', 'Search failed');
-        return { type: 'none', matches: [] };
-      }
-    })(),
+    {
+      source: 'digikey',
+      promise: (async (): Promise<SearchResult> => {
+        if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
+        try {
+          const response = await keywordSearch(trimmed, { limit: 10 }, currency, userId);
+          return mapKeywordResponseToSearchResult(response);
+        } catch (error) {
+          console.warn('Digikey search failed:', error);
+          reportServiceFailure('digikey', 'unavailable', 'Search failed');
+          return { type: 'none', matches: [] };
+        }
+      })(),
+    },
     // Atlas
-    searchAtlasProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+    {
+      source: 'atlas',
+      promise: searchAtlasProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+    },
   ];
 
   // MPN-prefix APIs — only when query looks like a part number
   if (isMpn && longEnough) {
-    searches.push(
-      searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
-    );
+    searches.push({
+      source: 'partsio',
+      promise: searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+    });
     if (!options?.skipMouser) {
-      searches.push(
-        searchMouserProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
-      );
+      searches.push({
+        source: 'mouser',
+        promise: searchMouserProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+      });
     }
   }
 
-  const results = await Promise.allSettled(searches);
+  const settled = await Promise.allSettled(searches.map(s => s.promise));
+
+  // Track which sources were successfully queried (even 0-result queries count —
+  // a 0 from a reachable source is a valid answer, not a failure). This stops
+  // shouldBypassSearchCache() from re-querying sources that are up but happened
+  // to have no data for this MPN.
+  const sourcesContributed: SearchDataSource[] = [];
 
   // Merge in priority order: Digikey → Atlas → Parts.io → Mouser
   const seenMpns = new Set<string>();
   const mergedMatches = [];
 
-  for (const result of results) {
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
     if (result.status !== 'fulfilled') continue;
-    for (const part of result.value.matches ?? []) {
+    sourcesContributed.push(searches[i].source);
+    const matches = result.value.matches ?? [];
+    for (const part of matches) {
       const key = part.mpn.toLowerCase();
       if (!seenMpns.has(key) && mergedMatches.length < SEARCH_RESULT_CAP) {
         seenMpns.add(key);
@@ -285,6 +378,7 @@ export async function searchParts(
     const result: SearchResult = {
       type: mergedMatches.length === 1 ? 'single' : 'multiple',
       matches: mergedMatches,
+      sourcesContributed,
     };
 
     // ── Search cache: store in L1 + L2 (skip 'none' — may be transient failure) ──
@@ -294,7 +388,7 @@ export async function searchParts(
       if (oldestKey) searchCache.delete(oldestKey);
     }
     setCachedResponse('search', cacheKey, 'default', 'search', result, TTL_SEARCH_MS);
-    console.log(`[perf] searchParts MISS → stored L1+L2 (${cacheKey})`);
+    console.log(`[perf] searchParts MISS → stored L1+L2 (${cacheKey}, sources: ${sourcesContributed.join(',')})`);
 
     return result;
   }
@@ -584,6 +678,27 @@ export async function getRecommendations(
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
+  // ── L2 recommendations cache: read ──
+  // Cache key is built from stable inputs (mpn, overrides, context, prefs,
+  // currency, options) — NOT from prefetchedAttributes — so the cache works for
+  // both the GET flow (no prefetch) and the POST flow (with prefetch). On a hit,
+  // the cached result already contains sourceAttributes, so prefetched attrs
+  // are simply discarded.
+  const recsCacheVariant = buildRecommendationsVariant(
+    mpn,
+    attributeOverrides,
+    applicationContext,
+    currency,
+    preferredManufacturers,
+    userPreferences,
+    options,
+  );
+  const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
+  if (recsCached) {
+    console.log(`[perf] getRecommendations L2 HIT (${recsCacheVariant}) in ${(performance.now() - recsStart).toFixed(0)}ms`);
+    return recsCached.data;
+  }
+
   // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
   console.time('[perf] getAttributes');
   const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId, { skipMouser: options?.skipMouser });
@@ -778,7 +893,9 @@ export async function getRecommendations(
     const resolved = await Promise.all(
       mfrCrossRefs.map(async (xref) => {
         try {
-          const attrs = await getAttributes(xref.xref_mpn, userId, currency);
+          // skipMouser: xref candidates are scored on parametric data only.
+          // Commercial data is backfilled later by triggerMouserEnrichment().
+          const attrs = await getAttributes(xref.xref_mpn, currency, userId, { skipMouser: true });
           return attrs;
         } catch {
           return null;
@@ -1023,12 +1140,16 @@ export async function getRecommendations(
     // Determine primary dataSource for the result set
     const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
 
+    const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
+    setCachedResponse('search', mpn, recsCacheVariant, 'recommendations', result, TTL_RECOMMENDATIONS_MS);
     console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
-    return { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
+    return result;
   }
 
   // Step 4: No candidates found from any source
-  return { recommendations: [], sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
+  const emptyResult: RecommendationResult = { recommendations: [], sourceAttributes: sourceAttrs, familyId, familyName, dataSource };
+  setCachedResponse('search', mpn, recsCacheVariant, 'recommendations', emptyResult, TTL_RECOMMENDATIONS_MS);
+  return emptyResult;
 }
 
 // ============================================================

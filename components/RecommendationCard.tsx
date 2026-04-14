@@ -64,7 +64,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   const thirdPartySources = certifiedBy?.filter(s => s !== 'manufacturer') || [];
                   return (
                     <>
-                      {cats.includes('manufacturer_certified') && (
+{cats.includes('manufacturer_certified') && (
                         <Chip label="MFR Certified" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#66BB6A', borderColor: '#66BB6A' }} />
                       )}
                       {cats.includes('third_party_certified') && (

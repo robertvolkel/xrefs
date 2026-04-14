@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { validateContextOverride } from '@/lib/services/overrideValidator';
 import { invalidateOverrideCache } from '@/lib/services/overrideMerger';
+import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 import { ContextOverrideRecord } from '@/lib/types';
 
 /** GET /api/admin/overrides/context?family_id=12 */
@@ -94,6 +95,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateOverrideCache(body.familyId);
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true, data: mapRowToRecord(data) }, { status: 201 });
   } catch (error) {

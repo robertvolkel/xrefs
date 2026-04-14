@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { invalidateOverrideCache } from '@/lib/services/overrideMerger';
+import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 
 /** PATCH /api/admin/overrides/context/:overrideId */
 export async function PATCH(
@@ -49,6 +50,7 @@ export async function PATCH(
       .single();
 
     if (row) invalidateOverrideCache(row.family_id as string);
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -92,6 +94,7 @@ export async function DELETE(
     }
 
     if (row) invalidateOverrideCache(row.family_id as string);
+    invalidateRecommendationsCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {
