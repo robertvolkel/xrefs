@@ -156,6 +156,15 @@
     "notFound": "Nicht gefunden",
     "error": "Fehler"
   },
+  "partType": {
+    "electronic": "Elektronisch",
+    "mechanical": "Mechanisch",
+    "pcb": "Leiterplatte",
+    "custom": "Sonderteil",
+    "other": "Sonstiges",
+    "setPartType": "Typ setzen",
+    "label": "Typ"
+  },
   "rowActions": {
     "refresh": "Aktualisieren",
     "removeFromView": "Aus Ansicht entfernen",

@@ -117,6 +117,8 @@
     "editView": "Edit view",
     "createNewView": "Create new view",
     "saveAsTemplate": "Save as template",
+    "setDefaultTemplate": "Set as default for new lists",
+    "isDefaultTemplate": "Default for new lists",
     "deleteThisView": "Delete this view",
     "isDefaultView": "This is the default view",
     "setDefaultView": "Set as default view",
@@ -172,6 +174,15 @@
     "notFound": "Not Found",
     "error": "Error"
   },
+  "partType": {
+    "electronic": "Electronic",
+    "mechanical": "Mechanical",
+    "pcb": "PCB",
+    "custom": "Custom",
+    "other": "Other",
+    "setPartType": "Set Type",
+    "label": "Type"
+  },
   "rowActions": {
     "refresh": "Refresh",
     "removeFromView": "Remove from view",
@@ -191,7 +202,7 @@
     "descriptionLabel": "Description",
     "descriptionPlaceholder": "Describe the purpose of this view and what the assistant should focus on...",
     "saveConfirmTitle": "Save view changes?",
-    "saveConfirmMessage": "This view is shared across all your lists. Saving will update it everywhere.",
+    "saveConfirmMessage": "This will update the view for this list only. Other lists keep their own view settings.",
     "dontShowAgain": "Don't show this again"
   },
   "columnMapping": {

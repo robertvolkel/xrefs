@@ -156,6 +156,15 @@
     "notFound": "未找到",
     "error": "错误"
   },
+  "partType": {
+    "electronic": "电子",
+    "mechanical": "机械",
+    "pcb": "PCB",
+    "custom": "定制",
+    "other": "其他",
+    "setPartType": "设置类型",
+    "label": "类型"
+  },
   "rowActions": {
     "refresh": "刷新",
     "removeFromView": "从视图移除",

@@ -1,20 +1,27 @@
 'use client';
 
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
   IconButton,
   InputAdornment,
+  Menu,
+  MenuItem,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ClearIcon from '@mui/icons-material/Clear';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
+import { PartType } from '@/lib/types';
+
+const PART_TYPES: PartType[] = ['electronic', 'mechanical', 'pcb', 'custom', 'other'];
 
 interface PartsListActionBarProps {
   selectionCount: number;
@@ -25,6 +32,7 @@ interface PartsListActionBarProps {
   onRefresh: () => void;
   onDelete: () => void;
   onAddPart: () => void;
+  onSetPartType?: (partType: PartType) => void;
 }
 
 export default function PartsListActionBar({
@@ -36,8 +44,10 @@ export default function PartsListActionBar({
   onRefresh,
   onDelete,
   onAddPart,
+  onSetPartType,
 }: PartsListActionBarProps) {
   const { t } = useTranslation();
+  const [typeMenuAnchor, setTypeMenuAnchor] = useState<HTMLElement | null>(null);
 
   return (
     <Box
@@ -96,6 +106,40 @@ export default function PartsListActionBar({
       >
         {t('partsList.addPart')}
       </Button>
+
+      {onSetPartType && (
+        <>
+          <Tooltip title={t('partType.setPartType')}>
+            <span>
+              <Button
+                size="small"
+                startIcon={<CategoryOutlinedIcon sx={{ fontSize: 16 }} />}
+                disabled={selectionCount === 0}
+                onClick={(e) => setTypeMenuAnchor(e.currentTarget)}
+                sx={{ fontSize: '0.78rem', textTransform: 'none', color: 'text.secondary' }}
+              >
+                {t('partType.setPartType')}
+              </Button>
+            </span>
+          </Tooltip>
+          <Menu
+            anchorEl={typeMenuAnchor}
+            open={Boolean(typeMenuAnchor)}
+            onClose={() => setTypeMenuAnchor(null)}
+            slotProps={{ paper: { sx: { minWidth: 140 } } }}
+          >
+            {PART_TYPES.map(pt => (
+              <MenuItem
+                key={pt}
+                onClick={() => { onSetPartType(pt); setTypeMenuAnchor(null); }}
+                sx={{ fontSize: '0.82rem' }}
+              >
+                {t(`partType.${pt}`)}
+              </MenuItem>
+            ))}
+          </Menu>
+        </>
+      )}
 
       <TextField
         size="small"

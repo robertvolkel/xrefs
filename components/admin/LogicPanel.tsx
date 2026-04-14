@@ -113,11 +113,37 @@ export default function LogicPanel({ table }: LogicPanelProps) {
   // Count active overrides for the header badge
   const overrideCount = overrides.length;
 
+  // Base rule lookup for comparing against overridden values
+  const baseRuleMap = useMemo(() => {
+    const map = new Map<string, MatchingRule>();
+    for (const r of table.rules) map.set(r.attributeId, r);
+    return map;
+  }, [table.rules]);
+
+  // Merge override values onto base rules so the table reflects admin changes
+  const mergedRules = useMemo(() => {
+    return table.rules.map(rule => {
+      const ov = overrideMap.get(rule.attributeId);
+      if (!ov || ov.action === 'remove') return rule;
+      return {
+        ...rule,
+        ...(ov.weight !== undefined && { weight: ov.weight }),
+        ...(ov.logicType !== undefined && { logicType: ov.logicType }),
+        ...(ov.thresholdDirection !== undefined && { thresholdDirection: ov.thresholdDirection }),
+        ...(ov.upgradeHierarchy !== undefined && { upgradeHierarchy: ov.upgradeHierarchy }),
+        ...(ov.blockOnMissing !== undefined && { blockOnMissing: ov.blockOnMissing }),
+        ...(ov.tolerancePercent !== undefined && { tolerancePercent: ov.tolerancePercent }),
+        ...(ov.engineeringReason !== undefined && { engineeringReason: ov.engineeringReason }),
+        ...(ov.attributeName !== undefined && { attributeName: ov.attributeName }),
+      };
+    });
+  }, [table.rules, overrideMap]);
+
   const sortedRules = useMemo(() => {
-    if (!weightSort) return table.rules;
+    if (!weightSort) return mergedRules;
     const dir = weightSort === 'asc' ? 1 : -1;
-    return [...table.rules].sort((a, b) => dir * (a.weight - b.weight));
-  }, [table.rules, weightSort]);
+    return [...mergedRules].sort((a, b) => dir * (a.weight - b.weight));
+  }, [mergedRules, weightSort]);
 
   return (
     <Box>
@@ -134,7 +160,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
           {t('admin.addRule')}
         </Button>
       </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+      <Typography component="div" variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {t(`${fKey}.desc`, table.description)} &mdash; {t('admin.rulesCount', { count: table.rules.length })}
         {overrideCount > 0 && (
           <Chip
@@ -174,6 +200,8 @@ export default function LogicPanel({ table }: LogicPanelProps) {
               const override = overrideMap.get(rule.attributeId);
               const isOverridden = !!override;
               const annotCount = annotationCounts.get(rule.attributeId) ?? 0;
+              const base = baseRuleMap.get(rule.attributeId);
+              const changed = (field: keyof MatchingRule) => isOverridden && base && rule[field] !== base[field];
 
               return (
                 <TableRow
@@ -233,7 +261,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType])}
+                      label={t(typeTranslationKeys[rule.logicType], typeLabels[rule.logicType]) + (changed('logicType') ? ' *' : '')}
                       size="small"
                       sx={{
                         bgcolor: typeColors[rule.logicType] + '22',
@@ -246,17 +274,17 @@ export default function LogicPanel({ table }: LogicPanelProps) {
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      {getConditionText(rule, t)}
+                      {getConditionText(rule, t)}{(changed('thresholdDirection') || changed('upgradeHierarchy')) ? ' *' : ''}
                     </Typography>
                   </TableCell>
                   <TableCell sx={{ textAlign: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {rule.weight}
+                      {rule.weight}{changed('weight') ? ' *' : ''}
                     </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="caption" sx={{ color: 'text.secondary', lineHeight: 1.5 }}>
-                      {t(`${fKey}.reason.${rule.attributeId}`, rule.engineeringReason)}
+                      {t(`${fKey}.reason.${rule.attributeId}`, rule.engineeringReason)}{changed('engineeringReason') ? ' *' : ''}
                     </Typography>
                   </TableCell>
                   <TableCell sx={{ p: 0.5 }}>

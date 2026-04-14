@@ -14,6 +14,7 @@ import {
   ListItemText,
   Menu,
   MenuItem,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -31,7 +32,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
-import { PartsListRow, XrefRecommendation } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
 // Column IDs that display suggestion/replacement data
@@ -85,6 +86,8 @@ interface PartsListTableProps {
   highlightedRowIndex?: number | null;
   /** Called to cancel in-progress validation */
   onCancelValidation?: () => void;
+  /** Called when user changes part type via inline dropdown */
+  onSetPartType?: (rowIndex: number, partType: PartType) => void;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -318,6 +321,7 @@ function CellRenderer({
   isSubRow,
   columnMap,
   onCellEdit,
+  onSetPartType,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -330,6 +334,7 @@ function CellRenderer({
   recommendation?: XrefRecommendation;
   isSubRow?: boolean;
   onCellEdit?: (rowIndex: number, columnId: string, newValue: string) => void;
+  onSetPartType?: (rowIndex: number, partType: PartType) => void;
 }) {
   const { t } = useTranslation();
 
@@ -348,6 +353,28 @@ function CellRenderer({
 
       case 'sys:status':
         return <StatusChip status={row.status} />;
+
+      case 'sys:partType': {
+        if (isSubRow) return null;
+        const currentType = row.partType ?? 'electronic';
+        return (
+          <Select
+            size="small"
+            value={currentType}
+            onChange={(e) => onSetPartType?.(row.rowIndex, e.target.value as PartType)}
+            onClick={(e) => e.stopPropagation()}
+            variant="standard"
+            disableUnderline
+            sx={{ fontSize: ROW_FONT_SIZE, minWidth: 80 }}
+          >
+            <MenuItem value="electronic">{t('partType.electronic')}</MenuItem>
+            <MenuItem value="mechanical">{t('partType.mechanical')}</MenuItem>
+            <MenuItem value="pcb">{t('partType.pcb')}</MenuItem>
+            <MenuItem value="custom">{t('partType.custom')}</MenuItem>
+            <MenuItem value="other">{t('partType.other')}</MenuItem>
+          </Select>
+        );
+      }
 
       case 'sys:hits':
         if (row.status !== 'resolved') return null;
@@ -511,6 +538,7 @@ export default function PartsListTable({
   onCellEdit,
   highlightedRowIndex,
   onCancelValidation,
+  onSetPartType,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -676,6 +704,7 @@ export default function PartsListTable({
                           currency={currency}
                           columnMap={columnMap}
                           onCellEdit={onCellEdit}
+                          onSetPartType={onSetPartType}
                         />
                       </TableCell>
                     ))}

@@ -677,6 +677,9 @@ export interface AtlasManufacturerSummary {
 /** Status of an individual row during batch validation */
 export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
 
+/** Classification of a BOM line item — determines whether catalog validation is attempted */
+export type PartType = 'electronic' | 'mechanical' | 'pcb' | 'custom' | 'other';
+
 // ── Multi-Supplier Commercial Data ─────────────────────────
 
 export type SupplierName = 'digikey' | 'mouser' | 'arrow' | 'nexar';
@@ -780,6 +783,8 @@ export interface PartsListRow {
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
+  /** BOM line item classification — undefined treated as 'electronic' */
+  partType?: PartType;
 }
 
 /** Column mapping configuration */

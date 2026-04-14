@@ -26,7 +26,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { SavedView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import { SavedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import AddIcon from '@mui/icons-material/Add';
 import PostAddIcon from '@mui/icons-material/PostAdd';
@@ -58,7 +58,7 @@ export default function PartsListShell() {
     handleModalSelectRec, handleModalBackToRecs,
     handleModalConfirmReplacement, handleModalRecsRefreshed,
     handleSetPreferred,
-    handleUpdateListDetails, handleRefreshRows, handleDeleteRows,
+    handleUpdateListDetails, handleRefreshRows, handleSetPartType, handleDeleteRows,
     handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
     handleRetryMouserEnrichment, getMouserEnrichResult,
   } = usePartsListState();
@@ -75,6 +75,19 @@ export default function PartsListShell() {
     const safeColumns = sanitizeTemplateColumns(view.columns);
     const safeCalcFields = sanitizeTemplateCalcFields(view.calculatedFields);
     templates.createView(view.name, safeColumns, view.description, undefined, safeCalcFields);
+  }, [templates]);
+
+  const handleSetDefaultTemplate = useCallback((view: SavedView) => {
+    // Ensure it's saved as a template first
+    const existing = templates.views.find(v => v.name === view.name && !isBuiltinView(v.id));
+    if (!existing) {
+      const safeColumns = sanitizeTemplateColumns(view.columns);
+      const safeCalcFields = sanitizeTemplateCalcFields(view.calculatedFields);
+      const created = templates.createView(view.name, safeColumns, view.description, undefined, safeCalcFields);
+      templates.setDefaultView(created.id);
+    } else {
+      templates.setDefaultView(existing.id);
+    }
   }, [templates]);
 
   // --- Extracted hooks ---
@@ -349,6 +362,8 @@ export default function PartsListShell() {
             onEditView={() => { setPickerMode('edit'); setPickerOpen(true); }}
             onCreateView={() => { setPickerMode('create'); setPickerOpen(true); }}
             onSaveAsTemplate={handleSaveAsTemplate}
+            onSetDefaultTemplate={handleSetDefaultTemplate}
+            globalDefaultTemplateId={templates.defaultViewId}
           />
         }
         showViewControls={showTable}
@@ -364,6 +379,7 @@ export default function PartsListShell() {
           onRefresh={handleRefreshSelected}
           onDelete={() => deletion.promptDelete([...selectedRows])}
           onAddPart={() => setAddPartOpen(true)}
+          onSetPartType={(pt) => { handleSetPartType([...selectedRows], pt); clearSelection(); }}
         />
       )}
 
@@ -409,6 +425,7 @@ export default function PartsListShell() {
           onCellEdit={handleCellEdit}
           highlightedRowIndex={highlightedRowIndex}
           onCancelValidation={handleCancelValidation}
+          onSetPartType={(idx, pt) => handleSetPartType([idx], pt)}
         />
       )}
 

@@ -42,9 +42,19 @@ export function useListViewConfig(
 
     if (viewConfigs) {
       // Apply the starred default view on list load (not the last-active view)
-      const initialState = viewConfigs.defaultViewId && viewConfigs.defaultViewId !== viewConfigs.activeViewId
+      let initialState = viewConfigs.defaultViewId && viewConfigs.defaultViewId !== viewConfigs.activeViewId
         ? { ...viewConfigs, activeViewId: viewConfigs.defaultViewId }
         : viewConfigs;
+
+      // Inject any new global templates that don't exist in this list yet
+      const templates = loadViewState();
+      const existingIds = new Set(initialState.views.map(v => v.id));
+      const newTemplates = templates.views.filter(v => !isBuiltinView(v.id) && !existingIds.has(v.id));
+      if (newTemplates.length > 0) {
+        initialState = { ...initialState, views: [...initialState.views, ...newTemplates] };
+        saveListViewConfigsSupabase(listId, initialState).catch(() => {});
+      }
+
       setState(initialState);
     } else {
       // Migration: copy global templates into this list

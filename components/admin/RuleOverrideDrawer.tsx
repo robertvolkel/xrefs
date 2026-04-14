@@ -245,7 +245,7 @@ export default function RuleOverrideDrawer({
       // Populate from override (if exists) or base rule
       const ov = existingOverride;
       setAttributeId(baseRule.attributeId);
-      setAttributeName(ov?.attributeName ?? baseRule.attributeName);
+      setAttributeName(ov?.attributeName || baseRule.attributeName);
       setLogicType(ov?.logicType ?? baseRule.logicType);
       setWeight(ov?.weight ?? baseRule.weight);
       setThresholdDirection(ov?.thresholdDirection ?? baseRule.thresholdDirection ?? '');

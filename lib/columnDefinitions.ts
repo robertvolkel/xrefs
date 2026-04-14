@@ -69,6 +69,7 @@ export const GROUP_ORDER = [
 export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:row_number', label: '#', source: 'system', group: 'System', defaultWidth: '40px', align: 'center' },
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
+  { id: 'sys:partType', label: 'Type', source: 'system', group: 'System', defaultWidth: '110px' },
   { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
   { id: 'sys:top_suggestion', label: 'Top Suggestion(s)', source: 'system', group: 'Replacements', defaultWidth: '160px' },
   { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'Replacements', defaultWidth: '130px' },
@@ -144,6 +145,7 @@ export const DEFAULT_VIEW_COLUMNS: string[] = [
   'mapped:description',
   'mapped:cpn',
   'sys:status',
+  'sys:partType',
   'dk:unitPrice',
   'dk:quantityAvailable',
   'sys:hits',
@@ -315,6 +317,8 @@ export function getSortValue(
       return row.rowIndex;
     case 'sys:status':
       return row.status;
+    case 'sys:partType':
+      return row.partType ?? 'electronic';
     case 'sys:hits':
       return row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
     case 'sys:top_suggestion':

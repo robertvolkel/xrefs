@@ -9,6 +9,7 @@ import {
   PartAttributes,
   BatchValidateItem,
   PartSummary,
+  PartType,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { getPartAttributes, getRecommendations, validatePartsList, enrichWithMouserBatch } from '@/lib/api';
@@ -693,6 +694,8 @@ export function usePartsListState() {
                 newRows[idx] = {
                   ...existingRow,
                   status: item.status,
+                  // Auto-classify as electronic when catalog validation resolves
+                  ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
                   resolvedPart: item.resolvedPart,
                   sourceAttributes: item.sourceAttributes,
                   suggestedReplacement,
@@ -734,6 +737,70 @@ export function usePartsListState() {
       }));
     }
   }, [state.rows]);
+
+  // ----------------------------------------------------------
+  // Set part type for rows (electronic, mechanical, pcb, custom, other)
+  // ----------------------------------------------------------
+
+  const handleSetPartType = useCallback((rowIndices: number[], partType: PartType) => {
+    if (rowIndices.length === 0) return;
+    const indexSet = new Set(rowIndices);
+    const isElectronic = partType === 'electronic';
+
+    setState(prev => {
+      const newRows = prev.rows.map(r => {
+        if (!indexSet.has(r.rowIndex)) return r;
+        if (isElectronic) {
+          // Switching to electronic: reset to pending for catalog validation
+          return {
+            ...r,
+            partType,
+            status: 'pending' as const,
+            resolvedPart: undefined,
+            sourceAttributes: undefined,
+            suggestedReplacement: undefined,
+            allRecommendations: undefined,
+            enrichedData: undefined,
+            errorMessage: undefined,
+            recommendationCount: undefined,
+            topNonFailingRecs: undefined,
+          };
+        } else {
+          // Non-electronic: resolve immediately, clear catalog data
+          return {
+            ...r,
+            partType,
+            status: 'resolved' as const,
+            resolvedPart: undefined,
+            sourceAttributes: undefined,
+            suggestedReplacement: undefined,
+            allRecommendations: undefined,
+            enrichedData: undefined,
+            errorMessage: undefined,
+            recommendationCount: undefined,
+            topNonFailingRecs: undefined,
+          };
+        }
+      });
+      return { ...prev, rows: newRows };
+    });
+
+    // Persist
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setTimeout(() => {
+        setState(prev => {
+          updatePartsListSupabase(listId, prev.rows).catch(() => {});
+          return prev;
+        });
+      }, 0);
+    }
+
+    // If switching to electronic, trigger re-validation
+    if (isElectronic) {
+      handleRefreshRows(rowIndices);
+    }
+  }, [handleRefreshRows]);
 
   // ----------------------------------------------------------
   // Delete selected rows
@@ -1157,6 +1224,7 @@ export function usePartsListState() {
     handleReset,
     handleUpdateListDetails,
     handleRefreshRows,
+    handleSetPartType,
     handleDeleteRows,
     handleCreateEmptyList,
     handleAddPart,

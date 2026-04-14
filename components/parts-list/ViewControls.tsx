@@ -20,6 +20,7 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import SaveAsIcon from '@mui/icons-material/SaveAs';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import StarIcon from '@mui/icons-material/Star';
@@ -37,6 +38,9 @@ interface ViewControlsProps {
   onEditView: () => void;
   onCreateView: () => void;
   onSaveAsTemplate?: (view: SavedView) => void;
+  onSetDefaultTemplate?: (view: SavedView) => void;
+  /** ID of the global default template (for showing active state) */
+  globalDefaultTemplateId?: string;
 }
 
 export default function ViewControls({
@@ -49,6 +53,8 @@ export default function ViewControls({
   onEditView,
   onCreateView,
   onSaveAsTemplate,
+  onSetDefaultTemplate,
+  globalDefaultTemplateId,
 }: ViewControlsProps) {
   const { t } = useTranslation();
   const [viewMenuAnchor, setViewMenuAnchor] = useState<HTMLElement | null>(null);
@@ -121,6 +127,24 @@ export default function ViewControls({
           >
             <ListItemIcon><SaveAsIcon fontSize="small" /></ListItemIcon>
             <ListItemText>{t('partsList.saveAsTemplate')}</ListItemText>
+          </MenuItem>
+        )}
+        {onSetDefaultTemplate && !isBuiltinView(activeView.id) && (
+          <MenuItem
+            onClick={() => {
+              setViewMenuAnchor(null);
+              onSetDefaultTemplate(activeView);
+            }}
+            sx={{ fontSize: '0.82rem' }}
+          >
+            <ListItemIcon>
+              <PushPinOutlinedIcon fontSize="small" sx={{ ...(globalDefaultTemplateId === activeView.id && { color: 'warning.main' }) }} />
+            </ListItemIcon>
+            <ListItemText>
+              {globalDefaultTemplateId === activeView.id
+                ? t('partsList.isDefaultTemplate')
+                : t('partsList.setDefaultTemplate')}
+            </ListItemText>
           </MenuItem>
         )}
         <MenuItem

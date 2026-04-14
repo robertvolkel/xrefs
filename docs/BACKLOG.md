@@ -584,3 +584,21 @@ Three new services have zero test coverage:
 **Priority:** P2
 
 `components/auth/OnboardingAgent.tsx:542-545` — hidden `<Box sx={{ display: 'none' }} />` placeholder and `otherRoleText` state are dead code. Either implement the "Other" free-text input or remove the state + placeholder.
+
+### Part Type: List agent tool awareness (Decision #129)
+**Status:** Not started
+**Priority:** P2
+
+List agent tools (`get_list_summary`, `query_list`, `get_row_detail`) should include `partType` in their responses so the agent can answer questions about non-electronic items and filter by type.
+
+### Part Type: Auto-detection from description keywords (Decision #129)
+**Status:** Not started
+**Priority:** P3
+
+Heuristic detection of non-electronic parts from description text (e.g., "heatsink", "standoff", "enclosure" → mechanical; "PCB", "bare board" → pcb). Would reduce manual tagging on upload.
+
+### View templates: Supabase persistence for multi-device / org sharing (Decision #130)
+**Status:** Not started
+**Priority:** P3
+
+View templates are localStorage only — per-browser, not shareable. When org/company model is built, templates should move to Supabase so teammates share a common template pool.

@@ -37,6 +37,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       preferredMpn: r.preferredMpn,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
+      partType: r.partType,
     };
   });
 }
@@ -51,6 +52,7 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
     preferredMpn: r.preferredMpn,
+    partType: r.partType,
   }));
 }
 

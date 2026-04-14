@@ -18,8 +18,9 @@ import {
   ToggleButtonGroup,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult, CertificationSource } from '@/lib/types';
+import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
@@ -192,19 +193,32 @@ export default function ComparisonView({
               {replPart.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
-              {recommendation.certifiedBy && recommendation.certifiedBy.length > 0 && (
-                <Tooltip title={'Verified by: ' + recommendation.certifiedBy.map(s => CERT_LABELS[s] || s).join(', ')} arrow>
-                  <Chip
-                    label={recommendation.certifiedBy.length > 1 ? `Certified (${recommendation.certifiedBy.length})` : 'Certified'}
-                    size="small"
-                    variant="outlined"
-                    sx={{
-                      height: 18,
-                      fontSize: '0.6rem',
-                      color: recommendation.certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
-                      borderColor: recommendation.certifiedBy.length > 1 ? '#FFD54F' : '#CE93D8',
-                    }}
-                  />
+              {(() => {
+                const cats = deriveRecommendationCategories(recommendation);
+                const thirdPartySources = recommendation.certifiedBy?.filter(s => s !== 'manufacturer') || [];
+                return (
+                  <>
+                    {cats.includes('manufacturer_certified') && (
+                      <Chip label="MFR Certified" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#66BB6A', borderColor: '#66BB6A' }} />
+                    )}
+                    {cats.includes('third_party_certified') && (
+                      <Tooltip title={thirdPartySources.map(s => CERT_LABELS[s] || s).join(', ')} arrow>
+                        <Chip label="3rd Party" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
+                      </Tooltip>
+                    )}
+                  </>
+                );
+              })()}
+              {replPart.datasheetUrl && (
+                <Tooltip title="View datasheet" arrow>
+                  <Box
+                    component="span"
+                    role="link"
+                    onClick={() => window.open(replPart.datasheetUrl, '_blank')}
+                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
+                  >
+                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
+                  </Box>
                 </Tooltip>
               )}
             </Stack>

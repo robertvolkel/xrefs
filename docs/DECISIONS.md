@@ -3292,3 +3292,37 @@ Category is derived from `deriveRecommendationCategories()` — a recommendation
 **Also fixed:** `get_cross_ref_counts()` RPC function replaces client-side row counting for the Manufacturers panel MFR Crosses column, fixing the Supabase 1000-row limit that caused 3PEAK's 34K cross-references to show as "—".
 
 **Files:** `lib/services/partDataService.ts`, `lib/services/partDataCache.ts`, `scripts/supabase-cache-schema.sql`, `scripts/supabase-mfr-xref-counts-rpc.sql`, `app/api/admin/manufacturers/route.ts`, `app/api/admin/manufacturers/[slug]/route.ts`, `app/api/admin/manufacturers/[slug]/cross-references/route.ts`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `app/api/admin/overrides/rules/restore/route.ts`, `app/api/admin/overrides/context/route.ts`, `app/api/admin/overrides/context/[overrideId]/route.ts`
+
+---
+
+## 129. Part Type Classification for BOM Line Items
+
+**Decision:** Separate the concept of "what kind of BOM line item this is" (Part Type) from "did we find it in a catalog" (Validation Status). New `PartType` field: `electronic | mechanical | pcb | custom | other`.
+
+**Problem:** The parts list `status` field conflated two ideas — classification and validation. A BOM with mechanical parts, PCBs, or custom/fabricated items would show those as "Not Found" even though they were never expected to match an electronics catalog. Users had no way to indicate that a line item was intentionally non-electronic.
+
+**Solution:**
+1. **New `PartType` union type** on `PartsListRow` — optional, `undefined` treated as `'electronic'` for backward compatibility.
+2. **Non-electronic rows skip validation** — `validationManager.ts` filters to electronic rows only. Non-electronic rows are immediately marked `status: 'resolved'`.
+3. **Auto-classification** — when catalog validation resolves a part, `partType` is auto-set to `'electronic'`.
+4. **Inline dropdown** — `sys:partType` system column renders a `<Select>` in each table row for per-row type changes. Included in `DEFAULT_VIEW_COLUMNS`.
+5. **Bulk action** — "Set Type" button in action bar applies a part type to all selected rows.
+6. **Type change behavior** — switching to non-electronic: resolves immediately, clears catalog data. Switching back to electronic: resets to pending and triggers re-validation.
+7. **Persistence** — `partType` stored in the existing rows JSONB (no Supabase schema change). Existing saved lists work unchanged.
+
+**Files:** `lib/types.ts`, `lib/partsListStorage.ts`, `lib/supabasePartsListStorage.ts`, `lib/columnDefinitions.ts`, `lib/validationManager.ts`, `hooks/usePartsListState.ts`, `components/parts-list/PartsListTable.tsx`, `components/parts-list/PartsListActionBar.tsx`, `components/parts-list/PartsListShell.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+---
+
+## 130. Default Template for New Lists & Template Sync
+
+**Decision:** Let users designate a custom view template as the default for newly created lists, and automatically sync new templates to existing lists on load.
+
+**Problem:** Two gaps in the view template system: (1) New lists always opened with "Basic" view — no way to set a custom template as the default. (2) Templates saved after a list was created never appeared on that list — each list was a frozen snapshot from creation time.
+
+**Solution:**
+1. **Set default template** — new kebab menu item "Set as default for new lists" (pin icon) on custom views. Calls `setDefaultView()` on the global `useViewTemplates` hook, which updates `defaultViewId` in localStorage. The seeding logic in `useListViewConfig` already copies `defaultViewId` from global templates, so new lists automatically open with the chosen template.
+2. **Template sync on load** — when an existing list loads, `useListViewConfig` compares global templates against the list's views by ID. Any templates not yet in the list are injected and persisted. Existing list views are untouched — only new templates are added.
+3. **View save message fix** — corrected misleading confirmation dialog that claimed views were "shared across all lists" when they are actually per-list.
+
+**Files:** `hooks/useListViewConfig.ts`, `components/parts-list/ViewControls.tsx`, `components/parts-list/PartsListShell.tsx`, `locales/en.json`
