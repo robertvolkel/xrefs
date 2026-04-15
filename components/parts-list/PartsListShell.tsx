@@ -60,7 +60,7 @@ export default function PartsListShell() {
     handleSetPreferred,
     handleUpdateListDetails, handleRefreshRows, handleSetPartType, handleDeleteRows,
     handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
-    handleRetryMouserEnrichment, getMouserEnrichResult,
+    handleRetryFCEnrichment, getFCEnrichResult,
   } = usePartsListState();
 
   const {
@@ -185,20 +185,20 @@ export default function PartsListShell() {
       return;
     }
 
-    // Check Mouser enrichment after a short delay (it runs async after validation)
+    // Check FC enrichment after a short delay (it runs async after validation)
     const timer = setTimeout(() => {
-      const result = getMouserEnrichResult();
+      const result = getFCEnrichResult();
       if (result && result.requested > 0 && result.enriched === 0) {
         setNotification({
-          message: t('partsList.notifications.mouserUnavailable'),
+          message: t('partsList.notifications.fcUnavailable'),
           severity: 'warning',
           actionLabel: t('partsList.notifications.retry'),
           onAction: () => {
             setNotification(null);
-            handleRetryMouserEnrichment().then(retryResult => {
+            handleRetryFCEnrichment().then(retryResult => {
               if (retryResult.enriched > 0) {
                 setNotification({
-                  message: t('partsList.notifications.mouserLoaded', { count: retryResult.enriched }),
+                  message: t('partsList.notifications.fcLoaded', { count: retryResult.enriched }),
                   severity: 'success' as 'info',
                 });
               }
@@ -211,10 +211,10 @@ export default function PartsListShell() {
           severity: 'info',
         });
       }
-    }, 3000); // Wait for Mouser enrichment to finish
+    }, 3000); // Wait for FC enrichment to finish
 
     return () => clearTimeout(timer);
-  }, [phase, rows, t, getMouserEnrichResult, handleRetryMouserEnrichment]);
+  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment]);
 
   // --- Sort/search/filter pipeline (stays in shell) ---
 

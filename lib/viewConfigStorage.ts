@@ -178,7 +178,7 @@ export function isLegacyBuiltinView(viewId: string): boolean {
  * Templates must only contain portable column IDs (sys:*, mapped:*, dk:*, dkp:*, calc:*).
  */
 export function sanitizeTemplateColumns(columns: string[]): string[] {
-  return columns.filter(id => !id.startsWith('ss:'));
+  return columns.filter(id => !id.startsWith('ss:') && !id.startsWith('mouser:'));
 }
 
 /**

@@ -154,8 +154,8 @@
     "searchCount": "{{filtered}} of {{total}} parts",
     "notifications": {
       "validationErrors": "{{count}} parts could not be resolved — data source may be unavailable",
-      "mouserUnavailable": "Mouser pricing unavailable — API may be down or rate limited",
-      "mouserLoaded": "Mouser pricing loaded for {{count}} parts",
+      "fcUnavailable": "Pricing data unavailable — FindChips API may be down or rate limited",
+      "fcLoaded": "Pricing data loaded for {{count}} parts",
       "someNotFound": "{{count}} parts could not be found in any data source",
       "retry": "Retry"
     }

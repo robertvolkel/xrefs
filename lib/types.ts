@@ -169,7 +169,7 @@ export interface SearchResult {
 
 // ── Service Status ──────────────────────────────────────────
 
-export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'anthropic' | 'atlas';
+export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'findchips' | 'anthropic' | 'atlas';
 export type ServiceSeverity = 'degraded' | 'unavailable';
 
 export interface ServiceWarning {
@@ -682,7 +682,9 @@ export type PartType = 'electronic' | 'mechanical' | 'pcb' | 'custom' | 'other';
 
 // ── Multi-Supplier Commercial Data ─────────────────────────
 
-export type SupplierName = 'digikey' | 'mouser' | 'arrow' | 'nexar';
+/** Dynamic distributor names from FindChips API + well-known constants.
+ *  Well-known values: 'digikey', 'mouser', 'arrow', 'lcsc', 'farnell', 'newark', 'tme', 'rs' */
+export type SupplierName = string;
 
 /** A single price break from a supplier */
 export interface PriceBreak {
@@ -702,6 +704,9 @@ export interface SupplierQuote {
   leadTime?: string;
   productUrl?: string;
   fetchedAt: string;
+  packageType?: string;      // e.g., "Cut Tape", "Reel", "Each" (from FindChips)
+  minimumQuantity?: number;  // MOQ (from FindChips)
+  authorized?: boolean;      // whether distributor is authorized (from FindChips)
 }
 
 /** Lifecycle intelligence from any source */
@@ -709,7 +714,12 @@ export interface LifecycleInfo {
   status?: string;
   isDiscontinued?: boolean;
   suggestedReplacement?: string;
-  source: SupplierName | 'partsio';
+  source: string;
+  // FindChips risk scores (part-level, not distributor-specific)
+  riskRank?: number;
+  designRisk?: number;
+  productionRisk?: number;
+  longTermRisk?: number;
 }
 
 /** Regional compliance/trade data */
@@ -717,7 +727,7 @@ export interface ComplianceData {
   rohsStatus?: string;
   eccnCode?: string;
   htsCodesByRegion?: Record<string, string>;
-  source: SupplierName | 'partsio';
+  source: string;
 }
 
 /** Flattened, storage-friendly product data built during validation (from all sources) */

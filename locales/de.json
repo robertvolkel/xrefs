@@ -130,8 +130,8 @@
     "searchCount": "{{filtered}} von {{total}} Bauteilen",
     "notifications": {
       "validationErrors": "{{count}} Bauteile konnten nicht aufgelöst werden — Datenquelle möglicherweise nicht verfügbar",
-      "mouserUnavailable": "Mouser-Preise nicht verfügbar — API möglicherweise ausgefallen oder ratenbegrenzt",
-      "mouserLoaded": "Mouser-Preise für {{count}} Bauteile geladen",
+      "fcUnavailable": "Preisdaten nicht verfügbar — FindChips-API möglicherweise ausgefallen oder ratenbegrenzt",
+      "fcLoaded": "Preisdaten für {{count}} Bauteile geladen",
       "someNotFound": "{{count}} Bauteile konnten in keiner Datenquelle gefunden werden",
       "retry": "Wiederholen"
     }

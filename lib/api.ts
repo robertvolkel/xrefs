@@ -42,13 +42,13 @@ export function onServiceRecoveries(listener: ServiceRecoveryListener): () => vo
 
 /** Which services each API route exercises — used for recovery detection. */
 const ROUTE_SERVICES: Record<string, ServiceName[]> = {
-  '/api/search': ['digikey', 'atlas', 'partsio', 'mouser'],
+  '/api/search': ['digikey', 'atlas', 'partsio'],
   '/api/attributes': ['digikey', 'partsio'],
-  '/api/xref': ['digikey', 'partsio', 'mouser'],
+  '/api/xref': ['digikey', 'partsio', 'findchips'],
   '/api/chat': ['anthropic'],
   '/api/modal-chat': ['anthropic'],
-  '/api/mouser/enrich': ['mouser'],
-  '/api/parts-list/validate': ['digikey', 'partsio', 'mouser'],
+  '/api/fc/enrich': ['findchips'],
+  '/api/parts-list/validate': ['digikey', 'partsio', 'findchips'],
   '/api/list-chat': ['anthropic'],
 };
 
@@ -134,14 +134,14 @@ export async function getRecommendationsWithContext(
   });
 }
 
-/** Fetch Mouser enrichment data (pricing, lifecycle, compliance) for a batch of MPNs */
-export async function enrichWithMouserBatch(
+/** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs */
+export async function enrichWithFCBatch(
   mpns: string[],
-): Promise<Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
+): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
   if (mpns.length === 0) return {};
   try {
-    const result = await fetchApi<{ results: Record<string, { quote: SupplierQuote; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
-      `${BASE}/mouser/enrich`,
+    const result = await fetchApi<{ results: Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
+      `${BASE}/fc/enrich`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

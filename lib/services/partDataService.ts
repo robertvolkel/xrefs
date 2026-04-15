@@ -25,8 +25,10 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
-import { isMouserConfigured, getMouserProduct, getMouserProductsBatch, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
-import { mapMouserToQuote, mapMouserLifecycle, mapMouserCompliance, buildDigikeyQuote } from './mouserMapper';
+import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
+import { mapMouserLifecycle } from './mouserMapper';
+import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget } from './findchipsClient';
+import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
@@ -257,7 +259,7 @@ function buildRecommendationsVariant(
   currency: string | undefined,
   preferredManufacturers: string[] | undefined,
   userPreferences: UserPreferences | undefined,
-  options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipMouser?: boolean } | undefined,
+  options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
 ): string {
   const sortedPreferred = preferredManufacturers ? [...preferredManufacturers].sort() : undefined;
   const payload = {
@@ -269,7 +271,7 @@ function buildRecommendationsVariant(
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
-      skipMouser: !!options?.skipMouser,
+      skipFindchips: !!options?.skipFindchips,
     },
   };
   const hash = createHash('sha1').update(stableStringify(payload)).digest('hex').slice(0, 16);
@@ -280,14 +282,14 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipMouser?: boolean },
+  options?: { skipFindchips?: boolean },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
   const longEnough = trimmed.length >= 3;
 
   // ── Search cache: L1 in-memory ──
-  const cacheKey = `${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipMouser ? '1' : '0'}`;
+  const cacheKey = `${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     if (!shouldBypassSearchCache(cached.data)) {
@@ -340,7 +342,7 @@ export async function searchParts(
       source: 'partsio',
       promise: searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
     });
-    if (!options?.skipMouser) {
+    if (!options?.skipFindchips) {
       searches.push({
         source: 'mouser',
         promise: searchMouserProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
@@ -448,92 +450,77 @@ async function enrichWithPartsio(attrs: PartAttributes, userId?: string): Promis
 // ============================================================
 
 /**
- * Enrich part attributes with Mouser commercial data.
- * Adds SupplierQuote (pricing/availability), LifecycleInfo, and ComplianceData.
- * Also normalizes existing Digikey pricing into a SupplierQuote for uniform N-supplier display.
+ * Enrich part attributes with FindChips commercial data.
+ * Single API call returns pricing/stock from ~80 distributors (Digikey, Mouser,
+ * Arrow, LCSC, Farnell, etc.). Also extracts lifecycle and compliance data.
+ * Replaces the former enrichWithMouser + buildDigikeyQuote flow.
  */
-async function enrichWithMouser(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
-  if (!isMouserConfigured() || !hasMouserBudget()) return attrs;
+async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Promise<PartAttributes> {
+  if (!isFindchipsConfigured() || !hasFindchipsBudget()) return attrs;
 
   try {
-    const product = await getMouserProduct(attrs.part.mpn, userId);
+    const results = await getFindchipsResults(attrs.part.mpn, userId);
+    if (!results || results.length === 0) return attrs;
 
-    // Build Digikey quote from existing flat fields (always, for N-supplier uniformity)
-    const dkQuote = buildDigikeyQuote(attrs.part);
-    const quotes = [dkQuote];
+    const quotes = mapFCToQuotes(results, attrs.part.mpn);
+    const lifecycle = mapFCLifecycle(results);
+    const compliance = mapFCCompliance(results);
+
     const lifecycleInfos: LifecycleInfo[] = [];
+    if (lifecycle) lifecycleInfos.push(lifecycle);
+
     const complianceEntries: ComplianceData[] = [];
-
-    if (product) {
-      const mouserQuote = mapMouserToQuote(product);
-      quotes.push(mouserQuote);
-
-      const lifecycle = mapMouserLifecycle(product);
-      if (lifecycle) lifecycleInfos.push(lifecycle);
-
-      const compliance = mapMouserCompliance(product);
-      if (compliance) complianceEntries.push(compliance);
-    }
+    if (compliance) complianceEntries.push(compliance);
 
     return {
       ...attrs,
       part: {
         ...attrs.part,
-        supplierQuotes: quotes,
+        supplierQuotes: quotes.length > 0 ? quotes : undefined,
         lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
         complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
       },
     };
   } catch (error) {
-    console.warn('[mouser] Enrichment failed for', attrs.part.mpn, error);
-    reportServiceFailure('mouser', 'degraded', 'Enrichment failed');
+    console.warn('[findchips] Enrichment failed for', attrs.part.mpn, error);
+    reportServiceFailure('findchips', 'degraded', 'Enrichment failed');
     return attrs;
   }
 }
 
 /**
- * Enrich recommendation candidates with Mouser pricing (batch).
- * Uses pipe-separated batch API for efficiency (10 MPNs per call).
+ * Enrich recommendation candidates with FindChips pricing (batch).
+ * Concurrent individual API calls (FC has no batch endpoint).
  */
-async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
+async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?: string): Promise<XrefRecommendation[]> {
   if (recs.length === 0) return recs;
+  if (!isFindchipsConfigured() || !hasFindchipsBudget()) return recs;
 
-  // Always build Digikey quotes; add Mouser if configured
-  const mouserAvailable = isMouserConfigured() && hasMouserBudget();
-  let mouserProducts: Map<string, MouserProduct> | undefined;
-
-  if (mouserAvailable) {
-    try {
-      const mpns = recs.map(r => r.part.mpn);
-      mouserProducts = await getMouserProductsBatch(mpns, userId);
-    } catch (error) {
-      console.warn('[mouser] Candidate enrichment failed:', error);
-      reportServiceFailure('mouser', 'degraded', 'Candidate enrichment failed');
-    }
+  let fcResults: Map<string, import('./findchipsClient').FCDistributorResult[]>;
+  try {
+    const mpns = recs.map(r => r.part.mpn);
+    fcResults = await getFindchipsResultsBatch(mpns, userId);
+  } catch (error) {
+    console.warn('[findchips] Candidate enrichment failed:', error);
+    reportServiceFailure('findchips', 'degraded', 'Candidate enrichment failed');
+    return recs;
   }
 
   return recs.map(rec => {
-    const dkQuote = buildDigikeyQuote(rec.part);
-    const quotes = [dkQuote];
-    const lifecycleInfos: LifecycleInfo[] = [];
-    const complianceEntries: ComplianceData[] = [];
+    const distResults = fcResults.get(rec.part.mpn.toLowerCase());
+    if (!distResults || distResults.length === 0) return rec;
 
-    const mouserProduct = mouserProducts?.get(rec.part.mpn.toLowerCase());
-    if (mouserProduct) {
-      quotes.push(mapMouserToQuote(mouserProduct));
-      const lifecycle = mapMouserLifecycle(mouserProduct);
-      if (lifecycle) lifecycleInfos.push(lifecycle);
-      const compliance = mapMouserCompliance(mouserProduct);
-      if (compliance) complianceEntries.push(compliance);
-    }
+    const quotes = mapFCToQuotes(distResults, rec.part.mpn);
+    const lifecycle = mapFCLifecycle(distResults);
+    const compliance = mapFCCompliance(distResults);
 
     return {
       ...rec,
       part: {
         ...rec.part,
-        supplierQuotes: quotes,
-        lifecycleInfo: lifecycleInfos.length > 0 ? lifecycleInfos : undefined,
-        complianceData: complianceEntries.length > 0 ? complianceEntries : undefined,
+        supplierQuotes: quotes.length > 0 ? quotes : undefined,
+        lifecycleInfo: lifecycle ? [lifecycle] : undefined,
+        complianceData: compliance ? [compliance] : undefined,
       },
     };
   });
@@ -544,32 +531,29 @@ async function enrichCandidatesWithMouser(recs: XrefRecommendation[], userId?: s
 // ============================================================
 
 /**
- * Enrich part attributes with parts.io (parametric gap-fill) and Mouser
+ * Enrich part attributes with parts.io (parametric gap-fill) and FindChips
  * (commercial data) in parallel. The two enrichments touch disjoint fields:
  * - parts.io: parameters[], part lifecycle metadata
- * - Mouser: part.supplierQuotes, part.lifecycleInfo, part.complianceData
+ * - FindChips: part.supplierQuotes, part.lifecycleInfo, part.complianceData
  */
-async function enrichSourceInParallel(attrs: PartAttributes, userId?: string, skipMouser?: boolean): Promise<PartAttributes> {
-  const [partsioResult, mouserResult] = await Promise.all([
+async function enrichSourceInParallel(attrs: PartAttributes, userId?: string, skipFindchips?: boolean): Promise<PartAttributes> {
+  const [partsioResult, fcResult] = await Promise.all([
     enrichWithPartsio(attrs, userId),
-    skipMouser ? attrs : enrichWithMouser(attrs, userId),
+    skipFindchips ? attrs : enrichWithFindchips(attrs, userId),
   ]);
 
   // Merge: start from parts.io result (has parametric gap-fills + lifecycle),
-  // layer on Mouser commercial fields.
-  // If Mouser enrichment was skipped (unconfigured/no budget), still build the
-  // Digikey SupplierQuote so tiered pricing is always available in the UI.
-  const supplierQuotes = mouserResult.part.supplierQuotes
-    ?? partsioResult.part.supplierQuotes
-    ?? [buildDigikeyQuote(partsioResult.part)];
+  // layer on FindChips commercial fields.
+  const supplierQuotes = fcResult.part.supplierQuotes
+    ?? partsioResult.part.supplierQuotes;
 
   return {
     ...partsioResult,
     part: {
       ...partsioResult.part,
       supplierQuotes,
-      lifecycleInfo: mouserResult.part.lifecycleInfo ?? partsioResult.part.lifecycleInfo,
-      complianceData: mouserResult.part.complianceData ?? partsioResult.part.complianceData,
+      lifecycleInfo: fcResult.part.lifecycleInfo ?? partsioResult.part.lifecycleInfo,
+      complianceData: fcResult.part.complianceData ?? partsioResult.part.complianceData,
     },
   };
 }
@@ -580,14 +564,14 @@ async function enrichSourceInParallel(attrs: PartAttributes, userId?: string, sk
 
 export async function getAttributes(
   mpn: string, currency?: string, userId?: string,
-  options?: { skipMouser?: boolean },
+  options?: { skipFindchips?: boolean },
 ): Promise<PartAttributes | null> {
   if (isDigikeyConfigured()) {
     try {
       const response = await getProductDetails(mpn, currency, userId);
       if (response.Product) {
         const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(response.Product), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId, options?.skipMouser);
+        return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
       }
     } catch (error) {
       console.warn('Digikey product details lookup failed for', mpn, '— trying keyword search fallback');
@@ -607,7 +591,7 @@ export async function getAttributes(
       );
       if (match) {
         const attrs: PartAttributes = { ...mapDigikeyProductToAttributes(match), dataSource: 'digikey' as const };
-        return await enrichSourceInParallel(attrs, userId, options?.skipMouser);
+        return await enrichSourceInParallel(attrs, userId, options?.skipFindchips);
       }
     } catch {
       console.warn('Digikey keyword search fallback also failed for', mpn);
@@ -674,7 +658,7 @@ export async function getRecommendations(
   userPreferences?: UserPreferences,
   userId?: string,
   prefetchedAttributes?: PartAttributes,
-  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipMouser?: boolean },
+  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -701,7 +685,7 @@ export async function getRecommendations(
 
   // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
   console.time('[perf] getAttributes');
-  const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId, { skipMouser: options?.skipMouser });
+  const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId, { skipFindchips: options?.skipFindchips });
   console.timeEnd('[perf] getAttributes');
   if (!sourceAttrs) {
     const emptyAttrs: PartAttributes = { part: { mpn, manufacturer: '', description: '', detailedDescription: '', category: 'Capacitors', subcategory: '', status: 'Active' }, parameters: [] };
@@ -867,7 +851,7 @@ export async function getRecommendations(
       reportServiceFailure('partsio', 'degraded', 'Equivalent fetch failed');
       return [] as PartAttributes[];
     }),
-    fetchMouserSuggestions(sourceAttrs, currency, userId, options?.skipMouser).catch((error) => {
+    fetchMouserSuggestions(sourceAttrs, currency, userId, options?.skipFindchips).catch((error) => {
       console.warn('Mouser suggestion fetch failed:', error);
       return [] as PartAttributes[];
     }),
@@ -893,9 +877,9 @@ export async function getRecommendations(
     const resolved = await Promise.all(
       mfrCrossRefs.map(async (xref) => {
         try {
-          // skipMouser: xref candidates are scored on parametric data only.
-          // Commercial data is backfilled later by triggerMouserEnrichment().
-          const attrs = await getAttributes(xref.xref_mpn, currency, userId, { skipMouser: true });
+          // skipFindchips: xref candidates are scored on parametric data only.
+          // Commercial data is backfilled later by triggerFCEnrichment().
+          const attrs = await getAttributes(xref.xref_mpn, currency, userId, { skipFindchips: true });
           return attrs;
         } catch {
           return null;
@@ -1134,8 +1118,8 @@ export async function getRecommendations(
       }
     }
 
-    // Mouser candidate enrichment is deferred — the UI fetches it after recs render
-    // via /api/mouser/enrich to avoid blocking the critical path (~0.8s savings)
+    // FindChips candidate enrichment is deferred — the UI fetches it after recs render
+    // via /api/fc/enrich to avoid blocking the critical path
 
     // Determine primary dataSource for the result set
     const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
@@ -1254,7 +1238,7 @@ async function fetchMouserSuggestions(
   sourceAttrs: PartAttributes,
   currency?: string,
   userId?: string,
-  skipMouser?: boolean,
+  skipFindchips?: boolean,
 ): Promise<PartAttributes[]> {
   const mouserLifecycle = sourceAttrs.part.lifecycleInfo?.find(l => l.source === 'mouser');
   if (!mouserLifecycle?.suggestedReplacement) return [];
@@ -1265,7 +1249,7 @@ async function fetchMouserSuggestions(
   console.log(`[mouser] Fetching suggested replacement: ${cleanMpn} (from ${mouserLifecycle.suggestedReplacement})`);
 
   try {
-    const attrs = await getAttributes(cleanMpn, currency, userId, { skipMouser });
+    const attrs = await getAttributes(cleanMpn, currency, userId, { skipFindchips });
     if (!attrs) return [];
     return [attrs];
   } catch (error) {

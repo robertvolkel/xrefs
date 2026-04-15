@@ -16,7 +16,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 // TYPES
 // ============================================================
 
-export type CacheService = 'digikey' | 'partsio' | 'mouser' | 'search';
+export type CacheService = 'digikey' | 'partsio' | 'mouser' | 'findchips' | 'search';
 export type CacheTier = 'parametric' | 'lifecycle' | 'commercial' | 'search' | 'recommendations';
 
 export interface CacheReadResult<T> {
@@ -56,17 +56,17 @@ export const TTL_PARAMETRIC_DIGIKEY = null;
 /** Parts.io parametric: 90 days */
 export const TTL_PARAMETRIC_PARTSIO_MS = 90 * 24 * 60 * 60 * 1000;
 
-/** Lifecycle data (parts.io + Mouser): 6 months */
+/** Lifecycle data (parts.io + FindChips): 6 months */
 export const TTL_LIFECYCLE_MS = 180 * 24 * 60 * 60 * 1000;
 
-/** Commercial data (Digikey + Mouser pricing/stock): 24 hours */
+/** Commercial data (FindChips pricing/stock): 24 hours */
 export const TTL_COMMERCIAL_MS = 24 * 60 * 60 * 1000;
 
 /** Search results: 7 days (pricing preview goes stale; detailed pricing from getAttributes) */
 export const TTL_SEARCH_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Recommendations: 30 days. Parametric data and scoring logic are stable;
- *  pricing/stock are refreshed on display via triggerMouserEnrichment().
+ *  pricing/stock are refreshed on display via triggerFCEnrichment().
  *  Invalidated explicitly by admin writes that affect scoring (xref uploads,
  *  rule overrides, context overrides, manufacturer enable/disable). */
 export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;

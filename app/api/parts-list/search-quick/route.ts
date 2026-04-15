@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'MPN is required' }, { status: 400 });
     }
 
-    const searchResult = await searchParts(mpn, undefined, user?.id, { skipMouser: true });
+    const searchResult = await searchParts(mpn, undefined, user?.id, { skipFindchips: true });
 
     if (searchResult.type === 'none' || searchResult.matches.length === 0) {
       return NextResponse.json({ matches: [], manufacturerMismatch: false });

@@ -12,6 +12,7 @@ const DISPLAY_NAMES: Record<ServiceName, string> = {
   partsio: 'Parts.io',
   anthropic: 'Claude AI',
   mouser: 'Mouser',
+  findchips: 'FindChips',
   atlas: 'Atlas',
 };
 

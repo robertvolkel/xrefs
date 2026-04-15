@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import {
   Box,
   Typography,
@@ -173,17 +174,41 @@ export function RiskContent({ part, t, dataSource }: { part: Part; t: T; dataSou
   );
 }
 
+/* ── Supplier display name map ── */
+const SUPPLIER_DISPLAY: Record<string, string> = {
+  digikey: 'Digikey', mouser: 'Mouser', arrow: 'Arrow', lcsc: 'LCSC',
+  element14: 'element14', farnell: 'Farnell', newark: 'Newark', rs: 'RS Components',
+  tme: 'TME', avnet: 'Avnet', future: 'Future Electronics', rochester: 'Rochester',
+  rutronik: 'Rutronik', verical: 'Verical', chip1stop: 'Chip One Stop',
+};
+
+/** Format price with currency symbol */
+function formatPrice(price: number, currency?: string): string {
+  const cur = currency ?? 'USD';
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(price);
+  } catch {
+    return `${cur} ${price.toFixed(4)}`;
+  }
+}
+
 /* ── Supplier quote card ── */
 function SupplierCard({ quote, t }: { quote: SupplierQuote; t: T }) {
-  const supplierLabel = quote.supplier === 'digikey' ? 'Digikey' : quote.supplier === 'mouser' ? 'Mouser' : quote.supplier;
+  const supplierLabel = SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
+  const currency = quote.priceBreaks[0]?.currency;
 
   return (
-    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 1.5 }}>
+    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 1 }}>
       {/* Header */}
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-        <Typography variant="subtitle2" sx={{ fontSize: '0.78rem', fontWeight: 600 }}>
-          {supplierLabel}
-        </Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.75 }}>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Typography variant="subtitle2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
+            {supplierLabel}
+          </Typography>
+          {quote.authorized && (
+            <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'success.main', fontWeight: 500 }}>Auth</Typography>
+          )}
+        </Stack>
         {quote.productUrl && (
           <Link href={quote.productUrl} target="_blank" rel="noopener" sx={{ display: 'flex', alignItems: 'center', fontSize: '0.68rem' }}>
             <OpenInNewIcon sx={{ fontSize: '0.85rem' }} />
@@ -192,11 +217,11 @@ function SupplierCard({ quote, t }: { quote: SupplierQuote; t: T }) {
       </Stack>
 
       {/* Summary row */}
-      <Stack direction="row" spacing={2} sx={{ mb: quote.priceBreaks.length > 0 ? 1 : 0 }}>
+      <Stack direction="row" spacing={2} sx={{ mb: quote.priceBreaks.length > 0 ? 0.75 : 0 }}>
         {quote.unitPrice != null && (
           <Box>
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.unitPrice')}</Typography>
-            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>${quote.unitPrice.toFixed(4)}</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{formatPrice(quote.unitPrice, currency)}</Typography>
           </Box>
         )}
         {quote.quantityAvailable != null && (
@@ -205,10 +230,10 @@ function SupplierCard({ quote, t }: { quote: SupplierQuote; t: T }) {
             <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{quote.quantityAvailable.toLocaleString()}</Typography>
           </Box>
         )}
-        {quote.leadTime && (
+        {quote.packageType && (
           <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.leadTime')}</Typography>
-            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{quote.leadTime}</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>Package</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{quote.packageType}</Typography>
           </Box>
         )}
       </Stack>
@@ -218,15 +243,15 @@ function SupplierCard({ quote, t }: { quote: SupplierQuote; t: T }) {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontSize: '0.6rem', fontWeight: 600, color: 'text.secondary', borderColor: 'divider', py: 0.5 }}>{t('attributes.quantity')}</TableCell>
-              <TableCell sx={{ fontSize: '0.6rem', fontWeight: 600, color: 'text.secondary', borderColor: 'divider', py: 0.5 }}>{t('attributes.unitPrice')}</TableCell>
+              <TableCell sx={{ fontSize: '0.6rem', fontWeight: 600, color: 'text.secondary', borderColor: 'divider', py: 0.25 }}>{t('attributes.quantity')}</TableCell>
+              <TableCell sx={{ fontSize: '0.6rem', fontWeight: 600, color: 'text.secondary', borderColor: 'divider', py: 0.25 }}>{t('attributes.unitPrice')}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {quote.priceBreaks.map((pb) => (
               <TableRow key={pb.quantity}>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.5 }}>{pb.quantity.toLocaleString()}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.5 }}>${pb.unitPrice.toFixed(4)}</TableCell>
+                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{pb.quantity.toLocaleString()}</TableCell>
+                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -238,10 +263,10 @@ function SupplierCard({ quote, t }: { quote: SupplierQuote; t: T }) {
 
 /* ── Commercial tab content ── */
 export function CommercialContent({ part, t }: { part: Part; t: T }) {
+  const [showAll, setShowAll] = useState(false);
   const hasQuotes = part.supplierQuotes && part.supplierQuotes.length > 0;
-  const hasFlatPricing = part.unitPrice != null || part.quantityAvailable != null;
 
-  if (!hasQuotes && !hasFlatPricing) {
+  if (!hasQuotes) {
     return (
       <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}>
@@ -251,34 +276,36 @@ export function CommercialContent({ part, t }: { part: Part; t: T }) {
     );
   }
 
+  const quotes = part.supplierQuotes!;
+  const INITIAL_SHOW = 5;
+  const visibleQuotes = showAll ? quotes : quotes.slice(0, INITIAL_SHOW);
+  const hiddenCount = quotes.length - INITIAL_SHOW;
+
   return (
     <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
-      {hasQuotes ? (
-        part.supplierQuotes!.map((q) => (
-          <SupplierCard key={q.supplier} quote={q} t={t} />
-        ))
-      ) : hasFlatPricing ? (
-        /* Fallback: flat Digikey fields when no structured quotes */
-        <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
-          <Typography variant="subtitle2" sx={{ fontSize: '0.78rem', fontWeight: 600, mb: 1 }}>
-            Digikey
-          </Typography>
-          <Stack direction="row" spacing={2}>
-            {part.unitPrice != null && (
-              <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.unitPrice')}</Typography>
-                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>${part.unitPrice.toFixed(4)}</Typography>
-              </Box>
-            )}
-            {part.quantityAvailable != null && (
-              <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.stock')}</Typography>
-                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{part.quantityAvailable.toLocaleString()}</Typography>
-              </Box>
-            )}
-          </Stack>
-        </Box>
-      ) : null}
+      {visibleQuotes.map((q, i) => (
+        <SupplierCard key={`${q.supplier}-${q.supplierPartNumber ?? i}`} quote={q} t={t} />
+      ))}
+      {!showAll && hiddenCount > 0 && (
+        <Typography
+          variant="body2"
+          color="primary"
+          onClick={() => setShowAll(true)}
+          sx={{ fontSize: '0.72rem', cursor: 'pointer', textAlign: 'center', py: 1, '&:hover': { textDecoration: 'underline' } }}
+        >
+          Show {hiddenCount} more distributor{hiddenCount > 1 ? 's' : ''}
+        </Typography>
+      )}
+      {showAll && hiddenCount > 0 && (
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          onClick={() => setShowAll(false)}
+          sx={{ fontSize: '0.72rem', cursor: 'pointer', textAlign: 'center', py: 1, '&:hover': { textDecoration: 'underline' } }}
+        >
+          Show fewer
+        </Typography>
+      )}
     </Box>
   );
 }

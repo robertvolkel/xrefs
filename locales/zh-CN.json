@@ -130,8 +130,8 @@
     "searchCount": "{{total}} 个零件中的 {{filtered}} 个",
     "notifications": {
       "validationErrors": "{{count}} 个零件无法解析——数据源可能不可用",
-      "mouserUnavailable": "Mouser 定价不可用——API 可能已关闭或达到速率限制",
-      "mouserLoaded": "已加载 {{count}} 个零件的 Mouser 定价",
+      "fcUnavailable": "定价数据不可用——FindChips API 可能已关闭或达到速率限制",
+      "fcLoaded": "已加载 {{count}} 个零件的定价数据",
       "someNotFound": "{{count}} 个零件在任何数据源中均未找到",
       "retry": "重试"
     }
