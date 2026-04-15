@@ -597,8 +597,7 @@ List agent tools (`get_list_summary`, `query_list`, `get_row_detail`) should inc
 
 Heuristic detection of non-electronic parts from description text (e.g., "heatsink", "standoff", "enclosure" → mechanical; "PCB", "bare board" → pcb). Would reduce manual tagging on upload.
 
-### View templates: Supabase persistence for multi-device / org sharing (Decision #130)
-**Status:** Not started
-**Priority:** P3
+### ~~View templates: Supabase persistence for multi-device / org sharing (Decision #130)~~ COMPLETED
+**Status:** Completed
 
-View templates are localStorage only — per-browser, not shareable. When org/company model is built, templates should move to Supabase so teammates share a common template pool.
+Master views now stored in Supabase `view_templates` table (user-scoped). localStorage templates migrated on first load. Future: expand to org-level sharing when company model is built.

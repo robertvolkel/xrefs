@@ -3314,15 +3314,32 @@ Category is derived from `deriveRecommendationCategories()` — a recommendation
 
 ---
 
-## 130. Default Template for New Lists & Template Sync
+## 130. Master Views & List-Specific Views
 
-**Decision:** Let users designate a custom view template as the default for newly created lists, and automatically sync new templates to existing lists on load.
+**Decision:** Replace the copy-per-list view model with a clear two-tier system: Master Views (shared, Supabase-backed) and List-Specific Views (per-list only). Supersedes the old localStorage template system.
 
-**Problem:** Two gaps in the view template system: (1) New lists always opened with "Basic" view — no way to set a custom template as the default. (2) Templates saved after a list was created never appeared on that list — each list was a frozen snapshot from creation time.
+**Problem:** The old system copied all view templates into each list at creation time. Lists diverged independently — "Basic" looked different across lists, users couldn't tell what was shared vs. local, and there was no way to edit a view globally. The mental model was confusing.
 
-**Solution:**
-1. **Set default template** — new kebab menu item "Set as default for new lists" (pin icon) on custom views. Calls `setDefaultView()` on the global `useViewTemplates` hook, which updates `defaultViewId` in localStorage. The seeding logic in `useListViewConfig` already copies `defaultViewId` from global templates, so new lists automatically open with the chosen template.
-2. **Template sync on load** — when an existing list loads, `useListViewConfig` compares global templates against the list's views by ID. Any templates not yet in the list are injected and persisted. Existing list views are untouched — only new templates are added.
-3. **View save message fix** — corrected misleading confirmation dialog that claimed views were "shared across all lists" when they are actually per-list.
+**Solution — three view categories:**
+1. **Original** — read-only, shows raw uploaded columns. Builtin, unchanged.
+2. **Master Views** — shared across all lists, stored in Supabase `view_templates` table (user-scoped, RLS). Editing one updates it everywhere. Lists reference by ID, don't store copies.
+3. **List-Specific Views** — per-list only, invisible to other lists. Stored in per-list `view_configs` JSONB.
 
-**Files:** `hooks/useListViewConfig.ts`, `components/parts-list/ViewControls.tsx`, `components/parts-list/PartsListShell.tsx`, `locales/en.json`
+**Key behaviors:**
+- Edit a Master View → warning "Changes will apply across all your lists" → writes to `view_templates` table
+- Demote Master → List-Specific → warning → removes from table, copies to per-list JSONB
+- Promote List-Specific → Master → warning → sanitizes columns, creates in table, removes from per-list
+- Create new view → user picks Master or List-Specific via radio toggle
+- "Original" cannot be edited, deleted, or promoted
+- Dropdown shows scope badges: "Master" (primary chip) or "This list" (outlined chip)
+- Hidden rows for master views stored per-list in `masterViewOverrides` (not shared globally)
+- `ss:*` columns auto-stripped from master views; `columnMeta` enables cross-list portability
+
+**Migration:**
+1. **localStorage → Supabase** (one-time, `useMasterViews` hook): old templates uploaded as master views, "Basic" seeded if none exist, localStorage cleared
+2. **Per-list dedup** (lazy, each list load): old ViewState views matched to master views by name, copies removed, `hiddenRows` moved to `masterViewOverrides`, IDs remapped
+3. **Backward compat**: old `ViewState` JSONB detected by absence of `migrated` flag, cleaned up transparently
+
+**Schema:** `view_templates` table with UUID PK, user_id (RLS), name, columns (JSONB), description, column_meta, calculated_fields, is_default (unique partial index per user), sort_order, timestamps.
+
+**Files:** `scripts/supabase-view-templates-schema.sql`, `lib/viewConfigStorage.ts`, `lib/supabaseMasterViewStorage.ts` (new), `hooks/useMasterViews.ts` (new, replaces `useViewTemplates`), `hooks/useListViewConfig.ts`, `components/parts-list/ViewControls.tsx`, `components/parts-list/ColumnPickerDialog.tsx`, `components/parts-list/PartsListShell.tsx`, `lib/supabasePartsListStorage.ts`, `locales/en.json`

@@ -209,8 +209,8 @@ export async function deletePartsListSupabase(id: string): Promise<void> {
     .eq('id', id);
 }
 
-/** Save per-list view configurations */
-export async function saveListViewConfigsSupabase(id: string, viewConfigs: ViewState): Promise<void> {
+/** Save per-list view configurations (accepts both legacy ViewState and new ListViewState) */
+export async function saveListViewConfigsSupabase(id: string, viewConfigs: ViewState | import('./viewConfigStorage').ListViewState): Promise<void> {
   const supabase = createClient();
   await supabase
     .from('parts_lists')

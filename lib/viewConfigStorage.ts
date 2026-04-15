@@ -27,6 +27,7 @@ export interface SavedView {
   calculatedFields?: CalculatedFieldDef[];
 }
 
+/** @deprecated Use ListViewState for per-list storage, MasterView for global views */
 export interface ViewState {
   /** Which view is currently active (session state) */
   activeViewId: string;
@@ -37,12 +38,54 @@ export interface ViewState {
 }
 
 // ============================================================
+// MASTER VIEW + LIST-SPECIFIC VIEW TYPES (Decision #130)
+// ============================================================
+
+export type ViewScope = 'builtin' | 'master' | 'list';
+
+/** Master view stored in Supabase view_templates table */
+export interface MasterView {
+  id: string;          // UUID
+  name: string;
+  columns: string[];   // sanitized (no ss:* — only portable IDs)
+  description?: string;
+  columnMeta?: Record<string, string>;
+  calculatedFields?: CalculatedFieldDef[];
+  isDefault: boolean;
+  sortOrder: number;
+}
+
+/** UI-facing view with scope tag for rendering and action gating */
+export interface ResolvedView extends SavedView {
+  scope: ViewScope;
+}
+
+/** Per-list view state stored in parts_lists.view_configs JSONB */
+export interface ListViewState {
+  activeViewId: string;
+  defaultViewId: string;
+  /** List-specific views ONLY — master views are referenced by ID */
+  views: SavedView[];
+  /** Per-list overrides for master views (e.g., hidden rows) */
+  masterViewOverrides?: Record<string, {
+    hiddenRows?: Record<string, number[]>;
+  }>;
+  /** True after old-format cleanup — prevents re-migration */
+  migrated?: boolean;
+}
+
+// ============================================================
 // BUILT-IN VIEWS
 // ============================================================
 
-export const BUILTIN_VIEW_IDS = ['default', 'raw'] as const;
+/** @deprecated Legacy builtin IDs — includes 'default' for migration compat */
+export const LEGACY_BUILTIN_VIEW_IDS = ['default', 'raw'] as const;
 
-const DEFAULT_VIEW: SavedView = {
+/** Builtin view IDs — only 'raw' (Original) is code-generated. 'Basic' is now a master view. */
+export const BUILTIN_VIEW_IDS = ['raw'] as const;
+
+/** The default "Basic" view — used to seed master views for new users */
+export const DEFAULT_VIEW: SavedView = {
   id: 'default',
   name: 'Basic',
   columns: DEFAULT_VIEW_COLUMNS,
@@ -67,12 +110,12 @@ function createInitialState(): ViewState {
 // STORAGE
 // ============================================================
 
-const STORAGE_KEY = 'xrefs_column_views';
+export const VIEW_STORAGE_KEY = 'xrefs_column_views';
 
 export function loadViewState(): ViewState {
   if (typeof window === 'undefined') return createInitialState();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(VIEW_STORAGE_KEY);
     if (!raw) return createInitialState();
     const parsed = JSON.parse(raw) as ViewState;
     // Ensure built-in views exist
@@ -114,11 +157,16 @@ export function loadViewState(): ViewState {
 
 export function saveViewState(state: ViewState): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(state));
 }
 
 export function isBuiltinView(viewId: string): boolean {
   return (BUILTIN_VIEW_IDS as readonly string[]).includes(viewId);
+}
+
+/** Check if a view ID is a legacy builtin (includes 'default' which is now a master view) */
+export function isLegacyBuiltinView(viewId: string): boolean {
+  return (LEGACY_BUILTIN_VIEW_IDS as readonly string[]).includes(viewId);
 }
 
 // ============================================================

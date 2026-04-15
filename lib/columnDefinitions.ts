@@ -192,6 +192,14 @@ export function buildAvailableColumns(
   // System columns (exclude unlabeled utility columns like action/row_actions)
   columns.push(...SYSTEM_COLUMNS.filter(c => c.label));
 
+  // Portable mapped columns (resolve to actual ss:N at render time — safe for master views)
+  columns.push(
+    { id: 'mapped:mpn', label: 'MPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
+    { id: 'mapped:manufacturer', label: 'Manufacturer', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
+    { id: 'mapped:description', label: 'Description', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '200px' },
+    { id: 'mapped:cpn', label: 'CPN / Internal PN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
+  );
+
   // Spreadsheet columns (from the original upload)
   spreadsheetHeaders.forEach((header, index) => {
     columns.push({
