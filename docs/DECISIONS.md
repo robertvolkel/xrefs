@@ -3343,3 +3343,34 @@ Category is derived from `deriveRecommendationCategories()` — a recommendation
 **Schema:** `view_templates` table with UUID PK, user_id (RLS), name, columns (JSONB), description, column_meta, calculated_fields, is_default (unique partial index per user), sort_order, timestamps.
 
 **Files:** `scripts/supabase-view-templates-schema.sql`, `lib/viewConfigStorage.ts`, `lib/supabaseMasterViewStorage.ts` (new), `hooks/useMasterViews.ts` (new, replaces `useViewTemplates`), `hooks/useListViewConfig.ts`, `components/parts-list/ViewControls.tsx`, `components/parts-list/ColumnPickerDialog.tsx`, `components/parts-list/PartsListShell.tsx`, `lib/supabasePartsListStorage.ts`, `locales/en.json`
+
+## 131. FindChips API — Multi-Distributor Commercial Data (Apr 2026)
+
+Replaced Mouser as the primary commercial data source with FindChips (FC) API, an aggregator covering ~80 distributors (Digikey, Mouser, Arrow, LCSC, Farnell, RS, TME, etc.) in a single ~60-200ms API call.
+
+**Why:** Mouser provided single-distributor pricing/stock. FindChips returns data from all major distributors in one call — faster, broader coverage, and critically, includes Chinese distributors (LCSC, Winsource) that provide purchase paths for Atlas component recommendations. Also provides unique risk scoring data (designRisk, productionRisk, longTermRisk).
+
+**Architecture:**
+- `findchipsClient.ts` — GET API with 3-level cache (L1 in-memory 30min, L2 Supabase 24h, L3 live API), rate limiter (60/min, 5000/day), batch via concurrent individual calls
+- `findchipsMapper.ts` — Maps FC response to `SupplierQuote[]` (one per distributor, sorted by best price), `LifecycleInfo` (with risk scores), `ComplianceData` (RoHS). `normalizeDistributorName()` maps 40+ variations to canonical keys
+- `enrichWithFindchips()` replaces `enrichWithMouser()` in `partDataService.ts`
+- `/api/fc/enrich` POST endpoint replaces `/api/mouser/enrich`
+- No distributor filter — FC returns all available distributors per MPN
+
+**Mouser retained:** Solely for `SuggestedReplacement` lookups (Decision #97). `fetchMouserSuggestions()` stays in the recommendation pipeline. Mouser client stripped to suggestions-only functions.
+
+**Type changes:**
+- `SupplierName` widened from fixed union to `string` (dynamic distributor names)
+- `SupplierQuote` extended: `packageType`, `minimumQuantity`, `authorized`
+- `LifecycleInfo` extended: `riskRank`, `designRisk`, `productionRisk`, `longTermRisk`
+- `LifecycleInfo.source` and `ComplianceData.source` widened to `string`
+
+**Column changes:** All `mouser:*` columns removed. New `fc:lifecycle`, `fc:riskRank`, `fc:designRisk`, `fc:productionRisk`, `fc:longTermRisk` columns. `commercial:bestPrice` and `commercial:totalStock` summary columns unchanged (auto-aggregate across all N supplier quotes). Saved views auto-strip `mouser:*` IDs via `sanitizeTemplateColumns()`.
+
+**Commercial tab UI:** Shows N distributor cards (up to ~26), sorted by best unit price. Top 5 expanded, rest collapsed behind "Show N more distributors" toggle. Currency-aware pricing via `Intl.NumberFormat`. Package type and authorized distributor badge displayed. Flat-pricing fallback removed (FC always provides structured quotes).
+
+**What FC provides that Mouser didn't:** ~80 distributors in one call, Chinese distributor coverage (LCSC), risk scores (design/production/long-term), country of origin, faster response (~60ms vs ~300ms).
+
+**What FC doesn't provide that Mouser did:** HTS codes by region, ECCN (partsio still covers these), suggested replacement MPNs (Mouser retained for this).
+
+**Files:** `lib/services/findchipsClient.ts` (new), `lib/services/findchipsMapper.ts` (new), `app/api/fc/enrich/route.ts` (new), `app/api/mouser/enrich/route.ts` (deleted), `lib/types.ts`, `lib/services/partDataService.ts`, `lib/columnDefinitions.ts`, `components/AttributesTabContent.tsx`, `hooks/useAppState.ts`, `hooks/usePartsListState.ts`, `components/parts-list/PartsListShell.tsx`, `lib/api.ts`, `lib/viewConfigStorage.ts`, `lib/services/partDataCache.ts`, `lib/services/apiUsageLogger.ts`, `components/ServiceStatusIcon.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`

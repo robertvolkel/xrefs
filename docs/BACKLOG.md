@@ -88,7 +88,7 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 **Intentionally skipped:** Cables/Wires (too heterogeneous), Development Tools (no meaningful shared parametrics). Both remain at L0.
 
-**Remaining gap:** Parts.io param maps (`partsioParamMap.ts`) and Mouser mapper entries not yet added for L2 categories — currently Digikey-only.
+**Remaining gap:** Parts.io param maps (`partsioParamMap.ts`) not yet added for L2 categories — currently Digikey-only.
 
 ### L2 family-level param maps: split union maps into per-sensor-type maps
 **Status:** Phase 1 (Sensors) done — Decision #88. 7 sensor sub-families with dedicated param maps + general fallback.
@@ -372,7 +372,7 @@ Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Decision #99 a
 - **Worker thread scoring**: Matching engine is CPU-bound single-threaded. Node.js `worker_threads` could parallelize candidate evaluation for families with many rules (C4: 24 rules, E1: 23 rules).
 - **L2 cache admin UI panel**: Cache stats are exposed via `/api/admin/cache` (GET) and data-sources endpoint. Could add a visual panel in the admin section showing cache size, hit rates, and purge controls.
 - **Periodic cache cleanup**: Expired rows accumulate in `part_data_cache`. Could add a Supabase pg_cron or external cron to call `purgeExpired()` daily. Not critical for correctness (reads check TTL) but prevents table bloat.
-- **Defer source-part Mouser enrichment**: `enrichSourceInParallel()` awaits Mouser in the attributes critical path (+2-4s on cold cache). Could return attrs immediately and trigger Mouser enrichment as a background update like recommendations already do.
+- ~~**Defer source-part Mouser enrichment**~~ RESOLVED — FindChips API (Decision #131) is ~60-200ms, fast enough to await in the critical path. No longer a performance bottleneck.
 
 ---
 
@@ -504,20 +504,19 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 
 ---
 
-### ~~Phase 8: Commercial Data Enrichment (Multi-Supplier)~~ PARTIALLY COMPLETED
-**Status:** Mouser integration done (Decision #83); Arrow/Nexar and customer pricing remaining
+### ~~Phase 8: Commercial Data Enrichment (Multi-Supplier)~~ MOSTLY COMPLETED
+**Status:** FindChips API replaces Mouser (Decision #131); covers ~80 distributors including LCSC, Arrow, Farnell, RS. Mouser retained for SuggestedReplacement only.
 **Priority:** P3
 
-~~Integrate pricing enrichment API.~~ Done — Mouser Search API v2 integrated as second distributor. `SupplierQuote[]` model with `PartAvailability` type. Live pricing, stock, lead time, lifecycle, and MOQ for both Digikey and Mouser. `enrichWithMouser()` gap-fill in `partDataService.ts`. Parts list batch enrichment via `validateRow()`. `SupplierPricingDrawer` shows multi-supplier comparison.
+~~Integrate pricing enrichment API.~~ Done — FindChips (FC) API integrated as multi-distributor aggregator (Decision #131). Single API call returns pricing/stock/lifecycle from ~80 distributors. `findchipsClient.ts` with 3-level cache, `findchipsMapper.ts` with distributor name normalization. Commercial tab shows N distributor cards (top 5 expanded + collapse). Risk scores (designRisk, productionRisk, longTermRisk) from FC are new unique data. Chinese distributor coverage (LCSC) provides purchase paths for Atlas components.
 
 **Remaining:**
-- Arrow/Nexar: Next distributor API integration (extend `SupplierQuote[]` model)
 - Customer negotiated pricing overlays
-- Mouser: ComparisonView multi-supplier pricing table (Phase 3C — side-by-side pricing comparison in xref detail view)
-- Mouser: Add Mouser suggested replacements as candidate source in `getRecommendations()` for obsolete/EOL parts
-- Mouser: "Commercial" view template with DK/Mouser price/stock/lead time columns pre-configured
-- Mouser: Lifecycle status reconciliation (worst-status-wins across Digikey, Parts.io, Mouser)
+- ComparisonView multi-supplier pricing table (Phase 3C — side-by-side pricing comparison in xref detail view)
+- "Commercial" view template with best price/stock columns pre-configured
+- Lifecycle status reconciliation (worst-status-wins across FindChips, Parts.io)
 - BOM quantity-aware pricing (Decision #121 Phase 2): qty column auto-detection in `excelParser.ts`, `mapped:quantity` / `rawQuantity` on `PartsListRow`, effective price lookup per supplier tier, extended cost columns in parts list table
+- RS Components direct API integration (pending product search API from RS contact — see reference memory)
 
 ---
 
