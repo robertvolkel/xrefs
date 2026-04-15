@@ -251,8 +251,8 @@
   "attributes": {
     "parameterHeader": "Parameter",
     "valueHeader": "Value",
+    "tabOverview": "Overview",
     "tabSpecs": "Specs",
-    "tabRisk": "Risk & Compliance",
     "tabCommercial": "Commercial",
     "noRiskData": "No lifecycle or compliance data available.",
     "noCommercialData": "No pricing data available.",
@@ -360,6 +360,7 @@
     "taxonomyNav": "Digikey Taxonomy",
     "searchLogicNav": "Search Logic",
     "listLogicNav": "List Logic",
+    "distributorClicks": "Distributor Clicks",
     "taxonomy": "Digikey Taxonomy",
     "taxonomyDescription": "Digikey product categories cross-referenced with supported component families.",
     "coverageSummary": "Coverage: {{covered}} ({{percentage}}%) of {{total}} Digikey subcategories.",
@@ -728,6 +729,17 @@
     "resultHeader": "Result",
     "filtersLabel": "Filters:",
     "hasFeedbackLabel": "Has Feedback"
+  },
+  "adminDistributorClicks": {
+    "date": "Date",
+    "user": "User",
+    "mpn": "MPN",
+    "manufacturer": "Manufacturer",
+    "distributor": "Distributor",
+    "noEntries": "No distributor click data yet.",
+    "noEntriesFiltered": "No clicks match the current filters.",
+    "searchPlaceholder": "Search MPN, manufacturer, user…",
+    "filterAll": "All"
   },
   "contextQ": {
     "12": {

@@ -52,7 +52,7 @@ export default function PartDetailModal({
 }: PartDetailModalProps) {
   const { t } = useTranslation();
   const [recsLoading, setRecsLoading] = useState(false);
-  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('overview');
   const handleLoadingChange = useCallback((loading: boolean) => setRecsLoading(loading), []);
 
   if (!row) return null;
@@ -112,6 +112,7 @@ export default function PartDetailModal({
                 title={t('partDetail.sourcePartTitle')}
                 activeTab={attributesTab}
                 onTabChange={setAttributesTab}
+                allRecommendations={recs}
               />
             </Box>
             <Box sx={{ width: '35%', height: PANEL_HEIGHT, overflow: 'auto' }}>

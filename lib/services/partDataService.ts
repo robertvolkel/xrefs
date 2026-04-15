@@ -914,6 +914,16 @@ export async function getRecommendations(
     certificationMap.get(key)!.add('manufacturer');
   }
 
+  // Map MPN → manufacturer equivalence type (pin_to_pin preferred over functional
+  // when multiple rows cover the same MPN).
+  const mfrEquivalenceTypeMap = new Map<string, 'pin_to_pin' | 'functional'>();
+  for (const row of mfrCrossRefs) {
+    const key = row.xref_mpn.toLowerCase();
+    const current = mfrEquivalenceTypeMap.get(key);
+    if (current === 'pin_to_pin') continue;
+    mfrEquivalenceTypeMap.set(key, row.equivalence_type);
+  }
+
   const dataSourceMap = new Map<string, 'digikey' | 'atlas' | 'partsio'>();
   const enrichedFromMap = new Map<string, 'partsio'>();
   for (const c of digikeyCandidates) {
@@ -1012,94 +1022,50 @@ export async function getRecommendations(
         dataSource: dataSourceMap.get(key),
         certifiedBy,
         equivalenceType,
+        mfrEquivalenceType: mfrEquivalenceTypeMap.get(key),
         enrichedFrom: enrichedFromMap.get(key),
       };
     });
 
-    // Step 3b: Post-scoring filter for C2 switching regulators —
-    // topology and architecture are BLOCKING identity gates. Remove any
-    // candidate with a confirmed mismatch so they never appear in results.
-    if (familyId === 'C2') {
-      recs = filterSwitchingRegulatorMismatches(recs, sourceAttrs);
-    }
+    // Post-scoring blocking-rule filters are bypassed for MFR-certified and
+    // Accuris-certified crosses — an explicit human certification outranks
+    // our inferred blocking-rule rejection.
+    const withCertifiedBypass = (filter: (r: XrefRecommendation[], s: PartAttributes) => XrefRecommendation[]) => {
+      const certified: XrefRecommendation[] = [];
+      const uncertified: XrefRecommendation[] = [];
+      for (const r of recs) {
+        if (isCertifiedCross(r)) certified.push(r);
+        else uncertified.push(r);
+      }
+      recs = [...certified, ...filter(uncertified, sourceAttrs)];
+    };
 
-    // Step 3c: Post-scoring filter for C4 op-amps/comparators —
-    // device_type (op-amp vs comparator) is a BLOCKING identity gate.
-    if (familyId === 'C4') {
-      recs = filterOpampComparatorMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3d: Post-scoring filter for C5 logic ICs —
-    // logic_function (part number suffix) is a BLOCKING identity gate.
-    // '04 ≠ '14 even though both are inverters.
-    if (familyId === 'C5') {
-      recs = filterLogicICFunctionMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3e: Post-scoring filter for C6 voltage references —
-    // configuration (series vs shunt) is a BLOCKING identity gate.
-    // Series and shunt are architecturally incompatible topologies.
-    if (familyId === 'C6') {
-      recs = filterVoltageReferenceConfigMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3f: Post-scoring filter for C7 interface ICs —
-    // protocol (RS-485/CAN/I2C/USB) is a BLOCKING identity gate.
-    // No cross-protocol substitution is possible without circuit redesign.
-    if (familyId === 'C7') {
-      recs = filterInterfaceICProtocolMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3g: Post-scoring filter for C8 timers/oscillators —
-    // device_category (555/XO/MEMS/TCXO/VCXO/OCXO) is a BLOCKING identity gate.
-    // Exception: XO↔MEMS cross-substitution is permitted with review flag.
-    if (familyId === 'C8') {
-      recs = filterTimerOscillatorCategoryMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3h: Post-scoring filter for C9 ADCs —
-    // architecture (SAR/Delta-Sigma/Pipeline/Flash) is a BLOCKING identity gate.
-    // Cross-architecture candidates are removed before ranking. No exceptions.
-    if (familyId === 'C9') {
-      recs = filterAdcArchitectureMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3i: Post-scoring filter for C10 DACs —
-    // output_type (Voltage Output/Current Output) is a BLOCKING identity gate.
-    // Cross-type candidates are removed before ranking. No exceptions.
-    if (familyId === 'C10') {
-      recs = filterDacOutputTypeMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3j: Post-scoring filter for D1 crystals —
-    // mounting_type (SMD vs Through-Hole) and overtone_order are BLOCKING gates.
-    if (familyId === 'D1') {
-      recs = filterCrystalMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3k: Post-scoring filter for D2 fuses —
-    // speed_class and package_format are BLOCKING identity gates.
-    if (familyId === 'D2') {
-      recs = filterFuseMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3l: Post-scoring filter for E1 optocouplers —
-    // output_transistor_type and channel_count are BLOCKING identity gates.
-    if (familyId === 'E1') {
-      recs = filterOptocouplerMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3m: Post-scoring filter for F1 relays —
-    // contact_form, coil_voltage_vdc, and contact_count are BLOCKING identity gates.
-    if (familyId === 'F1') {
-      recs = filterRelayMismatches(recs, sourceAttrs);
-    }
-
-    // Step 3n: Post-scoring filter for F2 solid state relays —
-    // output_switch_type and mounting_type are BLOCKING identity gates.
-    if (familyId === 'F2') {
-      recs = filterSolidStateRelayMismatches(recs, sourceAttrs);
-    }
+    // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
+    if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
+    // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
+    if (familyId === 'C4') withCertifiedBypass(filterOpampComparatorMismatches);
+    // Step 3d: C5 logic ICs — logic_function BLOCKING identity gate ('04 ≠ '14)
+    if (familyId === 'C5') withCertifiedBypass(filterLogicICFunctionMismatches);
+    // Step 3e: C6 voltage references — configuration (series vs shunt) BLOCKING
+    if (familyId === 'C6') withCertifiedBypass(filterVoltageReferenceConfigMismatches);
+    // Step 3f: C7 interface ICs — protocol BLOCKING identity gate
+    if (familyId === 'C7') withCertifiedBypass(filterInterfaceICProtocolMismatches);
+    // Step 3g: C8 timers/oscillators — device_category BLOCKING (XO↔MEMS exempt)
+    if (familyId === 'C8') withCertifiedBypass(filterTimerOscillatorCategoryMismatches);
+    // Step 3h: C9 ADCs — architecture BLOCKING identity gate, no exceptions
+    if (familyId === 'C9') withCertifiedBypass(filterAdcArchitectureMismatches);
+    // Step 3i: C10 DACs — output_type BLOCKING identity gate, no exceptions
+    if (familyId === 'C10') withCertifiedBypass(filterDacOutputTypeMismatches);
+    // Step 3j: D1 crystals — mounting_type + overtone_order BLOCKING gates
+    if (familyId === 'D1') withCertifiedBypass(filterCrystalMismatches);
+    // Step 3k: D2 fuses — speed_class + package_format BLOCKING gates
+    if (familyId === 'D2') withCertifiedBypass(filterFuseMismatches);
+    // Step 3l: E1 optocouplers — output_transistor_type + channel_count BLOCKING
+    if (familyId === 'E1') withCertifiedBypass(filterOptocouplerMismatches);
+    // Step 3m: F1 relays — contact_form + coil_voltage_vdc + contact_count BLOCKING
+    if (familyId === 'F1') withCertifiedBypass(filterRelayMismatches);
+    // Step 3n: F2 solid state relays — output_switch_type + mounting_type BLOCKING
+    if (familyId === 'F2') withCertifiedBypass(filterSolidStateRelayMismatches);
 
     // Filter out excluded manufacturers from user preferences
     if (userPreferences?.excludedManufacturers?.length) {
@@ -1141,13 +1107,24 @@ export async function getRecommendations(
 // ============================================================
 
 /**
+ * Does this recommendation carry a human certification (manufacturer upload
+ * or Accuris/parts.io equivalence) strong enough to override our blocking-
+ * rule inferences? Used to exempt certified crosses from post-scoring
+ * filters and batch actionability filters.
+ */
+function isCertifiedCross(rec: XrefRecommendation): boolean {
+  if (!rec.certifiedBy || rec.certifiedBy.length === 0) return false;
+  return rec.certifiedBy.some(s => s === 'manufacturer' || s.startsWith('partsio_'));
+}
+
+/**
  * Filter recommendations for batch/list validation — keep only actionable results.
  *
  * Keep if ANY of:
  * - No failing rules (clean match)
  * - All fails are due to missing attributes (could pass if found manually)
  * - At most 1 real mismatch (fail where both attributes exist)
- * - Certified by parts.io (human-verified, kept regardless of fails)
+ * - MFR-certified or Accuris-certified (human-verified, kept regardless of fails)
  *
  * Always exclude: Obsolete or Discontinued parts (pre-filtered before scoring,
  * but double-check here for safety).
@@ -1158,8 +1135,8 @@ function filterRecsForBatch(recs: XrefRecommendation[]): XrefRecommendation[] {
     const status = rec.part.status;
     if (status === 'Obsolete' || status === 'Discontinued') return false;
 
-    // Always keep parts.io certified crosses
-    if (rec.certifiedBy?.some(s => s.startsWith('partsio_'))) return true;
+    // Always keep MFR-certified and Accuris-certified crosses
+    if (isCertifiedCross(rec)) return true;
 
     // Count real mismatches (fail + attribute exists) vs missing-attribute fails
     const fails = rec.matchDetails.filter(d => d.ruleResult === 'fail');

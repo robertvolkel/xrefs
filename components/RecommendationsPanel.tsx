@@ -28,9 +28,17 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       if (cats.includes('third_party_certified')) return 1;
       return 2;
     };
+    // Within a category, pin-to-pin MFR certifications outrank functional ones.
+    const mfrEqRank = (rec: XrefRecommendation): number => {
+      if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
+      if (rec.mfrEquivalenceType === 'functional') return 1;
+      return 2;
+    };
     const byCategoryThenScore = [...recommendations].sort((a, b) => {
       const catDiff = categoryPriority(a) - categoryPriority(b);
       if (catDiff !== 0) return catDiff;
+      const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
+      if (mfrDiff !== 0) return mfrDiff;
       return b.matchPercentage - a.matchPercentage;
     });
     if (!preferredMpn) return byCategoryThenScore;
@@ -174,7 +182,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         )}
         {selectedCategory !== 'all' && (
           <Chip
-            label={selectedCategory === 'logic_driven' ? 'Logic Driven' : selectedCategory === 'manufacturer_certified' ? 'MFR Certified' : '3rd Party'}
+            label={selectedCategory === 'logic_driven' ? 'Logic Driven' : selectedCategory === 'manufacturer_certified' ? 'MFR Certified' : 'Accuris Certified'}
             size="small"
             onDelete={() => setSelectedCategory('all')}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
@@ -273,7 +281,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                 { key: 'all' as const, label: `All (${sorted.length})`, color: undefined },
                 { key: 'logic_driven' as const, label: `Logic Driven (${categoryCounts.logic_driven})`, color: '#42A5F5' },
                 ...(categoryCounts.manufacturer_certified > 0 ? [{ key: 'manufacturer_certified' as const, label: `MFR Certified (${categoryCounts.manufacturer_certified})`, color: '#66BB6A' }] : []),
-                ...(categoryCounts.third_party_certified > 0 ? [{ key: 'third_party_certified' as const, label: `3rd Party (${categoryCounts.third_party_certified})`, color: '#FFA726' }] : []),
+                ...(categoryCounts.third_party_certified > 0 ? [{ key: 'third_party_certified' as const, label: `Accuris Certified (${categoryCounts.third_party_certified})`, color: '#FFA726' }] : []),
               ] as const).map(({ key, label, color }) => (
                 <Chip
                   key={key}

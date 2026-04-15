@@ -25,7 +25,7 @@ import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZ
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
-import { pillGroupSx, RiskContent, CommercialContent } from './AttributesTabContent';
+import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -203,7 +203,7 @@ export default function ComparisonView({
                     )}
                     {cats.includes('third_party_certified') && (
                       <Tooltip title={thirdPartySources.map(s => CERT_LABELS[s] || s).join(', ')} arrow>
-                        <Chip label="3rd Party" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
+                        <Chip label="Accuris Certified" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
                       </Tooltip>
                     )}
                   </>
@@ -248,8 +248,8 @@ export default function ComparisonView({
           size="small"
           sx={{ ...pillGroupSx, ml: 5 }}
         >
+          <ToggleButton value="overview">{t('attributes.tabOverview')}</ToggleButton>
           <ToggleButton value="specs">{t('attributes.tabSpecs')}</ToggleButton>
-          <ToggleButton value="risk">{t('attributes.tabRisk')}</ToggleButton>
           <ToggleButton value="commercial">{t('attributes.tabCommercial')}</ToggleButton>
         </ToggleButtonGroup>
       </Box>
@@ -412,9 +412,9 @@ export default function ComparisonView({
         </>
       )}
 
-      {/* Risk tab — replacement part lifecycle/compliance */}
-      {activeTab === 'risk' && (
-        <RiskContent part={replPart} t={t} />
+      {/* Overview tab — replacement part summary (no cross-refs on replacement side) */}
+      {activeTab === 'overview' && (
+        <OverviewContent part={replPart} t={t} dataSource={replacementAttributes?.dataSource as 'digikey' | 'atlas' | 'partsio' | undefined} />
       )}
 
       {/* Commercial tab — replacement part pricing/stock */}

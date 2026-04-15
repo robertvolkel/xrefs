@@ -148,6 +148,13 @@ When an admin reviews QC feedback flagging a specific rule, there should be a di
 
 ---
 
+### Reverse cross-reference resolution is slow for popular xref targets
+**Files:** `lib/services/partDataService.ts`, `lib/services/manufacturerCrossRefService.ts`
+
+After Decision #133, searching an MPN that appears as `xref_mpn` in many uploaded rows (e.g., 3PEAK's TPW4157 → 136 TI parts) triggers serial `getAttributes()` resolution per matched row. Observed ~17s on the xref-resolution step alone, ~25s total cold-compute. Subsequent searches hit the 30-day L2 recs cache and are instant, but the cold path is poor UX. User explicitly declined capping reverse matches because each is a manufacturer-certified option. Options: (1) pre-resolve reverse xrefs at cross-ref upload time and cache the resolved `PartAttributes` in Supabase; (2) introduce a batch Digikey/Atlas lookup that accepts N MPNs in a single request; (3) resolve reverse xrefs lazily (show certified MPNs as "resolving…" placeholders and stream in as they land).
+
+---
+
 ### i18n: German translations incomplete for context questions and engineering reasons
 **Status:** Partial — Chinese complete, German partial
 **Priority:** P1
@@ -517,6 +524,7 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 - Lifecycle status reconciliation (worst-status-wins across FindChips, Parts.io)
 - BOM quantity-aware pricing (Decision #121 Phase 2): qty column auto-detection in `excelParser.ts`, `mapped:quantity` / `rawQuantity` on `PartsListRow`, effective price lookup per supplier tier, extended cost columns in parts list table
 - RS Components direct API integration (pending product search API from RS contact — see reference memory)
+- ~~Distributor click tracking~~ Done (Decision #132). Client-side fire-and-forget logging of distributor link clicks. Admin view in QC section with filters/search/sort.
 
 ---
 

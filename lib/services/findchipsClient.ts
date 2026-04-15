@@ -18,9 +18,7 @@ import {
   getCachedResponseBatch,
   setCachedResponse,
   isNotFoundSentinel,
-  NOT_FOUND_SENTINEL,
   TTL_COMMERCIAL_MS,
-  TTL_NOT_FOUND_MS,
 } from './partDataCache';
 
 const BASE_URL = 'https://api.findchips.com/v1/fcl-search';
@@ -242,16 +240,13 @@ export async function getFindchipsResults(
   const l1 = getCached(mpnLower);
   if (l1 !== undefined) return l1;
 
-  // L2: Supabase persistent cache
+  // L2: Supabase persistent cache (only populated when the API returns hits;
+  // empty/null responses are not cached — see write path below)
   try {
-    const l2 = await getCachedResponse<FCDistributorResult[] | typeof NOT_FOUND_SENTINEL>(
+    const l2 = await getCachedResponse<FCDistributorResult[]>(
       'findchips', mpnLower, 'fc-results',
     );
-    if (l2) {
-      if (isNotFoundSentinel(l2.data)) {
-        setCache(mpnLower, null);
-        return null;
-      }
+    if (l2 && !isNotFoundSentinel(l2.data)) {
       setCache(mpnLower, l2.data as FCDistributorResult[]);
       return l2.data as FCDistributorResult[];
     }
@@ -283,11 +278,10 @@ export async function getFindchipsResults(
       setCache(mpnLower, results);
       setCachedResponse('findchips', mpnLower, 'fc-results', 'commercial', results, TTL_COMMERCIAL_MS);
       return results;
-    } else {
-      setCache(mpnLower, null);
-      setCachedResponse('findchips', mpnLower, 'fc-results', 'commercial', NOT_FOUND_SENTINEL, TTL_NOT_FOUND_MS);
-      return null;
     }
+    // Empty results are NOT cached — re-query next time so transient misses
+    // (rate limit, API hiccup, stale index) self-heal on the next request.
+    return null;
   } catch (err) {
     console.error('[findchips] API error:', err instanceof Error ? err.message : err);
     return null;
@@ -326,22 +320,19 @@ export async function getFindchipsResultsBatch(
 
   if (uncached.length === 0) return results;
 
-  // Check L2 cache for remaining
+  // Check L2 cache for remaining — legacy NOT_FOUND sentinels are ignored so
+  // historical empty-response rows don't keep masking live results.
   try {
-    const l2Results = await getCachedResponseBatch<FCDistributorResult[] | typeof NOT_FOUND_SENTINEL>(
+    const l2Results = await getCachedResponseBatch<FCDistributorResult[]>(
       'findchips', uncached, 'fc-results',
     );
     const stillUncached: string[] = [];
     for (const mpn of uncached) {
       const l2 = l2Results.get(mpn.toLowerCase());
-      if (l2) {
-        if (!isNotFoundSentinel(l2)) {
-          const data = l2 as FCDistributorResult[];
-          results.set(mpn.toLowerCase(), data);
-          setCache(mpn, data);
-        } else {
-          setCache(mpn, null);
-        }
+      if (l2 && !isNotFoundSentinel(l2)) {
+        const data = l2 as FCDistributorResult[];
+        results.set(mpn.toLowerCase(), data);
+        setCache(mpn, data);
       } else {
         stillUncached.push(mpn);
       }

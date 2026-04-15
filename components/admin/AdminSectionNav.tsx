@@ -9,11 +9,12 @@ import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import FactoryOutlinedIcon from '@mui/icons-material/FactoryOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
 import HistoryIcon from '@mui/icons-material/History';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'qc-feedback' | 'qc-logs';
+export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
 
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
@@ -37,6 +38,7 @@ const logicDocsSections: SectionItem[] = [
 const qcSections: SectionItem[] = [
   { id: 'qc-feedback', icon: FlagIcon, labelKey: 'adminQc.tabFeedback' },
   { id: 'qc-logs', icon: HistoryIcon, labelKey: 'adminQc.tabLogs' },
+  { id: 'distributor-clicks', icon: OpenInNewIcon, labelKey: 'admin.distributorClicks' },
 ];
 
 interface AdminSectionNavProps {

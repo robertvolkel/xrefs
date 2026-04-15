@@ -129,6 +129,9 @@ export interface XrefRecommendation {
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   /** Set when candidate came from parts.io FFF/Functional Equivalent fields */
   equivalenceType?: 'fff' | 'functional';
+  /** Set when candidate came from a manufacturer cross-reference upload.
+   *  Pin-to-pin is a stronger guarantee and sorts ahead of functional. */
+  mfrEquivalenceType?: 'pin_to_pin' | 'functional';
   /** All external sources that independently verified this as a valid cross-reference */
   certifiedBy?: CertificationSource[];
   /** Secondary data source used for gap-fill enrichment */
@@ -981,6 +984,19 @@ export interface RecommendationLogEntry {
   snapshot: RecommendationLogSnapshot;
   feedbackCount?: number;
   feedbackStatus?: FeedbackStatus;  // "worst" status across all feedback items
+  createdAt: string;
+  userEmail?: string;
+  userName?: string;
+}
+
+/** A distributor click log entry (from the admin API) */
+export interface DistributorClickEntry {
+  id: string;
+  userId: string;
+  mpn: string;
+  manufacturer: string;
+  distributor: string;
+  productUrl?: string;
   createdAt: string;
   userEmail?: string;
   userName?: string;

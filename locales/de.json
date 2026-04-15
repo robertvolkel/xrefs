@@ -221,8 +221,8 @@
   "attributes": {
     "parameterHeader": "Parameter",
     "valueHeader": "Wert",
+    "tabOverview": "Übersicht",
     "tabSpecs": "Spezifikationen",
-    "tabRisk": "Risiko",
     "tabCommercial": "Kommerziell",
     "noRiskData": "Keine Lebenszyklus- oder Compliance-Daten verfügbar.",
     "noCommercialData": "Keine Preisdaten verfügbar.",
@@ -300,6 +300,7 @@
     "setThreshold": "Schwellenwert setzen",
     "notApplicable": "Nicht zutreffend",
     "addReviewFlag": "Prüfkennzeichen hinzufügen",
+    "distributorClicks": "Distributor-Klicks",
     "taxonomyNav": "Taxonomie",
     "taxonomy": "Digikey-Taxonomie",
     "taxonomyDescription": "Digikey-Produktkategorien mit unterstützten Bauteilfamilien abgeglichen.",
@@ -487,6 +488,17 @@
     "analysisExample_scoreDistribution": "Anomalien in der Übereinstimmungsverteilung — bimodale oder verzerrte Ergebnisse",
     "analysisExample_dataSourceQuality": "Datenquellenqualitätsvergleich — Unterschiede zwischen Digikey- und Testdaten",
     "analysisError": "Analyse fehlgeschlagen. Bitte versuchen Sie es erneut."
+  },
+  "adminDistributorClicks": {
+    "date": "Datum",
+    "user": "Benutzer",
+    "mpn": "MPN",
+    "manufacturer": "Hersteller",
+    "distributor": "Distributor",
+    "noEntries": "Noch keine Distributor-Klick-Daten.",
+    "noEntriesFiltered": "Keine Klicks entsprechen den aktuellen Filtern.",
+    "searchPlaceholder": "MPN, Hersteller, Benutzer suchen…",
+    "filterAll": "Alle"
   },
   "contextQ": {
     "12": {

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import type { ManufacturerCrossReference } from '@/lib/types';
+import { mpnLookupCandidates } from './mpnNormalizer';
 
 /**
  * Manufacturer cross-reference lookup service.
@@ -15,15 +16,19 @@ export function invalidateMfrCrossRefCache(): void {
 }
 
 /**
- * Fetch manufacturer-certified cross-references for a given original MPN.
- * Returns xref (replacement) parts that manufacturers have certified as equivalents.
+ * Fetch manufacturer-certified cross-references for a given MPN.
+ *
+ * Searches both directions: rows where the MPN is the `original_mpn` and
+ * rows where it is the `xref_mpn`. For reverse matches, the row's fields
+ * are swapped so the consumer always sees the "other side" as `xref_mpn`
+ * (the recommendation to surface). Pin-to-pin and functional equivalence
+ * are symmetric, so reverse matches are semantically valid.
  */
 export async function fetchManufacturerCrossRefs(
   originalMpn: string
 ): Promise<ManufacturerCrossReference[]> {
   const key = originalMpn.toLowerCase();
 
-  // Check cache
   const cached = cache.get(key);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return cached.data;
@@ -31,10 +36,16 @@ export async function fetchManufacturerCrossRefs(
 
   try {
     const supabase = await createClient();
+    const candidates = mpnLookupCandidates(key);
+    const candidatesSet = new Set(candidates.map(c => c.toLowerCase()));
+    const orFilter = candidates
+      .flatMap(c => [`original_mpn.ilike.${c}`, `xref_mpn.ilike.${c}`])
+      .join(',');
+
     const { data, error } = await supabase
       .from('manufacturer_cross_references')
       .select('*')
-      .ilike('original_mpn', key)
+      .or(orFilter)
       .eq('is_active', true);
 
     if (error) {
@@ -42,7 +53,26 @@ export async function fetchManufacturerCrossRefs(
       return [];
     }
 
-    const results = (data || []) as ManufacturerCrossReference[];
+    const rows = (data || []) as ManufacturerCrossReference[];
+    console.log(
+      `[mfr-xref] lookup="${originalMpn}" candidates=[${candidates.join(', ')}] matched=${rows.length}`,
+    );
+    const results: ManufacturerCrossReference[] = rows.map((row) => {
+      const origLower = row.original_mpn.toLowerCase();
+      const forwardMatch = candidatesSet.has(origLower);
+      if (forwardMatch) return row;
+      // Reverse match — swap so xref_mpn carries the recommendation MPN.
+      // xref_description described the original xref side and no longer applies.
+      return {
+        ...row,
+        original_mpn: row.xref_mpn,
+        original_manufacturer: row.xref_manufacturer,
+        xref_mpn: row.original_mpn,
+        xref_manufacturer: row.original_manufacturer,
+        xref_description: undefined,
+      };
+    });
+
     cache.set(key, { data: results, ts: Date.now() });
     return results;
   } catch (err) {

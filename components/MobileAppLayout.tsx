@@ -108,10 +108,10 @@ export default function MobileAppLayout({
 }: MobileAppLayoutProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [badges, setBadges] = useState<Record<number, boolean>>({});
-  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('overview');
   const prevTabCountRef = useRef(1);
   // Reset attributes tab when source part changes
-  useEffect(() => { setAttributesTab('specs'); }, [sourceAttributes?.part.mpn]);
+  useEffect(() => { setAttributesTab('overview'); }, [sourceAttributes?.part.mpn]);
 
   // Build available tabs based on phase
   const tabs: MobileTab[] = useMemo(() => {
@@ -255,6 +255,7 @@ export default function MobileAppLayout({
               title="Source Part"
               activeTab={attributesTab}
               onTabChange={setAttributesTab}
+              allRecommendations={recommendations}
             />
           </Box>
         )}
