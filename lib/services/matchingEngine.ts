@@ -134,12 +134,15 @@ function evaluateIdentity(
     };
   }
 
-  // Compare numeric values if available, otherwise string comparison
+  // Compare numeric values if available, otherwise string comparison.
+  // Relative tolerance guards against floating-point rounding when the same
+  // real-world value is encoded in different SI prefixes (e.g., "0.33µF" vs "330000pF").
   let match = false;
   const srcNum = getNumeric(sourceParam);
   const candNum = getNumeric(candidateParam);
   if (srcNum !== null && candNum !== null) {
-    match = srcNum === candNum;
+    const denom = Math.max(Math.abs(srcNum), Math.abs(candNum), 1e-30);
+    match = Math.abs(srcNum - candNum) / denom < 1e-6;
   } else {
     match = normalize(sourceValue) === normalize(candidateValue);
   }
