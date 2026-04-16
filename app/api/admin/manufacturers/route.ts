@@ -37,6 +37,7 @@ interface MfrRow {
   id: number;
   enabled: boolean;
   website_url: string | null;
+  updated_at: string;
 }
 
 interface StatsRow {
@@ -44,6 +45,13 @@ interface StatsRow {
   family_id: string | null;
   product_count: number;
   param_keys: string[] | null;
+  max_updated_at: string | null;
+}
+
+function maxIso(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
 }
 
 async function computeStats(): Promise<object> {
@@ -52,7 +60,7 @@ async function computeStats(): Promise<object> {
   const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
     supabase
       .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, slug, id, enabled, website_url')
+      .select('name_display, name_en, name_zh, slug, id, enabled, website_url, updated_at')
       .order('name_en'),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
@@ -61,9 +69,11 @@ async function computeStats(): Promise<object> {
   const statsErr = rpcResult.error;
 
   const crossRefCounts = new Map<string, number>();
+  const crossRefLastUpload = new Map<string, string>();
   if (xrefCounts) {
-    for (const row of xrefCounts as { manufacturer_slug: string; count: number }[]) {
+    for (const row of xrefCounts as { manufacturer_slug: string; count: number; max_uploaded_at: string | null }[]) {
       crossRefCounts.set(row.manufacturer_slug, Number(row.count));
+      if (row.max_uploaded_at) crossRefLastUpload.set(row.manufacturer_slug, row.max_uploaded_at);
     }
   }
 
@@ -73,20 +83,27 @@ async function computeStats(): Promise<object> {
 
   if (statsErr) {
     console.warn('get_manufacturer_product_stats RPC failed:', statsErr.message);
-    const result = (mfrRows ?? []).map((m: MfrRow) => ({
-      id: m.id,
-      slug: m.slug,
-      nameEn: m.name_en,
-      nameZh: m.name_zh,
-      nameDisplay: m.name_display,
-      enabled: m.enabled,
-      websiteUrl: m.website_url,
-      productCount: 0,
-      scorableCount: 0,
-      families: [] as string[],
-      coveragePct: 0,
-      crossRefCount: crossRefCounts.get(m.slug) || 0,
-    }));
+    const result = (mfrRows ?? []).map((m: MfrRow) => {
+      const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
+      return {
+        id: m.id,
+        slug: m.slug,
+        nameEn: m.name_en,
+        nameZh: m.name_zh,
+        nameDisplay: m.name_display,
+        enabled: m.enabled,
+        websiteUrl: m.website_url,
+        productCount: 0,
+        scorableCount: 0,
+        families: [] as string[],
+        coveragePct: 0,
+        crossRefCount: crossRefCounts.get(m.slug) || 0,
+        lastProductUpdate: null as string | null,
+        lastProfileUpdate: m.updated_at,
+        lastCrossRefUpdate: xrefTs,
+        lastModified: maxIso(m.updated_at, xrefTs),
+      };
+    });
     return {
       manufacturers: result,
       summary: { totalManufacturers: result.length, withProducts: 0, enabledWithProducts: 0, totalProducts: 0, scorableProducts: 0, familiesCovered: 0 },
@@ -100,6 +117,7 @@ async function computeStats(): Promise<object> {
     productCount: number;
     scorableCount: number;
     families: Set<string>;
+    lastProductUpdate: string | null;
   }>();
   const allFamilies = new Set<string>();
 
@@ -115,10 +133,11 @@ async function computeStats(): Promise<object> {
 
     let agg = productAgg.get(row.manufacturer);
     if (!agg) {
-      agg = { productCount: 0, scorableCount: 0, families: new Set() };
+      agg = { productCount: 0, scorableCount: 0, families: new Set(), lastProductUpdate: null };
       productAgg.set(row.manufacturer, agg);
     }
     agg.productCount += count;
+    agg.lastProductUpdate = maxIso(agg.lastProductUpdate, row.max_updated_at);
 
     if (row.family_id) {
       agg.scorableCount += count;
@@ -152,6 +171,8 @@ async function computeStats(): Promise<object> {
   const result = manufacturers.map((m) => {
     const agg = productAgg.get(m.name_display) || productAgg.get(m.name_en);
     const cov = mfrCoverage.get(m.name_display) || mfrCoverage.get(m.name_en);
+    const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
+    const productTs = agg?.lastProductUpdate ?? null;
     return {
       id: m.id,
       slug: m.slug,
@@ -167,6 +188,10 @@ async function computeStats(): Promise<object> {
         ? Math.round((cov.totalCovered / cov.totalRules) * 100)
         : 0,
       crossRefCount: crossRefCounts.get(m.slug) || 0,
+      lastProductUpdate: productTs,
+      lastProfileUpdate: m.updated_at,
+      lastCrossRefUpdate: xrefTs,
+      lastModified: maxIso(maxIso(productTs, m.updated_at), xrefTs),
     };
   });
 

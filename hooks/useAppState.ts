@@ -19,6 +19,7 @@ import {
   chatWithOrchestrator,
   enrichWithFCBatch,
 } from '@/lib/api';
+import { sortRecommendationsForDisplay } from '@/components/RecommendationsPanel';
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
 import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
@@ -39,6 +40,7 @@ interface AppState {
   selectedRecommendation: XrefRecommendation | null;
   comparisonAttributes: PartAttributes | null;
   llmAvailable: boolean | null; // null = not yet checked
+  isEnrichingFC: boolean; // true while FindChips batch enrichment is in flight
 }
 
 const initialState: AppState = {
@@ -55,6 +57,7 @@ const initialState: AppState = {
   selectedRecommendation: null,
   comparisonAttributes: null,
   llmAvailable: null,
+  isEnrichingFC: false,
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -150,29 +153,52 @@ export function useAppState() {
     return () => timers.forEach(clearTimeout);
   }, [setStatus]);
 
-  /** Background FindChips enrichment — merges N-distributor pricing/lifecycle into displayed recs */
+  /** Background FindChips enrichment — merges N-distributor pricing/lifecycle into displayed recs.
+   *  Sorts recs by display priority (MFR Certified → 3rd Party → Logic Driven) so the first chunk
+   *  contains the MPNs the user sees at the top of the list. Fires chunks in parallel and merges
+   *  each as it arrives. Priority chunk is smaller (30) so it finishes quickly even under rate
+   *  limiting; remaining 50-MPN chunks fill in after. */
   const triggerFCEnrichment = useCallback(
     (recs: XrefRecommendation[], signal: AbortSignal) => {
       if (recs.length === 0) return;
-      const mpns = recs.map(r => r.part.mpn);
-      enrichWithFCBatch(mpns).then((fcData) => {
-        if (signal.aborted || Object.keys(fcData).length === 0) return;
-        setState((prev) => {
-          const enriched = prev.recommendations.map(rec => {
-            const data = fcData[rec.part.mpn.toLowerCase()];
-            if (!data) return rec;
-            return {
-              ...rec,
-              part: {
-                ...rec.part,
-                supplierQuotes: data.quotes.length > 0 ? data.quotes : rec.part.supplierQuotes,
-                lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
-                complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
-              },
-            };
+      const PRIORITY_CHUNK = 30;
+      const CHUNK_SIZE = 50;
+      const sortedRecs = sortRecommendationsForDisplay(recs);
+      const mpns = sortedRecs.map(r => r.part.mpn);
+      const chunks: string[][] = [];
+      if (mpns.length > 0) chunks.push(mpns.slice(0, PRIORITY_CHUNK));
+      for (let i = PRIORITY_CHUNK; i < mpns.length; i += CHUNK_SIZE) {
+        chunks.push(mpns.slice(i, i + CHUNK_SIZE));
+      }
+
+      setState((prev) => ({ ...prev, isEnrichingFC: true }));
+
+      const chunkPromises = chunks.map(chunk =>
+        enrichWithFCBatch(chunk).then((fcData) => {
+          if (signal.aborted || Object.keys(fcData).length === 0) return;
+          setState((prev) => {
+            const enriched = prev.recommendations.map(rec => {
+              const data = fcData[rec.part.mpn.toLowerCase()];
+              if (!data) return rec;
+              return {
+                ...rec,
+                part: {
+                  ...rec.part,
+                  supplierQuotes: data.quotes.length > 0 ? data.quotes : rec.part.supplierQuotes,
+                  lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
+                  complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
+                },
+              };
+            });
+            return { ...prev, recommendations: enriched, allRecommendations: enriched };
           });
-          return { ...prev, recommendations: enriched, allRecommendations: enriched };
-        });
+        }).catch(() => { /* individual chunk failures don't abort the batch */ })
+      );
+
+      Promise.all(chunkPromises).finally(() => {
+        if (!signal.aborted) {
+          setState((prev) => ({ ...prev, isEnrichingFC: false }));
+        }
       });
     },
     []
@@ -220,7 +246,7 @@ export function useAppState() {
             if (!signal.aborted) setStatus('');
           });
 
-        // Background: Mouser candidate enrichment (pricing/lifecycle)
+        // Background: FindChips candidate enrichment (pricing / lifecycle / risk).
         triggerFCEnrichment(recs, signal);
       } else {
         setStatus('');
@@ -929,7 +955,13 @@ export function useAppState() {
     if (TRANSIENT_PHASES.includes(phase)) {
       // Determine the best safe phase based on available data
       if (phase === 'finding-matches') {
-        phase = snapshot.recommendations.length > 0 ? 'viewing' : 'viewing';
+        // Recommendations may not have flushed before the snapshot was written.
+        // If we have any, drop the user back into the results view; otherwise
+        // park them at the action choices for the source part (or idle if even
+        // the source attributes never landed).
+        phase = snapshot.recommendations.length > 0
+          ? 'viewing'
+          : snapshot.sourceAttributes ? 'awaiting-action' : 'idle';
       } else if (phase === 'loading-attributes') {
         phase = snapshot.sourceAttributes ? 'viewing' : snapshot.sourcePart ? 'resolving' : 'idle';
       } else {
@@ -970,6 +1002,7 @@ export function useAppState() {
       selectedRecommendation: snapshot.selectedRecommendation,
       comparisonAttributes: snapshot.comparisonAttributes,
       llmAvailable: llmWasUsed ? true : null,
+      isEnrichingFC: false,
     });
   }, []);
 

@@ -33,9 +33,26 @@ const PAGE_SIZE = 25;
 interface CrossReferencesTabProps {
   slug: string;
   manufacturerName: string;
+  lastUploadedAt?: string | null;
 }
 
-export default function CrossReferencesTab({ slug, manufacturerName }: CrossReferencesTabProps) {
+function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  const diffMo = Math.round(diffDay / 30);
+  return `${diffMo}mo ago`;
+}
+
+export default function CrossReferencesTab({ slug, manufacturerName, lastUploadedAt }: CrossReferencesTabProps) {
   // Existing cross-refs state
   const [crossRefs, setCrossRefs] = useState<ManufacturerCrossReference[]>([]);
   const [total, setTotal] = useState(0);
@@ -213,18 +230,31 @@ export default function CrossReferencesTab({ slug, manufacturerName }: CrossRefe
       )}
 
       {/* Search + table */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, gap: 2 }}>
         <Typography variant="subtitle2" color="text.secondary">
           {total > 0 ? `${total} cross-reference${total !== 1 ? 's' : ''}` : search ? 'No results' : 'No cross-references uploaded yet'}
         </Typography>
-        {(total > 0 || search) && (
-          <TextField
-            size="small"
-            placeholder="Search MPN..."
-            onChange={(e) => handleSearchChange(e.target.value)}
-            sx={{ width: 240, '& input': { fontSize: '0.8rem' } }}
-          />
-        )}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {lastUploadedAt ? (
+            <Tooltip title={new Date(lastUploadedAt).toLocaleString()} arrow>
+              <Typography variant="caption" color="text.secondary">
+                Last uploaded: {formatRelativeTime(lastUploadedAt)}
+              </Typography>
+            </Tooltip>
+          ) : (
+            <Typography variant="caption" color="text.disabled">
+              Last uploaded: never
+            </Typography>
+          )}
+          {(total > 0 || search) && (
+            <TextField
+              size="small"
+              placeholder="Search MPN..."
+              onChange={(e) => handleSearchChange(e.target.value)}
+              sx={{ width: 240, '& input': { fontSize: '0.8rem' } }}
+            />
+          )}
+        </Box>
       </Box>
 
       {loading && crossRefs.length === 0 ? (

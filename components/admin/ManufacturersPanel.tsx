@@ -41,6 +41,10 @@ interface MfrListItem {
   families: string[];
   coveragePct: number;
   crossRefCount: number;
+  lastProductUpdate: string | null;
+  lastProfileUpdate: string | null;
+  lastCrossRefUpdate: string | null;
+  lastModified: string | null;
 }
 
 function formatRelativeTime(iso: string | null | undefined): string {
@@ -72,7 +76,7 @@ interface MfrListData {
   };
 }
 
-type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'crossRefCount' | 'families';
+type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'crossRefCount' | 'families' | 'lastModified';
 type SortDir = 'asc' | 'desc';
 
 export default function ManufacturersPanel() {
@@ -176,6 +180,11 @@ export default function ManufacturersPanel() {
         case 'coveragePct': return dir * (a.coveragePct - b.coveragePct);
         case 'crossRefCount': return dir * (a.crossRefCount - b.crossRefCount);
         case 'families': return dir * (a.families.length - b.families.length);
+        case 'lastModified': {
+          const av = a.lastModified ?? '';
+          const bv = b.lastModified ?? '';
+          return dir * av.localeCompare(bv);
+        }
         default: return 0;
       }
     });
@@ -283,6 +292,11 @@ export default function ManufacturersPanel() {
                             {t('admin.atlasFamiliesCol')}
                           </TableSortLabel>
                         </TableCell>
+                        <TableCell sortDirection={sortKey === 'lastModified' ? sortDir : false}>
+                          <TableSortLabel active={sortKey === 'lastModified'} direction={sortKey === 'lastModified' ? sortDir : 'desc'} onClick={() => handleSort('lastModified')}>
+                            Last Modified
+                          </TableSortLabel>
+                        </TableCell>
                         <TableCell align="center" sx={{ width: 60 }}>
                           {t('admin.atlasEnabledCol', 'Enabled')}
                         </TableCell>
@@ -337,6 +351,17 @@ export default function ManufacturersPanel() {
                                 <Chip key={f} label={f} size="small" sx={{ height: 22, fontSize: '0.72rem' }} />
                               ))}
                             </Box>
+                          </TableCell>
+                          <TableCell>
+                            {mfr.lastModified ? (
+                              <Tooltip title={new Date(mfr.lastModified).toLocaleString()} arrow>
+                                <Typography variant="caption" color="text.secondary">
+                                  {formatRelativeTime(mfr.lastModified)}
+                                </Typography>
+                              </Tooltip>
+                            ) : (
+                              <Typography variant="caption" sx={{ opacity: 0.3 }}>{'\u2014'}</Typography>
+                            )}
                           </TableCell>
                           <TableCell align="center" sx={{ width: 60 }}>
                             <Switch

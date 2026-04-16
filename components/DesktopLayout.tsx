@@ -79,6 +79,7 @@ export interface DesktopLayoutProps {
   showAttributesPanel: boolean;
   showRightPanel: boolean;
   isLoadingRecs: boolean;
+  isEnrichingFC: boolean;
   // Manufacturer profile
   chatCollapsed: boolean;
   mfrOpen: boolean;
@@ -118,7 +119,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
     recommendations, selectedRecommendation, conversationId,
-    showAttributesPanel, showRightPanel, isLoadingRecs,
+    showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
     chatCollapsed, mfrOpen, mfrProfile,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
@@ -290,6 +291,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               recommendations={recommendations}
               onSelect={onSelectRecommendation}
               onManufacturerClick={onManufacturerClick}
+              isEnrichingFC={isEnrichingFC}
             />
           ) : showRightPanel ? (
             <Box

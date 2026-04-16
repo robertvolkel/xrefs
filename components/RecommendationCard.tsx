@@ -1,9 +1,9 @@
 'use client';
 import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, Stack, Box } from '@mui/material';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
+import { computePriceRange, formatPrice } from './AttributesTabContent';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -12,6 +12,7 @@ interface RecommendationCardProps {
   showCommercial?: boolean;
   isPreferred?: boolean;
   onTogglePreferred?: () => void;
+  isEnrichingFC?: boolean;
 }
 
 const THIRD_PARTY_LABELS: Record<string, string> = {
@@ -26,7 +27,7 @@ function formatThirdPartyTooltip(sources: CertificationSource[]): string {
   return thirdParty.map(s => THIRD_PARTY_LABELS[s] || s).join(', ');
 }
 
-export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred }: RecommendationCardProps) {
+export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred, isEnrichingFC }: RecommendationCardProps) {
   const { part, matchDetails, dataSource, certifiedBy, enrichedFrom } = recommendation;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
@@ -75,16 +76,6 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                     </>
                   );
                 })()}
-                {part.datasheetUrl && (
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); window.open(part.datasheetUrl, '_blank'); }}
-                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
-                )}
                 {onTogglePreferred && (
                   <Box
                     component="span"
@@ -142,21 +133,49 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   ].filter(Boolean).join(', ')}
                 </Typography>
               )}
-              {showCommercial && (part.unitPrice != null || part.quantityAvailable != null || part.supplierQuotes?.length) && (
-                <Box sx={{ mt: 0.25 }}>
-                  {part.supplierQuotes && part.supplierQuotes.length > 0 ? (
-                    part.supplierQuotes.map(q => (
-                      <Typography key={q.supplier} variant="body2" color="text.secondary" noWrap>
-                        {q.supplier === 'digikey' ? 'Digikey' : q.supplier === 'mouser' ? 'Mouser' : q.supplier}: {q.unitPrice != null ? `$${q.unitPrice.toFixed(2)}` : '—'} · {q.quantityAvailable != null ? `${q.quantityAvailable.toLocaleString()} in stock` : '—'}
-                      </Typography>
-                    ))
-                  ) : (
-                    <Typography variant="body2" color="text.secondary" noWrap>
-                      Digikey: {part.unitPrice != null ? `$${part.unitPrice.toFixed(2)}` : '—'} · {part.quantityAvailable != null ? `${part.quantityAvailable.toLocaleString()} in stock` : '—'}
+              {showCommercial && (() => {
+                const quotes = part.supplierQuotes ?? [];
+                const distributorCount = quotes.length;
+                const priceRange = computePriceRange(quotes);
+                const totalStock = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
+
+                if (distributorCount === 0) {
+                  return (
+                    <Typography
+                      variant="body2"
+                      sx={{ mt: 0.5, fontSize: '0.72rem', color: 'text.disabled', fontStyle: isEnrichingFC ? 'italic' : 'normal' }}
+                      noWrap
+                    >
+                      {isEnrichingFC ? 'Loading pricing…' : 'No distributor data'}
                     </Typography>
-                  )}
-                </Box>
-              )}
+                  );
+                }
+
+                const priceText = priceRange
+                  ? priceRange.min === priceRange.max
+                    ? formatPrice(priceRange.min, priceRange.currency)
+                    : `${formatPrice(priceRange.min, priceRange.currency)}–${formatPrice(priceRange.max, priceRange.currency)}`
+                  : '—';
+
+                return (
+                  <Box sx={{ mt: 0.5 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontSize: '0.78rem', color: 'common.white' }}
+                      noWrap
+                    >
+                      Price Range: {priceText} ({distributorCount} Distributor{distributorCount === 1 ? '' : 's'})
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontSize: '0.78rem', color: 'common.white' }}
+                      noWrap
+                    >
+                      Total Stock: {totalStock.toLocaleString()}
+                    </Typography>
+                  </Box>
+                );
+              })()}
               {showSummary && (
                 <>
                   <Divider sx={{ my: 1, opacity: 0.4 }} />

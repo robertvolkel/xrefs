@@ -112,7 +112,7 @@ function computeTargetPrice(quotes: SupplierQuote[] | undefined): { targetPrice:
 }
 
 /** Flatten min/max unitPrice across every priceBreak of every distributor */
-function computePriceRange(quotes: SupplierQuote[] | undefined): { min: number; max: number; currency: string } | null {
+export function computePriceRange(quotes: SupplierQuote[] | undefined): { min: number; max: number; currency: string } | null {
   if (!quotes || quotes.length === 0) return null;
   const all: Array<{ price: number; currency: string }> = [];
   for (const q of quotes) {
@@ -427,7 +427,7 @@ const SUPPLIER_DISPLAY: Record<string, string> = {
 };
 
 /** Format price with currency symbol */
-function formatPrice(price: number, currency?: string): string {
+export function formatPrice(price: number, currency?: string): string {
   const cur = currency ?? 'USD';
   try {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(price);

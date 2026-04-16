@@ -134,7 +134,9 @@ export async function getRecommendationsWithContext(
   });
 }
 
-/** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs */
+/** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs.
+ *  Caller must keep batch size ≤ 50 (server cap). Callers like `triggerFCEnrichment` in
+ *  useAppState chunk larger lists and fire this in parallel per chunk for incremental rendering. */
 export async function enrichWithFCBatch(
   mpns: string[],
 ): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {

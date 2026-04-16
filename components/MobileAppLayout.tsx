@@ -64,6 +64,7 @@ interface MobileAppLayoutProps {
   showAttributesPanel: boolean;
   showRightPanel: boolean;
   isLoadingRecs: boolean;
+  isEnrichingFC: boolean;
   // Handlers
   onSearch: (query: string) => void;
   onConfirm: (part: PartSummary) => void;
@@ -92,6 +93,7 @@ export default function MobileAppLayout({
   showAttributesPanel,
   showRightPanel,
   isLoadingRecs,
+  isEnrichingFC,
   onSearch,
   onConfirm,
   onReject,
@@ -289,6 +291,7 @@ export default function MobileAppLayout({
                 recommendations={recommendations}
                 onSelect={onSelectRecommendation}
                 onManufacturerClick={onManufacturerClick}
+                isEnrichingFC={isEnrichingFC}
               />
             ) : (
               <Box

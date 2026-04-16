@@ -16,6 +16,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Tooltip,
   Typography,
@@ -46,6 +47,11 @@ interface MfrDetailData {
     scorableProducts: number;
     coveragePct: number;
   };
+  timestamps?: {
+    products: string | null;
+    profile: string | null;
+    crossRefs: string | null;
+  };
   familyBreakdown: {
     familyId: string | null;
     category: string;
@@ -55,6 +61,39 @@ interface MfrDetailData {
     coveragePct: number;
   }[];
   familyNames: Record<string, string>;
+}
+
+function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  const diffMo = Math.round(diffDay / 30);
+  return `${diffMo}mo ago`;
+}
+
+function TimestampLabel({ label, iso }: { label: string; iso: string | null | undefined }) {
+  if (!iso) {
+    return (
+      <Typography variant="caption" color="text.disabled">
+        {label}: never
+      </Typography>
+    );
+  }
+  return (
+    <Tooltip title={new Date(iso).toLocaleString()} arrow>
+      <Typography variant="caption" color="text.secondary">
+        {label}: {formatRelativeTime(iso)}
+      </Typography>
+    </Tooltip>
+  );
 }
 
 interface ProductRow {
@@ -89,6 +128,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [productSearch, setProductSearch] = useState('');
   const [productPage, setProductPage] = useState(1);
   const [productFamily, setProductFamily] = useState<string | null>(null);
+  const [productSort, setProductSort] = useState<'coverage' | null>(null);
+  const [productSortDir, setProductSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Explorer drawer state (for product detail)
   const [explorerOpen, setExplorerOpen] = useState(false);
@@ -141,13 +182,27 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
     const params = new URLSearchParams({ page: String(productPage), limit: '50' });
     if (productSearch) params.set('search', productSearch);
     if (productFamily) params.set('family', productFamily);
+    if (productSort) {
+      params.set('sort', productSort);
+      params.set('dir', productSortDir);
+    }
 
     fetch(`/api/admin/manufacturers/${slug}/products?${params}`)
       .then((r) => r.json())
       .then(setProducts)
       .catch(() => {})
       .finally(() => setProductsLoading(false));
-  }, [slug, productPage, productSearch, productFamily]);
+  }, [slug, productPage, productSearch, productFamily, productSort, productSortDir]);
+
+  const handleCoverageSort = useCallback(() => {
+    if (productSort !== 'coverage') {
+      setProductSort('coverage');
+      setProductSortDir('desc');
+    } else {
+      setProductSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    }
+    setProductPage(1);
+  }, [productSort]);
 
   useEffect(() => {
     if (activeTab === 0) fetchProducts();
@@ -280,9 +335,12 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
         {/* ── Profile Tab ── */}
         {activeTab === 4 && (
           <Box sx={{ maxWidth: 640 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              {`${stats.totalProducts} products · ${stats.scorableProducts} scorable · ${stats.coveragePct}% avg coverage`}
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                {`${stats.totalProducts} products · ${stats.scorableProducts} scorable · ${stats.coveragePct}% avg coverage`}
+              </Typography>
+              <TimestampLabel label="Last updated" iso={data.timestamps?.profile} />
+            </Box>
 
             {mfr.summary ? (
               <Box sx={{ mb: 3 }}>
@@ -342,7 +400,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
         {/* ── Products Tab ── */}
         {activeTab === 0 && (
           <Box>
-            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+            <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
               <TextField
                 size="small"
                 placeholder="Search by MPN or description..."
@@ -359,6 +417,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                 }}
                 sx={{ width: 320 }}
               />
+              <Box sx={{ flex: 1 }} />
+              <TimestampLabel label="Last updated" iso={data.timestamps?.products} />
             </Box>
 
             {productsLoading ? (
@@ -374,7 +434,15 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                         <TableCell>Family</TableCell>
                         <TableCell>Category</TableCell>
                         <TableCell>Status</TableCell>
-                        <TableCell align="right">Coverage</TableCell>
+                        <TableCell align="right" sortDirection={productSort === 'coverage' ? productSortDir : false}>
+                          <TableSortLabel
+                            active={productSort === 'coverage'}
+                            direction={productSort === 'coverage' ? productSortDir : 'desc'}
+                            onClick={handleCoverageSort}
+                          >
+                            Coverage
+                          </TableSortLabel>
+                        </TableCell>
                         <TableCell sx={{ width: 40 }} />
                       </TableRow>
                     </TableHead>
@@ -561,7 +629,11 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
 
         {/* ── Cross-References Tab ── */}
         {activeTab === 3 && (
-          <CrossReferencesTab slug={slug} manufacturerName={mfr?.nameDisplay || slug} />
+          <CrossReferencesTab
+            slug={slug}
+            manufacturerName={mfr?.nameDisplay || slug}
+            lastUploadedAt={data.timestamps?.crossRefs ?? null}
+          />
         )}
 
       </Box>

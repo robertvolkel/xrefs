@@ -51,6 +51,7 @@ export default function AppShell() {
         showAttributesPanel={panels.showAttributesPanel}
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
+        isEnrichingFC={appState.isEnrichingFC}
         onSearch={appState.handleSearch}
         onConfirm={appState.handleConfirmPart}
         onReject={appState.handleRejectPart}
@@ -82,6 +83,7 @@ export default function AppShell() {
         showAttributesPanel={panels.showAttributesPanel}
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
+        isEnrichingFC={appState.isEnrichingFC}
         chatCollapsed={mfr.chatCollapsed}
         mfrOpen={mfr.mfrOpen}
         mfrProfile={mfr.mfrProfile}

@@ -16,41 +16,53 @@ interface RecommendationsPanelProps {
   loading?: boolean;
   preferredMpn?: string;
   onTogglePreferred?: (mpn: string) => void;
+  isEnrichingFC?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred }: RecommendationsPanelProps) {
+/**
+ * Display-priority sort for recommendations: MFR Certified → 3rd Party Certified → Logic Driven,
+ * then pin-to-pin > functional within category, then by match score. Exported so background
+ * enrichers (e.g. FindChips) can batch the user-visible top N first.
+ */
+export function sortRecommendationsForDisplay(
+  recommendations: XrefRecommendation[],
+  preferredMpn?: string,
+): XrefRecommendation[] {
+  const categoryPriority = (rec: XrefRecommendation): number => {
+    const cats = deriveRecommendationCategories(rec);
+    if (cats.includes('manufacturer_certified')) return 0;
+    if (cats.includes('third_party_certified')) return 1;
+    return 2;
+  };
+  const mfrEqRank = (rec: XrefRecommendation): number => {
+    if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
+    if (rec.mfrEquivalenceType === 'functional') return 1;
+    return 2;
+  };
+  const byCategoryThenScore = [...recommendations].sort((a, b) => {
+    const catDiff = categoryPriority(a) - categoryPriority(b);
+    if (catDiff !== 0) return catDiff;
+    const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
+    if (mfrDiff !== 0) return mfrDiff;
+    return b.matchPercentage - a.matchPercentage;
+  });
+  if (!preferredMpn) return byCategoryThenScore;
+  const prefIdx = byCategoryThenScore.findIndex(r => r.part.mpn === preferredMpn);
+  if (prefIdx <= 0) return byCategoryThenScore;
+  const [preferred] = byCategoryThenScore.splice(prefIdx, 1);
+  return [preferred, ...byCategoryThenScore];
+}
+
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC }: RecommendationsPanelProps) {
   const { t } = useTranslation();
-  const sorted = useMemo(() => {
-    // Category priority: MFR Certified (0) > 3rd Party Certified (1) > Logic Driven only (2)
-    const categoryPriority = (rec: XrefRecommendation): number => {
-      const cats = deriveRecommendationCategories(rec);
-      if (cats.includes('manufacturer_certified')) return 0;
-      if (cats.includes('third_party_certified')) return 1;
-      return 2;
-    };
-    // Within a category, pin-to-pin MFR certifications outrank functional ones.
-    const mfrEqRank = (rec: XrefRecommendation): number => {
-      if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
-      if (rec.mfrEquivalenceType === 'functional') return 1;
-      return 2;
-    };
-    const byCategoryThenScore = [...recommendations].sort((a, b) => {
-      const catDiff = categoryPriority(a) - categoryPriority(b);
-      if (catDiff !== 0) return catDiff;
-      const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
-      if (mfrDiff !== 0) return mfrDiff;
-      return b.matchPercentage - a.matchPercentage;
-    });
-    if (!preferredMpn) return byCategoryThenScore;
-    const prefIdx = byCategoryThenScore.findIndex(r => r.part.mpn === preferredMpn);
-    if (prefIdx <= 0) return byCategoryThenScore; // Already first or not found
-    const [preferred] = byCategoryThenScore.splice(prefIdx, 1);
-    return [preferred, ...byCategoryThenScore];
-  }, [recommendations, preferredMpn]);
+  const sorted = useMemo(
+    () => sortRecommendationsForDisplay(recommendations, preferredMpn),
+    [recommendations, preferredMpn],
+  );
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedMfr, setSelectedMfr] = useState('');
   const [showCnOnly, setShowCnOnly] = useState(false);
-  const [showCommercial, setShowCommercial] = useState(false);
+  const [showCommercial, setShowCommercial] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
 
@@ -328,6 +340,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                 onTogglePreferred={onTogglePreferred ? () => {
                   onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
                 } : undefined}
+                isEnrichingFC={isEnrichingFC}
               />
             </Box>
           );
