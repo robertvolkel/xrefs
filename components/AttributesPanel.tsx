@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react';
 import {
   Box,
   Link,
+  Tooltip,
   Typography,
   Table,
   TableBody,
@@ -16,12 +17,13 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes } from '@/lib/types';
+import { PartAttributes, XrefRecommendation } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
-import { pillGroupSx, RiskContent, CommercialContent } from './AttributesTabContent';
+import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -29,9 +31,10 @@ interface AttributesPanelProps {
   title: string;
   activeTab: AttributesTab;
   onTabChange: (tab: AttributesTab) => void;
+  allRecommendations?: XrefRecommendation[];
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -83,6 +86,18 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
               {attributes.part.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
+              {attributes.part.datasheetUrl && (
+                <Tooltip title="View datasheet" arrow>
+                  <Box
+                    component="span"
+                    role="link"
+                    onClick={() => window.open(attributes.part.datasheetUrl, '_blank')}
+                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
+                  >
+                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
+                  </Box>
+                </Tooltip>
+              )}
             </Stack>
             <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
               {attributes.part.manufacturer}
@@ -95,8 +110,8 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
               size="small"
               sx={pillGroupSx}
             >
+              <ToggleButton value="overview">{t('attributes.tabOverview')}</ToggleButton>
               <ToggleButton value="specs">{t('attributes.tabSpecs')}</ToggleButton>
-              <ToggleButton value="risk">{t('attributes.tabRisk')}</ToggleButton>
               <ToggleButton value="commercial">{t('attributes.tabCommercial')}</ToggleButton>
             </ToggleButtonGroup>
           </>
@@ -217,8 +232,13 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
         </Box>
       )}
 
-      {activeTab === 'risk' && attributes && (
-        <RiskContent part={attributes.part} t={t} dataSource={attributes.dataSource as 'digikey' | 'atlas'} />
+      {activeTab === 'overview' && attributes && (
+        <OverviewContent
+          part={attributes.part}
+          t={t}
+          allRecommendations={allRecommendations}
+          dataSource={attributes.dataSource as 'digikey' | 'atlas' | 'partsio'}
+        />
       )}
 
       {activeTab === 'commercial' && attributes && (

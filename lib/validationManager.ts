@@ -96,12 +96,22 @@ export async function startBackgroundValidation(
     abortController,
   };
 
-  const items = initialRows.map((r) => ({
+  // Only validate electronic rows (undefined partType treated as electronic)
+  const electronicRows = initialRows.filter(r => !r.partType || r.partType === 'electronic');
+  const items = electronicRows.map((r) => ({
     rowIndex: r.rowIndex,
     mpn: r.rawMpn,
     manufacturer: r.rawManufacturer || undefined,
     description: r.rawDescription || undefined,
   }));
+
+  // If no electronic rows to validate, complete immediately
+  if (items.length === 0) {
+    active.done = true;
+    active.progress = 1;
+    notify();
+    return;
+  }
 
   try {
     const stream = await validatePartsList(items, currency, abortController.signal);
@@ -131,6 +141,8 @@ export async function startBackgroundValidation(
             active.rows[idx] = {
               ...active.rows[idx],
               status: item.status,
+              // Auto-classify as electronic when catalog validation resolves
+              ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
               resolvedPart: item.resolvedPart,
               sourceAttributes: item.sourceAttributes,
               suggestedReplacement: item.suggestedReplacement,

@@ -130,8 +130,8 @@
     "searchCount": "{{filtered}} von {{total}} Bauteilen",
     "notifications": {
       "validationErrors": "{{count}} Bauteile konnten nicht aufgelöst werden — Datenquelle möglicherweise nicht verfügbar",
-      "mouserUnavailable": "Mouser-Preise nicht verfügbar — API möglicherweise ausgefallen oder ratenbegrenzt",
-      "mouserLoaded": "Mouser-Preise für {{count}} Bauteile geladen",
+      "fcUnavailable": "Preisdaten nicht verfügbar — FindChips-API möglicherweise ausgefallen oder ratenbegrenzt",
+      "fcLoaded": "Preisdaten für {{count}} Bauteile geladen",
       "someNotFound": "{{count}} Bauteile konnten in keiner Datenquelle gefunden werden",
       "retry": "Wiederholen"
     }
@@ -155,6 +155,15 @@
     "resolved": "Aufgelöst",
     "notFound": "Nicht gefunden",
     "error": "Fehler"
+  },
+  "partType": {
+    "electronic": "Elektronisch",
+    "mechanical": "Mechanisch",
+    "pcb": "Leiterplatte",
+    "custom": "Sonderteil",
+    "other": "Sonstiges",
+    "setPartType": "Typ setzen",
+    "label": "Typ"
   },
   "rowActions": {
     "refresh": "Aktualisieren",
@@ -212,8 +221,8 @@
   "attributes": {
     "parameterHeader": "Parameter",
     "valueHeader": "Wert",
+    "tabOverview": "Übersicht",
     "tabSpecs": "Spezifikationen",
-    "tabRisk": "Risiko",
     "tabCommercial": "Kommerziell",
     "noRiskData": "Keine Lebenszyklus- oder Compliance-Daten verfügbar.",
     "noCommercialData": "Keine Preisdaten verfügbar.",
@@ -291,6 +300,7 @@
     "setThreshold": "Schwellenwert setzen",
     "notApplicable": "Nicht zutreffend",
     "addReviewFlag": "Prüfkennzeichen hinzufügen",
+    "distributorClicks": "Distributor-Klicks",
     "taxonomyNav": "Taxonomie",
     "taxonomy": "Digikey-Taxonomie",
     "taxonomyDescription": "Digikey-Produktkategorien mit unterstützten Bauteilfamilien abgeglichen.",
@@ -478,6 +488,17 @@
     "analysisExample_scoreDistribution": "Anomalien in der Übereinstimmungsverteilung — bimodale oder verzerrte Ergebnisse",
     "analysisExample_dataSourceQuality": "Datenquellenqualitätsvergleich — Unterschiede zwischen Digikey- und Testdaten",
     "analysisError": "Analyse fehlgeschlagen. Bitte versuchen Sie es erneut."
+  },
+  "adminDistributorClicks": {
+    "date": "Datum",
+    "user": "Benutzer",
+    "mpn": "MPN",
+    "manufacturer": "Hersteller",
+    "distributor": "Distributor",
+    "noEntries": "Noch keine Distributor-Klick-Daten.",
+    "noEntriesFiltered": "Keine Klicks entsprechen den aktuellen Filtern.",
+    "searchPlaceholder": "MPN, Hersteller, Benutzer suchen…",
+    "filterAll": "Alle"
   },
   "contextQ": {
     "12": {

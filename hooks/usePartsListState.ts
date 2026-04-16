@@ -9,9 +9,10 @@ import {
   PartAttributes,
   BatchValidateItem,
   PartSummary,
+  PartType,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { getPartAttributes, getRecommendations, validatePartsList, enrichWithMouserBatch } from '@/lib/api';
+import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
 import {
@@ -693,6 +694,8 @@ export function usePartsListState() {
                 newRows[idx] = {
                   ...existingRow,
                   status: item.status,
+                  // Auto-classify as electronic when catalog validation resolves
+                  ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
                   resolvedPart: item.resolvedPart,
                   sourceAttributes: item.sourceAttributes,
                   suggestedReplacement,
@@ -734,6 +737,70 @@ export function usePartsListState() {
       }));
     }
   }, [state.rows]);
+
+  // ----------------------------------------------------------
+  // Set part type for rows (electronic, mechanical, pcb, custom, other)
+  // ----------------------------------------------------------
+
+  const handleSetPartType = useCallback((rowIndices: number[], partType: PartType) => {
+    if (rowIndices.length === 0) return;
+    const indexSet = new Set(rowIndices);
+    const isElectronic = partType === 'electronic';
+
+    setState(prev => {
+      const newRows = prev.rows.map(r => {
+        if (!indexSet.has(r.rowIndex)) return r;
+        if (isElectronic) {
+          // Switching to electronic: reset to pending for catalog validation
+          return {
+            ...r,
+            partType,
+            status: 'pending' as const,
+            resolvedPart: undefined,
+            sourceAttributes: undefined,
+            suggestedReplacement: undefined,
+            allRecommendations: undefined,
+            enrichedData: undefined,
+            errorMessage: undefined,
+            recommendationCount: undefined,
+            topNonFailingRecs: undefined,
+          };
+        } else {
+          // Non-electronic: resolve immediately, clear catalog data
+          return {
+            ...r,
+            partType,
+            status: 'resolved' as const,
+            resolvedPart: undefined,
+            sourceAttributes: undefined,
+            suggestedReplacement: undefined,
+            allRecommendations: undefined,
+            enrichedData: undefined,
+            errorMessage: undefined,
+            recommendationCount: undefined,
+            topNonFailingRecs: undefined,
+          };
+        }
+      });
+      return { ...prev, rows: newRows };
+    });
+
+    // Persist
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setTimeout(() => {
+        setState(prev => {
+          updatePartsListSupabase(listId, prev.rows).catch(() => {});
+          return prev;
+        });
+      }, 0);
+    }
+
+    // If switching to electronic, trigger re-validation
+    if (isElectronic) {
+      handleRefreshRows(rowIndices);
+    }
+  }, [handleRefreshRows]);
 
   // ----------------------------------------------------------
   // Delete selected rows
@@ -1031,22 +1098,23 @@ export function usePartsListState() {
   }, []);
 
   // ----------------------------------------------------------
-  // Post-validation Mouser enrichment
+  // Post-validation FindChips enrichment
   // ----------------------------------------------------------
 
-  /** Shared Mouser enrichment logic — returns { requested, enriched } counts */
-  const runMouserEnrichment = useCallback(async (): Promise<{ requested: number; enriched: number }> => {
-    const rowsNeedingMouser = state.rows.filter(r =>
+  /** Shared FC enrichment logic — returns { requested, enriched } counts */
+  const runFCEnrichment = useCallback(async (): Promise<{ requested: number; enriched: number }> => {
+    // Check for rows that have no FC-sourced quotes yet
+    const rowsNeedingFC = state.rows.filter(r =>
       r.status === 'resolved' &&
       r.enrichedData &&
       r.resolvedPart?.mpn &&
-      !r.enrichedData.supplierQuotes?.some(q => q.supplier === 'mouser')
+      !r.enrichedData.supplierQuotes?.length
     );
 
-    if (rowsNeedingMouser.length === 0) return { requested: 0, enriched: 0 };
+    if (rowsNeedingFC.length === 0) return { requested: 0, enriched: 0 };
 
-    const mpns = rowsNeedingMouser.map(r => r.resolvedPart!.mpn);
-    const results = await enrichWithMouserBatch(mpns);
+    const mpns = rowsNeedingFC.map(r => r.resolvedPart!.mpn);
+    const results = await enrichWithFCBatch(mpns);
     const enrichedCount = Object.keys(results).length;
 
     if (enrichedCount > 0) {
@@ -1055,14 +1123,14 @@ export function usePartsListState() {
           const mpnLower = row.resolvedPart?.mpn?.toLowerCase();
           if (!mpnLower || !results[mpnLower] || !row.enrichedData) return row;
 
-          const mouser = results[mpnLower];
+          const fc = results[mpnLower];
           return {
             ...row,
             enrichedData: {
               ...row.enrichedData,
-              supplierQuotes: [...(row.enrichedData.supplierQuotes ?? []), mouser.quote],
-              lifecycleInfo: [...(row.enrichedData.lifecycleInfo ?? []), ...(mouser.lifecycle ? [mouser.lifecycle] : [])],
-              complianceData: [...(row.enrichedData.complianceData ?? []), ...(mouser.compliance ? [mouser.compliance] : [])],
+              supplierQuotes: fc.quotes.length > 0 ? fc.quotes : row.enrichedData.supplierQuotes,
+              lifecycleInfo: [...(row.enrichedData.lifecycleInfo ?? []), ...(fc.lifecycle ? [fc.lifecycle] : [])],
+              complianceData: [...(row.enrichedData.complianceData ?? []), ...(fc.compliance ? [fc.compliance] : [])],
             },
           };
         });
@@ -1081,20 +1149,20 @@ export function usePartsListState() {
     return { requested: mpns.length, enriched: enrichedCount };
   }, [state.rows]);
 
-  // Progressive Mouser enrichment — runs during validation (every 10 resolved rows) + on completion
-  const mouserEnrichResultRef = useRef<{ requested: number; enriched: number } | null>(null);
-  const mouserEnrichRunningRef = useRef(false);
-  const lastMouserBatchCountRef = useRef(0);
+  // Progressive FC enrichment — runs during validation (every 10 resolved rows) + on completion
+  const fcEnrichResultRef = useRef<{ requested: number; enriched: number } | null>(null);
+  const fcEnrichRunningRef = useRef(false);
+  const lastFCBatchCountRef = useRef(0);
 
   useEffect(() => {
     // Reset tracking when validation starts
     if (state.phase === 'validating' || state.phase === 'empty') {
-      lastMouserBatchCountRef.current = 0;
-      mouserEnrichResultRef.current = null;
+      lastFCBatchCountRef.current = 0;
+      fcEnrichResultRef.current = null;
     }
 
     // Don't run if already in progress or if no rows
-    if (mouserEnrichRunningRef.current) return;
+    if (fcEnrichRunningRef.current) return;
     if (state.phase !== 'validating' && state.phase !== 'results') return;
 
     const resolvedCount = state.rows.filter(r => r.status === 'resolved' && r.enrichedData).length;
@@ -1102,33 +1170,33 @@ export function usePartsListState() {
     const batchThreshold = 10;
 
     // During validation: trigger every 10 resolved rows. On completion: trigger for remaining.
-    const newSinceLastBatch = resolvedCount - lastMouserBatchCountRef.current;
+    const newSinceLastBatch = resolvedCount - lastFCBatchCountRef.current;
     if (!isDone && newSinceLastBatch < batchThreshold) return;
     if (resolvedCount === 0) return;
 
-    mouserEnrichRunningRef.current = true;
-    lastMouserBatchCountRef.current = resolvedCount;
+    fcEnrichRunningRef.current = true;
+    lastFCBatchCountRef.current = resolvedCount;
 
-    runMouserEnrichment()
+    runFCEnrichment()
       .then(result => {
         // Accumulate results across batches
-        const prev = mouserEnrichResultRef.current;
-        mouserEnrichResultRef.current = {
+        const prev = fcEnrichResultRef.current;
+        fcEnrichResultRef.current = {
           requested: (prev?.requested ?? 0) + result.requested,
           enriched: (prev?.enriched ?? 0) + result.enriched,
         };
       })
       .catch(() => {})
-      .finally(() => { mouserEnrichRunningRef.current = false; });
-  }, [state.phase, state.rows, runMouserEnrichment]);
+      .finally(() => { fcEnrichRunningRef.current = false; });
+  }, [state.phase, state.rows, runFCEnrichment]);
 
   /** Manual retry — called from snackbar "Retry" button */
-  const handleRetryMouserEnrichment = useCallback(async () => {
-    return runMouserEnrichment();
-  }, [runMouserEnrichment]);
+  const handleRetryFCEnrichment = useCallback(async () => {
+    return runFCEnrichment();
+  }, [runFCEnrichment]);
 
   /** Get the latest Mouser enrichment result for notification logic */
-  const getMouserEnrichResult = useCallback(() => mouserEnrichResultRef.current, []);
+  const getFCEnrichResult = useCallback(() => fcEnrichResultRef.current, []);
 
   // ----------------------------------------------------------
   // Derived values
@@ -1157,12 +1225,13 @@ export function usePartsListState() {
     handleReset,
     handleUpdateListDetails,
     handleRefreshRows,
+    handleSetPartType,
     handleDeleteRows,
     handleCreateEmptyList,
     handleAddPart,
     handleCellEdit,
     handleCancelValidation,
-    handleRetryMouserEnrichment,
-    getMouserEnrichResult,
+    handleRetryFCEnrichment,
+    getFCEnrichResult,
   };
 }

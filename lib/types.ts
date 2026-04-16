@@ -129,6 +129,9 @@ export interface XrefRecommendation {
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   /** Set when candidate came from parts.io FFF/Functional Equivalent fields */
   equivalenceType?: 'fff' | 'functional';
+  /** Set when candidate came from a manufacturer cross-reference upload.
+   *  Pin-to-pin is a stronger guarantee and sorts ahead of functional. */
+  mfrEquivalenceType?: 'pin_to_pin' | 'functional';
   /** All external sources that independently verified this as a valid cross-reference */
   certifiedBy?: CertificationSource[];
   /** Secondary data source used for gap-fill enrichment */
@@ -169,7 +172,7 @@ export interface SearchResult {
 
 // ── Service Status ──────────────────────────────────────────
 
-export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'anthropic' | 'atlas';
+export type ServiceName = 'digikey' | 'partsio' | 'mouser' | 'findchips' | 'anthropic' | 'atlas';
 export type ServiceSeverity = 'degraded' | 'unavailable';
 
 export interface ServiceWarning {
@@ -677,9 +680,14 @@ export interface AtlasManufacturerSummary {
 /** Status of an individual row during batch validation */
 export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
 
+/** Classification of a BOM line item — determines whether catalog validation is attempted */
+export type PartType = 'electronic' | 'mechanical' | 'pcb' | 'custom' | 'other';
+
 // ── Multi-Supplier Commercial Data ─────────────────────────
 
-export type SupplierName = 'digikey' | 'mouser' | 'arrow' | 'nexar';
+/** Dynamic distributor names from FindChips API + well-known constants.
+ *  Well-known values: 'digikey', 'mouser', 'arrow', 'lcsc', 'farnell', 'newark', 'tme', 'rs' */
+export type SupplierName = string;
 
 /** A single price break from a supplier */
 export interface PriceBreak {
@@ -699,6 +707,9 @@ export interface SupplierQuote {
   leadTime?: string;
   productUrl?: string;
   fetchedAt: string;
+  packageType?: string;      // e.g., "Cut Tape", "Reel", "Each" (from FindChips)
+  minimumQuantity?: number;  // MOQ (from FindChips)
+  authorized?: boolean;      // whether distributor is authorized (from FindChips)
 }
 
 /** Lifecycle intelligence from any source */
@@ -706,7 +717,12 @@ export interface LifecycleInfo {
   status?: string;
   isDiscontinued?: boolean;
   suggestedReplacement?: string;
-  source: SupplierName | 'partsio';
+  source: string;
+  // FindChips risk scores (part-level, not distributor-specific)
+  riskRank?: number;
+  designRisk?: number;
+  productionRisk?: number;
+  longTermRisk?: number;
 }
 
 /** Regional compliance/trade data */
@@ -714,7 +730,7 @@ export interface ComplianceData {
   rohsStatus?: string;
   eccnCode?: string;
   htsCodesByRegion?: Record<string, string>;
-  source: SupplierName | 'partsio';
+  source: string;
 }
 
 /** Flattened, storage-friendly product data built during validation (from all sources) */
@@ -780,6 +796,8 @@ export interface PartsListRow {
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
+  /** BOM line item classification — undefined treated as 'electronic' */
+  partType?: PartType;
 }
 
 /** Column mapping configuration */
@@ -966,6 +984,19 @@ export interface RecommendationLogEntry {
   snapshot: RecommendationLogSnapshot;
   feedbackCount?: number;
   feedbackStatus?: FeedbackStatus;  // "worst" status across all feedback items
+  createdAt: string;
+  userEmail?: string;
+  userName?: string;
+}
+
+/** A distributor click log entry (from the admin API) */
+export interface DistributorClickEntry {
+  id: string;
+  userId: string;
+  mpn: string;
+  manufacturer: string;
+  distributor: string;
+  productUrl?: string;
   createdAt: string;
   userEmail?: string;
   userName?: string;

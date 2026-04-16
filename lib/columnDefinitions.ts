@@ -39,8 +39,8 @@ export interface ColumnDefinition {
   isNumeric?: boolean;
   /** Whether this is a URL/link column */
   isLink?: boolean;
-  /** Data source for display badge in column picker (DK, PIO, Atlas, Mouser) */
-  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mouser';
+  /** Data source for display badge in column picker (DK, PIO, Atlas, FC) */
+  dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mouser' | 'findchips';
   /** For calculated columns: the formula definition */
   calculatedField?: CalculatedFieldDef;
   /** Whether this cell can be edited inline (only ss:* columns) */
@@ -69,6 +69,7 @@ export const GROUP_ORDER = [
 export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:row_number', label: '#', source: 'system', group: 'System', defaultWidth: '40px', align: 'center' },
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
+  { id: 'sys:partType', label: 'Type', source: 'system', group: 'System', defaultWidth: '110px' },
   { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
   { id: 'sys:top_suggestion', label: 'Top Suggestion(s)', source: 'system', group: 'Replacements', defaultWidth: '160px' },
   { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'Replacements', defaultWidth: '130px' },
@@ -110,21 +111,15 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:countryOfOrigin', label: 'Country of Origin', source: 'digikey-product', enrichedField: 'countryOfOrigin', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '110px' },
   { id: 'dk:eccnCode', label: 'ECCN Code', source: 'digikey-product', enrichedField: 'eccnCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '90px' },
   { id: 'dk:htsCode', label: 'HTS Code', source: 'digikey-product', enrichedField: 'htsCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '100px' },
-  // Mouser Commercial
-  { id: 'mouser:unitPrice', label: 'Mouser Price', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '90px', align: 'right', isNumeric: true },
-  { id: 'mouser:stock', label: 'Mouser Stock', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '90px', align: 'right', isNumeric: true },
-  { id: 'mouser:leadTime', label: 'Mouser Lead Time', source: 'digikey-product', group: 'Commercial', dataSource: 'mouser', defaultWidth: '110px' },
-  // Multi-supplier summary
+  // Multi-supplier summary (aggregated from FindChips N-distributor quotes)
   { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true },
-  // Mouser Risk & Lifecycle
-  { id: 'mouser:lifecycle', label: 'Lifecycle (Mouser)', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'mouser', defaultWidth: '110px' },
-  { id: 'mouser:suggestedReplacement', label: 'Suggested Replacement', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'mouser', defaultWidth: '140px' },
-  // Mouser Trade & Export (regional HTS codes)
-  { id: 'mouser:htsUS', label: 'HTS (US)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
-  { id: 'mouser:htsCN', label: 'HTS (CN)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
-  { id: 'mouser:htsEU', label: 'HTS (EU/TARIC)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '110px' },
-  { id: 'mouser:eccn', label: 'ECCN (Mouser)', source: 'digikey-product', group: 'Trade & Export', dataSource: 'mouser', defaultWidth: '100px' },
+  // FindChips Risk & Lifecycle
+  { id: 'fc:lifecycle', label: 'Lifecycle', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '100px' },
+  { id: 'fc:riskRank', label: 'Risk Rank', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'fc:designRisk', label: 'Design Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'fc:productionRisk', label: 'Production Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'fc:longTermRisk', label: 'Long-term Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true },
 ];
 
 /** Standalone definition for the auto-appended row actions column */
@@ -144,6 +139,7 @@ export const DEFAULT_VIEW_COLUMNS: string[] = [
   'mapped:description',
   'mapped:cpn',
   'sys:status',
+  'sys:partType',
   'dk:unitPrice',
   'dk:quantityAvailable',
   'sys:hits',
@@ -189,6 +185,14 @@ export function buildAvailableColumns(
 
   // System columns (exclude unlabeled utility columns like action/row_actions)
   columns.push(...SYSTEM_COLUMNS.filter(c => c.label));
+
+  // Portable mapped columns (resolve to actual ss:N at render time — safe for master views)
+  columns.push(
+    { id: 'mapped:mpn', label: 'MPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
+    { id: 'mapped:manufacturer', label: 'Manufacturer', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
+    { id: 'mapped:description', label: 'Description', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '200px' },
+    { id: 'mapped:cpn', label: 'CPN / Internal PN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
+  );
 
   // Spreadsheet columns (from the original upload)
   spreadsheetHeaders.forEach((header, index) => {
@@ -248,8 +252,8 @@ export function getCellValue(
 
     case 'digikey-product': {
       // Mouser columns (resolved from supplierQuotes/lifecycleInfo/complianceData)
-      if (column.id.startsWith('mouser:')) {
-        return getMouserCellValue(column.id, row);
+      if (column.id.startsWith('fc:')) {
+        return getFCCellValue(column.id, row);
       }
       // Multi-supplier summary columns
       if (column.id.startsWith('commercial:')) {
@@ -315,6 +319,8 @@ export function getSortValue(
       return row.rowIndex;
     case 'sys:status':
       return row.status;
+    case 'sys:partType':
+      return row.partType ?? 'electronic';
     case 'sys:hits':
       return row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
     case 'sys:top_suggestion':
@@ -331,34 +337,24 @@ export function getSortValue(
 }
 
 // ============================================================
-// MOUSER / MULTI-SUPPLIER CELL VALUE HELPERS
+// FINDCHIPS / MULTI-SUPPLIER CELL VALUE HELPERS
 // ============================================================
 
-/** Extract a cell value from Mouser supplier data on a row */
-function getMouserCellValue(columnId: string, row: PartsListRow): string | number | undefined {
-  const quote = row.enrichedData?.supplierQuotes?.find(q => q.supplier === 'mouser');
-  const lifecycle = row.enrichedData?.lifecycleInfo?.find(l => l.source === 'mouser');
-  const compliance = row.enrichedData?.complianceData?.find(c => c.source === 'mouser');
+/** Extract a cell value from FindChips lifecycle/risk data on a row */
+function getFCCellValue(columnId: string, row: PartsListRow): string | number | undefined {
+  const lifecycle = row.enrichedData?.lifecycleInfo?.find(l => l.source === 'findchips');
 
   switch (columnId) {
-    case 'mouser:unitPrice':
-      return quote?.unitPrice;
-    case 'mouser:stock':
-      return quote?.quantityAvailable;
-    case 'mouser:leadTime':
-      return quote?.leadTime;
-    case 'mouser:lifecycle':
+    case 'fc:lifecycle':
       return lifecycle?.status;
-    case 'mouser:suggestedReplacement':
-      return lifecycle?.suggestedReplacement;
-    case 'mouser:htsUS':
-      return compliance?.htsCodesByRegion?.US;
-    case 'mouser:htsCN':
-      return compliance?.htsCodesByRegion?.CN;
-    case 'mouser:htsEU':
-      return compliance?.htsCodesByRegion?.EU;
-    case 'mouser:eccn':
-      return compliance?.eccnCode;
+    case 'fc:riskRank':
+      return lifecycle?.riskRank != null ? Number(lifecycle.riskRank.toFixed(2)) : undefined;
+    case 'fc:designRisk':
+      return lifecycle?.designRisk != null ? Number(lifecycle.designRisk.toFixed(2)) : undefined;
+    case 'fc:productionRisk':
+      return lifecycle?.productionRisk != null ? Number(lifecycle.productionRisk.toFixed(2)) : undefined;
+    case 'fc:longTermRisk':
+      return lifecycle?.longTermRisk != null ? Number(lifecycle.longTermRisk.toFixed(2)) : undefined;
     default:
       return undefined;
   }

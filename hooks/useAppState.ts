@@ -17,7 +17,7 @@ import {
   getPartAttributes,
   getRecommendationsWithOverrides,
   chatWithOrchestrator,
-  enrichWithMouserBatch,
+  enrichWithFCBatch,
 } from '@/lib/api';
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
@@ -150,36 +150,22 @@ export function useAppState() {
     return () => timers.forEach(clearTimeout);
   }, [setStatus]);
 
-  /** Background Mouser enrichment — merges pricing/lifecycle into displayed recs */
-  const triggerMouserEnrichment = useCallback(
+  /** Background FindChips enrichment — merges N-distributor pricing/lifecycle into displayed recs */
+  const triggerFCEnrichment = useCallback(
     (recs: XrefRecommendation[], signal: AbortSignal) => {
       if (recs.length === 0) return;
       const mpns = recs.map(r => r.part.mpn);
-      enrichWithMouserBatch(mpns).then((mouserData) => {
-        if (signal.aborted || Object.keys(mouserData).length === 0) return;
+      enrichWithFCBatch(mpns).then((fcData) => {
+        if (signal.aborted || Object.keys(fcData).length === 0) return;
         setState((prev) => {
           const enriched = prev.recommendations.map(rec => {
-            const data = mouserData[rec.part.mpn.toLowerCase()];
+            const data = fcData[rec.part.mpn.toLowerCase()];
             if (!data) return rec;
-            // Build Digikey quote from flat fields if supplierQuotes is empty
-            const existingQuotes = rec.part.supplierQuotes && rec.part.supplierQuotes.length > 0
-              ? rec.part.supplierQuotes
-              : (rec.part.unitPrice != null || rec.part.quantityAvailable != null)
-                ? [{
-                    supplier: 'digikey' as const,
-                    unitPrice: rec.part.unitPrice,
-                    quantityAvailable: rec.part.quantityAvailable,
-                    priceBreaks: rec.part.unitPrice != null
-                      ? [{ quantity: 1, unitPrice: rec.part.unitPrice, currency: 'USD' }]
-                      : [],
-                    fetchedAt: new Date().toISOString(),
-                  }]
-                : [];
             return {
               ...rec,
               part: {
                 ...rec.part,
-                supplierQuotes: [...existingQuotes, data.quote],
+                supplierQuotes: data.quotes.length > 0 ? data.quotes : rec.part.supplierQuotes,
                 lifecycleInfo: data.lifecycle ? [...(rec.part.lifecycleInfo ?? []), data.lifecycle] : rec.part.lifecycleInfo,
                 complianceData: data.compliance ? [...(rec.part.complianceData ?? []), data.compliance] : rec.part.complianceData,
               },
@@ -235,12 +221,12 @@ export function useAppState() {
           });
 
         // Background: Mouser candidate enrichment (pricing/lifecycle)
-        triggerMouserEnrichment(recs, signal);
+        triggerFCEnrichment(recs, signal);
       } else {
         setStatus('');
       }
     },
-    [addMessage, setStatus, triggerMouserEnrichment]
+    [addMessage, setStatus, triggerFCEnrichment]
   );
 
   // ============================================================

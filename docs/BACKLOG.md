@@ -88,7 +88,7 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 **Intentionally skipped:** Cables/Wires (too heterogeneous), Development Tools (no meaningful shared parametrics). Both remain at L0.
 
-**Remaining gap:** Parts.io param maps (`partsioParamMap.ts`) and Mouser mapper entries not yet added for L2 categories — currently Digikey-only.
+**Remaining gap:** Parts.io param maps (`partsioParamMap.ts`) not yet added for L2 categories — currently Digikey-only.
 
 ### L2 family-level param maps: split union maps into per-sensor-type maps
 **Status:** Phase 1 (Sensors) done — Decision #88. 7 sensor sub-families with dedicated param maps + general fallback.
@@ -145,6 +145,13 @@ Currently admins save overrides blindly — they can't see how a weight or logic
 **Files:** `components/admin/QcFeedbackDetailView.tsx`, `components/admin/RuleOverrideDrawer.tsx`
 
 When an admin reviews QC feedback flagging a specific rule, there should be a direct "Create Override" button that pre-fills the RuleOverrideDrawer with the flagged rule's family and attributeId. Currently the admin must navigate to the Logic section manually.
+
+---
+
+### Reverse cross-reference resolution is slow for popular xref targets
+**Files:** `lib/services/partDataService.ts`, `lib/services/manufacturerCrossRefService.ts`
+
+After Decision #133, searching an MPN that appears as `xref_mpn` in many uploaded rows (e.g., 3PEAK's TPW4157 → 136 TI parts) triggers serial `getAttributes()` resolution per matched row. Observed ~17s on the xref-resolution step alone, ~25s total cold-compute. Subsequent searches hit the 30-day L2 recs cache and are instant, but the cold path is poor UX. User explicitly declined capping reverse matches because each is a manufacturer-certified option. Options: (1) pre-resolve reverse xrefs at cross-ref upload time and cache the resolved `PartAttributes` in Supabase; (2) introduce a batch Digikey/Atlas lookup that accepts N MPNs in a single request; (3) resolve reverse xrefs lazily (show certified MPNs as "resolving…" placeholders and stream in as they land).
 
 ---
 
@@ -365,13 +372,14 @@ If two context questions affect the same rule's weight, the second one overwrite
 ### Recommendation pipeline — further performance opportunities
 **Files:** `lib/services/partDataService.ts`, `hooks/useAppState.ts`
 
-Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Decision #99 added persistent L2 cache (Supabase-backed) for cross-user, cross-session caching. Remaining opportunities:
+Decision #98 reduced recommendation latency from 15-30s to ~5-8s. Decision #99 added persistent L2 cache (Supabase-backed) for cross-user, cross-session caching. Decision #128 added a recommendations-level L2 cache (30-day TTL, cross-user, admin-write invalidation) and fixed a sticky search cache bypass regression. Remaining opportunities:
 - ~~**Request coalescing**: If two users search the same MPN within 5s, share results.~~ Largely addressed by L2 cache — second request hits Supabase instead of live API.
 - **Override cache TTL**: Supabase override fetches use 60s TTL. Overrides rarely change — could extend to 5 minutes with invalidation on admin writes.
 - **Score-first parts.io enrichment**: Currently all 20 Digikey candidates are enriched with parts.io before scoring. Could score with Digikey-only data first, then enrich only top 10 and re-score. Risky — parts.io fills attributes critical for some families (thyristor tq, relay coil specs).
 - **Worker thread scoring**: Matching engine is CPU-bound single-threaded. Node.js `worker_threads` could parallelize candidate evaluation for families with many rules (C4: 24 rules, E1: 23 rules).
 - **L2 cache admin UI panel**: Cache stats are exposed via `/api/admin/cache` (GET) and data-sources endpoint. Could add a visual panel in the admin section showing cache size, hit rates, and purge controls.
 - **Periodic cache cleanup**: Expired rows accumulate in `part_data_cache`. Could add a Supabase pg_cron or external cron to call `purgeExpired()` daily. Not critical for correctness (reads check TTL) but prevents table bloat.
+- ~~**Defer source-part Mouser enrichment**~~ RESOLVED — FindChips API (Decision #131) is ~60-200ms, fast enough to await in the critical path. No longer a performance bottleneck.
 
 ---
 
@@ -503,20 +511,20 @@ Atlas product database integrated: 115 manufacturers, 54,746 products ingested i
 
 ---
 
-### ~~Phase 8: Commercial Data Enrichment (Multi-Supplier)~~ PARTIALLY COMPLETED
-**Status:** Mouser integration done (Decision #83); Arrow/Nexar and customer pricing remaining
+### ~~Phase 8: Commercial Data Enrichment (Multi-Supplier)~~ MOSTLY COMPLETED
+**Status:** FindChips API replaces Mouser (Decision #131); covers ~80 distributors including LCSC, Arrow, Farnell, RS. Mouser retained for SuggestedReplacement only.
 **Priority:** P3
 
-~~Integrate pricing enrichment API.~~ Done — Mouser Search API v2 integrated as second distributor. `SupplierQuote[]` model with `PartAvailability` type. Live pricing, stock, lead time, lifecycle, and MOQ for both Digikey and Mouser. `enrichWithMouser()` gap-fill in `partDataService.ts`. Parts list batch enrichment via `validateRow()`. `SupplierPricingDrawer` shows multi-supplier comparison.
+~~Integrate pricing enrichment API.~~ Done — FindChips (FC) API integrated as multi-distributor aggregator (Decision #131). Single API call returns pricing/stock/lifecycle from ~80 distributors. `findchipsClient.ts` with 3-level cache, `findchipsMapper.ts` with distributor name normalization. Commercial tab shows N distributor cards (top 5 expanded + collapse). Risk scores (designRisk, productionRisk, longTermRisk) from FC are new unique data. Chinese distributor coverage (LCSC) provides purchase paths for Atlas components.
 
 **Remaining:**
-- Arrow/Nexar: Next distributor API integration (extend `SupplierQuote[]` model)
 - Customer negotiated pricing overlays
-- Mouser: ComparisonView multi-supplier pricing table (Phase 3C — side-by-side pricing comparison in xref detail view)
-- Mouser: Add Mouser suggested replacements as candidate source in `getRecommendations()` for obsolete/EOL parts
-- Mouser: "Commercial" view template with DK/Mouser price/stock/lead time columns pre-configured
-- Mouser: Lifecycle status reconciliation (worst-status-wins across Digikey, Parts.io, Mouser)
+- ComparisonView multi-supplier pricing table (Phase 3C — side-by-side pricing comparison in xref detail view)
+- "Commercial" view template with best price/stock columns pre-configured
+- Lifecycle status reconciliation (worst-status-wins across FindChips, Parts.io)
 - BOM quantity-aware pricing (Decision #121 Phase 2): qty column auto-detection in `excelParser.ts`, `mapped:quantity` / `rawQuantity` on `PartsListRow`, effective price lookup per supplier tier, extended cost columns in parts list table
+- RS Components direct API integration (pending product search API from RS contact — see reference memory)
+- ~~Distributor click tracking~~ Done (Decision #132). Client-side fire-and-forget logging of distributor link clicks. Admin view in QC section with filters/search/sort.
 
 ---
 
@@ -583,3 +591,20 @@ Three new services have zero test coverage:
 **Priority:** P2
 
 `components/auth/OnboardingAgent.tsx:542-545` — hidden `<Box sx={{ display: 'none' }} />` placeholder and `otherRoleText` state are dead code. Either implement the "Other" free-text input or remove the state + placeholder.
+
+### Part Type: List agent tool awareness (Decision #129)
+**Status:** Not started
+**Priority:** P2
+
+List agent tools (`get_list_summary`, `query_list`, `get_row_detail`) should include `partType` in their responses so the agent can answer questions about non-electronic items and filter by type.
+
+### Part Type: Auto-detection from description keywords (Decision #129)
+**Status:** Not started
+**Priority:** P3
+
+Heuristic detection of non-electronic parts from description text (e.g., "heatsink", "standoff", "enclosure" → mechanical; "PCB", "bare board" → pcb). Would reduce manual tagging on upload.
+
+### ~~View templates: Supabase persistence for multi-device / org sharing (Decision #130)~~ COMPLETED
+**Status:** Completed
+
+Master views now stored in Supabase `view_templates` table (user-scoped). localStorage templates migrated on first load. Future: expand to org-level sharing when company model is built.

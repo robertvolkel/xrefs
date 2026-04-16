@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -10,12 +11,16 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
+  FormLabel,
   IconButton,
   List,
   ListItem,
   ListItemIcon,
   ListItemText,
+  Radio,
+  RadioGroup,
   Tab,
   Tabs,
   TextField,
@@ -74,7 +79,9 @@ interface ColumnPickerDialogProps {
   availableColumns: ColumnDefinition[];
   initialView?: SavedView;
   isBuiltinView?: boolean;
-  onSave: (name: string, columns: string[], description: string, calculatedFields?: CalculatedFieldDef[]) => void;
+  /** Scope of the view being edited (master views show a warning) */
+  viewScope?: import('@/lib/viewConfigStorage').ViewScope;
+  onSave: (name: string, columns: string[], description: string, calculatedFields?: CalculatedFieldDef[], scope?: 'master' | 'list') => void;
   onCancel: () => void;
 }
 
@@ -84,6 +91,7 @@ export default function ColumnPickerDialog({
   availableColumns,
   initialView,
   isBuiltinView: isBuiltin,
+  viewScope,
   onSave,
   onCancel,
 }: ColumnPickerDialogProps) {
@@ -94,6 +102,7 @@ export default function ColumnPickerDialog({
   const [activeColumnIds, setActiveColumnIds] = useState<string[]>(initialView?.columns ?? []);
   const [search, setSearch] = useState('');
   const [calcFields, setCalcFields] = useState<CalculatedFieldDef[]>(initialView?.calculatedFields ?? []);
+  const [createScope, setCreateScope] = useState<'master' | 'list'>('master');
   const [editingCalcField, setEditingCalcField] = useState<CalculatedFieldDef | null>(null);
   const [showCalcEditor, setShowCalcEditor] = useState(false);
 
@@ -106,6 +115,7 @@ export default function ColumnPickerDialog({
     setSearch('');
     setShowCalcEditor(false);
     setEditingCalcField(null);
+    setCreateScope('master');
     // Create mode → Settings tab first; Edit mode → Columns tab
     setTab(mode === 'create' ? 0 : 1);
   };
@@ -217,14 +227,19 @@ export default function ColumnPickerDialog({
 
   const doSave = () => {
     const trimmedName = name.trim() || 'Untitled View';
-    onSave(trimmedName, activeColumnIds, description.trim(), calcFields.length > 0 ? calcFields : undefined);
+    const scope = mode === 'create' ? createScope : (viewScope === 'master' ? 'master' : 'list');
+    onSave(trimmedName, activeColumnIds, description.trim(), calcFields.length > 0 ? calcFields : undefined, scope);
   };
 
   const handleSave = () => {
-    if (mode === 'edit' && typeof window !== 'undefined' && localStorage.getItem(SKIP_CONFIRM_KEY) !== 'true') {
-      setDontShowAgain(false);
-      setConfirmOpen(true);
-      return;
+    const isMasterEdit = mode === 'edit' && viewScope === 'master';
+    // Always confirm for master views; for list views, respect "don't show again"
+    if (mode === 'edit') {
+      if (isMasterEdit || (typeof window !== 'undefined' && localStorage.getItem(SKIP_CONFIRM_KEY) !== 'true')) {
+        setDontShowAgain(false);
+        setConfirmOpen(true);
+        return;
+      }
     }
     doSave();
   };
@@ -262,6 +277,13 @@ export default function ColumnPickerDialog({
         {/* Settings tab */}
         {tab === 0 && (
           <Box sx={{ pt: 2.5, display: 'flex', flexDirection: 'column', gap: 2.5, flex: 1 }}>
+            {/* Master view edit warning */}
+            {mode === 'edit' && viewScope === 'master' && (
+              <Alert severity="info" sx={{ py: 0.5 }}>
+                {t('columnPicker.saveMasterConfirmMessage')}
+              </Alert>
+            )}
+
             <TextField
               label={t('columnPicker.viewNameLabel')}
               value={name}
@@ -281,6 +303,28 @@ export default function ColumnPickerDialog({
               minRows={3}
               maxRows={6}
             />
+
+            {/* Scope toggle — create mode only */}
+            {mode === 'create' && (
+              <FormControl>
+                <FormLabel sx={{ fontSize: '0.82rem', mb: 0.5 }}>View type</FormLabel>
+                <RadioGroup
+                  value={createScope}
+                  onChange={(e) => setCreateScope(e.target.value as 'master' | 'list')}
+                >
+                  <FormControlLabel
+                    value="master"
+                    control={<Radio size="small" />}
+                    label={<Typography variant="body2">{t('columnPicker.scopeMaster')}</Typography>}
+                  />
+                  <FormControlLabel
+                    value="list"
+                    control={<Radio size="small" />}
+                    label={<Typography variant="body2">{t('columnPicker.scopeList')}</Typography>}
+                  />
+                </RadioGroup>
+              </FormControl>
+            )}
           </Box>
         )}
 
@@ -534,20 +578,24 @@ export default function ColumnPickerDialog({
         <DialogTitle sx={{ pb: 0.5 }}>{t('columnPicker.saveConfirmTitle')}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            {t('columnPicker.saveConfirmMessage')}
+            {viewScope === 'master'
+              ? t('columnPicker.saveMasterConfirmMessage')
+              : t('columnPicker.saveConfirmMessage')}
           </Typography>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={dontShowAgain}
-                onChange={e => setDontShowAgain(e.target.checked)}
-                size="small"
-              />
-            }
-            label={t('columnPicker.dontShowAgain')}
-            sx={{ mt: 1.5 }}
-            slotProps={{ typography: { variant: 'body2' } }}
-          />
+          {viewScope !== 'master' && (
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={dontShowAgain}
+                  onChange={e => setDontShowAgain(e.target.checked)}
+                  size="small"
+                />
+              }
+              label={t('columnPicker.dontShowAgain')}
+              sx={{ mt: 1.5 }}
+              slotProps={{ typography: { variant: 'body2' } }}
+            />
+          )}
         </DialogContent>
         <DialogActions>
           <Button color="inherit" onClick={() => setConfirmOpen(false)}>{t('common.cancel')}</Button>

@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateManufacturerCache } from '@/lib/services/atlasClient';
 import { invalidateAtlasCache } from '../route';
+import { invalidateManufacturersListCache } from '../../manufacturers/route';
 
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
   try {
@@ -62,6 +63,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
 
     invalidateManufacturerCache();
     invalidateAtlasCache();
+    invalidateManufacturersListCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {

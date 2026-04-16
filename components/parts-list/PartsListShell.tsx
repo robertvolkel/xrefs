@@ -15,7 +15,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { usePartsListState } from '@/hooks/usePartsListState';
 import { useListViewConfig } from '@/hooks/useListViewConfig';
-import { useViewTemplates } from '@/hooks/useViewConfig';
+import { useMasterViews } from '@/hooks/useMasterViews';
 import { usePartsListAutoLoad } from '@/hooks/usePartsListAutoLoad';
 import { useRowSelection } from '@/hooks/useRowSelection';
 import { useRowDeletion } from '@/hooks/useRowDeletion';
@@ -26,7 +26,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { SavedView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import AddIcon from '@mui/icons-material/Add';
 import PostAddIcon from '@mui/icons-material/PostAdd';
@@ -58,24 +58,59 @@ export default function PartsListShell() {
     handleModalSelectRec, handleModalBackToRecs,
     handleModalConfirmReplacement, handleModalRecsRefreshed,
     handleSetPreferred,
-    handleUpdateListDetails, handleRefreshRows, handleDeleteRows,
+    handleUpdateListDetails, handleRefreshRows, handleSetPartType, handleDeleteRows,
     handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
-    handleRetryMouserEnrichment, getMouserEnrichResult,
+    handleRetryFCEnrichment, getFCEnrichResult,
   } = usePartsListState();
+
+  const {
+    masterViews,
+    createMasterView, updateMasterView, deleteMasterView,
+  } = useMasterViews();
 
   const {
     activeView, views, defaultViewId,
     selectView, createView, updateView, deleteView, setDefaultView,
     hideRowInView, getHiddenRows,
-  } = useListViewConfig(activeListId, listViewConfigs);
+  } = useListViewConfig(activeListId, listViewConfigs, masterViews);
 
-  const templates = useViewTemplates();
-
-  const handleSaveAsTemplate = useCallback((view: SavedView) => {
+  const handlePromoteView = useCallback(async (view: ResolvedView) => {
     const safeColumns = sanitizeTemplateColumns(view.columns);
     const safeCalcFields = sanitizeTemplateCalcFields(view.calculatedFields);
-    templates.createView(view.name, safeColumns, view.description, undefined, safeCalcFields);
-  }, [templates]);
+    const created = await createMasterView({
+      name: view.name,
+      columns: safeColumns,
+      description: view.description,
+      calculatedFields: safeCalcFields,
+    });
+    if (created) {
+      // Remove from per-list storage and switch to the new master view
+      deleteView(view.id);
+      selectView(created.id);
+    }
+  }, [createMasterView, deleteView, selectView]);
+
+  const handleDemoteView = useCallback(async (view: ResolvedView) => {
+    // Find the master view to get its full data
+    const master = masterViews.find(mv => mv.id === view.id);
+    if (!master) return;
+    // Create a list-specific copy
+    const listView = createView(
+      master.name,
+      master.columns,
+      master.description,
+      master.columnMeta,
+      master.calculatedFields,
+    );
+    // Delete the master view
+    await deleteMasterView(master.id);
+    selectView(listView.id);
+  }, [masterViews, createView, deleteMasterView, selectView]);
+
+  const handleDeleteMasterView = useCallback(async (view: ResolvedView) => {
+    await deleteMasterView(view.id);
+    // activeView will auto-fallback in useListViewConfig
+  }, [deleteMasterView]);
 
   // --- Extracted hooks ---
 
@@ -150,20 +185,20 @@ export default function PartsListShell() {
       return;
     }
 
-    // Check Mouser enrichment after a short delay (it runs async after validation)
+    // Check FC enrichment after a short delay (it runs async after validation)
     const timer = setTimeout(() => {
-      const result = getMouserEnrichResult();
+      const result = getFCEnrichResult();
       if (result && result.requested > 0 && result.enriched === 0) {
         setNotification({
-          message: t('partsList.notifications.mouserUnavailable'),
+          message: t('partsList.notifications.fcUnavailable'),
           severity: 'warning',
           actionLabel: t('partsList.notifications.retry'),
           onAction: () => {
             setNotification(null);
-            handleRetryMouserEnrichment().then(retryResult => {
+            handleRetryFCEnrichment().then(retryResult => {
               if (retryResult.enriched > 0) {
                 setNotification({
-                  message: t('partsList.notifications.mouserLoaded', { count: retryResult.enriched }),
+                  message: t('partsList.notifications.fcLoaded', { count: retryResult.enriched }),
                   severity: 'success' as 'info',
                 });
               }
@@ -176,10 +211,10 @@ export default function PartsListShell() {
           severity: 'info',
         });
       }
-    }, 3000); // Wait for Mouser enrichment to finish
+    }, 3000); // Wait for FC enrichment to finish
 
     return () => clearTimeout(timer);
-  }, [phase, rows, t, getMouserEnrichResult, handleRetryMouserEnrichment]);
+  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment]);
 
   // --- Sort/search/filter pipeline (stays in shell) ---
 
@@ -348,7 +383,9 @@ export default function PartsListShell() {
             setDefaultView={setDefaultView}
             onEditView={() => { setPickerMode('edit'); setPickerOpen(true); }}
             onCreateView={() => { setPickerMode('create'); setPickerOpen(true); }}
-            onSaveAsTemplate={handleSaveAsTemplate}
+            onPromoteView={handlePromoteView}
+            onDemoteView={handleDemoteView}
+            onDeleteMasterView={handleDeleteMasterView}
           />
         }
         showViewControls={showTable}
@@ -409,6 +446,7 @@ export default function PartsListShell() {
           onCellEdit={handleCellEdit}
           highlightedRowIndex={highlightedRowIndex}
           onCancelValidation={handleCancelValidation}
+          onSetPartType={(idx, pt) => handleSetPartType([idx], pt)}
         />
       )}
 
@@ -443,7 +481,8 @@ export default function PartsListShell() {
         availableColumns={availableColumns}
         initialView={pickerMode === 'edit' ? { ...activeView, columns: resolvedViewColumns } : undefined}
         isBuiltinView={pickerMode === 'edit' && activeView.id === 'raw'}
-        onSave={(name, columns, description, calcFields) => {
+        viewScope={pickerMode === 'edit' ? activeView.scope : undefined}
+        onSave={async (name, columns, description, calcFields, scope) => {
           // Build columnMeta: map each ss:N to its current header text
           const meta: Record<string, string> = {};
           for (const colId of columns) {
@@ -456,10 +495,39 @@ export default function PartsListShell() {
           }
           const columnMeta = Object.keys(meta).length > 0 ? meta : undefined;
 
-          if (pickerMode === 'create') createView(name, columns, description, columnMeta, calcFields);
-          else {
-            const newName = activeView.id !== 'raw' ? name : undefined;
-            updateView(activeView.id, columns, newName, description, columnMeta, calcFields);
+          if (pickerMode === 'create') {
+            if (scope === 'master') {
+              // Create as master view (sanitize ss:* columns)
+              const safeColumns = sanitizeTemplateColumns(columns);
+              const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
+              const created = await createMasterView({
+                name,
+                columns: safeColumns,
+                description,
+                columnMeta,
+                calculatedFields: safeCalcFields,
+              });
+              if (created) selectView(created.id);
+            } else {
+              createView(name, columns, description, columnMeta, calcFields);
+            }
+          } else {
+            // Edit mode
+            if (activeView.scope === 'master') {
+              // Update master view via API
+              const safeColumns = sanitizeTemplateColumns(columns);
+              const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
+              await updateMasterView(activeView.id, {
+                name: activeView.id !== 'raw' ? name : undefined,
+                columns: safeColumns,
+                description,
+                columnMeta,
+                calculatedFields: safeCalcFields,
+              });
+            } else {
+              const newName = activeView.id !== 'raw' ? name : undefined;
+              updateView(activeView.id, columns, newName, description, columnMeta, calcFields);
+            }
           }
           setPickerOpen(false);
         }}

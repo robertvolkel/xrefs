@@ -3275,3 +3275,167 @@ Hardcoded markdown content maintained alongside code changes — no LLM generati
 Category is derived from `deriveRecommendationCategories()` — a recommendation with `certifiedBy: ['manufacturer']` gets priority 0, 3rd-party sources get priority 1, everything else gets priority 2. Preferred MPN (user-starred) still floats to the very top regardless of category.
 
 **Files:** `components/RecommendationsPanel.tsx`
+
+## Decision #128 — Recommendations L2 Cache & Search Cache Bypass Fix (Apr 2026)
+
+**Problem:** Repeat searches took ~10s and repeat recommendations took ~30s despite the L2 Supabase cache. Three root causes:
+1. **Sticky search cache bypass:** Decision #126's `shouldBypassSearchCache()` checked if each configured source (Digikey, Parts.io, Mouser) was in `sourcesContributed`. But the write path only tagged sources with `matches.length > 0`. If Mouser returned 0 results for an obscure MPN (very common), it never got tagged → every repeat search bypassed the cache permanently.
+2. **No recommendations-level cache:** `getRecommendations()` re-ran the full pipeline (Digikey category search, candidate enrichment, scoring) on every call — 5-30s even when sub-calls hit their own L2 caches.
+3. **Manufacturer xref `getAttributes()` called Mouser:** Each of the 34K newly-uploaded 3PEAK cross-reference MPNs triggered a fresh Mouser API call during xref candidate resolution, burning daily quota and adding 1-3s per uncached xref. Also had an arg-order bug (userId passed as currency).
+
+**Solution:**
+1. **Fix `sourcesContributed` tracking:** Tag any successfully-queried source regardless of match count. A 0-result fulfilled query proves the source was reachable. Tighten `shouldBypassSearchCache()` to only bypass legacy entries (missing `sourcesContributed`) — per-source checks removed.
+2. **Add `'recommendations'` cache tier:** Reuses `service='search'` with `variant='rec:<version>:<mpn>:<sha1-16>'` in `part_data_cache` table. Cache key is a SHA-1 hash of all scoring inputs (overrides, context, prefs, currency, options) + `RECS_CACHE_SCHEMA_VERSION`. 30-day TTL — parametric data and scoring are stable; pricing/stock refreshed on display via existing `triggerMouserEnrichment()`. Global (cross-user) cache: two users with same inputs share one entry.
+3. **Admin-write invalidation:** `invalidateRecommendationsCache()` purges the entire `recommendations` tier. Called from 8 admin routes: xref upload/delete, manufacturer enable/disable, rule override CRUD, context override CRUD, rule restore.
+4. **Skip Mouser on xref candidates:** Pass `{ skipMouser: true }` to `getAttributes()` in manufacturer xref resolution. Fixed arg-order bug in same edit.
+
+**Also fixed:** `get_cross_ref_counts()` RPC function replaces client-side row counting for the Manufacturers panel MFR Crosses column, fixing the Supabase 1000-row limit that caused 3PEAK's 34K cross-references to show as "—".
+
+**Files:** `lib/services/partDataService.ts`, `lib/services/partDataCache.ts`, `scripts/supabase-cache-schema.sql`, `scripts/supabase-mfr-xref-counts-rpc.sql`, `app/api/admin/manufacturers/route.ts`, `app/api/admin/manufacturers/[slug]/route.ts`, `app/api/admin/manufacturers/[slug]/cross-references/route.ts`, `app/api/admin/overrides/rules/route.ts`, `app/api/admin/overrides/rules/[overrideId]/route.ts`, `app/api/admin/overrides/rules/restore/route.ts`, `app/api/admin/overrides/context/route.ts`, `app/api/admin/overrides/context/[overrideId]/route.ts`
+
+---
+
+## 129. Part Type Classification for BOM Line Items
+
+**Decision:** Separate the concept of "what kind of BOM line item this is" (Part Type) from "did we find it in a catalog" (Validation Status). New `PartType` field: `electronic | mechanical | pcb | custom | other`.
+
+**Problem:** The parts list `status` field conflated two ideas — classification and validation. A BOM with mechanical parts, PCBs, or custom/fabricated items would show those as "Not Found" even though they were never expected to match an electronics catalog. Users had no way to indicate that a line item was intentionally non-electronic.
+
+**Solution:**
+1. **New `PartType` union type** on `PartsListRow` — optional, `undefined` treated as `'electronic'` for backward compatibility.
+2. **Non-electronic rows skip validation** — `validationManager.ts` filters to electronic rows only. Non-electronic rows are immediately marked `status: 'resolved'`.
+3. **Auto-classification** — when catalog validation resolves a part, `partType` is auto-set to `'electronic'`.
+4. **Inline dropdown** — `sys:partType` system column renders a `<Select>` in each table row for per-row type changes. Included in `DEFAULT_VIEW_COLUMNS`.
+5. **Bulk action** — "Set Type" button in action bar applies a part type to all selected rows.
+6. **Type change behavior** — switching to non-electronic: resolves immediately, clears catalog data. Switching back to electronic: resets to pending and triggers re-validation.
+7. **Persistence** — `partType` stored in the existing rows JSONB (no Supabase schema change). Existing saved lists work unchanged.
+
+**Files:** `lib/types.ts`, `lib/partsListStorage.ts`, `lib/supabasePartsListStorage.ts`, `lib/columnDefinitions.ts`, `lib/validationManager.ts`, `hooks/usePartsListState.ts`, `components/parts-list/PartsListTable.tsx`, `components/parts-list/PartsListActionBar.tsx`, `components/parts-list/PartsListShell.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+---
+
+## 130. Master Views & List-Specific Views
+
+**Decision:** Replace the copy-per-list view model with a clear two-tier system: Master Views (shared, Supabase-backed) and List-Specific Views (per-list only). Supersedes the old localStorage template system.
+
+**Problem:** The old system copied all view templates into each list at creation time. Lists diverged independently — "Basic" looked different across lists, users couldn't tell what was shared vs. local, and there was no way to edit a view globally. The mental model was confusing.
+
+**Solution — three view categories:**
+1. **Original** — read-only, shows raw uploaded columns. Builtin, unchanged.
+2. **Master Views** — shared across all lists, stored in Supabase `view_templates` table (user-scoped, RLS). Editing one updates it everywhere. Lists reference by ID, don't store copies.
+3. **List-Specific Views** — per-list only, invisible to other lists. Stored in per-list `view_configs` JSONB.
+
+**Key behaviors:**
+- Edit a Master View → warning "Changes will apply across all your lists" → writes to `view_templates` table
+- Demote Master → List-Specific → warning → removes from table, copies to per-list JSONB
+- Promote List-Specific → Master → warning → sanitizes columns, creates in table, removes from per-list
+- Create new view → user picks Master or List-Specific via radio toggle
+- "Original" cannot be edited, deleted, or promoted
+- Dropdown shows scope badges: "Master" (primary chip) or "This list" (outlined chip)
+- Hidden rows for master views stored per-list in `masterViewOverrides` (not shared globally)
+- `ss:*` columns auto-stripped from master views; `columnMeta` enables cross-list portability
+
+**Migration:**
+1. **localStorage → Supabase** (one-time, `useMasterViews` hook): old templates uploaded as master views, "Basic" seeded if none exist, localStorage cleared
+2. **Per-list dedup** (lazy, each list load): old ViewState views matched to master views by name, copies removed, `hiddenRows` moved to `masterViewOverrides`, IDs remapped
+3. **Backward compat**: old `ViewState` JSONB detected by absence of `migrated` flag, cleaned up transparently
+
+**Schema:** `view_templates` table with UUID PK, user_id (RLS), name, columns (JSONB), description, column_meta, calculated_fields, is_default (unique partial index per user), sort_order, timestamps.
+
+**Files:** `scripts/supabase-view-templates-schema.sql`, `lib/viewConfigStorage.ts`, `lib/supabaseMasterViewStorage.ts` (new), `hooks/useMasterViews.ts` (new, replaces `useViewTemplates`), `hooks/useListViewConfig.ts`, `components/parts-list/ViewControls.tsx`, `components/parts-list/ColumnPickerDialog.tsx`, `components/parts-list/PartsListShell.tsx`, `lib/supabasePartsListStorage.ts`, `locales/en.json`
+
+## 131. FindChips API — Multi-Distributor Commercial Data (Apr 2026)
+
+Replaced Mouser as the primary commercial data source with FindChips (FC) API, an aggregator covering ~80 distributors (Digikey, Mouser, Arrow, LCSC, Farnell, RS, TME, etc.) in a single ~60-200ms API call.
+
+**Why:** Mouser provided single-distributor pricing/stock. FindChips returns data from all major distributors in one call — faster, broader coverage, and critically, includes Chinese distributors (LCSC, Winsource) that provide purchase paths for Atlas component recommendations. Also provides unique risk scoring data (designRisk, productionRisk, longTermRisk).
+
+**Architecture:**
+- `findchipsClient.ts` — GET API with 3-level cache (L1 in-memory 30min, L2 Supabase 24h, L3 live API), rate limiter (60/min, 5000/day), batch via concurrent individual calls
+- `findchipsMapper.ts` — Maps FC response to `SupplierQuote[]` (one per distributor, sorted by best price), `LifecycleInfo` (with risk scores), `ComplianceData` (RoHS). `normalizeDistributorName()` maps 40+ variations to canonical keys
+- `enrichWithFindchips()` replaces `enrichWithMouser()` in `partDataService.ts`
+- `/api/fc/enrich` POST endpoint replaces `/api/mouser/enrich`
+- No distributor filter — FC returns all available distributors per MPN
+
+**Mouser retained:** Solely for `SuggestedReplacement` lookups (Decision #97). `fetchMouserSuggestions()` stays in the recommendation pipeline. Mouser client stripped to suggestions-only functions.
+
+**Type changes:**
+- `SupplierName` widened from fixed union to `string` (dynamic distributor names)
+- `SupplierQuote` extended: `packageType`, `minimumQuantity`, `authorized`
+- `LifecycleInfo` extended: `riskRank`, `designRisk`, `productionRisk`, `longTermRisk`
+- `LifecycleInfo.source` and `ComplianceData.source` widened to `string`
+
+**Column changes:** All `mouser:*` columns removed. New `fc:lifecycle`, `fc:riskRank`, `fc:designRisk`, `fc:productionRisk`, `fc:longTermRisk` columns. `commercial:bestPrice` and `commercial:totalStock` summary columns unchanged (auto-aggregate across all N supplier quotes). Saved views auto-strip `mouser:*` IDs via `sanitizeTemplateColumns()`.
+
+**Commercial tab UI:** Shows N distributor cards (up to ~26), sorted by best unit price. Top 5 expanded, rest collapsed behind "Show N more distributors" toggle. Currency-aware pricing via `Intl.NumberFormat`. Package type and authorized distributor badge displayed. Flat-pricing fallback removed (FC always provides structured quotes).
+
+**What FC provides that Mouser didn't:** ~80 distributors in one call, Chinese distributor coverage (LCSC), risk scores (design/production/long-term), country of origin, faster response (~60ms vs ~300ms).
+
+**What FC doesn't provide that Mouser did:** HTS codes by region, ECCN (partsio still covers these), suggested replacement MPNs (Mouser retained for this).
+
+**Files:** `lib/services/findchipsClient.ts` (new), `lib/services/findchipsMapper.ts` (new), `app/api/fc/enrich/route.ts` (new), `app/api/mouser/enrich/route.ts` (deleted), `lib/types.ts`, `lib/services/partDataService.ts`, `lib/columnDefinitions.ts`, `components/AttributesTabContent.tsx`, `hooks/useAppState.ts`, `hooks/usePartsListState.ts`, `components/parts-list/PartsListShell.tsx`, `lib/api.ts`, `lib/viewConfigStorage.ts`, `lib/services/partDataCache.ts`, `lib/services/apiUsageLogger.ts`, `components/ServiceStatusIcon.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+## 132. Distributor Click Tracking (Apr 2026)
+
+Added client-side tracking of distributor link clicks in the Commercial tab, with an admin view for browsing click logs.
+
+**Why:** The team needs visibility into which distributors users are clicking through to, which MPNs drive the most distributor visits, and which users are actively using the commercial data. This informs distributor partnership decisions and helps measure the value of the FindChips multi-distributor integration (Decision #131).
+
+**Architecture:**
+- **Client-side logging** via `logDistributorClick()` in `lib/supabaseLogger.ts` — same fire-and-forget pattern as `logSearch()`. Browser Supabase client inserts directly into `distributor_clicks` table. No server-side API route needed for writes.
+- **Supabase table** `distributor_clicks`: `id` (UUID), `user_id` (FK auth.users), `mpn`, `manufacturer`, `distributor`, `product_url`, `created_at`. Indexes on user_id, created_at DESC, distributor, mpn. RLS: users INSERT/SELECT own rows; admin reads via service role.
+- **Click point**: `SupplierCard` component in `AttributesTabContent.tsx`. The `<Link>` that opens `quote.productUrl` fires `logDistributorClick()` onClick. `CommercialContent` passes `mpn` and `manufacturer` down as optional props. Covers both AttributesPanel (source part) and ComparisonView (replacement part) usage sites.
+- **Admin view**: New `'distributor-clicks'` section in the QC nav group. `DistributorClicksTab` component with distributor filter chips, debounced search (MPN/manufacturer/user), sortable columns (date, user, MPN, manufacturer, distributor), product URL link, and pagination. API route at `GET /api/admin/distributor-clicks` with `requireAdmin()` guard and profile enrichment.
+
+**Files:** `scripts/supabase-distributor-clicks-schema.sql` (new), `lib/supabaseLogger.ts`, `components/AttributesTabContent.tsx`, `lib/types.ts` (`DistributorClickEntry`), `app/api/admin/distributor-clicks/route.ts` (new), `lib/api.ts`, `components/admin/DistributorClicksTab.tsx` (new), `components/admin/AdminSectionNav.tsx`, `components/admin/AdminShell.tsx`, `locales/en.json`, `locales/de.json`, `locales/zh-CN.json`
+
+## Decision #132 — Persistent Admin Stats Cache + Atlas MFRs as Default Section (Apr 2026)
+
+**Context:** The Atlas MFRs section (`ManufacturersPanel` → `/api/admin/manufacturers`) took ~10s on every cold load. Existing 30-min in-memory cache was lost on every server restart/deploy, forcing admin to wait repeatedly even though the underlying data only changes during ingest or on manufacturer enable/disable. Admin also opened to "Parameter Mappings" by default instead of the section they actually use most.
+
+**Decision:** Persistent Supabase-backed cache (`admin_stats_cache` table, TEXT-keyed) fronted by a short-lived (60s) in-memory hot path. On GET, the route serves the persistent row instantly; computes fresh only if the row is missing or `?refresh=1` is passed. Writes that affect the aggregate (`PATCH /api/admin/atlas/manufacturers` toggle, `PATCH /admin/manufacturers/[slug]`, cross-ref POST/DELETE) call `invalidateManufacturersListCache()` which deletes the row AND kicks off a fire-and-forget background recompute so the next admin load is already warm. Manual "Refresh" button in the panel header (with relative "Computed Xh ago" label) forces recompute for edge cases. Default admin section changed from `'param-mappings'` to `'manufacturers'`.
+
+**Rationale:** The data changes rarely — waiting 10s per session is pure UX tax. Persistence across deploys is the key unlock. Background recompute after invalidation means even after a change, the next visit is instant. Refresh button is the escape hatch. `admin_stats_cache` is TEXT-keyed to host future admin-panel aggregations without schema churn.
+
+**Files:** `scripts/supabase-admin-stats-cache-schema.sql` (new, generic keyed cache), `app/api/admin/manufacturers/route.ts` (persistent cache, `computeStats()` extracted, `?refresh=1` support, background recompute on invalidation), `app/api/admin/atlas/manufacturers/route.ts` (calls `invalidateManufacturersListCache()` on toggle), `components/admin/ManufacturersPanel.tsx` (Refresh button + relative-time label, reads `cachedAt`), `components/admin/AdminShell.tsx` (default section → `'manufacturers'`).
+
+## Decision #133 — Manufacturer Cross-Reference Lookup Fixes + Certified-Cross Bypass (Apr 2026)
+
+**Context:** Searching `TPW4157-TR` (a 3PEAK analog switch) produced zero MFR-certified recommendations despite 3PEAK having uploaded 136 cross-references with TPW4157 as the replacement for various Texas Instruments parts. Three distinct bugs combined to hide them: (1) packaging suffix `-TR` didn't normalize to the bare MPN stored in the cross-ref table; (2) `fetchManufacturerCrossRefs` only queried `original_mpn`, so an MPN that appeared as `xref_mpn` (the "replacement side") never matched — effectively making cross-references one-directional; (3) even when certified candidates surfaced, post-scoring family-specific blocking-rule filters (C2, C4–C10, D1–D2, E1, F1–F2) hard-dropped them if any architectural/topological attribute disagreed with the source, overriding the human certification.
+
+**Decision:**
+1. **Packaging suffix normalization** — new `lib/services/mpnNormalizer.ts` with conservative `stripPackagingSuffix()` (handles `-TR`, `-T/R`, `-REEL`, `-CT`, `-7INCH`, `-13INCH`, `/R7`) and `mpnLookupCandidates()` that returns both raw and stripped variants. Applied in the cross-ref lookup query. Conservative list — never strips patterns that could encode part variant (grade, tolerance, voltage).
+2. **Bidirectional cross-reference lookup** — `fetchManufacturerCrossRefs` now queries both `original_mpn` and `xref_mpn` via Supabase `.or()` across all candidate MPNs. For reverse matches (hit via `xref_mpn`), the row's fields are swapped before returning so the consumer in `partDataService.ts` transparently reads `xref_mpn` as the recommendation MPN. Pin-to-pin and functional equivalence are symmetric, so reverse matches are semantically valid.
+3. **Pin-to-pin sort preference** — added `mfrEquivalenceType?: 'pin_to_pin' | 'functional'` to `XrefRecommendation`, populated from a per-MPN map (pin-to-pin wins when both exist). `RecommendationsPanel` sort comparator applies `category → mfrEqRank (pin_to_pin → functional → none) → score` within each category.
+4. **Certified-cross bypass on post-scoring filters** — new `isCertifiedCross(rec)` helper (true for `manufacturer` or `partsio_*` certifications). All 13 post-scoring blocking-rule filters wrapped through a local `withCertifiedBypass()` at the call site: certified recs are split off, filter runs on uncertified only, result is recombined. `filterRecsForBatch` also extended to keep MFR-certified crosses (previously only parts.io).
+5. **Cache invalidation** — `RECS_CACHE_SCHEMA_VERSION` bumped `v1 → v2` (reverse lookup) and again `v2 → v3` (certified-cross bypass) so affected families recompute on next search.
+
+**Rationale:** An explicit human certification — whether a manufacturer uploaded a cross-reference spreadsheet or Accuris's data team marked FFF/Functional equivalence — represents stronger real-world evidence than our inferred blocking-rule rejection. The pipeline was silently dropping these high-signal candidates. Directionality: once an authorized cross-reference is uploaded, both parts are certified equivalents; restricting lookup to one direction was an artifact of table schema, not semantics. Packaging suffixes are a purely cosmetic distinction that never affects electrical equivalence. Pin-to-pin is a stronger guarantee than functional (drop-in replacement vs. logical equivalent), so when a manufacturer certifies both for the same MPN, pin-to-pin should surface first.
+
+**Known trade-off:** Popular xref targets (TPW4157 maps to 136 TI parts in 3PEAK's upload) incur a cold-compute cost on first search — each reverse-matched xref MPN is resolved via `getAttributes()` serially through the candidate resolver. Observed ~25s cold path; subsequent searches hit the 30-day L2 recs cache and return in <100ms. User explicitly declined capping reverse matches because every row is a manufacturer-certified option. Future work: batch MPN resolution or pre-resolve common reverse xrefs at ingest time.
+
+**Files:** `lib/services/mpnNormalizer.ts` (new), `lib/services/manufacturerCrossRefService.ts` (bidirectional query + reverse-match field swap), `lib/types.ts` (`mfrEquivalenceType` on `XrefRecommendation`), `lib/services/partDataService.ts` (`mfrEquivalenceTypeMap`, `isCertifiedCross`, `withCertifiedBypass` wrapping all 13 post-scoring filters, `filterRecsForBatch` extended), `components/RecommendationsPanel.tsx` (pin-to-pin sort within category), `lib/services/partDataCache.ts` (`RECS_CACHE_SCHEMA_VERSION` → `v3`).
+
+## Decision #134 — Overview Tab Consolidation, Risk & Compliance Tab Removed (Apr 2026)
+
+**Context:** The Part Detail panel had three tabs — **Specs**, **Risk & Compliance**, **Commercial** — but no single surface summarized a part at a glance. A user inspecting a part had to tab through three views to piece together image + identity + lifecycle + distributor footprint + compliance. The Risk & Compliance tab, in particular, only showed lifecycle/compliance/supply-chain rows without any of the other high-level context.
+
+**Decision:** Add a new **Overview** tab (leftmost, default) that consolidates a summary of the part: image (Digikey `PhotoUrl`), identity (MPN/MFR/category/subcategory), description, origin & lifecycle (country of origin, status, years to EOL, risk rank, suggested replacements), distribution aggregates (distributor count, price range, **Target Price**), cross-references summary (counts + MFR list — source-side only, gated on `allRecommendations.length > 0`), and environmental & export classifications (RoHS / REACH / ECCN / HTS + regional HTS). The **Risk & Compliance** tab is removed; its lifecycle + compliance fields migrate into the Overview tab's sections.
+
+**Target Price formula:** For each distributor, take the unit price at that distributor's highest-quantity price break. Then take the minimum of those per-distributor top-tier prices and multiply by 0.80. Rationale: approximates a "best price at volume, then negotiated" target. Hidden when no price breaks exist. Tooltip on the row explains the formula.
+
+**Cross-References section scope:** Rendered only on the source-side Overview (inside `AttributesPanel`), never on the replacement-side Overview (inside `ComparisonView`). A replacement part has no cross-references of its own. Source-side gets `allRecommendations` piped from `DesktopLayout` / `MobileAppLayout` / `PartDetailModal`.
+
+**Chinese manufacturer flag:** MFR chips in the cross-reference list append `🇨🇳` when any rec for that MFR has `dataSource === 'atlas'`, reusing the exact markup from `RecommendationCard.tsx`.
+
+**Files:** `components/AttributesTabContent.tsx` (new `OverviewContent` component with `computeTargetPrice` / `computePriceRange` / `summarizeCrossRefs` helpers; `RiskContent` removed), `components/DesktopLayout.tsx` / `components/MobileAppLayout.tsx` / `components/parts-list/PartDetailModal.tsx` (`AttributesTab = 'overview' | 'specs' | 'commercial'`, default `'overview'`, pipe `allRecommendations`/`recs` to source-side panel), `components/AttributesPanel.tsx` (accept `allRecommendations` prop, render `OverviewContent`), `components/ComparisonView.tsx` (render `OverviewContent` without recs), `locales/{en,de,zh-CN}.json` (`tabOverview` key added, `tabRisk` removed).
+
+## Decision #135 — FindChips: Don't Cache Empty Results (Apr 2026)
+
+**Context:** FindChips lookups for parts that temporarily returned zero distributors (rate-limit rejection, API hiccup, stale index, transient upstream issue) were writing a `NOT_FOUND_SENTINEL` to the L2 Supabase cache with a 24-hour TTL. Subsequent requests for the same MPN within that window returned the cached null without ever re-hitting the API, so genuinely-stocked parts (e.g., `TNC0402GTC10K0F345`, a Stackpole NTC thermistor with multiple distributors on findchips.com) could appear as "No pricing data" for a full day. The single-call `getFindchipsResults` path wrote the sentinel; the batch path also read it on the next lookup.
+
+**Decision:** Stop writing empty-result sentinels to L2 on both paths. If the API returns zero distributors we simply return `null` without persisting anything — the next request re-queries. On reads we also ignore any legacy `NOT_FOUND_SENTINEL` rows that were written before this change, so historical entries don't keep masking live results until they expire on their own. Successful (hit) responses continue to be cached normally at `TTL_COMMERCIAL_MS` (24h).
+
+**Trade-off:** Re-querying on every empty response costs an API call each time. Acceptable because (a) the rate limiter (60/min, 5000/day) already caps total spend, (b) most parts that genuinely have no distributors are obscure and rarely looked up, and (c) the user-visible cost of a 24h stale miss is much higher than the server-side cost of extra calls. If spam becomes a problem we can revisit with a much shorter sentinel TTL (e.g., 5 min) instead of removing it entirely.
+
+**Files:** `lib/services/findchipsClient.ts` (remove `NOT_FOUND_SENTINEL` / `TTL_NOT_FOUND_MS` writes on both single + batch paths; read paths now treat sentinels as cache-miss).

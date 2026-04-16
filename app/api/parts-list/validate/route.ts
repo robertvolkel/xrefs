@@ -34,12 +34,12 @@ async function processItem(
         ? `${item.manufacturer} ${query}`
         : query;
 
-      const searchResult = await searchParts(searchQuery, currency, userId, { skipMouser: true });
+      const searchResult = await searchParts(searchQuery, currency, userId, { skipFindchips: true });
 
       if (searchResult.type === 'none') {
         // Fallback: try direct attribute lookup (exact MPN match against Digikey, Atlas, parts.io)
         // searchParts uses prefix/keyword matching which may miss parts that exact lookup finds
-        const directAttrs = await getAttributes(query, currency, userId, { skipMouser: true });
+        const directAttrs = await getAttributes(query, currency, userId, { skipFindchips: true });
         if (!directAttrs) {
           return { rowIndex: item.rowIndex, status: 'not-found' };
         }
@@ -59,7 +59,7 @@ async function processItem(
     }
 
     // Step 2: Get attributes
-    const sourceAttributes = prefetchedAttributes ?? await getAttributes(resolvedPart.mpn, currency, userId, { skipMouser: true });
+    const sourceAttributes = prefetchedAttributes ?? await getAttributes(resolvedPart.mpn, currency, userId, { skipFindchips: true });
     if (!sourceAttributes) {
       return { rowIndex: item.rowIndex, status: 'resolved', resolvedPart };
     }
@@ -81,7 +81,7 @@ async function processItem(
     const recResult = await getRecommendations(
       resolvedPart.mpn, undefined, undefined, currency, undefined,
       userPreferences, userId, prefetchedAttributes,
-      { skipPartsioEnrichment: true, filterForBatch: true, skipMouser: true },
+      { skipPartsioEnrichment: true, filterForBatch: true, skipFindchips: true },
     );
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;

@@ -130,8 +130,8 @@
     "searchCount": "{{total}} 个零件中的 {{filtered}} 个",
     "notifications": {
       "validationErrors": "{{count}} 个零件无法解析——数据源可能不可用",
-      "mouserUnavailable": "Mouser 定价不可用——API 可能已关闭或达到速率限制",
-      "mouserLoaded": "已加载 {{count}} 个零件的 Mouser 定价",
+      "fcUnavailable": "定价数据不可用——FindChips API 可能已关闭或达到速率限制",
+      "fcLoaded": "已加载 {{count}} 个零件的定价数据",
       "someNotFound": "{{count}} 个零件在任何数据源中均未找到",
       "retry": "重试"
     }
@@ -155,6 +155,15 @@
     "resolved": "已解析",
     "notFound": "未找到",
     "error": "错误"
+  },
+  "partType": {
+    "electronic": "电子",
+    "mechanical": "机械",
+    "pcb": "PCB",
+    "custom": "定制",
+    "other": "其他",
+    "setPartType": "设置类型",
+    "label": "类型"
   },
   "rowActions": {
     "refresh": "刷新",
@@ -212,8 +221,8 @@
   "attributes": {
     "parameterHeader": "参数",
     "valueHeader": "值",
+    "tabOverview": "概述",
     "tabSpecs": "规格",
-    "tabRisk": "风险",
     "tabCommercial": "商业",
     "noRiskData": "无生命周期或合规数据。",
     "noCommercialData": "无价格数据。",
@@ -290,6 +299,7 @@
     "setThreshold": "设置阈值",
     "notApplicable": "不适用",
     "addReviewFlag": "添加审查标记",
+    "distributorClicks": "分销商点击",
     "taxonomyNav": "分类",
     "taxonomy": "Digikey 分类",
     "taxonomyDescription": "Digikey 产品类别与支持的元件系列交叉对照。",
@@ -637,6 +647,17 @@
     "resultHeader": "结果",
     "filtersLabel": "筛选:",
     "hasFeedbackLabel": "有反馈"
+  },
+  "adminDistributorClicks": {
+    "date": "日期",
+    "user": "用户",
+    "mpn": "MPN",
+    "manufacturer": "制造商",
+    "distributor": "分销商",
+    "noEntries": "暂无分销商点击数据。",
+    "noEntriesFiltered": "没有匹配当前筛选条件的点击记录。",
+    "searchPlaceholder": "搜索 MPN、制造商、用户…",
+    "filterAll": "全部"
   },
   "contextQ": {
     "12": {

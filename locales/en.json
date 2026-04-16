@@ -116,10 +116,18 @@
     "viewLabel": "View:",
     "editView": "Edit view",
     "createNewView": "Create new view",
-    "saveAsTemplate": "Save as template",
+    "promoteToMaster": "Make master view",
+    "demoteToListSpecific": "Make list-specific",
     "deleteThisView": "Delete this view",
     "isDefaultView": "This is the default view",
     "setDefaultView": "Set as default view",
+    "masterBadge": "Master",
+    "listBadge": "This list",
+    "promoteWarning": "This will become a master view, shared across all your lists. Any changes to it will apply everywhere.",
+    "demoteWarning": "Other lists will lose access to this view. Only this list will keep it.",
+    "editMasterWarning": "Changes will update this view across all your lists.",
+    "deleteMasterWarning": "This will remove the view from all your lists.",
+    "deleteMasterTitle": "Delete master view \"{{name}}\"?",
     "selectedCount": "{{selected}} of {{total}} selected",
     "partsCount": "{{count}} parts",
     "refreshTooltip": "Re-validate selected parts",
@@ -146,8 +154,8 @@
     "searchCount": "{{filtered}} of {{total}} parts",
     "notifications": {
       "validationErrors": "{{count}} parts could not be resolved — data source may be unavailable",
-      "mouserUnavailable": "Mouser pricing unavailable — API may be down or rate limited",
-      "mouserLoaded": "Mouser pricing loaded for {{count}} parts",
+      "fcUnavailable": "Pricing data unavailable — FindChips API may be down or rate limited",
+      "fcLoaded": "Pricing data loaded for {{count}} parts",
       "someNotFound": "{{count}} parts could not be found in any data source",
       "retry": "Retry"
     }
@@ -172,6 +180,15 @@
     "notFound": "Not Found",
     "error": "Error"
   },
+  "partType": {
+    "electronic": "Electronic",
+    "mechanical": "Mechanical",
+    "pcb": "PCB",
+    "custom": "Custom",
+    "other": "Other",
+    "setPartType": "Set Type",
+    "label": "Type"
+  },
   "rowActions": {
     "refresh": "Refresh",
     "removeFromView": "Remove from view",
@@ -191,7 +208,10 @@
     "descriptionLabel": "Description",
     "descriptionPlaceholder": "Describe the purpose of this view and what the assistant should focus on...",
     "saveConfirmTitle": "Save view changes?",
-    "saveConfirmMessage": "This view is shared across all your lists. Saving will update it everywhere.",
+    "saveConfirmMessage": "This will update the view for this list only. Other lists keep their own view settings.",
+    "saveMasterConfirmMessage": "This is a master view. Changes will apply across all your lists.",
+    "scopeMaster": "Master view (all lists)",
+    "scopeList": "List-specific view (this list only)",
     "dontShowAgain": "Don't show this again"
   },
   "columnMapping": {
@@ -231,8 +251,8 @@
   "attributes": {
     "parameterHeader": "Parameter",
     "valueHeader": "Value",
+    "tabOverview": "Overview",
     "tabSpecs": "Specs",
-    "tabRisk": "Risk & Compliance",
     "tabCommercial": "Commercial",
     "noRiskData": "No lifecycle or compliance data available.",
     "noCommercialData": "No pricing data available.",
@@ -340,6 +360,7 @@
     "taxonomyNav": "Digikey Taxonomy",
     "searchLogicNav": "Search Logic",
     "listLogicNav": "List Logic",
+    "distributorClicks": "Distributor Clicks",
     "taxonomy": "Digikey Taxonomy",
     "taxonomyDescription": "Digikey product categories cross-referenced with supported component families.",
     "coverageSummary": "Coverage: {{covered}} ({{percentage}}%) of {{total}} Digikey subcategories.",
@@ -708,6 +729,17 @@
     "resultHeader": "Result",
     "filtersLabel": "Filters:",
     "hasFeedbackLabel": "Has Feedback"
+  },
+  "adminDistributorClicks": {
+    "date": "Date",
+    "user": "User",
+    "mpn": "MPN",
+    "manufacturer": "Manufacturer",
+    "distributor": "Distributor",
+    "noEntries": "No distributor click data yet.",
+    "noEntriesFiltered": "No clicks match the current filters.",
+    "searchPlaceholder": "Search MPN, manufacturer, user…",
+    "filterAll": "All"
   },
   "contextQ": {
     "12": {

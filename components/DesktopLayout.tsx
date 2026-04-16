@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { AppPhase, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
 
-export type AttributesTab = 'specs' | 'risk' | 'commercial';
+export type AttributesTab = 'overview' | 'specs' | 'commercial';
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
 import ChatHistoryDrawer from './ChatHistoryDrawer';
@@ -130,8 +130,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   } = props;
 
   // Synced tab state for AttributesPanel + ComparisonView — both panels show same dimension
-  const [attributesTab, setAttributesTab] = useState<AttributesTab>('specs');
-  useEffect(() => { setAttributesTab('specs'); }, [sourceAttributes?.part.mpn]);
+  const [attributesTab, setAttributesTab] = useState<AttributesTab>('overview');
+  useEffect(() => { setAttributesTab('overview'); }, [sourceAttributes?.part.mpn]);
 
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
@@ -252,6 +252,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             title="Source Part"
             activeTab={attributesTab}
             onTabChange={setAttributesTab}
+            allRecommendations={recommendations}
           />
         </Box>
 

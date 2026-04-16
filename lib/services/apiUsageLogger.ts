@@ -38,7 +38,7 @@ interface LogTokenUsageParams {
 
 interface LogApiCallParams {
   userId: string;
-  service: 'digikey' | 'mouser' | 'partsio';
+  service: 'digikey' | 'mouser' | 'partsio' | 'findchips';
   operation: ApiOperation;
   requestCount?: number;   // For batched calls
   metadata?: Record<string, unknown>;

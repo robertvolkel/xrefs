@@ -37,6 +37,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       preferredMpn: r.preferredMpn,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
+      partType: r.partType,
     };
   });
 }
@@ -51,6 +52,7 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
     preferredMpn: r.preferredMpn,
+    partType: r.partType,
   }));
 }
 
@@ -207,8 +209,8 @@ export async function deletePartsListSupabase(id: string): Promise<void> {
     .eq('id', id);
 }
 
-/** Save per-list view configurations */
-export async function saveListViewConfigsSupabase(id: string, viewConfigs: ViewState): Promise<void> {
+/** Save per-list view configurations (accepts both legacy ViewState and new ListViewState) */
+export async function saveListViewConfigsSupabase(id: string, viewConfigs: ViewState | import('./viewConfigStorage').ListViewState): Promise<void> {
   const supabase = createClient();
   await supabase
     .from('parts_lists')

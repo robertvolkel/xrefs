@@ -1,16 +1,32 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
 
-// ── In-memory cache (30min TTL) ──────────────────────────────
-let cachedResponse: string | null = null;
-let cacheTimestamp = 0;
-const CACHE_TTL_MS = 1_800_000; // 30 minutes — data only changes on ingestion or logic updates
+// ── Hot in-memory cache (60s) ─────────────────────────────────
+// Fronts the persistent admin_stats_cache row so per-render
+// navigation in the panel doesn't re-hit Supabase.
+let memCache: { body: string; cachedAt: string } | null = null;
+let memCacheTimestamp = 0;
+const MEM_CACHE_TTL_MS = 60_000;
+
+const CACHE_KEY = 'manufacturers-list';
 
 export function invalidateManufacturersListCache() {
-  cachedResponse = null;
-  cacheTimestamp = 0;
+  memCache = null;
+  memCacheTimestamp = 0;
+  // Fire-and-forget: clear persistent row AND kick off a background
+  // recompute so the next admin page load is instant.
+  void (async () => {
+    try {
+      const svc = createServiceClient();
+      await svc.from('admin_stats_cache').delete().eq('key', CACHE_KEY);
+      await computeAndPersist();
+    } catch (err) {
+      console.error('invalidateManufacturersListCache background error:', err);
+    }
+  })();
 }
 
 interface MfrRow {
@@ -30,176 +46,209 @@ interface StatsRow {
   param_keys: string[] | null;
 }
 
-export async function GET() {
+async function computeStats(): Promise<object> {
+  const supabase = await createClient();
+
+  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
+    supabase
+      .from('atlas_manufacturers')
+      .select('name_display, name_en, name_zh, slug, id, enabled, website_url')
+      .order('name_en'),
+    supabase.rpc('get_manufacturer_product_stats'),
+    supabase.rpc('get_cross_ref_counts'),
+  ]);
+  const statsRows = rpcResult.data as StatsRow[] | null;
+  const statsErr = rpcResult.error;
+
+  const crossRefCounts = new Map<string, number>();
+  if (xrefCounts) {
+    for (const row of xrefCounts as { manufacturer_slug: string; count: number }[]) {
+      crossRefCounts.set(row.manufacturer_slug, Number(row.count));
+    }
+  }
+
+  if (mfrErr) {
+    throw new Error(`Failed to fetch atlas_manufacturers: ${mfrErr.message}`);
+  }
+
+  if (statsErr) {
+    console.warn('get_manufacturer_product_stats RPC failed:', statsErr.message);
+    const result = (mfrRows ?? []).map((m: MfrRow) => ({
+      id: m.id,
+      slug: m.slug,
+      nameEn: m.name_en,
+      nameZh: m.name_zh,
+      nameDisplay: m.name_display,
+      enabled: m.enabled,
+      websiteUrl: m.website_url,
+      productCount: 0,
+      scorableCount: 0,
+      families: [] as string[],
+      coveragePct: 0,
+      crossRefCount: crossRefCounts.get(m.slug) || 0,
+    }));
+    return {
+      manufacturers: result,
+      summary: { totalManufacturers: result.length, withProducts: 0, enabledWithProducts: 0, totalProducts: 0, scorableProducts: 0, familiesCovered: 0 },
+    };
+  }
+
+  const manufacturers = (mfrRows ?? []) as MfrRow[];
+  const stats = (statsRows ?? []) as StatsRow[];
+
+  const productAgg = new Map<string, {
+    productCount: number;
+    scorableCount: number;
+    families: Set<string>;
+  }>();
+  const allFamilies = new Set<string>();
+
+  const familyRuleAttrs = new Map<string, Set<string>>();
+  const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
+
+  let totalProducts = 0;
+  let totalScorable = 0;
+
+  for (const row of stats) {
+    const count = Number(row.product_count);
+    totalProducts += count;
+
+    let agg = productAgg.get(row.manufacturer);
+    if (!agg) {
+      agg = { productCount: 0, scorableCount: 0, families: new Set() };
+      productAgg.set(row.manufacturer, agg);
+    }
+    agg.productCount += count;
+
+    if (row.family_id) {
+      agg.scorableCount += count;
+      totalScorable += count;
+      agg.families.add(row.family_id);
+      allFamilies.add(row.family_id);
+
+      if (row.param_keys && row.param_keys.length > 0) {
+        if (!familyRuleAttrs.has(row.family_id)) {
+          const table = getLogicTable(row.family_id);
+          if (table) {
+            familyRuleAttrs.set(row.family_id, new Set(table.rules.map(r => r.attributeId)));
+          }
+        }
+        const ruleAttrs = familyRuleAttrs.get(row.family_id);
+        if (ruleAttrs && ruleAttrs.size > 0) {
+          let covered = 0;
+          for (const key of row.param_keys) {
+            if (ruleAttrs.has(key)) covered++;
+          }
+
+          let mc = mfrCoverage.get(row.manufacturer);
+          if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(row.manufacturer, mc); }
+          mc.totalCovered += covered * count;
+          mc.totalRules += ruleAttrs.size * count;
+        }
+      }
+    }
+  }
+
+  const result = manufacturers.map((m) => {
+    const agg = productAgg.get(m.name_display) || productAgg.get(m.name_en);
+    const cov = mfrCoverage.get(m.name_display) || mfrCoverage.get(m.name_en);
+    return {
+      id: m.id,
+      slug: m.slug,
+      nameEn: m.name_en,
+      nameZh: m.name_zh,
+      nameDisplay: m.name_display,
+      enabled: m.enabled,
+      websiteUrl: m.website_url,
+      productCount: agg?.productCount ?? 0,
+      scorableCount: agg?.scorableCount ?? 0,
+      families: agg ? [...agg.families].sort() : [],
+      coveragePct: cov && cov.totalRules > 0
+        ? Math.round((cov.totalCovered / cov.totalRules) * 100)
+        : 0,
+      crossRefCount: crossRefCounts.get(m.slug) || 0,
+    };
+  });
+
+  const withProducts = result.filter(m => m.productCount > 0).length;
+  const enabledMfrs = result.filter(m => m.enabled);
+  const enabledWithProducts = enabledMfrs.filter(m => m.productCount > 0).length;
+
+  return {
+    manufacturers: result,
+    summary: {
+      totalManufacturers: manufacturers.length,
+      withProducts,
+      enabledWithProducts,
+      totalProducts,
+      scorableProducts: totalScorable,
+      familiesCovered: allFamilies.size,
+    },
+  };
+}
+
+async function computeAndPersist(): Promise<{ payload: object; computedAt: string }> {
+  const payload = await computeStats();
+  const computedAt = new Date().toISOString();
+  try {
+    const svc = createServiceClient();
+    await svc
+      .from('admin_stats_cache')
+      .upsert({ key: CACHE_KEY, payload, computed_at: computedAt }, { onConflict: 'key' });
+  } catch (err) {
+    console.error('admin_stats_cache persist failed:', err);
+  }
+  return { payload, computedAt };
+}
+
+export async function GET(request: NextRequest) {
   try {
     const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
-    if (cachedResponse && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
-      return new NextResponse(cachedResponse, {
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+
+    if (!forceRefresh && memCache && Date.now() - memCacheTimestamp < MEM_CACHE_TTL_MS) {
+      return new NextResponse(memCache.body, {
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    const supabase = await createClient();
+    let payload: object | null = null;
+    let computedAt: string | null = null;
 
-    // Three parallel queries:
-    // 1. Manufacturers master list (~1K rows, lightweight)
-    // 2. RPC: GROUP BY (manufacturer, family_id) with counts + param keys (~2-3K rows)
-    // 3. RPC: Cross-ref counts per slug (avoids 1000-row PostgREST limit)
-    const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
-      supabase
-        .from('atlas_manufacturers')
-        .select('name_display, name_en, name_zh, slug, id, enabled, website_url')
-        .order('name_en'),
-      supabase.rpc('get_manufacturer_product_stats'),
-      supabase.rpc('get_cross_ref_counts'),
-    ]);
-    const statsRows = rpcResult.data as StatsRow[] | null;
-    const statsErr = rpcResult.error;
-
-    // Cross-ref counts per slug (from RPC — avoids Supabase 1000-row limit)
-    const crossRefCounts = new Map<string, number>();
-    if (xrefCounts) {
-      for (const row of xrefCounts as { manufacturer_slug: string; count: number }[]) {
-        crossRefCounts.set(row.manufacturer_slug, Number(row.count));
-      }
-    }
-
-    if (mfrErr) {
-      console.error('Failed to fetch atlas_manufacturers:', mfrErr.message);
-      return NextResponse.json({ error: 'Failed to fetch manufacturers' }, { status: 500 });
-    }
-
-    // Fallback: if RPC doesn't exist yet, return manufacturers without stats
-    if (statsErr) {
-      console.warn('get_manufacturer_product_stats RPC failed:', statsErr.message);
-      // Return basic response without stats so the page still loads
-      const result = (mfrRows ?? []).map((m: MfrRow) => ({
-        id: m.id,
-        slug: m.slug,
-        nameEn: m.name_en,
-        nameZh: m.name_zh,
-        nameDisplay: m.name_display,
-        enabled: m.enabled,
-        websiteUrl: m.website_url,
-        productCount: 0,
-        scorableCount: 0,
-        families: [] as string[],
-        coveragePct: 0,
-        crossRefCount: crossRefCounts.get(m.slug) || 0,
-      }));
-      return NextResponse.json({
-        manufacturers: result,
-        summary: { totalManufacturers: result.length, withProducts: 0, enabledWithProducts: 0, totalProducts: 0, scorableProducts: 0, familiesCovered: 0 },
-      });
-    }
-
-    const manufacturers = (mfrRows ?? []) as MfrRow[];
-    const stats = (statsRows ?? []) as StatsRow[];
-
-    // Build per-manufacturer aggregation from grouped stats (~2-3K rows vs 55K)
-    const productAgg = new Map<string, {
-      productCount: number;
-      scorableCount: number;
-      families: Set<string>;
-    }>();
-    const allFamilies = new Set<string>();
-
-    // Pre-compute rule attributes per family (cached across iterations)
-    const familyRuleAttrs = new Map<string, Set<string>>();
-    const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
-
-    let totalProducts = 0;
-    let totalScorable = 0;
-
-    for (const row of stats) {
-      const count = Number(row.product_count);
-      totalProducts += count;
-
-      let agg = productAgg.get(row.manufacturer);
-      if (!agg) {
-        agg = { productCount: 0, scorableCount: 0, families: new Set() };
-        productAgg.set(row.manufacturer, agg);
-      }
-      agg.productCount += count;
-
-      if (row.family_id) {
-        agg.scorableCount += count;
-        totalScorable += count;
-        agg.families.add(row.family_id);
-        allFamilies.add(row.family_id);
-
-        // Coverage: intersect param_keys with rule attributeIds
-        if (row.param_keys && row.param_keys.length > 0) {
-          if (!familyRuleAttrs.has(row.family_id)) {
-            const table = getLogicTable(row.family_id);
-            if (table) {
-              familyRuleAttrs.set(row.family_id, new Set(table.rules.map(r => r.attributeId)));
-            }
-          }
-          const ruleAttrs = familyRuleAttrs.get(row.family_id);
-          if (ruleAttrs && ruleAttrs.size > 0) {
-            let covered = 0;
-            for (const key of row.param_keys) {
-              if (ruleAttrs.has(key)) covered++;
-            }
-
-            let mc = mfrCoverage.get(row.manufacturer);
-            if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(row.manufacturer, mc); }
-            // Weight by product count — each product in this group contributes
-            mc.totalCovered += covered * count;
-            mc.totalRules += ruleAttrs.size * count;
-          }
+    if (!forceRefresh) {
+      try {
+        const svc = createServiceClient();
+        const { data } = await svc
+          .from('admin_stats_cache')
+          .select('payload, computed_at')
+          .eq('key', CACHE_KEY)
+          .maybeSingle();
+        if (data?.payload) {
+          payload = data.payload as object;
+          computedAt = data.computed_at as string;
         }
+      } catch (err) {
+        console.error('admin_stats_cache read failed:', err);
       }
     }
 
-    // Build response — merge master list with aggregated stats
-    const result = manufacturers.map((m) => {
-      const agg = productAgg.get(m.name_display) || productAgg.get(m.name_en);
-      const cov = mfrCoverage.get(m.name_display) || mfrCoverage.get(m.name_en);
-      return {
-        id: m.id,
-        slug: m.slug,
-        nameEn: m.name_en,
-        nameZh: m.name_zh,
-        nameDisplay: m.name_display,
-        enabled: m.enabled,
-        websiteUrl: m.website_url,
-        productCount: agg?.productCount ?? 0,
-        scorableCount: agg?.scorableCount ?? 0,
-        families: agg ? [...agg.families].sort() : [],
-        coveragePct: cov && cov.totalRules > 0
-          ? Math.round((cov.totalCovered / cov.totalRules) * 100)
-          : 0,
-        crossRefCount: crossRefCounts.get(m.slug) || 0,
-      };
-    });
+    if (!payload || !computedAt) {
+      const fresh = await computeAndPersist();
+      payload = fresh.payload;
+      computedAt = fresh.computedAt;
+    }
 
-    const withProducts = result.filter(m => m.productCount > 0).length;
-    const enabledMfrs = result.filter(m => m.enabled);
-    const enabledWithProducts = enabledMfrs.filter(m => m.productCount > 0).length;
+    const body = JSON.stringify({ ...payload, cachedAt: computedAt });
+    memCache = { body, cachedAt: computedAt };
+    memCacheTimestamp = Date.now();
 
-    const responseBody = JSON.stringify({
-      manufacturers: result,
-      summary: {
-        totalManufacturers: manufacturers.length,
-        withProducts,
-        enabledWithProducts,
-        totalProducts,
-        scorableProducts: totalScorable,
-        familiesCovered: allFamilies.size,
-      },
-    });
-
-    cachedResponse = responseBody;
-    cacheTimestamp = Date.now();
-
-    return new NextResponse(responseBody, {
+    return new NextResponse(body, {
       headers: { 'Content-Type': 'application/json' },
     });
-  } catch {
+  } catch (err) {
+    console.error('GET /api/admin/manufacturers error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

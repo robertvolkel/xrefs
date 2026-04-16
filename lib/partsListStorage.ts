@@ -5,7 +5,7 @@
  * Each list stores row data (without heavy allRecommendations to save space).
  */
 
-import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData } from './types';
+import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData, PartType } from './types';
 import { classifyListTheme } from './themeClassifier';
 
 const STORAGE_KEY = 'xrefs_parts_lists';
@@ -32,6 +32,8 @@ export interface StoredRow {
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
+  /** BOM line item classification */
+  partType?: PartType;
 }
 
 /** A saved parts list */

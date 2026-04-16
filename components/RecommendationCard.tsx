@@ -69,7 +69,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                       )}
                       {cats.includes('third_party_certified') && (
                         <Tooltip title={formatThirdPartyTooltip(thirdPartySources)} arrow>
-                          <Chip label="3rd Party" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
+                          <Chip label="Accuris Certified" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#FFA726', borderColor: '#FFA726' }} />
                         </Tooltip>
                       )}
                     </>

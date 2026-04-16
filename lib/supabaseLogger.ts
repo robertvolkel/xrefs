@@ -36,3 +36,30 @@ export function logSearch(params: LogSearchParams): void {
       .then(); // consume the promise
   });
 }
+
+interface LogDistributorClickParams {
+  mpn: string;
+  manufacturer: string;
+  distributor: string;
+  productUrl?: string;
+}
+
+/** Log a distributor link click. Non-blocking. */
+export function logDistributorClick(params: LogDistributorClickParams): void {
+  const supabase = createClient();
+
+  supabase.auth.getUser().then(({ data: { user } }) => {
+    if (!user) return;
+
+    supabase
+      .from('distributor_clicks')
+      .insert({
+        user_id: user.id,
+        mpn: params.mpn,
+        manufacturer: params.manufacturer,
+        distributor: params.distributor,
+        product_url: params.productUrl ?? null,
+      })
+      .then();
+  });
+}
