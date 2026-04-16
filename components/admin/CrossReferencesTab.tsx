@@ -24,6 +24,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { getMfrCrossRefs, uploadMfrCrossRefs, deleteMfrCrossRefs } from '@/lib/api';
 import { parseSpreadsheetFile } from '@/lib/excelParser';
+import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 import type { ManufacturerCrossReference, ParsedSpreadsheet, CrossRefColumnMapping } from '@/lib/types';
 import CrossRefColumnMappingDialog from './CrossRefColumnMappingDialog';
 
@@ -34,22 +35,6 @@ interface CrossReferencesTabProps {
   slug: string;
   manufacturerName: string;
   lastUploadedAt?: string | null;
-}
-
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  const diffMo = Math.round(diffDay / 30);
-  return `${diffMo}mo ago`;
 }
 
 export default function CrossReferencesTab({ slug, manufacturerName, lastUploadedAt }: CrossReferencesTabProps) {
@@ -172,12 +157,13 @@ export default function CrossReferencesTab({ slug, manufacturerName, lastUploade
   };
 
   // Delete
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (xref: ManufacturerCrossReference) => {
+    if (!window.confirm(`Delete cross-reference ${xref.original_mpn} → ${xref.xref_mpn}?`)) return;
     // Optimistic
-    setCrossRefs(prev => prev.filter(r => r.id !== id));
+    setCrossRefs(prev => prev.filter(r => r.id !== xref.id));
     setTotal(prev => prev - 1);
     try {
-      await deleteMfrCrossRefs(slug, [id]);
+      await deleteMfrCrossRefs(slug, [xref.id]);
     } catch {
       fetchCrossRefs(); // Revert on error
       setSnackbar({ open: true, message: 'Failed to delete cross-reference', severity: 'error' });
@@ -306,7 +292,7 @@ export default function CrossReferencesTab({ slug, manufacturerName, lastUploade
                       {xref.uploaded_at ? new Date(xref.uploaded_at).toLocaleDateString() : '—'}
                     </TableCell>
                     <TableCell>
-                      <IconButton size="small" onClick={() => handleDelete(xref.id)} sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}>
+                      <IconButton size="small" onClick={() => handleDelete(xref)} sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}>
                         <DeleteOutlineIcon sx={{ fontSize: 16 }} />
                       </IconButton>
                     </TableCell>

@@ -38,6 +38,7 @@ import AtlasExplorerDrawer from './AtlasExplorerDrawer';
 import FlaggedProductsTab from './FlaggedProductsTab';
 import CrossReferencesTab from './CrossReferencesTab';
 import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs } from '@/lib/api';
+import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 import type { AtlasManufacturer } from '@/lib/types';
 
 interface MfrDetailData {
@@ -61,22 +62,6 @@ interface MfrDetailData {
     coveragePct: number;
   }[];
   familyNames: Record<string, string>;
-}
-
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  const diffMo = Math.round(diffDay / 30);
-  return `${diffMo}mo ago`;
 }
 
 function TimestampLabel({ label, iso }: { label: string; iso: string | null | undefined }) {
@@ -147,6 +132,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [flaggedCount, setFlaggedCount] = useState(0);
   const [crossRefCount, setCrossRefCount] = useState(0);
+  const [enabledUpdating, setEnabledUpdating] = useState(false);
 
   // Fetch manufacturer data
   useEffect(() => {
@@ -237,9 +223,10 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
 
   // Enable/disable toggle
   const handleToggle = useCallback(async (enabled: boolean) => {
-    if (!data) return;
+    if (!data || enabledUpdating) return;
     const prev = data.manufacturer.enabled;
     setData({ ...data, manufacturer: { ...data.manufacturer, enabled } });
+    setEnabledUpdating(true);
 
     try {
       const res = await fetch(`/api/admin/manufacturers/${slug}`, {
@@ -251,8 +238,10 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
       if (!json.success) throw new Error(json.error);
     } catch {
       setData((d) => d ? { ...d, manufacturer: { ...d.manufacturer, enabled: prev } } : d);
+    } finally {
+      setEnabledUpdating(false);
     }
-  }, [data, slug]);
+  }, [data, slug, enabledUpdating]);
 
   if (loading) {
     return (
@@ -310,6 +299,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
         <Switch
           size="small"
           checked={mfr.enabled}
+          disabled={enabledUpdating}
           onChange={(e) => handleToggle(e.target.checked)}
         />
       </Box>

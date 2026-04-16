@@ -82,32 +82,9 @@ async function computeStats(): Promise<object> {
   }
 
   if (statsErr) {
-    console.warn('get_manufacturer_product_stats RPC failed:', statsErr.message);
-    const result = (mfrRows ?? []).map((m: MfrRow) => {
-      const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
-      return {
-        id: m.id,
-        slug: m.slug,
-        nameEn: m.name_en,
-        nameZh: m.name_zh,
-        nameDisplay: m.name_display,
-        enabled: m.enabled,
-        websiteUrl: m.website_url,
-        productCount: 0,
-        scorableCount: 0,
-        families: [] as string[],
-        coveragePct: 0,
-        crossRefCount: crossRefCounts.get(m.slug) || 0,
-        lastProductUpdate: null as string | null,
-        lastProfileUpdate: m.updated_at,
-        lastCrossRefUpdate: xrefTs,
-        lastModified: maxIso(m.updated_at, xrefTs),
-      };
-    });
-    return {
-      manufacturers: result,
-      summary: { totalManufacturers: result.length, withProducts: 0, enabledWithProducts: 0, totalProducts: 0, scorableProducts: 0, familiesCovered: 0 },
-    };
+    // Never synthesize a zero-filled "success" payload — it would get persisted
+    // to admin_stats_cache and served to every admin until someone clicks Refresh.
+    throw new Error(`get_manufacturer_product_stats RPC failed: ${statsErr.message}`);
   }
 
   const manufacturers = (mfrRows ?? []) as MfrRow[];
@@ -226,6 +203,30 @@ async function computeAndPersist(): Promise<{ payload: object; computedAt: strin
   return { payload, computedAt };
 }
 
+function looksPoisoned(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const summary = (payload as { summary?: { totalManufacturers?: number; totalProducts?: number } }).summary;
+  if (!summary) return false;
+  return (summary.totalManufacturers ?? 0) > 0 && (summary.totalProducts ?? 0) === 0;
+}
+
+async function readPersistentCache(): Promise<{ payload: object; computedAt: string } | null> {
+  try {
+    const svc = createServiceClient();
+    const { data } = await svc
+      .from('admin_stats_cache')
+      .select('payload, computed_at')
+      .eq('key', CACHE_KEY)
+      .maybeSingle();
+    if (data?.payload && data.computed_at) {
+      return { payload: data.payload as object, computedAt: data.computed_at as string };
+    }
+  } catch (err) {
+    console.error('admin_stats_cache read failed:', err);
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { error: authError } = await requireAdmin();
@@ -241,31 +242,40 @@ export async function GET(request: NextRequest) {
 
     let payload: object | null = null;
     let computedAt: string | null = null;
+    let stale = false;
 
     if (!forceRefresh) {
-      try {
-        const svc = createServiceClient();
-        const { data } = await svc
-          .from('admin_stats_cache')
-          .select('payload, computed_at')
-          .eq('key', CACHE_KEY)
-          .maybeSingle();
-        if (data?.payload) {
-          payload = data.payload as object;
-          computedAt = data.computed_at as string;
-        }
-      } catch (err) {
-        console.error('admin_stats_cache read failed:', err);
+      const cached = await readPersistentCache();
+      if (cached && !looksPoisoned(cached.payload)) {
+        payload = cached.payload;
+        computedAt = cached.computedAt;
       }
     }
 
     if (!payload || !computedAt) {
-      const fresh = await computeAndPersist();
-      payload = fresh.payload;
-      computedAt = fresh.computedAt;
+      try {
+        const fresh = await computeAndPersist();
+        payload = fresh.payload;
+        computedAt = fresh.computedAt;
+      } catch (err) {
+        console.error('computeAndPersist failed:', err);
+        // Fresh compute failed — fall back to last known good cache even on
+        // a force-refresh, so the admin never sees synthetic zeros.
+        const cached = await readPersistentCache();
+        if (cached && !looksPoisoned(cached.payload)) {
+          payload = cached.payload;
+          computedAt = cached.computedAt;
+          stale = true;
+        } else {
+          return NextResponse.json(
+            { error: 'Stats temporarily unavailable', detail: err instanceof Error ? err.message : String(err) },
+            { status: 503 }
+          );
+        }
+      }
     }
 
-    const body = JSON.stringify({ ...payload, cachedAt: computedAt });
+    const body = JSON.stringify({ ...payload, cachedAt: computedAt, stale });
     memCache = { body, cachedAt: computedAt };
     memCacheTimestamp = Date.now();
 

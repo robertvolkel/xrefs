@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Alert,
   Box,
   Button,
   Tab,
@@ -27,6 +28,7 @@ import { useTranslation } from 'react-i18next';
 import AtlasExplorerTab from './AtlasExplorerTab';
 import FlaggedProductsTab from './FlaggedProductsTab';
 import { getAtlasFlags } from '@/lib/api';
+import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 
 interface MfrListItem {
   id: number;
@@ -47,25 +49,10 @@ interface MfrListItem {
   lastModified: string | null;
 }
 
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  const diffMo = Math.round(diffDay / 30);
-  return `${diffMo}mo ago`;
-}
-
 interface MfrListData {
   manufacturers: MfrListItem[];
   cachedAt?: string | null;
+  stale?: boolean;
   summary: {
     totalManufacturers: number;
     withProducts: number;
@@ -89,30 +76,45 @@ export default function ManufacturersPanel() {
   const [search, setSearch] = useState('');
   const [flaggedCount, setFlaggedCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     getAtlasFlags('open').then((resp) => setFlaggedCount(resp.flags.length)).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    fetch('/api/admin/manufacturers')
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => {});
+  const loadData = useCallback(async (forceRefresh: boolean) => {
+    try {
+      const res = await fetch(`/api/admin/manufacturers${forceRefresh ? '?refresh=1' : ''}`);
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body?.detail) detail = String(body.detail);
+          else if (body?.error) detail = String(body.error);
+        } catch {}
+        setFetchError(detail);
+        return;
+      }
+      const json = (await res.json()) as MfrListData;
+      setData(json);
+      setFetchError(null);
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Network error');
+    }
   }, []);
+
+  useEffect(() => {
+    void loadData(false);
+  }, [loadData]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch('/api/admin/manufacturers?refresh=1');
-      const json = await res.json();
-      setData(json);
-    } catch (err) {
-      console.error('Manufacturers refresh failed:', err);
+      await loadData(true);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [loadData]);
 
   const handleSort = useCallback((key: MfrSortKey) => {
     setSortDir((prev) => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
@@ -205,12 +207,46 @@ export default function ManufacturersPanel() {
 
       {activeTab === 0 && (
         <>
-          {!data ? (
+          {!data && fetchError ? (
+            <Alert
+              severity="error"
+              action={
+                <Button color="inherit" size="small" onClick={handleRefresh} disabled={refreshing}>
+                  {refreshing ? 'Retrying…' : 'Retry'}
+                </Button>
+              }
+            >
+              Stats unavailable: {fetchError}
+            </Alert>
+          ) : !data ? (
             <Typography variant="body2" color="text.secondary">
               {t('common.loading')}
             </Typography>
           ) : (
             <Box>
+              {(() => {
+                const looksPoisoned = data.summary.totalManufacturers > 0 && data.summary.totalProducts === 0;
+                const showBanner = data.stale || !!fetchError || looksPoisoned;
+                if (!showBanner) return null;
+                const msg = fetchError
+                  ? `Stats failed to refresh (${fetchError}) — showing last known good data.`
+                  : data.stale
+                    ? 'Stats failed to refresh — showing last known good data.'
+                    : 'Product counts look wrong (every manufacturer shows zero). The stats aggregation may have failed. Try Refresh.';
+                return (
+                  <Alert
+                    severity="warning"
+                    sx={{ mb: 2 }}
+                    action={
+                      <Button color="inherit" size="small" onClick={handleRefresh} disabled={refreshing}>
+                        {refreshing ? 'Retrying…' : 'Retry'}
+                      </Button>
+                    }
+                  >
+                    {msg}
+                  </Alert>
+                );
+              })()}
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
                 <Typography variant="body2" color="text.secondary">
                   {`${data.summary.withProducts} manufacturers with products · ${data.summary.totalProducts.toLocaleString()} products · ${data.summary.scorableProducts.toLocaleString()} scorable · ${data.summary.familiesCovered} families`}

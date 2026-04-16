@@ -174,7 +174,7 @@ export function useAppState() {
       setState((prev) => ({ ...prev, isEnrichingFC: true }));
 
       const chunkPromises = chunks.map(chunk =>
-        enrichWithFCBatch(chunk).then((fcData) => {
+        enrichWithFCBatch(chunk, signal).then((fcData) => {
           if (signal.aborted || Object.keys(fcData).length === 0) return;
           setState((prev) => {
             const enriched = prev.recommendations.map(rec => {

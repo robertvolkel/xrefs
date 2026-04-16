@@ -136,9 +136,12 @@ export async function getRecommendationsWithContext(
 
 /** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs.
  *  Caller must keep batch size ≤ 50 (server cap). Callers like `triggerFCEnrichment` in
- *  useAppState chunk larger lists and fire this in parallel per chunk for incremental rendering. */
+ *  useAppState chunk larger lists and fire this in parallel per chunk for incremental rendering.
+ *  Pass an `AbortSignal` to cancel in-flight HTTP when the user navigates away — saves FindChips
+ *  rate-limit budget (60 calls/min). AbortError is swallowed (treated as empty result). */
 export async function enrichWithFCBatch(
   mpns: string[],
+  signal?: AbortSignal,
 ): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
   if (mpns.length === 0) return {};
   try {
@@ -148,6 +151,7 @@ export async function enrichWithFCBatch(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mpns }),
+        signal,
       },
     );
     return result.results ?? {};
