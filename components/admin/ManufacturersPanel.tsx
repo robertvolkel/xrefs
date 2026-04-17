@@ -24,10 +24,11 @@ import {
 } from '@mui/material';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SyncIcon from '@mui/icons-material/Sync';
 import { useTranslation } from 'react-i18next';
 import AtlasExplorerTab from './AtlasExplorerTab';
 import FlaggedProductsTab from './FlaggedProductsTab';
-import { getAtlasFlags } from '@/lib/api';
+import { getAtlasFlags, syncAllMfrProfiles } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 
 interface MfrListItem {
@@ -76,6 +77,8 @@ export default function ManufacturersPanel() {
   const [search, setSearch] = useState('');
   const [flaggedCount, setFlaggedCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -113,6 +116,21 @@ export default function ManufacturersPanel() {
       await loadData(true);
     } finally {
       setRefreshing(false);
+    }
+  }, [loadData]);
+
+  const handleSyncProfiles = useCallback(async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await syncAllMfrProfiles();
+      setSyncResult(`Synced ${result.updated} profiles (${result.skipped} unchanged, ${result.errors} errors)`);
+      // Refresh the stats to reflect updated data
+      await loadData(true);
+    } catch (err) {
+      setSyncResult(`Sync failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setSyncing(false);
     }
   }, [loadData]);
 
@@ -262,15 +280,30 @@ export default function ManufacturersPanel() {
                   <Button
                     size="small"
                     variant="outlined"
+                    startIcon={<SyncIcon fontSize="small" />}
+                    onClick={handleSyncProfiles}
+                    disabled={syncing || refreshing}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {syncing ? 'Syncing Profiles…' : 'Sync Profiles'}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
                     startIcon={<RefreshIcon fontSize="small" />}
                     onClick={handleRefresh}
-                    disabled={refreshing}
+                    disabled={refreshing || syncing}
                     sx={{ textTransform: 'none' }}
                   >
                     {refreshing ? 'Refreshing…' : 'Refresh'}
                   </Button>
                 </Box>
               </Box>
+              {syncResult && (
+                <Alert severity={syncResult.includes('failed') ? 'error' : 'success'} sx={{ mb: 2 }} onClose={() => setSyncResult(null)}>
+                  {syncResult}
+                </Alert>
+              )}
 
               <TextField
                 size="small"

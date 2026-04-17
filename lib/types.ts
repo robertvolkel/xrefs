@@ -656,6 +656,12 @@ export interface AtlasManufacturer {
   complianceFlags: string[];
   designResources: DesignResource[];
   enabled: boolean;
+  // Profile enrichment fields (from Atlas external API)
+  contactInfo: string | null;
+  coreProducts: string | null;
+  stockCode: string | null;
+  gaiaId: string | null;
+  apiSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

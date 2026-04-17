@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Typography, Switch, Stack, Chip } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { getQcSettings, updateQcSettings } from '@/lib/api';
+import { getQcSettings, updateQcSettings, getAdminAppFeedbackList } from '@/lib/api';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import {
@@ -138,12 +138,28 @@ function AdminShellInner() {
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
+  // App feedback open count for badge
+  const [appFeedbackOpenCount, setAppFeedbackOpenCount] = useState(0);
+
+  const refreshAppFeedbackCount = useCallback(() => {
+    getAdminAppFeedbackList({ status: 'open', limit: 1 })
+      .then((r) => setAppFeedbackOpenCount(r.statusCounts.open))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     getQcSettings()
       .then((s) => setLoggingEnabled(s.qcLoggingEnabled))
       .catch(() => {})
       .finally(() => setSettingsLoaded(true));
-  }, []);
+
+    refreshAppFeedbackCount();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh badge when leaving app-feedback section (may have resolved items)
+  useEffect(() => {
+    if (activeSection !== 'app-feedback') refreshAppFeedbackCount();
+  }, [activeSection, refreshAppFeedbackCount]);
 
   const handleToggleLogging = async (enabled: boolean) => {
     setLoggingEnabled(enabled);
@@ -272,7 +288,7 @@ function AdminShellInner() {
             overflow: 'hidden',
           }}
         >
-          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} />
+          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} appFeedbackOpenCount={appFeedbackOpenCount} />
         </Box>
 
         {/* Family Picker (conditional) */}

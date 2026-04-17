@@ -967,3 +967,27 @@ export async function deleteMfrCrossRefs(slug: string, ids: string[]): Promise<v
   });
   if (!res.ok) throw new Error('Failed to delete cross-references');
 }
+
+// ── Atlas Profile Sync ──────────────────────────────────────
+
+export async function syncAllMfrProfiles(): Promise<{
+  total: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+}> {
+  const res = await fetch(`${BASE}/admin/manufacturers`, { method: 'POST' });
+  if (!res.ok) throw new Error('Profile sync failed');
+  return res.json();
+}
+
+export async function syncMfrProfile(slug: string): Promise<{
+  atlasId: number;
+  name: string;
+  changeCount: number;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/sync`, { method: 'POST' });
+  if (!res.ok) throw new Error('Profile sync failed');
+  return res.json();
+}

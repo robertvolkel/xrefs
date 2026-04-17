@@ -1,6 +1,6 @@
 'use client';
 
-import { List, ListItemButton, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Badge } from '@mui/material';
 import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -36,10 +36,6 @@ const logicDocsSections: SectionItem[] = [
   { id: 'list-logic', icon: ListAltOutlinedIcon, labelKey: 'admin.listLogicNav' },
 ];
 
-const appFeedbackSections: SectionItem[] = [
-  { id: 'app-feedback', icon: FeedbackOutlinedIcon, labelKey: 'admin.appFeedback' },
-];
-
 const qcSections: SectionItem[] = [
   { id: 'qc-feedback', icon: FlagIcon, labelKey: 'adminQc.tabFeedback' },
   { id: 'qc-logs', icon: HistoryIcon, labelKey: 'adminQc.tabLogs' },
@@ -49,6 +45,7 @@ const qcSections: SectionItem[] = [
 interface AdminSectionNavProps {
   activeSection: AdminSection;
   onSectionChange: (section: AdminSection) => void;
+  appFeedbackOpenCount?: number;
 }
 
 function SectionList({ sections, activeSection, onSectionChange, t }: {
@@ -86,7 +83,7 @@ function SectionList({ sections, activeSection, onSectionChange, t }: {
   );
 }
 
-export default function AdminSectionNav({ activeSection, onSectionChange }: AdminSectionNavProps) {
+export default function AdminSectionNav({ activeSection, onSectionChange, appFeedbackOpenCount = 0 }: AdminSectionNavProps) {
   const { t } = useTranslation();
 
   return (
@@ -97,7 +94,33 @@ export default function AdminSectionNav({ activeSection, onSectionChange }: Admi
       <Divider sx={{ my: 1 }} />
       <SectionList sections={logicDocsSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
-      <SectionList sections={appFeedbackSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
+      {/* App Feedback — with badge for open items */}
+      <ListItemButton
+        selected={activeSection === 'app-feedback'}
+        onClick={() => onSectionChange('app-feedback')}
+        sx={{
+          py: 1.25,
+          px: 2,
+          '&.Mui-selected': { bgcolor: 'action.selected' },
+        }}
+      >
+        <ListItemIcon sx={{ minWidth: 36 }}>
+          <Badge
+            variant="dot"
+            color="error"
+            invisible={appFeedbackOpenCount === 0}
+          >
+            <FeedbackOutlinedIcon fontSize="small" sx={{ opacity: activeSection === 'app-feedback' ? 1 : 0.7 }} />
+          </Badge>
+        </ListItemIcon>
+        <ListItemText
+          primary={t('admin.appFeedback')}
+          primaryTypographyProps={{
+            variant: 'body2',
+            fontWeight: activeSection === 'app-feedback' ? 600 : 400,
+          }}
+        />
+      </ListItemButton>
       <Divider sx={{ my: 1 }} />
       <SectionList sections={qcSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>

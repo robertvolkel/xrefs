@@ -154,6 +154,11 @@ export async function GET(
         complianceFlags: mfr.compliance_flags,
         designResources: mfr.design_resources,
         enabled: mfr.enabled,
+        contactInfo: mfr.contact_info ?? null,
+        coreProducts: mfr.core_products ?? null,
+        stockCode: mfr.stock_code ?? null,
+        gaiaId: mfr.gaia_id ?? null,
+        apiSyncedAt: mfr.api_synced_at ?? null,
       },
       stats: {
         totalProducts,
@@ -189,7 +194,8 @@ export async function PATCH(
       'summary', 'headquarters', 'country', 'founded_year', 'website_url',
       'logo_url', 'is_second_source', 'certifications', 'manufacturing_locations',
       'product_categories', 'authorized_distributors', 'compliance_flags',
-      'design_resources', 'enabled',
+      'design_resources', 'enabled', 'contact_info', 'core_products',
+      'stock_code', 'gaia_id',
     ];
 
     const updates: Record<string, unknown> = {};

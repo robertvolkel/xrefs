@@ -3479,3 +3479,21 @@ Added client-side tracking of distributor link clicks in the Commercial tab, wit
 **Shared sort helper:** Extracted `sortRecommendationsForDisplay()` from `RecommendationsPanel.tsx` so the enrichment trigger and the display component use the same ranking — there is a single source of truth for "what the user sees at the top."
 
 **Files:** `components/RecommendationCard.tsx` (two-line summary, removed datasheet icon + unused import, `isEnrichingFC` prop), `components/RecommendationsPanel.tsx` (default `showCommercial=true`, `sortRecommendationsForDisplay` export, pipe `isEnrichingFC`), `components/{DesktopLayout,MobileAppLayout}.tsx` + `components/AppShell.tsx` (pipe `isEnrichingFC` through), `hooks/useAppState.ts` (`isEnrichingFC` in AppState, parallel chunked enrichment, priority chunk, import shared sort), `hooks/usePartsListState.ts` (chunk enrichment in parallel), `lib/api.ts` (revert `enrichWithFCBatch` to single-call).
+
+## Decision #139 — Atlas External API: Manufacturer Profile Enrichment (Apr 2026)
+
+**Context:** Atlas engineering team provided an external HTTP API (`https://cn-api.datasheet5.com`) for manufacturer and product data. The API currently serves manufacturer list, profiles, and paginated product listings — no parametric data on products yet. Our `atlas_manufacturers` table had 1,011 records but most profile JSONB columns (summary, certifications, HQ, etc.) were empty, with the Profile tab showing "No profile data yet" for most manufacturers.
+
+**Decision:**
+1. **Profile-only integration** — use the API exclusively for manufacturer profile enrichment. The API's product endpoint returns less data than what's already in `atlas_products` (no parameters, no family_id) and lacks bulk/family queries needed by the recommendation pipeline.
+2. **ID mapping validated** — API partner `id` matches our `atlas_id` at 89.2% (297/333 API partners). Zero ID mismatches. 35 API-only partners (not in our DB), 714 local-only (not in API). Join key: `atlas_id`.
+3. **Batch sync script** (`scripts/atlas-api-sync-profiles.mjs`) — fetches partner details one-by-one and enriches existing rows. Merge strategy: "API enriches, existing data preserved" (don't overwrite non-null admin-edited fields unless `--force`). Flags: `--dry-run`, `--force`, `--verbose`, `--id <N>`, `--add-new`.
+4. **New DB columns** — `contact_info`, `core_products`, `stock_code`, `gaia_id`, `api_synced_at` added to `atlas_manufacturers` (migration: `scripts/supabase-atlas-manufacturers-profile-migration.sql`).
+5. **API client** — `lib/services/atlasApiClient.ts`, server-side only, `ATLAS_API_TOKEN` env var, typed response interfaces for all 4 endpoints.
+6. **Profile tab enriched** — `ManufacturerDetailPage.tsx` Profile tab now shows: About (summary), Basic Info (founded year, HQ, website link, contact, stock code), Core Products (comma-split chips), Aliases, Parts.io, Certifications (parsed with category inference), Compliance, Logo. API sync timestamp shown in header.
+
+**Results:** 297 manufacturers enriched. Coverage: 229 with summaries, 108 with logos, 64 with parsed certifications.
+
+**Future:** When the API adds parametric data on products, it could replace the JSON file ingestion pipeline (`atlas-ingest.mjs`). The Supabase-first architecture remains — batch sync to Supabase, query from Supabase. Live API queries are unsuitable for the recommendation hot path.
+
+**Files:** `lib/services/atlasApiClient.ts` (new), `scripts/atlas-api-validate-ids.mjs` (new), `scripts/atlas-api-sync-profiles.mjs` (new), `scripts/supabase-atlas-manufacturers-profile-migration.sql` (new), `lib/types.ts` (AtlasManufacturer extended), `app/api/admin/manufacturers/[slug]/route.ts` (new fields exposed + PATCH allowlist), `components/admin/ManufacturerDetailPage.tsx` (Profile tab enriched).

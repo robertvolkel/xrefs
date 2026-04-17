@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -28,6 +29,7 @@ import LaunchIcon from '@mui/icons-material/Launch';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
+import SyncIcon from '@mui/icons-material/Sync';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -37,7 +39,7 @@ import AtlasCoverageDrawer from './AtlasCoverageDrawer';
 import AtlasExplorerDrawer from './AtlasExplorerDrawer';
 import FlaggedProductsTab from './FlaggedProductsTab';
 import CrossReferencesTab from './CrossReferencesTab';
-import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs } from '@/lib/api';
+import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs, syncMfrProfile } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 import type { AtlasManufacturer } from '@/lib/types';
 
@@ -106,6 +108,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [data, setData] = useState<MfrDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0); // 0=Products, 1=Flagged, 2=Coverage, 3=Cross-Refs, 4=Profile
+  const [syncingProfile, setSyncingProfile] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Products tab state
   const [products, setProducts] = useState<ProductsResponse | null>(null);
@@ -179,6 +183,26 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
       .catch(() => {})
       .finally(() => setProductsLoading(false));
   }, [slug, productPage, productSearch, productFamily, productSort, productSortDir]);
+
+  const handleSyncProfile = useCallback(async () => {
+    setSyncingProfile(true);
+    setSyncMessage(null);
+    try {
+      const result = await syncMfrProfile(slug);
+      if (result.changeCount > 0) {
+        setSyncMessage(`Updated ${result.changeCount} field(s)`);
+        // Re-fetch manufacturer detail to reflect changes
+        const r = await fetch(`/api/admin/manufacturers/${slug}`);
+        if (r.ok) setData(await r.json());
+      } else {
+        setSyncMessage('Already up to date');
+      }
+    } catch (err) {
+      setSyncMessage(`Sync failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    } finally {
+      setSyncingProfile(false);
+    }
+  }, [slug]);
 
   const handleCoverageSort = useCallback(() => {
     if (productSort !== 'coverage') {
@@ -329,18 +353,93 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
               <Typography variant="body2" color="text.secondary">
                 {`${stats.totalProducts} products · ${stats.scorableProducts} scorable · ${stats.coveragePct}% avg coverage`}
               </Typography>
-              <TimestampLabel label="Last updated" iso={data.timestamps?.profile} />
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                {mfr.apiSyncedAt && (
+                  <TimestampLabel label="API synced" iso={mfr.apiSyncedAt} />
+                )}
+                <TimestampLabel label="Last updated" iso={data.timestamps?.profile} />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<SyncIcon fontSize="small" />}
+                  onClick={handleSyncProfile}
+                  disabled={syncingProfile}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {syncingProfile ? 'Syncing…' : 'Sync Profile'}
+                </Button>
+              </Box>
             </Box>
+            {syncMessage && (
+              <Alert severity={syncMessage.includes('failed') ? 'error' : 'success'} sx={{ mb: 2 }} onClose={() => setSyncMessage(null)}>
+                {syncMessage}
+              </Alert>
+            )}
 
             {mfr.summary ? (
               <Box sx={{ mb: 3 }}>
                 <Typography variant="subtitle2" gutterBottom>About</Typography>
-                <Typography variant="body2">{mfr.summary}</Typography>
+                <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{mfr.summary}</Typography>
               </Box>
             ) : (
               <Typography variant="body2" color="text.disabled" sx={{ mb: 3, fontStyle: 'italic' }}>
-                No profile data yet — will be populated from enrichment data.
+                No profile data yet — run the API sync script to populate.
               </Typography>
+            )}
+
+            {/* Basic Info */}
+            {(mfr.foundedYear || mfr.headquarters || mfr.websiteUrl || mfr.contactInfo || mfr.stockCode) && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Basic Info</Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 0.5, fontSize: '0.8rem' }}>
+                  {mfr.foundedYear && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Founded</Typography>
+                      <Typography variant="body2">{mfr.foundedYear}</Typography>
+                    </>
+                  )}
+                  {mfr.headquarters && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Headquarters</Typography>
+                      <Typography variant="body2">{mfr.headquarters}</Typography>
+                    </>
+                  )}
+                  {mfr.websiteUrl && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Website</Typography>
+                      <Typography variant="body2">
+                        <a href={mfr.websiteUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+                          {mfr.websiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                        </a>
+                      </Typography>
+                    </>
+                  )}
+                  {mfr.contactInfo && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Contact</Typography>
+                      <Typography variant="body2">{mfr.contactInfo}</Typography>
+                    </>
+                  )}
+                  {mfr.stockCode && mfr.stockCode !== '-' && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Stock Code</Typography>
+                      <Typography variant="body2">{mfr.stockCode}</Typography>
+                    </>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {/* Core Products */}
+            {mfr.coreProducts && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Core Products</Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                  {mfr.coreProducts.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean).map((p: string) => (
+                    <Chip key={p} label={p} size="small" variant="outlined" sx={{ fontSize: '0.75rem' }} />
+                  ))}
+                </Box>
+              </Box>
             )}
 
             {Array.isArray(mfr.aliases) && mfr.aliases.length > 0 && (
@@ -382,6 +481,18 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                     <Chip key={f} label={f} size="small" color="success" variant="outlined" sx={{ fontSize: '0.75rem' }} />
                   ))}
                 </Box>
+              </Box>
+            )}
+
+            {mfr.logoUrl && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Logo</Typography>
+                <Box
+                  component="img"
+                  src={mfr.logoUrl}
+                  alt={`${mfr.nameEn} logo`}
+                  sx={{ maxWidth: 200, maxHeight: 80, objectFit: 'contain', borderRadius: 1, bgcolor: 'background.paper', p: 1 }}
+                />
               </Box>
             )}
           </Box>

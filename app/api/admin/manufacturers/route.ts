@@ -227,6 +227,28 @@ async function readPersistentCache(): Promise<{ payload: object; computedAt: str
   return null;
 }
 
+// ── POST: Batch sync all profiles from Atlas API ──────────
+export async function POST(request: NextRequest) {
+  try {
+    const { error: authError } = await requireAdmin();
+    if (authError) return authError;
+
+    const { syncAllProfiles } = await import('@/lib/services/atlasProfileSync');
+    const result = await syncAllProfiles();
+
+    // Invalidate caches so the list reflects new profile data
+    invalidateManufacturersListCache();
+
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error('POST /api/admin/manufacturers (sync) error:', err);
+    return NextResponse.json(
+      { error: 'Sync failed', detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { error: authError } = await requireAdmin();
