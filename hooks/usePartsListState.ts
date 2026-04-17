@@ -249,6 +249,9 @@ export function usePartsListState() {
         ...(mapping.cpnColumn != null && mapping.cpnColumn >= 0
           ? { rawCpn: row[mapping.cpnColumn] ?? '' }
           : {}),
+        ...(mapping.ipnColumn != null && mapping.ipnColumn >= 0
+          ? { rawIpn: row[mapping.ipnColumn] ?? '' }
+          : {}),
         rawCells: row,
         status: 'pending' as const,
       }));

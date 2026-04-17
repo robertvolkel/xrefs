@@ -59,7 +59,6 @@ export default function ViewControls({
   const { t } = useTranslation();
   const [viewMenuAnchor, setViewMenuAnchor] = useState<HTMLElement | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [promoteConfirmOpen, setPromoteConfirmOpen] = useState(false);
   const [demoteConfirmOpen, setDemoteConfirmOpen] = useState(false);
 
   const isMaster = activeView.scope === 'master';
@@ -138,7 +137,7 @@ export default function ViewControls({
           <MenuItem
             onClick={() => {
               setViewMenuAnchor(null);
-              setPromoteConfirmOpen(true);
+              onPromoteView(activeView);
             }}
             sx={{ fontSize: '0.82rem' }}
           >
@@ -220,33 +219,6 @@ export default function ViewControls({
             sx={{ textTransform: 'none' }}
           >
             {t('common.delete')}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Promote confirmation */}
-      <Dialog open={promoteConfirmOpen} onClose={() => setPromoteConfirmOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ pb: 0.5 }}>
-          {t('partsList.promoteToMaster')}
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary">
-            {t('partsList.promoteWarning')}
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button color="inherit" onClick={() => setPromoteConfirmOpen(false)} sx={{ textTransform: 'none' }}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => {
-              setPromoteConfirmOpen(false);
-              onPromoteView?.(activeView);
-            }}
-            sx={{ textTransform: 'none' }}
-          >
-            {t('partsList.promoteToMaster')}
           </Button>
         </DialogActions>
       </Dialog>

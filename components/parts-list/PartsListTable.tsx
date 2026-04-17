@@ -32,6 +32,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { PartsListRow, XrefRecommendation, PartType } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
@@ -88,6 +89,8 @@ interface PartsListTableProps {
   onCancelValidation?: () => void;
   /** Called when user changes part type via inline dropdown */
   onSetPartType?: (rowIndex: number, partType: PartType) => void;
+  /** Column IDs that were resolved via portable mapping (mapped:* or header remapping) */
+  portableColumnIds?: Set<string>;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -539,6 +542,7 @@ export default function PartsListTable({
   highlightedRowIndex,
   onCancelValidation,
   onSetPartType,
+  portableColumnIds,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -641,9 +645,21 @@ export default function PartsListTable({
                         }}
                       >
                         {col.label}
+                        {portableColumnIds?.has(col.id) && (
+                          <Tooltip title="Matched from your data" arrow>
+                            <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
+                          </Tooltip>
+                        )}
                       </TableSortLabel>
                     ) : (
-                      col.label
+                      <>
+                        {col.label}
+                        {portableColumnIds?.has(col.id) && (
+                          <Tooltip title="Matched from your data" arrow>
+                            <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
+                          </Tooltip>
+                        )}
+                      </>
                     )}
                   </TableCell>
                 );

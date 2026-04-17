@@ -27,6 +27,7 @@ import {
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
 import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import PromoteViewDialog, { viewNeedsPromoteDialog, buildFastPathPromoteResult } from './PromoteViewDialog';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import AddIcon from '@mui/icons-material/Add';
 import PostAddIcon from '@mui/icons-material/PostAdd';
@@ -74,17 +75,23 @@ export default function PartsListShell() {
     hideRowInView, getHiddenRows,
   } = useListViewConfig(activeListId, listViewConfigs, masterViews);
 
-  const handlePromoteView = useCallback(async (view: ResolvedView) => {
-    const safeColumns = sanitizeTemplateColumns(view.columns);
+  // --- Promote-to-master flow (state + core logic) ---
+  const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
+  const [promoteTargetView, setPromoteTargetView] = useState<ResolvedView | null>(null);
+
+  const doPromote = useCallback(async (view: ResolvedView, options: {
+    columns: string[];
+    columnMeta: Record<string, string>;
+  }) => {
     const safeCalcFields = sanitizeTemplateCalcFields(view.calculatedFields);
     const created = await createMasterView({
       name: view.name,
-      columns: safeColumns,
+      columns: options.columns,
       description: view.description,
+      columnMeta: Object.keys(options.columnMeta).length > 0 ? options.columnMeta : undefined,
       calculatedFields: safeCalcFields,
     });
     if (created) {
-      // Remove from per-list storage and switch to the new master view
       deleteView(view.id);
       selectView(created.id);
     }
@@ -140,6 +147,28 @@ export default function PartsListShell() {
   const { effectiveHeaders, availableColumns, inferredMapping } = useColumnCatalog(
     rows, columnMapping, spreadsheetHeaders,
   );
+
+  // --- Promote-to-master handlers (need inferredMapping from useColumnCatalog) ---
+
+  const handlePromoteView = useCallback((view: ResolvedView) => {
+    // Fast-path: no remaining ss:* columns after reverse-mapping → skip dialog
+    if (!viewNeedsPromoteDialog(view, inferredMapping)) {
+      doPromote(view, buildFastPathPromoteResult(view, inferredMapping));
+      return;
+    }
+    setPromoteTargetView(view);
+    setPromoteDialogOpen(true);
+  }, [inferredMapping, doPromote]);
+
+  const handlePromoteConfirm = useCallback(async (options: {
+    columns: string[];
+    columnMeta: Record<string, string>;
+  }) => {
+    if (!promoteTargetView) return;
+    setPromoteDialogOpen(false);
+    await doPromote(promoteTargetView, options);
+    setPromoteTargetView(null);
+  }, [promoteTargetView, doPromote]);
 
   // --- Local UI state (thin dialog toggles) ---
 
@@ -263,6 +292,10 @@ export default function PartsListShell() {
             if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) return `ss:${inferredMapping.cpnColumn}`;
             return 'mapped:cpn'; // Will be filtered out below
           }
+          if (id === 'mapped:ipn') {
+            if (inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0) return `ss:${inferredMapping.ipnColumn}`;
+            return 'mapped:ipn'; // Will be filtered out below
+          }
           return id;
         })
         .filter(id => !id.startsWith('mapped:'));
@@ -277,6 +310,49 @@ export default function PartsListShell() {
       return true;
     });
   }, [activeView, effectiveHeaders, rows, inferredMapping]);
+
+  // Track which columns in the resolved view were portable (mapped:* or header-remapped)
+  const portableColumnIds = useMemo(() => {
+    if (activeView.scope !== 'master') return undefined;
+    const ids = new Set<string>();
+    const viewCols = activeView.columns;
+
+    // mapped:* columns that were resolved to ss:* or dk:*
+    if (inferredMapping) {
+      for (const id of viewCols) {
+        if (id === 'mapped:mpn' && inferredMapping.mpnColumn >= 0)
+          ids.add(`ss:${inferredMapping.mpnColumn}`);
+        if (id === 'mapped:manufacturer') {
+          if (inferredMapping.manufacturerColumn >= 0) ids.add(`ss:${inferredMapping.manufacturerColumn}`);
+          else ids.add('dk:manufacturer');
+        }
+        if (id === 'mapped:description' && inferredMapping.descriptionColumn >= 0)
+          ids.add(`ss:${inferredMapping.descriptionColumn}`);
+        if (id === 'mapped:cpn' && inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0)
+          ids.add(`ss:${inferredMapping.cpnColumn}`);
+        if (id === 'mapped:ipn' && inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0)
+          ids.add(`ss:${inferredMapping.ipnColumn}`);
+      }
+    }
+
+    // ss:* columns that have columnMeta (portable by header name)
+    if (activeView.columnMeta) {
+      for (const ssId of Object.keys(activeView.columnMeta)) {
+        // Find the resolved ID (may have been remapped to a different index)
+        if (resolvedViewColumns.includes(ssId)) ids.add(ssId);
+        // Also check if it was remapped to a different ss:* by remapSpreadsheetColumns
+        const storedHeader = activeView.columnMeta[ssId];
+        if (storedHeader) {
+          const remappedId = resolvedViewColumns.find(
+            rId => rId.startsWith('ss:') && effectiveHeaders[parseInt(rId.slice(3), 10)]?.toLowerCase() === storedHeader.toLowerCase()
+          );
+          if (remappedId) ids.add(remappedId);
+        }
+      }
+    }
+
+    return ids.size > 0 ? ids : undefined;
+  }, [activeView, inferredMapping, resolvedViewColumns, effectiveHeaders]);
 
   // Build ColumnDefinition objects for this view's calculated fields
   const calcColumnDefs = useMemo(() => {
@@ -447,6 +523,7 @@ export default function PartsListShell() {
           highlightedRowIndex={highlightedRowIndex}
           onCancelValidation={handleCancelValidation}
           onSetPartType={(idx, pt) => handleSetPartType([idx], pt)}
+          portableColumnIds={portableColumnIds}
         />
       )}
 
@@ -544,6 +621,15 @@ export default function PartsListShell() {
         onCancel={() => setAddPartOpen(false)}
         spreadsheetHeaders={effectiveHeaders}
         inferredMapping={inferredMapping}
+      />
+
+      <PromoteViewDialog
+        open={promoteDialogOpen}
+        view={promoteTargetView}
+        effectiveHeaders={effectiveHeaders}
+        inferredMapping={inferredMapping}
+        onConfirm={handlePromoteConfirm}
+        onCancel={() => { setPromoteDialogOpen(false); setPromoteTargetView(null); }}
       />
 
       <NewListDialog
