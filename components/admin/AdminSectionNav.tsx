@@ -12,9 +12,10 @@ import HistoryIcon from '@mui/icons-material/History';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
+export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'app-feedback' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
 
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
@@ -33,6 +34,10 @@ const dataLogicSections: SectionItem[] = [
 const logicDocsSections: SectionItem[] = [
   { id: 'search-logic', icon: SearchOutlinedIcon, labelKey: 'admin.searchLogicNav' },
   { id: 'list-logic', icon: ListAltOutlinedIcon, labelKey: 'admin.listLogicNav' },
+];
+
+const appFeedbackSections: SectionItem[] = [
+  { id: 'app-feedback', icon: FeedbackOutlinedIcon, labelKey: 'admin.appFeedback' },
 ];
 
 const qcSections: SectionItem[] = [
@@ -91,6 +96,8 @@ export default function AdminSectionNav({ activeSection, onSectionChange }: Admi
       <SectionList sections={dataLogicSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
       <SectionList sections={logicDocsSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
+      <Divider sx={{ my: 1 }} />
+      <SectionList sections={appFeedbackSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
       <SectionList sections={qcSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>

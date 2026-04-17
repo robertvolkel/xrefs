@@ -1054,6 +1054,54 @@ export interface QcFeedbackUpdate {
 }
 
 // ============================================================
+// APP FEEDBACK (general user feedback about the app)
+// ============================================================
+
+export type AppFeedbackCategory = 'idea' | 'issue' | 'other';
+export type AppFeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
+
+/** Payload for submitting new app feedback (client sends this) */
+export interface AppFeedbackSubmission {
+  category: AppFeedbackCategory;
+  userComment: string;
+  userAgent?: string;
+  viewport?: string;
+}
+
+/** Full app feedback record from the database (admin reads this) */
+export interface AppFeedbackRecord extends AppFeedbackSubmission {
+  id: string;
+  userId: string;
+  status: AppFeedbackStatus;
+  adminNotes?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** App feedback item for admin list view (enriched with user profile info) */
+export interface AppFeedbackListItem extends AppFeedbackRecord {
+  userEmail?: string;
+  userName?: string;
+  resolvedByName?: string;
+}
+
+/** Status count summary for app feedback filter badges */
+export interface AppFeedbackStatusCounts {
+  open: number;
+  reviewed: number;
+  resolved: number;
+  dismissed: number;
+}
+
+/** Admin update payload for app feedback */
+export interface AppFeedbackUpdate {
+  status?: AppFeedbackStatus;
+  adminNotes?: string;
+}
+
+// ============================================================
 // QC EXPORT & ANALYSIS TYPES
 // ============================================================
 

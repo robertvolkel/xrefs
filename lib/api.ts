@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -321,6 +321,52 @@ export async function getAdminFeedbackList(params?: {
 /** Update feedback status / admin notes */
 export async function updateFeedback(feedbackId: string, update: QcFeedbackUpdate): Promise<void> {
   const res = await fetch(`${BASE}/admin/qc/feedback/${feedbackId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update feedback');
+}
+
+// ── App Feedback API ─────────────────────────────────────
+
+/** Submit general app feedback (idea/issue/other) */
+export async function submitAppFeedback(submission: AppFeedbackSubmission): Promise<{ id: string }> {
+  return fetchApi<{ id: string }>(`${BASE}/app-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(submission),
+  });
+}
+
+/** Get paginated app feedback items for admin triage */
+export async function getAdminAppFeedbackList(params?: {
+  status?: AppFeedbackStatus;
+  category?: AppFeedbackCategory;
+  search?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  page?: number;
+  limit?: number;
+}): Promise<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set('status', params.status);
+  if (params?.category) searchParams.set('category', params.category);
+  if (params?.search) searchParams.set('search', params.search);
+  if (params?.sortBy) searchParams.set('sort_by', params.sortBy);
+  if (params?.sortDir) searchParams.set('sort_dir', params.sortDir);
+  if (params?.page !== undefined) searchParams.set('page', String(params.page));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  const qs = searchParams.toString();
+  return fetchApi<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }>(
+    `${BASE}/admin/app-feedback${qs ? `?${qs}` : ''}`
+  );
+}
+
+/** Update app feedback status / admin notes */
+export async function updateAppFeedback(feedbackId: string, update: AppFeedbackUpdate): Promise<void> {
+  const res = await fetch(`${BASE}/admin/app-feedback/${feedbackId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(update),
