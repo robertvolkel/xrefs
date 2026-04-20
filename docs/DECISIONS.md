@@ -3439,3 +3439,65 @@ Added client-side tracking of distributor link clicks in the Commercial tab, wit
 **Trade-off:** Re-querying on every empty response costs an API call each time. Acceptable because (a) the rate limiter (60/min, 5000/day) already caps total spend, (b) most parts that genuinely have no distributors are obscure and rarely looked up, and (c) the user-visible cost of a 24h stale miss is much higher than the server-side cost of extra calls. If spam becomes a problem we can revisit with a much shorter sentinel TTL (e.g., 5 min) instead of removing it entirely.
 
 **Files:** `lib/services/findchipsClient.ts` (remove `NOT_FOUND_SENTINEL` / `TTL_NOT_FOUND_MS` writes on both single + batch paths; read paths now treat sentinels as cache-miss).
+
+## Decision #136 — Mouser Removed from Multi-Source Search (Apr 2026)
+
+**Context:** `searchParts()` queried Mouser as one of four data sources (Digikey + Atlas + Parts.io + Mouser) for MPN-like queries. When Mouser was the *only* source returning a hit — e.g., `GD25B127DSIGR`, a GigaDevice NOR Flash memory not indexed by Digikey or Atlas and not in Parts.io — the UI would render the part card with a "Mouser" badge, then fail when the user clicked through. `getAttributes()` only tries Digikey → Parts.io → Atlas and has no Mouser fallback, so the subsequent `/api/attributes/[mpn]` call returned 404 and the chat showed the generic "Something went wrong while fetching part details" error. Users could discover parts that the downstream pipeline could not process.
+
+**Decision:** Drop Mouser from `searchParts()` entirely. The MPN-branch now only adds Parts.io to the always-on Digikey + Atlas pair. `searchMouserProducts` remains exported in `mouserClient.ts` but is no longer called from the search path. Mouser continues to be used for `SuggestedReplacement` injection into the recommendation pipeline (Decision #97) and is otherwise unused for source-part data — FindChips (Decision #131) is the N-distributor commercial aggregator.
+
+**Rationale:** Per Decision #131, FindChips replaced Mouser as the multi-distributor commercial source. Mouser's participation in search was architectural debt from before that split. Adding a Mouser attribute fallback (map `MouserProduct` → `PartAttributes`) was the alternative, but Mouser's API returns very thin parametric data — the user would get an identity card with an empty attributes panel and no meaningful recommendations, replacing one confusing error with a different dead-end. Silent discoverability for parts we can't process downstream is worse UX than not surfacing them at all. If FindChips coverage gaps prove to matter in practice (GigaDevice, LCSC-only parts, etc.), the clean follow-up is a real FindChips-based search path rather than keeping a half-integrated Mouser search alive.
+
+**Files:** `lib/services/partDataService.ts` (remove `searchMouserProducts` import and its block from the MPN-specific search list; update merge-priority comment from `Digikey → Atlas → Parts.io → Mouser` to `Digikey → Atlas → Parts.io`), `CLAUDE.md` (update "Multi-source search" bullet).
+
+## Decision #137 — Identity Rule: String-Equality-First Comparison (Apr 2026)
+
+**Context:** `evaluateIdentity()` in the matching engine compared `numericValue` via strict `===` (or relative tolerance after a subsequent fix). This produced spurious "fail" results on visually identical values like `"0.33 µF"` vs `"0.33 µF"` when the two parts' `numericValue` fields had been populated by *different* data sources with *different* normalization conventions. Digikey's mapper normalizes to base SI units (`"0.33 µF"` → `3.3e-7`); Parts.io's mapper stores the raw number (`0.33`). When a candidate's capacitance came from Parts.io gap-fill while the source came from Digikey, the identity check compared `3.3e-7` to `0.33` and failed — even though the display strings users see are identical. An earlier fix (relative-tolerance `<1e-6`) handled intra-Digikey float rounding but not cross-source unit-scale mismatches.
+
+**Decision:** Swap the ordering in `evaluateIdentity()`. Always check `normalize(sourceValue) === normalize(candidateValue)` **first**. If the rendered strings match, pass — regardless of what either source stored as `numericValue`. Numeric comparison (with the 1e-6 relative tolerance for float rounding) now runs only as a fallback when the strings genuinely differ, catching legitimate equivalences like `"0.33µF"` vs `"330nF"`.
+
+**Rationale:** The display value is the authoritative representation of the parametric — it's what the user sees and what the engineering engineer-reviewer would compare against. Two sources may have different opinions about how to normalize internally, but if both mapped to the same display string, the parametric value agrees. This avoids making the engine dependent on every data source's mapper agreeing on a canonical numeric representation.
+
+**Cache invalidation:** Bumped `RECS_CACHE_SCHEMA_VERSION` from `v4` → `v5` so stale scored matchDetails with false "fail" entries get recomputed on next search.
+
+**Files:** `lib/services/matchingEngine.ts` (reorder evaluateIdentity to try string equality first), `lib/services/partDataCache.ts` (`RECS_CACHE_SCHEMA_VERSION` → `v5`).
+
+## Decision #138 — Recommendation Card Redesign + Prioritized FindChips Enrichment (Apr 2026)
+
+**Context:** With FindChips (Decision #131) providing N-distributor pricing for every recommendation, the per-card display needed an update. The old card showed one line per supplier with hardcoded Digikey/Mouser labels and a Digikey-only legacy fallback from `part.unitPrice`. Users also wanted commercial data visible by default (not hidden behind a toggle), the datasheet icon removed from the card face (it's available in the Part Detail), and faster perceived load time — a 74-MPN search took up to 60s before the last cards populated because chunks were awaited sequentially and the FindChips rate limiter (60 calls/min) capped throughput.
+
+**Decision:**
+1. **Card display** — replace per-supplier lines with a compact two-line summary reading `Price Range: $min–$max (N Distributors)` and `Total Stock: N,NNN` in plain white (no bold). Drop the legacy `part.unitPrice` fallback; show `No distributor data` (or `Loading pricing…` italic while enrichment is in flight) when no `supplierQuotes`. Remove the datasheet PDF icon from the card header — it remains in the Part Detail panel.
+2. **Default visible** — `showCommercial` in `RecommendationsPanel` now initializes to `true`. The `$` toggle still exists if users want to hide the summary.
+3. **Parallel chunked enrichment** — `triggerFCEnrichment` in `useAppState` now chunks the full MPN list and fires chunks in parallel via `Promise.all`, with per-chunk `setState` so cards populate as each chunk returns (not all-at-once after the slowest chunk).
+4. **Priority chunk** — the first chunk is sized 30 (instead of 50) and contains the top-ranked recs by display priority (MFR Certified → 3rd Party Certified → Logic Driven; pin-to-pin before functional; higher match score first). This ensures the user's visible top-of-list cards populate within seconds even under rate-limit throttling.
+5. **Loading state** — new `isEnrichingFC` flag on `AppState` propagates through `AppShell → {Desktop,Mobile}Layout → RecommendationsPanel → RecommendationCard`. Empty cards show `Loading pricing…` during enrichment, reverting to `No distributor data` only after the batch settles.
+6. **Server-cap respected** — `enrichWithFCBatch` stays a single-call helper; callers (`useAppState.triggerFCEnrichment` and `usePartsListState.runFCEnrichment`) chunk at 50 (the `/api/fc/enrich` cap) and call in parallel.
+
+**Rate-limit caveat:** FindChips' 60-call/minute cap still applies — for a 74-rec search, ~14 MPNs queue until the next minute rolls over. Prioritization guarantees those 14 are the lowest-visibility recs. If FindChips' actual allowance is higher, `PER_MINUTE_CAP` in `findchipsClient.ts` can be raised.
+
+**Shared sort helper:** Extracted `sortRecommendationsForDisplay()` from `RecommendationsPanel.tsx` so the enrichment trigger and the display component use the same ranking — there is a single source of truth for "what the user sees at the top."
+
+**Files:** `components/RecommendationCard.tsx` (two-line summary, removed datasheet icon + unused import, `isEnrichingFC` prop), `components/RecommendationsPanel.tsx` (default `showCommercial=true`, `sortRecommendationsForDisplay` export, pipe `isEnrichingFC`), `components/{DesktopLayout,MobileAppLayout}.tsx` + `components/AppShell.tsx` (pipe `isEnrichingFC` through), `hooks/useAppState.ts` (`isEnrichingFC` in AppState, parallel chunked enrichment, priority chunk, import shared sort), `hooks/usePartsListState.ts` (chunk enrichment in parallel), `lib/api.ts` (revert `enrichWithFCBatch` to single-call).
+
+## Decision #139 — Atlas External API: Manufacturer Profile Enrichment (Apr 2026)
+
+**Context:** Atlas engineering team provided an external HTTP API (`https://cn-api.datasheet5.com`) for manufacturer and product data. The API currently serves manufacturer list, profiles, and paginated product listings — no parametric data on products yet. Our `atlas_manufacturers` table had 1,011 records but most profile JSONB columns (summary, certifications, HQ, etc.) were empty, with the Profile tab showing "No profile data yet" for most manufacturers.
+
+**Decision:**
+1. **Profile-only integration** — use the API exclusively for manufacturer profile enrichment. The API's product endpoint returns less data than what's already in `atlas_products` (no parameters, no family_id) and lacks bulk/family queries needed by the recommendation pipeline.
+2. **ID mapping validated** — API partner `id` matches our `atlas_id` at 89.2% (297/333 API partners). Zero ID mismatches. 35 API-only partners (not in our DB), 714 local-only (not in API). Join key: `atlas_id`.
+3. **Batch sync script** (`scripts/atlas-api-sync-profiles.mjs`) — fetches partner details one-by-one and enriches existing rows. Merge strategy: "API enriches, existing data preserved" (don't overwrite non-null admin-edited fields unless `--force`). Flags: `--dry-run`, `--force`, `--verbose`, `--id <N>`, `--add-new`.
+4. **New DB columns** — `contact_info`, `core_products`, `stock_code`, `gaia_id`, `api_synced_at` added to `atlas_manufacturers` (migration: `scripts/supabase-atlas-manufacturers-profile-migration.sql`).
+5. **API client** — `lib/services/atlasApiClient.ts`, server-side only, `ATLAS_API_TOKEN` env var, typed response interfaces for all 4 endpoints.
+6. **Profile tab enriched** — `ManufacturerDetailPage.tsx` Profile tab now shows: About (summary), Basic Info (founded year, HQ, website link, contact, stock code), Core Products (comma-split chips), Aliases, Parts.io, Certifications (parsed with category inference), Compliance, Logo. API sync timestamp shown in header.
+
+**Results:** 297 manufacturers enriched. Coverage: 229 with summaries, 108 with logos, 64 with parsed certifications.
+
+**Future:** When the API adds parametric data on products, it could replace the JSON file ingestion pipeline (`atlas-ingest.mjs`). The Supabase-first architecture remains — batch sync to Supabase, query from Supabase. Live API queries are unsuitable for the recommendation hot path.
+
+**Admin sync buttons:** Two sync triggers in the admin UI, both reusing `lib/services/atlasProfileSync.ts`:
+- **ManufacturersPanel** — "Sync Profiles" button (batch all 297 matched manufacturers, ~30s). `POST /api/admin/manufacturers` → `syncAllProfiles()`. Shows progress alert with counts.
+- **ManufacturerDetailPage** — "Sync Profile" button on Profile tab (single manufacturer, ~200ms). `POST /api/admin/manufacturers/[slug]/sync` → `syncSingleProfile()`. Re-fetches detail data to reflect changes in place.
+
+**Files:** `lib/services/atlasApiClient.ts` (new), `lib/services/atlasProfileSync.ts` (new — shared sync logic), `scripts/atlas-api-validate-ids.mjs` (new), `scripts/atlas-api-sync-profiles.mjs` (new), `scripts/supabase-atlas-manufacturers-profile-migration.sql` (new), `lib/types.ts` (AtlasManufacturer extended), `lib/api.ts` (syncAllMfrProfiles, syncMfrProfile), `app/api/admin/manufacturers/route.ts` (POST handler for batch sync), `app/api/admin/manufacturers/[slug]/route.ts` (new fields exposed + PATCH allowlist), `app/api/admin/manufacturers/[slug]/sync/route.ts` (new — single sync), `components/admin/ManufacturersPanel.tsx` (Sync Profiles button), `components/admin/ManufacturerDetailPage.tsx` (Profile tab enriched + Sync Profile button).

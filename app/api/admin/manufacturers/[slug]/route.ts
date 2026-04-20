@@ -31,22 +31,37 @@ export async function GET(
 
     // Fetch all products for this manufacturer (paginated to avoid 1000-row Supabase cap)
     const mfrFilter = `manufacturer.eq.${mfr.name_display},manufacturer.eq.${mfr.name_en}`;
-    const allProducts: { family_id: string | null; category: string; subcategory: string; parameters: Record<string, unknown> | null }[] = [];
+    const allProducts: { family_id: string | null; category: string; subcategory: string; parameters: Record<string, unknown> | null; updated_at: string }[] = [];
     let offset = 0;
     const PAGE_SIZE = 1000;
+    let lastProductUpdate: string | null = null;
     while (true) {
       const { data: page } = await supabase
         .from('atlas_products')
-        .select('family_id, category, subcategory, parameters')
+        .select('family_id, category, subcategory, parameters, updated_at')
         .or(mfrFilter)
         .order('id')
         .range(offset, offset + PAGE_SIZE - 1);
       if (!page || page.length === 0) break;
+      for (const p of page) {
+        if (!lastProductUpdate || p.updated_at > lastProductUpdate) lastProductUpdate = p.updated_at;
+      }
       allProducts.push(...page);
       if (page.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;
     }
     const products = allProducts;
+
+    // Last cross-ref upload for this MFR
+    const { data: latestXref } = await supabase
+      .from('manufacturer_cross_references')
+      .select('uploaded_at')
+      .eq('manufacturer_slug', slug)
+      .eq('is_active', true)
+      .order('uploaded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const lastCrossRefUpdate = latestXref?.uploaded_at ?? null;
 
     // Aggregate per-family breakdown
     const familyMap = new Map<string, {
@@ -139,11 +154,21 @@ export async function GET(
         complianceFlags: mfr.compliance_flags,
         designResources: mfr.design_resources,
         enabled: mfr.enabled,
+        contactInfo: mfr.contact_info ?? null,
+        coreProducts: mfr.core_products ?? null,
+        stockCode: mfr.stock_code ?? null,
+        gaiaId: mfr.gaia_id ?? null,
+        apiSyncedAt: mfr.api_synced_at ?? null,
       },
       stats: {
         totalProducts,
         scorableProducts,
         coveragePct: totalRules > 0 ? Math.round((totalCovered / totalRules) * 100) : 0,
+      },
+      timestamps: {
+        products: lastProductUpdate,
+        profile: mfr.updated_at ?? null,
+        crossRefs: lastCrossRefUpdate,
       },
       familyBreakdown,
       familyNames,
@@ -169,7 +194,8 @@ export async function PATCH(
       'summary', 'headquarters', 'country', 'founded_year', 'website_url',
       'logo_url', 'is_second_source', 'certifications', 'manufacturing_locations',
       'product_categories', 'authorized_distributors', 'compliance_flags',
-      'design_resources', 'enabled',
+      'design_resources', 'enabled', 'contact_info', 'core_products',
+      'stock_code', 'gaia_id',
     ];
 
     const updates: Record<string, unknown> = {};

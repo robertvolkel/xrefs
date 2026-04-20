@@ -134,14 +134,20 @@ function evaluateIdentity(
     };
   }
 
-  // Compare numeric values if available, otherwise string comparison
-  let match = false;
-  const srcNum = getNumeric(sourceParam);
-  const candNum = getNumeric(candidateParam);
-  if (srcNum !== null && candNum !== null) {
-    match = srcNum === candNum;
-  } else {
-    match = normalize(sourceValue) === normalize(candidateValue);
+  // Prefer string equality of the displayed values — if the two parts render
+  // identically, they're the same value regardless of whether each source
+  // normalized `numericValue` to base SI units or stored it raw. This avoids
+  // false fails when Digikey (normalized, e.g. 3.3e-7) and parts.io (raw, e.g. 0.33)
+  // supply the same attribute for different parts in a comparison.
+  let match = normalize(sourceValue) === normalize(candidateValue);
+
+  // Numeric comparison (with relative tolerance for float rounding) only
+  // when strings genuinely differ — catches "0.33µF" vs "330nF" style equivalence.
+  const srcNum = match ? null : getNumeric(sourceParam);
+  const candNum = match ? null : getNumeric(candidateParam);
+  if (!match && srcNum !== null && candNum !== null) {
+    const denom = Math.max(Math.abs(srcNum), Math.abs(candNum), 1e-30);
+    match = Math.abs(srcNum - candNum) / denom < 1e-6;
   }
 
   // Tolerance band: if exact match fails but values are within ±tolerancePercent, pass with note

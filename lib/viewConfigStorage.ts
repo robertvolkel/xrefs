@@ -7,6 +7,7 @@
 
 import { DEFAULT_VIEW_COLUMNS } from './columnDefinitions';
 import type { CalculatedFieldDef } from './calculatedFields';
+import type { ColumnMapping } from './types';
 
 // ============================================================
 // TYPES
@@ -192,6 +193,44 @@ export function sanitizeTemplateCalcFields(fields: CalculatedFieldDef[] | undefi
     return refs.every(ref => !ref.columnId.startsWith('ss:') || ref.headerHint);
   });
   return portable.length > 0 ? portable : undefined;
+}
+
+/**
+ * Reverse-map ss:* columns back to mapped:* types using the inferred column mapping.
+ * For each ss:N, if N matches a known mapping field (mpn, manufacturer, description, cpn, ipn),
+ * replace with the corresponding mapped:* ID. Deduplicates against existing mapped:* entries.
+ */
+export function reverseMapKnownColumns(
+  columns: string[],
+  inferredMapping: ColumnMapping | null,
+): { columns: string[]; reverseMapped: Record<string, string> } {
+  if (!inferredMapping) return { columns, reverseMapped: {} };
+
+  const reverseMap: Record<number, string> = {};
+  if (inferredMapping.mpnColumn >= 0) reverseMap[inferredMapping.mpnColumn] = 'mapped:mpn';
+  if (inferredMapping.manufacturerColumn >= 0) reverseMap[inferredMapping.manufacturerColumn] = 'mapped:manufacturer';
+  if (inferredMapping.descriptionColumn >= 0) reverseMap[inferredMapping.descriptionColumn] = 'mapped:description';
+  if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) reverseMap[inferredMapping.cpnColumn] = 'mapped:cpn';
+  if (inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0) reverseMap[inferredMapping.ipnColumn] = 'mapped:ipn';
+
+  const existingMapped = new Set(columns.filter(id => id.startsWith('mapped:')));
+  const reverseMapped: Record<string, string> = {};
+
+  const result = columns.flatMap(id => {
+    if (!id.startsWith('ss:')) return [id];
+    const idx = parseInt(id.slice(3), 10);
+    const mappedId = reverseMap[idx];
+    if (mappedId) {
+      // Already have this mapped:* — drop the duplicate ss:*
+      if (existingMapped.has(mappedId)) return [];
+      reverseMapped[id] = mappedId;
+      existingMapped.add(mappedId);
+      return [mappedId];
+    }
+    return [id];
+  });
+
+  return { columns: result, reverseMapped };
 }
 
 // ============================================================

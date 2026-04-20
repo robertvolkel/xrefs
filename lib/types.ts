@@ -656,6 +656,12 @@ export interface AtlasManufacturer {
   complianceFlags: string[];
   designResources: DesignResource[];
   enabled: boolean;
+  // Profile enrichment fields (from Atlas external API)
+  contactInfo: string | null;
+  coreProducts: string | null;
+  stockCode: string | null;
+  gaiaId: string | null;
+  apiSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -778,8 +784,10 @@ export interface PartsListRow {
   rawMpn: string;
   rawManufacturer: string;
   rawDescription: string;
-  /** Customer Part Number / Internal Part Number (optional mapped column) */
+  /** Customer Part Number (optional mapped column) */
   rawCpn?: string;
+  /** Internal Part Number (optional mapped column) */
+  rawIpn?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRowStatus;
@@ -805,8 +813,10 @@ export interface ColumnMapping {
   mpnColumn: number;
   manufacturerColumn: number;
   descriptionColumn: number;
-  /** Optional Customer Part Number / Internal Part Number column */
+  /** Optional Customer Part Number column */
   cpnColumn?: number;
+  /** Optional Internal Part Number column */
+  ipnColumn?: number;
 }
 
 /** Parsed spreadsheet data before column mapping */
@@ -1050,6 +1060,54 @@ export interface FeedbackStatusCounts {
 /** Admin update payload for feedback */
 export interface QcFeedbackUpdate {
   status?: FeedbackStatus;
+  adminNotes?: string;
+}
+
+// ============================================================
+// APP FEEDBACK (general user feedback about the app)
+// ============================================================
+
+export type AppFeedbackCategory = 'idea' | 'issue' | 'other';
+export type AppFeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
+
+/** Payload for submitting new app feedback (client sends this) */
+export interface AppFeedbackSubmission {
+  category: AppFeedbackCategory;
+  userComment: string;
+  userAgent?: string;
+  viewport?: string;
+}
+
+/** Full app feedback record from the database (admin reads this) */
+export interface AppFeedbackRecord extends AppFeedbackSubmission {
+  id: string;
+  userId: string;
+  status: AppFeedbackStatus;
+  adminNotes?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** App feedback item for admin list view (enriched with user profile info) */
+export interface AppFeedbackListItem extends AppFeedbackRecord {
+  userEmail?: string;
+  userName?: string;
+  resolvedByName?: string;
+}
+
+/** Status count summary for app feedback filter badges */
+export interface AppFeedbackStatusCounts {
+  open: number;
+  reviewed: number;
+  resolved: number;
+  dismissed: number;
+}
+
+/** Admin update payload for app feedback */
+export interface AppFeedbackUpdate {
+  status?: AppFeedbackStatus;
   adminNotes?: string;
 }
 

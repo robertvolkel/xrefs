@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -16,6 +17,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Tooltip,
   Typography,
@@ -27,6 +29,7 @@ import LaunchIcon from '@mui/icons-material/Launch';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
+import SyncIcon from '@mui/icons-material/Sync';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -36,7 +39,8 @@ import AtlasCoverageDrawer from './AtlasCoverageDrawer';
 import AtlasExplorerDrawer from './AtlasExplorerDrawer';
 import FlaggedProductsTab from './FlaggedProductsTab';
 import CrossReferencesTab from './CrossReferencesTab';
-import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs } from '@/lib/api';
+import { createAtlasFlag, getAtlasFlags, getMfrCrossRefs, syncMfrProfile } from '@/lib/api';
+import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 import type { AtlasManufacturer } from '@/lib/types';
 
 interface MfrDetailData {
@@ -45,6 +49,11 @@ interface MfrDetailData {
     totalProducts: number;
     scorableProducts: number;
     coveragePct: number;
+  };
+  timestamps?: {
+    products: string | null;
+    profile: string | null;
+    crossRefs: string | null;
   };
   familyBreakdown: {
     familyId: string | null;
@@ -55,6 +64,23 @@ interface MfrDetailData {
     coveragePct: number;
   }[];
   familyNames: Record<string, string>;
+}
+
+function TimestampLabel({ label, iso }: { label: string; iso: string | null | undefined }) {
+  if (!iso) {
+    return (
+      <Typography variant="caption" color="text.disabled">
+        {label}: never
+      </Typography>
+    );
+  }
+  return (
+    <Tooltip title={new Date(iso).toLocaleString()} arrow>
+      <Typography variant="caption" color="text.secondary">
+        {label}: {formatRelativeTime(iso)}
+      </Typography>
+    </Tooltip>
+  );
 }
 
 interface ProductRow {
@@ -82,6 +108,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [data, setData] = useState<MfrDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0); // 0=Products, 1=Flagged, 2=Coverage, 3=Cross-Refs, 4=Profile
+  const [syncingProfile, setSyncingProfile] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Products tab state
   const [products, setProducts] = useState<ProductsResponse | null>(null);
@@ -89,6 +117,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [productSearch, setProductSearch] = useState('');
   const [productPage, setProductPage] = useState(1);
   const [productFamily, setProductFamily] = useState<string | null>(null);
+  const [productSort, setProductSort] = useState<'coverage' | null>(null);
+  const [productSortDir, setProductSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Explorer drawer state (for product detail)
   const [explorerOpen, setExplorerOpen] = useState(false);
@@ -106,6 +136,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [flaggedCount, setFlaggedCount] = useState(0);
   const [crossRefCount, setCrossRefCount] = useState(0);
+  const [enabledUpdating, setEnabledUpdating] = useState(false);
 
   // Fetch manufacturer data
   useEffect(() => {
@@ -141,13 +172,47 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
     const params = new URLSearchParams({ page: String(productPage), limit: '50' });
     if (productSearch) params.set('search', productSearch);
     if (productFamily) params.set('family', productFamily);
+    if (productSort) {
+      params.set('sort', productSort);
+      params.set('dir', productSortDir);
+    }
 
     fetch(`/api/admin/manufacturers/${slug}/products?${params}`)
       .then((r) => r.json())
       .then(setProducts)
       .catch(() => {})
       .finally(() => setProductsLoading(false));
-  }, [slug, productPage, productSearch, productFamily]);
+  }, [slug, productPage, productSearch, productFamily, productSort, productSortDir]);
+
+  const handleSyncProfile = useCallback(async () => {
+    setSyncingProfile(true);
+    setSyncMessage(null);
+    try {
+      const result = await syncMfrProfile(slug);
+      if (result.changeCount > 0) {
+        setSyncMessage(`Updated ${result.changeCount} field(s)`);
+        // Re-fetch manufacturer detail to reflect changes
+        const r = await fetch(`/api/admin/manufacturers/${slug}`);
+        if (r.ok) setData(await r.json());
+      } else {
+        setSyncMessage('Already up to date');
+      }
+    } catch (err) {
+      setSyncMessage(`Sync failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    } finally {
+      setSyncingProfile(false);
+    }
+  }, [slug]);
+
+  const handleCoverageSort = useCallback(() => {
+    if (productSort !== 'coverage') {
+      setProductSort('coverage');
+      setProductSortDir('desc');
+    } else {
+      setProductSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    }
+    setProductPage(1);
+  }, [productSort]);
 
   useEffect(() => {
     if (activeTab === 0) fetchProducts();
@@ -182,9 +247,10 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
 
   // Enable/disable toggle
   const handleToggle = useCallback(async (enabled: boolean) => {
-    if (!data) return;
+    if (!data || enabledUpdating) return;
     const prev = data.manufacturer.enabled;
     setData({ ...data, manufacturer: { ...data.manufacturer, enabled } });
+    setEnabledUpdating(true);
 
     try {
       const res = await fetch(`/api/admin/manufacturers/${slug}`, {
@@ -196,8 +262,10 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
       if (!json.success) throw new Error(json.error);
     } catch {
       setData((d) => d ? { ...d, manufacturer: { ...d.manufacturer, enabled: prev } } : d);
+    } finally {
+      setEnabledUpdating(false);
     }
-  }, [data, slug]);
+  }, [data, slug, enabledUpdating]);
 
   if (loading) {
     return (
@@ -255,6 +323,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
         <Switch
           size="small"
           checked={mfr.enabled}
+          disabled={enabledUpdating}
           onChange={(e) => handleToggle(e.target.checked)}
         />
       </Box>
@@ -280,19 +349,97 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
         {/* ── Profile Tab ── */}
         {activeTab === 4 && (
           <Box sx={{ maxWidth: 640 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              {`${stats.totalProducts} products · ${stats.scorableProducts} scorable · ${stats.coveragePct}% avg coverage`}
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                {`${stats.totalProducts} products · ${stats.scorableProducts} scorable · ${stats.coveragePct}% avg coverage`}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                {mfr.apiSyncedAt && (
+                  <TimestampLabel label="API synced" iso={mfr.apiSyncedAt} />
+                )}
+                <TimestampLabel label="Last updated" iso={data.timestamps?.profile} />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<SyncIcon fontSize="small" />}
+                  onClick={handleSyncProfile}
+                  disabled={syncingProfile}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {syncingProfile ? 'Syncing…' : 'Sync Profile'}
+                </Button>
+              </Box>
+            </Box>
+            {syncMessage && (
+              <Alert severity={syncMessage.includes('failed') ? 'error' : 'success'} sx={{ mb: 2 }} onClose={() => setSyncMessage(null)}>
+                {syncMessage}
+              </Alert>
+            )}
 
             {mfr.summary ? (
               <Box sx={{ mb: 3 }}>
                 <Typography variant="subtitle2" gutterBottom>About</Typography>
-                <Typography variant="body2">{mfr.summary}</Typography>
+                <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{mfr.summary}</Typography>
               </Box>
             ) : (
               <Typography variant="body2" color="text.disabled" sx={{ mb: 3, fontStyle: 'italic' }}>
-                No profile data yet — will be populated from enrichment data.
+                No profile data yet — run the API sync script to populate.
               </Typography>
+            )}
+
+            {/* Basic Info */}
+            {(mfr.foundedYear || mfr.headquarters || mfr.websiteUrl || mfr.contactInfo || mfr.stockCode) && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Basic Info</Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 0.5, fontSize: '0.8rem' }}>
+                  {mfr.foundedYear && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Founded</Typography>
+                      <Typography variant="body2">{mfr.foundedYear}</Typography>
+                    </>
+                  )}
+                  {mfr.headquarters && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Headquarters</Typography>
+                      <Typography variant="body2">{mfr.headquarters}</Typography>
+                    </>
+                  )}
+                  {mfr.websiteUrl && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Website</Typography>
+                      <Typography variant="body2">
+                        <a href={mfr.websiteUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+                          {mfr.websiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                        </a>
+                      </Typography>
+                    </>
+                  )}
+                  {mfr.contactInfo && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Contact</Typography>
+                      <Typography variant="body2">{mfr.contactInfo}</Typography>
+                    </>
+                  )}
+                  {mfr.stockCode && mfr.stockCode !== '-' && (
+                    <>
+                      <Typography variant="body2" color="text.secondary">Stock Code</Typography>
+                      <Typography variant="body2">{mfr.stockCode}</Typography>
+                    </>
+                  )}
+                </Box>
+              </Box>
+            )}
+
+            {/* Core Products */}
+            {mfr.coreProducts && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Core Products</Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                  {mfr.coreProducts.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean).map((p: string) => (
+                    <Chip key={p} label={p} size="small" variant="outlined" sx={{ fontSize: '0.75rem' }} />
+                  ))}
+                </Box>
+              </Box>
             )}
 
             {Array.isArray(mfr.aliases) && mfr.aliases.length > 0 && (
@@ -336,13 +483,25 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                 </Box>
               </Box>
             )}
+
+            {mfr.logoUrl && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" gutterBottom>Logo</Typography>
+                <Box
+                  component="img"
+                  src={mfr.logoUrl}
+                  alt={`${mfr.nameEn} logo`}
+                  sx={{ maxWidth: 200, maxHeight: 80, objectFit: 'contain', borderRadius: 1, bgcolor: 'background.paper', p: 1 }}
+                />
+              </Box>
+            )}
           </Box>
         )}
 
         {/* ── Products Tab ── */}
         {activeTab === 0 && (
           <Box>
-            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+            <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
               <TextField
                 size="small"
                 placeholder="Search by MPN or description..."
@@ -359,6 +518,8 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                 }}
                 sx={{ width: 320 }}
               />
+              <Box sx={{ flex: 1 }} />
+              <TimestampLabel label="Last updated" iso={data.timestamps?.products} />
             </Box>
 
             {productsLoading ? (
@@ -374,7 +535,15 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                         <TableCell>Family</TableCell>
                         <TableCell>Category</TableCell>
                         <TableCell>Status</TableCell>
-                        <TableCell align="right">Coverage</TableCell>
+                        <TableCell align="right" sortDirection={productSort === 'coverage' ? productSortDir : false}>
+                          <TableSortLabel
+                            active={productSort === 'coverage'}
+                            direction={productSort === 'coverage' ? productSortDir : 'desc'}
+                            onClick={handleCoverageSort}
+                          >
+                            Coverage
+                          </TableSortLabel>
+                        </TableCell>
                         <TableCell sx={{ width: 40 }} />
                       </TableRow>
                     </TableHead>
@@ -561,7 +730,11 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
 
         {/* ── Cross-References Tab ── */}
         {activeTab === 3 && (
-          <CrossReferencesTab slug={slug} manufacturerName={mfr?.nameDisplay || slug} />
+          <CrossReferencesTab
+            slug={slug}
+            manufacturerName={mfr?.nameDisplay || slug}
+            lastUploadedAt={data.timestamps?.crossRefs ?? null}
+          />
         )}
 
       </Box>

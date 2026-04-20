@@ -9,11 +9,14 @@ import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
 import ServiceStatusIcon from '@/components/ServiceStatusIcon';
+import AppFeedbackDialog from '@/components/AppFeedbackDialog';
+import NotificationSnackbar from '@/components/NotificationSnackbar';
 
 interface AppSidebarProps {
   onReset?: () => void;
@@ -36,6 +39,14 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const isSettingsActive = pathname === '/settings';
 
   const [hasNewReleases, setHasNewReleases] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setFeedbackOpen(true);
+    window.addEventListener('xq-open-app-feedback', handler);
+    return () => window.removeEventListener('xq-open-app-feedback', handler);
+  }, []);
 
   // Check for unseen releases by fetching latest from server
   useEffect(() => {
@@ -192,6 +203,19 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           </Badge>
         </IconButton>
         <IconButton
+          onClick={() => setFeedbackOpen(true)}
+          size="small"
+          title="Give feedback"
+          sx={{
+            mb: 1.5,
+            color: 'text.secondary',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <FeedbackOutlinedIcon fontSize="small" />
+        </IconButton>
+        <IconButton
           onClick={() => router.push('/settings')}
           size="small"
           sx={{
@@ -217,6 +241,18 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <LogoutIcon fontSize="small" sx={{ transform: 'scaleX(-1)' }} />
         </IconButton>
       </Box>
+      <AppFeedbackDialog
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        onSubmitted={() => setFeedbackSent(true)}
+      />
+      <NotificationSnackbar
+        open={feedbackSent}
+        message="Thanks — your feedback has been sent."
+        severity="success"
+        onClose={() => setFeedbackSent(false)}
+        autoHideDuration={4000}
+      />
     </Box>
   );
 }

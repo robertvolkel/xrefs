@@ -191,7 +191,8 @@ export function buildAvailableColumns(
     { id: 'mapped:mpn', label: 'MPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
     { id: 'mapped:manufacturer', label: 'Manufacturer', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
     { id: 'mapped:description', label: 'Description', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '200px' },
-    { id: 'mapped:cpn', label: 'CPN / Internal PN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
+    { id: 'mapped:cpn', label: 'CPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
+    { id: 'mapped:ipn', label: 'IPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
   );
 
   // Spreadsheet columns (from the original upload)

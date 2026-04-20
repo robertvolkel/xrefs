@@ -24,6 +24,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { getMfrCrossRefs, uploadMfrCrossRefs, deleteMfrCrossRefs } from '@/lib/api';
 import { parseSpreadsheetFile } from '@/lib/excelParser';
+import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 import type { ManufacturerCrossReference, ParsedSpreadsheet, CrossRefColumnMapping } from '@/lib/types';
 import CrossRefColumnMappingDialog from './CrossRefColumnMappingDialog';
 
@@ -33,9 +34,10 @@ const PAGE_SIZE = 25;
 interface CrossReferencesTabProps {
   slug: string;
   manufacturerName: string;
+  lastUploadedAt?: string | null;
 }
 
-export default function CrossReferencesTab({ slug, manufacturerName }: CrossReferencesTabProps) {
+export default function CrossReferencesTab({ slug, manufacturerName, lastUploadedAt }: CrossReferencesTabProps) {
   // Existing cross-refs state
   const [crossRefs, setCrossRefs] = useState<ManufacturerCrossReference[]>([]);
   const [total, setTotal] = useState(0);
@@ -155,12 +157,13 @@ export default function CrossReferencesTab({ slug, manufacturerName }: CrossRefe
   };
 
   // Delete
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (xref: ManufacturerCrossReference) => {
+    if (!window.confirm(`Delete cross-reference ${xref.original_mpn} → ${xref.xref_mpn}?`)) return;
     // Optimistic
-    setCrossRefs(prev => prev.filter(r => r.id !== id));
+    setCrossRefs(prev => prev.filter(r => r.id !== xref.id));
     setTotal(prev => prev - 1);
     try {
-      await deleteMfrCrossRefs(slug, [id]);
+      await deleteMfrCrossRefs(slug, [xref.id]);
     } catch {
       fetchCrossRefs(); // Revert on error
       setSnackbar({ open: true, message: 'Failed to delete cross-reference', severity: 'error' });
@@ -213,18 +216,31 @@ export default function CrossReferencesTab({ slug, manufacturerName }: CrossRefe
       )}
 
       {/* Search + table */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, gap: 2 }}>
         <Typography variant="subtitle2" color="text.secondary">
           {total > 0 ? `${total} cross-reference${total !== 1 ? 's' : ''}` : search ? 'No results' : 'No cross-references uploaded yet'}
         </Typography>
-        {(total > 0 || search) && (
-          <TextField
-            size="small"
-            placeholder="Search MPN..."
-            onChange={(e) => handleSearchChange(e.target.value)}
-            sx={{ width: 240, '& input': { fontSize: '0.8rem' } }}
-          />
-        )}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {lastUploadedAt ? (
+            <Tooltip title={new Date(lastUploadedAt).toLocaleString()} arrow>
+              <Typography variant="caption" color="text.secondary">
+                Last uploaded: {formatRelativeTime(lastUploadedAt)}
+              </Typography>
+            </Tooltip>
+          ) : (
+            <Typography variant="caption" color="text.disabled">
+              Last uploaded: never
+            </Typography>
+          )}
+          {(total > 0 || search) && (
+            <TextField
+              size="small"
+              placeholder="Search MPN..."
+              onChange={(e) => handleSearchChange(e.target.value)}
+              sx={{ width: 240, '& input': { fontSize: '0.8rem' } }}
+            />
+          )}
+        </Box>
       </Box>
 
       {loading && crossRefs.length === 0 ? (
@@ -276,7 +292,7 @@ export default function CrossReferencesTab({ slug, manufacturerName }: CrossRefe
                       {xref.uploaded_at ? new Date(xref.uploaded_at).toLocaleDateString() : '—'}
                     </TableCell>
                     <TableCell>
-                      <IconButton size="small" onClick={() => handleDelete(xref.id)} sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}>
+                      <IconButton size="small" onClick={() => handleDelete(xref)} sx={{ opacity: 0.5, '&:hover': { opacity: 1 } }}>
                         <DeleteOutlineIcon sx={{ fontSize: 16 }} />
                       </IconButton>
                     </TableCell>

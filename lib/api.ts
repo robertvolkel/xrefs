@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -134,9 +134,14 @@ export async function getRecommendationsWithContext(
   });
 }
 
-/** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs */
+/** Fetch FindChips enrichment data (N-distributor pricing, lifecycle, compliance) for a batch of MPNs.
+ *  Caller must keep batch size ≤ 50 (server cap). Callers like `triggerFCEnrichment` in
+ *  useAppState chunk larger lists and fire this in parallel per chunk for incremental rendering.
+ *  Pass an `AbortSignal` to cancel in-flight HTTP when the user navigates away — saves FindChips
+ *  rate-limit budget (60 calls/min). AbortError is swallowed (treated as empty result). */
 export async function enrichWithFCBatch(
   mpns: string[],
+  signal?: AbortSignal,
 ): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
   if (mpns.length === 0) return {};
   try {
@@ -146,6 +151,7 @@ export async function enrichWithFCBatch(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mpns }),
+        signal,
       },
     );
     return result.results ?? {};
@@ -315,6 +321,52 @@ export async function getAdminFeedbackList(params?: {
 /** Update feedback status / admin notes */
 export async function updateFeedback(feedbackId: string, update: QcFeedbackUpdate): Promise<void> {
   const res = await fetch(`${BASE}/admin/qc/feedback/${feedbackId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to update feedback');
+}
+
+// ── App Feedback API ─────────────────────────────────────
+
+/** Submit general app feedback (idea/issue/other) */
+export async function submitAppFeedback(submission: AppFeedbackSubmission): Promise<{ id: string }> {
+  return fetchApi<{ id: string }>(`${BASE}/app-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(submission),
+  });
+}
+
+/** Get paginated app feedback items for admin triage */
+export async function getAdminAppFeedbackList(params?: {
+  status?: AppFeedbackStatus;
+  category?: AppFeedbackCategory;
+  search?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  page?: number;
+  limit?: number;
+}): Promise<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set('status', params.status);
+  if (params?.category) searchParams.set('category', params.category);
+  if (params?.search) searchParams.set('search', params.search);
+  if (params?.sortBy) searchParams.set('sort_by', params.sortBy);
+  if (params?.sortDir) searchParams.set('sort_dir', params.sortDir);
+  if (params?.page !== undefined) searchParams.set('page', String(params.page));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  const qs = searchParams.toString();
+  return fetchApi<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }>(
+    `${BASE}/admin/app-feedback${qs ? `?${qs}` : ''}`
+  );
+}
+
+/** Update app feedback status / admin notes */
+export async function updateAppFeedback(feedbackId: string, update: AppFeedbackUpdate): Promise<void> {
+  const res = await fetch(`${BASE}/admin/app-feedback/${feedbackId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(update),
@@ -914,4 +966,28 @@ export async function deleteMfrCrossRefs(slug: string, ids: string[]): Promise<v
     body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error('Failed to delete cross-references');
+}
+
+// ── Atlas Profile Sync ──────────────────────────────────────
+
+export async function syncAllMfrProfiles(): Promise<{
+  total: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+}> {
+  const res = await fetch(`${BASE}/admin/manufacturers`, { method: 'POST' });
+  if (!res.ok) throw new Error('Profile sync failed');
+  return res.json();
+}
+
+export async function syncMfrProfile(slug: string): Promise<{
+  atlasId: number;
+  name: string;
+  changeCount: number;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/admin/manufacturers/${slug}/sync`, { method: 'POST' });
+  if (!res.ok) throw new Error('Profile sync failed');
+  return res.json();
 }

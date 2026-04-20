@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Box, Typography, Switch, Stack, Chip } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { getQcSettings, updateQcSettings } from '@/lib/api';
+import { getQcSettings, updateQcSettings, getAdminAppFeedbackList } from '@/lib/api';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import {
@@ -24,6 +24,7 @@ import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import QcFeedbackTab from './QcFeedbackTab';
 import QcLogsTab from './QcLogsTab';
 import DistributorClicksTab from './DistributorClicksTab';
+import AppFeedbackTab from './AppFeedbackTab';
 import SearchLogicPanel from './SearchLogicPanel';
 import ListLogicPanel from './ListLogicPanel';
 import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
@@ -108,7 +109,7 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'manufacturers' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'search-logic' || s === 'list-logic' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
+  return s === 'manufacturers' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
 }
 
 const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs', 'distributor-clicks'];
@@ -137,12 +138,28 @@ function AdminShellInner() {
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
+  // App feedback open count for badge
+  const [appFeedbackOpenCount, setAppFeedbackOpenCount] = useState(0);
+
+  const refreshAppFeedbackCount = useCallback(() => {
+    getAdminAppFeedbackList({ status: 'open', limit: 1 })
+      .then((r) => setAppFeedbackOpenCount(r.statusCounts.open))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     getQcSettings()
       .then((s) => setLoggingEnabled(s.qcLoggingEnabled))
       .catch(() => {})
       .finally(() => setSettingsLoaded(true));
-  }, []);
+
+    refreshAppFeedbackCount();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh badge when leaving app-feedback section (may have resolved items)
+  useEffect(() => {
+    if (activeSection !== 'app-feedback') refreshAppFeedbackCount();
+  }, [activeSection, refreshAppFeedbackCount]);
 
   const handleToggleLogging = async (enabled: boolean) => {
     setLoggingEnabled(enabled);
@@ -271,7 +288,7 @@ function AdminShellInner() {
             overflow: 'hidden',
           }}
         >
-          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} />
+          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} appFeedbackOpenCount={appFeedbackOpenCount} />
         </Box>
 
         {/* Family Picker (conditional) */}
@@ -294,6 +311,10 @@ function AdminShellInner() {
             {activeSection === 'qc-feedback' && <QcFeedbackTab />}
             {activeSection === 'qc-logs' && <QcLogsTab />}
             {activeSection === 'distributor-clicks' && <DistributorClicksTab />}
+          </Box>
+        ) : activeSection === 'app-feedback' ? (
+          <Box sx={{ flex: 1, overflow: 'hidden' }}>
+            <AppFeedbackTab />
           </Box>
         ) : activeSection === 'search-logic' || activeSection === 'list-logic' ? (
           <Box sx={{ flex: 1, overflow: 'hidden' }}>

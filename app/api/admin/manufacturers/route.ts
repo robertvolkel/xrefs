@@ -37,6 +37,7 @@ interface MfrRow {
   id: number;
   enabled: boolean;
   website_url: string | null;
+  updated_at: string;
 }
 
 interface StatsRow {
@@ -44,6 +45,13 @@ interface StatsRow {
   family_id: string | null;
   product_count: number;
   param_keys: string[] | null;
+  max_updated_at: string | null;
+}
+
+function maxIso(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
 }
 
 async function computeStats(): Promise<object> {
@@ -52,7 +60,7 @@ async function computeStats(): Promise<object> {
   const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
     supabase
       .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, slug, id, enabled, website_url')
+      .select('name_display, name_en, name_zh, slug, id, enabled, website_url, updated_at')
       .order('name_en'),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
@@ -61,9 +69,11 @@ async function computeStats(): Promise<object> {
   const statsErr = rpcResult.error;
 
   const crossRefCounts = new Map<string, number>();
+  const crossRefLastUpload = new Map<string, string>();
   if (xrefCounts) {
-    for (const row of xrefCounts as { manufacturer_slug: string; count: number }[]) {
+    for (const row of xrefCounts as { manufacturer_slug: string; count: number; max_uploaded_at: string | null }[]) {
       crossRefCounts.set(row.manufacturer_slug, Number(row.count));
+      if (row.max_uploaded_at) crossRefLastUpload.set(row.manufacturer_slug, row.max_uploaded_at);
     }
   }
 
@@ -72,25 +82,9 @@ async function computeStats(): Promise<object> {
   }
 
   if (statsErr) {
-    console.warn('get_manufacturer_product_stats RPC failed:', statsErr.message);
-    const result = (mfrRows ?? []).map((m: MfrRow) => ({
-      id: m.id,
-      slug: m.slug,
-      nameEn: m.name_en,
-      nameZh: m.name_zh,
-      nameDisplay: m.name_display,
-      enabled: m.enabled,
-      websiteUrl: m.website_url,
-      productCount: 0,
-      scorableCount: 0,
-      families: [] as string[],
-      coveragePct: 0,
-      crossRefCount: crossRefCounts.get(m.slug) || 0,
-    }));
-    return {
-      manufacturers: result,
-      summary: { totalManufacturers: result.length, withProducts: 0, enabledWithProducts: 0, totalProducts: 0, scorableProducts: 0, familiesCovered: 0 },
-    };
+    // Never synthesize a zero-filled "success" payload — it would get persisted
+    // to admin_stats_cache and served to every admin until someone clicks Refresh.
+    throw new Error(`get_manufacturer_product_stats RPC failed: ${statsErr.message}`);
   }
 
   const manufacturers = (mfrRows ?? []) as MfrRow[];
@@ -100,6 +94,7 @@ async function computeStats(): Promise<object> {
     productCount: number;
     scorableCount: number;
     families: Set<string>;
+    lastProductUpdate: string | null;
   }>();
   const allFamilies = new Set<string>();
 
@@ -115,10 +110,11 @@ async function computeStats(): Promise<object> {
 
     let agg = productAgg.get(row.manufacturer);
     if (!agg) {
-      agg = { productCount: 0, scorableCount: 0, families: new Set() };
+      agg = { productCount: 0, scorableCount: 0, families: new Set(), lastProductUpdate: null };
       productAgg.set(row.manufacturer, agg);
     }
     agg.productCount += count;
+    agg.lastProductUpdate = maxIso(agg.lastProductUpdate, row.max_updated_at);
 
     if (row.family_id) {
       agg.scorableCount += count;
@@ -152,6 +148,8 @@ async function computeStats(): Promise<object> {
   const result = manufacturers.map((m) => {
     const agg = productAgg.get(m.name_display) || productAgg.get(m.name_en);
     const cov = mfrCoverage.get(m.name_display) || mfrCoverage.get(m.name_en);
+    const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
+    const productTs = agg?.lastProductUpdate ?? null;
     return {
       id: m.id,
       slug: m.slug,
@@ -167,6 +165,10 @@ async function computeStats(): Promise<object> {
         ? Math.round((cov.totalCovered / cov.totalRules) * 100)
         : 0,
       crossRefCount: crossRefCounts.get(m.slug) || 0,
+      lastProductUpdate: productTs,
+      lastProfileUpdate: m.updated_at,
+      lastCrossRefUpdate: xrefTs,
+      lastModified: maxIso(maxIso(productTs, m.updated_at), xrefTs),
     };
   });
 
@@ -201,6 +203,52 @@ async function computeAndPersist(): Promise<{ payload: object; computedAt: strin
   return { payload, computedAt };
 }
 
+function looksPoisoned(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const summary = (payload as { summary?: { totalManufacturers?: number; totalProducts?: number } }).summary;
+  if (!summary) return false;
+  return (summary.totalManufacturers ?? 0) > 0 && (summary.totalProducts ?? 0) === 0;
+}
+
+async function readPersistentCache(): Promise<{ payload: object; computedAt: string } | null> {
+  try {
+    const svc = createServiceClient();
+    const { data } = await svc
+      .from('admin_stats_cache')
+      .select('payload, computed_at')
+      .eq('key', CACHE_KEY)
+      .maybeSingle();
+    if (data?.payload && data.computed_at) {
+      return { payload: data.payload as object, computedAt: data.computed_at as string };
+    }
+  } catch (err) {
+    console.error('admin_stats_cache read failed:', err);
+  }
+  return null;
+}
+
+// ── POST: Batch sync all profiles from Atlas API ──────────
+export async function POST(request: NextRequest) {
+  try {
+    const { error: authError } = await requireAdmin();
+    if (authError) return authError;
+
+    const { syncAllProfiles } = await import('@/lib/services/atlasProfileSync');
+    const result = await syncAllProfiles();
+
+    // Invalidate caches so the list reflects new profile data
+    invalidateManufacturersListCache();
+
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error('POST /api/admin/manufacturers (sync) error:', err);
+    return NextResponse.json(
+      { error: 'Sync failed', detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { error: authError } = await requireAdmin();
@@ -216,31 +264,40 @@ export async function GET(request: NextRequest) {
 
     let payload: object | null = null;
     let computedAt: string | null = null;
+    let stale = false;
 
     if (!forceRefresh) {
-      try {
-        const svc = createServiceClient();
-        const { data } = await svc
-          .from('admin_stats_cache')
-          .select('payload, computed_at')
-          .eq('key', CACHE_KEY)
-          .maybeSingle();
-        if (data?.payload) {
-          payload = data.payload as object;
-          computedAt = data.computed_at as string;
-        }
-      } catch (err) {
-        console.error('admin_stats_cache read failed:', err);
+      const cached = await readPersistentCache();
+      if (cached && !looksPoisoned(cached.payload)) {
+        payload = cached.payload;
+        computedAt = cached.computedAt;
       }
     }
 
     if (!payload || !computedAt) {
-      const fresh = await computeAndPersist();
-      payload = fresh.payload;
-      computedAt = fresh.computedAt;
+      try {
+        const fresh = await computeAndPersist();
+        payload = fresh.payload;
+        computedAt = fresh.computedAt;
+      } catch (err) {
+        console.error('computeAndPersist failed:', err);
+        // Fresh compute failed — fall back to last known good cache even on
+        // a force-refresh, so the admin never sees synthetic zeros.
+        const cached = await readPersistentCache();
+        if (cached && !looksPoisoned(cached.payload)) {
+          payload = cached.payload;
+          computedAt = cached.computedAt;
+          stale = true;
+        } else {
+          return NextResponse.json(
+            { error: 'Stats temporarily unavailable', detail: err instanceof Error ? err.message : String(err) },
+            { status: 503 }
+          );
+        }
+      }
     }
 
-    const body = JSON.stringify({ ...payload, cachedAt: computedAt });
+    const body = JSON.stringify({ ...payload, cachedAt: computedAt, stale });
     memCache = { body, cachedAt: computedAt };
     memCacheTimestamp = Date.now();
 

@@ -25,7 +25,7 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
-import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, searchMouserProducts, MouserProduct } from './mouserClient';
+import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget } from './findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
@@ -342,12 +342,6 @@ export async function searchParts(
       source: 'partsio',
       promise: searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
     });
-    if (!options?.skipFindchips) {
-      searches.push({
-        source: 'mouser',
-        promise: searchMouserProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
-      });
-    }
   }
 
   const settled = await Promise.allSettled(searches.map(s => s.promise));
@@ -358,7 +352,7 @@ export async function searchParts(
   // to have no data for this MPN.
   const sourcesContributed: SearchDataSource[] = [];
 
-  // Merge in priority order: Digikey → Atlas → Parts.io → Mouser
+  // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
 

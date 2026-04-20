@@ -16,8 +16,10 @@ export interface StoredRow {
   rawMpn: string;
   rawManufacturer: string;
   rawDescription: string;
-  /** Customer Part Number / Internal Part Number (optional mapped column) */
+  /** Customer Part Number (optional mapped column) */
   rawCpn?: string;
+  /** Internal Part Number (optional mapped column) */
+  rawIpn?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRow['status'];
@@ -102,6 +104,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawManufacturer: r.rawManufacturer,
       rawDescription: r.rawDescription,
       rawCpn: r.rawCpn,
+      rawIpn: r.rawIpn,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,

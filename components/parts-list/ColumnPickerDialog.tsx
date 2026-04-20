@@ -32,6 +32,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import Tooltip from '@mui/material/Tooltip';
 import { useTranslation } from 'react-i18next';
 import { ColumnDefinition, GROUP_ORDER } from '@/lib/columnDefinitions';
 import { SavedView } from '@/lib/viewConfigStorage';
@@ -66,6 +68,26 @@ function SourceBadge({ dataSource }: { dataSource?: string }) {
         '& .MuiChip-label': { px: 0.5, py: 0 },
       }}
     />
+  );
+}
+
+// ============================================================
+// PORTABLE BADGE
+// ============================================================
+
+/** Small sparkle icon shown next to portable columns in master views */
+function PortableBadge({ colId, viewScope, columnMeta }: {
+  colId: string;
+  viewScope?: import('@/lib/viewConfigStorage').ViewScope;
+  columnMeta?: Record<string, string>;
+}) {
+  if (viewScope !== 'master') return null;
+  const isPortable = colId.startsWith('mapped:') || (colId.startsWith('ss:') && columnMeta?.[colId]);
+  if (!isPortable) return null;
+  return (
+    <Tooltip title="Auto-matched across lists" arrow>
+      <AutoAwesomeIcon sx={{ fontSize: 14, ml: 0.5, color: 'text.secondary' }} />
+    </Tooltip>
   );
 }
 
@@ -121,9 +143,12 @@ export default function ColumnPickerDialog({
   };
 
   // Group available columns by their group field, sorted by GROUP_ORDER
+  // For master views, hide raw ss:* columns — only portable mapped:* columns in "Your Data"
   const grouped = useMemo(() => {
+    const isMasterScope = viewScope === 'master' || (mode === 'create' && createScope === 'master');
     const groups = new Map<string, ColumnDefinition[]>();
     for (const col of availableColumns) {
+      if (isMasterScope && col.id.startsWith('ss:')) continue;
       const existing = groups.get(col.group) ?? [];
       existing.push(col);
       groups.set(col.group, existing);
@@ -469,6 +494,7 @@ export default function ColumnPickerDialog({
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                               <span>{col.label}</span>
                               <SourceBadge dataSource={col.dataSource} />
+                              <PortableBadge colId={col.id} viewScope={viewScope} columnMeta={initialView?.columnMeta} />
                             </Box>
                           }
                           primaryTypographyProps={{ fontSize: '0.82rem' }}
@@ -541,6 +567,7 @@ export default function ColumnPickerDialog({
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                           <span>{col.label || t('columnPicker.actionColumn')}</span>
                           <SourceBadge dataSource={col.dataSource} />
+                          <PortableBadge colId={col.id} viewScope={viewScope} columnMeta={initialView?.columnMeta} />
                         </Box>
                       }
                       secondary={col.group}

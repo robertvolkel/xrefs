@@ -28,6 +28,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawManufacturer: r.rawManufacturer,
       rawDescription: r.rawDescription,
       rawCpn: r.rawCpn,
+      rawIpn: r.rawIpn,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,

@@ -13,6 +13,21 @@ import ComparisonView from './ComparisonView';
 import ManufacturerProfilePanel from './ManufacturerProfilePanel';
 import ParticleWaveBackground from './ParticleWaveBackground';
 
+function formatLastUpdated(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (sameDay) return `today at ${time}`;
+  if (isYesterday) return `yesterday at ${time}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${time}`;
+}
+
 function getGridColumns(
   showAttrs: boolean,
   showRecs: boolean,
@@ -79,6 +94,7 @@ export interface DesktopLayoutProps {
   showAttributesPanel: boolean;
   showRightPanel: boolean;
   isLoadingRecs: boolean;
+  isEnrichingFC: boolean;
   // Manufacturer profile
   chatCollapsed: boolean;
   mfrOpen: boolean;
@@ -118,7 +134,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
     recommendations, selectedRecommendation, conversationId,
-    showAttributesPanel, showRightPanel, isLoadingRecs,
+    showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
     chatCollapsed, mfrOpen, mfrProfile,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
@@ -290,6 +306,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               recommendations={recommendations}
               onSelect={onSelectRecommendation}
               onManufacturerClick={onManufacturerClick}
+              isEnrichingFC={isEnrichingFC}
             />
           ) : showRightPanel ? (
             <Box
@@ -329,6 +346,49 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           )}
         </Box>
         </Box>
+        {phase === 'idle' && messages.length === 0 && (
+          <Box
+            sx={{
+              position: 'absolute',
+              bottom: 40,
+              left: 0,
+              right: 0,
+              zIndex: 2,
+              textAlign: 'center',
+              pointerEvents: 'none',
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+              XQ Xrefs Alpha
+              {formatLastUpdated(process.env.NEXT_PUBLIC_LAST_UPDATED) && (
+                <>{'   |   '}Last Updated {formatLastUpdated(process.env.NEXT_PUBLIC_LAST_UPDATED)}</>
+              )}
+              {'   |   '}
+              <Box
+                component="span"
+                role="button"
+                tabIndex={0}
+                onClick={() => window.dispatchEvent(new Event('xq-open-app-feedback'))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    window.dispatchEvent(new Event('xq-open-app-feedback'));
+                  }
+                }}
+                sx={{
+                  pointerEvents: 'auto',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textDecorationStyle: 'dotted',
+                  textUnderlineOffset: '2px',
+                  '&:hover': { color: 'text.primary' },
+                }}
+              >
+                Give Feedback
+              </Box>
+            </Typography>
+          </Box>
+        )}
       </Box>
     </Box>
   );

@@ -4,20 +4,25 @@
 --
 -- Performance: ~1-2s vs 20-30s (eliminates 55K row fetch + JSONB deserialization)
 
+-- Drop first: CREATE OR REPLACE can't change the return type of an existing function.
+DROP FUNCTION IF EXISTS get_manufacturer_product_stats();
+
 CREATE OR REPLACE FUNCTION get_manufacturer_product_stats()
 RETURNS TABLE (
   manufacturer TEXT,
   family_id TEXT,
   product_count BIGINT,
-  param_keys TEXT[]
+  param_keys TEXT[],
+  max_updated_at TIMESTAMPTZ
 ) LANGUAGE sql STABLE AS $$
-  -- Step 1: Get all (manufacturer, family_id) groups with counts
+  -- Step 1: Get all (manufacturer, family_id) groups with counts + last-modified timestamp
   -- Step 2: For scorable groups, collect distinct param keys
   WITH groups AS (
     SELECT
       p.manufacturer,
       p.family_id,
-      COUNT(*) AS product_count
+      COUNT(*) AS product_count,
+      MAX(p.updated_at) AS max_updated_at
     FROM atlas_products p
     GROUP BY p.manufacturer, p.family_id
   ),
@@ -38,7 +43,8 @@ RETURNS TABLE (
     g.manufacturer,
     g.family_id,
     g.product_count,
-    pu.param_keys
+    pu.param_keys,
+    g.max_updated_at
   FROM groups g
   LEFT JOIN param_union pu
     ON g.manufacturer = pu.manufacturer

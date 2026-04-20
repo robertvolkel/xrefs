@@ -79,6 +79,17 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Atlas stats RPC (`get_manufacturer_product_stats`) hits Supabase statement timeout under load
+
+The RPC that backs the admin Atlas MFRs page aggregates ~55K `atlas_products` rows via a `LATERAL jsonb_object_keys(...)` unnest ([scripts/supabase-mfr-stats-rpc.sql](scripts/supabase-mfr-stats-rpc.sql)). It intermittently times out — the UI-layer fix (route.ts) now serves last-known-good data with a stale warning instead of poisoned zeros, but the underlying query is still fragile.
+
+**Options:**
+- Materialized view of manufacturer-family counts + param-key arrays, refreshed by a pg_cron job or a trigger on `atlas_products`.
+- Pre-aggregated `atlas_product_stats` table populated by ingest scripts (`atlas-ingest.mjs`) at write-time.
+- Raise Supabase statement timeout for this RPC only (`ALTER FUNCTION ... SET statement_timeout = ...`).
+
+**Why it matters:** Without a durable fix, admins keep seeing the stale banner even though the data is a few minutes old. Every ingest cycle grows `atlas_products`, so the timeout risk compounds.
+
 ### ~~L2 taxonomy: curated param maps for high-value non-xref categories~~ COMPLETED
 **Status:** Done — Wave 1 (Decision #86) + Wave 2 (Decision #87)
 

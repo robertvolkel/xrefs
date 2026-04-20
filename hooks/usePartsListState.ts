@@ -249,6 +249,9 @@ export function usePartsListState() {
         ...(mapping.cpnColumn != null && mapping.cpnColumn >= 0
           ? { rawCpn: row[mapping.cpnColumn] ?? '' }
           : {}),
+        ...(mapping.ipnColumn != null && mapping.ipnColumn >= 0
+          ? { rawIpn: row[mapping.ipnColumn] ?? '' }
+          : {}),
         rawCells: row,
         status: 'pending' as const,
       }));
@@ -1114,7 +1117,14 @@ export function usePartsListState() {
     if (rowsNeedingFC.length === 0) return { requested: 0, enriched: 0 };
 
     const mpns = rowsNeedingFC.map(r => r.resolvedPart!.mpn);
-    const results = await enrichWithFCBatch(mpns);
+    // Chunk into 50-MPN batches (server cap) and fire in parallel
+    const CHUNK_SIZE = 50;
+    const chunks: string[][] = [];
+    for (let i = 0; i < mpns.length; i += CHUNK_SIZE) {
+      chunks.push(mpns.slice(i, i + CHUNK_SIZE));
+    }
+    const chunkResults = await Promise.all(chunks.map(c => enrichWithFCBatch(c).catch(() => ({}))));
+    const results = Object.assign({}, ...chunkResults);
     const enrichedCount = Object.keys(results).length;
 
     if (enrichedCount > 0) {

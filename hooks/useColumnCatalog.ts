@@ -35,6 +35,7 @@ export function useColumnCatalog(
       const row = rows.find(r => r.rawMpn && r.rawCells?.length);
       if (!row) return null;
       const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
+      const ipnIdx = row.rawIpn ? row.rawCells.findIndex(c => c === row.rawIpn) : -1;
       return {
         mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
         manufacturerColumn: row.rawManufacturer
@@ -42,6 +43,7 @@ export function useColumnCatalog(
           : -1,
         descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
         ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
+        ...(ipnIdx >= 0 ? { ipnColumn: ipnIdx } : {}),
       };
     })();
 
@@ -50,6 +52,7 @@ export function useColumnCatalog(
       if (mapping?.manufacturerColumn === i) return 'Manufacturer';
       if (mapping?.descriptionColumn === i) return 'Description';
       if (mapping?.cpnColumn === i) return 'Customer Part #';
+      if (mapping?.ipnColumn === i) return 'Internal Part #';
       return `Column ${i + 1}`;
     });
   }, [spreadsheetHeaders, rows, columnMapping]);
@@ -70,9 +73,13 @@ export function useColumnCatalog(
       });
     }
     return all
-      .filter(col =>
-        col.source !== 'spreadsheet' || (col.spreadsheetIndex !== undefined && nonEmptyIndices.has(col.spreadsheetIndex)),
-      )
+      .filter(col => {
+        if (col.source !== 'spreadsheet') return true;
+        // Portable mapped:* columns always pass (they resolve at render time)
+        if (col.id.startsWith('mapped:')) return true;
+        // Raw ss:* columns only if they contain non-empty data
+        return col.spreadsheetIndex !== undefined && nonEmptyIndices.has(col.spreadsheetIndex);
+      })
       .map(col => {
         if (col.source !== 'spreadsheet' || col.spreadsheetIndex === undefined) return col;
         // Size spreadsheet columns based on actual content width
@@ -97,6 +104,7 @@ export function useColumnCatalog(
     const row = rows.find(r => r.rawMpn && r.rawCells?.length);
     if (!row) return null;
     const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
+    const ipnIdx = row.rawIpn ? row.rawCells.findIndex(c => c === row.rawIpn) : -1;
     return {
       mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
       manufacturerColumn: row.rawManufacturer
@@ -104,6 +112,7 @@ export function useColumnCatalog(
         : -1,
       descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
       ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
+      ...(ipnIdx >= 0 ? { ipnColumn: ipnIdx } : {}),
     };
   }, [columnMapping, rows]);
 

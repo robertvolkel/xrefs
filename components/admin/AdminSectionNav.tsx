@@ -1,6 +1,6 @@
 'use client';
 
-import { List, ListItemButton, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Badge } from '@mui/material';
 import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -12,9 +12,10 @@ import HistoryIcon from '@mui/icons-material/History';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
+import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
+export type AdminSection = 'manufacturers' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'app-feedback' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
 
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
@@ -44,6 +45,7 @@ const qcSections: SectionItem[] = [
 interface AdminSectionNavProps {
   activeSection: AdminSection;
   onSectionChange: (section: AdminSection) => void;
+  appFeedbackOpenCount?: number;
 }
 
 function SectionList({ sections, activeSection, onSectionChange, t }: {
@@ -81,7 +83,7 @@ function SectionList({ sections, activeSection, onSectionChange, t }: {
   );
 }
 
-export default function AdminSectionNav({ activeSection, onSectionChange }: AdminSectionNavProps) {
+export default function AdminSectionNav({ activeSection, onSectionChange, appFeedbackOpenCount = 0 }: AdminSectionNavProps) {
   const { t } = useTranslation();
 
   return (
@@ -91,6 +93,34 @@ export default function AdminSectionNav({ activeSection, onSectionChange }: Admi
       <SectionList sections={dataLogicSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
       <SectionList sections={logicDocsSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
+      <Divider sx={{ my: 1 }} />
+      {/* App Feedback — with badge for open items */}
+      <ListItemButton
+        selected={activeSection === 'app-feedback'}
+        onClick={() => onSectionChange('app-feedback')}
+        sx={{
+          py: 1.25,
+          px: 2,
+          '&.Mui-selected': { bgcolor: 'action.selected' },
+        }}
+      >
+        <ListItemIcon sx={{ minWidth: 36 }}>
+          <Badge
+            variant="dot"
+            color="error"
+            invisible={appFeedbackOpenCount === 0}
+          >
+            <FeedbackOutlinedIcon fontSize="small" sx={{ opacity: activeSection === 'app-feedback' ? 1 : 0.7 }} />
+          </Badge>
+        </ListItemIcon>
+        <ListItemText
+          primary={t('admin.appFeedback')}
+          primaryTypographyProps={{
+            variant: 'body2',
+            fontWeight: activeSection === 'app-feedback' ? 600 : 400,
+          }}
+        />
+      </ListItemButton>
       <Divider sx={{ my: 1 }} />
       <SectionList sections={qcSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>
