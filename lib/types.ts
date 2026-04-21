@@ -120,6 +120,35 @@ export function deriveRecommendationCategories(rec: XrefRecommendation): Recomme
   return cats.length > 0 ? cats : ['logic_driven'];
 }
 
+/** Mutually-exclusive trust tier used by parts-list column counts.
+ *  Priority: Accuris (parts.io) > Manufacturer > Logic. Mouser-only certified falls into Logic. */
+export type RecommendationBucket = 'accuris' | 'manufacturer' | 'logic';
+
+export function deriveRecommendationBucket(rec: XrefRecommendation): RecommendationBucket {
+  const certs = rec.certifiedBy ?? [];
+  if (certs.includes('partsio_fff') || certs.includes('partsio_functional')) return 'accuris';
+  if (certs.includes('manufacturer')) return 'manufacturer';
+  return 'logic';
+}
+
+export interface RecommendationCounts {
+  logicDrivenCount: number;
+  mfrCertifiedCount: number;
+  accurisCertifiedCount: number;
+}
+
+export function computeRecommendationCounts(recs: XrefRecommendation[] | undefined): RecommendationCounts {
+  const out: RecommendationCounts = { logicDrivenCount: 0, mfrCertifiedCount: 0, accurisCertifiedCount: 0 };
+  if (!recs) return out;
+  for (const r of recs) {
+    const b = deriveRecommendationBucket(r);
+    if (b === 'accuris') out.accurisCertifiedCount++;
+    else if (b === 'manufacturer') out.mfrCertifiedCount++;
+    else out.logicDrivenCount++;
+  }
+  return out;
+}
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;
@@ -136,7 +165,33 @@ export interface XrefRecommendation {
   certifiedBy?: CertificationSource[];
   /** Secondary data source used for gap-fill enrichment */
   enrichedFrom?: 'partsio';
+  /** Composite "better than source" score 0-100, weighted by list-level replacement priorities.
+   *  Used as the within-bucket tiebreak (see sortRecommendationsForDisplay). Decision #145. */
+  compositeScore?: number;
+  /** Per-axis 0-1 deltas behind the composite score. For future UI surfacing ("$ 12% cheaper"). */
+  compositeAxisDeltas?: Partial<Record<ReplacementAxis, number>>;
 }
+
+/** Axes used for composite "better than source" ranking (Decision #145) */
+export type ReplacementAxis = 'lifecycle' | 'compliance' | 'cost' | 'stock';
+
+/** Per-list configuration for composite ranking + display filters */
+export interface ReplacementPriorities {
+  /** Axis keys in user-chosen priority order. Position implies weight (first = highest). */
+  order: ReplacementAxis[];
+  /** Which axes are enabled. Unchecked axes are excluded (weight 0). */
+  enabled: Record<ReplacementAxis, boolean>;
+  /** When true, hide recommendations whose known totalStock across distributors is 0.
+   *  Recs with no commercial data (unknown stock) remain visible. Applied client-side
+   *  at display time — does not affect scoring or caching. */
+  hideZeroStock?: boolean;
+}
+
+export const DEFAULT_REPLACEMENT_PRIORITIES: ReplacementPriorities = {
+  order: ['lifecycle', 'compliance', 'cost', 'stock'],
+  enabled: { lifecycle: true, compliance: true, cost: true, stock: true },
+  hideZeroStock: false,
+};
 
 /** Per-parameter match detail for comparison */
 export interface MatchDetail {
@@ -799,6 +854,10 @@ export interface PartsListRow {
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — persisted so hits column is accurate on load */
   recommendationCount?: number;
+  /** Mutually-exclusive bucket counts (Accuris > MFR > Logic). Persisted for list column display. */
+  logicDrivenCount?: number;
+  mfrCertifiedCount?: number;
+  accurisCertifiedCount?: number;
   /** MPN explicitly chosen by user as preferred alternate — survives re-validation */
   preferredMpn?: string;
   /** Flattened Digikey data stored during validation */
@@ -864,6 +923,14 @@ export interface BatchValidateRequest {
   }>;
   /** Currency code for pricing (e.g. 'USD', 'CNY'). Passed to Digikey API. */
   currency?: string;
+  /** When true, bypass the recommendations L2 cache read so freshly recovered
+   *  upstream services (e.g. parts.io after VPN reconnect) get incorporated.
+   *  The computed result is still written back to cache. Use only for explicit
+   *  user-initiated Refresh — NOT for initial validation (we want cache hits there). */
+  forceRefresh?: boolean;
+  /** Per-list composite ranking priorities (Decision #145). Null/undefined → server
+   *  applies `DEFAULT_REPLACEMENT_PRIORITIES`. Part of the recs-cache variant hash. */
+  replacementPriorities?: ReplacementPriorities;
 }
 
 /** Single item response from batch validation */

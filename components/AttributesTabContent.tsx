@@ -419,7 +419,7 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
 }
 
 /* ── Supplier display name map ── */
-const SUPPLIER_DISPLAY: Record<string, string> = {
+export const SUPPLIER_DISPLAY: Record<string, string> = {
   digikey: 'Digikey', mouser: 'Mouser', arrow: 'Arrow', lcsc: 'LCSC',
   element14: 'element14', farnell: 'Farnell', newark: 'Newark', rs: 'RS Components',
   tme: 'TME', avnet: 'Avnet', future: 'Future Electronics', rochester: 'Rochester',

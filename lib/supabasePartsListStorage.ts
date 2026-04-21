@@ -5,7 +5,7 @@
  * Uses the browser Supabase client — call only from client components.
  */
 
-import { PartsListRow } from './types';
+import { PartsListRow, computeRecommendationCounts, ReplacementPriorities } from './types';
 import { createClient } from './supabase/client';
 import { StoredRow, PartsListSummary } from './partsListStorage';
 import { ViewState } from './viewConfigStorage';
@@ -22,6 +22,8 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       ? nonFailing?.filter(rec => rec.part.mpn !== r.preferredMpn)
       : nonFailing?.slice(1);
 
+    const computed = r.allRecommendations ? computeRecommendationCounts(r.allRecommendations) : null;
+
     return {
       rowIndex: r.rowIndex,
       rawMpn: r.rawMpn,
@@ -35,6 +37,9 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       suggestedReplacement: r.suggestedReplacement,
       topNonFailingRecs: subCandidates?.length ? subCandidates.slice(0, 2) : r.topNonFailingRecs,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
+      logicDrivenCount: computed?.logicDrivenCount ?? r.logicDrivenCount,
+      mfrCertifiedCount: computed?.mfrCertifiedCount ?? r.mfrCertifiedCount,
+      accurisCertifiedCount: computed?.accurisCertifiedCount ?? r.accurisCertifiedCount,
       preferredMpn: r.preferredMpn,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
@@ -52,6 +57,9 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     allRecommendations: undefined,
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
+    logicDrivenCount: r.logicDrivenCount,
+    mfrCertifiedCount: r.mfrCertifiedCount,
+    accurisCertifiedCount: r.accurisCertifiedCount,
     preferredMpn: r.preferredMpn,
     partType: r.partType,
   }));
@@ -99,6 +107,7 @@ export async function savePartsListSupabase(
   customer?: string,
   defaultViewId?: string,
   viewConfigs?: ViewState,
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<string | null> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -117,6 +126,7 @@ export async function savePartsListSupabase(
       rows: toStoredRows(rows),
       spreadsheet_headers: spreadsheetHeaders ?? [],
       ...(viewConfigs ? { view_configs: viewConfigs } : {}),
+      ...(replacementPriorities ? { replacement_priorities: replacementPriorities } : {}),
     })
     .select('id')
     .single();
@@ -152,12 +162,13 @@ export async function loadPartsListSupabase(id: string): Promise<{
   rows: PartsListRow[];
   spreadsheetHeaders: string[];
   viewConfigs: ViewState | null;
+  replacementPriorities: ReplacementPriorities | null;
   updatedAt: string | null;
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs, updated_at')
+    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs, replacement_priorities, updated_at')
     .eq('id', id)
     .single();
 
@@ -173,6 +184,7 @@ export async function loadPartsListSupabase(id: string): Promise<{
     rows: fromStoredRows(data.rows as StoredRow[]),
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
     viewConfigs: (record.view_configs as ViewState) ?? null,
+    replacementPriorities: (record.replacement_priorities as ReplacementPriorities) ?? null,
     updatedAt: (record.updated_at as string) ?? null,
   };
 }
@@ -185,6 +197,7 @@ export async function updatePartsListDetailsSupabase(
   currency?: string,
   customer?: string,
   defaultViewId?: string,
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<void> {
   const supabase = createClient();
 
@@ -196,6 +209,7 @@ export async function updatePartsListDetailsSupabase(
       ...(currency && { currency }),
       ...(customer !== undefined && { customer }),
       ...(defaultViewId !== undefined && { default_view_id: defaultViewId }),
+      ...(replacementPriorities !== undefined && { replacement_priorities: replacementPriorities }),
       updated_at: new Date().toISOString(),
     })
     .eq('id', id);

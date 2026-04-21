@@ -7,7 +7,7 @@
  * indicating data origin (Digikey, Parts.io, Atlas).
  */
 
-import { PartsListRow, EnrichedPartData } from './types';
+import { PartsListRow, EnrichedPartData, computeRecommendationCounts } from './types';
 import { CalculatedFieldDef, getCalculatedValue } from './calculatedFields';
 
 // ============================================================
@@ -71,10 +71,14 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
   { id: 'sys:partType', label: 'Type', source: 'system', group: 'System', defaultWidth: '110px' },
   { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
-  { id: 'sys:top_suggestion', label: 'Top Suggestion(s)', source: 'system', group: 'Replacements', defaultWidth: '160px' },
-  { id: 'sys:top_suggestion_mfr', label: 'Sug. Mfr', source: 'system', group: 'Replacements', defaultWidth: '130px' },
+  { id: 'sys:logicBasedCount', label: 'Logic-Based', source: 'system', group: 'Replacements', defaultWidth: '85px', align: 'center', isNumeric: true },
+  { id: 'sys:mfrCertifiedCount', label: 'MFR Certified', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'center', isNumeric: true },
+  { id: 'sys:accurisCertifiedCount', label: 'Accuris Certified', source: 'system', group: 'Replacements', defaultWidth: '110px', align: 'center', isNumeric: true },
+  { id: 'sys:top_suggestion', label: 'Sug. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px' },
+  { id: 'sys:top_suggestion_mfr', label: 'Suggested MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
   { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
   { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'sys:top_suggestion_supplier', label: 'Sug. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -322,16 +326,46 @@ export function getSortValue(
       return row.status;
     case 'sys:partType':
       return row.partType ?? 'electronic';
-    case 'sys:hits':
-      return row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
+    case 'sys:hits': {
+      const total = row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
+      return total > 0 ? 1 : 0;
+    }
+    case 'sys:logicBasedCount':
+      return row.allRecommendations
+        ? computeRecommendationCounts(row.allRecommendations).logicDrivenCount
+        : row.logicDrivenCount;
+    case 'sys:mfrCertifiedCount':
+      return row.allRecommendations
+        ? computeRecommendationCounts(row.allRecommendations).mfrCertifiedCount
+        : row.mfrCertifiedCount;
+    case 'sys:accurisCertifiedCount':
+      return row.allRecommendations
+        ? computeRecommendationCounts(row.allRecommendations).accurisCertifiedCount
+        : row.accurisCertifiedCount;
     case 'sys:top_suggestion':
       return row.suggestedReplacement?.part.mpn?.toLowerCase();
     case 'sys:top_suggestion_mfr':
       return row.suggestedReplacement?.part.manufacturer?.toLowerCase();
-    case 'sys:top_suggestion_price':
-      return row.suggestedReplacement?.part.unitPrice;
-    case 'sys:top_suggestion_stock':
-      return row.suggestedReplacement?.part.quantityAvailable;
+    case 'sys:top_suggestion_price': {
+      const p = row.suggestedReplacement?.part;
+      if (!p) return undefined;
+      const prices = p.supplierQuotes
+        ?.map(q => q.unitPrice)
+        .filter((v): v is number => v != null && v > 0);
+      return prices && prices.length > 0 ? Math.min(...prices) : p.unitPrice;
+    }
+    case 'sys:top_suggestion_stock': {
+      const p = row.suggestedReplacement?.part;
+      if (!p) return undefined;
+      const totals = p.supplierQuotes
+        ?.map(q => q.quantityAvailable)
+        .filter((v): v is number => v != null);
+      return totals && totals.length > 0 ? totals.reduce((a, b) => a + b, 0) : p.quantityAvailable;
+    }
+    case 'sys:top_suggestion_supplier': {
+      // Winning distributor = supplierQuotes[0] (mapper pre-sorts by best unit price)
+      return row.suggestedReplacement?.part.supplierQuotes?.[0]?.supplier?.toLowerCase();
+    }
     default:
       return undefined;
   }

@@ -32,6 +32,8 @@ interface PartDetailModalProps {
   onRecommendationsRefreshed: (recs: XrefRecommendation[]) => void;
   preferredMpn?: string;
   onTogglePreferred?: (mpn: string) => void;
+  /** List-level Replacement Preferences filter — propagates to RecommendationsPanel */
+  hideZeroStock?: boolean;
 }
 
 const PANEL_HEIGHT = '74vh';
@@ -49,6 +51,7 @@ export default function PartDetailModal({
   onRecommendationsRefreshed,
   preferredMpn,
   onTogglePreferred,
+  hideZeroStock,
 }: PartDetailModalProps) {
   const { t } = useTranslation();
   const [recsLoading, setRecsLoading] = useState(false);
@@ -99,6 +102,7 @@ export default function PartDetailModal({
               loading={recsLoading}
               preferredMpn={preferredMpn}
               onTogglePreferred={onTogglePreferred}
+              hideZeroStock={hideZeroStock}
             />
           </Box>
         )}

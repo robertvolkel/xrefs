@@ -29,6 +29,7 @@ import {
 import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
 import PromoteViewDialog, { viewNeedsPromoteDialog, buildFastPathPromoteResult } from './PromoteViewDialog';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
+import type { PartsListRow } from '@/lib/types';
 import AddIcon from '@mui/icons-material/Add';
 import PostAddIcon from '@mui/icons-material/PostAdd';
 import PartsListHeader from './PartsListHeader';
@@ -51,7 +52,8 @@ export default function PartsListShell() {
   const {
     phase, parsedData, columnMapping, rows, validationProgress, error, lastRefreshedAt,
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
-    spreadsheetHeaders, activeListId, listViewConfigs,
+    spreadsheetHeaders, activeListId, listViewConfigs, replacementPriorities,
+    backfillCountsResult,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
     handleFileSelected, handleParsedDataReady,
     handleColumnMappingConfirmed, handleColumnMappingCancelled,
@@ -244,6 +246,41 @@ export default function PartsListShell() {
 
     return () => clearTimeout(timer);
   }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment]);
+
+  // Notify when the cache-only bucket-count backfill has results to report
+  const backfillRowsRef = useRef<PartsListRow[]>(rows);
+  backfillRowsRef.current = rows;
+  useEffect(() => {
+    if (!backfillCountsResult) return;
+    const { hit, scanned, miss } = backfillCountsResult;
+    const missingIndices = backfillRowsRef.current
+      .filter(r => r.status === 'resolved'
+        && (r.recommendationCount ?? 0) > 0
+        && r.logicDrivenCount === undefined
+        && r.mfrCertifiedCount === undefined
+        && r.accurisCertifiedCount === undefined)
+      .map(r => r.rowIndex);
+    const refreshAction = missingIndices.length > 0 ? {
+      actionLabel: `Refresh ${missingIndices.length}`,
+      onAction: () => {
+        setNotification(null);
+        handleRefreshRows(missingIndices);
+      },
+    } : {};
+    if (hit > 0) {
+      setNotification({
+        message: `Updated replacement counts for ${hit} row${hit === 1 ? '' : 's'} from cache.${miss > 0 ? ` Refresh ${miss} row${miss === 1 ? '' : 's'} to fill the rest.` : ''}`,
+        severity: 'info',
+        ...refreshAction,
+      });
+    } else if (scanned > 0) {
+      setNotification({
+        message: `${scanned} row${scanned === 1 ? '' : 's'} missing replacement counts — refresh to populate.`,
+        severity: 'info',
+        ...refreshAction,
+      });
+    }
+  }, [backfillCountsResult, handleRefreshRows]);
 
   // --- Sort/search/filter pipeline (stays in shell) ---
 
@@ -547,6 +584,7 @@ export default function PartsListShell() {
         onConfirmReplacement={handleModalConfirmReplacement}
         onRecommendationsRefreshed={handleModalRecsRefreshed}
         preferredMpn={modalRow?.preferredMpn}
+        hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
         onTogglePreferred={(mpn) => {
           if (modalRow) handleSetPreferred(modalRow.rowIndex, mpn || null);
         }}
@@ -641,11 +679,14 @@ export default function PartsListShell() {
         initialCurrency={listCurrency}
         initialCustomer={listCustomer ?? ''}
         initialDefaultViewId={listDefaultViewId ?? ''}
+        initialReplacementPriorities={replacementPriorities ?? undefined}
         views={views}
-        onConfirm={async (name, description, currency, customer, dvId) => {
-          const currencyChanged = await handleUpdateListDetails(name, description, currency, customer, dvId);
+        onConfirm={async (name, description, currency, customer, dvId, replacementPriorities) => {
+          const { currencyChanged, prioritiesChanged } = await handleUpdateListDetails(
+            name, description, currency, customer, dvId, replacementPriorities,
+          );
           setEditNameOpen(false);
-          if (currencyChanged && rows.length > 0) {
+          if ((currencyChanged || prioritiesChanged) && rows.length > 0) {
             handleRefreshRows(rows.map(r => r.rowIndex));
           }
         }}

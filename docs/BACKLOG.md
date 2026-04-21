@@ -79,6 +79,16 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Reconcile RecommendationsPanel "Accuris Certified" chip with list column (Decision #140)
+
+After Decision #140, the parts-list column **Accuris Certified** counts parts.io only (`partsio_fff` / `partsio_functional`), while the modal's **Accuris Certified** chip still comes from the overlapping `deriveRecommendationCategories()` bucket which includes Mouser. A user clicking a count of `2` in the list column may see the drawer chip report `3`, with the extra rec being a Mouser suggestion.
+
+**Options:**
+- Rename the modal chip to "3rd Party Certified" and keep Mouser inside.
+- Split Mouser into its own modal chip and keep "Accuris Certified" as parts.io-only in both places.
+
+**File:** [components/RecommendationsPanel.tsx:99-106, 294-296](components/RecommendationsPanel.tsx#L99-L106).
+
 ### Atlas stats RPC (`get_manufacturer_product_stats`) hits Supabase statement timeout under load
 
 The RPC that backs the admin Atlas MFRs page aggregates ~55K `atlas_products` rows via a `LATERAL jsonb_object_keys(...)` unnest ([scripts/supabase-mfr-stats-rpc.sql](scripts/supabase-mfr-stats-rpc.sql)). It intermittently times out — the UI-layer fix (route.ts) now serves last-known-good data with a stale warning instead of poisoned zeros, but the underlying query is still fragile.

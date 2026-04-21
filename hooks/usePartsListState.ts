@@ -10,9 +10,11 @@ import {
   BatchValidateItem,
   PartSummary,
   PartType,
+  ReplacementPriorities,
+  computeRecommendationCounts,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch } from '@/lib/api';
+import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch, backfillListCounts } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
 import {
@@ -66,8 +68,12 @@ interface PartsListState {
   spreadsheetHeaders: string[];
   /** Per-list view configurations (null = not yet loaded / use templates) */
   listViewConfigs: ViewState | null;
+  /** Per-list composite ranking priorities (null = server applies defaults) */
+  replacementPriorities: ReplacementPriorities | null;
   /** Timestamp of last completed validation/refresh */
   lastRefreshedAt: Date | null;
+  /** Result of the last cache-only bucket-count backfill (null = no attempt this session) */
+  backfillCountsResult: { scanned: number; hit: number; miss: number } | null;
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -90,7 +96,9 @@ const INITIAL_STATE: PartsListState = {
   savedLists: [],
   spreadsheetHeaders: [],
   listViewConfigs: null,
+  replacementPriorities: null,
   lastRefreshedAt: null,
+  backfillCountsResult: null,
 };
 
 // ============================================================
@@ -106,6 +114,7 @@ export function usePartsListState() {
   const listCurrencyRef = useRef<string>('USD');
   const listCustomerRef = useRef<string | null>(null);
   const listDefaultViewIdRef = useRef<string | null>(null);
+  const listPrioritiesRef = useRef<ReplacementPriorities | null>(null);
   const activeListIdRef = useRef<string | null>(null);
   const validationAbortRef = useRef<AbortController | null>(null);
 
@@ -317,6 +326,7 @@ export function usePartsListState() {
       listCurrencyRef.current = loaded?.currency || 'USD';
       listCustomerRef.current = loaded?.customer || null;
       listDefaultViewIdRef.current = loaded?.defaultViewId || null;
+      listPrioritiesRef.current = loaded?.replacementPriorities ?? null;
 
       setState(prev => ({
         ...prev,
@@ -331,6 +341,7 @@ export function usePartsListState() {
         validationProgress: activeVal.progress,
         spreadsheetHeaders: loaded?.spreadsheetHeaders ?? [],
         listViewConfigs: loaded?.viewConfigs ?? null,
+        replacementPriorities: listPrioritiesRef.current,
         parsedData: null,
         columnMapping: null,
         error: null,
@@ -346,6 +357,7 @@ export function usePartsListState() {
     listCurrencyRef.current = loaded.currency || 'USD';
     listCustomerRef.current = loaded.customer || null;
     listDefaultViewIdRef.current = loaded.defaultViewId || null;
+    listPrioritiesRef.current = loaded.replacementPriorities;
     activeListIdRef.current = id;
 
     setState(prev => ({
@@ -361,11 +373,47 @@ export function usePartsListState() {
       validationProgress: 1,
       spreadsheetHeaders: loaded.spreadsheetHeaders,
       listViewConfigs: loaded.viewConfigs,
+      replacementPriorities: loaded.replacementPriorities,
       parsedData: null,
       columnMapping: null,
       error: null,
       lastRefreshedAt: loaded.updatedAt ? new Date(loaded.updatedAt) : new Date(),
+      backfillCountsResult: null,
     }));
+
+    // Cache-only backfill of per-bucket counts for rows saved before those fields
+    // existed. Zero live-API cost — server reads from L2 recs cache only.
+    const needsBackfill = loaded.rows.some(
+      r => r.status === 'resolved'
+        && (r.recommendationCount ?? 0) > 0
+        && r.logicDrivenCount === undefined
+        && r.mfrCertifiedCount === undefined
+        && r.accurisCertifiedCount === undefined,
+    );
+    if (needsBackfill) {
+      backfillListCounts(id).then(result => {
+        if (result.updates.length === 0) {
+          setState(prev => ({ ...prev, backfillCountsResult: { scanned: result.scanned, hit: result.hit, miss: result.miss } }));
+          return;
+        }
+        const byIndex = new Map(result.updates.map(u => [u.rowIndex, u]));
+        setState(prev => {
+          // Only apply if this list is still active
+          if (prev.activeListId !== id) return prev;
+          const newRows = prev.rows.map(r => {
+            const u = byIndex.get(r.rowIndex);
+            return u ? { ...r, logicDrivenCount: u.logicDrivenCount, mfrCertifiedCount: u.mfrCertifiedCount, accurisCertifiedCount: u.accurisCertifiedCount } : r;
+          });
+          // Persist updated counts so subsequent reloads skip the backfill
+          updatePartsListSupabase(id, newRows).catch(err => {
+            console.error('[PartsListState] Save after backfill failed:', err);
+          });
+          return { ...prev, rows: newRows, backfillCountsResult: { scanned: result.scanned, hit: result.hit, miss: result.miss } };
+        });
+      }).catch(err => {
+        console.warn('[PartsListState] Backfill counts call failed:', err);
+      });
+    }
   }, []);
 
   // ----------------------------------------------------------
@@ -447,7 +495,7 @@ export function usePartsListState() {
     // Fetch in parallel and update row atomically
     const [attrs, recs] = await Promise.all([
       needsAttrs ? getPartAttributes(mpn).catch(() => null) : Promise.resolve(null),
-      needsRecs ? getRecommendations(mpn).catch(() => null) : Promise.resolve(null),
+      needsRecs ? getRecommendations(mpn, undefined, listPrioritiesRef.current ?? undefined).catch(() => null) : Promise.resolve(null),
     ]);
 
     setState(prev => {
@@ -461,13 +509,17 @@ export function usePartsListState() {
           const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
           if (preferred) topRec = preferred;
         }
+        const recCounts = recs ? computeRecommendationCounts(recs) : null;
         newRows[idx] = {
           ...row,
           ...(attrs ? { sourceAttributes: attrs } : {}),
-          ...(recs ? {
+          ...(recs && recCounts ? {
             allRecommendations: recs,
             suggestedReplacement: topRec ?? row.suggestedReplacement,
             recommendationCount: recs.length,
+            logicDrivenCount: recCounts.logicDrivenCount,
+            mfrCertifiedCount: recCounts.mfrCertifiedCount,
+            accurisCertifiedCount: recCounts.accurisCertifiedCount,
           } : {}),
         };
       }
@@ -595,17 +647,27 @@ export function usePartsListState() {
     currency?: string,
     customer?: string,
     defaultViewId?: string,
-  ) => {
+    replacementPriorities?: ReplacementPriorities,
+  ): Promise<{ currencyChanged: boolean; prioritiesChanged: boolean }> => {
     const listId = activeListIdRef.current;
-    if (!listId) return;
+    if (!listId) return { currencyChanged: false, prioritiesChanged: false };
 
     const currencyChanged = currency != null && currency !== listCurrencyRef.current;
+    // Only ranking changes (axis order / enabled) warrant a row refresh — they affect
+    // composite scoring. `hideZeroStock` is a display-time filter, so toggling it alone
+    // should persist without re-running validation.
+    const rankingChanged = replacementPriorities !== undefined && (
+      JSON.stringify(replacementPriorities.order) !== JSON.stringify(listPrioritiesRef.current?.order) ||
+      JSON.stringify(replacementPriorities.enabled) !== JSON.stringify(listPrioritiesRef.current?.enabled)
+    );
+    const prioritiesChanged = rankingChanged;
 
     listNameRef.current = name;
     listDescriptionRef.current = description;
     if (currency) listCurrencyRef.current = currency;
     if (customer !== undefined) listCustomerRef.current = customer;
     if (defaultViewId !== undefined) listDefaultViewIdRef.current = defaultViewId;
+    if (replacementPriorities !== undefined) listPrioritiesRef.current = replacementPriorities;
     setState(prev => ({
       ...prev,
       listName: name,
@@ -613,13 +675,14 @@ export function usePartsListState() {
       ...(currency && { listCurrency: currency }),
       ...(customer !== undefined && { listCustomer: customer }),
       ...(defaultViewId !== undefined && { listDefaultViewId: defaultViewId }),
+      ...(replacementPriorities !== undefined && { replacementPriorities }),
     }));
 
-    await updatePartsListDetailsSupabase(listId, name, description, currency, customer, defaultViewId).catch(() => {});
+    await updatePartsListDetailsSupabase(listId, name, description, currency, customer, defaultViewId, replacementPriorities).catch(() => {});
     const lists = await getSavedListsSupabase();
     setState(prev => ({ ...prev, savedLists: lists }));
 
-    return currencyChanged;
+    return { currencyChanged, prioritiesChanged };
   }, []);
 
   // ----------------------------------------------------------
@@ -660,7 +723,16 @@ export function usePartsListState() {
       const abortController = new AbortController();
       validationAbortRef.current = abortController;
 
-      const stream = await validatePartsList(items, listCurrencyRef.current, abortController.signal);
+      // forceRefresh=true: user-initiated Refresh must bypass the recs L2 cache
+      // so recovered upstream services (e.g. parts.io after VPN reconnect) get
+      // incorporated. Initial validation from upload stays cache-friendly.
+      const stream = await validatePartsList(
+        items,
+        listCurrencyRef.current,
+        abortController.signal,
+        true,
+        listPrioritiesRef.current ?? undefined,
+      );
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -766,6 +838,9 @@ export function usePartsListState() {
             enrichedData: undefined,
             errorMessage: undefined,
             recommendationCount: undefined,
+            logicDrivenCount: undefined,
+            mfrCertifiedCount: undefined,
+            accurisCertifiedCount: undefined,
             topNonFailingRecs: undefined,
           };
         } else {
@@ -781,6 +856,9 @@ export function usePartsListState() {
             enrichedData: undefined,
             errorMessage: undefined,
             recommendationCount: undefined,
+            logicDrivenCount: undefined,
+            mfrCertifiedCount: undefined,
+            accurisCertifiedCount: undefined,
             topNonFailingRecs: undefined,
           };
         }
@@ -959,6 +1037,8 @@ export function usePartsListState() {
           [{ rowIndex: newRowIndex, mpn: resolvedPart?.mpn ?? trimmedMpn, manufacturer: trimmedMfr || undefined, skipSearch: !!resolvedPart }],
           listCurrencyRef.current,
           abortController.signal,
+          undefined,
+          listPrioritiesRef.current ?? undefined,
         );
         const reader = stream.getReader();
         const decoder = new TextDecoder();
@@ -980,6 +1060,7 @@ export function usePartsListState() {
                 const newRows = [...prev.rows];
                 const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
                 if (idx >= 0) {
+                  const streamCounts = computeRecommendationCounts(item.allRecommendations);
                   newRows[idx] = {
                     ...newRows[idx],
                     status: item.status,
@@ -990,6 +1071,9 @@ export function usePartsListState() {
                     enrichedData: item.enrichedData,
                     errorMessage: item.errorMessage,
                     recommendationCount: item.allRecommendations?.length,
+                    logicDrivenCount: streamCounts.logicDrivenCount,
+                    mfrCertifiedCount: streamCounts.mfrCertifiedCount,
+                    accurisCertifiedCount: streamCounts.accurisCertifiedCount,
                   };
                 }
                 return { ...prev, rows: newRows, phase: 'results', lastRefreshedAt: new Date() };
@@ -1106,17 +1190,37 @@ export function usePartsListState() {
 
   /** Shared FC enrichment logic — returns { requested, enriched } counts */
   const runFCEnrichment = useCallback(async (): Promise<{ requested: number; enriched: number }> => {
-    // Check for rows that have no FC-sourced quotes yet
-    const rowsNeedingFC = state.rows.filter(r =>
-      r.status === 'resolved' &&
-      r.enrichedData &&
-      r.resolvedPart?.mpn &&
-      !r.enrichedData.supplierQuotes?.length
-    );
+    // Collect MPNs needing FC enrichment from two sources:
+    //   (1) source parts whose enrichedData lacks supplierQuotes
+    //   (2) suggestedReplacement parts whose supplierQuotes are empty (batch validation
+    //       passes skipFindchips=true, so certified recs land with no commercial data —
+    //       Sug. Price / Sug. Stock columns go blank until we backfill here)
+    const mpnsToEnrich = new Set<string>();
+    const rowsWithSourceNeed = new Set<number>();
+    const rowsWithRecNeed = new Set<number>();
+    for (const r of state.rows) {
+      if (r.status !== 'resolved') continue;
+      if (r.enrichedData && r.resolvedPart?.mpn && !r.enrichedData.supplierQuotes?.length) {
+        mpnsToEnrich.add(r.resolvedPart.mpn);
+        rowsWithSourceNeed.add(r.rowIndex);
+      }
+      const recMpn = r.suggestedReplacement?.part.mpn;
+      if (recMpn && !r.suggestedReplacement!.part.supplierQuotes?.length) {
+        mpnsToEnrich.add(recMpn);
+        rowsWithRecNeed.add(r.rowIndex);
+      }
+      // Sub-row suggestions render the same Sug. Price / Sug. Stock columns
+      for (const sub of r.topNonFailingRecs ?? []) {
+        if (sub.part.mpn && !sub.part.supplierQuotes?.length) {
+          mpnsToEnrich.add(sub.part.mpn);
+          rowsWithRecNeed.add(r.rowIndex);
+        }
+      }
+    }
 
-    if (rowsNeedingFC.length === 0) return { requested: 0, enriched: 0 };
+    if (mpnsToEnrich.size === 0) return { requested: 0, enriched: 0 };
 
-    const mpns = rowsNeedingFC.map(r => r.resolvedPart!.mpn);
+    const mpns = Array.from(mpnsToEnrich);
     // Chunk into 50-MPN batches (server cap) and fire in parallel
     const CHUNK_SIZE = 50;
     const chunks: string[][] = [];
@@ -1130,19 +1234,68 @@ export function usePartsListState() {
     if (enrichedCount > 0) {
       setState(prev => {
         const newRows = prev.rows.map(row => {
-          const mpnLower = row.resolvedPart?.mpn?.toLowerCase();
-          if (!mpnLower || !results[mpnLower] || !row.enrichedData) return row;
+          let next = row;
 
-          const fc = results[mpnLower];
-          return {
-            ...row,
-            enrichedData: {
-              ...row.enrichedData,
-              supplierQuotes: fc.quotes.length > 0 ? fc.quotes : row.enrichedData.supplierQuotes,
-              lifecycleInfo: [...(row.enrichedData.lifecycleInfo ?? []), ...(fc.lifecycle ? [fc.lifecycle] : [])],
-              complianceData: [...(row.enrichedData.complianceData ?? []), ...(fc.compliance ? [fc.compliance] : [])],
-            },
-          };
+          // Enrich the source part's enrichedData
+          if (rowsWithSourceNeed.has(row.rowIndex) && row.enrichedData) {
+            const srcMpnLower = row.resolvedPart?.mpn?.toLowerCase();
+            const fc = srcMpnLower ? results[srcMpnLower] : undefined;
+            if (fc) {
+              next = {
+                ...next,
+                enrichedData: {
+                  ...next.enrichedData!,
+                  supplierQuotes: fc.quotes.length > 0 ? fc.quotes : next.enrichedData!.supplierQuotes,
+                  lifecycleInfo: [...(next.enrichedData!.lifecycleInfo ?? []), ...(fc.lifecycle ? [fc.lifecycle] : [])],
+                  complianceData: [...(next.enrichedData!.complianceData ?? []), ...(fc.compliance ? [fc.compliance] : [])],
+                },
+              };
+            }
+          }
+
+          // Enrich the suggestedReplacement's Part with FC commercial data so the
+          // Sug. Price / Sug. Stock columns can render without opening the modal.
+          if (rowsWithRecNeed.has(row.rowIndex)) {
+            if (next.suggestedReplacement) {
+              const recMpnLower = next.suggestedReplacement.part.mpn.toLowerCase();
+              const fc = results[recMpnLower];
+              if (fc && (fc.quotes.length > 0 || fc.lifecycle || fc.compliance)) {
+                next = {
+                  ...next,
+                  suggestedReplacement: {
+                    ...next.suggestedReplacement,
+                    part: {
+                      ...next.suggestedReplacement.part,
+                      ...(fc.quotes.length > 0 ? { supplierQuotes: fc.quotes } : {}),
+                      ...(fc.lifecycle ? { lifecycleInfo: [...(next.suggestedReplacement.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
+                      ...(fc.compliance ? { complianceData: [...(next.suggestedReplacement.part.complianceData ?? []), fc.compliance] } : {}),
+                    },
+                  },
+                };
+              }
+            }
+            // Same enrichment for each persisted sub-suggestion
+            if (next.topNonFailingRecs?.length) {
+              next = {
+                ...next,
+                topNonFailingRecs: next.topNonFailingRecs.map(sub => {
+                  const fc = results[sub.part.mpn.toLowerCase()];
+                  if (!fc || (fc.quotes.length === 0 && !fc.lifecycle && !fc.compliance)) return sub;
+                  return {
+                    ...sub,
+                    part: {
+                      ...sub.part,
+                      ...(fc.quotes.length > 0 ? { supplierQuotes: fc.quotes } : {}),
+                      ...(fc.lifecycle ? { lifecycleInfo: [...(sub.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
+                      ...(fc.compliance ? { complianceData: [...(sub.part.complianceData ?? []), fc.compliance] } : {}),
+                    },
+                  };
+                }),
+              };
+            }
+          }
+
+          return next;
         });
         return { ...prev, rows: newRows };
       });
