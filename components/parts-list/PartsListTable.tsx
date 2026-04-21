@@ -33,7 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { PartsListRow, XrefRecommendation, PartType } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
 // Column IDs that display suggestion/replacement data
@@ -381,7 +381,7 @@ function CellRenderer({
 
       case 'sys:hits':
         if (row.status !== 'resolved') return null;
-        if (recCount === 0) return <>0</>;
+        if (recCount === 0) return <Box component="span" sx={{ color: 'text.disabled', fontSize: ROW_FONT_SIZE }}>NO</Box>;
         return (
           <Link
             component="button"
@@ -392,18 +392,60 @@ function CellRenderer({
             }}
             sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}
           >
-            {recCount}
+            YES
           </Link>
         );
+
+      case 'sys:logicBasedCount':
+      case 'sys:mfrCertifiedCount':
+      case 'sys:accurisCertifiedCount': {
+        if (row.status !== 'resolved') return null;
+        const key =
+          column.id === 'sys:logicBasedCount' ? 'logicDrivenCount' :
+          column.id === 'sys:mfrCertifiedCount' ? 'mfrCertifiedCount' :
+          'accurisCertifiedCount';
+        // Row has no recs at all — real zero
+        if (recCount === 0) return <Box component="span" sx={{ color: 'text.disabled', fontSize: ROW_FONT_SIZE }}>0</Box>;
+        // Compute from live recs when available; otherwise rely on persisted field
+        let count: number | undefined;
+        if (row.allRecommendations) count = computeRecommendationCounts(row.allRecommendations)[key];
+        else if (row[key] !== undefined) count = row[key];
+        // Legacy list: recs exist but per-bucket counts were never persisted — refresh to backfill
+        if (count === undefined) {
+          return <Tooltip title="Refresh this row to populate bucket counts"><Box component="span" sx={{ color: 'text.disabled', fontSize: ROW_FONT_SIZE }}>—</Box></Tooltip>;
+        }
+        if (count === 0) return <Box component="span" sx={{ color: 'text.disabled', fontSize: ROW_FONT_SIZE }}>0</Box>;
+        return (
+          <Link
+            component="button"
+            variant="body2"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onRowClick(row.rowIndex);
+            }}
+            sx={{ fontSize: ROW_FONT_SIZE, fontWeight: 500 }}
+          >
+            {count}
+          </Link>
+        );
+      }
 
       case 'sys:top_suggestion':
         if (topRec) {
           const hasFails = topRec.matchDetails.some(d => d.ruleResult === 'fail');
           const dotColor = hasFails ? '#FF5252' : topRec.matchPercentage >= 85 ? '#69F0AE' : '#FFD54F';
           const isUserPicked = !isSubRow && row.preferredMpn != null && row.preferredMpn === topRec.part.mpn;
+          // Hide both the match-quality dot and % for certified recs — both derive
+          // from the parametric matching engine, which is orthogonal to external
+          // certification. Replace with a "Cert" label so the slot isn't blank.
+          const bucket = deriveRecommendationBucket(topRec);
+          const isCertified = bucket !== 'logic';
+          const certTooltip = bucket === 'accuris' ? 'Accuris Certified' : bucket === 'manufacturer' ? 'MFR Certified' : '';
           return (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-              <FiberManualRecordIcon sx={{ fontSize: 8, color: dotColor, flexShrink: 0 }} />
+              {!isCertified && (
+                <FiberManualRecordIcon sx={{ fontSize: 8, color: dotColor, flexShrink: 0 }} />
+              )}
               <OverflowTooltip variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
                 {topRec.part.mpn}
               </OverflowTooltip>
@@ -412,18 +454,43 @@ function CellRenderer({
                   <StarIcon sx={{ fontSize: 12, color: '#FFD54F', flexShrink: 0 }} />
                 </Tooltip>
               )}
-              <Typography
-                component="span"
-                sx={{
-                  fontSize: '0.68rem',
-                  color: topRec.matchPercentage >= 85 ? 'success.main' : 'warning.main',
-                  fontWeight: 600,
-                  flexShrink: 0,
-                  ml: 'auto',
-                }}
-              >
-                {Math.round(topRec.matchPercentage)}%
-              </Typography>
+              {isCertified ? (
+                <Tooltip title={certTooltip}>
+                  <Box
+                    component="span"
+                    sx={{
+                      fontSize: '0.6rem',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      color: 'info.main',
+                      border: '1px solid',
+                      borderColor: 'info.main',
+                      borderRadius: '4px',
+                      px: 0.5,
+                      py: 0,
+                      lineHeight: 1.4,
+                      flexShrink: 0,
+                      ml: 'auto',
+                    }}
+                  >
+                    Cert
+                  </Box>
+                </Tooltip>
+              ) : (
+                <Typography
+                  component="span"
+                  sx={{
+                    fontSize: '0.68rem',
+                    color: topRec.matchPercentage >= 85 ? 'success.main' : 'warning.main',
+                    fontWeight: 600,
+                    flexShrink: 0,
+                    ml: 'auto',
+                  }}
+                >
+                  {Math.round(topRec.matchPercentage)}%
+                </Typography>
+              )}
             </Box>
           );
         }

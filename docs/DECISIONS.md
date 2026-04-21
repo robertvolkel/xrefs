@@ -3501,3 +3501,97 @@ Added client-side tracking of distributor link clicks in the Commercial tab, wit
 - **ManufacturerDetailPage** — "Sync Profile" button on Profile tab (single manufacturer, ~200ms). `POST /api/admin/manufacturers/[slug]/sync` → `syncSingleProfile()`. Re-fetches detail data to reflect changes in place.
 
 **Files:** `lib/services/atlasApiClient.ts` (new), `lib/services/atlasProfileSync.ts` (new — shared sync logic), `scripts/atlas-api-validate-ids.mjs` (new), `scripts/atlas-api-sync-profiles.mjs` (new), `scripts/supabase-atlas-manufacturers-profile-migration.sql` (new), `lib/types.ts` (AtlasManufacturer extended), `lib/api.ts` (syncAllMfrProfiles, syncMfrProfile), `app/api/admin/manufacturers/route.ts` (POST handler for batch sync), `app/api/admin/manufacturers/[slug]/route.ts` (new fields exposed + PATCH allowlist), `app/api/admin/manufacturers/[slug]/sync/route.ts` (new — single sync), `components/admin/ManufacturersPanel.tsx` (Sync Profiles button), `components/admin/ManufacturerDetailPage.tsx` (Profile tab enriched + Sync Profile button).
+
+## Decision #140 — Granular Replacements Columns: Y/N Xrefs + Per-Bucket Counts (Apr 2026)
+
+**Context:** The parts-list Replacements column group collapsed every cross-reference into a single "Xrefs" count. That flattens trust tiers that users care about: logic-driven matches depend on attribute-level scoring (weaker when source data is missing), whereas manufacturer-uploaded cross-references and parts.io (Accuris) FFF/functional equivalents are explicit human- or vendor-certified equivalences. `RecommendationsPanel` already classified recs via `deriveRecommendationCategories()` but only as *overlapping* buckets, and only inside the modal — the list view gave no signal that a row had high-trust certified alternatives.
+
+**Decision:**
+1. **New mutually-exclusive bucket** — add `RecommendationBucket = 'accuris' | 'manufacturer' | 'logic'` plus `deriveRecommendationBucket()` and `computeRecommendationCounts()` in `lib/types.ts`. Priority: **Accuris > Manufacturer > Logic**. Accuris is parts.io-only (`partsio_fff`, `partsio_functional`); Mouser-only certified and all uncertified recs fall into Logic. The existing overlapping `deriveRecommendationCategories()` is left unchanged (still used by the modal chips).
+2. **`sys:hits` becomes Y/N** — replace the count-Link with "Y" (clickable → drawer) or "N" (muted, not clickable). Sort value collapses to boolean 1/0 so Y rows sort above N rows. Label stays "Xrefs".
+3. **Three new Replacements columns** — `sys:logicBasedCount`, `sys:mfrCertifiedCount`, `sys:accurisCertifiedCount`. All `isNumeric: true`, center-aligned, clickable when > 0 (opens drawer). Not in `DEFAULT_VIEW_COLUMNS` — opt-in via the column picker so existing users aren't surprised.
+4. **Persisted counts** — new `logicDrivenCount`, `mfrCertifiedCount`, `accurisCertifiedCount` fields on `PartsListRow` and both `StoredRow` variants. Computed from full `allRecommendations` at validation time (in `usePartsListState.ts` and `validationManager.ts`) and persisted in the existing `parts_lists.rows` JSONB — no DB schema change. Older stored rows lack these fields and render `0` until next validation.
+
+**Rationale:** Mutually-exclusive was the user's call — framed as trust tiers, overlapping counts were confusing (a single rec could appear in two buckets). Accuris outranks Manufacturer because parts.io's FFF/functional data comes from a commercial equivalence registry with stricter curation than our manufacturer upload workflow, which accepts bulk drops without per-entry review. Mouser moved to Logic because it's a suggestion stream, not a certification, and including it under "Accuris Certified" (as the modal does) conflates two very different data qualities.
+
+**Known inconsistency (follow-up):** `RecommendationsPanel` still uses the overlapping `deriveRecommendationCategories()` and labels its third-party bucket "Accuris Certified" despite including Mouser. After this change the list column "Accuris Certified" excludes Mouser while the modal chip includes it. Harmonize in a follow-up — either rename the modal chip or split Mouser out there too.
+
+**Files:** `lib/types.ts` (`RecommendationBucket`, `deriveRecommendationBucket()`, `computeRecommendationCounts()`, new `PartsListRow` count fields), `lib/partsListStorage.ts` + `lib/supabasePartsListStorage.ts` (`StoredRow` extended, `toStoredRows`/`fromStoredRows` carry counts), `hooks/usePartsListState.ts` + `lib/validationManager.ts` (populate counts wherever `allRecommendations` is assigned, reset alongside `recommendationCount`), `lib/columnDefinitions.ts` (three new `SYSTEM_COLUMNS` entries, Y/N sort semantics for `sys:hits`, numeric sort cases for new columns), `components/parts-list/PartsListTable.tsx` (Y/N renderer for `sys:hits`, count renderer for the three new columns), `__tests__/services/recommendationBucket.test.ts` (new — 10 tests covering bucket priority and count tallying).
+
+## Decision #141 — Cache-Only Bucket-Count Backfill for Legacy Lists (Apr 2026)
+
+**Context:** Decision #140 added three per-bucket count fields to `StoredRow`. Lists validated **before** that change don't have the fields in their `parts_lists.rows` JSONB, and since `allRecommendations` is intentionally not persisted (too heavy), the list view showed a **—** dash for those columns until the user manually refreshed each row. For a 500-part BOM that's a non-starter.
+
+**Decision:** On list load, silently backfill the three counts from the existing L2 recommendations cache (`part_data_cache` table, Decision #128) — **cache-only**, never fall through to a live pipeline run. Runs once per list, ever; writes back to Supabase so subsequent opens skip the backfill entirely.
+
+**Pipeline:**
+1. `handleLoadList()` detects any resolved row with `recommendationCount > 0` and all three bucket counts `undefined`.
+2. Fires `POST /api/parts-list/backfill-counts { listId }` (fire-and-forget).
+3. Server loads the list, authenticates ownership via RLS, fetches user prefs, and for each target row calls the new `lookupCachedRecommendations()` helper using the **exact same inputs** the validation pipeline used (`currency, userPreferences, { skipPartsioEnrichment: true, filterForBatch: true, skipFindchips: true }`) — this guarantees the variant key matches the entry written at validation time.
+4. Cache hit → compute buckets via `computeRecommendationCounts()`, include in response. Cache miss → row stays as dash; user can refresh it explicitly if desired.
+5. Client merges updates into row state, persists with a single `updatePartsListSupabase()` call.
+6. `NotificationSnackbar` reports the outcome (`"Updated replacement counts for N rows from cache"` or `"N rows missing replacement counts — refresh to populate"`).
+
+**Rationale:** The recs L2 cache is 30-day TTL and cross-user (Decision #128) — if anyone has validated a given MPN in the last month, it's in `part_data_cache` and readable in <100ms. Zero Digikey / Mouser / parts.io / FindChips exposure from the backfill. Rate-limit-sensitive APIs are never touched. Cold-cache rows (older than 30 days or never validated) stay as dashes, which is the honest state — a full refresh is required to recompute them, and that's the same cost whether triggered now or later.
+
+**Why not auto-refresh cold rows?** A 500-row BOM could be fully cold. Auto-refreshing would blow through Digikey's rate limit for a cosmetic column fill the user may not even look at. Cache-only keeps the cost at zero and degrades gracefully for cold entries.
+
+**Variant key alignment critical:** The recs cache variant hash includes `currency, userPrefs, opts`. The backfill endpoint passes `skipPartsioEnrichment: true, filterForBatch: true, skipFindchips: true` to exactly match what `app/api/parts-list/validate/route.ts:82-84` passes during validation. Any mismatch = 100% cache miss. This is fragile — if validation options change, the backfill must be updated in lockstep.
+
+**Concurrency:** 5 parallel cache reads (Supabase can trivially handle this).
+
+**Files:** `lib/services/partDataService.ts` (new `lookupCachedRecommendations()` export wrapping `buildRecommendationsVariant` + `getCachedResponse`), `app/api/parts-list/backfill-counts/route.ts` (new endpoint — POST, auth + RLS check, load list, iterate targets, return `{ updates, scanned, hit, miss }`), `lib/api.ts` (new `backfillListCounts()` client wrapper + response types), `hooks/usePartsListState.ts` (fire backfill after `handleLoadList` resolves, merge updates, persist once, `backfillCountsResult` added to state), `components/parts-list/PartsListShell.tsx` (effect surfaces `backfillCountsResult` via `NotificationSnackbar`).
+
+## Decision #142 — Refresh Forces Cache Bypass for Recovered Upstream Services (Apr 2026)
+
+**Context:** The recs L2 cache (Decision #128) writes a "final" entry whenever `getRecommendations()` completes, even if upstream sources partially failed. `fetchPartsioEquivalents()` catches network errors and returns empty — so a user validating a list while disconnected from the parts.io VPN silently produces recommendations with zero Accuris candidates, and that partial-outage result persists for 30 days. When the same user later reconnects to VPN and clicks Refresh expecting fresh parts.io data, `handleRefreshRows` → `validatePartsList` → server `getRecommendations()` hits the cached variant key and short-circuits **before** parts.io is re-attempted. Accuris counts stay stuck at zero regardless of how many times the user refreshes. The cache is authoritative when it shouldn't be.
+
+**Decision:** The Refresh button now bypasses the L2 cache read via a runtime-only `forceRefresh` flag threaded from the UI through the validate endpoint into `getRecommendations()`. The computed result is still *written* to cache, so subsequent callers (list load backfill, modal opens) benefit from the fresh entry. The flag is **excluded from `buildRecommendationsVariant`** — it's a request-scope behavior toggle, not a cache-key input, so the same variant string is used for read and write (fresh result replaces stale entry in place).
+
+**Scope:** `forceRefresh` applies ONLY to user-initiated Refresh:
+- `handleRefreshRows` (toolbar Refresh + snackbar "Refresh N" action) → `true`
+- Initial validation after upload (`validationManager.ts`) → unset (cache-friendly — a fresh upload has no existing entry, so bypassing the read is wasteful)
+- Single-part Add flow (`handleAddPart`) → unset (new MPN, cache probably cold anyway)
+- `handleOpenModal` single-row modal fetch → unset (different variant due to `filterForBatch: false`)
+- `/api/xref/[mpn]` GET/POST (non-list flows) → unset
+
+**Rationale:** Refresh should mean *fresh*. The alternatives considered:
+- **Don't cache on partial outage** — propagate service-unavailable flags up to the cache writer, skip write if any source errored. Correct but invasive — touches every error handler and adds coupling between unrelated services.
+- **Time-bound retry of failed sources** — tag cache entries with "parts.io failed at write time" and re-attempt parts.io (only) on reads after some cooldown. Clever but complicates the cache schema and creates a second cache-state axis (per-source freshness).
+- **User-facing "bust cache" toggle** — admin escape hatch. Good for debugging, bad for normal users.
+
+Forced refresh on the Refresh button is the simplest correct fix: the user who knows something is wrong already has the mental model of "this data might be stale, hit Refresh" — aligning behavior with that expectation is lower-friction than any server-side cleverness.
+
+**Known limitation:** This fixes batch validation only. The modal-click path (`handleOpenModal` → `getRecommendations(mpn)` with default opts) uses a *different* cache variant (`filterForBatch: false`) and doesn't get forced. If a cold entry exists for that variant, clicking Y still returns it. In practice the modal variant is usually cold (only populated by explicit user modal opens), so this rarely hurts. Follow-up could add forceRefresh to the modal path too if real-world complaints arise.
+
+**Files:** `lib/services/partDataService.ts` (getRecommendations options type gains `forceRefresh?: boolean`, `buildRecommendationsVariant` already ignores it via its explicit field pick, cache-read block guarded by `if (!options?.forceRefresh)`), `app/api/parts-list/validate/route.ts` (`processItem` accepts forceRefresh, passes it into getRecommendations, POST handler plumbs `body.forceRefresh`), `lib/types.ts` (`BatchValidateRequest.forceRefresh` field), `lib/api.ts` (`validatePartsList(items, currency, signal, forceRefresh?)` gains 4th param), `hooks/usePartsListState.ts` (`handleRefreshRows` passes `true`; other call sites unchanged).
+
+## Decision #143 — Sort Order Flipped: Accuris → MFR → Logic (Apr 2026)
+
+**Context:** Decisions #127 / #133 established the modal recommendation sort as MFR Certified → 3rd Party Certified → Logic Driven. Decision #140 then introduced mutually-exclusive bucket priority (Accuris > MFR > Logic, Mouser-only → Logic) for the parts-list count columns, but the modal's top-level sort was left in the original order. This meant the "Top Suggestion" surfaced at row 0 in the list view could be a different rec than the one at the top of the modal for the same part — a confusing inconsistency.
+
+**Decision:** Flip `sortRecommendationsForDisplay()` to use `deriveRecommendationBucket()` directly (Accuris → MFR → Logic). The modal's sort, the parts-list Top Suggestion, and the bucket count columns now use one priority scheme. Mouser-only certified recs fall into the Logic bucket — consistent with Decision #140's Accuris = parts.io-only definition.
+
+**Rationale:** Parts.io's FFF/functional equivalents come from a curated commercial equivalence registry with stricter per-entry validation than bulk manufacturer cross-reference uploads (which are accept-as-submitted). Per Decision #140 the user explicitly chose Accuris as the highest trust tier; extending that ordering into the recommendation display was the natural follow-up — the Top Suggestion you see in the list matches the top card in the modal matches the Accuris Certified bucket count.
+
+**Visual language not updated:** Category chip colors in the modal remain as before — MFR green, Accuris amber, Logic blue. Flipping chip colors alongside sort order risks confusing users who've built muscle memory. If the sort change creates confusion in practice we can revisit, but it's decoupled from priority. The chip filter uses `deriveRecommendationCategories()` (overlapping) unchanged — a rec certified by BOTH parts.io and manufacturer will still appear in both chip filters, even though it sorts under Accuris.
+
+**Files:** `components/RecommendationsPanel.tsx` (`sortRecommendationsForDisplay()` categoryPriority uses `deriveRecommendationBucket()`; docstring updated; imports `deriveRecommendationBucket`), `CLAUDE.md` (Sort order bullet rewritten to point to Decision #143). `hooks/useAppState.ts` unchanged — already consumes the shared helper.
+
+## Decision #144 — Shared Sort Helper + Hide Match % for Certified Recs in List View (Apr 2026)
+
+**Context:** Two related issues surfaced after the #143 sort reorder.
+
+**Issue 1 — Server/client sort divergence:** `findReplacements()` in the matching engine sorts by `passed` flag then `matchPercentage` with manufacturer-preference boost. The validate route takes `recs[0]` as `suggestedReplacement` and persists it onto the list row. The client's `sortRecommendationsForDisplay()` then re-sorts on display using category bucket priority. Result: the Top Suggestion shown in the parts-list row and the top card in the modal could be **different recs** for the same part. Reported case: `16ZLH2200MEFC12.5X20` showed `EU-FS1E222B / Panasonic` in the list but `MAL214855222E3 / Vishay BCcomponents` (Accuris Certified) at the top of the modal — the higher-match logic-driven rec beat the Accuris-certified one on server side because bucket priority wasn't applied.
+
+**Issue 2 — Confusing percentage display on certified recs:** When the list view's Top Suggestion was an Accuris or MFR cert, the row still showed a match % like `89%` next to the MPN. That number reflects parametric attribute coverage from the matching engine — meaningful for logic-driven matches, misleading for certified ones where the equivalence is asserted by an external registry (parts.io FFF/functional or MFR cross-ref upload) regardless of how many internal parametric rules match.
+
+**Decision:**
+
+**Part 1 — Share the sort.** Extract `sortRecommendationsForDisplay()` into a plain lib module (`lib/services/recommendationSort.ts`) and call it server-side inside `getRecommendations()` right before the cache write. The result: every consumer (batch validate's `suggestedReplacement`, single-xref endpoint, modal fetch, FindChips priority chunk, persisted list rows) receives recs already sorted by bucket priority. The client's redundant sort is idempotent — safe, but no longer load-bearing. `RecommendationsPanel.tsx` re-exports the helper from its new home to keep backward-compat for existing imports (`useAppState.ts`).
+
+**Part 2 — Hide match % AND match-quality dot for certified recs in the list.** In `sys:top_suggestion` cell renderer, gate BOTH the percentage Typography AND the colored dot on `deriveRecommendationBucket(topRec) === 'logic'`. The red/yellow/green dot derives from parametric coverage (red = any rule failed, ≥85% = green, else yellow) — orthogonal to external certification. Showing a red "fail" dot next to an Accuris- or MFR-certified part is actively misleading, since certified recs bypass the blocking-rule filters per Decision #133 precisely because external authority outranks our inferred parametric rejection. For certified recs the list cell now shows just the MPN (and optional preferred-alternate star). Modal continues to render the dot and percentage unconditionally — the drawer has the room for the nuance (category chip + match % + per-rule breakdown) that the narrow list cell doesn't.
+
+**Retroactive behavior:** Existing rows validated before this change still carry the old `suggestedReplacement` (picked by match score, not bucket). They'll correct themselves on the next Refresh — the forceRefresh flag from Decision #142 ensures the Refresh button actually re-runs the pipeline and persists the updated top suggestion. No cache schema bump — the cache stores the full recs array and the client re-sorts on display, so modal top is always correct; only the persisted `suggestedReplacement` was stale.
+
+**Files:** `lib/services/recommendationSort.ts` (new — exports `sortRecommendationsForDisplay`), `components/RecommendationsPanel.tsx` (import from new location + re-export for backward compat; deletes inline implementation), `lib/services/partDataService.ts` (imports sort helper, calls `sortRecommendationsForDisplay(recs)` just before `setCachedResponse` + return in `getRecommendations`), `components/parts-list/PartsListTable.tsx` (imports `deriveRecommendationBucket`, `sys:top_suggestion` renderer wraps match % in `!isCertified` conditional).

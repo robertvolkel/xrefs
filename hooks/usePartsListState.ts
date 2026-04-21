@@ -10,9 +10,10 @@ import {
   BatchValidateItem,
   PartSummary,
   PartType,
+  computeRecommendationCounts,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
-import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch } from '@/lib/api';
+import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch, backfillListCounts } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
 import {
@@ -68,6 +69,8 @@ interface PartsListState {
   listViewConfigs: ViewState | null;
   /** Timestamp of last completed validation/refresh */
   lastRefreshedAt: Date | null;
+  /** Result of the last cache-only bucket-count backfill (null = no attempt this session) */
+  backfillCountsResult: { scanned: number; hit: number; miss: number } | null;
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -91,6 +94,7 @@ const INITIAL_STATE: PartsListState = {
   spreadsheetHeaders: [],
   listViewConfigs: null,
   lastRefreshedAt: null,
+  backfillCountsResult: null,
 };
 
 // ============================================================
@@ -365,7 +369,42 @@ export function usePartsListState() {
       columnMapping: null,
       error: null,
       lastRefreshedAt: loaded.updatedAt ? new Date(loaded.updatedAt) : new Date(),
+      backfillCountsResult: null,
     }));
+
+    // Cache-only backfill of per-bucket counts for rows saved before those fields
+    // existed. Zero live-API cost — server reads from L2 recs cache only.
+    const needsBackfill = loaded.rows.some(
+      r => r.status === 'resolved'
+        && (r.recommendationCount ?? 0) > 0
+        && r.logicDrivenCount === undefined
+        && r.mfrCertifiedCount === undefined
+        && r.accurisCertifiedCount === undefined,
+    );
+    if (needsBackfill) {
+      backfillListCounts(id).then(result => {
+        if (result.updates.length === 0) {
+          setState(prev => ({ ...prev, backfillCountsResult: { scanned: result.scanned, hit: result.hit, miss: result.miss } }));
+          return;
+        }
+        const byIndex = new Map(result.updates.map(u => [u.rowIndex, u]));
+        setState(prev => {
+          // Only apply if this list is still active
+          if (prev.activeListId !== id) return prev;
+          const newRows = prev.rows.map(r => {
+            const u = byIndex.get(r.rowIndex);
+            return u ? { ...r, logicDrivenCount: u.logicDrivenCount, mfrCertifiedCount: u.mfrCertifiedCount, accurisCertifiedCount: u.accurisCertifiedCount } : r;
+          });
+          // Persist updated counts so subsequent reloads skip the backfill
+          updatePartsListSupabase(id, newRows).catch(err => {
+            console.error('[PartsListState] Save after backfill failed:', err);
+          });
+          return { ...prev, rows: newRows, backfillCountsResult: { scanned: result.scanned, hit: result.hit, miss: result.miss } };
+        });
+      }).catch(err => {
+        console.warn('[PartsListState] Backfill counts call failed:', err);
+      });
+    }
   }, []);
 
   // ----------------------------------------------------------
@@ -461,13 +500,17 @@ export function usePartsListState() {
           const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
           if (preferred) topRec = preferred;
         }
+        const recCounts = recs ? computeRecommendationCounts(recs) : null;
         newRows[idx] = {
           ...row,
           ...(attrs ? { sourceAttributes: attrs } : {}),
-          ...(recs ? {
+          ...(recs && recCounts ? {
             allRecommendations: recs,
             suggestedReplacement: topRec ?? row.suggestedReplacement,
             recommendationCount: recs.length,
+            logicDrivenCount: recCounts.logicDrivenCount,
+            mfrCertifiedCount: recCounts.mfrCertifiedCount,
+            accurisCertifiedCount: recCounts.accurisCertifiedCount,
           } : {}),
         };
       }
@@ -660,7 +703,10 @@ export function usePartsListState() {
       const abortController = new AbortController();
       validationAbortRef.current = abortController;
 
-      const stream = await validatePartsList(items, listCurrencyRef.current, abortController.signal);
+      // forceRefresh=true: user-initiated Refresh must bypass the recs L2 cache
+      // so recovered upstream services (e.g. parts.io after VPN reconnect) get
+      // incorporated. Initial validation from upload stays cache-friendly.
+      const stream = await validatePartsList(items, listCurrencyRef.current, abortController.signal, true);
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -766,6 +812,9 @@ export function usePartsListState() {
             enrichedData: undefined,
             errorMessage: undefined,
             recommendationCount: undefined,
+            logicDrivenCount: undefined,
+            mfrCertifiedCount: undefined,
+            accurisCertifiedCount: undefined,
             topNonFailingRecs: undefined,
           };
         } else {
@@ -781,6 +830,9 @@ export function usePartsListState() {
             enrichedData: undefined,
             errorMessage: undefined,
             recommendationCount: undefined,
+            logicDrivenCount: undefined,
+            mfrCertifiedCount: undefined,
+            accurisCertifiedCount: undefined,
             topNonFailingRecs: undefined,
           };
         }
@@ -980,6 +1032,7 @@ export function usePartsListState() {
                 const newRows = [...prev.rows];
                 const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
                 if (idx >= 0) {
+                  const streamCounts = computeRecommendationCounts(item.allRecommendations);
                   newRows[idx] = {
                     ...newRows[idx],
                     status: item.status,
@@ -990,6 +1043,9 @@ export function usePartsListState() {
                     enrichedData: item.enrichedData,
                     errorMessage: item.errorMessage,
                     recommendationCount: item.allRecommendations?.length,
+                    logicDrivenCount: streamCounts.logicDrivenCount,
+                    mfrCertifiedCount: streamCounts.mfrCertifiedCount,
+                    accurisCertifiedCount: streamCounts.accurisCertifiedCount,
                   };
                 }
                 return { ...prev, rows: newRows, phase: 'results', lastRefreshedAt: new Date() };

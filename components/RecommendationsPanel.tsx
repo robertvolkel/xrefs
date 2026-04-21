@@ -8,6 +8,10 @@ import { useTranslation } from 'react-i18next';
 import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
+import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
+
+// Re-export for backward compatibility with existing consumers (e.g. useAppState)
+export { sortRecommendationsForDisplay };
 
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
@@ -17,40 +21,6 @@ interface RecommendationsPanelProps {
   preferredMpn?: string;
   onTogglePreferred?: (mpn: string) => void;
   isEnrichingFC?: boolean;
-}
-
-/**
- * Display-priority sort for recommendations: MFR Certified → 3rd Party Certified → Logic Driven,
- * then pin-to-pin > functional within category, then by match score. Exported so background
- * enrichers (e.g. FindChips) can batch the user-visible top N first.
- */
-export function sortRecommendationsForDisplay(
-  recommendations: XrefRecommendation[],
-  preferredMpn?: string,
-): XrefRecommendation[] {
-  const categoryPriority = (rec: XrefRecommendation): number => {
-    const cats = deriveRecommendationCategories(rec);
-    if (cats.includes('manufacturer_certified')) return 0;
-    if (cats.includes('third_party_certified')) return 1;
-    return 2;
-  };
-  const mfrEqRank = (rec: XrefRecommendation): number => {
-    if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
-    if (rec.mfrEquivalenceType === 'functional') return 1;
-    return 2;
-  };
-  const byCategoryThenScore = [...recommendations].sort((a, b) => {
-    const catDiff = categoryPriority(a) - categoryPriority(b);
-    if (catDiff !== 0) return catDiff;
-    const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
-    if (mfrDiff !== 0) return mfrDiff;
-    return b.matchPercentage - a.matchPercentage;
-  });
-  if (!preferredMpn) return byCategoryThenScore;
-  const prefIdx = byCategoryThenScore.findIndex(r => r.part.mpn === preferredMpn);
-  if (prefIdx <= 0) return byCategoryThenScore;
-  const [preferred] = byCategoryThenScore.splice(prefIdx, 1);
-  return [preferred, ...byCategoryThenScore];
 }
 
 export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC }: RecommendationsPanelProps) {

@@ -19,6 +19,7 @@ import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from '.
 import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
+import { sortRecommendationsForDisplay } from './recommendationSort';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
@@ -643,6 +644,29 @@ export async function getAttributes(
 // RECOMMENDATIONS (cross-reference)
 // ============================================================
 
+/**
+ * Cache-only lookup: returns the cached RecommendationResult if present,
+ * or null if the L2 cache has no entry. Does NOT fall through to the live
+ * pipeline. Inputs MUST match those that were used when the cache entry was
+ * written (same currency, userPreferences, options) or the variant won't match.
+ */
+export async function lookupCachedRecommendations(
+  mpn: string,
+  attributeOverrides?: Record<string, string>,
+  applicationContext?: ApplicationContext,
+  currency?: string,
+  preferredManufacturers?: string[],
+  userPreferences?: UserPreferences,
+  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
+): Promise<RecommendationResult | null> {
+  const variant = buildRecommendationsVariant(
+    mpn, attributeOverrides, applicationContext, currency,
+    preferredManufacturers, userPreferences, options,
+  );
+  const cached = await getCachedResponse<RecommendationResult>('search', mpn, variant);
+  return cached?.data ?? null;
+}
+
 export async function getRecommendations(
   mpn: string,
   attributeOverrides?: Record<string, string>,
@@ -652,7 +676,7 @@ export async function getRecommendations(
   userPreferences?: UserPreferences,
   userId?: string,
   prefetchedAttributes?: PartAttributes,
-  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
+  options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean; forceRefresh?: boolean },
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -662,6 +686,10 @@ export async function getRecommendations(
   // both the GET flow (no prefetch) and the POST flow (with prefetch). On a hit,
   // the cached result already contains sourceAttributes, so prefetched attrs
   // are simply discarded.
+  // `forceRefresh` is a runtime-only flag (excluded from the variant) that
+  // skips the cache read on user-initiated Refresh, ensuring freshly recovered
+  // upstream services (e.g. parts.io after a VPN reconnect) get incorporated.
+  // The write still happens, so subsequent calls benefit from the fresh data.
   const recsCacheVariant = buildRecommendationsVariant(
     mpn,
     attributeOverrides,
@@ -671,10 +699,14 @@ export async function getRecommendations(
     userPreferences,
     options,
   );
-  const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
-  if (recsCached) {
-    console.log(`[perf] getRecommendations L2 HIT (${recsCacheVariant}) in ${(performance.now() - recsStart).toFixed(0)}ms`);
-    return recsCached.data;
+  if (!options?.forceRefresh) {
+    const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
+    if (recsCached) {
+      console.log(`[perf] getRecommendations L2 HIT (${recsCacheVariant}) in ${(performance.now() - recsStart).toFixed(0)}ms`);
+      return recsCached.data;
+    }
+  } else {
+    console.log(`[perf] getRecommendations forceRefresh — skipping cache read for ${mpn}`);
   }
 
   // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
@@ -1083,6 +1115,11 @@ export async function getRecommendations(
 
     // Determine primary dataSource for the result set
     const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
+
+    // Apply display-priority sort server-side so `suggestedReplacement` (recs[0] at
+    // validation time) agrees with the modal's top card on the client. Both use
+    // sortRecommendationsForDisplay (Accuris → MFR → Logic → pin-to-pin → score).
+    recs = sortRecommendationsForDisplay(recs);
 
     const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
     setCachedResponse('search', mpn, recsCacheVariant, 'recommendations', result, TTL_RECOMMENDATIONS_MS);

@@ -7,7 +7,7 @@
  * and unsubscribes on unmount without cancelling the stream.
  */
 
-import { PartsListRow, BatchValidateItem } from './types';
+import { PartsListRow, BatchValidateItem, computeRecommendationCounts } from './types';
 import { validatePartsList } from './api';
 import { updatePartsListSupabase } from './supabasePartsListStorage';
 
@@ -138,6 +138,7 @@ export async function startBackgroundValidation(
 
           const idx = active.rows.findIndex((r) => r.rowIndex === item.rowIndex);
           if (idx >= 0) {
+            const counts = computeRecommendationCounts(item.allRecommendations);
             active.rows[idx] = {
               ...active.rows[idx],
               status: item.status,
@@ -149,6 +150,10 @@ export async function startBackgroundValidation(
               allRecommendations: item.allRecommendations,
               enrichedData: item.enrichedData,
               errorMessage: item.errorMessage,
+              recommendationCount: item.allRecommendations?.length,
+              logicDrivenCount: counts.logicDrivenCount,
+              mfrCertifiedCount: counts.mfrCertifiedCount,
+              accurisCertifiedCount: counts.accurisCertifiedCount,
             };
           }
 

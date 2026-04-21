@@ -5,7 +5,7 @@
  * Uses the browser Supabase client — call only from client components.
  */
 
-import { PartsListRow } from './types';
+import { PartsListRow, computeRecommendationCounts } from './types';
 import { createClient } from './supabase/client';
 import { StoredRow, PartsListSummary } from './partsListStorage';
 import { ViewState } from './viewConfigStorage';
@@ -22,6 +22,8 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       ? nonFailing?.filter(rec => rec.part.mpn !== r.preferredMpn)
       : nonFailing?.slice(1);
 
+    const computed = r.allRecommendations ? computeRecommendationCounts(r.allRecommendations) : null;
+
     return {
       rowIndex: r.rowIndex,
       rawMpn: r.rawMpn,
@@ -35,6 +37,9 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       suggestedReplacement: r.suggestedReplacement,
       topNonFailingRecs: subCandidates?.length ? subCandidates.slice(0, 2) : r.topNonFailingRecs,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
+      logicDrivenCount: computed?.logicDrivenCount ?? r.logicDrivenCount,
+      mfrCertifiedCount: computed?.mfrCertifiedCount ?? r.mfrCertifiedCount,
+      accurisCertifiedCount: computed?.accurisCertifiedCount ?? r.accurisCertifiedCount,
       preferredMpn: r.preferredMpn,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
@@ -52,6 +57,9 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     allRecommendations: undefined,
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
+    logicDrivenCount: r.logicDrivenCount,
+    mfrCertifiedCount: r.mfrCertifiedCount,
+    accurisCertifiedCount: r.accurisCertifiedCount,
     preferredMpn: r.preferredMpn,
     partType: r.partType,
   }));

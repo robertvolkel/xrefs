@@ -5,7 +5,7 @@
  * Each list stores row data (without heavy allRecommendations to save space).
  */
 
-import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData, PartType } from './types';
+import { PartsListRow, PartSummary, PartAttributes, XrefRecommendation, EnrichedPartData, PartType, computeRecommendationCounts } from './types';
 import { classifyListTheme } from './themeClassifier';
 
 const STORAGE_KEY = 'xrefs_parts_lists';
@@ -29,6 +29,10 @@ export interface StoredRow {
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — for accurate hits column on load */
   recommendationCount?: number;
+  /** Mutually-exclusive bucket counts (Accuris > MFR > Logic) */
+  logicDrivenCount?: number;
+  mfrCertifiedCount?: number;
+  accurisCertifiedCount?: number;
   /** MPN explicitly chosen by user as preferred alternate */
   preferredMpn?: string;
   /** Flattened Digikey data stored during validation */
@@ -98,6 +102,8 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       ?.filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
       .slice(1, 3);
 
+    const computed = r.allRecommendations ? computeRecommendationCounts(r.allRecommendations) : null;
+
     return {
       rowIndex: r.rowIndex,
       rawMpn: r.rawMpn,
@@ -111,6 +117,9 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       suggestedReplacement: r.suggestedReplacement,
       topNonFailingRecs: nonFailing?.length ? nonFailing : r.topNonFailingRecs,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
+      logicDrivenCount: computed?.logicDrivenCount ?? r.logicDrivenCount,
+      mfrCertifiedCount: computed?.mfrCertifiedCount ?? r.mfrCertifiedCount,
+      accurisCertifiedCount: computed?.accurisCertifiedCount ?? r.accurisCertifiedCount,
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
     };
@@ -126,6 +135,9 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
     allRecommendations: undefined,
     topNonFailingRecs: r.topNonFailingRecs,
     recommendationCount: r.recommendationCount,
+    logicDrivenCount: r.logicDrivenCount,
+    mfrCertifiedCount: r.mfrCertifiedCount,
+    accurisCertifiedCount: r.accurisCertifiedCount,
   }));
 }
 

@@ -120,6 +120,35 @@ export function deriveRecommendationCategories(rec: XrefRecommendation): Recomme
   return cats.length > 0 ? cats : ['logic_driven'];
 }
 
+/** Mutually-exclusive trust tier used by parts-list column counts.
+ *  Priority: Accuris (parts.io) > Manufacturer > Logic. Mouser-only certified falls into Logic. */
+export type RecommendationBucket = 'accuris' | 'manufacturer' | 'logic';
+
+export function deriveRecommendationBucket(rec: XrefRecommendation): RecommendationBucket {
+  const certs = rec.certifiedBy ?? [];
+  if (certs.includes('partsio_fff') || certs.includes('partsio_functional')) return 'accuris';
+  if (certs.includes('manufacturer')) return 'manufacturer';
+  return 'logic';
+}
+
+export interface RecommendationCounts {
+  logicDrivenCount: number;
+  mfrCertifiedCount: number;
+  accurisCertifiedCount: number;
+}
+
+export function computeRecommendationCounts(recs: XrefRecommendation[] | undefined): RecommendationCounts {
+  const out: RecommendationCounts = { logicDrivenCount: 0, mfrCertifiedCount: 0, accurisCertifiedCount: 0 };
+  if (!recs) return out;
+  for (const r of recs) {
+    const b = deriveRecommendationBucket(r);
+    if (b === 'accuris') out.accurisCertifiedCount++;
+    else if (b === 'manufacturer') out.mfrCertifiedCount++;
+    else out.logicDrivenCount++;
+  }
+  return out;
+}
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;
@@ -799,6 +828,10 @@ export interface PartsListRow {
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — persisted so hits column is accurate on load */
   recommendationCount?: number;
+  /** Mutually-exclusive bucket counts (Accuris > MFR > Logic). Persisted for list column display. */
+  logicDrivenCount?: number;
+  mfrCertifiedCount?: number;
+  accurisCertifiedCount?: number;
   /** MPN explicitly chosen by user as preferred alternate — survives re-validation */
   preferredMpn?: string;
   /** Flattened Digikey data stored during validation */
@@ -864,6 +897,11 @@ export interface BatchValidateRequest {
   }>;
   /** Currency code for pricing (e.g. 'USD', 'CNY'). Passed to Digikey API. */
   currency?: string;
+  /** When true, bypass the recommendations L2 cache read so freshly recovered
+   *  upstream services (e.g. parts.io after VPN reconnect) get incorporated.
+   *  The computed result is still written back to cache. Use only for explicit
+   *  user-initiated Refresh — NOT for initial validation (we want cache hits there). */
+  forceRefresh?: boolean;
 }
 
 /** Single item response from batch validation */

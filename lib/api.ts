@@ -106,6 +106,30 @@ export async function getRecommendations(mpn: string, signal?: AbortSignal): Pro
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, { signal });
 }
 
+export interface BackfillCountsUpdate {
+  rowIndex: number;
+  logicDrivenCount: number;
+  mfrCertifiedCount: number;
+  accurisCertifiedCount: number;
+}
+
+export interface BackfillCountsResponse {
+  updates: BackfillCountsUpdate[];
+  scanned: number;
+  hit: number;
+  miss: number;
+}
+
+/** Cache-only backfill of per-bucket counts for rows missing them. Zero live-API cost. */
+export async function backfillListCounts(listId: string, signal?: AbortSignal): Promise<BackfillCountsResponse> {
+  return fetchApi<BackfillCountsResponse>(`${BASE}/parts-list/backfill-counts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ listId }),
+    signal,
+  });
+}
+
 export async function getRecommendationsWithOverrides(
   mpn: string,
   overrides: Record<string, string>,
@@ -459,11 +483,12 @@ export async function validatePartsList(
   items: Array<{ rowIndex: number; mpn: string; manufacturer?: string; description?: string; skipSearch?: boolean }>,
   currency?: string,
   signal?: AbortSignal,
+  forceRefresh?: boolean,
 ): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch(`${BASE}/parts-list/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items, currency }),
+    body: JSON.stringify({ items, currency, forceRefresh }),
     signal,
   });
   if (!res.ok || !res.body) {

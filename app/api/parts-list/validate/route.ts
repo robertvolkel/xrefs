@@ -14,6 +14,7 @@ async function processItem(
   currency?: string,
   userId?: string,
   userPreferences?: UserPreferences,
+  forceRefresh?: boolean,
 ): Promise<BatchValidateItem> {
   try {
     const query = item.mpn.trim() || item.description?.trim() || '';
@@ -81,7 +82,7 @@ async function processItem(
     const recResult = await getRecommendations(
       resolvedPart.mpn, undefined, undefined, currency, undefined,
       userPreferences, userId, prefetchedAttributes,
-      { skipPartsioEnrichment: true, filterForBatch: true, skipFindchips: true },
+      { skipPartsioEnrichment: true, filterForBatch: true, skipFindchips: true, forceRefresh },
     );
     const recs = recResult.recommendations;
     const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
@@ -153,7 +154,7 @@ export async function POST(request: NextRequest) {
         // Process in chunks for concurrency control
         for (let i = 0; i < body.items.length; i += CONCURRENCY) {
           const chunk = body.items.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(chunk.map(item => processItem(item, body.currency, user?.id, prefs)));
+          const results = await Promise.all(chunk.map(item => processItem(item, body.currency, user?.id, prefs, body.forceRefresh)));
 
           for (const result of results) {
             await writer.write(encoder.encode(JSON.stringify(result) + '\n'));
