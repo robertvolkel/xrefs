@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -20,6 +20,7 @@ import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { sortRecommendationsForDisplay } from './recommendationSort';
+import { computeCompositeScore } from './compositeScore';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
@@ -261,14 +262,21 @@ function buildRecommendationsVariant(
   preferredManufacturers: string[] | undefined,
   userPreferences: UserPreferences | undefined,
   options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
+  replacementPriorities: ReplacementPriorities | undefined,
 ): string {
   const sortedPreferred = preferredManufacturers ? [...preferredManufacturers].sort() : undefined;
+  // Scoring inputs only — `hideZeroStock` is a display-time filter and is intentionally
+  // excluded so toggling it doesn't invalidate cached rec sets.
+  const replPriForHash = replacementPriorities
+    ? { order: replacementPriorities.order, enabled: replacementPriorities.enabled }
+    : null;
   const payload = {
     overrides: attributeOverrides ?? null,
     ctx: applicationContext ?? null,
     ccy: currency ?? 'USD',
     pref: sortedPreferred ?? null,
     userPrefs: userPreferences ?? null,
+    replPri: replPriForHash,
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
@@ -658,10 +666,11 @@ export async function lookupCachedRecommendations(
   preferredManufacturers?: string[],
   userPreferences?: UserPreferences,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<RecommendationResult | null> {
   const variant = buildRecommendationsVariant(
     mpn, attributeOverrides, applicationContext, currency,
-    preferredManufacturers, userPreferences, options,
+    preferredManufacturers, userPreferences, options, replacementPriorities,
   );
   const cached = await getCachedResponse<RecommendationResult>('search', mpn, variant);
   return cached?.data ?? null;
@@ -677,6 +686,7 @@ export async function getRecommendations(
   userId?: string,
   prefetchedAttributes?: PartAttributes,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean; forceRefresh?: boolean },
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -698,6 +708,7 @@ export async function getRecommendations(
     preferredManufacturers,
     userPreferences,
     options,
+    replacementPriorities,
   );
   if (!options?.forceRefresh) {
     const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
@@ -1116,9 +1127,18 @@ export async function getRecommendations(
     // Determine primary dataSource for the result set
     const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
 
+    // Compute the per-list composite "better than source" score (Decision #145).
+    // Runs once per rec with source + candidate + priorities in scope. Score is
+    // persisted on the recommendation so it flows through the cache and list save.
+    const activePriorities = replacementPriorities ?? DEFAULT_REPLACEMENT_PRIORITIES;
+    recs = recs.map(rec => {
+      const { score, axisDeltas } = computeCompositeScore(rec, sourceAttrs, activePriorities);
+      return { ...rec, compositeScore: score, compositeAxisDeltas: axisDeltas };
+    });
+
     // Apply display-priority sort server-side so `suggestedReplacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
-    // sortRecommendationsForDisplay (Accuris → MFR → Logic → pin-to-pin → score).
+    // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
     recs = sortRecommendationsForDisplay(recs);
 
     const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };

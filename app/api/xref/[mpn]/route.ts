@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ApiResponse, ApplicationContext, PartAttributes, XrefRecommendation } from '@/lib/types';
+import { ApiResponse, ApplicationContext, PartAttributes, XrefRecommendation, ReplacementPriorities } from '@/lib/types';
 import { getRecommendations } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { logRecommendation } from '@/lib/services/recommendationLogger';
@@ -56,13 +56,14 @@ export async function POST(
     const { mpn } = await params;
     const decodedMpn = decodeURIComponent(mpn);
     const prefs = await fetchUserPreferences(user!.id);
-    const { overrides, applicationContext, sourceAttributes } = await request.json() as {
+    const { overrides, applicationContext, sourceAttributes, replacementPriorities } = await request.json() as {
       overrides?: Record<string, string>;
       applicationContext?: ApplicationContext;
       sourceAttributes?: PartAttributes;
+      replacementPriorities?: ReplacementPriorities;
     };
 
-    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id, sourceAttributes);
+    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id, sourceAttributes, undefined, replacementPriorities);
 
     // QC log (fire-and-forget — don't block the response)
     logRecommendation({

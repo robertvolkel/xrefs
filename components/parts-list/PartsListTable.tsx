@@ -34,6 +34,7 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { PartsListRow, XrefRecommendation, PartType, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
 // Column IDs that display suggestion/replacement data
@@ -42,6 +43,7 @@ const SUGGESTION_COLUMN_IDS = new Set([
   'sys:top_suggestion_mfr',
   'sys:top_suggestion_price',
   'sys:top_suggestion_stock',
+  'sys:top_suggestion_supplier',
 ]);
 
 /**
@@ -507,13 +509,36 @@ function CellRenderer({
           </OverflowTooltip>
         ) : null;
 
-      case 'sys:top_suggestion_price':
-        return topRec?.part.unitPrice != null ? <>{formatPrice(topRec.part.unitPrice, currency)}</> : null;
+      case 'sys:top_suggestion_price': {
+        if (!topRec) return null;
+        // Prefer cross-distributor best price from supplierQuotes (FindChips enrichment).
+        // Covers parts.io-sourced certified recs that never populate Digikey-only part.unitPrice.
+        const prices = topRec.part.supplierQuotes
+          ?.map(q => q.unitPrice)
+          .filter((p): p is number => p != null && p > 0);
+        const best = prices && prices.length > 0 ? Math.min(...prices) : topRec.part.unitPrice;
+        return best != null ? <>{formatPrice(best, currency)}</> : null;
+      }
 
-      case 'sys:top_suggestion_stock':
-        return topRec?.part.quantityAvailable != null
-          ? <>{topRec.part.quantityAvailable.toLocaleString()}</>
-          : null;
+      case 'sys:top_suggestion_stock': {
+        if (!topRec) return null;
+        const totals = topRec.part.supplierQuotes
+          ?.map(q => q.quantityAvailable)
+          .filter((s): s is number => s != null);
+        const stock = totals && totals.length > 0
+          ? totals.reduce((a, b) => a + b, 0)
+          : topRec.part.quantityAvailable;
+        return stock != null ? <>{stock.toLocaleString()}</> : null;
+      }
+
+      case 'sys:top_suggestion_supplier': {
+        // Winning distributor = first entry in supplierQuotes (mapper pre-sorts by best unit price)
+        const winner = topRec?.part.supplierQuotes?.[0]?.supplier;
+        if (!winner) return null;
+        const display = SUPPLIER_DISPLAY[winner.toLowerCase()]
+          ?? winner.charAt(0).toUpperCase() + winner.slice(1);
+        return <OverflowTooltip>{display}</OverflowTooltip>;
+      }
 
       case 'sys:row_actions':
         return (

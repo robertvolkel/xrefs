@@ -78,6 +78,7 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:top_suggestion_mfr', label: 'Suggested MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
   { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
   { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'sys:top_suggestion_supplier', label: 'Sug. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -345,10 +346,26 @@ export function getSortValue(
       return row.suggestedReplacement?.part.mpn?.toLowerCase();
     case 'sys:top_suggestion_mfr':
       return row.suggestedReplacement?.part.manufacturer?.toLowerCase();
-    case 'sys:top_suggestion_price':
-      return row.suggestedReplacement?.part.unitPrice;
-    case 'sys:top_suggestion_stock':
-      return row.suggestedReplacement?.part.quantityAvailable;
+    case 'sys:top_suggestion_price': {
+      const p = row.suggestedReplacement?.part;
+      if (!p) return undefined;
+      const prices = p.supplierQuotes
+        ?.map(q => q.unitPrice)
+        .filter((v): v is number => v != null && v > 0);
+      return prices && prices.length > 0 ? Math.min(...prices) : p.unitPrice;
+    }
+    case 'sys:top_suggestion_stock': {
+      const p = row.suggestedReplacement?.part;
+      if (!p) return undefined;
+      const totals = p.supplierQuotes
+        ?.map(q => q.quantityAvailable)
+        .filter((v): v is number => v != null);
+      return totals && totals.length > 0 ? totals.reduce((a, b) => a + b, 0) : p.quantityAvailable;
+    }
+    case 'sys:top_suggestion_supplier': {
+      // Winning distributor = supplierQuotes[0] (mapper pre-sorts by best unit price)
+      return row.suggestedReplacement?.part.supplierQuotes?.[0]?.supplier?.toLowerCase();
+    }
     default:
       return undefined;
   }

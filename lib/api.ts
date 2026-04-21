@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, ReplacementPriorities } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -102,7 +102,21 @@ export async function getPartAttributes(mpn: string, signal?: AbortSignal): Prom
   return fetchApi<PartAttributes>(`${BASE}/attributes/${encodeURIComponent(mpn)}`, { signal });
 }
 
-export async function getRecommendations(mpn: string, signal?: AbortSignal): Promise<XrefRecommendation[]> {
+export async function getRecommendations(
+  mpn: string,
+  signal?: AbortSignal,
+  replacementPriorities?: ReplacementPriorities,
+): Promise<XrefRecommendation[]> {
+  // When priorities are supplied (list context), use POST so they can travel in the body;
+  // otherwise keep the GET shape for the single-search / non-list flows.
+  if (replacementPriorities) {
+    return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replacementPriorities }),
+      signal,
+    });
+  }
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, { signal });
 }
 
@@ -136,11 +150,12 @@ export async function getRecommendationsWithOverrides(
   applicationContext?: ApplicationContext,
   signal?: AbortSignal,
   sourceAttributes?: PartAttributes,
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext, sourceAttributes }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities }),
     signal,
   });
 }
@@ -149,11 +164,12 @@ export async function getRecommendationsWithContext(
   mpn: string,
   applicationContext: ApplicationContext,
   signal?: AbortSignal,
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applicationContext }),
+    body: JSON.stringify({ applicationContext, replacementPriorities }),
     signal,
   });
 }
@@ -484,11 +500,12 @@ export async function validatePartsList(
   currency?: string,
   signal?: AbortSignal,
   forceRefresh?: boolean,
+  replacementPriorities?: ReplacementPriorities,
 ): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch(`${BASE}/parts-list/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items, currency, forceRefresh }),
+    body: JSON.stringify({ items, currency, forceRefresh, replacementPriorities }),
     signal,
   });
   if (!res.ok || !res.body) {

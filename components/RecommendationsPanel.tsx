@@ -21,9 +21,11 @@ interface RecommendationsPanelProps {
   preferredMpn?: string;
   onTogglePreferred?: (mpn: string) => void;
   isEnrichingFC?: boolean;
+  /** List-level setting from Replacement Preferences — hide recs with known zero stock */
+  hideZeroStock?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
@@ -83,6 +85,15 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const filtered = sorted
     .filter(r => !selectedMfr || r.part.manufacturer === selectedMfr)
     .filter(r => !showCnOnly || r.dataSource === 'atlas')
+    .filter(r => {
+      if (!hideZeroStock) return true;
+      // Hide only when quote data exists AND total stock is 0 — avoids hiding recs
+      // whose stock is simply unknown (empty supplierQuotes → undefined, keep shown)
+      const quotes = r.part.supplierQuotes;
+      if (!quotes || quotes.length === 0) return true;
+      const total = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
+      return total > 0;
+    })
     .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation

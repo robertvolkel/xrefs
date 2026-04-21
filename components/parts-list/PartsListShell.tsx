@@ -52,7 +52,7 @@ export default function PartsListShell() {
   const {
     phase, parsedData, columnMapping, rows, validationProgress, error, lastRefreshedAt,
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
-    spreadsheetHeaders, activeListId, listViewConfigs,
+    spreadsheetHeaders, activeListId, listViewConfigs, replacementPriorities,
     backfillCountsResult,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
     handleFileSelected, handleParsedDataReady,
@@ -584,6 +584,7 @@ export default function PartsListShell() {
         onConfirmReplacement={handleModalConfirmReplacement}
         onRecommendationsRefreshed={handleModalRecsRefreshed}
         preferredMpn={modalRow?.preferredMpn}
+        hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
         onTogglePreferred={(mpn) => {
           if (modalRow) handleSetPreferred(modalRow.rowIndex, mpn || null);
         }}
@@ -678,11 +679,14 @@ export default function PartsListShell() {
         initialCurrency={listCurrency}
         initialCustomer={listCustomer ?? ''}
         initialDefaultViewId={listDefaultViewId ?? ''}
+        initialReplacementPriorities={replacementPriorities ?? undefined}
         views={views}
-        onConfirm={async (name, description, currency, customer, dvId) => {
-          const currencyChanged = await handleUpdateListDetails(name, description, currency, customer, dvId);
+        onConfirm={async (name, description, currency, customer, dvId, replacementPriorities) => {
+          const { currencyChanged, prioritiesChanged } = await handleUpdateListDetails(
+            name, description, currency, customer, dvId, replacementPriorities,
+          );
           setEditNameOpen(false);
-          if (currencyChanged && rows.length > 0) {
+          if ((currencyChanged || prioritiesChanged) && rows.length > 0) {
             handleRefreshRows(rows.map(r => r.rowIndex));
           }
         }}
