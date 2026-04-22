@@ -5,7 +5,7 @@
  * Uses the browser Supabase client — call only from client components.
  */
 
-import { PartsListRow, computeRecommendationCounts, ReplacementPriorities } from './types';
+import { PartsListRow, computeRecommendationCounts, ReplacementPriorities, PartsListUploadSettings } from './types';
 import { createClient } from './supabase/client';
 import { StoredRow, PartsListSummary } from './partsListStorage';
 import { ViewState } from './viewConfigStorage';
@@ -31,11 +31,12 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawDescription: r.rawDescription,
       rawCpn: r.rawCpn,
       rawIpn: r.rawIpn,
+      rawQty: r.rawQty,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,
-      suggestedReplacement: r.suggestedReplacement,
-      topNonFailingRecs: subCandidates?.length ? subCandidates.slice(0, 2) : r.topNonFailingRecs,
+      replacement: r.replacement,
+      replacementAlternates: subCandidates?.length ? subCandidates.slice(0, 4) : r.replacementAlternates,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
       logicDrivenCount: computed?.logicDrivenCount ?? r.logicDrivenCount,
       mfrCertifiedCount: computed?.mfrCertifiedCount ?? r.mfrCertifiedCount,
@@ -48,21 +49,34 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
   });
 }
 
-/** Convert stored rows back to PartsListRow (without heavy fields) */
+/** Convert stored rows back to PartsListRow (without heavy fields).
+ *  Reads either the new (`replacement`, `replacementAlternates`) or legacy
+ *  (`suggestedReplacement`, `topNonFailingRecs`) keys — rows saved before the
+ *  Apr 2026 rename progressively migrate on next save. */
 function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
-  return stored.map(r => ({
-    ...r,
-    rawCells: r.rawCells ?? [],
-    sourceAttributes: undefined,
-    allRecommendations: undefined,
-    topNonFailingRecs: r.topNonFailingRecs,
-    recommendationCount: r.recommendationCount,
-    logicDrivenCount: r.logicDrivenCount,
-    mfrCertifiedCount: r.mfrCertifiedCount,
-    accurisCertifiedCount: r.accurisCertifiedCount,
-    preferredMpn: r.preferredMpn,
-    partType: r.partType,
-  }));
+  return stored.map(r => {
+    const legacyReplacement = (r as { suggestedReplacement?: import('./types').XrefRecommendation }).suggestedReplacement;
+    const legacyAlternates = (r as { topNonFailingRecs?: import('./types').XrefRecommendation[] }).topNonFailingRecs;
+    const { suggestedReplacement: _s, topNonFailingRecs: _t, ...rest } = r as StoredRow & {
+      suggestedReplacement?: import('./types').XrefRecommendation;
+      topNonFailingRecs?: import('./types').XrefRecommendation[];
+    };
+    void _s; void _t;
+    return {
+      ...rest,
+      rawCells: r.rawCells ?? [],
+      sourceAttributes: undefined,
+      allRecommendations: undefined,
+      replacement: rest.replacement ?? legacyReplacement,
+      replacementAlternates: rest.replacementAlternates ?? legacyAlternates,
+      recommendationCount: r.recommendationCount,
+      logicDrivenCount: r.logicDrivenCount,
+      mfrCertifiedCount: r.mfrCertifiedCount,
+      accurisCertifiedCount: r.accurisCertifiedCount,
+      preferredMpn: r.preferredMpn,
+      partType: r.partType,
+    };
+  });
 }
 
 /** Get summaries of all saved lists for the current user (newest first) */
@@ -108,6 +122,7 @@ export async function savePartsListSupabase(
   defaultViewId?: string,
   viewConfigs?: ViewState,
   replacementPriorities?: ReplacementPriorities,
+  uploadSettings?: PartsListUploadSettings,
 ): Promise<string | null> {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -127,6 +142,7 @@ export async function savePartsListSupabase(
       spreadsheet_headers: spreadsheetHeaders ?? [],
       ...(viewConfigs ? { view_configs: viewConfigs } : {}),
       ...(replacementPriorities ? { replacement_priorities: replacementPriorities } : {}),
+      ...(uploadSettings ? { upload_settings: uploadSettings } : {}),
     })
     .select('id')
     .single();
@@ -163,12 +179,13 @@ export async function loadPartsListSupabase(id: string): Promise<{
   spreadsheetHeaders: string[];
   viewConfigs: ViewState | null;
   replacementPriorities: ReplacementPriorities | null;
+  uploadSettings: PartsListUploadSettings | null;
   updatedAt: string | null;
 } | null> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from('parts_lists')
-    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs, replacement_priorities, updated_at')
+    .select('name, description, currency, customer, default_view_id, rows, spreadsheet_headers, view_configs, replacement_priorities, upload_settings, updated_at')
     .eq('id', id)
     .single();
 
@@ -185,6 +202,7 @@ export async function loadPartsListSupabase(id: string): Promise<{
     spreadsheetHeaders: (record.spreadsheet_headers as string[]) ?? [],
     viewConfigs: (record.view_configs as ViewState) ?? null,
     replacementPriorities: (record.replacement_priorities as ReplacementPriorities) ?? null,
+    uploadSettings: (record.upload_settings as PartsListUploadSettings) ?? null,
     updatedAt: (record.updated_at as string) ?? null,
   };
 }

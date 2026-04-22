@@ -36,6 +36,7 @@ import PartsListHeader from './PartsListHeader';
 import PartsListActionBar from './PartsListActionBar';
 import ViewControls from './ViewControls';
 import ColumnMappingDialog from './ColumnMappingDialog';
+import DuplicateDetectionDialog from './DuplicateDetectionDialog';
 import PartsListTable from './PartsListTable';
 import PartDetailModal from './PartDetailModal';
 import ColumnPickerDialog from './ColumnPickerDialog';
@@ -56,7 +57,9 @@ export default function PartsListShell() {
     backfillCountsResult,
     modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
     handleFileSelected, handleParsedDataReady,
-    handleColumnMappingConfirmed, handleColumnMappingCancelled,
+    handleColumnMappingConfirmed, handleColumnMappingCancelled, handleSheetChange,
+    handleConsolidateDuplicates, handleLeaveDuplicatesAsIs,
+    pendingDuplicateGroups, pendingQtyMapped,
     handleLoadList, handleOpenModal, handleCloseModal,
     handleModalSelectRec, handleModalBackToRecs,
     handleModalConfirmReplacement, handleModalRecsRefreshed,
@@ -561,6 +564,9 @@ export default function PartsListShell() {
           onCancelValidation={handleCancelValidation}
           onSetPartType={(idx, pt) => handleSetPartType([idx], pt)}
           portableColumnIds={portableColumnIds}
+          hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
+          buckets={replacementPriorities?.buckets ?? replacementPriorities?.suggestionBuckets}
+          maxReplacements={replacementPriorities?.maxReplacements ?? replacementPriorities?.maxSuggestions}
         />
       )}
 
@@ -570,6 +576,15 @@ export default function PartsListShell() {
         initialMapping={columnMapping}
         onConfirm={handleColumnMappingConfirmed}
         onCancel={handleColumnMappingCancelled}
+        onSheetChange={handleSheetChange}
+      />
+
+      <DuplicateDetectionDialog
+        open={phase === 'dedupe-prompt'}
+        groups={pendingDuplicateGroups ?? []}
+        qtyColumnMapped={pendingQtyMapped}
+        onConsolidate={handleConsolidateDuplicates}
+        onLeaveAsIs={handleLeaveDuplicatesAsIs}
       />
 
       <PartDetailModal

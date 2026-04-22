@@ -740,7 +740,7 @@ async function executeTool(
             resolvedMpn: r.resolvedPart?.mpn,
             recommendationCount: r.recommendationCount ?? 0,
             preferredMpn: r.preferredMpn,
-            suggestedReplacement: r.suggestedReplacement?.part?.mpn,
+            replacement: r.replacement?.part?.mpn,
           });
 
           if (allRows.length >= maxRows) break;
@@ -1368,7 +1368,7 @@ function executeListReadTool(
         if (row.preferredMpn) withPreferred++;
         const recCount = row.recommendationCount ?? 0;
         if (recCount > 0) withRecs++;
-        const topScore = row.suggestedReplacement?.matchPercentage;
+        const topScore = row.replacement?.matchPercentage;
         if (topScore != null) { totalScore += topScore; scoredCount++; }
       }
 
@@ -1421,11 +1421,11 @@ function executeListReadTool(
       if (has_preferred === false) filtered = filtered.filter(r => !r.preferredMpn);
       if (min_score != null) {
         const min = Number(min_score);
-        filtered = filtered.filter(r => (r.suggestedReplacement?.matchPercentage ?? 0) >= min);
+        filtered = filtered.filter(r => (r.replacement?.matchPercentage ?? 0) >= min);
       }
       if (max_score != null) {
         const max = Number(max_score);
-        filtered = filtered.filter(r => (r.suggestedReplacement?.matchPercentage ?? 100) <= max);
+        filtered = filtered.filter(r => (r.replacement?.matchPercentage ?? 100) <= max);
       }
 
       return JSON.stringify({
@@ -1437,8 +1437,8 @@ function executeListReadTool(
           status: r.status,
           recommendationCount: r.recommendationCount ?? 0,
           preferredMpn: r.preferredMpn ?? null,
-          topSuggestion: r.suggestedReplacement
-            ? { mpn: r.suggestedReplacement.part.mpn, manufacturer: r.suggestedReplacement.part.manufacturer, matchPercentage: r.suggestedReplacement.matchPercentage }
+          topReplacement: r.replacement
+            ? { mpn: r.replacement.part.mpn, manufacturer: r.replacement.part.manufacturer, matchPercentage: r.replacement.matchPercentage }
             : null,
         })),
       });
@@ -1461,16 +1461,16 @@ function executeListReadTool(
           manufacturer: row.resolvedPart.manufacturer,
           category: row.resolvedPart.category,
         } : null,
-        recommendations: (row.topNonFailingRecs ?? []).map(rec => ({
+        recommendations: (row.replacementAlternates ?? []).map(rec => ({
           mpn: rec.part.mpn,
           manufacturer: rec.part.manufacturer,
           matchPercentage: rec.matchPercentage,
           failedRules: rec.matchDetails?.filter(d => d.matchStatus === 'worse' || d.matchStatus === 'different').map(d => d.parameterName) ?? [],
         })),
-        topSuggestion: row.suggestedReplacement ? {
-          mpn: row.suggestedReplacement.part.mpn,
-          manufacturer: row.suggestedReplacement.part.manufacturer,
-          matchPercentage: row.suggestedReplacement.matchPercentage,
+        topReplacement: row.replacement ? {
+          mpn: row.replacement.part.mpn,
+          manufacturer: row.replacement.part.manufacturer,
+          matchPercentage: row.replacement.matchPercentage,
         } : null,
         errorMessage: row.errorMessage ?? null,
       });

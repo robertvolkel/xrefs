@@ -111,7 +111,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
     }
 
     // Build data-aware key so we re-initialize when allRecommendations arrives
-    const recCount = row.allRecommendations?.length ?? (row.suggestedReplacement ? 1 : 0);
+    const recCount = row.allRecommendations?.length ?? (row.replacement ? 1 : 0);
     const dataKey = `${row.rowIndex}:${recCount}`;
 
     // Skip if already initialized with this exact data state
@@ -130,7 +130,7 @@ export function useModalChat({ row, open, onRecommendationsRefreshed }: UseModal
     // Determine part info
     const mpn = row.sourceAttributes?.part.mpn ?? row.resolvedPart?.mpn ?? row.rawMpn;
     mpnRef.current = mpn;
-    recsRef.current = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
+    recsRef.current = row.allRecommendations ?? (row.replacement ? [row.replacement] : []);
 
     // If we have source attributes, check for missing attrs and context questions
     const attrs = row.sourceAttributes;

@@ -1136,7 +1136,7 @@ export async function getRecommendations(
       return { ...rec, compositeScore: score, compositeAxisDeltas: axisDeltas };
     });
 
-    // Apply display-priority sort server-side so `suggestedReplacement` (recs[0] at
+    // Apply display-priority sort server-side so `row.replacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
     // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
     recs = sortRecommendationsForDisplay(recs);

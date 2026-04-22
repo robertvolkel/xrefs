@@ -20,12 +20,19 @@ export interface StoredRow {
   rawCpn?: string;
   /** Internal Part Number (optional mapped column) */
   rawIpn?: string;
+  /** Quantity (optional mapped column) */
+  rawQty?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRow['status'];
   resolvedPart?: PartSummary;
+  /** Top replacement proposed for this row. */
+  replacement?: XrefRecommendation;
+  /** Up to 4 alternate non-failing replacements for sub-row display. */
+  replacementAlternates?: XrefRecommendation[];
+  /** @deprecated legacy alias of `replacement` — read-only back-compat for rows saved before Apr 2026. */
   suggestedReplacement?: XrefRecommendation;
-  /** Top 2 non-failing recs after #1 — for inline sub-row display on load */
+  /** @deprecated legacy alias of `replacementAlternates` — read-only back-compat for rows saved before Apr 2026. */
   topNonFailingRecs?: XrefRecommendation[];
   /** Total recommendation count — for accurate hits column on load */
   recommendationCount?: number;
@@ -97,10 +104,11 @@ function writeAll(lists: SavedPartsList[]): void {
 /** Strip heavy fields from rows for storage */
 function toStoredRows(rows: PartsListRow[]): StoredRow[] {
   return rows.map(r => {
-    // Derive top non-failing sub-recs (positions #2 and #3) from live data
+    // Derive top non-failing sub-recs (positions #2–#5) from live data.
+    // Widened to support up to 5 total suggestions per row (Decision #145 Phase 1 follow-up).
     const nonFailing = r.allRecommendations
       ?.filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'))
-      .slice(1, 3);
+      .slice(1, 5);
 
     const computed = r.allRecommendations ? computeRecommendationCounts(r.allRecommendations) : null;
 
@@ -111,11 +119,12 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawDescription: r.rawDescription,
       rawCpn: r.rawCpn,
       rawIpn: r.rawIpn,
+      rawQty: r.rawQty,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,
-      suggestedReplacement: r.suggestedReplacement,
-      topNonFailingRecs: nonFailing?.length ? nonFailing : r.topNonFailingRecs,
+      replacement: r.replacement,
+      replacementAlternates: nonFailing?.length ? nonFailing : r.replacementAlternates,
       recommendationCount: r.allRecommendations?.length ?? r.recommendationCount,
       logicDrivenCount: computed?.logicDrivenCount ?? r.logicDrivenCount,
       mfrCertifiedCount: computed?.mfrCertifiedCount ?? r.mfrCertifiedCount,
@@ -126,19 +135,33 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
   });
 }
 
-/** Convert stored rows back to PartsListRow (without heavy fields) */
+/** Convert stored rows back to PartsListRow (without heavy fields).
+ *  Reads either the new (`replacement`, `replacementAlternates`) or legacy
+ *  (`suggestedReplacement`, `topNonFailingRecs`) keys — rows saved before the
+ *  Apr 2026 rename progressively migrate on next save. */
 function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
-  return stored.map(r => ({
-    ...r,
-    rawCells: r.rawCells ?? [],
-    sourceAttributes: undefined,
-    allRecommendations: undefined,
-    topNonFailingRecs: r.topNonFailingRecs,
-    recommendationCount: r.recommendationCount,
-    logicDrivenCount: r.logicDrivenCount,
-    mfrCertifiedCount: r.mfrCertifiedCount,
-    accurisCertifiedCount: r.accurisCertifiedCount,
-  }));
+  return stored.map(r => {
+    // Read legacy keys once, drop them from the mapped output.
+    const legacyReplacement = (r as { suggestedReplacement?: XrefRecommendation }).suggestedReplacement;
+    const legacyAlternates = (r as { topNonFailingRecs?: XrefRecommendation[] }).topNonFailingRecs;
+    const { suggestedReplacement: _s, topNonFailingRecs: _t, ...rest } = r as StoredRow & {
+      suggestedReplacement?: XrefRecommendation;
+      topNonFailingRecs?: XrefRecommendation[];
+    };
+    void _s; void _t;
+    return {
+      ...rest,
+      rawCells: r.rawCells ?? [],
+      sourceAttributes: undefined,
+      allRecommendations: undefined,
+      replacement: rest.replacement ?? legacyReplacement,
+      replacementAlternates: rest.replacementAlternates ?? legacyAlternates,
+      recommendationCount: r.recommendationCount,
+      logicDrivenCount: r.logicDrivenCount,
+      mfrCertifiedCount: r.mfrCertifiedCount,
+      accurisCertifiedCount: r.accurisCertifiedCount,
+    };
+  });
 }
 
 // ============================================================

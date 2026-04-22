@@ -16,6 +16,7 @@ export function buildEnrichedData(attrs: PartAttributes): EnrichedPartData {
 
   return {
     // Product Identification
+    mpn: attrs.part.mpn,
     manufacturer: attrs.part.manufacturer,
     digikeyPartNumber: attrs.part.digikeyPartNumber,
     productUrl: attrs.part.productUrl,

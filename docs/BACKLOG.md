@@ -79,6 +79,20 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Phase 2: Deep-fetch for `suggestionBuckets` shortfall (Decision #146)
+
+Phase 1 shipped `maxSuggestions` (1–5) + `suggestionBuckets` multi-select as display-time filters over the persisted top-5 (`suggestedReplacement` + up to 4 `topNonFailingRecs`). If a row's persisted top-5 doesn't contain enough recs matching the user's selected buckets (e.g. user picks "5 Accuris-only" but the row's persisted set is 2 Accuris + 2 MFR + 1 Logic), the user sees fewer than max.
+
+Phase 2 mirrors the existing `hideZeroStock` deep-fetch effect in `usePartsListState.ts`:
+1. Detect rows where `filtered-persisted-subs.length < maxSuggestions - 1`.
+2. Call `getRecommendations(mpn, priorities)` + `enrichWithFCBatch(top-30-mpns)` — same two-step pattern as the zero-stock deep-fetch (Decision #146 FC-enrichment fix).
+3. Filter for selected buckets, promote to `topNonFailingRecs`, persist.
+4. Guard with `scopeFetchAttemptedRef` to avoid infinite retry when the cohort genuinely lacks enough of the target bucket.
+
+**Cost:** one `getRecommendations` + one `enrichWithFCBatch` per affected row, concurrency 2. Same budget profile as the zero-stock deep-fetch. Worth doing if users hit the shortfall in practice.
+
+**File:** [hooks/usePartsListState.ts](hooks/usePartsListState.ts) — extend the existing deep-fetch effect pattern.
+
 ### Reconcile RecommendationsPanel "Accuris Certified" chip with list column (Decision #140)
 
 After Decision #140, the parts-list column **Accuris Certified** counts parts.io only (`partsio_fff` / `partsio_functional`), while the modal's **Accuris Certified** chip still comes from the overlapping `deriveRecommendationCategories()` bucket which includes Mouser. A user clicking a count of `2` in the list column may see the drawer chip report `3`, with the extra rec being a Mouser suggestion.

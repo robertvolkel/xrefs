@@ -451,6 +451,23 @@ FindChips (FC) API is an aggregator covering ~80 distributors (Digikey, Mouser, 
 
 **Columns:** `fc:lifecycle`, `fc:riskRank`, `fc:designRisk`, `fc:productionRisk`, `fc:longTermRisk` (Risk & Lifecycle group). `commercial:bestPrice`, `commercial:totalStock` (Commercial summary, auto-aggregate across all N supplier quotes). Old `mouser:*` columns removed; saved views auto-strip via `sanitizeTemplateColumns()`.
 
+## Replacement Preferences (Decisions #145, #146)
+
+Per-list configuration stored on `parts_lists.replacement_priorities` JSONB column, shape `ReplacementPriorities` in `lib/types.ts`. Editable via List Settings → Replacement Preferences tab (`ReplacementPrioritiesField.tsx`). Two kinds of inputs:
+
+- **Scoring inputs** (affect composite score + cache variant): `order: ReplacementAxis[]` (priority ranking of Lifecycle / Compliance / Cost / Stock), `enabled: Record<ReplacementAxis, boolean>`. Changes trigger `handleRefreshRows`. Composite score computed in `getRecommendations()` via `computeCompositeScore()` (lib/services/compositeScore.ts), stored on `XrefRecommendation.compositeScore`. Used as within-bucket tiebreak: match % floor for Logic within ±2%, composite primary for certified buckets. Stock axis is gated — only active when source `totalStock < 100`.
+- **Display filters** (client-side, not cache-varied): `hideZeroStock?: boolean`, `maxReplacements?: 1-5`, `buckets?: RecommendationBucket[]`. Applied in `PartsListTable.tsx` via `pickEffectiveTopRec()` + `recPassesFilters()` + `getAlternateReplacements()`. No refresh triggered on toggle — `handleUpdateListDetails` separates `rankingChanged` from filter-only changes. Legacy `suggestionBuckets` / `maxSuggestions` keys are still accepted on read (pre-Decision-#147) and progressively migrate on next save.
+
+**Three-layer defense for `hideZeroStock`:** (1) render-time swap picks first stocked candidate from persisted `[replacement, ...replacementAlternates]`; (2) post-FC-enrichment promotion effect persists the swap; (3) deep-fetch effect (concurrency 2) handles rows where all persisted top-3 are zero-stock — calls `getRecommendations` + `enrichWithFCBatch(top-30)` because `getRecommendations` returns candidates with empty `supplierQuotes` by design (FC enrichment deferred). `deepFetchAttemptedRef` prevents infinite retry on cohorts with no stocked alternative.
+
+**Persisted alternates cap:** bumped 2 → 4 in `toStoredRows` (both Supabase + localStorage) to support `maxReplacements: 5`. Existing lists progressively migrate on next write.
+
+**Repl. Distributor column (`sys:top_suggestion_supplier`):** reads `supplierQuotes[0].supplier` (pre-sorted by best unit price). Uses `SUPPLIER_DISPLAY` from `AttributesTabContent.tsx`. Column ID preserved pre-rename; header label is "Repl. Distributor".
+
+**Vocabulary (Decision #147):** Parts-list code uses "replacement" throughout. `PartsListRow.replacement` = the top proposed swap (singular); `PartsListRow.replacementAlternates` = positions #2–#5. Storage layer reads legacy `suggestedReplacement` / `topNonFailingRecs` keys for back-compat. Do NOT confuse with `LifecycleInfo.suggestedReplacement` — that's Mouser's manufacturer-published successor MPN on EOL parts, a genuinely different concept.
+
+**Column picker MPN vs SKU:** `dk:mpn` (Product Identity, label "MPN (DK)") surfaces `EnrichedPartData.mpn` — canonical MPN as resolved by source, distinct from user's raw `mapped:mpn`. `dk:digikeyPartNumber` renamed to "DigiKey SKU" and moved to Commercial group — it's a distributor SKU, not part identity.
+
 ## Product Direction
 
 The app is evolving from a cross-reference tool into a component intelligence platform built on five pillars:

@@ -3625,3 +3625,94 @@ Forced refresh on the Refresh button is the simplest correct fix: the user who k
 **Retroactive behavior:** Lists created before this change have `replacement_priorities = null` — the server defaults kick in. Users can edit in the tabbed dialog to override. Cached recs written before this change are still scoreless on `compositeScore`; sort falls back to `?? 0` so the existing bucket ordering is preserved until a refresh repopulates.
 
 **Files:** `lib/types.ts` (`ReplacementAxis`, `ReplacementPriorities`, `DEFAULT_REPLACEMENT_PRIORITIES`; extends `XrefRecommendation` with `compositeScore` + `compositeAxisDeltas`; extends `BatchValidateRequest`). `lib/services/compositeScore.ts` (new — per-axis delta functions + aggregator). `lib/services/partDataService.ts` (`getRecommendations` + `lookupCachedRecommendations` + cache variant all accept priorities; composite computed before sort). `lib/services/recommendationSort.ts` (tiebreak: match % floor for Logic bucket within ±2%, composite primary otherwise). `app/api/parts-list/validate/route.ts` (plumbs `body.replacementPriorities`). `app/api/xref/[mpn]/route.ts` (POST body accepts priorities). `lib/api.ts` (`validatePartsList`, `getRecommendations`, `getRecommendationsWith{Overrides,Context}` accept optional priorities). `lib/supabasePartsListStorage.ts` (load/save `replacement_priorities` column). `hooks/usePartsListState.ts` (state + `listPrioritiesRef`; passes priorities through refresh + modal + single-part-add; `handleUpdateListDetails` returns `{ currencyChanged, prioritiesChanged }`). `components/parts-list/ReplacementPrioritiesField.tsx` (new — ordered checklist with move-up/down + reset). `components/lists/NewListDialog.tsx` (Tabs wrapper: General + Replacement Preferences, with dot badge on the Preferences tab when customized). `components/parts-list/PartsListShell.tsx` (forwards priorities + refresh on change). `scripts/supabase-parts-lists-priorities-migration.sql` (new — `ALTER TABLE parts_lists ADD COLUMN replacement_priorities JSONB`). `__tests__/services/compositeScore.test.ts` (new — 19 tests covering per-axis deltas, gating, weight assignment, score bounds).
+
+## Decision #146 — Replacement Display Filters + Sug. Distributor + MPN/SKU Taxonomy (Apr 2026)
+
+**Context:** After Decision #145 shipped, several gaps surfaced during testing that shaped a set of display-layer polish. Bundled here because they all hinge on the same conceptual split: *scoring inputs* vs *display-time filters*.
+
+**Changes:**
+
+1. **Sug. Price / Sug. Stock fallback to `supplierQuotes`.** The row-level columns were reading only `part.unitPrice` / `part.quantityAvailable` — Digikey-only fields. Parts.io-sourced Accuris-certified recs never populate those, so their commercial cells went blank. Renderer + `getSortValue` now prefer `min(supplierQuotes[].unitPrice)` / `sum(supplierQuotes[].quantityAvailable)`, same aggregation the Commercial tab uses. Mirrors `commercial:bestPrice` / `commercial:totalStock` logic.
+
+2. **`runFCEnrichment` extended to enrich `suggestedReplacement` + `topNonFailingRecs`.** Batch validation passes `skipFindchips: true` for perf, so certified recs land with empty `supplierQuotes`. The existing source-only FC enrichment now also collects MPNs from top + subs, single deduped batch, merges FC data back onto all three positions. Persisted to Supabase in the same save. Sug. Price / Stock / Distributor columns populate correctly without requiring the user to open the modal.
+
+3. **Sug. Distributor column (`sys:top_suggestion_supplier`).** New opt-in column in Replacements group. Reads `supplierQuotes[0].supplier` (mapper pre-sorts by best unit price → `[0]` is the winning distributor for the Sug. Price). `SUPPLIER_DISPLAY` exported from `AttributesTabContent.tsx` for clean display names (Digikey, Mouser, Arrow, LCSC, etc.). Added to `SUGGESTION_COLUMN_IDS` so sub-rows render it too.
+
+4. **`hideZeroStock` filter — list-level, not modal-level.** Initially shipped as an ephemeral modal toggle. User correction: should live in Replacement Preferences (per-list, persisted), similar to other list settings. Extended `ReplacementPriorities` with `hideZeroStock?: boolean`. Pipeline:
+   - **Render-time swap** in `PartsListTable` cell renderer: when the top is known-zero-stock, `pickEffectiveTopRec()` promotes the first stocked candidate from `[top, ...subs]`. Instant, no API call.
+   - **Persisted promotion effect** in `usePartsListState`: decoupled from `runFCEnrichment`. Fires on filter toggle + row state change. When the top is known-zero and a sub has stock, swaps them in state, persists via `updatePartsListSupabase`.
+   - **Deep-fetch effect** for rows where all persisted top-3 are zero-stock. Calls `getRecommendations(mpn)` fresh. Critical detail (Decision #146 bug fix): `getRecommendations` returns candidates with empty `supplierQuotes` (FC enrichment is deferred by design), so the effect *also* calls `enrichWithFCBatch(top-30-mpns)` and merges FC data into each rec before scanning for stock. Without this, `totalStock()` returns `-1` for every candidate and the effect is a silent no-op. Concurrency 2 (two upstream hops + 30 FC calls per row), plus `deepFetchAttemptedRef` termination guard so rows with no stocked alternative don't retry on every re-render. Attempted set clears when `hideZeroStock` toggles off.
+   - **Cache variant excludes `hideZeroStock`.** Display-time filter, not a scoring input. `buildRecommendationsVariant()` hashes only `{order, enabled}` from priorities so toggling the filter doesn't invalidate cached rec sets.
+   - **Refresh trigger narrowed.** `handleUpdateListDetails` distinguishes `rankingChanged` (axis `order` or `enabled`) from filter-only toggles. Only ranking changes fire `handleRefreshRows`. `hideZeroStock` / bucket / count toggles save + re-render only.
+
+5. **`maxSuggestions` dropdown (1–5).** New `ReplacementPriorities.maxSuggestions` field, default 3. Persisted-subs cap bumped from 2 → 4 in `toStoredRows` (both Supabase + localStorage storage) to support up to 5 total per row. Existing lists progressively migrate — next normal write persists the wider set. `getSubSuggestions()` slices to `maxSuggestions - 1`.
+
+6. **`suggestionBuckets` multi-select.** New `ReplacementPriorities.suggestionBuckets?: RecommendationBucket[]` field, default all three checked. Empty set interpreted as "all" to prevent accidental blank lists. UI: three checkboxes (Accuris Certified / MFR Certified / Logic Driven) in the Filters block. `recPassesFilters()` unifies bucket filter + zero-stock filter; `pickEffectiveTopRec()` + `getSubSuggestions()` both honor both filters. **Phase 1 scope:** display-time only — if persisted top-3 lacks enough of the selected bucket, user sees fewer than max. Phase 2 (deep-fetch for scope shortfall) tracked in BACKLOG.
+
+7. **Hide match % and dot for certified recs in list view.** Certified recs already bypass the blocking-rule filter (Decision #133), so showing a red "fail" dot next to them was actively misleading. `sys:top_suggestion` renderer now checks `deriveRecommendationBucket(topRec) !== 'logic'` and hides both the dot and the percentage for certified recs. Replaced with a compact `CERT` pill with tooltip showing the bucket ("Accuris Certified" / "MFR Certified"). Modal still shows full dot + % + per-rule breakdown — the drawer has room for nuance the list cell doesn't.
+
+8. **Column picker: MPN/SKU taxonomy cleanup.** Two coupled changes:
+   - **`dk:digikeyPartNumber`** renamed label `DigiKey Part #` → `DigiKey SKU` and moved from Product Identity → Commercial group. It's a distributor SKU (e.g. `1276-1001-1-ND`), not a part identity. Column ID preserved — existing saved views render the same data under the new header.
+   - **New `dk:mpn` column** in Product Identity group, label `MPN (DK)`. `EnrichedPartData` extended with `mpn?: string`, populated in `buildEnrichedData()` from `attrs.part.mpn`. `getCellValue()` mirrors the existing `dk:manufacturer` fallback pattern: reads `enrichedData.mpn ?? resolvedPart.mpn` so legacy rows (no `mpn` on `enrichedData`) still render. Source-agnostic under the hood even though labeled "(DK)" — Part.mpn is always populated regardless of data source.
+
+**Sort order revision.** Also in this batch: `sortRecommendationsForDisplay()` reordered from MFR → Accuris → Logic to **Accuris → MFR → Logic** at the user's request. Uses the mutually-exclusive `deriveRecommendationBucket()` so the modal's top card and the parts-list Top Suggestion always agree. Extracted from `RecommendationsPanel.tsx` into shared `lib/services/recommendationSort.ts` and called server-side in `getRecommendations()` before cache write, so `suggestedReplacement = recs[0]` matches the client's rendered top. Previously these could diverge because the server used `findReplacements()` sort (match % only) while the client re-sorted by bucket.
+
+**Rationale for bundling into one decision:** all eight items are display-layer (not scoring-layer) and share the same persisted state (`ReplacementPriorities` JSONB) and cache-variant concerns. Decision #145 established the substrate; this decision polishes the surface.
+
+**Files touched (superset, not exhaustive):** `lib/types.ts` (ReplacementPriorities extensions; EnrichedPartData.mpn), `lib/services/enrichedDataBuilder.ts` (populate mpn), `lib/services/recommendationSort.ts` (new bucket order + extracted from component), `lib/services/partDataService.ts` (cache variant scope, sort server-side, accepts priorities), `lib/columnDefinitions.ts` (Sug. Distributor, dk:mpn, DigiKey SKU rename+move, sort/renderer helpers), `lib/supabasePartsListStorage.ts` + `lib/partsListStorage.ts` (subs cap 2→4), `hooks/usePartsListState.ts` (runFCEnrichment enriches top + subs, promotion effect, deep-fetch effect with FC batch, attempted-ref guard), `components/parts-list/PartsListTable.tsx` (pickEffectiveTopRec, recPassesFilters, filter props threaded, CERT pill, supplierQuotes fallbacks), `components/parts-list/ReplacementPrioritiesField.tsx` (Filters block: hideZeroStock, maxSuggestions dropdown, bucket checkboxes), `components/parts-list/PartsListShell.tsx` (pipe filter props to table + modal), `components/parts-list/PartDetailModal.tsx` (hideZeroStock prop), `components/RecommendationsPanel.tsx` (hideZeroStock prop, re-export shared sort helper), `components/AttributesTabContent.tsx` (export SUPPLIER_DISPLAY).
+
+> ℹ️ **Subsequent rename (Decision #147):** `suggestedReplacement` → `replacement`, `topNonFailingRecs` → `replacementAlternates`, `suggestionBuckets` → `buckets`, `maxSuggestions` → `maxReplacements`, helpers like `SUGGESTION_COLUMN_IDS` and `getSubSuggestions` renamed. This file's pre-rename vocabulary is preserved for historical accuracy; code uses the new names.
+
+## Decision #147 — Vocabulary Cleanup: "Suggestion" → "Replacement" Across Parts List (Apr 2026)
+
+**Context:** After Decisions #145 / #146 the parts-list UI was split-vocabulary: user-facing labels said "Repl." (per user rename) while internals said "Sug." / "suggestion" everywhere — `suggestedReplacement`, `topNonFailingRecs`, `suggestionBuckets`, `maxSuggestions`, `SUGGESTION_COLUMN_IDS`, `getSubSuggestions`, etc. User articulated the semantic split cleanly: *"A suggestion can be anything — it should not be a word that is interchangeable with Replacement. A replacement is more specific."* The word "suggestion" is too generic for what these fields actually represent: the concrete proposed swap for a given source part.
+
+**Decision:** Drop "suggestion" vocabulary from parts-list code. Standardize on "replacement" (singular = the top one; alternates for positions #2–#N). Preserve all persisted data and column IDs unchanged so saved views and existing lists keep working.
+
+### Renames
+
+**Row fields (in-memory + JSONB keys):**
+- `PartsListRow.suggestedReplacement` → `PartsListRow.replacement`
+- `PartsListRow.topNonFailingRecs` → `PartsListRow.replacementAlternates`
+- `BatchValidateItem.suggestedReplacement` → `BatchValidateItem.replacement` (NDJSON stream key)
+
+**`ReplacementPriorities` fields (JSONB key on `parts_lists.replacement_priorities`):**
+- `suggestionBuckets` → `buckets`
+- `maxSuggestions` → `maxReplacements`
+
+**Helpers / constants:**
+- `SUGGESTION_COLUMN_IDS` → `REPLACEMENT_COLUMN_IDS`
+- `getSubSuggestions()` → `getAlternateReplacements()`
+- `hasSuggestionColumns` → `hasReplacementColumns`
+- `MAX_SUGGESTIONS_OPTIONS` → `MAX_REPLACEMENTS_OPTIONS`
+
+**LLM tool output keys (from `listChat` orchestrator):**
+- `topSuggestion` → `topReplacement`
+- `suggestedReplacement` (on `query_list` row summary) → `replacement`
+
+**Copy:**
+- "Hide zero-stock recommendations" → "Hide zero-stock replacements"
+- "Show suggestions from:" → "Show replacements from:"
+- "Show up to N suggestions…" → "Show up to N replacements…"
+
+### Back-compat strategy (zero-risk rollout)
+
+Three layers, decreasing scope:
+
+1. **Persisted rows** (`parts_lists.rows` JSONB + localStorage). `StoredRow` accepts both legacy and new keys. `fromStoredRows` reads `replacement ?? suggestedReplacement` and `replacementAlternates ?? topNonFailingRecs`, strips the legacy keys from the mapped output. `toStoredRows` writes only new keys. Existing lists progressively migrate on next write — no data migration SQL.
+2. **Persisted priorities** (`parts_lists.replacement_priorities` JSONB). `ReplacementPriorities` retains `suggestionBuckets` and `maxSuggestions` as optional `@deprecated` fields. `ReplacementPrioritiesField` reads `value.buckets ?? value.suggestionBuckets` on load and strips the legacy key on save. Same for `maxSuggestions`. Progressive migration.
+3. **NDJSON wire format** (validate route → validationManager + in-hook stream parsers). Parsers normalize `rawItem.replacement ?? rawItem.suggestedReplacement` → `item.replacement` so a stale client reading a freshly-deployed server (or vice versa) during a staged deploy doesn't drop data mid-stream. Server writes only the new key.
+
+### Non-changes (scope left alone)
+
+- **Column IDs** (`sys:top_suggestion`, `sys:top_suggestion_mfr`, etc.) kept as-is. They're opaque internal handles referenced by every saved view's JSONB. Renaming would require an alias map in `sanitizeTemplateColumns` plus careful read-side compat across master views + per-list views + templates. User never sees the ID — only the label, which is already "Repl.*" per the earlier rename. Churn-without-value.
+- **`LifecycleInfo.suggestedReplacement`** and its UI display in `AttributesTabContent.tsx` and `mouserMapper.ts`. This is the Mouser API field representing a *manufacturer-published successor MPN* on an EOL part — a genuinely different concept from our row-level proposed replacement. Keeping "suggestedReplacement" here is correct.
+- **`pickEffectiveTopRec`** kept — "rec" is a third neutral term (recommendation) that's fine internally.
+
+### Files Modified
+
+`lib/types.ts`, `lib/partsListStorage.ts`, `lib/supabasePartsListStorage.ts`, `lib/validationManager.ts`, `lib/columnDefinitions.ts`, `lib/services/llmOrchestrator.ts`, `lib/services/recommendationSort.ts`, `lib/services/partDataService.ts`, `app/api/parts-list/validate/route.ts`, `hooks/usePartsListState.ts`, `hooks/useModalChat.ts`, `components/parts-list/PartsListShell.tsx`, `components/parts-list/PartsListTable.tsx`, `components/parts-list/PartDetailModal.tsx`, `components/parts-list/ReplacementPrioritiesField.tsx`.
+
+### Verification
+
+`npx tsc --noEmit` clean. `npm test` → 1270/1270 tests pass. Deprecation hints in the IDE are intentional — they mark the three legacy-read fallback sites (`PartsListShell` prop fallback, `ReplacementPrioritiesField` load/save fallback), not bugs.

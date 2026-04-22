@@ -74,11 +74,11 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:logicBasedCount', label: 'Logic-Based', source: 'system', group: 'Replacements', defaultWidth: '85px', align: 'center', isNumeric: true },
   { id: 'sys:mfrCertifiedCount', label: 'MFR Certified', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'center', isNumeric: true },
   { id: 'sys:accurisCertifiedCount', label: 'Accuris Certified', source: 'system', group: 'Replacements', defaultWidth: '110px', align: 'center', isNumeric: true },
-  { id: 'sys:top_suggestion', label: 'Sug. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px' },
-  { id: 'sys:top_suggestion_mfr', label: 'Suggested MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
-  { id: 'sys:top_suggestion_price', label: 'Sug. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
-  { id: 'sys:top_suggestion_stock', label: 'Sug. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'sys:top_suggestion_supplier', label: 'Sug. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px' },
+  { id: 'sys:top_suggestion', label: 'Repl. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px' },
+  { id: 'sys:top_suggestion_mfr', label: 'Repl. MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
+  { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
+  { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -89,8 +89,8 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
 
 const PRODUCT_COLUMNS: ColumnDefinition[] = [
   // Product Identity
+  { id: 'dk:mpn', label: 'MPN (DK)', source: 'digikey-product', enrichedField: 'mpn', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
   { id: 'dk:manufacturer', label: 'Manufacturer', source: 'digikey-product', enrichedField: 'manufacturer', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
-  { id: 'dk:digikeyPartNumber', label: 'DigiKey Part #', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
   { id: 'dk:category', label: 'Category', source: 'digikey-product', enrichedField: 'category', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '120px' },
   { id: 'dk:subcategory', label: 'Subcategory', source: 'digikey-product', enrichedField: 'subcategory', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
   // Documentation
@@ -98,6 +98,7 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:photoUrl', label: 'Photo', source: 'digikey-product', enrichedField: 'photoUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
   { id: 'dk:productUrl', label: 'Product Page', source: 'digikey-product', enrichedField: 'productUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
   // Commercial
+  { id: 'dk:digikeyPartNumber', label: 'DigiKey SKU', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'Commercial', dataSource: 'digikey', defaultWidth: '140px' },
   { id: 'dk:unitPrice', label: 'DK Price', source: 'digikey-product', enrichedField: 'unitPrice', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'dk:quantityAvailable', label: 'DK Stock', source: 'digikey-product', enrichedField: 'quantityAvailable', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'dk:productStatus', label: 'Product Status', source: 'digikey-product', enrichedField: 'productStatus', group: 'Commercial', dataSource: 'digikey', defaultWidth: '100px' },
@@ -270,6 +271,10 @@ export function getCellValue(
       if (column.enrichedField === 'manufacturer') {
         return row.enrichedData?.manufacturer ?? row.resolvedPart?.manufacturer;
       }
+      // MPN fallback: legacy rows lack enrichedData.mpn; resolvedPart.mpn is the canonical MPN.
+      if (column.enrichedField === 'mpn') {
+        return row.enrichedData?.mpn ?? row.resolvedPart?.mpn;
+      }
       if (!row.enrichedData) return undefined;
       const val = row.enrichedData[column.enrichedField];
       // parameters is a Record, not a display value
@@ -327,7 +332,7 @@ export function getSortValue(
     case 'sys:partType':
       return row.partType ?? 'electronic';
     case 'sys:hits': {
-      const total = row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
+      const total = row.allRecommendations?.length ?? row.recommendationCount ?? (row.replacement ? 1 : 0);
       return total > 0 ? 1 : 0;
     }
     case 'sys:logicBasedCount':
@@ -343,11 +348,11 @@ export function getSortValue(
         ? computeRecommendationCounts(row.allRecommendations).accurisCertifiedCount
         : row.accurisCertifiedCount;
     case 'sys:top_suggestion':
-      return row.suggestedReplacement?.part.mpn?.toLowerCase();
+      return row.replacement?.part.mpn?.toLowerCase();
     case 'sys:top_suggestion_mfr':
-      return row.suggestedReplacement?.part.manufacturer?.toLowerCase();
+      return row.replacement?.part.manufacturer?.toLowerCase();
     case 'sys:top_suggestion_price': {
-      const p = row.suggestedReplacement?.part;
+      const p = row.replacement?.part;
       if (!p) return undefined;
       const prices = p.supplierQuotes
         ?.map(q => q.unitPrice)
@@ -355,7 +360,7 @@ export function getSortValue(
       return prices && prices.length > 0 ? Math.min(...prices) : p.unitPrice;
     }
     case 'sys:top_suggestion_stock': {
-      const p = row.suggestedReplacement?.part;
+      const p = row.replacement?.part;
       if (!p) return undefined;
       const totals = p.supplierQuotes
         ?.map(q => q.quantityAvailable)
@@ -364,7 +369,7 @@ export function getSortValue(
     }
     case 'sys:top_suggestion_supplier': {
       // Winning distributor = supplierQuotes[0] (mapper pre-sorts by best unit price)
-      return row.suggestedReplacement?.part.supplierQuotes?.[0]?.supplier?.toLowerCase();
+      return row.replacement?.part.supplierQuotes?.[0]?.supplier?.toLowerCase();
     }
     default:
       return undefined;

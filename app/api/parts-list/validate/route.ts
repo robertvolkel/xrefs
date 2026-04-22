@@ -87,7 +87,7 @@ async function processItem(
       replacementPriorities,
     );
     const recs = recResult.recommendations;
-    const suggestedReplacement = recs.length > 0 ? recs[0] : undefined;
+    const replacement = recs.length > 0 ? recs[0] : undefined;
 
     // Step 3b: Log recommendation (awaited to ensure it completes within request lifecycle)
     if (userId) {
@@ -115,7 +115,7 @@ async function processItem(
       status: 'resolved',
       resolvedPart,
       sourceAttributes,
-      suggestedReplacement,
+      replacement,
       allRecommendations: recs,
       enrichedData,
     };
