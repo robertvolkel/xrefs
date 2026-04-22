@@ -106,7 +106,7 @@
     "customerPlaceholder": "e.g., Acme Corp",
     "descriptionLabel": "Describe the application, goals, requirements, or constraints",
     "descriptionPlaceholder": "e.g., Automotive power supply redesign, need AEC-Q200 qualified replacements",
-    "createButton": "Create List",
+    "createButton": "Continue with Upload",
     "saveButton": "Save",
     "currencyLabel": "Currency",
     "defaultViewLabel": "Default View",

@@ -185,12 +185,22 @@ export interface ReplacementPriorities {
    *  Recs with no commercial data (unknown stock) remain visible. Applied client-side
    *  at display time — does not affect scoring or caching. */
   hideZeroStock?: boolean;
+  /** Maximum number of replacements rendered per list row (1-5). Default 3. */
+  maxReplacements?: number;
+  /** Which buckets are eligible for display (multi-select). Empty / undefined = all. */
+  buckets?: RecommendationBucket[];
+  /** @deprecated legacy alias of `maxReplacements` — read-only back-compat for rows saved before Apr 2026. Never written. */
+  maxSuggestions?: number;
+  /** @deprecated legacy alias of `buckets` — read-only back-compat for rows saved before Apr 2026. Never written. */
+  suggestionBuckets?: RecommendationBucket[];
 }
 
 export const DEFAULT_REPLACEMENT_PRIORITIES: ReplacementPriorities = {
   order: ['lifecycle', 'compliance', 'cost', 'stock'],
   enabled: { lifecycle: true, compliance: true, cost: true, stock: true },
   hideZeroStock: false,
+  maxReplacements: 3,
+  buckets: ['accuris', 'manufacturer', 'logic'],
 };
 
 /** Per-parameter match detail for comparison */
@@ -797,6 +807,9 @@ export interface ComplianceData {
 /** Flattened, storage-friendly product data built during validation (from all sources) */
 export interface EnrichedPartData {
   // Product Identification
+  /** Canonical MPN as returned by the resolving data source (Digikey / Atlas / parts.io).
+   *  May differ from the user's raw spreadsheet MPN (packaging suffix, case, format). */
+  mpn?: string;
   manufacturer?: string;
   digikeyPartNumber?: string;
   productUrl?: string;
@@ -843,15 +856,21 @@ export interface PartsListRow {
   rawCpn?: string;
   /** Internal Part Number (optional mapped column) */
   rawIpn?: string;
+  /** Quantity (optional mapped column) — kept as the raw string so free-form
+   *  values like "10 pcs" round-trip; numeric parsing happens at point-of-use. */
+  rawQty?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRowStatus;
   resolvedPart?: PartSummary;
   sourceAttributes?: PartAttributes;
-  suggestedReplacement?: XrefRecommendation;
+  /** The top replacement proposed for this row (singular). Serves as the
+   *  "Repl. MPN" column value. Persisted per row. */
+  replacement?: XrefRecommendation;
   allRecommendations?: XrefRecommendation[];
-  /** Top 2 non-failing recs after #1 — persisted for inline sub-row display */
-  topNonFailingRecs?: XrefRecommendation[];
+  /** Up to 4 additional non-failing replacements (positions #2–#5). Persisted
+   *  for inline sub-row display + as fallback for the list-column filter path. */
+  replacementAlternates?: XrefRecommendation[];
   /** Total recommendation count — persisted so hits column is accurate on load */
   recommendationCount?: number;
   /** Mutually-exclusive bucket counts (Accuris > MFR > Logic). Persisted for list column display. */
@@ -876,6 +895,28 @@ export interface ColumnMapping {
   cpnColumn?: number;
   /** Optional Internal Part Number column */
   ipnColumn?: number;
+  /** Optional Quantity column — unlocks qty summing in the dedupe flow */
+  qtyColumn?: number;
+}
+
+/** A group of rows that share the same (MPN, MFR) — result of dedupe scan */
+export interface DuplicateGroup {
+  /** Canonical MPN (trimmed, preserves case from the first-seen row) */
+  mpn: string;
+  /** Canonical manufacturer (trimmed, preserves case from the first-seen row) */
+  manufacturer: string;
+  /** Number of rows in the group (always >= 2) */
+  rowCount: number;
+  /** Sum across group if qtyColumn was mapped; undefined otherwise */
+  totalQty?: number;
+  /** Row indexes (into the input array) that belong to this group */
+  rowIndexes: number[];
+}
+
+/** Per-list upload-time preferences persisted in parts_lists.upload_settings */
+export interface PartsListUploadSettings {
+  /** User chose "Leave as is" on the duplicate-detection modal — don't re-prompt */
+  duplicateCheckDismissed?: boolean;
 }
 
 /** Parsed spreadsheet data before column mapping */
@@ -883,6 +924,10 @@ export interface ParsedSpreadsheet {
   headers: string[];
   rows: string[][];
   fileName: string;
+  /** All sheet/tab names in the source workbook (spreadsheet files only) */
+  sheetNames?: string[];
+  /** Name of the sheet whose data populated headers+rows */
+  activeSheet?: string;
 }
 
 /** Manufacturer-certified cross-reference record (from Supabase) */
@@ -939,7 +984,8 @@ export interface BatchValidateItem {
   status: 'resolved' | 'not-found' | 'error';
   resolvedPart?: PartSummary;
   sourceAttributes?: PartAttributes;
-  suggestedReplacement?: XrefRecommendation;
+  /** The top replacement proposed for this row (singular). */
+  replacement?: XrefRecommendation;
   allRecommendations?: XrefRecommendation[];
   enrichedData?: EnrichedPartData;
   errorMessage?: string;

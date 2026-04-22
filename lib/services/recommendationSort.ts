@@ -14,7 +14,7 @@ const MATCH_PERCENT_TIE_BAND = 2;
  *     within ±MATCH_PERCENT_TIE_BAND (Decision #145).
  *
  * Called both server-side (in `getRecommendations()` before cache write) AND client-side
- * (in `RecommendationsPanel`) so `suggestedReplacement` (persisted from `recs[0]` during
+ * (in `RecommendationsPanel`) so `row.replacement` (persisted from `recs[0]` during
  * validation) agrees with the modal's top card.
  */
 export function sortRecommendationsForDisplay(

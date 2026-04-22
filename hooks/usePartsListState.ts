@@ -11,12 +11,14 @@ import {
   PartSummary,
   PartType,
   ReplacementPriorities,
+  DuplicateGroup,
   computeRecommendationCounts,
 } from '@/lib/types';
 import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch, backfillListCounts } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
+import { findDuplicateGroups, consolidateDuplicates } from '@/lib/services/bomDeduper';
 import {
   getSavedListsSupabase,
   savePartsListSupabase,
@@ -37,7 +39,7 @@ import {
 // STATE
 // ============================================================
 
-export type PartsListPhase = 'empty' | 'mapping' | 'validating' | 'results';
+export type PartsListPhase = 'empty' | 'mapping' | 'dedupe-prompt' | 'validating' | 'results';
 
 interface PartsListState {
   phase: PartsListPhase;
@@ -74,6 +76,12 @@ interface PartsListState {
   lastRefreshedAt: Date | null;
   /** Result of the last cache-only bucket-count backfill (null = no attempt this session) */
   backfillCountsResult: { scanned: number; hit: number; miss: number } | null;
+  /** Rows staged during column mapping, awaiting user's duplicate-resolution choice */
+  pendingRows: PartsListRow[] | null;
+  /** Duplicate groups detected in pendingRows (only set during 'dedupe-prompt' phase) */
+  pendingDuplicateGroups: DuplicateGroup[] | null;
+  /** Whether the pending column mapping included a qty column (shapes dialog UI) */
+  pendingQtyMapped: boolean;
 }
 
 const INITIAL_STATE: PartsListState = {
@@ -99,6 +107,9 @@ const INITIAL_STATE: PartsListState = {
   replacementPriorities: null,
   lastRefreshedAt: null,
   backfillCountsResult: null,
+  pendingRows: null,
+  pendingDuplicateGroups: null,
+  pendingQtyMapped: false,
 };
 
 // ============================================================
@@ -117,6 +128,9 @@ export function usePartsListState() {
   const listPrioritiesRef = useRef<ReplacementPriorities | null>(null);
   const activeListIdRef = useRef<string | null>(null);
   const validationAbortRef = useRef<AbortController | null>(null);
+  // Retain the uploaded File so we can re-parse a different sheet from the
+  // column-mapping dialog without re-prompting the user.
+  const pendingFileRef = useRef<File | null>(null);
 
   // Load saved lists on mount
   useEffect(() => {
@@ -172,6 +186,7 @@ export function usePartsListState() {
     try {
       const parsedData = await parseSpreadsheetFile(file);
       const columnMapping = autoDetectColumns(parsedData.headers, parsedData.rows);
+      pendingFileRef.current = file;
 
       const name = overrideName || file.name.replace(/\.[^.]+$/, '');
       const desc = overrideDescription ?? null;
@@ -212,6 +227,7 @@ export function usePartsListState() {
     overrideDefaultViewId?: string,
   ) => {
     const columnMapping = autoDetectColumns(parsed.headers, parsed.rows);
+    pendingFileRef.current = null;
 
     const name = overrideName || parsed.fileName;
     const desc = overrideDescription ?? null;
@@ -241,6 +257,42 @@ export function usePartsListState() {
   // Column mapping
   // ----------------------------------------------------------
 
+  /**
+   * Persist a set of rows (original or consolidated) and kick off background
+   * validation. Shared tail of the column-mapping → validation path, also
+   * invoked from the dedupe-prompt handlers after the user makes a choice.
+   */
+  const startValidationForRows = useCallback(async (
+    rows: PartsListRow[],
+    headers: string[],
+    uploadSettings?: { duplicateCheckDismissed?: boolean },
+  ) => {
+    const saveName = listNameRef.current || 'Untitled List';
+    const saveDesc = listDescriptionRef.current ?? undefined;
+    try {
+      const saveCustomer = listCustomerRef.current ?? undefined;
+      const saveDefaultViewId = listDefaultViewIdRef.current ?? undefined;
+      const listId = await savePartsListSupabase(
+        saveName,
+        rows,
+        saveDesc,
+        headers,
+        saveCustomer,
+        saveDefaultViewId,
+        undefined,
+        undefined,
+        uploadSettings,
+      );
+      if (listId) {
+        activeListIdRef.current = listId;
+        setState(prev => ({ ...prev, activeListId: listId }));
+      }
+      startBackgroundValidation(listId || '', rows, listCurrencyRef.current);
+    } catch {
+      startBackgroundValidation('', rows, listCurrencyRef.current);
+    }
+  }, []);
+
   const handleColumnMappingConfirmed = useCallback(async (mapping: ColumnMapping) => {
     let validRows: PartsListRow[] = [];
     let headers: string[] = [];
@@ -261,6 +313,9 @@ export function usePartsListState() {
         ...(mapping.ipnColumn != null && mapping.ipnColumn >= 0
           ? { rawIpn: row[mapping.ipnColumn] ?? '' }
           : {}),
+        ...(mapping.qtyColumn != null && mapping.qtyColumn >= 0
+          ? { rawQty: row[mapping.qtyColumn] ?? '' }
+          : {}),
         rawCells: row,
         status: 'pending' as const,
       }));
@@ -270,7 +325,6 @@ export function usePartsListState() {
 
       return {
         ...prev,
-        phase: 'validating',
         columnMapping: mapping,
         rows: validRows,
         validationProgress: 0,
@@ -278,31 +332,96 @@ export function usePartsListState() {
       };
     });
 
-    if (validRows.length === 0) return;
-
-    // Save list to Supabase immediately (all rows as "pending") so it
-    // appears in the Lists dashboard right away.
-    const saveName = listNameRef.current || 'Untitled List';
-    const saveDesc = listDescriptionRef.current ?? undefined;
-    try {
-      const saveCustomer = listCustomerRef.current ?? undefined;
-      const saveDefaultViewId = listDefaultViewIdRef.current ?? undefined;
-      const listId = await savePartsListSupabase(saveName, validRows, saveDesc, headers, saveCustomer, saveDefaultViewId);
-      if (listId) {
-        activeListIdRef.current = listId;
-        setState(prev => ({ ...prev, activeListId: listId }));
-      }
-
-      // Start background validation (runs outside React lifecycle)
-      startBackgroundValidation(listId || '', validRows, listCurrencyRef.current);
-    } catch {
-      // Save failed — start validation anyway (just won't persist)
-      startBackgroundValidation('', validRows, state.listCurrency);
+    if (validRows.length === 0) {
+      setState(prev => ({ ...prev, phase: 'validating' }));
+      return;
     }
-  }, []);
+
+    // Scan for duplicate MPN+MFR pairs before saving. If any are found, park
+    // the work in 'dedupe-prompt' phase and let the user choose.
+    const qtyMapped = mapping.qtyColumn != null && mapping.qtyColumn >= 0;
+    const groups = findDuplicateGroups(validRows, qtyMapped);
+    if (groups.length > 0) {
+      setState(prev => ({
+        ...prev,
+        phase: 'dedupe-prompt',
+        pendingRows: validRows,
+        pendingDuplicateGroups: groups,
+        pendingQtyMapped: qtyMapped,
+      }));
+      return;
+    }
+
+    setState(prev => ({ ...prev, phase: 'validating' }));
+    await startValidationForRows(validRows, headers);
+  }, [startValidationForRows]);
+
+  const handleConsolidateDuplicates = useCallback(async () => {
+    let rowsToUse: PartsListRow[] | null = null;
+    let headers: string[] = [];
+    let qtyMapped = false;
+    setState(prev => {
+      if (prev.phase !== 'dedupe-prompt' || !prev.pendingRows || !prev.pendingDuplicateGroups) return prev;
+      const consolidated = consolidateDuplicates(prev.pendingRows, prev.pendingDuplicateGroups, prev.pendingQtyMapped);
+      rowsToUse = consolidated;
+      headers = prev.spreadsheetHeaders;
+      qtyMapped = prev.pendingQtyMapped;
+      return {
+        ...prev,
+        phase: 'validating',
+        rows: consolidated,
+        pendingRows: null,
+        pendingDuplicateGroups: null,
+        pendingQtyMapped: false,
+      };
+    });
+    // reference qtyMapped to satisfy the linter even though consolidation already used it
+    void qtyMapped;
+    if (rowsToUse) {
+      await startValidationForRows(rowsToUse, headers);
+    }
+  }, [startValidationForRows]);
+
+  const handleLeaveDuplicatesAsIs = useCallback(async () => {
+    let rowsToUse: PartsListRow[] | null = null;
+    let headers: string[] = [];
+    setState(prev => {
+      if (prev.phase !== 'dedupe-prompt' || !prev.pendingRows) return prev;
+      rowsToUse = prev.pendingRows;
+      headers = prev.spreadsheetHeaders;
+      return {
+        ...prev,
+        phase: 'validating',
+        rows: prev.pendingRows,
+        pendingRows: null,
+        pendingDuplicateGroups: null,
+        pendingQtyMapped: false,
+      };
+    });
+    if (rowsToUse) {
+      await startValidationForRows(rowsToUse, headers, { duplicateCheckDismissed: true });
+    }
+  }, [startValidationForRows]);
 
   const handleColumnMappingCancelled = useCallback(() => {
+    pendingFileRef.current = null;
     setState(prev => ({ ...prev, phase: 'empty', parsedData: null, columnMapping: null, listName: null }));
+  }, []);
+
+  /** Re-parse the pending file using a different sheet and re-run auto-detect. */
+  const handleSheetChange = useCallback(async (sheetName: string) => {
+    const file = pendingFileRef.current;
+    if (!file) return;
+    try {
+      const parsedData = await parseSpreadsheetFile(file, sheetName);
+      const columnMapping = autoDetectColumns(parsedData.headers, parsedData.rows);
+      setState(prev => ({ ...prev, parsedData, columnMapping, error: null }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'Failed to read sheet',
+      }));
+    }
   }, []);
 
   // ----------------------------------------------------------
@@ -442,7 +561,7 @@ export function usePartsListState() {
       const newRows = [...prev.rows];
       const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
       if (idx >= 0) {
-        newRows[idx] = { ...newRows[idx], suggestedReplacement: rec, preferredMpn: rec.part.mpn };
+        newRows[idx] = { ...newRows[idx], replacement: rec, preferredMpn: rec.part.mpn };
       }
 
       return {
@@ -503,7 +622,7 @@ export function usePartsListState() {
       const idx = newRows.findIndex(r => r.rowIndex === rowIndex);
       if (idx >= 0) {
         const row = newRows[idx];
-        // Resolve suggestedReplacement: prefer user's preferredMpn, fall back to recs[0]
+        // Resolve replacement: prefer user's preferredMpn, fall back to recs[0]
         let topRec = recs ? recs[0] : undefined;
         if (recs && row.preferredMpn) {
           const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
@@ -515,7 +634,7 @@ export function usePartsListState() {
           ...(attrs ? { sourceAttributes: attrs } : {}),
           ...(recs && recCounts ? {
             allRecommendations: recs,
-            suggestedReplacement: topRec ?? row.suggestedReplacement,
+            replacement: topRec ?? row.replacement,
             recommendationCount: recs.length,
             logicDrivenCount: recCounts.logicDrivenCount,
             mfrCertifiedCount: recCounts.mfrCertifiedCount,
@@ -578,18 +697,41 @@ export function usePartsListState() {
       const idx = newRows.findIndex(r => r.rowIndex === prev.modalRowIndex);
       if (idx >= 0) {
         const row = newRows[idx];
-        // Resolve suggestedReplacement: prefer user's preferredMpn, fall back to recs[0]
+        // Resolve replacement: prefer user's preferredMpn, fall back to recs[0]
         let topRec = recs.length > 0 ? recs[0] : undefined;
         if (row.preferredMpn) {
           const preferred = recs.find(r => r.part.mpn === row.preferredMpn);
           if (preferred) topRec = preferred;
         }
+        // Rebuild persisted sub-rec slots from the new recs so the main-list
+        // Repl. MPN column's filter-fallback path (pickEffectiveTopRec →
+        // replacementAlternates) doesn't keep pointing at stale candidates from
+        // the pre-context fetch.
+        const nonFailing = recs.filter(r => !r.matchDetails.some(d => d.ruleResult === 'fail'));
+        const subs = row.preferredMpn
+          ? nonFailing.filter(r => r.part.mpn !== row.preferredMpn)
+          : nonFailing.slice(1);
+        const recCounts = computeRecommendationCounts(recs);
         newRows[idx] = {
           ...row,
           allRecommendations: recs,
-          suggestedReplacement: topRec ?? row.suggestedReplacement,
+          replacement: topRec ?? row.replacement,
+          recommendationCount: recs.length,
+          logicDrivenCount: recCounts.logicDrivenCount,
+          mfrCertifiedCount: recCounts.mfrCertifiedCount,
+          accurisCertifiedCount: recCounts.accurisCertifiedCount,
+          replacementAlternates: subs.slice(0, 4),
         };
       }
+
+      // Persist so the refreshed top + counts survive page reload.
+      const listId = activeListIdRef.current;
+      if (listId) {
+        updatePartsListSupabase(listId, newRows).catch((err) => {
+          console.error('[PartsListState] Save after modal rec refresh failed:', err);
+        });
+      }
+
       return { ...prev, rows: newRows };
     });
   }, []);
@@ -607,19 +749,19 @@ export function usePartsListState() {
       const row = newRows[idx];
       const preferredMpn = mpn || undefined;
 
-      // Resolve suggestedReplacement from allRecommendations
-      let suggestedReplacement = row.suggestedReplacement;
+      // Resolve replacement from allRecommendations
+      let replacement = row.replacement;
       if (row.allRecommendations && row.allRecommendations.length > 0) {
         if (preferredMpn) {
           const preferred = row.allRecommendations.find(r => r.part.mpn === preferredMpn);
-          if (preferred) suggestedReplacement = preferred;
+          if (preferred) replacement = preferred;
         } else {
           // Cleared preference — revert to highest score
-          suggestedReplacement = row.allRecommendations[0];
+          replacement = row.allRecommendations[0];
         }
       }
 
-      newRows[idx] = { ...row, preferredMpn, suggestedReplacement };
+      newRows[idx] = { ...row, preferredMpn, replacement };
       return { ...prev, rows: newRows };
     });
 
@@ -700,7 +842,7 @@ export function usePartsListState() {
       error: null,
       rows: prev.rows.map(r =>
         indexSet.has(r.rowIndex)
-          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, suggestedReplacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined /* preferredMpn deliberately preserved */ }
+          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, replacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined /* preferredMpn deliberately preserved */ }
           : r,
       ),
     }));
@@ -748,19 +890,24 @@ export function usePartsListState() {
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            const item: BatchValidateItem = JSON.parse(line);
+            const rawItem = JSON.parse(line) as BatchValidateItem & { suggestedReplacement?: XrefRecommendation };
+            // Wire-format back-compat: accept either `replacement` (current) or
+            // `suggestedReplacement` (pre-rename) from the NDJSON stream.
+            const item: BatchValidateItem = rawItem.replacement
+              ? rawItem
+              : { ...rawItem, replacement: rawItem.suggestedReplacement };
             setState(prev => {
               const newRows = [...prev.rows];
               const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
               if (idx >= 0) {
                 const existingRow = newRows[idx];
-                // Resolve suggestedReplacement: prefer user's preferredMpn if still in results
-                let suggestedReplacement = item.suggestedReplacement;
+                // Resolve replacement: prefer user's preferredMpn if still in results
+                let replacement = item.replacement;
                 let preferredMpn = existingRow.preferredMpn;
                 if (preferredMpn && item.allRecommendations) {
                   const preferred = item.allRecommendations.find(r => r.part.mpn === preferredMpn);
                   if (preferred) {
-                    suggestedReplacement = preferred;
+                    replacement = preferred;
                   } else {
                     // Preferred MPN no longer in results — clear preference
                     preferredMpn = undefined;
@@ -773,7 +920,7 @@ export function usePartsListState() {
                   ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
                   resolvedPart: item.resolvedPart,
                   sourceAttributes: item.sourceAttributes,
-                  suggestedReplacement,
+                  replacement,
                   allRecommendations: item.allRecommendations,
                   enrichedData: item.enrichedData,
                   errorMessage: item.errorMessage,
@@ -833,7 +980,7 @@ export function usePartsListState() {
             status: 'pending' as const,
             resolvedPart: undefined,
             sourceAttributes: undefined,
-            suggestedReplacement: undefined,
+            replacement: undefined,
             allRecommendations: undefined,
             enrichedData: undefined,
             errorMessage: undefined,
@@ -841,7 +988,7 @@ export function usePartsListState() {
             logicDrivenCount: undefined,
             mfrCertifiedCount: undefined,
             accurisCertifiedCount: undefined,
-            topNonFailingRecs: undefined,
+            replacementAlternates: undefined,
           };
         } else {
           // Non-electronic: resolve immediately, clear catalog data
@@ -851,7 +998,7 @@ export function usePartsListState() {
             status: 'resolved' as const,
             resolvedPart: undefined,
             sourceAttributes: undefined,
-            suggestedReplacement: undefined,
+            replacement: undefined,
             allRecommendations: undefined,
             enrichedData: undefined,
             errorMessage: undefined,
@@ -859,7 +1006,7 @@ export function usePartsListState() {
             logicDrivenCount: undefined,
             mfrCertifiedCount: undefined,
             accurisCertifiedCount: undefined,
-            topNonFailingRecs: undefined,
+            replacementAlternates: undefined,
           };
         }
       });
@@ -1055,7 +1202,12 @@ export function usePartsListState() {
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
-              const item: BatchValidateItem = JSON.parse(line);
+              const rawItem = JSON.parse(line) as BatchValidateItem & { suggestedReplacement?: XrefRecommendation };
+            // Wire-format back-compat: accept either `replacement` (current) or
+            // `suggestedReplacement` (pre-rename) from the NDJSON stream.
+            const item: BatchValidateItem = rawItem.replacement
+              ? rawItem
+              : { ...rawItem, replacement: rawItem.suggestedReplacement };
               setState(prev => {
                 const newRows = [...prev.rows];
                 const idx = newRows.findIndex(r => r.rowIndex === item.rowIndex);
@@ -1066,7 +1218,7 @@ export function usePartsListState() {
                     status: item.status,
                     resolvedPart: item.resolvedPart,
                     sourceAttributes: item.sourceAttributes,
-                    suggestedReplacement: item.suggestedReplacement,
+                    replacement: item.replacement,
                     allRecommendations: item.allRecommendations,
                     enrichedData: item.enrichedData,
                     errorMessage: item.errorMessage,
@@ -1192,9 +1344,9 @@ export function usePartsListState() {
   const runFCEnrichment = useCallback(async (): Promise<{ requested: number; enriched: number }> => {
     // Collect MPNs needing FC enrichment from two sources:
     //   (1) source parts whose enrichedData lacks supplierQuotes
-    //   (2) suggestedReplacement parts whose supplierQuotes are empty (batch validation
+    //   (2) replacement parts whose supplierQuotes are empty (batch validation
     //       passes skipFindchips=true, so certified recs land with no commercial data —
-    //       Sug. Price / Sug. Stock columns go blank until we backfill here)
+    //       Repl. Price / Repl. Stock columns go blank until we backfill here)
     const mpnsToEnrich = new Set<string>();
     const rowsWithSourceNeed = new Set<number>();
     const rowsWithRecNeed = new Set<number>();
@@ -1204,13 +1356,13 @@ export function usePartsListState() {
         mpnsToEnrich.add(r.resolvedPart.mpn);
         rowsWithSourceNeed.add(r.rowIndex);
       }
-      const recMpn = r.suggestedReplacement?.part.mpn;
-      if (recMpn && !r.suggestedReplacement!.part.supplierQuotes?.length) {
+      const recMpn = r.replacement?.part.mpn;
+      if (recMpn && !r.replacement!.part.supplierQuotes?.length) {
         mpnsToEnrich.add(recMpn);
         rowsWithRecNeed.add(r.rowIndex);
       }
-      // Sub-row suggestions render the same Sug. Price / Sug. Stock columns
-      for (const sub of r.topNonFailingRecs ?? []) {
+      // Alternate replacements render the same Repl. Price / Repl. Stock columns
+      for (const sub of r.replacementAlternates ?? []) {
         if (sub.part.mpn && !sub.part.supplierQuotes?.length) {
           mpnsToEnrich.add(sub.part.mpn);
           rowsWithRecNeed.add(r.rowIndex);
@@ -1253,32 +1405,32 @@ export function usePartsListState() {
             }
           }
 
-          // Enrich the suggestedReplacement's Part with FC commercial data so the
-          // Sug. Price / Sug. Stock columns can render without opening the modal.
+          // Enrich the replacement's Part with FC commercial data so the
+          // Repl. Price / Repl. Stock columns can render without opening the modal.
           if (rowsWithRecNeed.has(row.rowIndex)) {
-            if (next.suggestedReplacement) {
-              const recMpnLower = next.suggestedReplacement.part.mpn.toLowerCase();
+            if (next.replacement) {
+              const recMpnLower = next.replacement.part.mpn.toLowerCase();
               const fc = results[recMpnLower];
               if (fc && (fc.quotes.length > 0 || fc.lifecycle || fc.compliance)) {
                 next = {
                   ...next,
-                  suggestedReplacement: {
-                    ...next.suggestedReplacement,
+                  replacement: {
+                    ...next.replacement,
                     part: {
-                      ...next.suggestedReplacement.part,
+                      ...next.replacement.part,
                       ...(fc.quotes.length > 0 ? { supplierQuotes: fc.quotes } : {}),
-                      ...(fc.lifecycle ? { lifecycleInfo: [...(next.suggestedReplacement.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
-                      ...(fc.compliance ? { complianceData: [...(next.suggestedReplacement.part.complianceData ?? []), fc.compliance] } : {}),
+                      ...(fc.lifecycle ? { lifecycleInfo: [...(next.replacement.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
+                      ...(fc.compliance ? { complianceData: [...(next.replacement.part.complianceData ?? []), fc.compliance] } : {}),
                     },
                   },
                 };
               }
             }
             // Same enrichment for each persisted sub-suggestion
-            if (next.topNonFailingRecs?.length) {
+            if (next.replacementAlternates?.length) {
               next = {
                 ...next,
-                topNonFailingRecs: next.topNonFailingRecs.map(sub => {
+                replacementAlternates: next.replacementAlternates.map(sub => {
                   const fc = results[sub.part.mpn.toLowerCase()];
                   if (!fc || (fc.quotes.length === 0 && !fc.lifecycle && !fc.compliance)) return sub;
                   return {
@@ -1297,7 +1449,37 @@ export function usePartsListState() {
 
           return next;
         });
-        return { ...prev, rows: newRows };
+
+        // After FC data is merged, if the list-level hideZeroStock filter is on and
+        // the top suggestion has known zero stock, promote the first stocked sub to top
+        // and demote the zero-stock original into sub position. Persisted, so subsequent
+        // loads no longer depend on the render-time fallback (Decision #145 follow-up).
+        const hideZeroStock = listPrioritiesRef.current?.hideZeroStock;
+        const finalRows = hideZeroStock ? newRows.map(row => {
+          const top = row.replacement;
+          if (!top) return row;
+          const topQuotes = top.part.supplierQuotes;
+          const topHasZero = topQuotes && topQuotes.length > 0
+            && topQuotes.reduce((s, q) => s + (q.quantityAvailable ?? 0), 0) === 0;
+          if (!topHasZero) return row;
+          const subs = row.replacementAlternates ?? [];
+          const stockedIdx = subs.findIndex(s => {
+            const q = s.part.supplierQuotes;
+            return q && q.length > 0 && q.reduce((n, x) => n + (x.quantityAvailable ?? 0), 0) > 0;
+          });
+          if (stockedIdx < 0) return row;
+          const promoted = subs[stockedIdx];
+          const newSubs = [...subs];
+          newSubs.splice(stockedIdx, 1);
+          newSubs.unshift(top); // demote old top into position 0 of subs
+          return {
+            ...row,
+            replacement: promoted,
+            replacementAlternates: newSubs.slice(0, 2),
+          };
+        }) : newRows;
+
+        return { ...prev, rows: finalRows };
       });
 
       const listId = activeListIdRef.current;
@@ -1361,6 +1543,159 @@ export function usePartsListState() {
   /** Get the latest Mouser enrichment result for notification logic */
   const getFCEnrichResult = useCallback(() => fcEnrichResultRef.current, []);
 
+  // ── Zero-stock promotion (Decision #145 follow-up) ───────────────────────────
+  // When hideZeroStock is enabled, promote the first stocked sub into the top
+  // suggestion slot. Runs independently of FC enrichment so it fires on list
+  // load (where rows arrive with FC data already persisted) and whenever the
+  // user toggles the filter. Persists the swap so subsequent loads see the
+  // stocked rec as the top without needing the render-time fallback.
+  const promotionRunningRef = useRef(false);
+  useEffect(() => {
+    if (promotionRunningRef.current) return;
+    if (!listPrioritiesRef.current?.hideZeroStock) return;
+    if (state.phase !== 'results') return;
+
+    const totalStock = (rec?: { part: { supplierQuotes?: { quantityAvailable?: number }[] } }) => {
+      const q = rec?.part.supplierQuotes;
+      if (!q || q.length === 0) return -1; // unknown
+      return q.reduce((s, x) => s + (x.quantityAvailable ?? 0), 0);
+    };
+
+    const updates: Array<{ rowIndex: number; newTop: XrefRecommendation; newSubs: XrefRecommendation[] }> = [];
+    for (const row of state.rows) {
+      const top = row.replacement;
+      if (!top) continue;
+      if (totalStock(top) !== 0) continue; // top not known-zero
+      const subs = row.replacementAlternates ?? [];
+      const stockedIdx = subs.findIndex(s => totalStock(s) > 0);
+      if (stockedIdx < 0) continue;
+      const promoted = subs[stockedIdx];
+      const newSubs = [...subs];
+      newSubs.splice(stockedIdx, 1);
+      newSubs.unshift(top);
+      updates.push({ rowIndex: row.rowIndex, newTop: promoted, newSubs: newSubs.slice(0, 2) });
+    }
+    if (updates.length === 0) return;
+
+    promotionRunningRef.current = true;
+    const byIndex = new Map(updates.map(u => [u.rowIndex, u]));
+    setState(prev => {
+      const newRows = prev.rows.map(r => {
+        const u = byIndex.get(r.rowIndex);
+        return u ? { ...r, replacement: u.newTop, replacementAlternates: u.newSubs } : r;
+      });
+      const listId = activeListIdRef.current;
+      if (listId) updatePartsListSupabase(listId, newRows).catch(() => {});
+      return { ...prev, rows: newRows };
+    });
+    promotionRunningRef.current = false;
+  }, [state.phase, state.rows, state.replacementPriorities]);
+
+  // ── Deep-fetch for rows still zero-stock after promotion ─────────────────────
+  // If every persisted candidate in top-3 is zero-stock, fetch the full rec set
+  // for that MPN, FC-enrich the top candidates (getRecommendations returns recs
+  // with empty supplierQuotes by design — FC enrichment is deferred), then look
+  // for a stocked pick further down the list. Concurrency-limited to 2 since
+  // each worker now makes 2 upstream round trips + burns 30 FC calls per row.
+  const deepFetchRunningRef = useRef<Set<number>>(new Set());
+  const deepFetchAttemptedRef = useRef<Set<number>>(new Set());
+
+  // Reset the attempted set when hideZeroStock transitions off, so a subsequent
+  // toggle-on retries rows we previously gave up on.
+  useEffect(() => {
+    if (!listPrioritiesRef.current?.hideZeroStock) {
+      deepFetchAttemptedRef.current.clear();
+    }
+  }, [state.replacementPriorities]);
+
+  useEffect(() => {
+    if (!listPrioritiesRef.current?.hideZeroStock) return;
+    if (state.phase !== 'results') return;
+
+    const totalStock = (rec?: { part: { supplierQuotes?: { quantityAvailable?: number }[] } }) => {
+      const q = rec?.part.supplierQuotes;
+      if (!q || q.length === 0) return -1;
+      return q.reduce((s, x) => s + (x.quantityAvailable ?? 0), 0);
+    };
+
+    // Candidates: rows whose top is known-zero AND no sub has positive stock,
+    // AND we haven't already tried + exhausted deep-fetch for them this session.
+    const stuckRows = state.rows.filter(r => {
+      if (!r.replacement) return false;
+      if (deepFetchRunningRef.current.has(r.rowIndex)) return false;
+      if (deepFetchAttemptedRef.current.has(r.rowIndex)) return false;
+      if (totalStock(r.replacement) !== 0) return false;
+      const subs = r.replacementAlternates ?? [];
+      return !subs.some(s => totalStock(s) > 0);
+    });
+    if (stuckRows.length === 0) return;
+
+    const CONCURRENCY = 2;
+    const SCAN_TOP_N = 30; // under the 50-MPN /api/fc/enrich cap and keeps FC rate burn bounded
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < stuckRows.length) {
+        const row = stuckRows[cursor++];
+        const mpn = row.resolvedPart?.mpn;
+        if (!mpn) continue;
+        deepFetchRunningRef.current.add(row.rowIndex);
+        try {
+          const recs = await getRecommendations(mpn, undefined, listPrioritiesRef.current ?? undefined);
+
+          // getRecommendations returns candidates with empty supplierQuotes — FC
+          // enrichment is deferred by design. Batch-enrich the top-N so totalStock()
+          // can actually evaluate stock instead of always returning -1 (unknown).
+          const topMpns = recs.slice(0, SCAN_TOP_N).map(r => r.part.mpn);
+          const fcResults = topMpns.length > 0
+            ? await enrichWithFCBatch(topMpns).catch(() => ({} as Record<string, { quotes: import('@/lib/types').SupplierQuote[]; lifecycle: import('@/lib/types').LifecycleInfo | null; compliance: import('@/lib/types').ComplianceData | null }>))
+            : {};
+          const enriched = recs.slice(0, SCAN_TOP_N).map(rec => {
+            const fc = fcResults[rec.part.mpn.toLowerCase()];
+            if (!fc || fc.quotes.length === 0) return rec;
+            return {
+              ...rec,
+              part: {
+                ...rec.part,
+                supplierQuotes: fc.quotes,
+                ...(fc.lifecycle ? { lifecycleInfo: [...(rec.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
+                ...(fc.compliance ? { complianceData: [...(rec.part.complianceData ?? []), fc.compliance] } : {}),
+              },
+            };
+          });
+
+          const stocked = enriched.find(r => totalStock(r) > 0);
+          if (!stocked) {
+            // Genuinely no stocked alternative in top-N — don't retry this session.
+            deepFetchAttemptedRef.current.add(row.rowIndex);
+            continue;
+          }
+          // Build new top-3: stocked rec + next 2 non-failing (excluding stocked),
+          // using `enriched` so the persisted subs also carry FC data.
+          const nonFailingOthers = enriched
+            .filter(r => r.part.mpn !== stocked.part.mpn)
+            .filter(r => !r.matchDetails.some(d => d.ruleResult === 'fail'));
+          setState(prev => {
+            const newRows = prev.rows.map(r =>
+              r.rowIndex === row.rowIndex
+                ? { ...r, replacement: stocked, replacementAlternates: nonFailingOthers.slice(0, 2) }
+                : r,
+            );
+            const listId = activeListIdRef.current;
+            if (listId) updatePartsListSupabase(listId, newRows).catch(() => {});
+            return { ...prev, rows: newRows };
+          });
+        } catch {
+          // Swallow — row stays zero-stock; render-time fallback still shows it.
+          // Mark attempted so we don't hammer on every re-render.
+          deepFetchAttemptedRef.current.add(row.rowIndex);
+        } finally {
+          deepFetchRunningRef.current.delete(row.rowIndex);
+        }
+      }
+    };
+    Promise.all(Array.from({ length: Math.min(CONCURRENCY, stuckRows.length) }, worker)).catch(() => {});
+  }, [state.phase, state.rows, state.replacementPriorities]);
+
   // ----------------------------------------------------------
   // Derived values
   // ----------------------------------------------------------
@@ -1376,6 +1711,9 @@ export function usePartsListState() {
     handleParsedDataReady,
     handleColumnMappingConfirmed,
     handleColumnMappingCancelled,
+    handleConsolidateDuplicates,
+    handleLeaveDuplicatesAsIs,
+    handleSheetChange,
     handleLoadList,
     handleDeleteList,
     handleOpenModal,

@@ -33,12 +33,12 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { PartsListRow, XrefRecommendation, PartType, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
 import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
-// Column IDs that display suggestion/replacement data
-const SUGGESTION_COLUMN_IDS = new Set([
+// Column IDs that display replacement data
+const REPLACEMENT_COLUMN_IDS = new Set([
   'sys:top_suggestion',
   'sys:top_suggestion_mfr',
   'sys:top_suggestion_price',
@@ -47,21 +47,40 @@ const SUGGESTION_COLUMN_IDS = new Set([
 ]);
 
 /**
- * Extract up to 2 additional non-failing recommendations for sub-row display.
- * Uses live allRecommendations when available, falls back to persisted topNonFailingRecs.
+ * Extract up to (maxReplacements - 1) additional non-failing replacements for sub-row display.
+ * Uses live allRecommendations when available, falls back to persisted replacementAlternates.
  */
-function getSubSuggestions(row: PartsListRow): XrefRecommendation[] {
+function getAlternateReplacements(
+  row: PartsListRow,
+  hideZeroStock = false,
+  buckets?: RecommendationBucket[],
+  maxReplacements = 3,
+): XrefRecommendation[] {
+  let base: XrefRecommendation[];
   if (row.allRecommendations && row.allRecommendations.length >= 2) {
     const nonFailing = row.allRecommendations
       .filter(rec => !rec.matchDetails.some(d => d.ruleResult === 'fail'));
-    // If a preferred MPN is set, exclude it from sub-rows (it's the top suggestion)
-    const candidates = row.preferredMpn
+    // If a preferred MPN is set, exclude it from alternates (it's the top replacement)
+    base = row.preferredMpn
       ? nonFailing.filter(rec => rec.part.mpn !== row.preferredMpn)
-      : nonFailing.slice(1); // Skip the #1 (already the top suggestion)
-    return candidates.slice(0, 2);
+      : nonFailing.slice(1); // Skip #1 (already the top replacement)
+  } else {
+    // Fallback: persisted alternates (up to 4 positions #2–#5)
+    base = row.replacementAlternates ?? [];
   }
-  // Fallback: persisted top non-failing recs (already positions #2 and #3)
-  return row.topNonFailingRecs ?? [];
+
+  // If an alternate was promoted to effective top, exclude it from sub-rows
+  const effectiveTop = pickEffectiveTopRec(row, hideZeroStock, buckets);
+  if (effectiveTop && effectiveTop.part.mpn !== row.replacement?.part.mpn) {
+    base = base.filter(r => r.part.mpn !== effectiveTop.part.mpn);
+  }
+
+  // Apply filters: bucket match + zero-stock
+  base = base.filter(r => recPassesFilters(r, hideZeroStock, buckets));
+
+  // Cap to (maxReplacements - 1) since 1 slot is used by the top replacement
+  const subCap = Math.max(0, (maxReplacements ?? 3) - 1);
+  return base.slice(0, subCap);
 }
 
 interface PartsListTableProps {
@@ -93,6 +112,12 @@ interface PartsListTableProps {
   onSetPartType?: (rowIndex: number, partType: PartType) => void;
   /** Column IDs that were resolved via portable mapping (mapped:* or header remapping) */
   portableColumnIds?: Set<string>;
+  /** List-level hideZeroStock filter — promotes a stocked sub-rec over a zero-stock top at render time */
+  hideZeroStock?: boolean;
+  /** List-level bucket filter for sub-rows (multi-select). Empty / undefined = all. */
+  buckets?: RecommendationBucket[];
+  /** Max number of total replacements (top + alternates) rendered per row. */
+  maxReplacements?: number;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -314,6 +339,44 @@ function formatPrice(value: number, currency: string): string {
   }
 }
 
+/** A rec is "known zero stock" iff supplierQuotes has data AND sums to 0. Unknown stock stays visible. */
+function hasKnownZeroStock(rec: XrefRecommendation | undefined): boolean {
+  const quotes = rec?.part.supplierQuotes;
+  if (!quotes || quotes.length === 0) return false;
+  return quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0) === 0;
+}
+
+/** Does a rec match the selected buckets? Empty / undefined means "all". */
+function recMatchesBuckets(rec: XrefRecommendation, buckets?: RecommendationBucket[]): boolean {
+  if (!buckets || buckets.length === 0) return true;
+  return buckets.includes(deriveRecommendationBucket(rec));
+}
+
+/** A rec passes the filters when it matches the bucket set AND isn't known-zero-stock (if filtered). */
+function recPassesFilters(
+  rec: XrefRecommendation | undefined,
+  hideZeroStock: boolean,
+  buckets?: RecommendationBucket[],
+): boolean {
+  if (!rec) return false;
+  if (hideZeroStock && hasKnownZeroStock(rec)) return false;
+  return recMatchesBuckets(rec, buckets);
+}
+
+/** Promote the first filter-passing candidate from [top, ...subs] to be the displayed top.
+ *  Falls back to the original top if nothing in the persisted set passes. */
+function pickEffectiveTopRec(
+  row: PartsListRow,
+  hideZeroStock: boolean,
+  buckets?: RecommendationBucket[],
+): XrefRecommendation | undefined {
+  const base = row.replacement;
+  if (!base) return base;
+  if (recPassesFilters(base, hideZeroStock, buckets)) return base;
+  const passingAlt = row.replacementAlternates?.find(r => recPassesFilters(r, hideZeroStock, buckets));
+  return passingAlt ?? base;
+}
+
 function CellRenderer({
   column,
   row,
@@ -327,6 +390,8 @@ function CellRenderer({
   columnMap,
   onCellEdit,
   onSetPartType,
+  hideZeroStock,
+  buckets,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -340,17 +405,25 @@ function CellRenderer({
   isSubRow?: boolean;
   onCellEdit?: (rowIndex: number, columnId: string, newValue: string) => void;
   onSetPartType?: (rowIndex: number, partType: PartType) => void;
+  hideZeroStock?: boolean;
+  buckets?: RecommendationBucket[];
 }) {
   const { t } = useTranslation();
 
-  // Sub-rows only render suggestion system columns
+  // Sub-rows only render replacement system columns
   if (isSubRow && column.source !== 'system') return null;
-  if (isSubRow && !SUGGESTION_COLUMN_IDS.has(column.id)) return null;
+  if (isSubRow && !REPLACEMENT_COLUMN_IDS.has(column.id)) return null;
+
+  // Hide zero-stock sub-row entirely when the filter is on
+  if (isSubRow && hideZeroStock && hasKnownZeroStock(recommendation)) return null;
 
   // System columns have custom rendering
   if (column.source === 'system') {
-    const recCount = row.allRecommendations?.length ?? row.recommendationCount ?? (row.suggestedReplacement ? 1 : 0);
-    const topRec = recommendation ?? row.suggestedReplacement;
+    const recCount = row.allRecommendations?.length ?? row.recommendationCount ?? (row.replacement ? 1 : 0);
+    // For parent rows, honor the list-level hideZeroStock filter by picking the first
+    // stocked candidate from persisted recs (replacement + replacementAlternates).
+    const effectiveTop = recommendation ?? pickEffectiveTopRec(row, !!hideZeroStock, buckets);
+    const topRec = effectiveTop;
 
     switch (column.id) {
       case 'sys:row_number':
@@ -635,6 +708,9 @@ export default function PartsListTable({
   onCancelValidation,
   onSetPartType,
   portableColumnIds,
+  hideZeroStock,
+  buckets,
+  maxReplacements,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -642,7 +718,7 @@ export default function PartsListTable({
   const hasSelection = selectedRows !== undefined && onToggleRow !== undefined;
   const allSelected = hasSelection && rows.length > 0 && rows.every(r => selectedRows!.has(r.rowIndex));
   const someSelected = hasSelection && rows.some(r => selectedRows!.has(r.rowIndex));
-  const hasSuggestionColumns = columns.some(col => SUGGESTION_COLUMN_IDS.has(col.id));
+  const hasReplacementColumns = columns.some(col => REPLACEMENT_COLUMN_IDS.has(col.id));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', px: 3 }}>
@@ -760,8 +836,10 @@ export default function PartsListTable({
           </TableHead>
           <TableBody>
             {rows.map((row) => {
-              const subSuggestions = hasSuggestionColumns ? getSubSuggestions(row) : [];
-              const hasSubRows = subSuggestions.length > 0;
+              const alternates = hasReplacementColumns
+                ? getAlternateReplacements(row, hideZeroStock, buckets, maxReplacements)
+                : [];
+              const hasSubRows = alternates.length > 0;
 
               return (
                 <Fragment key={row.rowIndex}>
@@ -813,13 +891,15 @@ export default function PartsListTable({
                           columnMap={columnMap}
                           onCellEdit={onCellEdit}
                           onSetPartType={onSetPartType}
+                          hideZeroStock={hideZeroStock}
+                          buckets={buckets}
                         />
                       </TableCell>
                     ))}
                   </TableRow>
 
-                  {/* Suggestion sub-rows */}
-                  {subSuggestions.map((rec, subIdx) => (
+                  {/* Alternate replacement sub-rows */}
+                  {alternates.map((rec, subIdx) => (
                     <TableRow
                       key={`${row.rowIndex}-sub-${subIdx}`}
                       onClick={() => onRowClick(row.rowIndex)}
@@ -827,7 +907,7 @@ export default function PartsListTable({
                         cursor: 'pointer',
                         '& td': {
                           py: '4px',
-                          ...(subIdx < subSuggestions.length - 1
+                          ...(subIdx < alternates.length - 1
                             ? { borderBottom: 'none' }
                             : { borderBottom: '2px solid', borderColor: 'divider' }),
                         },
@@ -846,7 +926,7 @@ export default function PartsListTable({
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {SUGGESTION_COLUMN_IDS.has(col.id) ? (
+                          {REPLACEMENT_COLUMN_IDS.has(col.id) ? (
                             <CellRenderer
                               column={col}
                               row={row}
@@ -854,6 +934,8 @@ export default function PartsListTable({
                               isSubRow
                               onRowClick={onRowClick}
                               currency={currency}
+                              hideZeroStock={hideZeroStock}
+                              buckets={buckets}
                             />
                           ) : null}
                         </TableCell>

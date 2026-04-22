@@ -60,7 +60,7 @@ export default function PartDetailModal({
 
   if (!row) return null;
 
-  const recs = row.allRecommendations ?? (row.suggestedReplacement ? [row.suggestedReplacement] : []);
+  const recs = row.allRecommendations ?? (row.replacement ? [row.replacement] : []);
   const title = row.resolvedPart
     ? `${row.resolvedPart.mpn} — ${row.resolvedPart.manufacturer}`
     : row.rawMpn;

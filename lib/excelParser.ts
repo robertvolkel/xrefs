@@ -6,30 +6,77 @@
 import * as XLSX from 'xlsx';
 import { ParsedSpreadsheet, ColumnMapping } from './types';
 
-/** Parse a File object into a ParsedSpreadsheet */
-export async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadsheet> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
-
-  // Use the first sheet
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('Spreadsheet has no sheets');
-
+/** Read the raw rows for a given sheet */
+function readSheetRows(workbook: XLSX.WorkBook, sheetName: string): string[][] {
   const sheet = workbook.Sheets[sheetName];
+  if (!sheet) return [];
   const raw: string[][] = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: '',
     raw: false,
   });
+  return raw;
+}
 
-  if (raw.length < 2) throw new Error('Spreadsheet must have a header row and at least one data row');
+/**
+ * Parse a File object into a ParsedSpreadsheet.
+ * If `sheetName` is provided, reads that sheet. Otherwise defaults to the first
+ * sheet — and, if the workbook has multiple sheets but the first is empty,
+ * automatically falls back to the first non-empty sheet.
+ */
+export async function parseSpreadsheetFile(
+  file: File,
+  sheetName?: string,
+): Promise<ParsedSpreadsheet> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+
+  const sheetNames = workbook.SheetNames;
+  if (sheetNames.length === 0) throw new Error('Spreadsheet has no sheets');
+
+  // Resolve which sheet to read
+  let activeSheet = sheetName && sheetNames.includes(sheetName) ? sheetName : sheetNames[0];
+  let raw = readSheetRows(workbook, activeSheet);
+
+  // If caller didn't specify a sheet and the default is empty, pick the first
+  // non-empty sheet so users with a summary/cover tab don't hit a dead end.
+  if (!sheetName && raw.length < 2 && sheetNames.length > 1) {
+    for (const name of sheetNames) {
+      const candidate = readSheetRows(workbook, name);
+      if (candidate.length >= 2) {
+        activeSheet = name;
+        raw = candidate;
+        break;
+      }
+    }
+  }
+
+  if (raw.length < 2) {
+    throw new Error(
+      sheetNames.length > 1
+        ? `Sheet "${activeSheet}" has no data. Pick a different sheet to continue.`
+        : 'Spreadsheet must have a header row and at least one data row',
+    );
+  }
 
   const headers = raw[0].map(h => String(h).trim());
   const rows = raw.slice(1).filter(row => row.some(cell => String(cell).trim() !== ''));
 
-  if (rows.length === 0) throw new Error('No data rows found in spreadsheet');
+  if (rows.length === 0) {
+    throw new Error(
+      sheetNames.length > 1
+        ? `Sheet "${activeSheet}" has no data rows. Pick a different sheet to continue.`
+        : 'No data rows found in spreadsheet',
+    );
+  }
 
-  return { headers, rows: rows.map(r => r.map(c => String(c).trim())), fileName: file.name };
+  return {
+    headers,
+    rows: rows.map(r => r.map(c => String(c).trim())),
+    fileName: file.name,
+    sheetNames,
+    activeSheet,
+  };
 }
 
 // ============================================================
@@ -62,6 +109,10 @@ export const CPN_PATTERNS = [
 export const IPN_PATTERNS = [
   'ipn', 'internal part number', 'internal pn', 'internal p/n',
   'internal number',
+];
+
+export const QTY_PATTERNS = [
+  'qty', 'quantity', 'qnty', 'count', 'amount', 'qty.',
 ];
 
 /**
@@ -112,14 +163,15 @@ function scoreContentAsMPN(rows: string[][], colIndex: number): number {
  * with content-based heuristics as a tiebreaker.
  */
 export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnMapping | null {
-  type Field = 'mpn' | 'mfr' | 'desc' | 'cpn' | 'ipn';
-  const fields: Field[] = ['mpn', 'mfr', 'desc', 'cpn', 'ipn'];
+  type Field = 'mpn' | 'mfr' | 'desc' | 'cpn' | 'ipn' | 'qty';
+  const fields: Field[] = ['mpn', 'mfr', 'desc', 'cpn', 'ipn', 'qty'];
   const patternMap: Record<Field, string[]> = {
     mpn: MPN_PATTERNS,
     mfr: MFR_PATTERNS,
     desc: DESC_PATTERNS,
     cpn: CPN_PATTERNS,
     ipn: IPN_PATTERNS,
+    qty: QTY_PATTERNS,
   };
 
   // Score every column for every field (header-based)
@@ -129,6 +181,7 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     desc: headers.map((h) => scoreHeader(h, patternMap.desc)),
     cpn: headers.map((h) => scoreHeader(h, patternMap.cpn)),
     ipn: headers.map((h) => scoreHeader(h, patternMap.ipn)),
+    qty: headers.map((h) => scoreHeader(h, patternMap.qty)),
   };
 
   // Add content-based bonus when rows are available
@@ -139,10 +192,10 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     }
   }
 
-  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC > CPN).
+  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC > CPN > IPN > QTY).
   // Each column can only be assigned to one field.
   const assigned = new Set<number>();
-  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1, cpn: -1, ipn: -1 };
+  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1, cpn: -1, ipn: -1, qty: -1 };
 
   for (const field of fields) {
     let bestIdx = -1;
@@ -168,5 +221,6 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     descriptionColumn: result.desc,
     ...(result.cpn >= 0 ? { cpnColumn: result.cpn } : {}),
     ...(result.ipn >= 0 ? { ipnColumn: result.ipn } : {}),
+    ...(result.qty >= 0 ? { qtyColumn: result.qty } : {}),
   };
 }

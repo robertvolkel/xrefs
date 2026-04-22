@@ -28,7 +28,7 @@ import {
 } from '@/lib/supabasePartsListStorage';
 import { setPendingFile, setPendingParsedData, setPendingEmptyList } from '@/lib/pendingFile';
 import { ParsedSpreadsheet } from '@/lib/types';
-import { useViewTemplates } from '@/hooks/useViewConfig';
+import { useMasterViews } from '@/hooks/useMasterViews';
 import ParticleWaveBackground from '../ParticleWaveBackground';
 import ListCard from './ListCard';
 import NewListDialog from './NewListDialog';
@@ -54,7 +54,7 @@ function savePinnedIds(ids: Set<string>): void {
 export default function ListsDashboard() {
   const router = useRouter();
   const { t } = useTranslation();
-  const { views } = useViewTemplates();
+  const { masterViews } = useMasterViews();
   const [lists, setLists] = useState<PartsListSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -428,7 +428,7 @@ export default function ListsDashboard() {
         fileName={selectedFile?.name ?? (parsedFromPaste ? parsedFromPaste.fileName : '')}
         onConfirm={handleDialogConfirm}
         onCancel={handleDialogCancel}
-        views={views}
+        views={masterViews}
       />
 
       {/* List settings dialog */}
@@ -443,7 +443,7 @@ export default function ListsDashboard() {
         initialDefaultViewId={settingsList?.defaultViewId ?? ''}
         onConfirm={handleSettingsSave}
         onCancel={() => setSettingsList(null)}
-        views={views}
+        views={masterViews}
       />
 
       {/* Currency-change refresh confirmation */}

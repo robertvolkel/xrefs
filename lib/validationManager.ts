@@ -133,7 +133,12 @@ export async function startBackgroundValidation(
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const item: BatchValidateItem = JSON.parse(line);
+          const rawItem = JSON.parse(line) as BatchValidateItem & { suggestedReplacement?: import('./types').XrefRecommendation };
+          // Wire-format back-compat: accept either `replacement` (current) or
+          // `suggestedReplacement` (pre-Apr-2026 server) from the NDJSON stream.
+          const item: BatchValidateItem = rawItem.replacement
+            ? rawItem
+            : { ...rawItem, replacement: rawItem.suggestedReplacement };
           processed++;
 
           const idx = active.rows.findIndex((r) => r.rowIndex === item.rowIndex);
@@ -146,7 +151,7 @@ export async function startBackgroundValidation(
               ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
               resolvedPart: item.resolvedPart,
               sourceAttributes: item.sourceAttributes,
-              suggestedReplacement: item.suggestedReplacement,
+              replacement: item.replacement,
               allRecommendations: item.allRecommendations,
               enrichedData: item.enrichedData,
               errorMessage: item.errorMessage,
