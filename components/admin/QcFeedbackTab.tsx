@@ -18,7 +18,6 @@ import {
   Badge,
   TextField,
   Button,
-  CircularProgress,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -34,6 +33,7 @@ import {
 } from '@/lib/api';
 import { statusColor } from './qcConstants';
 import QcFeedbackDetailView from './QcFeedbackDetailView';
+import PaginatedTableSkeleton from './PaginatedTableSkeleton';
 
 type StatusFilter = FeedbackStatus | 'all';
 
@@ -201,9 +201,7 @@ export default function QcFeedbackTab() {
       {/* Feedback table */}
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
         {loading ? (
-          <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={24} />
-          </Box>
+          <PaginatedTableSkeleton columns={columns} />
         ) : items.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>

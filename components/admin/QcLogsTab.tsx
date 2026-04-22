@@ -47,6 +47,7 @@ import { statusColor } from './qcConstants';
 import QcFeedbackCard from './QcFeedbackCard';
 import QcRecommendationSummary from './QcRecommendationSummary';
 import QcAnalysisDrawer from './QcAnalysisDrawer';
+import PaginatedTableSkeleton from './PaginatedTableSkeleton';
 
 type SourceFilter = 'all' | 'chat' | 'direct' | 'batch';
 
@@ -390,9 +391,7 @@ export default function QcLogsTab() {
       {/* Log table */}
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
         {logsLoading ? (
-          <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={24} />
-          </Box>
+          <PaginatedTableSkeleton columns={columns} />
         ) : logs.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>

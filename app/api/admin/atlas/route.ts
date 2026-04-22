@@ -66,11 +66,16 @@ export async function GET() {
       supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
     ]);
 
-    // Build manufacturer identity lookup from atlas_manufacturers (new table)
+    // Build manufacturer identity lookup from atlas_manufacturers (new table).
+    // atlas_products.manufacturer typically uses English-only names (e.g. "ISC") while
+    // name_display is the combined "ENGLISH Chinese" form (e.g. "ISC 无锡固电") — so we
+    // register the identity under both name_display AND name_en so lookups hit either way.
     const mfrIdentity = new Map<string, { nameEn: string; nameZh: string | null; slug: string; id: number; enabled: boolean }>();
     if (!mfrRecordsErr && mfrRecords) {
       for (const r of mfrRecords as { name_display: string; name_en: string; name_zh: string | null; slug: string; id: number; enabled: boolean }[]) {
-        mfrIdentity.set(r.name_display, { nameEn: r.name_en, nameZh: r.name_zh, slug: r.slug, id: r.id, enabled: r.enabled });
+        const identity = { nameEn: r.name_en, nameZh: r.name_zh, slug: r.slug, id: r.id, enabled: r.enabled };
+        if (r.name_display) mfrIdentity.set(r.name_display, identity);
+        if (r.name_en && !mfrIdentity.has(r.name_en)) mfrIdentity.set(r.name_en, identity);
       }
     }
 

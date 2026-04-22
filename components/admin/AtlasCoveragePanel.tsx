@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
   Chip,
-  LinearProgress,
   Table,
   TableHead,
   TableBody,
@@ -13,13 +12,13 @@ import {
   TableCell,
   TableSortLabel,
   Button,
-  CircularProgress,
+  Skeleton,
   Alert,
   GlobalStyles,
 } from '@mui/material';
 import PrintOutlinedIcon from '@mui/icons-material/PrintOutlined';
 import { useTranslation } from 'react-i18next';
-import { getAllLogicTables } from '@/lib/logicTables';
+import type { ComponentCategory } from '@/lib/types';
 
 interface AtlasSummary {
   totalProducts: number;
@@ -66,22 +65,30 @@ interface AtlasResponse {
   familyNames: Record<string, string>;
 }
 
-const FAMILY_BLOCKS: { label: string; ids: string[] }[] = [
-  { label: 'Passives', ids: ['12', '13', '52', '53', '54', '55', '58', '59', '60', '61', '64', '65', '66', '67', '68', '69', '70', '71', '72'] },
-  { label: 'Discrete Semiconductors', ids: ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9'] },
-  { label: 'ICs & Power Management', ids: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10'] },
-  { label: 'Frequency Control', ids: ['D1', 'D2'] },
-  { label: 'Optoelectronics', ids: ['E1'] },
-  { label: 'Relays', ids: ['F1', 'F2'] },
+const CATEGORY_BLOCKS: { label: string; categories: ComponentCategory[] }[] = [
+  { label: 'Passives', categories: ['Capacitors', 'Resistors', 'Inductors', 'Filters'] },
+  { label: 'Discretes', categories: ['Diodes', 'Transistors', 'Thyristors'] },
+  {
+    label: 'Power Management',
+    categories: ['Voltage Regulators', 'Gate Drivers', 'Protection', 'Power Supplies', 'Transformers', 'Battery Products'],
+  },
+  { label: 'Analog & Data Converters', categories: ['Amplifiers', 'Voltage References', 'ADCs', 'DACs'] },
+  {
+    label: 'Digital ICs & Memory',
+    categories: ['Logic ICs', 'Interface ICs', 'Microcontrollers', 'Processors', 'Memory', 'ICs'],
+  },
+  { label: 'Frequency & Timing', categories: ['Crystals', 'Timers and Oscillators'] },
+  {
+    label: 'Optoelectronics & Electromechanical',
+    categories: ['Optocouplers', 'LEDs and Optoelectronics', 'Relays', 'Switches', 'Motors and Fans'],
+  },
+  {
+    label: 'Sensors, RF & Connectivity',
+    categories: ['Sensors', 'RF and Wireless', 'Audio', 'Connectors', 'Cables and Wires', 'Test and Measurement', 'Development Tools'],
+  },
 ];
 
-const allLogicTables = getAllLogicTables();
-const LOCAL_FAMILY_NAMES: Record<string, string> = Object.fromEntries(
-  allLogicTables.map((t) => [t.familyId, t.familyName]),
-);
-const TOTAL_FAMILIES = allLogicTables.length;
-
-type SortKey = 'products' | 'coverage' | 'name';
+type SortKey = 'products' | 'name';
 type SortDir = 'asc' | 'desc';
 
 function formatDate(iso: string | null): string {
@@ -94,6 +101,36 @@ function mfrDisplayName(m: AtlasMfr): string {
   return m.nameEn || m.manufacturer;
 }
 
+const PDF_TITLE = 'Atlas MFR Report';
+
+function handleAtlasPrint(rootEl: HTMLElement) {
+  if (document.getElementById('atlas-print-portal')) return;
+
+  const prevTitle = document.title;
+  document.title = PDF_TITLE;
+
+  const clone = rootEl.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('[data-no-print="true"]').forEach((el) => el.remove());
+
+  const portal = document.createElement('div');
+  portal.id = 'atlas-print-portal';
+  portal.setAttribute('data-mui-color-scheme', 'light');
+  portal.appendChild(clone);
+  document.body.appendChild(portal);
+  document.body.classList.add('atlas-printing');
+
+  const cleanup = () => {
+    document.body.classList.remove('atlas-printing');
+    if (portal.parentNode) portal.remove();
+    document.title = prevTitle;
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+
+  // Give the browser a tick to apply the DOM + class before opening print dialog
+  setTimeout(() => window.print(), 80);
+}
+
 export default function AtlasCoveragePanel() {
   const { t } = useTranslation();
   const [data, setData] = useState<AtlasResponse | null>(null);
@@ -102,6 +139,8 @@ export default function AtlasCoveragePanel() {
 
   const [sortKey, setSortKey] = useState<SortKey>('products');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,25 +159,32 @@ export default function AtlasCoveragePanel() {
     return () => { cancelled = true; };
   }, []);
 
-  // Aggregate product count per family from familyBreakdown
-  const familyCounts = useMemo<Record<string, number>>(() => {
+  // Per-category product counts + MFR counts, aggregated across enabled MFRs.
+  // Includes all familyBreakdown rows — both scorable (familyId set) and non-scorable (familyId null).
+  const { categoryCounts, mfrsPerCategory } = useMemo(() => {
     const counts: Record<string, number> = {};
-    if (!data) return counts;
+    const sets: Record<string, Set<string>> = {};
+    if (!data) return { categoryCounts: counts, mfrsPerCategory: {} as Record<string, number> };
+    const enabledSet = new Set(data.manufacturers.filter((m) => m.enabled).map((m) => m.manufacturer));
     for (const fb of data.familyBreakdown) {
-      if (!fb.familyId) continue;
-      counts[fb.familyId] = (counts[fb.familyId] ?? 0) + fb.count;
+      if (!enabledSet.has(fb.manufacturer)) continue;
+      counts[fb.category] = (counts[fb.category] ?? 0) + fb.count;
+      if (!sets[fb.category]) sets[fb.category] = new Set();
+      sets[fb.category].add(fb.manufacturer);
     }
-    return counts;
+    const mfrCounts: Record<string, number> = {};
+    for (const [cat, set] of Object.entries(sets)) mfrCounts[cat] = set.size;
+    return { categoryCounts: counts, mfrsPerCategory: mfrCounts };
   }, [data]);
 
-  const maxFamilyCount = useMemo(() => {
-    const values = Object.values(familyCounts);
-    return values.length ? Math.max(...values) : 0;
-  }, [familyCounts]);
+  const categoriesWithCoverage = useMemo(
+    () => Object.keys(categoryCounts).filter((c) => categoryCounts[c] > 0).length,
+    [categoryCounts],
+  );
 
-  const familiesWithCoverage = useMemo(
-    () => Object.keys(familyCounts).filter((f) => familyCounts[f] > 0).length,
-    [familyCounts],
+  const coveredBlocks = useMemo(
+    () => CATEGORY_BLOCKS.filter((b) => b.categories.some((c) => (categoryCounts[c] ?? 0) > 0)).length,
+    [categoryCounts],
   );
 
   const sortedMfrs = useMemo(() => {
@@ -147,17 +193,11 @@ export default function AtlasCoveragePanel() {
     arr.sort((a, b) => {
       let cmp = 0;
       if (sortKey === 'products') cmp = a.productCount - b.productCount;
-      else if (sortKey === 'coverage') cmp = a.coveragePct - b.coveragePct;
       else if (sortKey === 'name') cmp = mfrDisplayName(a).localeCompare(mfrDisplayName(b));
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return arr;
   }, [data, sortKey, sortDir]);
-
-  const maxMfrProducts = useMemo(
-    () => (sortedMfrs.length ? Math.max(...sortedMfrs.map((m) => m.productCount)) : 0),
-    [sortedMfrs],
-  );
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -169,11 +209,7 @@ export default function AtlasCoveragePanel() {
   };
 
   if (loading) {
-    return (
-      <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-        <CircularProgress size={24} />
-      </Box>
-    );
+    return <AtlasCoverageSkeleton />;
   }
 
   if (error || !data) {
@@ -185,32 +221,53 @@ export default function AtlasCoveragePanel() {
   }
 
   const s = data.summary;
-  const livePct = s.targetManufacturers > 0 ? Math.round((s.enabledManufacturers / s.targetManufacturers) * 100) : 0;
-  const scorablePct = s.totalProducts > 0 ? Math.round((s.scorableProducts / s.totalProducts) * 100) : 0;
   const generatedOn = formatDate(new Date().toISOString());
+  const lastUpdatedFmt = formatDate(s.lastUpdated);
 
   return (
     <>
       <GlobalStyles
         styles={{
+          // Portal is invisible on screen — only appears during print
+          '#atlas-print-portal': { display: 'none' },
           '@media print': {
-            '@page': { margin: '0.5in' },
+            '@page': { margin: '0.5in', size: 'letter' },
             'html, body': {
               background: '#fff !important',
-              color: '#000 !important',
+              margin: 0,
+              padding: 0,
             },
-            '#admin-page-header, #admin-nav, [data-no-print="true"]': {
+            // Hide all non-portal body children when printing
+            'body.atlas-printing > *:not(#atlas-print-portal)': {
               display: 'none !important',
             },
-            '.atlas-coverage-print-root': {
-              overflow: 'visible !important',
-              padding: '0 !important',
-              background: '#fff !important',
-              color: '#000 !important',
+            // Reveal portal and force light theme via MUI CSS variable overrides
+            'body.atlas-printing #atlas-print-portal': {
+              display: 'block !important',
+              background: '#fff',
+              color: 'rgba(0, 0, 0, 0.87)',
+              padding: 0,
+              colorScheme: 'light',
+              '--mui-palette-mode': 'light',
+              '--mui-palette-text-primary': 'rgba(0, 0, 0, 0.87)',
+              '--mui-palette-text-secondary': 'rgba(0, 0, 0, 0.6)',
+              '--mui-palette-text-disabled': 'rgba(0, 0, 0, 0.38)',
+              '--mui-palette-background-paper': '#fff',
+              '--mui-palette-background-default': '#fff',
+              '--mui-palette-divider': 'rgba(0, 0, 0, 0.18)',
+              '--mui-palette-action-active': 'rgba(0, 0, 0, 0.54)',
+              '--mui-palette-action-selected': 'rgba(0, 0, 0, 0.06)',
+              '--mui-palette-action-hover': 'rgba(0, 0, 0, 0.04)',
+              '--mui-palette-action-disabled': 'rgba(0, 0, 0, 0.26)',
+              '--mui-palette-action-disabledBackground': 'rgba(0, 0, 0, 0.08)',
+              '--mui-palette-primary-main': '#1976d2',
+              '--mui-palette-common-black': '#000',
+              '--mui-palette-common-white': '#fff',
             },
-            '.atlas-coverage-print-root *': {
+            'body.atlas-printing #atlas-print-portal *': {
               WebkitPrintColorAdjust: 'exact',
               printColorAdjust: 'exact',
+              boxShadow: 'none !important',
             },
             '.atlas-coverage-section': {
               pageBreakInside: 'avoid',
@@ -220,11 +277,16 @@ export default function AtlasCoveragePanel() {
               pageBreakBefore: 'always',
               breakBefore: 'page',
             },
+            '.atlas-coverage-print-root': {
+              maxWidth: 'none !important',
+              padding: '0 !important',
+            },
           },
         }}
       />
 
       <Box
+        ref={rootRef}
         className="atlas-coverage-print-root"
         sx={{
           px: 3,
@@ -257,14 +319,14 @@ export default function AtlasCoveragePanel() {
             variant="outlined"
             size="small"
             startIcon={<PrintOutlinedIcon fontSize="small" />}
-            onClick={() => window.print()}
+            onClick={() => rootRef.current && handleAtlasPrint(rootRef.current)}
             sx={{ flexShrink: 0 }}
           >
             {t('admin.atlasCoverageReport.exportPdf')}
           </Button>
         </Box>
 
-        {/* Hero: Target vs. Live */}
+        {/* Hero: identified dataset */}
         <Box
           className="atlas-coverage-section"
           sx={{
@@ -276,52 +338,27 @@ export default function AtlasCoveragePanel() {
             bgcolor: 'background.paper',
           }}
         >
-          <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}
+          >
             {t('admin.atlasCoverageReport.heroEyebrow')}
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mt: 1, flexWrap: 'wrap' }}>
-            <Typography variant="h3" fontWeight={700} sx={{ lineHeight: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, mt: 1, flexWrap: 'wrap' }}>
+            <Typography variant="h2" fontWeight={700} sx={{ lineHeight: 1 }}>
               {s.targetManufacturers.toLocaleString()}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {t('admin.atlasCoverageReport.targetLabel')}
-            </Typography>
-            <Typography variant="body2" sx={{ mx: 1, color: 'text.disabled' }}>·</Typography>
-            <Typography variant="h4" fontWeight={600} sx={{ lineHeight: 1 }}>
-              {s.enabledManufacturers.toLocaleString()}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {t('admin.atlasCoverageReport.liveLabel')}
+            <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
+              {t('admin.atlasCoverageReport.heroHeadlineSuffix')}
             </Typography>
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, maxWidth: 720, lineHeight: 1.6 }}>
-            {t('admin.atlasCoverageReport.heroBody')}
+            {t('admin.atlasCoverageReport.heroBody', {
+              live: s.enabledManufacturers.toLocaleString(),
+              products: s.enabledProducts.toLocaleString(),
+            })}
           </Typography>
-          <Box sx={{ mt: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t('admin.atlasCoverageReport.ingestedLabel')}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {livePct}% ({s.enabledManufacturers}/{s.targetManufacturers})
-              </Typography>
-            </Box>
-            <LinearProgress
-              variant="determinate"
-              value={livePct}
-              sx={{
-                height: 8,
-                borderRadius: 4,
-                bgcolor: 'action.hover',
-                '& .MuiLinearProgress-bar': { borderRadius: 4 },
-              }}
-            />
-          </Box>
-          {s.queuedManufacturers > 0 && (
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
-              {t('admin.atlasCoverageReport.queuedNote', { count: s.queuedManufacturers })}
-            </Typography>
-          )}
         </Box>
 
         {/* KPI tiles */}
@@ -337,9 +374,8 @@ export default function AtlasCoveragePanel() {
           <KpiTile
             label={t('admin.atlasCoverageReport.kpiLiveMfrs')}
             value={s.enabledManufacturers.toLocaleString()}
-            subtitle={t('admin.atlasCoverageReport.kpiLiveMfrsSub', {
-              disabled: s.totalManufacturers - s.enabledManufacturers,
-            })}
+            subtitle={t('admin.atlasCoverageReport.kpiLiveMfrsSub')}
+            accent
           />
           <KpiTile
             label={t('admin.atlasCoverageReport.kpiTotalProducts')}
@@ -347,121 +383,116 @@ export default function AtlasCoveragePanel() {
             subtitle={t('admin.atlasCoverageReport.kpiTotalProductsSub')}
           />
           <KpiTile
-            label={t('admin.atlasCoverageReport.kpiScorable')}
-            value={s.scorableProducts.toLocaleString()}
-            subtitle={`${scorablePct}% ${t('admin.atlasCoverageReport.kpiScorableSub')}`}
+            label={t('admin.atlasCoverageReport.kpiCategories')}
+            value={categoriesWithCoverage.toLocaleString()}
+            subtitle={t('admin.atlasCoverageReport.kpiCategoriesSub', { blocks: coveredBlocks })}
           />
           <KpiTile
-            label={t('admin.atlasCoverageReport.kpiCategories')}
-            value={`${familiesWithCoverage} / ${TOTAL_FAMILIES}`}
-            subtitle={t('admin.atlasCoverageReport.kpiCategoriesSub')}
+            label={t('admin.atlasCoverageReport.kpiFreshness')}
+            value={lastUpdatedFmt}
+            subtitle={t('admin.atlasCoverageReport.kpiFreshnessSub')}
           />
         </Box>
 
-        {/* Category coverage matrix */}
+        {/* Product categories covered by Atlas MFRs */}
         <Box className="atlas-coverage-section" sx={{ mb: 4 }}>
           <Typography variant="body1" fontWeight={600} sx={{ mb: 0.5 }}>
             {t('admin.atlasCoverageReport.categoryCoverageTitle')}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
             {t('admin.atlasCoverageReport.categoryCoverageSubtitle', {
-              covered: familiesWithCoverage,
-              total: TOTAL_FAMILIES,
+              covered: categoriesWithCoverage,
+              blocks: coveredBlocks,
             })}
           </Typography>
 
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            {FAMILY_BLOCKS.map((block) => (
-              <Box key={block.label}>
-                <Typography
-                  variant="caption"
-                  fontWeight={600}
-                  sx={{ mb: 1, display: 'block', textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary' }}
-                >
-                  {block.label}
-                </Typography>
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
-                    gap: 1,
-                  }}
-                >
-                  {block.ids.map((id) => {
-                    const count = familyCounts[id] ?? 0;
-                    const name = data.familyNames[id] || LOCAL_FAMILY_NAMES[id] || id;
-                    const covered = count > 0;
-                    const barPct = covered && maxFamilyCount > 0 ? (count / maxFamilyCount) * 100 : 0;
-                    return (
-                      <Box
-                        key={id}
-                        sx={{
-                          p: 1.25,
-                          border: 1,
-                          borderColor: covered ? 'divider' : 'action.disabledBackground',
-                          borderRadius: 1,
-                          bgcolor: covered ? 'background.paper' : 'action.hover',
-                          opacity: covered ? 1 : 0.55,
-                          minHeight: 68,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          justifyContent: 'space-between',
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
+            {CATEGORY_BLOCKS.map((block) => {
+              const represented = block.categories
+                .filter((c) => (categoryCounts[c] ?? 0) > 0)
+                .sort((a, b) => (categoryCounts[b] ?? 0) - (categoryCounts[a] ?? 0));
+              if (represented.length === 0) return null;
+              return (
+                <Box key={block.label}>
+                  <Typography
+                    variant="caption"
+                    fontWeight={600}
+                    sx={{ mb: 1, display: 'block', textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary' }}
+                  >
+                    {block.label}
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
+                      gap: 1,
+                    }}
+                  >
+                    {represented.map((cat) => {
+                      const count = categoryCounts[cat] ?? 0;
+                      const mfrCount = mfrsPerCategory[cat] ?? 0;
+                      return (
+                        <Box
+                          key={cat}
                           sx={{
-                            fontWeight: covered ? 600 : 500,
-                            fontSize: '0.72rem',
-                            lineHeight: 1.3,
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                            color: covered ? 'text.primary' : 'text.disabled',
+                            p: 1.25,
+                            border: 1,
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            bgcolor: 'background.paper',
+                            minHeight: 72,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
                           }}
                         >
-                          {name}
-                        </Typography>
-                        <Box sx={{ mt: 0.75 }}>
                           <Typography
                             variant="caption"
                             sx={{
-                              fontSize: '0.7rem',
-                              color: covered ? 'text.secondary' : 'text.disabled',
-                              fontWeight: 500,
+                              fontWeight: 600,
+                              fontSize: '0.72rem',
+                              lineHeight: 1.3,
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                              color: 'text.primary',
                             }}
                           >
-                            {covered
-                              ? t('admin.atlasCoverageReport.productCount', { count })
-                              : t('admin.atlasCoverageReport.notYetRepresented')}
+                            {cat}
                           </Typography>
-                          {covered && (
-                            <Box
+                          <Box sx={{ mt: 0.75 }}>
+                            <Typography
+                              variant="caption"
                               sx={{
-                                mt: 0.5,
-                                height: 3,
-                                bgcolor: 'action.hover',
-                                borderRadius: 1,
-                                overflow: 'hidden',
+                                fontSize: '0.78rem',
+                                color: 'text.primary',
+                                fontWeight: 700,
+                                lineHeight: 1,
+                                display: 'block',
                               }}
                             >
-                              <Box
-                                sx={{
-                                  width: `${barPct}%`,
-                                  height: '100%',
-                                  bgcolor: 'primary.main',
-                                }}
-                              />
-                            </Box>
-                          )}
+                              {count.toLocaleString()}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                fontSize: '0.66rem',
+                                color: 'text.secondary',
+                                display: 'block',
+                                mt: 0.25,
+                              }}
+                            >
+                              {t('admin.atlasCoverageReport.productsFromMfrs', { count: mfrCount })}
+                            </Typography>
+                          </Box>
                         </Box>
-                      </Box>
-                    );
-                  })}
+                      );
+                    })}
+                  </Box>
                 </Box>
-              </Box>
-            ))}
+              );
+            })}
           </Box>
         </Box>
 
@@ -473,7 +504,7 @@ export default function AtlasCoveragePanel() {
           <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
             {t('admin.atlasCoverageReport.mfrsSubtitle', {
               live: s.enabledManufacturers,
-              disabled: s.totalManufacturers - s.enabledManufacturers,
+              queued: s.totalManufacturers - s.enabledManufacturers + s.queuedManufacturers,
             })}
           </Typography>
 
@@ -501,15 +532,6 @@ export default function AtlasCoveragePanel() {
                     {t('admin.atlasCoverageReport.colProducts')}
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right" sx={{ fontWeight: 600, fontSize: '0.72rem' }}>
-                  <TableSortLabel
-                    active={sortKey === 'coverage'}
-                    direction={sortKey === 'coverage' ? sortDir : 'desc'}
-                    onClick={() => toggleSort('coverage')}
-                  >
-                    {t('admin.atlasCoverageReport.colCoverage')}
-                  </TableSortLabel>
-                </TableCell>
                 <TableCell sx={{ fontWeight: 600, fontSize: '0.72rem' }}>
                   {t('admin.atlasCoverageReport.colCategories')}
                 </TableCell>
@@ -520,8 +542,7 @@ export default function AtlasCoveragePanel() {
                 <MfrRow
                   key={m.manufacturer}
                   mfr={m}
-                  maxProducts={maxMfrProducts}
-                  disabledLabel={t('admin.atlasCoverageReport.statusDisabled')}
+                  queuedLabel={t('admin.atlasCoverageReport.statusQueued')}
                   liveLabel={t('admin.atlasCoverageReport.statusLive')}
                   overflowLabel={(n: number) => t('admin.atlasCoverageReport.moreCategories', { count: n })}
                 />
@@ -551,7 +572,111 @@ export default function AtlasCoveragePanel() {
   );
 }
 
-function KpiTile({ label, value, subtitle }: { label: string; value: string; subtitle: string }) {
+function AtlasCoverageSkeleton() {
+  return (
+    <Box sx={{ px: 3, pt: '16px', pb: 6, maxWidth: 960, mx: 'auto' }}>
+      {/* Header strip */}
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 3, gap: 2 }}>
+        <Box>
+          <Skeleton variant="text" width={220} height={28} sx={{ mb: 0.5 }} />
+          <Skeleton variant="text" width={160} height={16} />
+        </Box>
+        <Skeleton variant="rounded" width={140} height={32} />
+      </Box>
+
+      {/* Hero card */}
+      <Box sx={{ p: 3, mb: 3, border: 1, borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}>
+        <Skeleton variant="text" width={280} height={14} />
+        <Skeleton variant="text" width={420} height={60} sx={{ mt: 1 }} />
+        <Box sx={{ mt: 2 }}>
+          <Skeleton variant="text" width="100%" height={14} />
+          <Skeleton variant="text" width="95%" height={14} />
+          <Skeleton variant="text" width="70%" height={14} />
+        </Box>
+      </Box>
+
+      {/* KPI tiles */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
+          gap: 2,
+          mb: 4,
+        }}
+      >
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Box
+            key={i}
+            sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}
+          >
+            <Skeleton variant="text" width={110} height={12} />
+            <Skeleton variant="text" width={90} height={34} sx={{ mt: 0.75 }} />
+            <Skeleton variant="text" width={130} height={12} sx={{ mt: 0.5 }} />
+          </Box>
+        ))}
+      </Box>
+
+      {/* Category section */}
+      <Box sx={{ mb: 4 }}>
+        <Skeleton variant="text" width={320} height={22} sx={{ mb: 0.5 }} />
+        <Skeleton variant="text" width={460} height={14} sx={{ mb: 2 }} />
+        {Array.from({ length: 3 }).map((_, blockIdx) => (
+          <Box key={blockIdx} sx={{ mb: 2.5 }}>
+            <Skeleton variant="text" width={140} height={12} sx={{ mb: 1 }} />
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },
+                gap: 1,
+              }}
+            >
+              {Array.from({ length: 4 - blockIdx }).map((_, i) => (
+                <Skeleton key={i} variant="rounded" height={72} />
+              ))}
+            </Box>
+          </Box>
+        ))}
+      </Box>
+
+      {/* MFR table */}
+      <Box sx={{ mb: 4 }}>
+        <Skeleton variant="text" width={180} height={22} sx={{ mb: 0.5 }} />
+        <Skeleton variant="text" width={280} height={14} sx={{ mb: 2 }} />
+        {Array.from({ length: 8 }).map((_, i) => (
+          <Box
+            key={i}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              py: 1.5,
+              borderBottom: 1,
+              borderColor: 'divider',
+            }}
+          >
+            <Skeleton variant="text" width={180} />
+            <Skeleton variant="rounded" width={48} height={20} />
+            <Box sx={{ flex: 1 }} />
+            <Skeleton variant="text" width={50} />
+            <Skeleton variant="rounded" width={260} height={22} />
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  subtitle,
+  accent,
+}: {
+  label: string;
+  value: string;
+  subtitle: string;
+  accent?: boolean;
+}) {
   return (
     <Box
       sx={{
@@ -565,7 +690,11 @@ function KpiTile({ label, value, subtitle }: { label: string; value: string; sub
       <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, fontSize: '0.65rem' }}>
         {label}
       </Typography>
-      <Typography variant="h5" fontWeight={700} sx={{ mt: 0.5, lineHeight: 1.1 }}>
+      <Typography
+        variant="h5"
+        fontWeight={700}
+        sx={{ mt: 0.5, lineHeight: 1.1, color: accent ? 'primary.main' : 'text.primary' }}
+      >
         {value}
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontSize: '0.7rem' }}>
@@ -577,27 +706,24 @@ function KpiTile({ label, value, subtitle }: { label: string; value: string; sub
 
 function MfrRow({
   mfr,
-  maxProducts,
-  disabledLabel,
+  queuedLabel,
   liveLabel,
   overflowLabel,
 }: {
   mfr: AtlasMfr;
-  maxProducts: number;
-  disabledLabel: string;
+  queuedLabel: string;
   liveLabel: string;
   overflowLabel: (n: number) => string;
 }) {
-  const isDisabled = !mfr.enabled;
-  const barPct = maxProducts > 0 ? (mfr.productCount / maxProducts) * 100 : 0;
+  const isQueued = !mfr.enabled;
   const visibleCategories = mfr.categories.slice(0, 4);
   const overflowCount = Math.max(0, mfr.categories.length - visibleCategories.length);
-  const textColor = isDisabled ? 'text.disabled' : 'text.primary';
+  const textColor = isQueued ? 'text.disabled' : 'text.primary';
 
   return (
     <TableRow sx={{ '& td': { py: 1.25, fontSize: '0.74rem' } }}>
       <TableCell sx={{ color: textColor }}>
-        <Box>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 0.75, rowGap: 0.25 }}>
           <Typography
             variant="body2"
             sx={{ fontSize: '0.78rem', fontWeight: 500, color: textColor, lineHeight: 1.3 }}
@@ -605,7 +731,10 @@ function MfrRow({
             {mfr.nameEn || mfr.manufacturer}
           </Typography>
           {mfr.nameZh && (
-            <Typography variant="caption" sx={{ color: isDisabled ? 'text.disabled' : 'text.secondary', fontSize: '0.7rem' }}>
+            <Typography
+              variant="caption"
+              sx={{ color: isQueued ? 'text.disabled' : 'text.secondary', fontSize: '0.72rem', lineHeight: 1.3 }}
+            >
               {mfr.nameZh}
             </Typography>
           )}
@@ -613,36 +742,22 @@ function MfrRow({
       </TableCell>
       <TableCell>
         <Chip
-          label={isDisabled ? disabledLabel : liveLabel}
+          label={isQueued ? queuedLabel : liveLabel}
           size="small"
-          variant={isDisabled ? 'outlined' : 'filled'}
+          variant={isQueued ? 'outlined' : 'filled'}
           sx={{
             fontSize: '0.65rem',
             height: 20,
-            bgcolor: isDisabled ? 'transparent' : 'action.selected',
-            color: isDisabled ? 'text.disabled' : 'text.primary',
+            bgcolor: isQueued ? 'transparent' : 'action.selected',
+            color: isQueued ? 'text.disabled' : 'text.primary',
             borderColor: 'divider',
           }}
         />
       </TableCell>
       <TableCell align="right" sx={{ color: textColor }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
-          <Typography variant="body2" sx={{ fontSize: '0.78rem', fontWeight: 600, color: textColor, lineHeight: 1 }}>
-            {mfr.productCount.toLocaleString()}
-          </Typography>
-          <Box sx={{ width: 60, height: 3, bgcolor: 'action.hover', borderRadius: 1, overflow: 'hidden' }}>
-            <Box
-              sx={{
-                width: `${barPct}%`,
-                height: '100%',
-                bgcolor: isDisabled ? 'text.disabled' : 'primary.main',
-              }}
-            />
-          </Box>
-        </Box>
-      </TableCell>
-      <TableCell align="right" sx={{ color: textColor, fontSize: '0.74rem' }}>
-        {mfr.coveragePct}%
+        <Typography variant="body2" sx={{ fontSize: '0.82rem', fontWeight: 600, color: textColor, lineHeight: 1 }}>
+          {mfr.productCount.toLocaleString()}
+        </Typography>
       </TableCell>
       <TableCell>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 320 }}>

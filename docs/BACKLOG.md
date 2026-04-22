@@ -79,6 +79,37 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Wire Chinese-MFR aliases into hot lookup paths
+
+`atlas_manufacturers.aliases` JSONB (GIN-indexed, populated from the master Excel import — 1,011 rows today) is not read by any code path. Variants like "兆易创新", "GD", and "gd/兆易创新" silently miss in Atlas search, BOM duplicate detection, the AddPart mismatch warning, and admin manufacturer aggregation.
+
+**Scope (exact-hit alias resolution, no fuzzy):**
+1. New `lib/services/manufacturerAliasResolver.ts` — 5-min cached `resolveManufacturerAlias(input)` + `getAllManufacturerVariants()`.
+2. [lib/services/atlasClient.ts:130](../lib/services/atlasClient.ts#L130) — `searchAtlasProducts` ORs over `manufacturer.in.(variants…)` when the query resolves.
+3. [app/api/parts-list/search-quick/route.ts:30-35](../app/api/parts-list/search-quick/route.ts#L30-L35) — suppress mismatch warning when input + top result share a canonical.
+4. [lib/services/bomDeduper.ts:8](../lib/services/bomDeduper.ts#L8) + [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) — pre-canonicalize `rawManufacturer` so duplicate groups collapse across variants.
+5. [app/api/admin/manufacturers/route.ts:149-150](../app/api/admin/manufacturers/route.ts#L149-L150) + [app/api/admin/manufacturers/[slug]/products/route.ts](../app/api/admin/manufacturers/[slug]/products/route.ts) — fold product aggregation + coverage across all variants.
+
+**Biggest impact:** Atlas search (every user search today silently drops variant-named results) and admin aggregation (coverage stats undercount where product imports used inconsistent names).
+
+**Deferred:** matching-engine preferred-MFR `includes()` check (lower ROI), xref lookup (MPN-only today, no MFR filter), Digikey/parts.io alias expansion (those catalogs don't know Chinese aliases).
+
+### Western MFR aliases — acquisitions, rebrands, abbreviations
+
+For US/EU customer BOMs the bigger alias problem isn't translation — it's **acquisitions and rebrands**. A 2018 BOM saying `Linear Technology LT1086` hits Digikey as `Analog Devices`, fires a false AddPart mismatch warning, and breaks dedup against today's `Analog Devices LT1086`. Same pattern for Freescale→NXP (2015), Atmel→Microchip (2016), Maxim→ADI (2021), Intersil/IDT/Dialog→Renesas, International Rectifier→Infineon, Cypress→Infineon, National Semi/Burr-Brown→TI, Fairchild→onsemi, plus rebrands (ON Semiconductor→onsemi) and abbreviations (TI, ADI, ST, NXP).
+
+**Impact:** Same four paths as the Chinese-alias item (Atlas search, dedup, AddPart mismatch, admin aggregation) plus matching-engine preferred-MFR sort. For a Western-heavy customer base this is arguably higher ROI than Chinese aliasing — every multi-year BOM hits acquired-brand noise.
+
+**Scope:**
+1. Curated Western alias file arriving — determines schema. Needs at minimum canonical name + alias list; nice-to-have: `acquired_by`, `acquired_year`, `relation_type` (acquisition / rebrand / subsidiary / abbreviation).
+2. **Storage decision:** new `manufacturer_aliases` table (region-keyed, cleanly separate from `atlas_manufacturers` which is the Chinese dataset) vs extending `atlas_manufacturers` with a `region` column. Default: new table.
+3. Reuse `manufacturerAliasResolver.ts` from the Chinese-alias work — resolver reads both sources and returns a unified `ManufacturerAliasMatch`. Consumers don't care which side the hit came from.
+4. Seed from the file; add admin UI for curation later if needed.
+
+**Blocked on:** Western aliases file (expected shortly).
+
+**Why split from the Chinese item:** Chinese aliases have ready data (in `atlas_manufacturers.aliases`) and can ship immediately. Western aliases need the seed file and a schema decision. Splitting keeps the Chinese fix from getting stuck.
+
 ### Phase 2: Deep-fetch for `suggestionBuckets` shortfall (Decision #146)
 
 Phase 1 shipped `maxSuggestions` (1–5) + `suggestionBuckets` multi-select as display-time filters over the persisted top-5 (`suggestedReplacement` + up to 4 `topNonFailingRecs`). If a row's persisted top-5 doesn't contain enough recs matching the user's selected buckets (e.g. user picks "5 Accuris-only" but the row's persisted set is 2 Accuris + 2 MFR + 1 Logic), the user sees fewer than max.
