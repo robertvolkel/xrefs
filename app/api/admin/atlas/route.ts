@@ -91,6 +91,8 @@ export async function GET() {
         summary: {
           totalProducts: 0,
           totalManufacturers: 0,
+          targetManufacturers: mfrRecords?.length ?? 0,
+          queuedManufacturers: mfrRecords?.length ?? 0,
           enabledManufacturers: 0,
           enabledProducts: 0,
           scorableProducts: 0,
@@ -254,10 +256,16 @@ export async function GET() {
     const enabledMfrs = manufacturers.filter((m) => m.enabled);
     const enabledProductCount = enabledMfrs.reduce((sum, m) => sum + m.productCount, 0);
 
+    // Target = all MFRs in the master list; Queued = on the radar but not yet ingested
+    const targetManufacturers = mfrRecords?.length ?? mfrMap.size;
+    const queuedManufacturers = Math.max(0, targetManufacturers - mfrMap.size);
+
     const responseBody = JSON.stringify({
       summary: {
         totalProducts: rows.length,
         totalManufacturers: mfrMap.size,
+        targetManufacturers,
+        queuedManufacturers,
         enabledManufacturers: enabledMfrs.length,
         enabledProducts: enabledProductCount,
         scorableProducts: scorableRows.length,

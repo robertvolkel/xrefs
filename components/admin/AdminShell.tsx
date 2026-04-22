@@ -20,6 +20,7 @@ import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
 import ManufacturersPanel from './ManufacturersPanel';
+import AtlasCoveragePanel from './AtlasCoveragePanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import QcFeedbackTab from './QcFeedbackTab';
 import QcLogsTab from './QcLogsTab';
@@ -109,7 +110,7 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'manufacturers' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
+  return s === 'manufacturers' || s === 'atlas-coverage' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
 }
 
 const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs', 'distributor-clicks'];
@@ -240,6 +241,7 @@ function AdminShellInner() {
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', bgcolor: 'background.default' }}>
       {/* Header */}
       <Box
+        id="admin-page-header"
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -280,6 +282,7 @@ function AdminShellInner() {
       <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Section Nav */}
         <Box
+          id="admin-nav"
           sx={{
             width: 240,
             flexShrink: 0,
@@ -320,6 +323,10 @@ function AdminShellInner() {
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             {activeSection === 'search-logic' && <SearchLogicPanel />}
             {activeSection === 'list-logic' && <ListLogicPanel />}
+          </Box>
+        ) : activeSection === 'atlas-coverage' ? (
+          <Box sx={{ flex: 1, overflowY: 'auto' }}>
+            <AtlasCoveragePanel />
           </Box>
         ) : (
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>
