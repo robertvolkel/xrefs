@@ -911,8 +911,30 @@ export function evaluateCandidate(
   };
 }
 
-/** Check if a manufacturer name matches any preferred manufacturer (case-insensitive partial match) */
-function isPreferredManufacturer(manufacturer: string, preferred: string[]): boolean {
+/**
+ * Check if a manufacturer matches any preferred manufacturer.
+ *
+ * When `manufacturerSlugLookup` is supplied (built by the caller via
+ * `manufacturerAliasResolver`), compare canonical slugs — this collapses
+ * acquired-brand families so "prefer Analog Devices" also floats Linear
+ * Technology / Maxim / Hittite parts. Falls back to the original substring
+ * check for any input that doesn't resolve (non-Atlas/Western MFRs, blanks).
+ */
+function isPreferredManufacturer(
+  manufacturer: string,
+  preferred: string[],
+  manufacturerSlugLookup?: Map<string, string>,
+): boolean {
+  if (manufacturerSlugLookup) {
+    const candidateSlug = manufacturerSlugLookup.get(manufacturer.toLowerCase());
+    if (candidateSlug) {
+      for (const p of preferred) {
+        const preferredSlug = manufacturerSlugLookup.get(p.toLowerCase());
+        if (preferredSlug && preferredSlug === candidateSlug) return true;
+      }
+    }
+    // Fall through to substring check for inputs that didn't resolve.
+  }
   const mfrLower = manufacturer.toLowerCase();
   return preferred.some(p => mfrLower.includes(p.toLowerCase()) || p.toLowerCase().includes(mfrLower));
 }
@@ -923,6 +945,7 @@ export function findReplacements(
   source: PartAttributes,
   candidates: PartAttributes[],
   preferredManufacturers?: string[],
+  manufacturerSlugLookup?: Map<string, string>,
 ): XrefRecommendation[] {
   // Filter out the source part itself
   const filteredCandidates = candidates.filter(
@@ -939,8 +962,8 @@ export function findReplacements(
     if (a.passed !== b.passed) return a.passed ? -1 : 1;
     // Apply manufacturer preference: preferred manufacturers sort above non-preferred at equal/close scores
     if (hasPreferred) {
-      const aPreferred = isPreferredManufacturer(a.candidate.part.manufacturer, preferredManufacturers);
-      const bPreferred = isPreferredManufacturer(b.candidate.part.manufacturer, preferredManufacturers);
+      const aPreferred = isPreferredManufacturer(a.candidate.part.manufacturer, preferredManufacturers, manufacturerSlugLookup);
+      const bPreferred = isPreferredManufacturer(b.candidate.part.manufacturer, preferredManufacturers, manufacturerSlugLookup);
       if (aPreferred !== bPreferred) {
         // Only boost if scores are within 5% of each other
         if (Math.abs(a.matchPercentage - b.matchPercentage) <= 5) {

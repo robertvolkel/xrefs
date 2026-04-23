@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Badge, Box, Checkbox, Chip, CircularProgress, FormControlLabel, IconButton, MenuItem, Popover, Select, Tooltip, Typography } from '@mui/material';
+import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
@@ -122,9 +122,11 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           </Typography>
         </Box>
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-          {activeOnly && hiddenCount > 0
-            ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
-            : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+          {loading
+            ? t('recommendations.loading', 'Loading recommendations…')
+            : activeOnly && hiddenCount > 0
+              ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+              : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
         </Typography>
       </Box>
@@ -326,29 +328,37 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             </Box>
           );
         })}
-      </Box>
 
-      {/* Loading overlay while recommendations are refreshing */}
-      {loading && (
-        <Box
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            bgcolor: 'rgba(0, 0, 0, 0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            gap: 1.5,
-            zIndex: 1,
-          }}
-        >
-          <CircularProgress size={32} />
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-            {t('recommendations.updating', 'Updating recommendations...')}
-          </Typography>
-        </Box>
-      )}
+        {/* Skeleton cards while recommendations are loading. Rendered inline
+            (not as a scrim overlay) so the user sees exactly where cards will
+            land. Count backs off if some real cards already exist. */}
+        {loading && (
+          <>
+            {Array.from({ length: Math.max(1, 4 - filtered.length) }).map((_, i) => (
+              <Box
+                key={`skeleton-${i}`}
+                sx={{
+                  mb: 1.5,
+                  p: 1.5,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  bgcolor: 'background.paper',
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+                  <Skeleton variant="text" width={140} height={20} />
+                  <Skeleton variant="rounded" width={52} height={18} />
+                  <Skeleton variant="rounded" width={110} height={18} />
+                </Box>
+                <Skeleton variant="text" width="35%" height={16} sx={{ mb: 0.5 }} />
+                <Skeleton variant="text" width="80%" height={14} />
+                <Skeleton variant="text" width="55%" height={14} />
+              </Box>
+            ))}
+          </>
+        )}
+      </Box>
     </Box>
   );
 }

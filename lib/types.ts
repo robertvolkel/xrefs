@@ -748,8 +748,10 @@ export interface AtlasManufacturerSummary {
 // PARTS LIST TYPES
 // ============================================================
 
-/** Status of an individual row during batch validation */
-export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
+/** Status of an individual row during batch validation.
+ *  'ambiguous' = search returned multiple plausible candidates but no exact MPN match;
+ *  user should pick from `candidateMatches` to confirm row identity. */
+export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'ambiguous' | 'not-found' | 'error';
 
 /** Classification of a BOM line item — determines whether catalog validation is attempted */
 export type PartType = 'electronic' | 'mechanical' | 'pcb' | 'custom' | 'other';
@@ -879,6 +881,9 @@ export interface PartsListRow {
   accurisCertifiedCount?: number;
   /** MPN explicitly chosen by user as preferred alternate — survives re-validation */
   preferredMpn?: string;
+  /** Top search candidates surfaced when status='ambiguous' — populated by the
+   *  batch validator so the row-identity picker can render them without refetching. */
+  candidateMatches?: PartSummary[];
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
@@ -981,7 +986,7 @@ export interface BatchValidateRequest {
 /** Single item response from batch validation */
 export interface BatchValidateItem {
   rowIndex: number;
-  status: 'resolved' | 'not-found' | 'error';
+  status: 'resolved' | 'ambiguous' | 'not-found' | 'error';
   resolvedPart?: PartSummary;
   sourceAttributes?: PartAttributes;
   /** The top replacement proposed for this row (singular). */
@@ -989,6 +994,9 @@ export interface BatchValidateItem {
   allRecommendations?: XrefRecommendation[];
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
+  /** Top N search candidates when multiple matches exist but none is an exact
+   *  MPN hit. Surfaced to the row-identity picker so the user can disambiguate. */
+  candidateMatches?: PartSummary[];
 }
 
 /** Response from the batch validate API */

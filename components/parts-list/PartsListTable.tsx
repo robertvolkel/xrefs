@@ -33,7 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
 import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
 import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
 
@@ -118,6 +118,12 @@ interface PartsListTableProps {
   buckets?: RecommendationBucket[];
   /** Max number of total replacements (top + alternates) rendered per row. */
   maxReplacements?: number;
+  /** Called when user clicks the status chip on a row with status='ambiguous',
+   *  to open the row-identity picker with the row's candidateMatches. */
+  onAmbiguousClick?: (rowIndex: number) => void;
+  /** Column mapping — used to detect which ss:* column is the MPN column so
+   *  Enter in that cell forces a commit (opens the picker) even without edits. */
+  columnMapping?: ColumnMapping | null;
 }
 
 const ROW_FONT_SIZE = '0.78rem';
@@ -126,7 +132,15 @@ const ROW_FONT_SIZE = '0.78rem';
 // STATUS CHIP
 // ============================================================
 
-function StatusChip({ status }: { status: PartsListRow['status'] }) {
+function StatusChip({
+  status,
+  candidateCount,
+  onClick,
+}: {
+  status: PartsListRow['status'];
+  candidateCount?: number;
+  onClick?: () => void;
+}) {
   const { t } = useTranslation();
   switch (status) {
     case 'pending':
@@ -135,6 +149,17 @@ function StatusChip({ status }: { status: PartsListRow['status'] }) {
       return <Chip label={t('status.validating')} size="small" color="info" sx={{ fontSize: '0.7rem' }} />;
     case 'resolved':
       return <Chip label={t('status.resolved')} size="small" color="success" sx={{ fontSize: '0.7rem' }} />;
+    case 'ambiguous':
+      return (
+        <Chip
+          label={candidateCount && candidateCount > 0 ? `${candidateCount} matches` : 'Pick match'}
+          size="small"
+          color="warning"
+          clickable={!!onClick}
+          onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
+          sx={{ fontSize: '0.7rem' }}
+        />
+      );
     case 'not-found':
       return <Chip label={t('status.notFound')} size="small" color="error" sx={{ fontSize: '0.7rem' }} />;
     case 'error':
@@ -253,9 +278,15 @@ function OverflowTooltip({
 function EditableCell({
   value,
   onCommit,
+  alwaysCommitOnEnter,
 }: {
   value: string;
   onCommit: (newValue: string) => void;
+  /** When true, pressing Enter fires onCommit even if the draft matches the
+   *  current value. Used for MPN cells where Enter means "confirm identity"
+   *  (open the row-identity picker) — retrying a Not Found row without edits
+   *  is legitimate and shouldn't be a silent no-op. */
+  alwaysCommitOnEnter?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -274,6 +305,13 @@ function EditableCell({
       onCommit(draft);
     }
   }, [draft, value, onCommit]);
+
+  const commitFromEnter = useCallback(() => {
+    setEditing(false);
+    if (alwaysCommitOnEnter || draft !== value) {
+      onCommit(draft);
+    }
+  }, [draft, value, onCommit, alwaysCommitOnEnter]);
 
   const cancel = useCallback(() => {
     setEditing(false);
@@ -306,7 +344,7 @@ function EditableCell({
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Enter') { e.preventDefault(); commitFromEnter(); }
         if (e.key === 'Escape') { e.preventDefault(); cancel(); }
         e.stopPropagation();
       }}
@@ -392,6 +430,8 @@ function CellRenderer({
   onSetPartType,
   hideZeroStock,
   buckets,
+  onAmbiguousClick,
+  columnMapping,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -407,6 +447,8 @@ function CellRenderer({
   onSetPartType?: (rowIndex: number, partType: PartType) => void;
   hideZeroStock?: boolean;
   buckets?: RecommendationBucket[];
+  onAmbiguousClick?: (rowIndex: number) => void;
+  columnMapping?: ColumnMapping | null;
 }) {
   const { t } = useTranslation();
 
@@ -430,7 +472,13 @@ function CellRenderer({
         return <>{row.rowIndex + 1}</>;
 
       case 'sys:status':
-        return <StatusChip status={row.status} />;
+        return (
+          <StatusChip
+            status={row.status}
+            candidateCount={row.candidateMatches?.length}
+            onClick={row.status === 'ambiguous' && onAmbiguousClick ? () => onAmbiguousClick(row.rowIndex) : undefined}
+          />
+        );
 
       case 'sys:partType': {
         if (isSubRow) return null;
@@ -631,12 +679,18 @@ function CellRenderer({
   // Data columns: use getCellValue
   const value = getCellValue(column, row, columnMap);
 
-  // Editable spreadsheet cells — render EditableCell even when empty
+  // Editable spreadsheet cells — render EditableCell even when empty.
+  // MPN cells opt into alwaysCommitOnEnter so hitting Enter without typing
+  // still opens the row-identity picker (useful for retrying Not Found rows).
   if (column.editable && onCellEdit) {
+    const isMpnCol = columnMapping?.mpnColumn != null
+      && columnMapping.mpnColumn >= 0
+      && column.id === `ss:${columnMapping.mpnColumn}`;
     return (
       <EditableCell
         value={String(value ?? '')}
         onCommit={(newValue) => onCellEdit(row.rowIndex, column.id, newValue)}
+        alwaysCommitOnEnter={isMpnCol}
       />
     );
   }
@@ -711,6 +765,8 @@ export default function PartsListTable({
   hideZeroStock,
   buckets,
   maxReplacements,
+  onAmbiguousClick,
+  columnMapping,
 }: PartsListTableProps) {
   const { t } = useTranslation();
   const total = rows.length;
@@ -893,6 +949,8 @@ export default function PartsListTable({
                           onSetPartType={onSetPartType}
                           hideZeroStock={hideZeroStock}
                           buckets={buckets}
+                          onAmbiguousClick={onAmbiguousClick}
+                          columnMapping={columnMapping}
                         />
                       </TableCell>
                     ))}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { invalidateManufacturerCache } from '@/lib/services/atlasClient';
+import { invalidateManufacturerAliasCache } from '@/lib/services/manufacturerAliasResolver';
 import { invalidateAtlasCache } from '../route';
 import { invalidateManufacturersListCache } from '../../manufacturers/route';
 
@@ -62,6 +63,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateManufacturerCache();
+    invalidateManufacturerAliasCache();
     invalidateAtlasCache();
     invalidateManufacturersListCache();
 

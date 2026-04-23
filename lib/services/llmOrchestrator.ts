@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
@@ -33,9 +33,58 @@ function summarizeRecommendations(recs: XrefRecommendation[]): string {
   if (recs.length === 0) return '';
 
   const passed = recs.filter(r => r.matchPercentage > 0).length;
-  const top5 = recs.slice(0, 5).map(r => `${r.part.mpn} (${r.part.manufacturer}, ${r.matchPercentage}%)`).join(', ');
+  const counts = { accuris: 0, manufacturer: 0, logic: 0 };
+  for (const r of recs) counts[deriveRecommendationBucket(r)]++;
 
-  return `\n\n[Context: ${recs.length} replacement candidates found, ${passed} passed. Top 5: ${top5}. You have a filter_recommendations tool to narrow results.]`;
+  const describe = (r: XrefRecommendation) => {
+    const certs: string[] = [];
+    const bucket = deriveRecommendationBucket(r);
+    if (bucket === 'accuris') certs.push('Accuris Certified');
+    if (bucket === 'manufacturer') certs.push('MFR Certified');
+    if (r.certifiedBy?.includes('mouser')) certs.push('Mouser suggested');
+    const certStr = certs.length > 0 ? `, ${certs.join(', ')}` : '';
+    return `${r.part.mpn} (${r.part.manufacturer}, ${r.matchPercentage}%${certStr})`;
+  };
+  const top5 = recs.slice(0, 5).map(describe).join(', ');
+
+  // Build the filterable-parameter catalog from matchDetails. The LLM needs the
+  // exact parameterName spellings to call filter_recommendations reliably —
+  // without this it guesses ("Voltage Rated" vs "Rated Voltage") and the
+  // case-insensitive exact match silently returns zero results.
+  const paramMap = new Map<string, { source: string; sample?: string }>();
+  for (const r of recs) {
+    for (const d of r.matchDetails) {
+      if (!d.parameterName) continue;
+      if (paramMap.has(d.parameterName)) continue;
+      paramMap.set(d.parameterName, {
+        source: d.sourceValue || 'N/A',
+        sample: d.replacementValue || undefined,
+      });
+    }
+  }
+  let paramCatalog = '';
+  if (paramMap.size > 0) {
+    const lines: string[] = [];
+    for (const [name, v] of paramMap) {
+      const src = v.source === 'N/A' ? '—' : v.source;
+      lines.push(`  - "${name}": source=${src}`);
+    }
+    paramCatalog = `\nFilterable parameters (use these exact names in filter_recommendations.attribute_filters[].parameter or exclude_failing_parameters[]):\n${lines.join('\n')}`;
+  }
+
+  // Detect which automotive-qualification rule applies (AEC-Q100 for ICs,
+  // AEC-Q101 for discretes, AEC-Q200 for passives). Removes LLM ambiguity on
+  // "automotive qualified" queries.
+  const aecRule = [...paramMap.keys()].find(n => /aec[\s-]?q(100|101|200)/i.test(n));
+  const aecHint = aecRule
+    ? `\nAutomotive qualification for this family: "${aecRule}". Use exclude_failing_parameters: ["${aecRule}"] when the user asks for automotive-qualified parts.`
+    : '';
+
+  return `\n\n[Context: ${recs.length} replacement candidates found, ${passed} passed.
+Categories: ${counts.accuris} Accuris Certified (parts.io FFF/functional equivalents), ${counts.manufacturer} Manufacturer Certified (MFR-uploaded cross-refs), ${counts.logic} Logic Driven (matched by rule engine only).
+Top 5: ${top5}.${paramCatalog}${aecHint}
+Compound queries are supported — e.g. "parts ≥10V, auto-qualified, Accuris certified" → one filter_recommendations call with attribute_filters + exclude_failing_parameters + category_filter together.
+Use category_filter to narrow by certification (Accuris → "third_party_certified", MFR → "manufacturer_certified", rule-engine-only → "logic_driven").]`;
 }
 
 const filterRecommendationsTool: Anthropic.Tool = {
@@ -79,6 +128,11 @@ const filterRecommendationsTool: Anthropic.Tool = {
         enum: ['match_percentage', 'manufacturer', 'price'],
         description: 'Sort order for the results',
       },
+      category_filter: {
+        type: 'string',
+        enum: ['logic_driven', 'manufacturer_certified', 'third_party_certified'],
+        description: 'Narrow to a single trust category. "third_party_certified" = Accuris Certified (parts.io FFF/functional) OR Mouser suggested. "manufacturer_certified" = MFR-uploaded cross-references. "logic_driven" = matched by the rule engine (may also be certified). Use this when the user asks for Accuris-certified / MFR-certified / certified-only results.',
+      },
     },
     required: [],
   },
@@ -120,6 +174,10 @@ interface FilterInput {
   exclude_failing_parameters?: string[];
   attribute_filters?: AttributeFilter[];
   sort_by?: string;
+  /** Narrow to recommendations belonging to a specific trust category:
+   *  'third_party_certified' (Accuris/Mouser), 'manufacturer_certified' (MFR cross-ref),
+   *  'logic_driven' (rule-engine match). Maps to UI category chips. */
+  category_filter?: RecommendationCategory;
 }
 
 /** Apply filter_recommendations tool input to a recommendations array */
@@ -138,6 +196,10 @@ function applyRecommendationFilter(
   }
   if (input.exclude_obsolete) {
     filtered = filtered.filter(r => r.part.status !== 'Obsolete');
+  }
+  if (input.category_filter) {
+    const target = input.category_filter;
+    filtered = filtered.filter(r => deriveRecommendationCategories(r).includes(target));
   }
   if (input.exclude_failing_parameters && input.exclude_failing_parameters.length > 0) {
     const excludeNames = input.exclude_failing_parameters.map(n => n.toLowerCase());
@@ -291,6 +353,12 @@ If a user asks about anything unrelated to electronic components, respond in 1-2
 
 Meta-questions about this system itself — what data sources you use, what families you support, how search or matching works, what APIs you're connected to, what you can do — ARE on-topic. Answer them factually and concisely using the "About This System" section below. Do NOT deflect with the "specialist" introduction for these questions.
 
+General electronics domain questions — theory (e.g. "X7R vs C0G"), design guidance (e.g. "how do I pick a MOSFET for a 12V→5V buck converter"), standards (e.g. "what does AEC-Q200 qualify"), concepts, or comparisons that aren't about a specific MPN — ARE on-topic. Answer thoroughly from domain knowledge. 2-3 paragraphs is fine when the question warrants it — the goal is to provide real value, not artificial brevity. Use bullet points for lists and comparisons. Always end with a PIVOT — a concrete offer tied to this tool's capabilities (search_parts, find_replacements, filter_recommendations). Example pivots:
+- "Want me to find C0G 0603 10nF candidates?"
+- "Give me your switching frequency and target current, I'll search for MOSFET candidates."
+- "I can filter any recommendations to AEC-Q200-qualified parts when you're ready."
+Do NOT answer part-specific questions (a named MPN's specs, pricing, availability, lifecycle, attributes) from general knowledge — those always go through search_parts. The general-knowledge allowance applies ONLY to theory, standards, design concepts, and comparisons that don't reference a specific part number.
+
 About This System (use these facts when answering meta-questions):
 - Data sources:
   - **Digikey** (primary): live OAuth2 API providing parametric specs, pricing, and availability for the active Digikey catalog (millions of parts).
@@ -345,7 +413,7 @@ Formatting rules:
 - No filler, no repetition. Engineers don't need hand-holding.
 
 Important rules:
-- Always use tools — never guess part numbers or specs. If the user asks about a part's specifications, attributes, pricing, or any technical detail, ALWAYS use search_parts first so the UI can show a part card. Never answer from general knowledge — your training data may be outdated or inaccurate. The tools return live data from real APIs.
+- For part-specific questions (a named MPN's specs, attributes, pricing, availability, lifecycle), ALWAYS use search_parts first so the UI can show a part card. Never answer part-specific questions from general knowledge — training data can be stale and the tools return live data from real APIs. This rule does NOT apply to general domain questions (theory, standards, comparisons, design concepts) — those are answered from knowledge per the guidance above, followed by a pivot.
 - NEVER describe a part's specifications in your text response. The UI displays attributes in a dedicated panel when the user clicks a part card. Writing specs in chat is redundant and a worse experience.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first. NEVER skip the search step. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
 - If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
@@ -939,9 +1007,16 @@ Your role:
 - Be concise and technical — your users are electronics engineers
 
 Tool usage:
-- Use filter_recommendations when the user wants to narrow the existing list (e.g. "show only TDK", "hide obsolete parts", "only parts with >80% match")
-- Use refine_replacements when the user provides a NEW requirement that changes how parts are evaluated (e.g. "I need AEC-Q200 compliance", "voltage must be 50V")
-- Do NOT use any tool for general questions — answer from context.`;
+- Use filter_recommendations when the user wants to narrow the existing list (e.g. "show only TDK", "hide obsolete parts", "only parts with >80% match", "only Accuris certified", "automotive qualified ≥10V Accuris certified").
+- Combine multiple predicates into a SINGLE filter_recommendations call — the tool ANDs them (manufacturer_filter, min_match_percentage, exclude_obsolete, exclude_failing_parameters, attribute_filters, category_filter).
+- For attribute filters, copy parameter names EXACTLY from the "Filterable parameters" list in the context — never invent or rephrase (e.g. use "Voltage Rated" verbatim, not "Rated Voltage").
+- Use refine_replacements when the user provides a NEW requirement that changes how parts are evaluated (e.g. "I need AEC-Q200 compliance", "voltage must be 50V").
+- Do NOT use any tool for general questions — answer from context.
+
+General electronics domain questions:
+- Questions about theory, standards, comparisons, or design concepts that don't map to a tool call (e.g. "X7R vs C0G for audio path?", "what does AEC-Q200 actually qualify?", "how does DC bias derating work?") — answer thoroughly from domain knowledge. 2-3 paragraphs is fine when warranted; don't artificially truncate. Use bullet points for lists and comparisons.
+- Always end with a PIVOT to an action on THIS part's recommendations. Example: user asks "X7R vs C0G for audio path?" → explain the dielectric trade-offs (piezoelectric effect, DC bias stability, temperature stability, capacitance density), then offer to filter — e.g. "Want me to filter to only C0G parts?" which maps to filter_recommendations({ attribute_filters: [{ parameter: 'Dielectric', operator: 'equals', value: 'C0G' }] }).
+- Do NOT answer part-specific questions (any named MPN's specs, attributes, pricing) from general knowledge — those stay tool-gated.`;
 
   if (Object.keys(overrides).length > 0) {
     prompt += `\n\nUser-provided attribute overrides:\n${JSON.stringify(overrides, null, 2)}`;

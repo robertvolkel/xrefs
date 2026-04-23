@@ -19,6 +19,7 @@ import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from '.
 import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
+import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { sortRecommendationsForDisplay } from './recommendationSort';
 import { computeCompositeScore } from './compositeScore';
 import { getContextQuestionsForFamily } from '../contextQuestions';
@@ -1040,8 +1041,36 @@ export async function getRecommendations(
       ...(userPreferences?.preferredManufacturers ?? []),
     ];
 
+    // Pre-resolve MFR aliases to canonical slugs so the matching engine's
+    // preferred-MFR tiebreaker catches acquired-brand families (Decision #151):
+    // "prefer Analog Devices" floats Linear Tech / Maxim / Hittite too.
+    // Lookup covers both sides (preferred + every candidate MFR) so isPreferredManufacturer
+    // can compare slug-to-slug via Map.get() — sync inside findReplacements.
+    const manufacturerSlugLookup = new Map<string, string>();
+    if (mergedPreferred.length > 0) {
+      const resolveOne = async (raw: string) => {
+        const key = raw.toLowerCase();
+        if (manufacturerSlugLookup.has(key)) return;
+        const match = await resolveManufacturerAlias(raw);
+        if (match) manufacturerSlugLookup.set(key, match.slug);
+      };
+      await Promise.all([
+        ...mergedPreferred.map(resolveOne),
+        ...allCandidates
+          .map(c => c.part.manufacturer)
+          .filter((m): m is string => !!m)
+          .map(resolveOne),
+      ]);
+    }
+
     console.time('[perf] findReplacements (scoring)');
-    let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, mergedPreferred.length > 0 ? mergedPreferred : undefined);
+    let recs = findReplacements(
+      effectiveTable,
+      sourceAttrs,
+      allCandidates,
+      mergedPreferred.length > 0 ? mergedPreferred : undefined,
+      manufacturerSlugLookup.size > 0 ? manufacturerSlugLookup : undefined,
+    );
     console.timeEnd('[perf] findReplacements (scoring)');
 
     // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps

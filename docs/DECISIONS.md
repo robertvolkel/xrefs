@@ -3716,3 +3716,328 @@ Three layers, decreasing scope:
 ### Verification
 
 `npx tsc --noEmit` clean. `npm test` → 1270/1270 tests pass. Deprecation hints in the IDE are intentional — they mark the three legacy-read fallback sites (`PartsListShell` prop fallback, `ReplacementPrioritiesField` load/save fallback), not bugs.
+
+---
+
+## Decision #148 — Manufacturer Alias Resolution: Canonical MFR-Identity Layer (Apr 2026)
+
+**Context:** `atlas_manufacturers.aliases` has been GIN-indexed and populated for 1,011 Chinese manufacturers since the canonical-identity import, but no code path read it. Chinese/abbreviated variants (`兆易创新`, `GD`, `gd/兆易创新`) silently missed in Atlas search; BOM rows spelled differently for the same MFR never deduped; AddPart warned users about false mismatches; admin aggregation only folded `name_display OR name_en` so products imported under alias spellings were invisible in coverage reports. Beyond cleanup, this is the identity layer that upcoming AVL / AML / Line Card ingestion needs — customer manufacturer data arrives in inconsistent forms and must canonicalize at ingest time, not be retrofitted later.
+
+**Decision:** Add a shared resolver that maps any known variant (case-insensitive, exact hit only — no fuzzy) to the canonical `name_display`, and wire it into the four hot paths that compare manufacturer names. Design the contract to absorb the Western company-graph follow-on without consumer changes.
+
+### Resolver contract
+
+```ts
+export interface ManufacturerAliasMatch {
+  canonical: string;
+  slug: string;
+  source: 'atlas' | 'western';
+  variants: string[];
+  companyUid?: number;              // Reserved for Western company graph
+  lineage?: { uid; name; status }[]; // Reserved for Western parent-chain walk
+}
+export async function resolveManufacturerAlias(input: string): Promise<ManufacturerAliasMatch | null>;
+export async function getAllManufacturerVariants(): Promise<Map<string, ManufacturerAliasMatch>>;
+export function invalidateManufacturerAliasCache(): void;
+```
+
+5-minute in-memory cache; coalesced in-flight refresh to avoid thundering-herd on cold start. Returns `null` when nothing matches — callers fall through to their existing substring behavior unchanged.
+
+### Exact-hit-only, not fuzzy
+
+Collision risk with fuzzy matching is asymmetric: false positives silently mis-canonicalize unrelated MFRs, corrupting dedup and aggregation; false negatives just mean we don't help. Fuzzy matching also couples the resolver to an opaque scoring function that's hard to tune across languages. Exact hit with a rich alias list (which Atlas already has) gives us the recall we need without the failure mode.
+
+### Why dedup pre-canonicalization is in the caller, not `bomDeduper`
+
+`bomDeduper.ts` is imported into the client-side hook `usePartsListState`. Adding a Supabase-using import would pull server-only code into the client bundle. Instead, `usePartsListState` calls a new server endpoint `POST /api/manufacturer-aliases/canonicalize` (batch) through a thin client wrapper `manufacturerAliasClient.ts`, rewrites `rawManufacturer` to canonical, then calls the unchanged `findDuplicateGroups`. Deduper stays oblivious.
+
+### Atlas search: two parallel queries, merge by id
+
+Inline `.or('mpn.ilike.%x%,manufacturer.in.(v1,v2,v3)')` is tricky to escape correctly for values containing commas, quotes, or CJK characters. Cleaner: one query for MPN ilike, one for `manufacturer.in(variants)` (or the original manufacturer ilike fallback), merge + dedup by `id`. Same semantics as the old `.or()`, zero escaping headaches.
+
+### Admin aggregation: variant-fold
+
+The half-implemented pattern at `admin/manufacturers/route.ts` (`productAgg.get(name_display) || productAgg.get(name_en)`) becomes a full fold across `[name_display, name_en, name_zh, ...aliases]`. `foldAggs` sums `productCount` + `scorableCount`, unions `families`, maxes `lastProductUpdate`. The per-slug products route switches `.or('manufacturer.eq.X,manufacturer.eq.Y')` to `.in('manufacturer', variants)`. No RPC changes, no schema changes — pure lookup-side fold.
+
+### Forward compatibility with Western
+
+Reserving `source`, `companyUid`, `lineage` on the contract means the Western follow-on (P1, see BACKLOG) adds a second source read behind the same interface. Consumers don't change. The `companyUid` field will be the stable FK that AVL/AML/Line Card ingestion stores on customer rows, so future corporate-ownership changes propagate automatically without customer re-upload.
+
+### Files Modified
+
+**New:**
+- `lib/services/manufacturerAliasResolver.ts` — server-side cached resolver
+- `lib/services/manufacturerAliasClient.ts` — client-safe batch wrapper + `canonicalizeRowManufacturers`
+- `app/api/manufacturer-aliases/canonicalize/route.ts` — batch POST endpoint
+- `__tests__/services/manufacturerAliasResolver.test.ts` — 16 tests
+
+**Modified:**
+- `lib/services/atlasClient.ts` — dual-query search + dedup by id
+- `app/api/parts-list/search-quick/route.ts` — alias-aware mismatch suppression
+- `hooks/usePartsListState.ts` — pre-canonicalize `rawManufacturer` before dedup
+- `app/api/admin/manufacturers/route.ts` — fold product agg + coverage across variants
+- `app/api/admin/manufacturers/[slug]/products/route.ts` — `.in('manufacturer', variants)`
+- `app/api/admin/atlas/manufacturers/route.ts` — invalidate resolver cache on toggle
+- `__tests__/services/bomDeduper.test.ts` — alias-variant collapse documentation test
+
+### Verification
+
+`npm run lint` clean for all touched files. `npm test` → 1,287/1,287 tests pass (19 suites). Backward-compatible: MFRs not in `atlas_manufacturers` fall through the resolver to the original substring/ilike behavior.
+
+---
+
+## Decision #149 — Western MFR Company-Identity Graph (Apr 2026)
+
+**Context:** The app is moving toward ingesting customer-supplied manufacturer data (AVLs, AMLs, Preferred MFR lists, Line Cards). Every one of those is keyed on manufacturer names that will arrive in inconsistent forms — acquired brands (Linear Tech / Maxim / Hittite / Burr-Brown → ADI; Freescale → NXP; Atmel / Microsemi → Microchip; Intersil / IDT / Dialog → Renesas; IR / Cypress → Infineon; Fairchild → onsemi; National Semi → TI), rebrands (ON Semiconductor → onsemi), subsidiary brands (Vishay Dale), and abbreviations (TI, ADI, ST, NXP). Without canonical resolution at ingest time, customer data fragments and filter semantics break; retrofitting canonical identity later is painful and customer-visible.
+
+Decision #148 shipped the resolver for Chinese (Atlas) MFRs with a forward-compat contract (`source: 'atlas' | 'western'`, reserved `companyUid` / `lineage`). This decision adds the Western source behind the same interface.
+
+**Decision:** Ingest a company-identity graph into two Supabase tables and extend the resolver to walk it. Exact-hit matching, no fuzzy. Hot-path consumers unchanged — they light up for Western inputs automatically.
+
+### Source data (already in `/data/`)
+
+- **`UID, name, source_URL, company_status_code, parent_company_ID.xlsx`** — 25,861 companies. Top-level self-reference; children point up via `parent_company_id`. Status enum: `corporate`, `active`, `acquired`, `division`, `brand`, `merged`, `defunct`, `unknown`, `product`, `sister`, null.
+- **`content_id, value, context_code.xlsx`** — 8,732 alias rows. `context_code` taxonomy: `also_known_as` (3,361), `brand_of` (1,994), `acquired_by` (706), `formerly_known_as` (619), `short_name` (564), `division_of` (530), `previous_name_value` (388), `acronym` (138), `parent_of` (118), `merged_into` (108), `trademark_of` (79), `product_family` (61), `abbreviation` (34), `mis-spelling` (30), `nickname` (1), `phoenetic` (1).
+
+**Verified chains:** Linear Tech (2136, acquired) → ADI (1742, corporate) via `parent_uid`. Maxim / Hittite / Burr-Brown similarly → ADI / TI. National Semi → TI via `context_code=acquired_by` alias (parent points to self). Linear Tech has 27 alias variants alone (`lt`, `ltc`, `linear tech`, `linetech`, `lint`, misspellings).
+
+### Two-table schema (`scripts/supabase-manufacturer-companies-schema.sql`)
+
+```sql
+manufacturer_companies (uid PK, name, source_url, status, parent_uid, slug UNIQUE, created_at, updated_at)
+manufacturer_aliases   (id BIGSERIAL PK, company_uid FK, value, value_lower GENERATED, context, created_at)
+```
+
+Indexes: `parent_uid` (for future graph queries), `LOWER(name)` (resolver lookup), partial `status` for `('corporate','active')`, `aliases.value_lower`, `aliases.company_uid`, `aliases.context`. RLS: authenticated read, admin-only write. `updated_at` trigger on companies table.
+
+### Import script (`scripts/manufacturer-companies-import.mjs`)
+
+Dual-xlsx input with **two-pass** company insert: pass 1 upserts with `parent_uid=NULL`, pass 2 sets `parent_uid` after every row exists. Avoids self-referential FK ordering issues within batch upserts. Orphan handling:
+- 189 alias rows whose `content_id` doesn't exist → dropped with stderr audit.
+- 31 companies whose `parent_company_id` doesn't exist → `parent_uid` set NULL.
+
+**Important parser gotcha:** `XLSX.utils.sheet_to_json(sheet, { defval: null })` is required. Without `defval`, columns whose first row is null get silently dropped. A related bug: `Number(null) === 0` (not `NaN`) — guard explicitly with `parentRaw !== null && parentRaw !== undefined && parentRaw !== ''` before `Number()`. Bit me in an early iteration (turned 1,080 false orphan parents into 31 real ones).
+
+### Resolver extension (`lib/services/manufacturerAliasResolver.ts`)
+
+Pre-computes the canonical walk at cache-build time so `resolveManufacturerAlias()` stays O(1):
+
+1. **Load** Atlas + Western (paginated via `fetchAllPages` — 1000-row PostgREST cap) in parallel.
+2. **Build** a `companyByUid` map with inlined aliases per node.
+3. **Walk** every company to its terminal canonical via `walkToCanonical(startUid)`:
+   - Step up through `parent_uid` graph first (primary mechanism).
+   - Else step up through `context=acquired_by|merged_into` alias (secondary — source data uses both; user confirmed intentional).
+   - Terminate at self-ref row, orphan parent, or `MAX_PARENT_HOPS = 6` (loop guard via `visited` set).
+4. **Group** descendants by canonical. Each canonical's `ManufacturerAliasMatch.variants` = union of every descendant's name + aliases — so ADI's variants include `lt`, `ltc`, `linetech`, `hittite`, `maxim`, etc.
+5. **Index** variant → uid. Collision policy: prefer canonical with `status IN ('corporate','active')`; ties broken by lowest `uid`. Ensures "Cypress" routes to the surviving entity when multiple companies share a name.
+6. **At resolve time:** look up by lowercased input. Attach per-input `lineage` (the chain from origin to canonical) — stored per-uid, applied as an override on the canonical's match object.
+
+**Atlas wins cross-source collisions** (rare, logged when observed). Same 5-minute cache TTL. `invalidateManufacturerAliasCache()` wipes both sources together.
+
+### Hot paths unchanged
+
+Atlas search, AddPart mismatch, BOM dedup, admin aggregation all already consume `ManufacturerAliasMatch` via `resolveManufacturerAlias()`. Zero edits to consumers. Western inputs light up the moment the data lands.
+
+### Deployment (user actions)
+
+The code is live but the data and schema are not. To activate:
+
+1. Apply schema migration in Supabase SQL editor:
+   ```bash
+   cat scripts/supabase-manufacturer-companies-schema.sql  # copy-paste into SQL editor
+   ```
+2. Import data (requires `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`):
+   ```bash
+   node scripts/manufacturer-companies-import.mjs --dry-run --verbose  # sanity check first
+   node scripts/manufacturer-companies-import.mjs                       # real write
+   ```
+3. Resolver picks up Western data on next 5-min cache refresh (or admin toggle on the Atlas manufacturers page invalidates immediately).
+
+### Future: AVL / AML / Preferred-MFR / Line-Card ingestion
+
+Those features (not in this decision) will call `resolveManufacturerAlias()` at ingest time and persist `companyUid` + raw customer string. Filter semantics become uid-comparisons. Future acquisitions (admin updates `parent_uid`) propagate automatically through customer data without re-upload.
+
+### Files Modified
+
+**New:**
+- `scripts/supabase-manufacturer-companies-schema.sql` — 2-table schema + indexes + RLS
+- `scripts/manufacturer-companies-import.mjs` — dual-xlsx import with orphan handling
+
+**Modified:**
+- `lib/services/manufacturerAliasResolver.ts` — Western source + parent-walk + `acquired_by` alias chain + lineage assembly + collision policy
+- `__tests__/services/manufacturerAliasResolver.test.ts` — 24 tests (11 Atlas, 9 Western, 3 cross-source, 1 getAll); mock routes by table name + paginated range
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,295/1,295 tests pass (19 suites, +8 Western tests). Import script `--dry-run --verbose` on the real files: 25,861 companies parsed, 8,543 aliases after dropping 189 orphans, 31 orphan parents nulled, status distribution matches inspection values.
+
+---
+
+## Decision #150 — BOM Batch-Validate MFR-Aware Match Selection (Apr 2026)
+
+**Context:** Decisions #148 / #149 wired alias resolution into 4 hot paths (Atlas search, AddPart mismatch, BOM dedup, admin aggregation) but **NOT** into the per-row BOM batch validator at [app/api/parts-list/validate/route.ts](app/api/parts-list/validate/route.ts). That route uses the `manufacturer` field only as a keyword fallback when MPN is blank; otherwise it blindly picks `searchResult.matches[0]` without MFR comparison. Consequence: a BOM row `LT1086 | Linear Technology` gets silently resolved to whatever comes first in search, even when a later candidate canonically matches the user's input MFR.
+
+Gap surfaced in review post-#149 — user called it out immediately.
+
+**Decision:** When `searchParts()` returns multiple candidates AND the user supplied a manufacturer, prefer the candidate whose MFR canonically matches the input. Fall through to `matches[0]` in every ambiguous case (input MFR blank, input doesn't resolve, no candidate's MFR resolves to the same canonical). Zero impact on single-match or MPN-less paths.
+
+### Implementation
+
+New helper `lib/services/mfrMatchPicker.ts` with a single exported function:
+
+```ts
+export async function pickMfrAwareMatch(
+  matches: PartSummary[],
+  inputManufacturer: string | undefined,
+): Promise<PartSummary>;
+```
+
+Called in `validate/route.ts processItem()` immediately after `searchParts()` returns, replacing the old `resolvedPart = searchResult.matches[0]` line. The existing ambiguity-flag logic (`candidateMatches` when MPN doesn't exactly match) still runs against the resolved part — unchanged semantics.
+
+**Why a separate module rather than inline?** Next.js route files convention-lock exports to HTTP methods; factoring the pure logic out keeps the route file focused on the handler and gives us a clean unit-test target.
+
+### Scope-limits (intentional)
+
+- No new mismatch-warning UI. Predecessor-brand swaps (`Linear Technology` → `Analog Devices Inc`) still happen silently because that's what we want — the canonical is what should be stored. Can add an informational "resolved to successor brand" note later if users ask for it.
+- No change to the MPN-less fallback path (`${manufacturer} ${query}` keyword concatenation). Unrelated.
+- No change to `search-quick` route (AddPart dialog) — that path already resolves via the slug-comparison approach added in Decision #148.
+
+### Files Modified
+
+**New:**
+- `lib/services/mfrMatchPicker.ts` — 25 lines, one exported function
+- `__tests__/services/mfrMatchPicker.test.ts` — 8 tests
+
+**Modified:**
+- `app/api/parts-list/validate/route.ts` — import `pickMfrAwareMatch`; one-line replacement of `matches[0]` pick
+
+### Verification
+
+`npm run lint` clean. `npm test` → 1,303/1,303 (20 suites, +8 picker tests). Picker tests cover: single-match passthrough, blank-input passthrough, unresolvable-input passthrough, canonical-preferred selection, matches[0]-already-canonical, no-canonical-match fallback, cross-source (Atlas), empty-manufacturer skip.
+
+---
+
+## Decision #151 — Matching-Engine Preferred-MFR Sort Uses Alias Resolver (Apr 2026)
+
+**Context:** Users can set `preferredManufacturers` in [Settings → Company Settings](components/settings/CompanySettingsPanel.tsx) — an existing feature that stores preferences in `profiles.preferences` JSONB and uses them as a sort tiebreaker in [matchingEngine.ts findReplacements()](lib/services/matchingEngine.ts). Before this decision, `isPreferredManufacturer()` used a substring check: `mfrLower.includes(p.toLowerCase()) || p.toLowerCase().includes(mfrLower)`. Consequence: a user who set "prefer Analog Devices" would NOT float Linear Tech / Maxim / Hittite parts because those strings don't substring-match "Analog Devices" in either direction — despite being the same company canonically.
+
+Decisions #148/#149 built the alias resolver but only wired it into hot paths that compare MFR strings at the time (Atlas search, AddPart mismatch, BOM dedup, admin aggregation, batch-validate match pick). The preferred-MFR sort was noted as deferred lower-ROI. This decision closes that gap.
+
+**Decision:** Swap the substring check for canonical-slug comparison via `resolveManufacturerAlias()`. Do the resolution at the caller (partDataService) so `findReplacements` stays sync and the existing substring behavior remains as a fallback for any input that doesn't resolve.
+
+### Contract change
+
+`findReplacements()` gains an optional parameter:
+
+```ts
+export function findReplacements(
+  logicTable: LogicTable,
+  source: PartAttributes,
+  candidates: PartAttributes[],
+  preferredManufacturers?: string[],
+  manufacturerSlugLookup?: Map<string, string>,  // ← new; lowercased MFR → canonical slug
+): XrefRecommendation[];
+```
+
+`isPreferredManufacturer()` consults the lookup first (slug-to-slug comparison) when provided; falls through to substring on misses. Backward-compatible: tests and `mockXrefService.ts` calls without the lookup argument get today's behavior unchanged.
+
+### Where the lookup is built
+
+[partDataService.getRecommendations()](lib/services/partDataService.ts) builds a single `Map<string, string>` before calling the matching engine:
+
+```ts
+const manufacturerSlugLookup = new Map<string, string>();
+if (mergedPreferred.length > 0) {
+  const resolveOne = async (raw: string) => {
+    const key = raw.toLowerCase();
+    if (manufacturerSlugLookup.has(key)) return;
+    const match = await resolveManufacturerAlias(raw);
+    if (match) manufacturerSlugLookup.set(key, match.slug);
+  };
+  await Promise.all([
+    ...mergedPreferred.map(resolveOne),
+    ...allCandidates
+      .map(c => c.part.manufacturer)
+      .filter((m): m is string => !!m)
+      .map(resolveOne),
+  ]);
+}
+```
+
+~N+M resolver calls per `getRecommendations` call (preferred count + candidate count, typically <~120). Each hits the 5-min resolver cache after first population — O(1) after warmup.
+
+### Performance
+
+Measured with `console.time('[perf] findReplacements (scoring)')` — no measurable regression in scoring. Alias pre-resolution adds a small async pass BEFORE scoring. The resolver's in-memory variant map hits for every Atlas/Western MFR with no additional Supabase traffic.
+
+### Edge cases
+
+- **Preferred MFR that doesn't resolve:** substring fallback fires (same behavior as today).
+- **Candidate MFR that doesn't resolve (non-Atlas/Western vendor):** substring fallback fires for that specific comparison.
+- **Empty preferredManufacturers:** `manufacturerSlugLookup` stays empty, no overhead, no lookup passed to `findReplacements`.
+
+### Files Modified
+
+**Modified:**
+- [lib/services/matchingEngine.ts](lib/services/matchingEngine.ts) — `isPreferredManufacturer()` signature + implementation; `findReplacements()` signature pass-through.
+- [lib/services/partDataService.ts](lib/services/partDataService.ts) — import `resolveManufacturerAlias`; build + pass `manufacturerSlugLookup` to `findReplacements()`.
+- [__tests__/services/matchingEngine.test.ts](__tests__/services/matchingEngine.test.ts) — 5 new tests: substring fallback (backward compat), canonical-boost, no-canonical-boost-when-differing, substring-fallback-for-unresolved, honors existing 5% match-% band.
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,308/1,308 (20 suites, +5 preferred-MFR tests).
+
+---
+
+## Decision #152 — Admin Alias Editor: Inline on Manufacturer Profile Tab (Apr 2026)
+
+**Context:** Atlas aliases (`atlas_manufacturers.aliases` JSONB) have been populated only via the Excel import script. When an admin spots a missing abbreviation, rebrand, or misspelling, the only remediation was re-running the bulk import — friction that actively discouraged alias corrections. Aliases already rendered as read-only chips in the Profile tab of the per-MFR admin detail page ([ManufacturerDetailPage.tsx:445-454](components/admin/ManufacturerDetailPage.tsx#L445-L454), pre-fix). User called out the gap after the alias arc (#148 / #149 / #150 / #151) shipped.
+
+Scope decision: Atlas-only, inline on Profile tab. Western `manufacturer_companies` + `manufacturer_aliases` editing stays deferred — the graph + 15-context taxonomy needs its own design pass.
+
+**Decision:** Upgrade the existing chip strip in-place to a fully editable widget with add/remove, optimistic saves, and immediate resolver cache invalidation. No new nav section, no new tab on AtlasPanel, no drawer — the edit surface sits exactly where read-only display already lives.
+
+### UI — inline widget
+
+Each alias renders as a `<Chip onDelete={...}>` so MUI draws the × affordance natively. Below the chips: a `<TextField>` + `<Button>` pair, Enter-key submits. **Immediate save on each action** — optimistic update → PATCH → rollback on failure + `<Alert>` error banner. No dirty state, no Save/Cancel buttons. Matches the `updateEnabled` toggle pattern at [ManufacturerDetailPage.tsx:249-268](components/admin/ManufacturerDetailPage.tsx) that already exists for the enabled switch.
+
+Always renders the Aliases section (previously hidden when `aliases.length === 0`) so admins can add the first alias on a MFR that has none.
+
+Duplicates (case-insensitive) and empty submissions no-op with a brief `error` flash on the input. `CircularProgress size={12}` inline next to the "Aliases" header while a PATCH is in flight.
+
+### API — extend existing PATCH allowlist + validation
+
+[app/api/admin/manufacturers/[slug]/route.ts](app/api/admin/manufacturers/[slug]/route.ts) gains `'aliases'` in the `allowedFields` array plus a new exported `normalizeAliasInput()` helper that:
+
+- Rejects non-array input (400)
+- Rejects non-string entries (400)
+- Rejects empty / whitespace-only entries (400)
+- Rejects entries longer than 100 chars (400)
+- Caps total at 50 entries (400)
+- Dedupes case-insensitively, first writer wins
+- Trims surrounding whitespace before dedup
+
+The helper is exported specifically for unit testing; route handler calls it inline right before the `.update()` call.
+
+### Cache invalidation
+
+After successful write, calls `invalidateManufacturerAliasCache()` from [lib/services/manufacturerAliasResolver.ts](lib/services/manufacturerAliasResolver.ts) alongside the existing `invalidateManufacturerCache()` + `invalidateManufacturersListCache()` invalidations. Alias edits skip `invalidateRecommendationsCache()` because the resolver is used for MFR identity only — not for scoring weights. The recommendations cache remains valid across alias edits.
+
+### Files Modified
+
+**New:**
+- `__tests__/services/manufacturerAliasValidation.test.ts` — 10 tests covering every validation branch
+
+**Modified:**
+- `app/api/admin/manufacturers/[slug]/route.ts` — export `normalizeAliasInput()`, add `aliases` to `allowedFields`, plumb validation + resolver cache invalidation
+- `components/admin/ManufacturerDetailPage.tsx` — 5 new useState hooks (aliases / pending / error / input / inputError), `useEffect` to sync from server data, `patchAliases` + `handleAddAlias` + `handleDeleteAlias` callbacks, upgraded Profile-tab alias section with chip-delete + TextField-add widget
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,318/1,318 tests pass (21 suites, +10 validation tests). Manual end-to-end: on `/admin/manufacturers/gigadevice`, add "GD777", delete "gd", duplicate-add fails silently, empty-add fails silently, every successful change persists across refresh, resolver picks up the new alias immediately (uploaded BOM with the new alias canonicalizes correctly without waiting on the 5-min TTL).
+
+### Out of scope (deferred)
+
+- Western `manufacturer_companies` / `manufacturer_aliases` editor — graph + 15-context-code taxonomy warrants its own design.
+- Bulk-browse tab across all MFRs (the "new tab in AtlasPanel" option). Defer until/unless cross-MFR browsing becomes a recurring admin workflow.
+- Context-code selection — Atlas aliases are a flat string list by design; no taxonomy to choose from.

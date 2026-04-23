@@ -55,7 +55,7 @@ export default function PartsListShell() {
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
     spreadsheetHeaders, activeListId, listViewConfigs, replacementPriorities,
     backfillCountsResult,
-    modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
+    modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing, modalInitialFetching,
     handleFileSelected, handleParsedDataReady,
     handleColumnMappingConfirmed, handleColumnMappingCancelled, handleSheetChange,
     handleConsolidateDuplicates, handleLeaveDuplicatesAsIs,
@@ -67,6 +67,8 @@ export default function PartsListShell() {
     handleUpdateListDetails, handleRefreshRows, handleSetPartType, handleDeleteRows,
     handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
     handleRetryFCEnrichment, getFCEnrichResult,
+    pickerState, handleReplaceRowIdentity, handleOpenAmbiguousPicker, handlePickerCancel,
+    getLastValidationScope,
   } = usePartsListState();
 
   const {
@@ -206,6 +208,11 @@ export default function PartsListShell() {
     prevPhaseRef.current = phase;
     if (!wasValidating || phase !== 'results') return;
 
+    // Skip list-level summary snackbars after per-row refreshes (picker
+    // confirmation, row action Refresh, Add Part, inline MFR edit). They're
+    // intended as a post-upload / refresh-all summary, not a per-row signal.
+    if (getLastValidationScope() === 'partial') return;
+
     // Check for validation failures
     const errorCount = rows.filter(r => r.status === 'error').length;
     const notFoundCount = rows.filter(r => r.status === 'not-found').length;
@@ -248,7 +255,7 @@ export default function PartsListShell() {
     }, 3000); // Wait for FC enrichment to finish
 
     return () => clearTimeout(timer);
-  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment]);
+  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment, getLastValidationScope]);
 
   // Notify when the cache-only bucket-count backfill has results to report
   const backfillRowsRef = useRef<PartsListRow[]>(rows);
@@ -567,6 +574,8 @@ export default function PartsListShell() {
           hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
           buckets={replacementPriorities?.buckets ?? replacementPriorities?.suggestionBuckets}
           maxReplacements={replacementPriorities?.maxReplacements ?? replacementPriorities?.maxSuggestions}
+          onAmbiguousClick={handleOpenAmbiguousPicker}
+          columnMapping={inferredMapping}
         />
       )}
 
@@ -593,6 +602,7 @@ export default function PartsListShell() {
         selectedRec={modalSelectedRec}
         comparisonAttrs={modalComparisonAttrs}
         isComparing={modalComparing}
+        initialFetching={modalInitialFetching}
         onClose={handleCloseModal}
         onSelectRec={handleModalSelectRec}
         onBackToRecs={handleModalBackToRecs}
@@ -672,6 +682,24 @@ export default function PartsListShell() {
           if (idx != null) setHighlightedRowIndex(idx);
         }}
         onCancel={() => setAddPartOpen(false)}
+        spreadsheetHeaders={effectiveHeaders}
+        inferredMapping={inferredMapping}
+      />
+
+      {/* Row-identity picker — same dialog in 'replace' mode. Opens on MPN cell
+          edit (to force Search → Select confirmation) or on ambiguous status
+          chip click (to let the user pick from batch-validator candidates). */}
+      <AddPartDialog
+        open={pickerState !== null}
+        mode="replace"
+        initialMpn={pickerState?.mpn}
+        initialManufacturer={pickerState?.manufacturer}
+        initialCandidates={pickerState?.candidates}
+        onReplace={(picked) => {
+          if (pickerState) handleReplaceRowIdentity(pickerState.rowIndex, picked);
+        }}
+        onAdd={() => { /* unused in replace mode */ }}
+        onCancel={handlePickerCancel}
         spreadsheetHeaders={effectiveHeaders}
         inferredMapping={inferredMapping}
       />

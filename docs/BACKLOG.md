@@ -79,36 +79,25 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
-### Wire Chinese-MFR aliases into hot lookup paths
+### ~~Wire Chinese-MFR aliases into hot lookup paths~~ COMPLETED
 
-`atlas_manufacturers.aliases` JSONB (GIN-indexed, populated from the master Excel import — 1,011 rows today) is not read by any code path. Variants like "兆易创新", "GD", and "gd/兆易创新" silently miss in Atlas search, BOM duplicate detection, the AddPart mismatch warning, and admin manufacturer aggregation.
+Shipped Apr 2026 (Decision #148). New [lib/services/manufacturerAliasResolver.ts](../lib/services/manufacturerAliasResolver.ts) exposes `resolveManufacturerAlias()` + `getAllManufacturerVariants()` with a 5-min cache over `atlas_manufacturers` (`name_display`, `name_en`, `name_zh`, `aliases[]`). Client-safe wrapper `manufacturerAliasClient.ts` proxies through `POST /api/manufacturer-aliases/canonicalize`. Forward-compat contract (`source: 'atlas' | 'western'`, reserved `companyUid`/`lineage`) so the Western follow-on is purely additive.
 
-**Scope (exact-hit alias resolution, no fuzzy):**
-1. New `lib/services/manufacturerAliasResolver.ts` — 5-min cached `resolveManufacturerAlias(input)` + `getAllManufacturerVariants()`.
-2. [lib/services/atlasClient.ts:130](../lib/services/atlasClient.ts#L130) — `searchAtlasProducts` ORs over `manufacturer.in.(variants…)` when the query resolves.
-3. [app/api/parts-list/search-quick/route.ts:30-35](../app/api/parts-list/search-quick/route.ts#L30-L35) — suppress mismatch warning when input + top result share a canonical.
-4. [lib/services/bomDeduper.ts:8](../lib/services/bomDeduper.ts#L8) + [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) — pre-canonicalize `rawManufacturer` so duplicate groups collapse across variants.
-5. [app/api/admin/manufacturers/route.ts:149-150](../app/api/admin/manufacturers/route.ts#L149-L150) + [app/api/admin/manufacturers/[slug]/products/route.ts](../app/api/admin/manufacturers/[slug]/products/route.ts) — fold product aggregation + coverage across all variants.
+Wired into four hot paths: Atlas search (dual-query + dedup by id), BOM dedup pre-canonicalization in `usePartsListState`, AddPart mismatch suppression in `search-quick`, admin manufacturer aggregation (both list and per-slug products routes). Cache invalidated from the atlas/manufacturers toggle.
 
-**Biggest impact:** Atlas search (every user search today silently drops variant-named results) and admin aggregation (coverage stats undercount where product imports used inconsistent names).
+**Deferred (not shipped):** matching-engine preferred-MFR `includes()` check (lower ROI), xref lookup (MPN-only today, no MFR filter), Digikey/parts.io alias expansion (those catalogs don't know Chinese aliases).
 
-**Deferred:** matching-engine preferred-MFR `includes()` check (lower ROI), xref lookup (MPN-only today, no MFR filter), Digikey/parts.io alias expansion (those catalogs don't know Chinese aliases).
+### ~~Western MFR aliases — company-identity graph ingestion~~ COMPLETED
 
-### Western MFR aliases — acquisitions, rebrands, abbreviations
+Shipped Apr 2026 (Decision #149). New tables `manufacturer_companies` (25,861 rows, parent-chain graph, status enum) + `manufacturer_aliases` (8,543 rows, 15-context taxonomy). Resolver extended with parent-walk + `acquired_by`/`merged_into` alias chain, variants union from all descendants, per-resolve `lineage`, corporate/active canonical collision policy. Full context in [docs/DECISIONS.md](DECISIONS.md) Decision #149.
 
-For US/EU customer BOMs the bigger alias problem isn't translation — it's **acquisitions and rebrands**. A 2018 BOM saying `Linear Technology LT1086` hits Digikey as `Analog Devices`, fires a false AddPart mismatch warning, and breaks dedup against today's `Analog Devices LT1086`. Same pattern for Freescale→NXP (2015), Atmel→Microchip (2016), Maxim→ADI (2021), Intersil/IDT/Dialog→Renesas, International Rectifier→Infineon, Cypress→Infineon, National Semi/Burr-Brown→TI, Fairchild→onsemi, plus rebrands (ON Semiconductor→onsemi) and abbreviations (TI, ADI, ST, NXP).
+### ~~BOM batch-validate MFR-aware match selection~~ COMPLETED
 
-**Impact:** Same four paths as the Chinese-alias item (Atlas search, dedup, AddPart mismatch, admin aggregation) plus matching-engine preferred-MFR sort. For a Western-heavy customer base this is arguably higher ROI than Chinese aliasing — every multi-year BOM hits acquired-brand noise.
+Shipped Apr 2026 (Decision #150). Closes the last alias-wiring gap: `app/api/parts-list/validate/route.ts` now uses `pickMfrAwareMatch()` (in new `lib/services/mfrMatchPicker.ts`) to prefer a search candidate whose MFR canonically matches the user's input over blind `matches[0]`. Falls through to existing behavior on any ambiguity (blank input, unresolvable input, no canonical match among candidates). +8 tests.
 
-**Scope:**
-1. Curated Western alias file arriving — determines schema. Needs at minimum canonical name + alias list; nice-to-have: `acquired_by`, `acquired_year`, `relation_type` (acquisition / rebrand / subsidiary / abbreviation).
-2. **Storage decision:** new `manufacturer_aliases` table (region-keyed, cleanly separate from `atlas_manufacturers` which is the Chinese dataset) vs extending `atlas_manufacturers` with a `region` column. Default: new table.
-3. Reuse `manufacturerAliasResolver.ts` from the Chinese-alias work — resolver reads both sources and returns a unified `ManufacturerAliasMatch`. Consumers don't care which side the hit came from.
-4. Seed from the file; add admin UI for curation later if needed.
+### ~~Admin alias editor on Profile tab~~ COMPLETED
 
-**Blocked on:** Western aliases file (expected shortly).
-
-**Why split from the Chinese item:** Chinese aliases have ready data (in `atlas_manufacturers.aliases`) and can ship immediately. Western aliases need the seed file and a schema decision. Splitting keeps the Chinese fix from getting stuck.
+Shipped Apr 2026 (Decision #152). The read-only alias chip strip on `/admin/manufacturers/[slug]` → Profile tab became fully editable — click × on any chip to remove, type into the "Add alias" field + Enter to add. Optimistic saves, rollback on PATCH failure, immediate resolver cache invalidation so edits take effect without waiting out the 5-min TTL. New `normalizeAliasInput()` helper in [app/api/admin/manufacturers/[slug]/route.ts](../app/api/admin/manufacturers/[slug]/route.ts) validates shape (array of strings), caps length (50 entries, 100 chars each), dedupes case-insensitively, trims whitespace. +10 validation tests. Atlas only — Western `manufacturer_companies` / `manufacturer_aliases` editor remains deferred.
 
 ### Phase 2: Deep-fetch for `suggestionBuckets` shortfall (Decision #146)
 
@@ -674,3 +663,14 @@ Heuristic detection of non-electronic parts from description text (e.g., "heatsi
 **Status:** Completed
 
 Master views now stored in Supabase `view_templates` table (user-scoped). localStorage templates migrated on first load. Future: expand to org-level sharing when company model is built.
+
+### ~~Matching-engine preferred-MFR filter should use alias resolver~~ COMPLETED
+
+Shipped Apr 2026 (Decision #151). `isPreferredManufacturer()` now accepts an optional `manufacturerSlugLookup: Map<string, string>` for canonical-slug comparison; `partDataService.getRecommendations()` pre-resolves preferred + candidate MFRs and passes the lookup in. Substring fallback preserved for non-resolving inputs. +5 tests in `matchingEngine.test.ts`.
+
+### Xref lookup could filter by manufacturer
+**Status:** Not started
+**Priority:** P2
+**File:** [lib/services/manufacturerCrossRefService.ts](../lib/services/manufacturerCrossRefService.ts)
+
+`fetchManufacturerCrossRefs()` today matches on MPN alone. If a customer ever uploads cross-refs with an `original_manufacturer` column + two different MFRs ship the same MPN string, we'd conflate them. Adding a `resolveManufacturerAlias()`-based filter would disambiguate. Not a current bug (xrefs aren't dense enough for collisions yet), just preemptive. Deferred from Decision #148.

@@ -33,6 +33,7 @@ interface MfrRow {
   name_display: string;
   name_en: string;
   name_zh: string | null;
+  aliases: string[] | null;
   slug: string;
   id: number;
   enabled: boolean;
@@ -60,7 +61,7 @@ async function computeStats(): Promise<object> {
   const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
     supabase
       .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, slug, id, enabled, website_url, updated_at')
+      .select('name_display, name_en, name_zh, aliases, slug, id, enabled, website_url, updated_at')
       .order('name_en'),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
@@ -146,10 +147,35 @@ async function computeStats(): Promise<object> {
   }
 
   const result = manufacturers.map((m) => {
-    const agg = productAgg.get(m.name_display) || productAgg.get(m.name_en);
-    const cov = mfrCoverage.get(m.name_display) || mfrCoverage.get(m.name_en);
+    // Fold product aggregation across every known spelling so products imported
+    // under alias names (common before aliases were wired — products use English
+    // only; atlas_manufacturers.name_display is "ENGLISH Chinese") are counted.
+    const variants = Array.from(new Set(
+      [m.name_display, m.name_en, m.name_zh, ...(m.aliases ?? [])].filter((v): v is string => !!v)
+    ));
+
+    let productCount = 0;
+    let scorableCount = 0;
+    const families = new Set<string>();
+    let lastProductUpdate: string | null = null;
+    let totalCovered = 0;
+    let totalRules = 0;
+    for (const v of variants) {
+      const agg = productAgg.get(v);
+      if (agg) {
+        productCount += agg.productCount;
+        scorableCount += agg.scorableCount;
+        for (const f of agg.families) families.add(f);
+        lastProductUpdate = maxIso(lastProductUpdate, agg.lastProductUpdate);
+      }
+      const cov = mfrCoverage.get(v);
+      if (cov) {
+        totalCovered += cov.totalCovered;
+        totalRules += cov.totalRules;
+      }
+    }
+
     const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
-    const productTs = agg?.lastProductUpdate ?? null;
     return {
       id: m.id,
       slug: m.slug,
@@ -158,17 +184,15 @@ async function computeStats(): Promise<object> {
       nameDisplay: m.name_display,
       enabled: m.enabled,
       websiteUrl: m.website_url,
-      productCount: agg?.productCount ?? 0,
-      scorableCount: agg?.scorableCount ?? 0,
-      families: agg ? [...agg.families].sort() : [],
-      coveragePct: cov && cov.totalRules > 0
-        ? Math.round((cov.totalCovered / cov.totalRules) * 100)
-        : 0,
+      productCount,
+      scorableCount,
+      families: [...families].sort(),
+      coveragePct: totalRules > 0 ? Math.round((totalCovered / totalRules) * 100) : 0,
       crossRefCount: crossRefCounts.get(m.slug) || 0,
-      lastProductUpdate: productTs,
+      lastProductUpdate,
       lastProfileUpdate: m.updated_at,
       lastCrossRefUpdate: xrefTs,
-      lastModified: maxIso(maxIso(productTs, m.updated_at), xrefTs),
+      lastModified: maxIso(maxIso(lastProductUpdate, m.updated_at), xrefTs),
     };
   });
 

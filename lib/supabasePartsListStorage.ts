@@ -45,6 +45,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
       partType: r.partType,
+      candidateMatches: r.candidateMatches,
     };
   });
 }
@@ -75,6 +76,7 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
       accurisCertifiedCount: r.accurisCertifiedCount,
       preferredMpn: r.preferredMpn,
       partType: r.partType,
+      candidateMatches: r.candidateMatches,
     };
   });
 }

@@ -84,6 +84,24 @@ describe('findDuplicateGroups', () => {
     expect(groups[0].totalQty).toBeUndefined();
   });
 
+  it('collapses alias-variant MFRs once rows are pre-canonicalized', () => {
+    // Mirrors the runtime contract: usePartsListState rewrites rawManufacturer
+    // to the Atlas canonical (name_display) via the canonicalize endpoint
+    // BEFORE calling findDuplicateGroups. The deduper itself stays oblivious
+    // to aliasing; this test documents the expected collapsed state.
+    const canonical = 'GIGADEVICE 兆易创新';
+    const rows = [
+      makeRow(0, 'GD32F405', canonical),  // from input 'GD'
+      makeRow(1, 'GD32F405', canonical),  // from input 'GigaDevice'
+      makeRow(2, 'GD32F405', canonical),  // from input '兆易创新'
+    ];
+    const groups = findDuplicateGroups(rows, false);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].rowCount).toBe(3);
+    expect(groups[0].manufacturer).toBe(canonical);
+    expect(groups[0].rowIndexes).toEqual([0, 1, 2]);
+  });
+
   it('returns multiple groups and excludes singletons', () => {
     const rows = [
       makeRow(0, 'A1', 'Kemet'),     // dup group 1

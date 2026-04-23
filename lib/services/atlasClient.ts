@@ -8,6 +8,7 @@
 import { createClient } from '../supabase/server';
 import type { PartAttributes, SearchResult, Part, PartSummary, ParametricAttribute } from '../types';
 import { fromParametersJsonb } from './atlasMapper';
+import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 
 // ─── Disabled Manufacturer Cache ─────────────────────────
 const CACHE_TTL_MS = 60_000; // 1 minute, same as override caches
@@ -123,27 +124,55 @@ export async function searchAtlasProducts(query: string): Promise<SearchResult> 
   try {
     const supabase = await createClient();
 
-    // Over-fetch to compensate for disabled manufacturer filtering
-    const { data, error } = await supabase
+    // If the query resolves to a known manufacturer (exact alias hit), pull
+    // products by the full variant set in addition to the MPN ilike. The
+    // mismatch before this change: `manufacturer.ilike.%gd%` silently misses
+    // products stored as "GIGADEVICE 兆易创新" for pure-CJK or abbreviated input.
+    const aliasMatch = await resolveManufacturerAlias(query);
+
+    const columns = 'id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country';
+
+    const mpnQuery = supabase
       .from('atlas_products')
-      .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')
-      .or(`mpn.ilike.%${query}%,manufacturer.ilike.%${query}%`)
+      .select(columns)
+      .ilike('mpn', `%${query}%`)
       .limit(50);
 
-    if (error) {
-      console.warn('Atlas search error:', error.message);
+    const mfrQuery = aliasMatch
+      ? supabase
+          .from('atlas_products')
+          .select(columns)
+          .in('manufacturer', aliasMatch.variants)
+          .limit(50)
+      : supabase
+          .from('atlas_products')
+          .select(columns)
+          .ilike('manufacturer', `%${query}%`)
+          .limit(50);
+
+    const [mpnRes, mfrRes] = await Promise.all([mpnQuery, mfrQuery]);
+
+    if (mpnRes.error && mfrRes.error) {
+      console.warn('Atlas search error:', mpnRes.error.message || mfrRes.error?.message);
       return { type: 'none', matches: [] };
     }
 
-    if (!data || data.length === 0) {
+    // Merge + dedup by id — replaces the single .or() round trip with two
+    // targeted queries. Safer than string-escaping variants into an .or() clause.
+    const byId = new Map<string, AtlasProductRow>();
+    for (const row of (mpnRes.data ?? []) as AtlasProductRow[]) byId.set(row.id, row);
+    for (const row of (mfrRes.data ?? []) as AtlasProductRow[]) byId.set(row.id, row);
+    const data = [...byId.values()];
+
+    if (data.length === 0) {
       return { type: 'none', matches: [] };
     }
 
     // Filter out disabled manufacturers, then trim to 20
     const disabled = await getDisabledManufacturers();
     const filtered = disabled.size > 0
-      ? (data as AtlasProductRow[]).filter((row) => !disabled.has(row.manufacturer))
-      : (data as AtlasProductRow[]);
+      ? data.filter((row) => !disabled.has(row.manufacturer))
+      : data;
     const trimmed = filtered.slice(0, 20);
 
     if (trimmed.length === 0) {

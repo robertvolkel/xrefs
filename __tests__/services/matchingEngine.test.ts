@@ -659,6 +659,115 @@ describe('matchingEngine', () => {
       expect(results[0]).toHaveProperty('matchDetails');
       expect(results[0].matchDetails[0]).toHaveProperty('parameterId', 'cap');
     });
+
+    // Alias-aware preferred-MFR tests — Decision #151
+    describe('preferredManufacturers with manufacturerSlugLookup (Decision #151)', () => {
+      function attrsWithMfr(mfr: string, mpn: string): PartAttributes {
+        return {
+          part: {
+            mpn,
+            manufacturer: mfr,
+            description: 'Test part',
+            detailedDescription: '',
+            category: 'Capacitors' as const,
+            subcategory: 'MLCC',
+            status: 'Active' as const,
+          },
+          parameters: [param('cap', '100nF', 1e-7)],
+        };
+      }
+
+      it('substring fallback still fires when no lookup is supplied (backward compat)', () => {
+        const src = attrsWithMfr('Source Co', 'SRC-001');
+        // Two candidates at identical match %, preferred = "Analog Devices" substring-matches the first
+        const candidates = [
+          attrsWithMfr('Kemet', 'K1'),
+          attrsWithMfr('Analog Devices Inc', 'ADI1'),
+        ];
+        const results = findReplacements(table(rules), src, candidates, ['Analog Devices']);
+        expect(results[0].part.mpn).toBe('ADI1');
+      });
+
+      it('boosts canonically-matching candidate when slug lookup provided (the fix)', () => {
+        const src = attrsWithMfr('Source Co', 'SRC-001');
+        // Linear Tech is an acquired brand of ADI. Substring check would MISS this.
+        const candidates = [
+          attrsWithMfr('Kemet', 'K1'),
+          attrsWithMfr('Linear Technology', 'LT1'),
+        ];
+        // Both user-preferred "Analog Devices Inc" and the candidate "Linear Technology"
+        // resolve to the same canonical slug. (Lookup is the caller's responsibility;
+        // here we construct it directly.)
+        const lookup = new Map<string, string>([
+          ['analog devices inc', 'analog-devices-inc'],
+          ['linear technology', 'analog-devices-inc'],
+          ['kemet', 'kemet'],
+        ]);
+        const results = findReplacements(
+          table(rules), src, candidates, ['Analog Devices Inc'], lookup,
+        );
+        expect(results[0].part.mpn).toBe('LT1');
+      });
+
+      it('does NOT boost when candidate slug differs from preferred slug', () => {
+        const src = attrsWithMfr('Source Co', 'SRC-001');
+        const candidates = [
+          attrsWithMfr('Kemet', 'K1'),              // comes first in input order
+          attrsWithMfr('Texas Instruments', 'TI1'),  // TI, NOT ADI
+        ];
+        const lookup = new Map<string, string>([
+          ['analog devices inc', 'analog-devices-inc'],
+          ['texas instruments', 'texas-instruments'],
+          ['kemet', 'kemet'],
+        ]);
+        const results = findReplacements(
+          table(rules), src, candidates, ['Analog Devices Inc'], lookup,
+        );
+        // No canonical match → preserve input order by match %; both tied on %,
+        // stable-sorted so Kemet stays first.
+        expect(results[0].part.mpn).toBe('K1');
+      });
+
+      it('falls back to substring when candidate does not resolve (non-Atlas/Western MFR)', () => {
+        const src = attrsWithMfr('Source Co', 'SRC-001');
+        const candidates = [
+          attrsWithMfr('Kemet', 'K1'),
+          attrsWithMfr('Analog Devices Inc', 'ADI1'),
+        ];
+        // Candidate ADI is NOT in the lookup — simulates a candidate not covered
+        // by either Atlas or Western data. Substring check still fires and matches.
+        const lookup = new Map<string, string>([
+          ['kemet', 'kemet'],
+          // 'analog devices inc' intentionally absent
+        ]);
+        const results = findReplacements(
+          table(rules), src, candidates, ['Analog Devices'], lookup,
+        );
+        expect(results[0].part.mpn).toBe('ADI1');
+      });
+
+      it('only boosts when match percentages are within 5% (honors existing band)', () => {
+        // Preferred-MFR boost is gated to "close scores" (within 5%). If the
+        // non-preferred candidate is far ahead on match %, it still wins.
+        const src = attrsWithMfr('Source Co', 'SRC-001');
+        const candidates = [
+          attrsWithMfr('Kemet', 'K1'),                  // perfect match
+          {
+            ...attrsWithMfr('Linear Technology', 'LT1'),
+            parameters: [param('cap', '10nF', 1e-8)],    // fails → score 0
+          },
+        ];
+        const lookup = new Map<string, string>([
+          ['analog devices inc', 'analog-devices-inc'],
+          ['linear technology', 'analog-devices-inc'],
+        ]);
+        const results = findReplacements(
+          table(rules), src, candidates, ['Analog Devices Inc'], lookup,
+        );
+        expect(results[0].part.mpn).toBe('K1');
+        expect(results[1].part.mpn).toBe('LT1');
+      });
+    });
   });
 
   // ----------------------------------------------------------

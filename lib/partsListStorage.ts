@@ -47,6 +47,9 @@ export interface StoredRow {
   errorMessage?: string;
   /** BOM line item classification */
   partType?: PartType;
+  /** Top search candidates when status='ambiguous' — persisted so the picker
+   *  can render them after a page reload without re-running batch validation. */
+  candidateMatches?: PartSummary[];
 }
 
 /** A saved parts list */
