@@ -50,9 +50,30 @@ function buildAtlasMatch(row: AtlasRow): ManufacturerAliasMatch {
   variantSet.add(row.name_display);
   if (row.name_en) variantSet.add(row.name_en);
   if (row.name_zh) variantSet.add(row.name_zh);
-  for (const a of row.aliases ?? []) {
+
+  // Defensive: the aliases JSONB column has historically been written both as
+  // arrays (correct) and as JSON-encoded strings (pre-fix bug). If we get a
+  // string, parse it back. Iterating a string directly would add every
+  // character to the variant map and silently poison the resolver. Logged so
+  // re-corruption doesn't go unnoticed.
+  let aliasArray: string[] = [];
+  if (Array.isArray(row.aliases)) {
+    aliasArray = row.aliases;
+  } else if (typeof row.aliases === 'string') {
+    try {
+      const parsed = JSON.parse(row.aliases);
+      if (Array.isArray(parsed)) {
+        aliasArray = parsed;
+        console.warn(`manufacturerAliasResolver: aliases column for "${row.slug}" is a JSON string, not a JSONB array. Re-run scripts/atlas-manufacturers-import.mjs to fix.`);
+      }
+    } catch {
+      // Not valid JSON — treat as no aliases.
+    }
+  }
+  for (const a of aliasArray) {
     if (a && typeof a === 'string') variantSet.add(a);
   }
+
   return {
     canonical: row.name_display,
     slug: row.slug,

@@ -3989,21 +3989,23 @@ Measured with `console.time('[perf] findReplacements (scoring)')` — no measura
 
 ---
 
-## Decision #152 — Admin Alias Editor: Inline on Manufacturer Profile Tab (Apr 2026)
+## Decision #152 — Admin Alias Editor: Dedicated Aliases Tab (Apr 2026)
 
-**Context:** Atlas aliases (`atlas_manufacturers.aliases` JSONB) have been populated only via the Excel import script. When an admin spots a missing abbreviation, rebrand, or misspelling, the only remediation was re-running the bulk import — friction that actively discouraged alias corrections. Aliases already rendered as read-only chips in the Profile tab of the per-MFR admin detail page ([ManufacturerDetailPage.tsx:445-454](components/admin/ManufacturerDetailPage.tsx#L445-L454), pre-fix). User called out the gap after the alias arc (#148 / #149 / #150 / #151) shipped.
+**Context:** Atlas aliases (`atlas_manufacturers.aliases` JSONB) have been populated only via the Excel import script. When an admin spots a missing abbreviation, rebrand, or misspelling, the only remediation was re-running the bulk import — friction that actively discouraged alias corrections. Aliases previously rendered as read-only chips inside the Profile tab of the per-MFR admin detail page. User called out the gap after the alias arc (#148 / #149 / #150 / #151) shipped.
 
-Scope decision: Atlas-only, inline on Profile tab. Western `manufacturer_companies` + `manufacturer_aliases` editing stays deferred — the graph + 15-context taxonomy needs its own design pass.
+**Initial design** (first iteration): upgraded the Profile-tab chip strip in-place to an editable widget. User pushed back: "Why put it in Profile? That makes no sense — it should be a dedicated tab." Correct call — aliases are *identity*, not profile metadata. Rationalized placement based on "that's where the read-only chips already lived" isn't a design principle.
 
-**Decision:** Upgrade the existing chip strip in-place to a fully editable widget with add/remove, optimistic saves, and immediate resolver cache invalidation. No new nav section, no new tab on AtlasPanel, no drawer — the edit surface sits exactly where read-only display already lives.
+**Decision:** New dedicated "Aliases" tab (tab index 5) on the per-MFR detail page, positioned after Profile. Shows alias count in the tab label (`Aliases (3)`) for discoverability. Editable widget: add/remove with optimistic saves, immediate resolver cache invalidation. Atlas-only — Western `manufacturer_companies` / `manufacturer_aliases` editor stays deferred (graph + 15-context taxonomy warrants its own design).
 
-### UI — inline widget
+### UI — dedicated tab
 
-Each alias renders as a `<Chip onDelete={...}>` so MUI draws the × affordance natively. Below the chips: a `<TextField>` + `<Button>` pair, Enter-key submits. **Immediate save on each action** — optimistic update → PATCH → rollback on failure + `<Alert>` error banner. No dirty state, no Save/Cancel buttons. Matches the `updateEnabled` toggle pattern at [ManufacturerDetailPage.tsx:249-268](components/admin/ManufacturerDetailPage.tsx) that already exists for the enabled switch.
+Tab declared alongside existing five (Products, Flagged, Coverage, Cross-References, Profile) at [ManufacturerDetailPage.tsx:408](components/admin/ManufacturerDetailPage.tsx#L408). Tab label includes the alias count when > 0.
 
-Always renders the Aliases section (previously hidden when `aliases.length === 0`) so admins can add the first alias on a MFR that has none.
+Tab content: header with inline `CircularProgress` while a PATCH is in flight, explanatory helper text ("Variant spellings, abbreviations, and translations…"), chip row with MUI `<Chip onDelete={...}>` for each alias, then a `<TextField>` + `<Button>` pair for adds (Enter-key submits). **Immediate save on each action** — optimistic update → PATCH → rollback on failure + `<Alert>` error banner. No dirty state, no Save/Cancel buttons. Matches the `updateEnabled` toggle pattern at [ManufacturerDetailPage.tsx](components/admin/ManufacturerDetailPage.tsx) used by the enabled switch.
 
-Duplicates (case-insensitive) and empty submissions no-op with a brief `error` flash on the input. `CircularProgress size={12}` inline next to the "Aliases" header while a PATCH is in flight.
+The old in-Profile-tab alias chip strip is removed entirely — no duplication, no confusion about where the source of truth lives.
+
+Duplicates (case-insensitive) and empty submissions no-op with `error` prop on the input + helper text "Empty or duplicate alias".
 
 ### API — extend existing PATCH allowlist + validation
 
@@ -4041,3 +4043,47 @@ After successful write, calls `invalidateManufacturerAliasCache()` from [lib/ser
 - Western `manufacturer_companies` / `manufacturer_aliases` editor — graph + 15-context-code taxonomy warrants its own design.
 - Bulk-browse tab across all MFRs (the "new tab in AtlasPanel" option). Defer until/unless cross-MFR browsing becomes a recurring admin workflow.
 - Context-code selection — Atlas aliases are a flat string list by design; no taxonomy to choose from.
+
+---
+
+## Decision #153 — Fix: atlas_manufacturers.aliases Double-JSON-Encoding (Apr 2026)
+
+**Context:** While testing the new Aliases tab (Decision #152) on `/admin/manufacturers/gigadevice`, the UI showed "No aliases yet" despite the source xlsx clearly listing 6 aliases for GigaDevice (`gigadevice; 兆易创新; gd/兆易创新; gigadevice semiconductor (beijing) inc; gd兆易创新; gigadevice semiconductor`). A direct Supabase query on `atlas_manufacturers.aliases` revealed the root cause:
+
+```
+typeof aliases: string
+Array.isArray(aliases): false
+aliases raw: "[\"gigadevice\",\"兆易创新\",\"gd/兆易创新\",...]"
+```
+
+The column was JSONB with a **string** value containing JSON text, instead of a JSON **array**.
+
+**Root cause:** `scripts/atlas-manufacturers-import.mjs` line 165 had `aliases: JSON.stringify(aliases)`. Supabase-JS JSON-encodes the entire record body when sending to PostgREST, so pre-stringifying the field double-encoded it — PostgreSQL stored a JSON string literal in the JSONB column instead of the actual array.
+
+**Latent impact (silent, since the Chinese P1 shipped in Decision #148):**
+- 335 of 1,011 atlas manufacturers had mis-encoded aliases. The admin editor correctly showed "No aliases yet" on all of them.
+- The resolver iterated `string` instead of `string[]` via `for (const a of row.aliases)`, which walks characters. The variant map was silently polluted with one-char keys like `"["`, `"g"`, `","`, `"\""` for every affected MFR.
+- Nothing visibly broke because the resolver returns `null` on non-matches and callers fall back to substring logic. Users saw "mostly works" behavior but the alias-hit path wasn't actually exercising its data.
+- The resolver tests didn't catch it because mocks passed real arrays, not strings.
+
+**Fix — three parts:**
+
+1. **Import script** ([scripts/atlas-manufacturers-import.mjs](scripts/atlas-manufacturers-import.mjs)): drop `JSON.stringify()` so the array is passed directly; supabase-js handles encoding. Also replaced the follow-up `JSON.parse(m.aliases).length` in the summary log with `(m.aliases ?? []).length`.
+
+2. **Migration:** re-ran the fixed import. Every row upserts by `atlas_id` / `slug`, so the 335 alias-bearing rows get their columns rewritten as proper JSONB arrays; the 676 alias-free rows pass through unchanged. Verified via Supabase query: `Array.isArray(row.aliases) === true` across sampled rows post-fix.
+
+3. **Defensive parsing in the resolver** ([lib/services/manufacturerAliasResolver.ts](lib/services/manufacturerAliasResolver.ts) `buildAtlasMatch()`): if `row.aliases` comes back as a string (re-corruption from future scripts, partial rollbacks, etc.), `JSON.parse()` it and log a warning with the slug. Prevents silent variant-map pollution if this ever happens again. +1 test case covering the legacy string-encoded form.
+
+### Files Modified
+
+- `scripts/atlas-manufacturers-import.mjs` — drop `JSON.stringify`, fix summary log
+- `lib/services/manufacturerAliasResolver.ts` — defensive string→array parse in `buildAtlasMatch`
+- `__tests__/services/manufacturerAliasResolver.test.ts` — +1 test: "tolerates a legacy JSON-string-encoded aliases column"
+
+### Verification
+
+`npm test` → 1,319/1,319 (21 suites, +1 defensive test). On reload of `/admin/manufacturers/gigadevice` → Aliases tab, all 6 aliases now render as chips with working delete buttons. Resolver cache tick picks up the corrected data within 5 min, or immediately on any admin manufacturer-toggle PATCH.
+
+### Takeaway
+
+Resolver tests that mock Supabase responses pass TS/JS objects directly, which doesn't reproduce the wire-format of what actually comes back from PostgREST for JSONB columns. For bugs that live in the DB-serialization layer, the test mocks can't catch them. An integration test that hits a real Supabase instance would — out of scope for now, but worth noting if a similar latent bug surfaces.

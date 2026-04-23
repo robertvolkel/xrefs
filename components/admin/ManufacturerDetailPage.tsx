@@ -405,6 +405,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
           <Tab label="Coverage" />
           <Tab label={`Cross-References${crossRefCount > 0 ? ` (${crossRefCount})` : ''}`} />
           <Tab label="Profile" />
+          <Tab label={`Aliases${aliases.length > 0 ? ` (${aliases.length})` : ''}`} />
         </Tabs>
       </Box>
 
@@ -506,65 +507,6 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                 </Box>
               </Box>
             )}
-
-            <Box sx={{ mb: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                <Typography variant="subtitle2">Aliases</Typography>
-                {aliasPending && <CircularProgress size={12} />}
-              </Box>
-              {aliasError && (
-                <Alert severity="error" sx={{ mb: 1, py: 0 }} onClose={() => setAliasError(null)}>
-                  {aliasError}
-                </Alert>
-              )}
-              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
-                {aliases.length === 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    No aliases. Add variant spellings, abbreviations, or translations below.
-                  </Typography>
-                )}
-                {aliases.map((a) => (
-                  <Chip
-                    key={a}
-                    label={a}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: '0.75rem' }}
-                    onDelete={aliasPending ? undefined : () => handleDeleteAlias(a)}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                <TextField
-                  size="small"
-                  placeholder="Add alias (e.g. GD, gigadevice, 兆易创新)"
-                  value={aliasInput}
-                  error={aliasInputError}
-                  onChange={(e) => {
-                    setAliasInput(e.target.value);
-                    if (aliasInputError) setAliasInputError(false);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddAlias();
-                    }
-                  }}
-                  disabled={aliasPending}
-                  sx={{ flex: '0 1 320px' }}
-                  inputProps={{ maxLength: 100 }}
-                />
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={handleAddAlias}
-                  disabled={aliasPending || !aliasInput.trim()}
-                >
-                  Add
-                </Button>
-              </Box>
-            </Box>
-
 
             {mfr.partsioName && (
               <Box sx={{ mb: 3 }}>
@@ -848,6 +790,81 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
             manufacturerName={mfr?.nameDisplay || slug}
             lastUploadedAt={data.timestamps?.crossRefs ?? null}
           />
+        )}
+
+        {/* ── Aliases Tab (Decision #152) ── */}
+        {activeTab === 5 && (
+          <Box sx={{ maxWidth: 720 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="subtitle1">Aliases</Typography>
+              {aliasPending && <CircularProgress size={14} />}
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Variant spellings, abbreviations, and translations for this manufacturer.
+              Any BOM row, AddPart input, or search query that matches one of these
+              canonicalizes to <strong>{mfr.nameDisplay}</strong>. Case-insensitive exact match.
+            </Typography>
+
+            {aliasError && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setAliasError(null)}>
+                {aliasError}
+              </Alert>
+            )}
+
+            <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2, minHeight: 32 }}>
+              {aliases.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  No aliases yet. Add the first one below.
+                </Typography>
+              ) : (
+                aliases.map((a) => (
+                  <Chip
+                    key={a}
+                    label={a}
+                    size="small"
+                    variant="outlined"
+                    onDelete={aliasPending ? undefined : () => handleDeleteAlias(a)}
+                  />
+                ))
+              )}
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <TextField
+                size="small"
+                placeholder="Add alias (e.g. GD, gigadevice, 兆易创新)"
+                value={aliasInput}
+                error={aliasInputError}
+                onChange={(e) => {
+                  setAliasInput(e.target.value);
+                  if (aliasInputError) setAliasInputError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddAlias();
+                  }
+                }}
+                disabled={aliasPending}
+                sx={{ flex: '0 1 360px' }}
+                inputProps={{ maxLength: 100 }}
+                helperText={aliasInputError ? 'Empty or duplicate alias' : ' '}
+              />
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleAddAlias}
+                disabled={aliasPending || !aliasInput.trim()}
+                sx={{ mb: aliasInputError ? 2.5 : 2.5 }}
+              >
+                Add
+              </Button>
+            </Box>
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Max 50 aliases, 100 chars each. Saves immediately on add or delete.
+            </Typography>
+          </Box>
         )}
 
       </Box>

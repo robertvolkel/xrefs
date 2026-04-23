@@ -95,9 +95,9 @@ Shipped Apr 2026 (Decision #149). New tables `manufacturer_companies` (25,861 ro
 
 Shipped Apr 2026 (Decision #150). Closes the last alias-wiring gap: `app/api/parts-list/validate/route.ts` now uses `pickMfrAwareMatch()` (in new `lib/services/mfrMatchPicker.ts`) to prefer a search candidate whose MFR canonically matches the user's input over blind `matches[0]`. Falls through to existing behavior on any ambiguity (blank input, unresolvable input, no canonical match among candidates). +8 tests.
 
-### ~~Admin alias editor on Profile tab~~ COMPLETED
+### ~~Admin alias editor — dedicated Aliases tab~~ COMPLETED
 
-Shipped Apr 2026 (Decision #152). The read-only alias chip strip on `/admin/manufacturers/[slug]` → Profile tab became fully editable — click × on any chip to remove, type into the "Add alias" field + Enter to add. Optimistic saves, rollback on PATCH failure, immediate resolver cache invalidation so edits take effect without waiting out the 5-min TTL. New `normalizeAliasInput()` helper in [app/api/admin/manufacturers/[slug]/route.ts](../app/api/admin/manufacturers/[slug]/route.ts) validates shape (array of strings), caps length (50 entries, 100 chars each), dedupes case-insensitively, trims whitespace. +10 validation tests. Atlas only — Western `manufacturer_companies` / `manufacturer_aliases` editor remains deferred.
+Shipped Apr 2026 (Decision #152). New "Aliases" tab on `/admin/manufacturers/[slug]` (sibling of Products / Flagged / Coverage / Cross-Refs / Profile, shows alias count in the label). Fully editable — click × on any chip to remove, type into the "Add alias" field + Enter to add. Optimistic saves, rollback on PATCH failure, immediate resolver cache invalidation so edits take effect without waiting out the 5-min TTL. New `normalizeAliasInput()` helper in [app/api/admin/manufacturers/[slug]/route.ts](../app/api/admin/manufacturers/[slug]/route.ts) validates shape (array of strings), caps length (50 entries, 100 chars each), dedupes case-insensitively, trims whitespace. +10 validation tests. Atlas only — Western `manufacturer_companies` / `manufacturer_aliases` editor remains deferred.
 
 ### Phase 2: Deep-fetch for `suggestionBuckets` shortfall (Decision #146)
 

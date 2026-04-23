@@ -237,6 +237,26 @@ describe('resolveManufacturerAlias — Atlas', () => {
     expect(m?.canonical).toBe('GIGADEVICE 兆易创新');
   });
 
+  it('tolerates a legacy JSON-string-encoded aliases column (import bug fallback)', async () => {
+    // Pre-fix versions of scripts/atlas-manufacturers-import.mjs wrote
+    // JSON.stringify(array) into a JSONB array column, which stored the value
+    // as a JSON string. Without defensive parsing, iterating the string would
+    // add every character to the variant map.
+    const corrupt = {
+      ...gigadevice,
+      aliases: '["gd","gigadevice","兆易创新"]' as unknown as string[],
+    };
+    atlasData = [corrupt];
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const m = await resolveManufacturerAlias('GD');
+      expect(m?.canonical).toBe('GIGADEVICE 兆易创新');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('JSON string'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('returns null gracefully when Atlas Supabase errors', async () => {
     atlasError = { message: 'boom' };
     expect(await resolveManufacturerAlias('GD')).toBeNull();
