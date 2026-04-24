@@ -4,6 +4,7 @@ import { Box, ButtonBase, Typography } from '@mui/material';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { LIST_AGENT_FOOTER_HEIGHT, ROW_FONT_SIZE } from '@/lib/layoutConstants';
+import TypingIndicator from '@/components/TypingIndicator';
 
 interface ListAgentFooterProps {
   isOpen: boolean;
@@ -43,11 +44,7 @@ export default function ListAgentFooter({ isOpen, onToggle, isLoading, lastRefre
             Refreshed at {formatRefreshTime(lastRefreshedAt)}
           </Typography>
         )}
-        {isLoading && (
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: ROW_FONT_SIZE, letterSpacing: '0.03em' }}>
-            Thinking...
-          </Typography>
-        )}
+        {isLoading && <TypingIndicator variant="inline" />}
       </Box>
 
       <ButtonBase

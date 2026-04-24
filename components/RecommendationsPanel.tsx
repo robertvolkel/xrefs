@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
+import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, LinearProgress, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
@@ -24,9 +24,12 @@ interface RecommendationsPanelProps {
   isEnrichingFC?: boolean;
   /** List-level setting from Replacement Preferences — hide recs with known zero stock */
   hideZeroStock?: boolean;
+  /** Use a compact header height. True when paired with a panel that has no header
+   *  (e.g. the modal chat panel) so we don't render a 116px block of dead space. */
+  compactHeader?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
@@ -107,14 +110,19 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <Box
         sx={{
-          height: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
-          minHeight: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          height: compactHeader
+            ? 52
+            : { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          minHeight: compactHeader
+            ? 52
+            : { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
           px: 2,
-          py: 1.5,
+          py: compactHeader ? 0.75 : 1.5,
           borderBottom: 1,
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
+          justifyContent: 'center',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -131,6 +139,9 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           }
         </Typography>
       </Box>
+
+      {/* Refresh progress bar — signals that recommendations are being reprocessed (e.g. after context answers). */}
+      {loading && <LinearProgress sx={{ height: 2 }} />}
 
       {/* Filter row — single compact row with filter icon + active filter chips + price toggle */}
       <Box
@@ -301,6 +312,16 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       </Popover>
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+        {/* Stale-while-revalidate: dim existing cards while a refresh is in flight.
+            Skeletons render below this wrapper at full opacity. */}
+        <Box
+          sx={{
+            transition: 'opacity 0.2s ease',
+            ...(loading && filtered.length > 0
+              ? { opacity: 0.5, pointerEvents: 'none' }
+              : {}),
+          }}
+        >
         {filtered.map((rec) => {
           const isNonActive = rec.part.status !== 'Active';
           const shouldHide = activeOnly && isNonActive;
@@ -330,13 +351,14 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             </Box>
           );
         })}
+        </Box>
 
         {/* Skeleton cards while recommendations are loading. Rendered inline
             (not as a scrim overlay) so the user sees exactly where cards will
             land. Count backs off if some real cards already exist. */}
         {loading && (
           <>
-            {Array.from({ length: Math.max(1, 4 - filtered.length) }).map((_, i) => (
+            {Array.from({ length: Math.max(0, 3 - filtered.length) }).map((_, i) => (
               <Box
                 key={`skeleton-${i}`}
                 sx={{

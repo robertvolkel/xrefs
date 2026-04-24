@@ -6,6 +6,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
 import { ChatMessage } from '@/lib/types';
 import MessageBubble from '@/components/MessageBubble';
+import TypingIndicator from '@/components/TypingIndicator';
 import { LIST_AGENT_FOOTER_HEIGHT } from '@/lib/layoutConstants';
 
 interface ListAgentDrawerProps {
@@ -109,11 +110,7 @@ export default function ListAgentDrawer({
               onListActionCancel={onActionCancel}
             />
           ))}
-          {isLoading && (
-            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', ml: 5, mt: 0.5 }}>
-              Thinking...
-            </Typography>
-          )}
+          {isLoading && <TypingIndicator />}
           <div ref={messagesEndRef} />
         </Box>
 

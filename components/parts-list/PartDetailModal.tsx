@@ -65,7 +65,10 @@ export default function PartDetailModal({
 
   if (!row) return null;
 
-  const recs = row.allRecommendations ?? (row.replacement ? [row.replacement] : []);
+  const seeded = row.replacement
+    ? [row.replacement, ...(row.replacementAlternates ?? [])]
+    : [];
+  const recs = row.allRecommendations ?? seeded;
   const title = row.resolvedPart
     ? `${row.resolvedPart.mpn} — ${row.resolvedPart.manufacturer}`
     : row.rawMpn;
@@ -108,6 +111,7 @@ export default function PartDetailModal({
               preferredMpn={preferredMpn}
               onTogglePreferred={onTogglePreferred}
               hideZeroStock={hideZeroStock}
+              compactHeader
             />
           </Box>
         )}
