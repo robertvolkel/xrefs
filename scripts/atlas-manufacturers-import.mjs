@@ -380,4 +380,8 @@ if (mfrsWithProducts) {
   console.log(`  ${noProducts.length} manufacturers have no ingested products (expected — master list is larger)`);
 }
 
+// Invalidate Atlas Coverage cache so admin pages recompute on next visit
+await supabase.from('admin_stats_cache').delete().eq('key', 'atlas-coverage');
+console.log('  Atlas Coverage cache invalidated.');
+
 console.log('\nDone!');

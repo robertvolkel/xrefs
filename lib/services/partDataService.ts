@@ -35,6 +35,12 @@ import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMappe
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
+import {
+  classifyQualificationDomain,
+  upgradeFromAttributes,
+  isDomainCompatible,
+  contextExpectedDomains,
+} from './qualificationDomain';
 
 // ============================================================
 // PARTS.IO LIFECYCLE METADATA HELPER
@@ -1063,6 +1069,27 @@ export async function getRecommendations(
       ]);
     }
 
+    // Qualification-domain classification (Decision #155, Phase 1).
+    // Classify source + build a per-candidate classification map so the
+    // exclusion filter + deviation flag can be applied after scoring. Both
+    // steps also check for a positive `aec_q200` parametric attribute that
+    // can upgrade an unknown classification to automotive_q200.
+    const sourceAecQ200 = sourceAttrs.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+    sourceAttrs.part.qualificationDomain = upgradeFromAttributes(
+      classifyQualificationDomain(sourceAttrs.part),
+      sourceAecQ200,
+    );
+    const candidateDomainByMpn = new Map<string, import('../types').DomainClassification>();
+    for (const c of allCandidates) {
+      const key = c.part.mpn.toLowerCase();
+      if (candidateDomainByMpn.has(key)) continue;
+      const aecVal = c.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+      candidateDomainByMpn.set(
+        key,
+        upgradeFromAttributes(classifyQualificationDomain(c.part), aecVal),
+      );
+    }
+
     console.time('[perf] findReplacements (scoring)');
     let recs = findReplacements(
       effectiveTable,
@@ -1073,7 +1100,10 @@ export async function getRecommendations(
     );
     console.timeEnd('[perf] findReplacements (scoring)');
 
-    // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps
+    // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps.
+    // Also attach the qualification domain to rec.part and compute the deviation flag
+    // against the user-selected context (Decision #155).
+    const expectedDomains = contextExpectedDomains(applicationContext);
     recs = recs.map(rec => {
       const key = rec.part.mpn.toLowerCase();
       const certs = certificationMap.get(key);
@@ -1083,19 +1113,48 @@ export async function getRecommendations(
         certs?.has('partsio_fff') ? 'fff' :
         certs?.has('partsio_functional') ? 'functional' :
         undefined;
+      const domain = candidateDomainByMpn.get(key);
+      const domainDeviation =
+        !!domain &&
+        domain.domain !== 'unknown' &&
+        expectedDomains.size > 0 &&
+        !expectedDomains.has(domain.domain);
       return {
         ...rec,
+        part: domain ? { ...rec.part, qualificationDomain: domain } : rec.part,
         dataSource: dataSourceMap.get(key),
         certifiedBy,
         equivalenceType,
         mfrEquivalenceType: mfrEquivalenceTypeMap.get(key),
         enrichedFrom: enrichedFromMap.get(key),
+        domainDeviation: domainDeviation || undefined,
       };
     });
 
+    // Qualification-domain hard exclusion (Decision #155). Runs BEFORE
+    // withCertifiedBypass so certified-cross bypass cannot route a
+    // cross-domain substitution (e.g. medical_implant → automotive) around
+    // the gate. Phase 1 only wires the `automotive` row of the matrix;
+    // non-automotive contexts skip this filter.
+    let domainExcludedCount = 0;
+    if (expectedDomains.size > 0) {
+      const preDomainCount = recs.length;
+      recs = recs.filter(rec => {
+        const domain = rec.part.qualificationDomain?.domain ?? 'unknown';
+        const check = isDomainCompatible(applicationContext, domain);
+        return check.compatible;
+      });
+      domainExcludedCount = preDomainCount - recs.length;
+      if (domainExcludedCount > 0) {
+        console.log(`[perf] qualification-domain filter: ${preDomainCount} → ${recs.length} recs (excluded ${domainExcludedCount} cross-domain)`);
+      }
+    }
+
     // Post-scoring blocking-rule filters are bypassed for MFR-certified and
     // Accuris-certified crosses — an explicit human certification outranks
-    // our inferred blocking-rule rejection.
+    // our inferred blocking-rule rejection. Domain filter above is NOT part
+    // of this bypass — cross-domain substitution is unsafe regardless of
+    // certification.
     const withCertifiedBypass = (filter: (r: XrefRecommendation[], s: PartAttributes) => XrefRecommendation[]) => {
       const certified: XrefRecommendation[] = [];
       const uncertified: XrefRecommendation[] = [];
@@ -1168,9 +1227,35 @@ export async function getRecommendations(
     // Apply display-priority sort server-side so `row.replacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
     // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
-    recs = sortRecommendationsForDisplay(recs);
+    recs = sortRecommendationsForDisplay(recs, undefined, applicationContext);
 
-    const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
+    // Qualification-domain telemetry (Decision #155). Only populated when
+    // the domain filter is active (Phase 1: automotive context). Forwarded
+    // into QC logs to drive Phase 2 MFR classifier prioritization —
+    // unknown-rate split by reason tells us whether the bottleneck is
+    // classifier coverage, classifier quality, or upstream data.
+    let domainStats: import('../types').DomainStats | undefined;
+    if (expectedDomains.size > 0) {
+      const stats = {
+        excludedByDomain: domainExcludedCount,
+        knownMatched: 0,
+        unknown: { no_classifier: 0, ambiguous_series: 0, no_signal: 0 },
+        deviationCount: 0,
+      };
+      for (const rec of recs) {
+        const d = rec.part.qualificationDomain;
+        if (!d || d.domain === 'unknown') {
+          const reason = d?.reason ?? 'no_signal';
+          stats.unknown[reason]++;
+          continue;
+        }
+        if (expectedDomains.has(d.domain)) stats.knownMatched++;
+        else stats.deviationCount++;
+      }
+      domainStats = stats;
+    }
+
+    const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource, domainStats };
     setCachedResponse('search', mpn, recsCacheVariant, 'recommendations', result, TTL_RECOMMENDATIONS_MS);
     console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
     return result;

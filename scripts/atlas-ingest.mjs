@@ -1772,4 +1772,10 @@ async function processFile(filePath) {
       console.error('Description cleanup failed (non-fatal):', err.message);
     }
   }
+
+  // Invalidate Atlas Coverage cache so admin pages recompute on next visit
+  if (!dryRun && grandMapped > 0 && supabase) {
+    await supabase.from('admin_stats_cache').delete().eq('key', 'atlas-coverage');
+    console.log('\nAtlas Coverage cache invalidated.');
+  }
 })();

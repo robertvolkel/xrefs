@@ -26,6 +26,7 @@ import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import DomainChip from './DomainChip';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -190,6 +191,11 @@ export default function ComparisonView({
                 {replPart.mpn}
               </Typography>
               <Chip label={replPart.status} size="small" color={replPart.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              <DomainChip
+                classification={replPart.qualificationDomain}
+                deviation={recommendation.domainDeviation}
+                contextActive={recommendation.domainDeviation === true || !!replPart.qualificationDomain}
+              />
               {replPart.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}

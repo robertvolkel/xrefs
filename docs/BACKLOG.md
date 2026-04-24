@@ -79,6 +79,57 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Qualification-domain Phase 2 — MFR classifier coverage (Decision #155)
+
+Phase 1 shipped the qualification-domain filter for Murata MLCCs only. Non-Murata parts universally classify `unknown/no_classifier` today, rank below context-matched in automotive searches, and show the amber "Domain unknown — verify" chip. That's a deliberate ranking tier, not an exclusion — but every non-Murata BOM hits it, so Phase 2 classifier coverage is on the critical path.
+
+**Prioritization:** Once Phase 1 is in prod for a week or two, query `recommendation_log.snapshot.domainStats.unknown.no_classifier` grouped by source MFR. Build the classifiers with the highest unknown hit count first. Initial guess at order (refine with telemetry):
+
+1. **TDK** — CGA (AEC-Q200 automotive), C (commercial), CGJ (AEC-Q200 automotive high-CV), medical-spec CNC series
+2. **Samsung Electro-Mechanics** — CL (AEC-Q200 automotive), CIH (implantable medical)
+3. **Yageo** — AC (AEC-Q200 automotive), CC (commercial)
+4. **KEMET** — C0G/X7R automotive vs commercial split, mil-spec (MIL-PRF-55681)
+5. **AVX (now Kyocera AVX)** — Automotive X7R/NP0 series
+6. **Kyocera** — MLCC automotive series
+7. **Taiyo Yuden** — AMK (automotive), HMK (commercial)
+
+**Files:** add `lib/services/classifiers/<mfr>Mlcc.ts` per MFR, register in `lib/services/qualificationDomain.ts:getClassifiers()`. No schema change — classifiers implement the existing `MfrClassifier` interface.
+
+### Re-enable amber "unknown domain" chip once classifier coverage is high enough (Decision #155)
+
+Phase 1 ships the `unknown`-domain chip in suppressed state — classification is still computed (drives sort tiebreak + QC telemetry) but the badge is not rendered. Reason: with only the Murata MLCC classifier registered, most candidates in a typical search classify unknown, so the chip fires everywhere and users learn to ignore it. The label "Domain unknown — verify" was also too vague — users couldn't tell what domain or what to verify.
+
+**Re-enable criterion:** per-family classifier coverage ≥ ~50% non-unknown under the `automotive` context (query from `recommendation_log.snapshot.domainStats.unknown.*` grouped by family). Below that threshold the chip is noise; above it, the chip legitimately flags the minority of unclassified parts that need attention.
+
+**Also rewrite the copy** before re-enabling — "Domain unknown — verify" is jargon. Candidates: "AEC status unverified for this part" / "Not confirmed AEC-Q200" / "Verification pending" — whichever reads best in the actual UI.
+
+**Files:** single site — `domainBadge()` in [lib/services/qualificationDomain.ts](lib/services/qualificationDomain.ts) (currently returns `null` for the unknown branch).
+
+### Qualification-domain Phase 2 — mechanism extensions (Decision #155)
+
+After MFR coverage stabilizes, wire the remaining mechanism pieces:
+
+1. **Remaining rows of the exclusion matrix** — medical/industrial/mil_spec/space contexts. Matrix shape is already commented in `qualificationDomain.ts`; just needs `isDomainCompatible` + `contextExpectedDomains` extension as family context questions surface those environments.
+2. **Severity follow-up for automotive** — powertrain / safety-critical / infotainment / aftermarket. Refines which non-Q200 domains are tolerable as deviations (infotainment might accept commercial+warning; powertrain must not).
+3. **Other families** — B1–B9 (AEC-Q101), C1–C10 (AEC-Q100), D1–D2, E1 (AEC-Q101 for optos), F1–F2. Same mechanism, per-family MFR classifiers.
+4. **Per-query "strict AEC-Q200 only" user filter** — opt-in hard-mode that also excludes unknowns (makes Phase 1's ranking-tier behavior Option-2-like, as a user choice rather than system default).
+5. **Datasheet-extraction classifier fallback** — reuse Atlas `descriptionExtractor` pattern to infer domain from datasheet text when no MPN-prefix rule matches. Cost/benefit depends on Phase 2 telemetry.
+
+### Audit certified-cross bypass for safety-class filters (Decision #155)
+
+Decision #133 bypasses 13 post-scoring family filters for MFR-certified and Accuris-certified crosses, on the principle that a human certification outranks our inferred blocking-rule rejection. Decision #155's qualification-domain filter runs **before** that bypass, which is correct for cross-domain substitution — but the 13 family filters themselves mix two kinds of constraints:
+
+- **Safety-class** — e.g. F2 TRIAC-on-DC latch-up, C10 voltage/current output incompatibility, F1 AC/DC contact voltage, C7 protocol boundaries. These aren't preferences; they're physics. A certified cross that violates them is still unsafe.
+- **Compatibility/preference** — e.g. C5 logic-function codes, C6 series-vs-shunt architecture. Certified crosses might legitimately pin-swap across these when the vendor has done the qualification work.
+
+**Task:** audit each of the 13 filters in `lib/services/partDataService.ts` (C2, C4–C10, D1–D2, E1, F1–F2) and classify as safety-class or compatibility. Scope the certified-cross bypass to compatibility-only; safety-class filters should apply even to certified crosses. Likely requires splitting each `filter*Mismatches` into two predicates.
+
+### Request-session memoization for qualification-domain classification (Decision #155)
+
+`getRecommendations` currently memoizes classifier results per call in a `Map<mpn, DomainClassification>`. In batch parts-list validation, the same candidate MPNs frequently appear across source rows (e.g. the whole 0603/X7R/0.1 µF subspace dedups to a few dozen MFR series), so a session-scoped cache would avoid redundant classifier runs.
+
+Low priority — classifier cost is microseconds today since it's pure-function MPN-prefix matching. Revisit when we add datasheet-extraction classifiers (LLM round-trip) in Phase 2+.
+
 ### ~~Wire Chinese-MFR aliases into hot lookup paths~~ COMPLETED
 
 Shipped Apr 2026 (Decision #148). New [lib/services/manufacturerAliasResolver.ts](../lib/services/manufacturerAliasResolver.ts) exposes `resolveManufacturerAlias()` + `getAllManufacturerVariants()` with a 5-min cache over `atlas_manufacturers` (`name_display`, `name_en`, `name_zh`, `aliases[]`). Client-safe wrapper `manufacturerAliasClient.ts` proxies through `POST /api/manufacturer-aliases/canonicalize`. Forward-compat contract (`source: 'atlas' | 'western'`, reserved `companyUid`/`lineage`) so the Western follow-on is purely additive.

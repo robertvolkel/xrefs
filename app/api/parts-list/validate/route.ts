@@ -123,6 +123,7 @@ async function processItem(
         snapshot: {
           sourceAttributes: recResult.sourceAttributes,
           recommendations: recs,
+          domainStats: recResult.domainStats,
         },
       });
     }

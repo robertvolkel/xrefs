@@ -33,6 +33,45 @@ export interface Part {
   supplierQuotes?: SupplierQuote[];
   lifecycleInfo?: LifecycleInfo[];
   complianceData?: ComplianceData[];
+  // Qualification-domain classification (Decision #155 — Phase 1: Murata MLCCs).
+  // Populated during getRecommendations() for source + every candidate so the
+  // matching engine can apply the cross-domain exclusion matrix and the UI can
+  // render the appropriate domain badge.
+  qualificationDomain?: DomainClassification;
+}
+
+/** High-level reliability/qualification category a part is designed and sold for.
+ *  This is categorical — cross-domain substitution (e.g. automotive ↔ medical_implant)
+ *  is unsafe even when a vendor's FFF table says the parts are electrically equivalent.
+ *  Decision #155. */
+export type QualificationDomain =
+  | 'automotive_q200'   // AEC-Q200 passives
+  | 'automotive_q100'   // AEC-Q100 ICs (Phase 2+ — reserved in type)
+  | 'automotive_q101'   // AEC-Q101 discretes (Phase 2+ — reserved in type)
+  | 'industrial_harsh'  // wide-temp industrial, sulfur-exposed
+  | 'commercial'        // general-purpose / consumer
+  | 'medical_implant'   // GHTF Class D implantable (e.g. Murata GCH)
+  | 'medical_general'   // non-implant medical
+  | 'mil_spec'          // MIL-PRF / MIL-STD
+  | 'space'             // space / rad-hard
+  | 'unknown';          // no classifier signal — NOT "probably commercial"
+
+/** Why a classification landed on `unknown`. Drives UI copy and telemetry splits:
+ *  these three reasons map to different Phase 2 workstreams (MFR coverage vs
+ *  classifier quality vs upstream data completeness) and must be distinguishable. */
+export type UnknownReason =
+  | 'no_classifier'     // no classifier registered for the part's MFR
+  | 'ambiguous_series'  // classifier ran but couldn't decide
+  | 'no_signal';        // classifier ran, no applicable data
+
+export interface DomainClassification {
+  domain: QualificationDomain;
+  confidence: 'high' | 'medium' | 'low';
+  source: 'mpn_prefix' | 'attribute_flag' | 'datasheet_extract' | 'series_metadata';
+  /** Populated only when domain === 'unknown'. */
+  reason?: UnknownReason;
+  /** Human-readable provenance, e.g. "Murata GCH series — GHTF Class D". */
+  evidence?: string;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -170,6 +209,11 @@ export interface XrefRecommendation {
   compositeScore?: number;
   /** Per-axis 0-1 deltas behind the composite score. For future UI surfacing ("$ 12% cheaper"). */
   compositeAxisDeltas?: Partial<Record<ReplacementAxis, number>>;
+  /** True when the candidate's qualification domain is known AND does not match
+   *  the user's selected context (e.g. classifier says `industrial_harsh` but
+   *  the user picked Automotive). `unknown` candidates never get this flag —
+   *  unknown is a ranking signal, not a deviation. Decision #155. */
+  domainDeviation?: boolean;
 }
 
 /** Axes used for composite "better than source" ranking (Decision #145) */
@@ -1081,6 +1125,29 @@ export interface RecommendationResult {
   familyName?: string;
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   unsupportedFamily?: boolean;
+  /** Per-call qualification-domain telemetry (Decision #155). Only populated
+   *  when the user selected a context that drives domain gating (Phase 1:
+   *  automotive). Forwarded into QC logs so we can track unknown-rate by
+   *  reason per family to prioritize Phase 2 MFR classifier coverage. */
+  domainStats?: DomainStats;
+}
+
+/** Domain-classification telemetry for a single getRecommendations call. */
+export interface DomainStats {
+  /** Count of candidates hard-excluded by the domain matrix BEFORE rendering. */
+  excludedByDomain: number;
+  /** Survivors whose domain matches the context-expected set. */
+  knownMatched: number;
+  /** Survivors classified `unknown`, split by reason so we can prioritize
+   *  Phase 2 workstreams: MFR coverage vs classifier quality vs upstream data. */
+  unknown: {
+    no_classifier: number;
+    ambiguous_series: number;
+    no_signal: number;
+  };
+  /** Survivors whose domain is known but doesn't match the context-expected
+   *  set (e.g. commercial/industrial under automotive). */
+  deviationCount: number;
 }
 
 /** The stage of the recommendation pipeline being questioned */
@@ -1099,6 +1166,8 @@ export interface RecommendationLogSnapshot {
   contextQuestions?: ContextQuestion[];
   contextAnswers?: ApplicationContext;
   attributeOverrides?: Record<string, string>;
+  /** Qualification-domain telemetry (Decision #155). */
+  domainStats?: DomainStats;
 }
 
 /** A recommendation log entry (from the admin API) */

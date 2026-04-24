@@ -623,6 +623,7 @@ async function executeTool(
           snapshot: {
             sourceAttributes: result.sourceAttributes,
             recommendations: recs,
+            domainStats: result.domainStats,
           },
         });
       }
@@ -1182,6 +1183,7 @@ export async function refinementChat(
               recommendations: recs,
               contextAnswers: mergedContext,
               attributeOverrides: mergedOverrides,
+              domainStats: refineResult.domainStats,
             },
           });
         }

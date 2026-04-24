@@ -4087,3 +4087,161 @@ The column was JSONB with a **string** value containing JSON text, instead of a 
 ### Takeaway
 
 Resolver tests that mock Supabase responses pass TS/JS objects directly, which doesn't reproduce the wire-format of what actually comes back from PostgREST for JSONB columns. For bugs that live in the DB-serialization layer, the test mocks can't catch them. An integration test that hits a real Supabase instance would — out of scope for now, but worth noting if a similar latent bug surfaces.
+
+---
+
+## Decision #154 — Fix: Atlas Alias Separator Parsing (Apr 2026)
+
+**Context:** Second latent bug surfaced while QA'ing the new Aliases tab (Decision #152). KOHER's tab rendered a single chip containing `koher,科或（上海）电子有限公司,科或,KOHERelec` — four distinct manufacturer names mashed together. The cause was parse-time: [scripts/atlas-manufacturers-import.mjs](scripts/atlas-manufacturers-import.mjs) `parseAliases()` split only on ASCII semicolons (`;`), but the source master file uses three separator styles.
+
+**Measured impact** (1,011 rows in `data/atlas_manufacturers_20260319_canonical_identity_model copy.xlsx`):
+
+| Separator | Rows | Pre-fix behavior |
+|-----------|------|------------------|
+| ASCII `;` | 241 | ✅ split correctly |
+| CJK `；` (full-width) | 10 | ❌ one blob alias (SWST, RESI, 2Pai Semi, etc.) |
+| Comma-only (no semi) | 2 | ❌ one blob alias (KOHER, one other) |
+| No separator | 85 | ✅ correct as-is |
+| Empty | 676 | n/a |
+
+12 rows had their aliases silently mis-parsed since the first import. Each affected row held a single chip containing all its variants joined by the unrecognized separator — effectively making those aliases unusable for resolution unless the user typed the whole blob verbatim (with the commas).
+
+### Tricky constraint
+
+Some rows legitimately contain commas inside company names — e.g. HONGFA's aliases include `"xiamen hongfa electroacoustic co.,ltd."`. Those rows use `;` as separator, so they parse correctly today. A naive "split on commas too" would regress them, splitting `Co.,Ltd.` into two fake aliases.
+
+### Fix — tiered split
+
+```js
+// 1. Always split on both semicolon variants — neither occurs inside a
+//    company name, safe for every row (including mixed ASCII+CJK like RESI).
+let parts = raw.split(/[;；]/);
+// 2. If no semicolon produced a split, fall back to commas. Only reachable
+//    for the 2 comma-only rows; other rows already produced multiple pieces.
+if (parts.length === 1) parts = parts[0].split(',');
+```
+
+Minimal, no heuristics, preserves all 241 already-correct rows and fixes the 12 broken ones. Re-ran the import (idempotent upsert by `atlas_id`/`slug`) — 1,011 rows touched, only the 12 broken ones changed shape.
+
+### Spot-check results (post-fix)
+
+- KOHER: `1 blob` → 4 chips (`koher`, `科或（上海）电子有限公司`, `科或`, `KOHERelec`)
+- SWST: `1 blob` → 4 chips
+- RESI: `1 blob` → 8 chips (had mixed ASCII + CJK semicolons)
+- 2Pai Semi: `1 blob` → 5 chips
+- RUNIC: `1 blob` → 5 chips
+- HONGFA (regression check): 5 chips, comma inside `Co.,Ltd.` preserved ✓
+
+### Files Modified
+
+- `scripts/atlas-manufacturers-import.mjs` — `parseAliases()` tiered split + inline comment documenting the three observed separator styles
+
+### Takeaway (pairs with #153)
+
+Both #153 (double-encode) and #154 (separator parsing) were silent data-layer bugs that the existing test mocks couldn't catch. The resolver test mocks pass clean arrays; the import script has no unit tests at all. Both bugs sat in production since the first Chinese P1 ship (#148) and surfaced only because the admin editor (#152) forced the data to round-trip through `Array.isArray()` + per-item chip rendering. If/when a similar data pipeline is added in the future (Western manufacturer curation UI, AVL ingestion, etc.), consider either unit tests on the parse helpers OR an integration test that walks real Supabase reads.
+
+
+## Decision #155 — Qualification-Domain Filter for Cross-Domain Substitution (Apr 2026)
+
+### Problem
+
+A user opened the Xref modal for Murata `GRM188R71E104KA01D` (commercial MLCC, 0.1 µF / 25 V / X7R / 0603), answered "Automotive" in the context questions, and the top "Accuris Certified" recommendation came back as `GCH188R71E104KE01D` — Murata's implanted-medical-device (GHTF Class D) series, not AEC-Q200 automotive. Per Murata's published application-suitability matrix, GCH has no automotive box checked; the correct automotive substitutes for that value are the GCM / GCJ (soft-termination) / GRT series.
+
+Root cause traced to three reinforcing issues:
+
+1. **`aec_q200` is an `identity_flag` rule.** Semantics: *if the source requires it, the replacement must too.* The source GRM is commercial (aec_q200 = false/missing), so the rule passes for every candidate regardless of their AEC state.
+2. **`escalate_to_mandatory` is weight-only.** The automotive context bumps `aec_q200` weight 8→10 via `contextModifier.ts:58-60` but does not flip rule semantics or inject a synthetic "source requires" override.
+3. **Bucket precedence is unconditional.** `sortRecommendationsForDisplay` puts `accuris` bucket ahead of `logic` bucket regardless of match %, so a non-AEC Accuris-certified candidate floats above any AEC-qualified Logic-Driven candidate.
+
+Net effect: automotive context could surface a medical-implantable part as the top recommendation. The right mental model, per the user's framing, is that "AEC-Q200 shouldn't be a binary gate — qualification domain should be."
+
+### Decision
+
+Introduce **qualification domain** as a categorical gate orthogonal to the logic table. A part's domain (`automotive_q200`, `medical_implant`, `mil_spec`, `space`, `industrial_harsh`, `commercial`, `unknown`, etc.) is determined by a pluggable per-manufacturer classifier. The user's context selects an **expected-domain set**; cross-domain substitution (e.g. medical_implant → automotive) is hard-excluded regardless of what a vendor's FFF table says.
+
+Three behaviors, in order of precedence:
+
+1. **Hard-exclude** candidates whose domain is incompatible with the selected context (e.g. medical/mil-spec/space under automotive). Runs **before** `withCertifiedBypass()` so certified-cross bypass cannot route around the gate.
+2. **Rank context-matched domains first** inside each bucket. Unknown candidates rank above confirmed deviations (see sort rationale below).
+3. **Flag deviations with a visible badge** — amber "Domain unknown — verify" for unknown, red "Not AEC-Q200 — verify" for commercial/industrial under automotive context.
+
+### Phase 1 scope — Murata MLCCs only
+
+Deliberately narrow to prove the mechanism on the reported case before generalizing:
+
+- **One classifier:** `lib/services/classifiers/murataMlcc.ts`. MPN prefix → domain. GCM/GCJ/GRT/KGM/KCM → `automotive_q200`; GCH → `medical_implant`; GJM → `mil_spec`; GRM/GMC → `commercial`. Other MFRs → `unknown / no_classifier`.
+- **One row of the exclusion matrix wired:** `automotive`. Other rows (medical, industrial, mil_spec, space) are defined in a commented matrix in `qualificationDomain.ts` so Phase 2 devs fill a locked shape rather than make ad-hoc decisions.
+- **Single UI treatment:** amber for unknown, red for deviation, green for context-matched. Badge rendered on source panel (anchor) AND candidate cards + modal header.
+
+Non-Murata MFRs universally classify `unknown/no_classifier` in Phase 1 → ranked below context-matched but **not** excluded. Excluding them would collapse recommendations to Murata-only, turning a classifier-coverage gap into a recommendation-coverage cliff. Phase 2 classifiers (TDK, Samsung, Yageo, KEMET, AVX, Kyocera, Taiyo Yuden) feed the same interface with no schema change.
+
+### Design decisions worth tombstoning
+
+**Sort order: `context-matched > unknown > deviation`.** Not obviously right in isolation — it feels backwards since "unknown" seems weaker than "known-anything." The rationale: unknown candidates *may* be AEC-qualified once Phase 2 builds classifiers for their MFRs, so they carry positive expected value. A confirmed deviation (e.g. classifier says `commercial`, context is `automotive`) is definitively not AEC today. Expected-value ranking therefore puts unknown ahead of confirmed-deviation. Documented inline in `recommendationSort.ts` so a future reader doesn't "fix" it.
+
+**Asymmetric `aec_q200` attribute upgrade.** A positive `aec_q200 = true` on an otherwise-unknown part upgrades to `automotive_q200` (confidence: medium). A negative `aec_q200 = false` does **not** downgrade to `commercial` — stays `unknown`. In practice `aec_q200 = false` in Digikey / parts.io / Atlas data is almost always "field not populated" rather than "confirmed not qualified," and suppressing a legitimate AEC part is costlier than leaving it at unknown.
+
+**Deleted `escalate_to_mandatory` on `aec_q200` in MLCC automotive context.** The weight bump 8→10 was a near-noop once domain became the real mechanism: when both source and candidate had AEC data, the rule passed at both weight 8 and weight 10 — the bump only shifted the denominator by ~2–4 percentage points and never changed pass/fail. Two parallel mechanisms trying to solve the same problem is a debugging trap. Single-mechanism principle: domain does the work, `aec_q200` rule stays at base weight. Trivially restored if the narrow case surfaces in telemetry. The `flexible_termination` and `dielectric` escalations under automotive are unrelated and retained.
+
+**Exclusion runs before certified-cross bypass.** Decision #133 bypasses the 13 post-scoring family filters for MFR-certified and Accuris-certified recs, on the principle that a human certification outranks our inferred blocking-rule rejection. Domain exclusion is NOT part of that bypass — cross-domain substitution is unsafe even with a vendor's FFF table behind it. Scope of the certified-cross audit follow-up (see Backlog): decide which of the 13 filters encode safety-class constraints that should never be bypassable even for certified crosses.
+
+### Instrumentation (forcing function for Phase 2)
+
+Every `getRecommendations` call under an active domain-gating context emits telemetry into `recommendation_log.snapshot.domainStats`:
+
+```
+{
+  excludedByDomain,           // hard drops
+  knownMatched,               // survivors in the context-expected set
+  unknown: {                  // split by reason for Phase 2 prioritization
+    no_classifier,            // → MFR classifier coverage
+    ambiguous_series,         // → classifier quality
+    no_signal,                // → upstream data completeness
+  },
+  deviationCount,             // known-mismatch survivors
+}
+```
+
+Splitting unknown by reason is essential — a single `unknownCount` would hide which of the three workstreams (MFR coverage vs classifier quality vs upstream data) is driving the metric. The per-MFR unknown rate queryable from QC logs tells us which Phase 2 classifiers to build first.
+
+### Files
+
+- **new** `lib/services/qualificationDomain.ts` — types, classifier registry, `classifyQualificationDomain`, `upgradeFromAttributes`, `isDomainCompatible`, `contextExpectedDomains`, `contextActivatesDomainGate`, `domainBadge`.
+- **new** `lib/services/classifiers/murataMlcc.ts` — first concrete MfrClassifier.
+- **new** `components/DomainChip.tsx` — three-state badge component + `inferContextActive()` helper.
+- **new** `__tests__/services/qualificationDomain.test.ts` — 34 tests covering classifier, asymmetric upgrade, automotive exclusion row, reported-bug integration.
+- **modified** `lib/types.ts` — added `QualificationDomain`, `UnknownReason`, `DomainClassification`, `DomainStats`. Extended `Part.qualificationDomain`, `XrefRecommendation.domainDeviation`, `RecommendationResult.domainStats`, `RecommendationLogSnapshot.domainStats`.
+- **modified** `lib/services/partDataService.ts` — classify source + every candidate, apply exclusion matrix before `withCertifiedBypass`, set deviation flag, build `domainStats`.
+- **modified** `lib/services/recommendationSort.ts` — added within-bucket domain tiebreak (accepts optional `applicationContext`).
+- **modified** `lib/services/partDataCache.ts` — bumped `RECS_CACHE_SCHEMA_VERSION` v5 → v6.
+- **modified** `lib/contextQuestions/mlcc.ts` — deleted `escalate_to_mandatory` on `aec_q200` under automotive; commented rationale.
+- **modified** `components/RecommendationCard.tsx`, `components/AttributesPanel.tsx`, `components/ComparisonView.tsx` — render `DomainChip` next to status chip.
+- **modified** `components/RecommendationsPanel.tsx` — infer `contextActive` from recs and pass to card.
+- **modified** `app/api/xref/[mpn]/route.ts`, `app/api/parts-list/validate/route.ts`, `lib/services/llmOrchestrator.ts` — include `domainStats` in QC log snapshots.
+
+### Verification
+
+- Unit suite: 34/34 pass. Reported-bug integration: `classifyQualificationDomain(GCH188R71E104KE01D)` → `medical_implant`, `isDomainCompatible(automotive, medical_implant)` → `compatible: false`.
+- Full suite: 1353 tests, 22 suites, all pass (~1.7s).
+- TypeScript: no errors introduced outside pre-existing test files.
+
+### Phase 2 follow-on — tracked in BACKLOG
+
+1. Additional MFR classifiers (TDK, Samsung, Yageo, KEMET, AVX, Kyocera, Taiyo Yuden), ordered by unknown-rate telemetry once Phase 1 ships.
+2. Wire remaining rows of the exclusion matrix (medical, industrial, mil_spec, space) as family context questions are added.
+3. Severity follow-up question for automotive context (powertrain / safety / infotainment / aftermarket).
+4. Per-query "strict AEC-Q200 only" user filter.
+5. Datasheet-extraction classifier as a fallback behind MPN-prefix classifiers.
+6. **Certified-cross bypass audit** — separate safety-class blocking rules in the 13 post-scoring family filters from compatibility/preference filters; safety-class should apply even to certified crosses (tightens Decision #133).
+7. Request-session memoization for domain classification (batch parts-list pipelines repeat the same candidate MPNs across rows).
+8. Re-enable the amber "unknown domain" chip once per-family classifier coverage clears ~50% non-unknown (and rewrite the label — "Domain unknown — verify" is jargon).
+
+### Post-ship fixes (same-session)
+
+Three issues surfaced during manual verification and were fixed before close of session:
+
+1. **Parts.io candidate shape bypassed the classifier.** `fetchPartsioEquivalents()` constructs candidate `Part` objects with `subcategory` but no `category` field. The Murata classifier's `isMlccCategory()` guard required `part.category === 'Capacitors'`, so GCH candidates from parts.io fell through to `unknown` instead of `medical_implant` and survived the automotive exclusion filter. Fixed by trusting the MPN prefix authoritatively — Murata's MLCC prefix space (GRM/GCM/GCJ/GRT/GCH/GJM/KGM/KCM/GMC) doesn't collide with their inductor (LQ*) or EMI filter (NFM/BLM/DLW) spaces. `isLikelyMlccFromCategory` retained only as a secondary allow-path for unknown-prefix candidates. Regression tests added in `qualificationDomain.test.ts`. Cache bumped v6 → v7.
+
+2. **React stale closure in main search flow.** `handleFindReplacements` in `hooks/useAppState.ts` read `state.applicationContext` from a `useCallback` closure. Callers (`handleContextResponse`, `handleAttributeResponse`) invoked it immediately after `setState({applicationContext: ...})`, before React had flushed — so the closure served the old null context and the domain filter never ran on the main search view. Fixed by giving `handleFindReplacements` an optional `contextOverride` argument and passing the freshly-built context directly from the two state-setting call sites.
+
+3. **Suppressed the amber "Domain unknown — verify" chip.** Phase 1 has only one registered classifier (Murata MLCC), so the chip fired on the majority of non-Murata candidates — noise rather than signal. The label was also too vague: "domain" is internal taxonomy and "verify" doesn't tell users what to verify. `domainBadge()` now returns `null` for the `unknown` branch; classification still drives the sort tiebreak and QC telemetry. Re-enable tracked in BACKLOG with a coverage threshold (~50% non-unknown per family) and a copy-rewrite prerequisite.

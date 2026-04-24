@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
+import { invalidateAtlasCache } from '../atlas/route';
 
 // ── Hot in-memory cache (60s) ─────────────────────────────────
 // Fronts the persistent admin_stats_cache row so per-render
@@ -260,8 +261,9 @@ export async function POST(request: NextRequest) {
     const { syncAllProfiles } = await import('@/lib/services/atlasProfileSync');
     const result = await syncAllProfiles();
 
-    // Invalidate caches so the list reflects new profile data
+    // Invalidate caches so the list and Atlas Coverage reflect new profile data
     invalidateManufacturersListCache();
+    invalidateAtlasCache();
 
     return NextResponse.json(result);
   } catch (err) {

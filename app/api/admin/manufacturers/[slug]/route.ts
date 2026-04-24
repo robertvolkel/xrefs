@@ -7,6 +7,7 @@ import { invalidateManufacturerCache } from '@/lib/services/atlasClient';
 import { invalidateManufacturerAliasCache } from '@/lib/services/manufacturerAliasResolver';
 import { invalidateRecommendationsCache } from '@/lib/services/partDataCache';
 import { invalidateManufacturersListCache } from '../route';
+import { invalidateAtlasCache } from '../../atlas/route';
 
 // ─── Alias normalization / validation (Decision #152) ────
 // Exported for unit testing; route handler uses it via normalizeAliasInput.
@@ -274,6 +275,7 @@ export async function PATCH(
     // Invalidate caches
     invalidateManufacturerCache();
     invalidateManufacturersListCache();
+    invalidateAtlasCache();
     // Resolver cache must flush whenever aliases change so the new spellings
     // take effect immediately instead of waiting out the 5-min TTL.
     if ('aliases' in updates) {

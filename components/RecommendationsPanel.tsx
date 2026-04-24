@@ -9,6 +9,7 @@ import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategor
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
+import { inferContextActive } from './DomainChip';
 
 // Re-export for backward compatibility with existing consumers (e.g. useAppState)
 export { sortRecommendationsForDisplay };
@@ -324,6 +325,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                   onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
                 } : undefined}
                 isEnrichingFC={isEnrichingFC}
+                contextActive={inferContextActive(recommendations)}
               />
             </Box>
           );

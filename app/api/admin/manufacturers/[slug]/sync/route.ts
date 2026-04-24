@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { syncSingleProfile } from '@/lib/services/atlasProfileSync';
 import { invalidateManufacturersListCache } from '../../route';
+import { invalidateAtlasCache } from '../../../atlas/route';
 
 export async function POST(
   _request: NextRequest,
@@ -38,8 +39,9 @@ export async function POST(
       );
     }
 
-    // Invalidate list cache so updated profile data shows
+    // Invalidate list + Atlas Coverage caches so updated profile data shows
     invalidateManufacturersListCache();
+    invalidateAtlasCache();
 
     return NextResponse.json(result);
   } catch (err) {

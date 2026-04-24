@@ -24,6 +24,7 @@ import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZ
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import DomainChip, { inferContextActive } from './DomainChip';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -83,6 +84,10 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                 {attributes.part.mpn}
               </Typography>
               <Chip label={attributes.part.status} size="small" color={attributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              <DomainChip
+                classification={attributes.part.qualificationDomain}
+                contextActive={inferContextActive(allRecommendations ?? [])}
+              />
               {attributes.part.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}

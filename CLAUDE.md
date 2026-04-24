@@ -225,9 +225,12 @@ The core pipeline is in `lib/services/partDataService.ts → getRecommendations(
 3. **Classify family** — Map subcategory string → family ID, detect variant families (e.g., current sense within chip resistors) via `lib/logicTables/familyClassifier.ts`
 4. **Get logic table** — Load the family's matching rules from `lib/logicTables/`
 5. **Apply admin overrides** — `overrideMerger.ts` fetches active DB overrides and merges onto the TS base (remove→override→add pattern)
-6. **Apply context** — If user answered application context questions, `contextModifier.ts` adjusts rule weights/types (e.g., automotive → AEC-Q200 weight becomes 10). Context questions are also subject to admin overrides.
-6. **Fetch candidates** — Search Digikey for replacement candidates using critical parameters as keywords
-7. **Score candidates** — `matchingEngine.ts` evaluates each candidate against every rule
+6. **Apply context** — If user answered application context questions, `contextModifier.ts` adjusts rule weights/types. Context questions are also subject to admin overrides.
+7. **Fetch candidates** — Search Digikey for replacement candidates using critical parameters as keywords
+8. **Score candidates** — `matchingEngine.ts` evaluates each candidate against every rule
+9. **Apply qualification-domain filter** (Decision #155) — After scoring, classify source + every candidate into a `QualificationDomain` (automotive_q200 / medical_implant / mil_spec / space / ...) via `qualificationDomain.ts`. Hard-exclude cross-domain candidates (e.g. medical_implant under automotive context) **before** the certified-cross bypass so certified crosses can't route around the gate. Flag deviations for the UI badge. Phase 1: Murata MLCCs only.
+10. **Apply post-scoring family filters** — `withCertifiedBypass` applies per-family blocking-rule filters (C2/C4–C10/D1–D2/E1/F1–F2); bypassed for MFR-certified and Accuris-certified crosses (Decision #133).
+11. **Sort** — `sortRecommendationsForDisplay` buckets (Accuris → MFR → Logic), then within each bucket ranks `context-matched > unknown > deviation` on qualification domain, then match % / composite score.
 
 ### Scoring
 

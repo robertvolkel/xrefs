@@ -284,11 +284,17 @@ export function useAppState() {
   /** Find replacements for the current source part — triggered by user choosing "Find cross-references".
    *  Checks for missing attributes and context questions first, deferring to forms if needed. */
   const handleFindReplacements = useCallback(
-    async () => {
+    // `contextOverride` bypasses the React stale-closure trap: callers that
+    // setState({applicationContext}) and immediately call this function
+    // cannot rely on state.applicationContext being updated yet (Decision
+    // #155 regression — without it, the domain filter sees null context and
+    // never runs on the main search flow).
+    async (contextOverride?: ApplicationContext | null) => {
       const signal = freshAbort();
       const mpn = state.sourcePart?.mpn;
       const sourceAttrs = state.sourceAttributes;
       if (!mpn || !sourceAttrs) return;
+      const effectiveContext = contextOverride ?? state.applicationContext ?? undefined;
 
       // Step 1: Check for missing critical attributes
       const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
@@ -380,13 +386,13 @@ export function useAppState() {
         const recs = await getRecommendationsWithOverrides(
           mpn,
           hasOverrides ? overrides : {},
-          state.applicationContext ?? undefined,
+          effectiveContext ?? undefined,
           signal,
           sourceAttrs,
         );
         if (signal.aborted) return;
 
-        const contextMsg = state.applicationContext
+        const contextMsg = effectiveContext
           ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
           : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
         showRecsAndDeferAssessment(recs, mpn, sourceAttrs.parameters.length, contextMsg, signal);
@@ -848,7 +854,7 @@ export function useAppState() {
       if (autoContext) {
         setState((prev) => ({ ...prev, applicationContext: autoContext }));
       }
-      await handleFindReplacements();
+      await handleFindReplacements(autoContext);
     },
     [addMessage, setStatus, handleFindReplacements, state.sourcePart, state.sourceAttributes]
   );
@@ -916,7 +922,7 @@ export function useAppState() {
 
       // Context answered/skipped — now find replacements
       setState((prev) => ({ ...prev, applicationContext: context }));
-      await handleFindReplacements();
+      await handleFindReplacements(context);
     },
     [addMessage, setStatus, handleFindReplacements, state.sourcePart, state.sourceAttributes]
   );

@@ -417,6 +417,12 @@ async function main() {
   console.log(`  Errors:   ${errored}`);
   if (dryRun) console.log('  (DRY RUN — no database writes)');
   console.log('═══════════════════════════════════════════════════');
+
+  // Invalidate Atlas Coverage cache so admin pages recompute on next visit
+  if (!dryRun && (updated > 0 || added > 0)) {
+    await supabase.from('admin_stats_cache').delete().eq('key', 'atlas-coverage');
+    console.log('  Atlas Coverage cache invalidated.');
+  }
 }
 
 main().catch((err) => {
