@@ -114,6 +114,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (body.upgradeHierarchy !== undefined) insert.upgrade_hierarchy = body.upgradeHierarchy;
     if (body.blockOnMissing !== undefined) insert.block_on_missing = body.blockOnMissing;
     if (body.tolerancePercent !== undefined) insert.tolerance_percent = body.tolerancePercent;
+    if (body.valueAliases !== undefined) insert.value_aliases = body.valueAliases;
     if (body.engineeringReason !== undefined) insert.engineering_reason = body.engineeringReason;
     if (body.attributeName !== undefined) insert.attribute_name = body.attributeName;
     if (body.sortOrder !== undefined) insert.sort_order = body.sortOrder;
@@ -159,6 +160,7 @@ export function mapRowToRecord(row: Record<string, unknown>): RuleOverrideRecord
     upgradeHierarchy: row.upgrade_hierarchy as string[] | undefined,
     blockOnMissing: row.block_on_missing as boolean | undefined,
     tolerancePercent: row.tolerance_percent as number | undefined,
+    valueAliases: row.value_aliases as string[][] | undefined,
     engineeringReason: row.engineering_reason as string | undefined,
     attributeName: row.attribute_name as string | undefined,
     sortOrder: row.sort_order as number | undefined,

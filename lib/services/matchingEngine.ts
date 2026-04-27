@@ -57,6 +57,30 @@ function normalize(value: string): string {
 }
 
 /**
+ * Check whether two values land in the same alias group on this rule.
+ * Returns true only when both values appear in the same group; any value
+ * not in any group is treated as ungrouped (returns false).
+ * Comparison uses `normalize()` so casing/whitespace differences don't matter.
+ */
+function inSameAliasGroup(rule: MatchingRule, a: string, b: string): boolean {
+  const groups = rule.valueAliases;
+  if (!groups || groups.length === 0) return false;
+  const an = normalize(a);
+  const bn = normalize(b);
+  for (const group of groups) {
+    let hasA = false;
+    let hasB = false;
+    for (const member of group) {
+      const mn = normalize(member);
+      if (mn === an) hasA = true;
+      if (mn === bn) hasB = true;
+      if (hasA && hasB) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Parse a parametric value into a numeric range { min, max }.
  * Handles formats:
  *   "-0.5V to -6V", "1mA ~ 5mA", "2...8V", "-3V" (single → degenerate range)
@@ -140,6 +164,13 @@ function evaluateIdentity(
   // false fails when Digikey (normalized, e.g. 3.3e-7) and parts.io (raw, e.g. 0.33)
   // supply the same attribute for different parts in a comparison.
   let match = normalize(sourceValue) === normalize(candidateValue);
+
+  // Per-rule value aliases — different sources often emit synonyms for the
+  // same categorical state (e.g. Digikey "Polar" vs Atlas "POLARIZED"). When
+  // both sides land in the same alias group on this rule, treat them as equal.
+  if (!match && inSameAliasGroup(rule, sourceValue, candidateValue)) {
+    match = true;
+  }
 
   // Numeric comparison (with relative tolerance for float rounding) only
   // when strings genuinely differ — catches "0.33µF" vs "330nF" style equivalence.
@@ -283,9 +314,27 @@ function evaluateIdentityUpgrade(
   if (srcIdx === -1) srcIdx = hierarchy.findIndex(h => srcNorm.includes(h.toUpperCase()));
   if (candIdx === -1) candIdx = hierarchy.findIndex(h => candNorm.includes(h.toUpperCase()));
 
-  // If neither is in hierarchy, do exact string match
+  // Alias-aware fallback: if a value isn't in the hierarchy directly, see
+  // whether any of its alias-group mates is. Lets per-rule synonyms map onto
+  // hierarchy positions without bloating the hierarchy itself.
+  if ((srcIdx === -1 || candIdx === -1) && rule.valueAliases?.length) {
+    for (const group of rule.valueAliases) {
+      const groupNormed = group.map(v => normalize(v));
+      const groupHasSrc = groupNormed.includes(srcNorm);
+      const groupHasCand = groupNormed.includes(candNorm);
+      if (!groupHasSrc && !groupHasCand) continue;
+      const groupHierarchyIdx = hierarchy.findIndex(h =>
+        groupNormed.includes(h.toUpperCase())
+      );
+      if (groupHierarchyIdx === -1) continue;
+      if (srcIdx === -1 && groupHasSrc) srcIdx = groupHierarchyIdx;
+      if (candIdx === -1 && groupHasCand) candIdx = groupHierarchyIdx;
+    }
+  }
+
+  // If neither is in hierarchy, do exact string match (with alias fallback)
   if (srcIdx === -1 && candIdx === -1) {
-    const match = srcNorm === candNorm;
+    const match = srcNorm === candNorm || inSameAliasGroup(rule, sourceValue, candidateValue);
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,

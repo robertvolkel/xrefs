@@ -636,6 +636,14 @@ export interface MatchingRule {
   blockOnMissing?: boolean;
   /** For identity rules: allow ±% tolerance band before failing (e.g., 10 = ±10% for fsw). */
   tolerancePercent?: number;
+  /**
+   * Per-rule value aliases for identity / identity_upgrade comparisons.
+   * Each inner array is a group of equivalent values; any value in a group
+   * is treated as equal to any other value in the same group for this rule.
+   * Comparison uses the same case/whitespace normalization as the engine.
+   * Example: [['Polar', 'Polarized', 'Uni-Polar'], ['Bi-Polar', 'Bipolar', 'Non-Polar']]
+   */
+  valueAliases?: string[][];
 }
 
 /** A complete logic table for a component family */
@@ -1420,6 +1428,7 @@ export interface RuleOverrideRecord {
   upgradeHierarchy?: string[];
   blockOnMissing?: boolean;
   tolerancePercent?: number;
+  valueAliases?: string[][];
   engineeringReason?: string;
   attributeName?: string;
   sortOrder?: number;

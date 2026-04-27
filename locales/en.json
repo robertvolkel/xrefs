@@ -544,6 +544,9 @@
     "upgradeHierarchyPlaceholder": "Best, Good, Acceptable (comma-separated, best first)",
     "upgradeHierarchyHelper": "Comma-separated list, best option first",
     "tolerancePercent": "Tolerance %",
+    "valueAliases": "Value Aliases",
+    "valueAliasesPlaceholder": "Polar, Polarized, Uni-Polar\nBi-Polar, Bipolar, Non-Polar",
+    "valueAliasesHelper": "One group per line, comma-separated. Values in the same line are treated as equivalent.",
     "blockOnMissing": "Block on missing data (fail instead of review)",
     "engineeringReason": "Engineering Reason",
     "changeReason": "Why are you making this change?",
@@ -613,6 +616,22 @@
     "restoreReason": "Reason for restoring",
     "restore": "Restore",
     "restoring": "Restoring..."
+  },
+  "proposeAlias": {
+    "title": "Propose value alias",
+    "tooltip": "Propose alias — mark these values equivalent",
+    "values": "Values to mark equivalent",
+    "target": "Add to",
+    "newGroup": "Create new alias group",
+    "existingGroupPrefix": "Add to existing group:",
+    "extraValues": "Additional synonyms (optional, comma-separated)",
+    "extraValuesPlaceholder": "e.g. Uni-Polar, Unipolar",
+    "extraValuesHelper": "Other known synonyms to add to this group while you're here.",
+    "changeReason": "Change reason",
+    "changeReasonPlaceholder": "Required — why is this alias being added?",
+    "conflictMessage": "\"{{value}}\" is already a member of a different alias group on this rule. Pick that group from the dropdown above instead, or remove it from your additions.",
+    "submit": "Add alias",
+    "saving": "Saving…"
   },
   "settings": {
     "title": "Settings",

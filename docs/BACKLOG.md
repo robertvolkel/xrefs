@@ -79,6 +79,15 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Value-alias system follow-ups (Decision #160)
+
+Phases 1, 2, and 3 (Inline "Propose alias" button) all shipped same session. 6 alias rules now active (polarization seed, MLCC C0G/NP0, D2 speed_class, 52 composition, C7 protocol, C9 architecture). Remaining work, in priority order:
+
+1. **`package_case` formatting drift** — Digikey appends ` (NNNN Metric)` to EIA codes (`0603` ↔ `0603 (1608 Metric)`), recurs across many families. Cleaner fix: small enhancement to engine's `normalize()` to strip the parenthetical metric suffix on package values. NOT per-family aliases (doesn't scale across 43 families × ~20 EIA sizes). 8× hits in mining output on family 52, plus more on B5/B8.
+2. **Mapper / param-map bugs surfaced by mining** (yellow-bucket pairs from `scripts/mine-identity-fails-output.csv`): `B1/configuration` "BRIDGE, 4 ELEMENTS" vs "Single Phase" (82×), `E1/output_transistor_type` (45×), `C7/operating_mode` "Full-Duplex" vs "LINE TRANSCEIVER" (28×) and "DIGITAL ISOLATOR" vs "INTERFACE CIRCUIT" (15×), `B8/package_case` 0603 appearing for thyristors (data quality — wrong source data), `C1/enable_pin` "Absent" vs "Current Limit". Wrong-field-mapping at the Digikey/Atlas mapper layer, not synonym problems. Triage by family.
+3. **Re-mining cadence** — re-run `npx tsx scripts/mine-identity-fails.ts` every 4-8 weeks (or whenever logging volume jumps). Incremental discovery from ongoing usage. The script's filter step 5 already drops pairs covered by existing `valueAliases`, so re-runs only show new patterns. Lower priority than (1) and (2) since the inline "Propose alias" button now handles per-incident maintenance — re-mining is just a periodic safety net for patterns admins haven't proactively flagged.
+4. **Optional: dashboard surfacing** — instead of waiting for admin to bump into a fail, surface "N new identity fails this week" as a small admin-home card with one-click into the propose-alias flow. Only build if (3) re-mining shows the inline-button path isn't keeping up.
+
 ### Side-by-side comparison panel — align section headers across panels
 
 **Files:** `components/AttributesTabContent.tsx` (`OverviewContent`), `components/ComparisonView.tsx`, `components/AttributesPanel.tsx`

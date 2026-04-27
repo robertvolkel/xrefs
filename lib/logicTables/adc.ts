@@ -56,6 +56,12 @@ export const adcLogicTable: LogicTable = {
       blockOnMissing: true,
       engineeringReason: 'HARD GATE. SAR, Delta-Sigma, Pipeline, and Flash converters have fundamentally different latency, noise floor, speed, and power characteristics — substitution across architectures requires firmware changes and may destabilize control loops. SAR: 1-cycle latency, 8–18 bit, 1 kSPS–5 MSPS. Delta-Sigma: high resolution (16–32 bit), high latency (decimation filter group delay). Pipeline: high speed (10–500 MSPS), moderate resolution. Flash: very high speed (>500 MSPS), low resolution. Post-scoring filter removes all cross-architecture candidates before ranking.',
       sortOrder: 1,
+      valueAliases: [
+        ['Delta-Sigma', 'ADC, DELTA-SIGMA', 'Sigma-Delta', 'ΔΣ'],
+        ['SAR', 'Successive Approximation', 'Successive-Approximation Register'],
+        ['Pipeline', 'Pipelined'],
+        ['Flash', 'Direct Conversion'],
+      ],
     },
     {
       attributeId: 'resolution_bits',

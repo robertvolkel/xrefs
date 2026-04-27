@@ -475,6 +475,9 @@
     "upgradeHierarchyPlaceholder": "最佳, 良好, 可接受（逗号分隔，最佳排前）",
     "upgradeHierarchyHelper": "逗号分隔列表，最佳选项排前",
     "tolerancePercent": "容差 %",
+    "valueAliases": "值别名",
+    "valueAliasesPlaceholder": "Polar, Polarized, Uni-Polar\nBi-Polar, Bipolar, Non-Polar",
+    "valueAliasesHelper": "每行一组，逗号分隔。同一行的值视为等同。",
     "blockOnMissing": "缺失数据时阻止（失败而非审查）",
     "engineeringReason": "工程理由",
     "changeReason": "为什么要做此更改？",
@@ -544,6 +547,22 @@
     "restoreReason": "恢复原因",
     "restore": "恢复",
     "restoring": "恢复中..."
+  },
+  "proposeAlias": {
+    "title": "建议值别名",
+    "tooltip": "建议别名 — 将这两个值标记为等同",
+    "values": "要标记为等同的值",
+    "target": "添加到",
+    "newGroup": "创建新的别名组",
+    "existingGroupPrefix": "添加到现有组：",
+    "extraValues": "其他同义词（可选，逗号分隔）",
+    "extraValuesPlaceholder": "例如 Uni-Polar, Unipolar",
+    "extraValuesHelper": "顺便添加到此组的其他已知同义词。",
+    "changeReason": "更改原因",
+    "changeReasonPlaceholder": "必填 — 为什么要添加此别名？",
+    "conflictMessage": "\"{{value}}\" 已经是此规则上另一个别名组的成员。请从上面的下拉菜单中选择该组，或将其从您的添加中删除。",
+    "submit": "添加别名",
+    "saving": "保存中…"
   },
   "settings": {
     "title": "设置",

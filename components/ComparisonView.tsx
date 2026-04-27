@@ -27,6 +27,8 @@ import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 import DomainChip from './DomainChip';
 import MatchPercentageBadge from './MatchPercentageBadge';
+import ProposeAliasButton from './admin/ProposeAliasButton';
+import { getLogicTableForSubcategory } from '@/lib/logicTables';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -122,6 +124,12 @@ export default function ComparisonView({
   );
 
   const sourceParamIds = new Set(sourceAttributes.parameters.map((p) => p.parameterId));
+
+  // Resolve the family the engine used so admin "Propose alias" buttons can
+  // attach overrides to the right rule. Falls back to base family for variants.
+  const familyId =
+    getLogicTableForSubcategory(sourceAttributes.part.subcategory, sourceAttributes)?.familyId
+    ?? null;
 
   const rowsFromSource = sourceAttributes.parameters
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -275,7 +283,7 @@ export default function ComparisonView({
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                       {t('comparison.valueHeader')}
                     </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32 }} />
+                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 56 }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -327,15 +335,25 @@ export default function ComparisonView({
                           </Stack>
                         </TableCell>
                         <TableCell
-                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32, lineHeight: 0 }}
+                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 56, lineHeight: 0 }}
                         >
-                          {row.note ? (
-                            <Tooltip title={row.note} placement="left" arrow>
-                              {resultContent}
-                            </Tooltip>
-                          ) : (
-                            resultContent
-                          )}
+                          <Stack direction="row" alignItems="center" spacing={0.25} justifyContent="flex-start">
+                            {row.note ? (
+                              <Tooltip title={row.note} placement="left" arrow>
+                                {resultContent}
+                              </Tooltip>
+                            ) : (
+                              resultContent
+                            )}
+                            <ProposeAliasButton
+                              familyId={familyId}
+                              attributeId={row.parameterId}
+                              attributeName={row.parameterName}
+                              sourceValue={row.sourceValue}
+                              replacementValue={row.replacementValue}
+                              ruleResult={row.ruleResult}
+                            />
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     );

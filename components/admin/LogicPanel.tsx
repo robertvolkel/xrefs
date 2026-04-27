@@ -133,6 +133,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
         ...(ov.upgradeHierarchy !== undefined && { upgradeHierarchy: ov.upgradeHierarchy }),
         ...(ov.blockOnMissing !== undefined && { blockOnMissing: ov.blockOnMissing }),
         ...(ov.tolerancePercent !== undefined && { tolerancePercent: ov.tolerancePercent }),
+        ...(ov.valueAliases !== undefined && { valueAliases: ov.valueAliases }),
         ...(ov.engineeringReason !== undefined && { engineeringReason: ov.engineeringReason }),
         ...(ov.attributeName !== undefined && { attributeName: ov.attributeName }),
       };

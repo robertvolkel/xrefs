@@ -1061,6 +1061,124 @@ describe('matchingEngine', () => {
   });
 
   // ----------------------------------------------------------
+  // identity with valueAliases (categorical synonyms across sources)
+  // ----------------------------------------------------------
+  describe('identity with valueAliases', () => {
+    const polarizationRule = rule({
+      attributeId: 'polarization',
+      logicType: 'identity',
+      valueAliases: [
+        ['Polar', 'Polarized', 'Uni-Polar', 'Unipolar'],
+        ['Bi-Polar', 'Bipolar', 'Non-Polar', 'Non Polar'],
+      ],
+    });
+
+    it('passes when both values are in the same alias group (Digikey "Polar" vs Atlas "POLARIZED")', () => {
+      const src = attrs([param('polarization', 'Polar')]);
+      const cand = attrs([param('polarization', 'POLARIZED')], 'CAND-001');
+      const result = evaluateCandidate(table([polarizationRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('exact');
+    });
+
+    it('handles case and whitespace differences within an alias group', () => {
+      const src = attrs([param('polarization', 'bi-polar')]);
+      const cand = attrs([param('polarization', 'Non Polar')], 'CAND-001');
+      const result = evaluateCandidate(table([polarizationRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('fails when values are in different alias groups', () => {
+      const src = attrs([param('polarization', 'Polar')]);
+      const cand = attrs([param('polarization', 'Bipolar')], 'CAND-001');
+      const result = evaluateCandidate(table([polarizationRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('fails normally when one value is not in any alias group', () => {
+      const src = attrs([param('polarization', 'Polar')]);
+      const cand = attrs([param('polarization', 'Mystery Type')], 'CAND-001');
+      const result = evaluateCandidate(table([polarizationRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('without valueAliases, "Polar" and "Polarized" still fail (no regression)', () => {
+      const baseRule = rule({ attributeId: 'polarization', logicType: 'identity' });
+      const src = attrs([param('polarization', 'Polar')]);
+      const cand = attrs([param('polarization', 'Polarized')], 'CAND-001');
+      const result = evaluateCandidate(table([baseRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('falls through to numeric comparison when string + alias both miss (e.g. "330nF" vs "0.33µF")', () => {
+      const numericRule = rule({
+        attributeId: 'capacitance',
+        logicType: 'identity',
+        valueAliases: [['Polar', 'Polarized']], // unrelated to numeric values
+      });
+      const src = attrs([param('capacitance', '330nF', 3.3e-7)]);
+      const cand = attrs([param('capacitance', '0.33µF', 3.3e-7)], 'CAND-001');
+      const result = evaluateCandidate(table([numericRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+  });
+
+  // ----------------------------------------------------------
+  // identity_upgrade with valueAliases (synonym → hierarchy position)
+  // ----------------------------------------------------------
+  describe('identity_upgrade with valueAliases', () => {
+    const dielectricRule = rule({
+      attributeId: 'dielectric',
+      attributeName: 'Dielectric',
+      logicType: 'identity_upgrade',
+      upgradeHierarchy: ['C0G', 'X7R', 'X5R'],
+      valueAliases: [['C0G', 'NP0']],
+    });
+
+    it('NP0 (alias of C0G) matches C0G as exact same hierarchy position', () => {
+      const src = attrs([param('dielectric', 'C0G')]);
+      const cand = attrs([param('dielectric', 'NP0')], 'CAND-001');
+      const result = evaluateCandidate(table([dielectricRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+      expect(result.results[0].matchStatus).toBe('exact');
+    });
+
+    it('NP0 source upgraded to nothing — pure C0G→NP0 lateral never downgrades the score', () => {
+      const src = attrs([param('dielectric', 'NP0')]);
+      const cand = attrs([param('dielectric', 'C0G')], 'CAND-001');
+      const result = evaluateCandidate(table([dielectricRule]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+
+    it('downgrade across hierarchy still fails (NP0 → X7R)', () => {
+      const src = attrs([param('dielectric', 'NP0')]);
+      const cand = attrs([param('dielectric', 'X7R')], 'CAND-001');
+      const result = evaluateCandidate(table([dielectricRule]), src, cand);
+      expect(result.results[0].result).toBe('fail');
+    });
+
+    it('upgrade across hierarchy still passes as upgrade (X5R → X7R)', () => {
+      const src = attrs([param('dielectric', 'X5R')]);
+      const cand = attrs([param('dielectric', 'X7R')], 'CAND-001');
+      const result = evaluateCandidate(table([dielectricRule]), src, cand);
+      expect(result.results[0].result).toBe('upgrade');
+    });
+
+    it('both values in same alias group, neither in hierarchy → pass', () => {
+      const ruleWithOffHierarchyAliases = rule({
+        attributeId: 'dielectric',
+        logicType: 'identity_upgrade',
+        upgradeHierarchy: ['X7R', 'X5R'],
+        valueAliases: [['Foo', 'Bar']],
+      });
+      const src = attrs([param('dielectric', 'Foo')]);
+      const cand = attrs([param('dielectric', 'Bar')], 'CAND-001');
+      const result = evaluateCandidate(table([ruleWithOffHierarchyAliases]), src, cand);
+      expect(result.results[0].result).toBe('pass');
+    });
+  });
+
+  // ----------------------------------------------------------
   // vref_check (cross-attribute Vref → Vout recalculation)
   // ----------------------------------------------------------
   describe('vref_check', () => {

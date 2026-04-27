@@ -4424,3 +4424,110 @@ Server-side at `≤2` would force a refetch whenever the user toggled "Show all,
 - [lib/services/partDataService.ts](lib/services/partDataService.ts) — local helpers removed; imports from `../types`; single-part filter call deleted.
 - [lib/services/partDataCache.ts](lib/services/partDataCache.ts) — `RECS_CACHE_SCHEMA_VERSION = 'v9'`.
 - [components/RecommendationsPanel.tsx](components/RecommendationsPanel.tsx) — `hideHighFails` state, filter pipeline addition, popover section, dismissible chip, badge counter, clear-all reset.
+
+---
+
+## Decision #160 — Per-Rule Value Aliases for Categorical Identity Synonyms (Apr 2026)
+
+**Context:** Real failure case from a user-supplied screenshot — Würth Elektronik aluminum electrolytic (family 58, sourced from Digikey) reports `Polarization = "Polar"`. The Accuris-certified replacement (Fenghua, sourced from Atlas) reports `Polarization = "POLARIZED"`. The two strings are semantically identical, but the `polarization` rule (`identity` LogicType) failed the candidate because the engine's `normalize()` only does trim + uppercase + whitespace-collapse. `"POLAR" ≠ "POLARIZED"`. After string-equality fails, the engine falls through to numeric extraction (handles SI-prefix UoM drift like `1 µF ≡ 1000 nF` from Decision #137), but for non-numeric values there was no remediation. No alias / synonym layer existed anywhere in the system.
+
+### Decision
+
+**Per-rule `valueAliases?: string[][]` on `MatchingRule`, evaluated by the matching engine between normalize-equality and numeric fallback, overridable via the existing admin override system (Decision #60).**
+
+Each inner array is a group of equivalent values for that rule; any value in a group is treated as equal to any other value in the same group. Comparison uses the existing `normalize()` helper so casing/whitespace differences inside a group don't matter.
+
+### Why per-rule, not global
+
+Considered four options:
+
+1. **Per-rule alias map on the LogicRule (chosen).** Locality — engineers reading `aluminumElectrolytic.ts` see the alias group right next to the rule. Per-attribute scope — polarization aliases can't bleed into mounting-type or dielectric. Admin-overridable for free via [overrideMerger.ts](lib/services/overrideMerger.ts) with no new UI surface. Becomes part of the rule snapshot in `recommendation_log` for QC.
+2. **Mapper-side canonicalization** — fragile; requires knowing every source's value space across 3 mappers and 43 families; a new variant from Atlas silently misses.
+3. **Global value-normalizer module** — risks cross-attribute collisions; engineers won't find it co-located with the rule it affects.
+4. **Change rule type to `identity_flag`** — semantically wrong for multi-state categoricals (Polar vs Bi-Polar are distinct states, not presence/absence).
+
+### Engine wiring
+
+In [lib/services/matchingEngine.ts](lib/services/matchingEngine.ts):
+
+- New helper `inSameAliasGroup(rule, a, b)` — normalizes both inputs, returns `true` iff they appear in the same `rule.valueAliases` group.
+- `evaluateIdentity()` — between the existing normalize-equality check and the numeric-tolerance fallback, consult aliases. If both sides land in the same group, treat as match. Otherwise fall through to today's path. Preserves SI-prefix numeric tolerance entirely.
+- `evaluateIdentityUpgrade()` — alias-aware hierarchy lookup. If a value isn't in `upgradeHierarchy` directly but one of its alias-group mates is, use that hierarchy index. Plus the both-missing-from-hierarchy fallback also consults aliases. Lets per-rule synonyms map onto hierarchy positions without bloating the hierarchy itself.
+- Other rule types (`threshold`, `fit`, `identity_flag`, `identity_range`, `vref_check`, `application_review`, `operational`) ignore aliases — they're numeric / boolean / non-comparison.
+
+### Hand-curated seed entries (Phase 1)
+
+- **Family 58 (Aluminum Electrolytic) — `polarization`:** `[['Polar', 'Polarized', 'Uni-Polar', 'Unipolar'], ['Bi-Polar', 'Bipolar', 'Non-Polar', 'Non Polar']]`. Validates the engine work against the failing screenshot case.
+- **Family 12 (MLCC) — `dielectric`:** `[['C0G', 'NP0']]`. Audit of existing `identity_upgrade` hierarchies turned up exactly one lateral equivalent — `NP0` was previously listed as hierarchy position 1 (right after `C0G` at position 0), causing a `C0G → NP0` substitution to read as a downgrade. The engineering reason on the same rule literally calls them "Class I (C0G/NP0)" together. Fix: removed `NP0` from `upgradeHierarchy`, added it as a `valueAliases` group with `C0G`. Now treated as exact same hierarchy position.
+
+No other lateral equivalents found in the audit; the remaining hierarchies (Thin/Thick Film, FS/NPT/PT, etc.) are genuinely ordered.
+
+### Override-system plumbing
+
+New `value_aliases JSONB` column on `rule_overrides` (Supabase migration: [scripts/supabase-rule-overrides-value-aliases-migration.sql](scripts/supabase-rule-overrides-value-aliases-migration.sql)). Plumbed through:
+
+- [lib/services/overrideMerger.ts](lib/services/overrideMerger.ts) — modify-merge, add-pass-through, cleanup (stripped for non-identity rule types).
+- [lib/services/overrideValidator.ts](lib/services/overrideValidator.ts) — validates `string[][]` shape, no empty groups, no value in two groups (case/whitespace-normalized for the dedup check).
+- [lib/services/overrideHistoryHelper.ts](lib/services/overrideHistoryHelper.ts) — `value_aliases` in snapshot fields + camelCase map.
+- [app/api/admin/overrides/rules/route.ts](app/api/admin/overrides/rules/route.ts) — POST insert + `mapRowToRecord`.
+- [app/api/admin/overrides/rules/[overrideId]/route.ts](app/api/admin/overrides/rules/[overrideId]/route.ts) — PATCH field map + previous_values current-state copy.
+- [app/api/admin/overrides/rules/restore/route.ts](app/api/admin/overrides/rules/restore/route.ts) — restore copies field forward.
+- [lib/logicTables/deltaBuilder.ts](lib/logicTables/deltaBuilder.ts) — variant family (53/54/55/60/13/72/B2/B3/B4) compile-time delta path.
+
+### Admin UI
+
+[components/admin/RuleOverrideDrawer.tsx](components/admin/RuleOverrideDrawer.tsx) — new conditional `Value Aliases` multi-line text field (one group per line, comma-separated). Visible when `logicType ∈ {identity, identity_upgrade}`. Diff display in the history view formats `string[][]` as `group1 | group2`. i18n strings added to `en.json` and `zh-CN.json` (de.json doesn't have adminOverride strings; English fallback). [components/admin/LogicPanel.tsx](components/admin/LogicPanel.tsx) `mergedRules` now includes `valueAliases` so the indicator-dot logic picks up alias-only changes.
+
+### Tests
+
+[__tests__/services/matchingEngine.test.ts](__tests__/services/matchingEngine.test.ts) — new test groups for `identity with valueAliases` (6 tests) and `identity_upgrade with valueAliases` (5 tests) covering: same-group pass, case/whitespace insensitivity, different-group fail, unknown-value fail, no-regression when aliases absent, fall-through to numeric comparison, alias maps to hierarchy index, lateral within-position pass, downgrade still fails, upgrade still passes, both off-hierarchy in same group passes. All 1380 tests pass.
+
+### Phase 2 (shipped same session)
+
+Built [scripts/mine-identity-fails.ts](scripts/mine-identity-fails.ts) — read-only Node script (run via `npx tsx`) that scans `recommendation_log` JSONB snapshots, filters to `identity` / `identity_upgrade` rule fails where both values are non-numeric strings, drops pairs already covered by existing `valueAliases`, groups by `(family_id, attributeId, normalize(a), normalize(b))` direction-insensitively, and writes a ranked CSV + JSON to `scripts/mine-identity-fails-output.{csv,json}`.
+
+**Mining run results (497 logs, 49,114 rule evaluations scanned):**
+- 581 string-vs-string identity fails
+- **59 unique suspect pairs** — well within the "small + obvious, hand-curate" bucket. No Haiku tooling needed.
+- Triage: 4 green-bucket rules (real synonyms), ~6 yellow (mapper / param-map bugs — separate fix), remaining ~49 red (genuinely different specs, engine correctly failing).
+
+**Curation pass — four alias groups added (extensions chosen over strict-evidence):**
+
+1. **[lib/logicTables/d2Fuses.ts](lib/logicTables/d2Fuses.ts) — `speed_class`** — five groups covering Fast/Very Fast/Medium/Slow/Very Slow with all standard letter codes (F, FF, M, T, TT) and prose variants (Fast Blow, Time Delay, Time Lag, etc.). Mining evidence: only Fast↔Fast Blow (51×).
+2. **[lib/logicTables/chipResistors.ts](lib/logicTables/chipResistors.ts) — `composition`** — Thick Film + Chinese forms (`厚膜`, `厚膜电阻`) and Thin Film + Chinese forms (`薄膜`, `薄膜电阻`). Mining evidence: 31× across thick-film variants.
+3. **[lib/logicTables/interfaceICs.ts](lib/logicTables/interfaceICs.ts) — `protocol`** — six groups covering RS-232, RS-485, RS-422, I²C, CAN, CAN FD with all EIA/TIA/V.28 standard designations and the concatenated forms Atlas/parts.io emit. Mining evidence: 24× on RS-232 variants only.
+4. **[lib/logicTables/adc.ts](lib/logicTables/adc.ts) — `architecture`** — four groups covering Delta-Sigma (incl. `ΔΣ`), SAR (incl. `Successive Approximation`), Pipeline (incl. `Pipelined`), Flash (incl. `Direct Conversion`). Mining evidence: 10× on Delta-Sigma variants only.
+
+The non-mining-evidence entries (extensions) were kept after explicit user approval. Justification: each affected attribute has a fixed canonical vocabulary (fuse speed classes, RS-* protocols, ADC architectures, film resistor compositions), so the same vocabulary-drift pattern certainly affects the other variants we just haven't logged yet at sufficient scale.
+
+**Re-mining after curation:** kept-fails dropped 581 → 465 (-20%), unique pairs dropped 59 → 48 (-19%), `already aliased` count more than doubled (119 → 235) confirming the engine is now consuming the new groups. None of the four green-bucket pairs reappear in the output.
+
+**Two follow-ups deferred to backlog:**
+- **`package_case` formatting drift** (`0603` ↔ `0603 (1608 Metric)`, 8× on family 52, recurs across many families) — Digikey appends ` (NNNN Metric)` to EIA codes; cleaner fix is a small enhancement to the engine's `normalize()` to strip the parenthetical metric suffix on package values, NOT per-family aliases (doesn't scale across 43 families × ~20 standard EIA sizes).
+- **Mapper / param-map bugs** (yellow bucket: `B1/configuration` "BRIDGE, 4 ELEMENTS" ↔ "Single Phase" 82×, `E1/output_transistor_type` 45×, `C7/operating_mode` 28× + 15×, etc.) — these are wrong-field-mapping issues at the Digikey/Atlas mapper layer, not synonym problems.
+
+**Phase 3 — Inline "Propose alias" button (shipped same session):**
+
+Two new components plus wiring into two surfaces, admin-gated:
+
+- [components/admin/ProposeAliasDialog.tsx](components/admin/ProposeAliasDialog.tsx) — modal that fetches the rule's effective `valueAliases` (TS base merged with active override), auto-suggests an existing group when one of the two values is already aliased, lets admin pick "Create new group" or "Add to existing group: X", optional comma-separated extra synonyms, required change reason. Detects collision (same value in two groups) client-side before submit. Posts via `createRuleOverride` (no existing override) or `updateRuleOverride` (existing) — both routes already invalidate cache on save.
+- [components/admin/ProposeAliasButton.tsx](components/admin/ProposeAliasButton.tsx) — small `LinkOutlinedIcon` icon button. Renders only when ALL of: user is admin, rule's `logicType` is `identity` / `identity_upgrade`, row's `ruleResult === 'fail'`, both values are non-empty / non-N/A, family has a logic table. Hidden in all other cases — regular users never see it.
+
+Wired into:
+- [components/ComparisonView.tsx](components/ComparisonView.tsx) — inline next to the status dot in the per-rule comparison table. FamilyId resolved client-side via `getLogicTableForSubcategory(part.subcategory, sourceAttributes)` (handles variant family classification).
+- [components/admin/QcFeedbackDetailView.tsx](components/admin/QcFeedbackDetailView.tsx) — same button on the same row layout. `onSuccess` callback auto-resolves the feedback (status → `resolved`, admin notes appended with "Resolved by adding value alias.") if the feedback was `open` or `reviewed`.
+
+**Net flow per failing row:** admin clicks the link icon → small dialog appears with the two values pre-filled and the rule's existing groups → picks new-group or existing-group → adds optional extras → enters reason → submits. The rule is patched, recommendations cache invalidates, and on the QC feedback path the original feedback ticket is auto-closed. No further dev work needed for ongoing maintenance — admin-driven, per-incident, lives in the UI they already use.
+
+i18n strings added under `proposeAlias.*` in `en.json` and `zh-CN.json`.
+
+**What this does NOT change:**
+- The matching engine itself (still consumes `valueAliases` exactly as it did since Phase 1).
+- Override system plumbing (just a new caller; existing POST/PATCH routes do the work).
+- Existing override-management UI in the rule drawer (still works the same way; this is a faster path for the common case of "I see a fail, fix it on the spot").
+
+### What this does NOT solve
+
+- Compound numeric values where the qualifier matters (e.g. `22.1 mA @ 100 kHz` test conditions) — `getNumeric()` extracts the leading number; if the qualifier is load-bearing for a specific rule, that's per-rule custom logic, not aliases.
+- Atlas Chinese parameter NAME → English mapping (separate concern, handled by family dictionaries in `atlasMapper.ts`).
+- Cross-source value disagreements that aren't synonyms (data quality, not matching).

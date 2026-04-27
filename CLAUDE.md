@@ -224,7 +224,7 @@ The core pipeline is in `lib/services/partDataService.ts → getRecommendations(
 2. **Merge overrides** — Apply any user-supplied attribute corrections
 3. **Classify family** — Map subcategory string → family ID, detect variant families (e.g., current sense within chip resistors) via `lib/logicTables/familyClassifier.ts`
 4. **Get logic table** — Load the family's matching rules from `lib/logicTables/`
-5. **Apply admin overrides** — `overrideMerger.ts` fetches active DB overrides and merges onto the TS base (remove→override→add pattern)
+5. **Apply admin overrides** — `overrideMerger.ts` fetches active DB overrides and merges onto the TS base (remove→override→add pattern). Patchable fields include `valueAliases` (Decision #160) for per-rule categorical synonym groups.
 6. **Apply context** — If user answered application context questions, `contextModifier.ts` adjusts rule weights/types. Context questions are also subject to admin overrides.
 7. **Fetch candidates** — Search Digikey for replacement candidates using critical parameters as keywords
 8. **Score candidates** — `matchingEngine.ts` evaluates each candidate against every rule
@@ -247,9 +247,9 @@ Defined in `lib/types.ts` as `LogicType`:
 
 | Type | Behavior | Example |
 |------|----------|---------|
-| `identity` | Exact match required — string-equality-first check (after normalize) then numeric fallback with 1e-6 relative tolerance for SI-prefix encoding drift; supports optional `tolerancePercent` band. Decision #137. | Capacitance, package/case, fsw ±10% |
+| `identity` | Exact match required — string-equality-first check (after normalize), then per-rule `valueAliases` lookup (Decision #160), then numeric fallback with 1e-6 relative tolerance for SI-prefix encoding drift; supports optional `tolerancePercent` band. Decision #137. | Capacitance, package/case, fsw ±10%, Polar≡Polarized |
 | `identity_range` | Range overlap required (replacement range must intersect source range) | JFET Vp, Idss |
-| `identity_upgrade` | Match or superior per hierarchy (best→worst array) | Dielectric: C0G > X7R > X5R |
+| `identity_upgrade` | Match or superior per hierarchy (best→worst array); also consults `valueAliases` so synonyms map to hierarchy positions (Decision #160). | Dielectric: C0G≡NP0 > X7R > X5R |
 | `identity_flag` | Boolean gate — if original requires it, replacement must too | AEC-Q200, flexible termination |
 | `threshold` | Numeric comparison: `gte`, `lte`, or `range_superset` | Voltage ≥, ESR ≤, temp range ⊇ |
 | `fit` | Physical constraint ≤ | Component height |

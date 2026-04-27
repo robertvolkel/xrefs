@@ -80,6 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       upgrade_hierarchy: source.upgrade_hierarchy,
       block_on_missing: source.block_on_missing,
       tolerance_percent: source.tolerance_percent,
+      value_aliases: source.value_aliases,
       engineering_reason: source.engineering_reason,
       attribute_name: source.attribute_name,
       sort_order: source.sort_order,
