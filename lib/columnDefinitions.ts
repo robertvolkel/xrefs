@@ -7,8 +7,8 @@
  * indicating data origin (Digikey, Parts.io, Atlas).
  */
 
-import { PartsListRow, EnrichedPartData, computeRecommendationCounts } from './types';
-import { CalculatedFieldDef, getCalculatedValue } from './calculatedFields';
+import { PartsListRow, EnrichedPartData, XrefRecommendation, computeRecommendationCounts } from './types';
+import { CalculatedFieldDef, getCalculatedValue, toNumber } from './calculatedFields';
 
 // ============================================================
 // TYPES
@@ -47,6 +47,32 @@ export interface ColumnDefinition {
   editable?: boolean;
 }
 
+/**
+ * Short suffix for each data source, appended to column display labels.
+ * All sources listed here are covered by the text suffix convention —
+ * ColumnPickerDialog's SourceBadge skips any source present in this map
+ * to avoid a redundant colored chip next to "Risk Rank (FC)" etc.
+ */
+export const SOURCE_SUFFIX: Record<string, string> = {
+  digikey: 'DK',
+  partsio: 'P',
+  atlas: 'A',
+  findchips: 'FC',
+  mouser: 'Mouser',
+};
+
+/**
+ * Return the user-facing label for a column, appending a source suffix
+ * (e.g. "Manufacturer (DK)") when the column has a known data source.
+ * Idempotent — won't double-suffix a label that already ends with the tag.
+ */
+export function getColumnDisplayLabel(col: { label: string; dataSource?: string }): string {
+  const suffix = col.dataSource ? SOURCE_SUFFIX[col.dataSource] : undefined;
+  if (!suffix) return col.label;
+  if (col.label.endsWith(`(${suffix})`)) return col.label;
+  return `${col.label} (${suffix})`;
+}
+
 /** Display order for column groups in the column picker */
 export const GROUP_ORDER = [
   'System',
@@ -76,11 +102,82 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:accurisCertifiedCount', label: 'Accuris Certified', source: 'system', group: 'Replacements', defaultWidth: '110px', align: 'center', isNumeric: true },
   { id: 'sys:top_suggestion', label: 'Repl. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px' },
   { id: 'sys:top_suggestion_mfr', label: 'Repl. MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
-  { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true },
-  { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px' },
+  { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px', dataSource: 'findchips' },
+  { id: 'sys:priceDelta', label: 'Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'sys:cheapest_viable_price', label: 'Lowest Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
+
+/**
+ * Resolve the best available replacement unit price for savings/delta math.
+ * Mirrors the logic used by sys:top_suggestion_price — prefers the best
+ * cross-distributor quote (FindChips), falls back to part.unitPrice.
+ */
+export function resolveReplacementUnitPrice(row: PartsListRow): number | undefined {
+  const part = row.replacement?.part;
+  if (!part) return undefined;
+  const prices = part.supplierQuotes
+    ?.map(q => q.unitPrice)
+    .filter((v): v is number => v != null && v > 0);
+  if (prices && prices.length > 0) return Math.min(...prices);
+  return part.unitPrice;
+}
+
+/**
+ * Resolve the best available unit price for any recommendation.
+ * Same min(supplierQuotes[].unitPrice) pattern used elsewhere — falls back to
+ * the part's plain `unitPrice` (Digikey-only) when no FC quotes are present.
+ */
+export function resolveBestRecPrice(rec: XrefRecommendation | undefined): number | undefined {
+  if (!rec) return undefined;
+  const prices = rec.part.supplierQuotes
+    ?.map(q => q.unitPrice)
+    .filter((v): v is number => v != null && v > 0);
+  if (prices && prices.length > 0) return Math.min(...prices);
+  return rec.part.unitPrice;
+}
+
+/**
+ * Pick the top-N viable replacements sorted by best FC unit price ascending.
+ *
+ * Viable = certified (Accuris partsio_fff/partsio_functional OR MFR-uploaded)
+ *          OR rule-engine match with zero failing rules.
+ *
+ * Recs without a resolvable FC unit price are excluded — the caller relies on
+ * a real number for the column's price floor.
+ */
+export function pickCheapestViableRecs(
+  recs: XrefRecommendation[] | undefined,
+  cap = 5,
+): XrefRecommendation[] {
+  if (!recs || recs.length === 0) return [];
+  const isViable = (r: XrefRecommendation): boolean => {
+    const certs = r.certifiedBy ?? [];
+    if (certs.includes('partsio_fff') || certs.includes('partsio_functional') || certs.includes('manufacturer')) return true;
+    return !r.matchDetails.some(d => d.ruleResult === 'fail');
+  };
+  return recs
+    .filter(isViable)
+    .map(r => ({ rec: r, price: resolveBestRecPrice(r) }))
+    .filter((x): x is { rec: XrefRecommendation; price: number } => x.price != null && x.price > 0)
+    .sort((a, b) => a.price - b.price)
+    .slice(0, cap)
+    .map(({ rec }) => rec);
+}
+
+/**
+ * Compute replacement savings for a row: (current unit cost − replacement unit price).
+ * Positive = savings (replacement is cheaper); negative = replacement is more expensive.
+ * Undefined when either side is missing.
+ */
+export function computePriceDelta(row: PartsListRow): number | undefined {
+  const current = toNumber(row.rawUnitCost);
+  const replacement = resolveReplacementUnitPrice(row);
+  if (current === undefined || replacement === undefined) return undefined;
+  return current - replacement;
+}
 
 // ============================================================
 // PRODUCT-LEVEL COLUMN DEFINITIONS (always available)
@@ -89,8 +186,8 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
 
 const PRODUCT_COLUMNS: ColumnDefinition[] = [
   // Product Identity
-  { id: 'dk:mpn', label: 'MPN (DK)', source: 'digikey-product', enrichedField: 'mpn', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
-  { id: 'dk:manufacturer', label: 'Manufacturer', source: 'digikey-product', enrichedField: 'manufacturer', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
+  { id: 'dk:mpn', label: 'MPN', source: 'digikey-product', enrichedField: 'mpn', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
+  { id: 'dk:manufacturer', label: 'MFR', source: 'digikey-product', enrichedField: 'manufacturer', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
   { id: 'dk:category', label: 'Category', source: 'digikey-product', enrichedField: 'category', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '120px' },
   { id: 'dk:subcategory', label: 'Subcategory', source: 'digikey-product', enrichedField: 'subcategory', group: 'Product Identity', dataSource: 'digikey', defaultWidth: '140px' },
   // Documentation
@@ -98,9 +195,9 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:photoUrl', label: 'Photo', source: 'digikey-product', enrichedField: 'photoUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
   { id: 'dk:productUrl', label: 'Product Page', source: 'digikey-product', enrichedField: 'productUrl', group: 'Documentation', dataSource: 'digikey', defaultWidth: '80px', isLink: true },
   // Commercial
-  { id: 'dk:digikeyPartNumber', label: 'DigiKey SKU', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'Commercial', dataSource: 'digikey', defaultWidth: '140px' },
-  { id: 'dk:unitPrice', label: 'DK Price', source: 'digikey-product', enrichedField: 'unitPrice', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'dk:quantityAvailable', label: 'DK Stock', source: 'digikey-product', enrichedField: 'quantityAvailable', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'dk:digikeyPartNumber', label: 'SKU', source: 'digikey-product', enrichedField: 'digikeyPartNumber', group: 'Commercial', dataSource: 'digikey', defaultWidth: '140px' },
+  { id: 'dk:unitPrice', label: 'Price', source: 'digikey-product', enrichedField: 'unitPrice', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
+  { id: 'dk:quantityAvailable', label: 'Stock', source: 'digikey-product', enrichedField: 'quantityAvailable', group: 'Commercial', dataSource: 'digikey', defaultWidth: '80px', align: 'right', isNumeric: true },
   { id: 'dk:productStatus', label: 'Product Status', source: 'digikey-product', enrichedField: 'productStatus', group: 'Commercial', dataSource: 'digikey', defaultWidth: '100px' },
   { id: 'dk:factoryLeadTimeWeeks', label: 'Lead Time (Weeks)', source: 'digikey-product', enrichedField: 'factoryLeadTimeWeeks', group: 'Commercial', dataSource: 'partsio', defaultWidth: '100px', align: 'right', isNumeric: true },
   // Compliance
@@ -117,8 +214,8 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:eccnCode', label: 'ECCN Code', source: 'digikey-product', enrichedField: 'eccnCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '90px' },
   { id: 'dk:htsCode', label: 'HTS Code', source: 'digikey-product', enrichedField: 'htsCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '100px' },
   // Multi-supplier summary (aggregated from FindChips N-distributor quotes)
-  { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true, dataSource: 'findchips' },
   // FindChips Risk & Lifecycle
   { id: 'fc:lifecycle', label: 'Lifecycle', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '100px' },
   { id: 'fc:riskRank', label: 'Risk Rank', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true },
@@ -194,10 +291,11 @@ export function buildAvailableColumns(
   // Portable mapped columns (resolve to actual ss:N at render time — safe for master views)
   columns.push(
     { id: 'mapped:mpn', label: 'MPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
-    { id: 'mapped:manufacturer', label: 'Manufacturer', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
+    { id: 'mapped:manufacturer', label: 'MFR', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '140px' },
     { id: 'mapped:description', label: 'Description', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '200px' },
     { id: 'mapped:cpn', label: 'CPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
     { id: 'mapped:ipn', label: 'IPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
+    { id: 'mapped:unitCost', label: 'Unit Cost', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '100px', align: 'right', isNumeric: true },
   );
 
   // Spreadsheet columns (from the original upload)
@@ -371,6 +469,8 @@ export function getSortValue(
       // Winning distributor = supplierQuotes[0] (mapper pre-sorts by best unit price)
       return row.replacement?.part.supplierQuotes?.[0]?.supplier?.toLowerCase();
     }
+    case 'sys:priceDelta':
+      return computePriceDelta(row);
     default:
       return undefined;
   }

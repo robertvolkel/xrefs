@@ -437,7 +437,7 @@ export function formatPrice(price: number, currency?: string): string {
 }
 
 /* ── Supplier quote card ── */
-function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
+export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
   const supplierLabel = SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
 

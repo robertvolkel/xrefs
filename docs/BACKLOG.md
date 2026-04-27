@@ -79,6 +79,15 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Cost-optimization follow-ups (Decision #156)
+
+Phase 1 shipped `mapped:unitCost` auto-detection + `sys:priceDelta` (Repl. Savings) column. Natural extensions:
+
+1. **Extended cost column** — `Unit Cost × Quantity` and `Repl. Price × Quantity`, plus a "total project savings" rollup. Requires the existing optional `qtyColumn` to be populated.
+2. **Percentage savings** — `(unitCost − replacementPrice) / unitCost`. Useful for sorting by ROI rather than absolute dollars. Could ride on the existing `calc:*` infra now that `toNumber()` is exported, OR be a second built-in `sys:priceDeltaPct`.
+3. **Cost-optimization view template preset** — ship a default master template tuned for cost reduction (Unit Cost + Repl. Price + Repl. Savings + Repl. Distributor + sort by savings). Surface it as a one-click "apply" in the view picker.
+4. **Multi-currency reconciliation** — when the user's unit-cost currency differs from the replacement quote's currency, today the math runs blind. Need either FX conversion or an explicit warning/per-row currency tag.
+
 ### Qualification-domain Phase 2 — MFR classifier coverage (Decision #155)
 
 Phase 1 shipped the qualification-domain filter for Murata MLCCs only. Non-Murata parts universally classify `unknown/no_classifier` today, rank below context-matched in automotive searches, and show the amber "Domain unknown — verify" chip. That's a deliberate ranking tier, not an exclusion — but every non-Murata BOM hits it, so Phase 2 classifier coverage is on the critical path.

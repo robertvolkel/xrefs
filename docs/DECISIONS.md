@@ -4245,3 +4245,112 @@ Three issues surfaced during manual verification and were fixed before close of 
 2. **React stale closure in main search flow.** `handleFindReplacements` in `hooks/useAppState.ts` read `state.applicationContext` from a `useCallback` closure. Callers (`handleContextResponse`, `handleAttributeResponse`) invoked it immediately after `setState({applicationContext: ...})`, before React had flushed — so the closure served the old null context and the domain filter never ran on the main search view. Fixed by giving `handleFindReplacements` an optional `contextOverride` argument and passing the freshly-built context directly from the two state-setting call sites.
 
 3. **Suppressed the amber "Domain unknown — verify" chip.** Phase 1 has only one registered classifier (Murata MLCC), so the chip fired on the majority of non-Murata candidates — noise rather than signal. The label was also too vague: "domain" is internal taxonomy and "verify" doesn't tell users what to verify. `domainBadge()` now returns `null` for the `unknown` branch; classification still drives the sort tiebreak and QC telemetry. Re-enable tracked in BACKLOG with a coverage threshold (~50% non-unknown per family) and a copy-rewrite prerequisite.
+
+
+## Decision #156 — BOM Cost-Optimization Workflow: Unit Cost + Repl. Savings (Apr 2026)
+
+### Problem
+
+A common parts-list workflow is cost reduction: users upload a BOM that includes their **current unit cost** column and want to compare it against the proposed replacement's price to surface savings. Three things blocked this workflow:
+
+1. There was no first-class "Unit Cost" mapped field — users with a "Unit Cost" header had to rely on the list-local `ss:N` column, which is stripped from master templates by `sanitizeTemplateColumns()`. Cost columns couldn't be part of a portable view.
+2. There was no built-in column comparing current cost to replacement price. Users would have to eyeball Repl. Price next to their raw cost column.
+3. **Bug:** Even the raw `ss:N` "Unit Cost" column did not appear in the column-picker's "Your Data" section in either master OR list-specific views. The user could see their Unit Cost data in the Original View table but had no UI affordance to add the column to a custom view.
+
+### Decisions
+
+**1. Add `mapped:unitCost` as a portable auto-detected field.** Same shape as `mapped:cpn` / `mapped:ipn`. Header detection via `UNIT_COST_PATTERNS` in `excelParser.ts` — longer phrases first ("current unit cost", "unit price"), bare "cost"/"price" last so "extended cost" / "list price" don't collide. Persisted as `rawUnitCost` on `PartsListRow` / `StoredRow`. Numeric parsing reuses the existing `toNumber()` helper from `calculatedFields.ts` (now exported), which handles "$1.25", commas, whitespace.
+
+**2. Add `sys:priceDelta` (label "Repl. Savings") as a built-in system column, not a user-defined `calc:*` field.** The existing `calc:*` infrastructure is for runtime-defined formula fields stored per-view. Savings should be a first-class built-in — available to every user, portable by default, no formula-builder interaction. Compute: `toNumber(rawUnitCost) − resolveReplacementUnitPrice(row)`. Positive = savings (replacement cheaper); negative = replacement more expensive; undefined when either side is missing. Display as signed currency, green/red coloring, sortable numerically. Mirrors `sys:top_suggestion_price`'s logic for picking the best cross-distributor quote (FindChips supplierQuotes, falling back to part.unitPrice).
+
+**3. Fix the picker visibility bug by trusting headers, not data scans.** The strict `nonEmptyIndices` filter in `useColumnCatalog.ts:75-87` silently dropped any `ss:*` column whose data scan didn't register as non-empty — and currency/numeric values were slipping past the `val.toString().trim() !== ''` check on certain lists. New rule: if the user provided a real header (non-empty trimmed string in `effectiveHeaders[index]`), the column is selectable in the picker, regardless of the data scan. Unlabeled columns still require data to avoid surfacing phantom trailing columns.
+
+**4. Fix master-view save round-trip stripping mapped fields.** When the column picker opens against a master view, it expands `mapped:*` IDs to concrete `ss:N` indices (so the user sees real column labels). On save, `sanitizeTemplateColumns()` ran directly on those `ss:N` IDs, which strips all `ss:*` — silently wiping every Your Data column. `reverseMapKnownColumns()` already existed (used by PromoteViewDialog) but wasn't called on the normal save path. Wired into `PartsListShell.tsx`'s ColumnPickerDialog `onSave` handler before `sanitizeTemplateColumns` for both create and edit master-scope flows.
+
+### Files
+
+**Auto-detection + storage**:
+- `lib/excelParser.ts` — `UNIT_COST_PATTERNS` constant + `unitCost` wired into `autoDetectColumns` greedy assignment
+- `lib/types.ts` — `unitCostColumn?` on `ColumnMapping`, `rawUnitCost?` on `PartsListRow`
+- `lib/partsListStorage.ts`, `lib/supabasePartsListStorage.ts` — persist `rawUnitCost`
+- `hooks/usePartsListState.ts` — extract `rawUnitCost` from raw cells during parsing
+- `hooks/useColumnCatalog.ts` — inferred-mapping recovery (locate the column on lists saved before unitCost detection landed)
+- `lib/viewConfigStorage.ts` — `unitCostColumn` in `reverseMapKnownColumns` map
+- `components/parts-list/PartsListShell.tsx` — `mapped:unitCost` resolution to `ss:N` at render time + portableColumnIds tracking + `reverseMapKnownColumns` on master-view save
+- `components/parts-list/AddPartDialog.tsx` — exclude unitCost column from the "extras" picker
+- `components/parts-list/ColumnMappingDialog.tsx` — manual "Unit Cost (optional)" override dropdown
+
+**Column registration + display**:
+- `lib/columnDefinitions.ts` — `mapped:unitCost` (group "Your Data"), `sys:priceDelta` (group "Replacements"), `resolveReplacementUnitPrice()`, `computePriceDelta()` helpers, `getSortValue` case
+- `lib/calculatedFields.ts` — `toNumber()` exported for reuse
+- `components/parts-list/PartsListTable.tsx` — `sys:priceDelta` custom renderer + REPLACEMENT_COLUMN_IDS membership
+
+**Picker visibility fix**:
+- `hooks/useColumnCatalog.ts:75-87` — header-based ss:* visibility check
+
+### Verification
+
+- Upload a BOM with a "Unit Cost" column → header auto-assigned to `mapped:unitCost`
+- Edit any view → "Unit Cost" appears under "Your Data" with the sparkle (portable badge)
+- Raw `ss:*` columns now appear under "Your Data" in list-scope views (the picker visibility fix)
+- Add "Unit Cost" + "Repl. Savings" to a view → savings render with sign + color, sort numerically, missing values render as `—`
+- Save a master view containing mapped fields → reload → mapped fields survive (the reverse-map fix)
+- 1355 Jest tests pass
+
+### Out of scope (BACKLOG)
+
+- Extended cost (Unit Cost × Quantity) column
+- Percentage savings (delta/cost)
+- Cost-optimization view template preset (Unit Cost + Repl. Price + Repl. Savings + Repl. Distributor, sorted by savings)
+- Multi-currency reconciliation when user's unit-cost currency differs from the replacement's quote currency
+
+---
+
+## Decision #157 — Column-Label Source Suffix Convention + Manufacturer→MFR (Apr 2026)
+
+### Problem
+
+Column labels in the parts-list table and column picker had no consistent provenance indicator. Some hand-rolled prefixes/suffixes existed inconsistently: "MPN (DK)", "DK Price", "DK Stock", "DigiKey SKU", and most other Digikey columns had no marker at all. The picker's `SourceBadge` chip (orange "DK", blue "PIO", green "Atlas") only appeared in the picker, not the table header, and didn't disambiguate columns whose data origin differs from their ID prefix (e.g. `dk:riskRank` carries `dataSource: 'partsio'` while `fc:riskRank` is FindChips — both rendered as "Risk Rank" in headers).
+
+Additionally, "Manufacturer" eats horizontal space in dense tables with 15+ columns.
+
+### Decisions
+
+**1. Single source-suffix convention via `getColumnDisplayLabel(col)` helper.** Helper appends `(suffix)` to `col.label` based on `col.dataSource`. Idempotent — won't double-suffix. Map (`SOURCE_SUFFIX` in `lib/columnDefinitions.ts`):
+
+| dataSource | suffix |
+|------------|--------|
+| `digikey`  | DK     |
+| `partsio`  | P      |
+| `atlas`    | A      |
+| `findchips`| FC     |
+| `mouser`   | Mouser |
+
+The convention is `dataSource`-driven, not ID-prefix driven. So `dk:riskRank` (which is parts.io-sourced) renders as "Risk Rank (P)" while `fc:riskRank` renders as "Risk Rank (FC)" — collision resolved.
+
+**2. Normalized inline labels** so the helper owns the suffix entirely:
+- `dk:mpn` "MPN (DK)" → label "MPN" (renders "MPN (DK)")
+- `dk:unitPrice` "DK Price" → "Price" ("Price (DK)")
+- `dk:quantityAvailable` "DK Stock" → "Stock" ("Stock (DK)")
+- `dk:digikeyPartNumber` "DigiKey SKU" → "SKU" ("SKU (DK)")
+
+**3. Drop the redundant SourceBadge chip for any source covered by the suffix map.** Picker's `SourceBadge` checks `SOURCE_SUFFIX[dataSource]` and returns `null` if present. Removes the orange/blue/green chip entirely from the picker — text suffix is the only indicator now. (Chip code retained as fallback for any future source not yet in `SOURCE_SUFFIX`.)
+
+**4. Abbreviate "Manufacturer" → "MFR" in column labels.** Two definitions touched: `dk:manufacturer` and `mapped:manufacturer`. Replaced "Manufacturer" → "MFR". `sys:top_suggestion_mfr` was already "Repl. MFR".
+
+### Consumers routed through `getColumnDisplayLabel`
+
+- `components/parts-list/PartsListTable.tsx` — table header (sortable + non-sortable spans)
+- `components/parts-list/ColumnPickerDialog.tsx` — picker list, active-columns pane, search filter
+- `components/parts-list/CalculatedFieldEditor.tsx` — formula operand pickers (left/right)
+
+### Files
+
+- `lib/columnDefinitions.ts` — `SOURCE_SUFFIX` exported, `getColumnDisplayLabel()` helper, normalized PRODUCT_COLUMNS labels, MFR abbreviation
+- `components/parts-list/ColumnPickerDialog.tsx` — import + route 3 label sites + `SourceBadge` skips suffixed sources
+- `components/parts-list/PartsListTable.tsx` — header labels through helper
+- `components/parts-list/CalculatedFieldEditor.tsx` — operand picker through helper
+
+### Extensibility
+
+Adding a new data source becomes a one-line change in `SOURCE_SUFFIX`. Parametric (`dkp:*`) columns auto-inherit the correct suffix from whichever source populated their value (Atlas/Digikey/parts.io) via the existing `parameterKeys` source field — no per-column work needed.

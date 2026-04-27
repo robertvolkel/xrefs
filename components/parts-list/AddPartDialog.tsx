@@ -103,6 +103,7 @@ export default function AddPartDialog({
     if (inferredMapping.manufacturerColumn >= 0) mappedIndices.add(inferredMapping.manufacturerColumn);
     if (inferredMapping.descriptionColumn >= 0) mappedIndices.add(inferredMapping.descriptionColumn);
     if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) mappedIndices.add(inferredMapping.cpnColumn);
+    if (inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0) mappedIndices.add(inferredMapping.unitCostColumn);
   } else {
     // Default empty-list layout: 0=MPN, 1=MFR
     mappedIndices.add(0);

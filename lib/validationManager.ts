@@ -10,6 +10,7 @@
 import { PartsListRow, BatchValidateItem, computeRecommendationCounts } from './types';
 import { validatePartsList } from './api';
 import { updatePartsListSupabase } from './supabasePartsListStorage';
+import { pickCheapestViableRecs } from './columnDefinitions';
 
 export type ValidationSubscriber = (
   rows: PartsListRow[],
@@ -161,6 +162,7 @@ export async function startBackgroundValidation(
               mfrCertifiedCount: counts.mfrCertifiedCount,
               accurisCertifiedCount: counts.accurisCertifiedCount,
               candidateMatches: item.candidateMatches,
+              cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
             };
           }
 

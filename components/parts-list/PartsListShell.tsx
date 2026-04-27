@@ -26,7 +26,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields, reverseMapKnownColumns } from '@/lib/viewConfigStorage';
 import PromoteViewDialog, { viewNeedsPromoteDialog, buildFastPathPromoteResult } from './PromoteViewDialog';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import type { PartsListRow } from '@/lib/types';
@@ -343,6 +343,10 @@ export default function PartsListShell() {
             if (inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0) return `ss:${inferredMapping.ipnColumn}`;
             return 'mapped:ipn'; // Will be filtered out below
           }
+          if (id === 'mapped:unitCost') {
+            if (inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0) return `ss:${inferredMapping.unitCostColumn}`;
+            return 'mapped:unitCost'; // Will be filtered out below
+          }
           return id;
         })
         .filter(id => !id.startsWith('mapped:'));
@@ -379,6 +383,8 @@ export default function PartsListShell() {
           ids.add(`ss:${inferredMapping.cpnColumn}`);
         if (id === 'mapped:ipn' && inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0)
           ids.add(`ss:${inferredMapping.ipnColumn}`);
+        if (id === 'mapped:unitCost' && inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0)
+          ids.add(`ss:${inferredMapping.unitCostColumn}`);
       }
     }
 
@@ -635,10 +641,16 @@ export default function PartsListShell() {
           }
           const columnMeta = Object.keys(meta).length > 0 ? meta : undefined;
 
+          // For master views: reverse-map ss:N indices that correspond to known
+          // mapped fields (mpn / manufacturer / description / cpn / ipn / unitCost)
+          // back to their portable mapped:* form BEFORE sanitize strips list-specific
+          // ss:* entries. Otherwise Your Data columns silently vanish on save because
+          // the picker expands mapped:* → ss:N on open, and sanitize drops all ss:*.
           if (pickerMode === 'create') {
             if (scope === 'master') {
-              // Create as master view (sanitize ss:* columns)
-              const safeColumns = sanitizeTemplateColumns(columns);
+              // Create as master view (reverse-map known ss:* then strip remaining list-specific ss:*)
+              const { columns: portableColumns } = reverseMapKnownColumns(columns, inferredMapping);
+              const safeColumns = sanitizeTemplateColumns(portableColumns);
               const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
               const created = await createMasterView({
                 name,
@@ -654,8 +666,9 @@ export default function PartsListShell() {
           } else {
             // Edit mode
             if (activeView.scope === 'master') {
-              // Update master view via API
-              const safeColumns = sanitizeTemplateColumns(columns);
+              // Update master view via API (reverse-map + sanitize, same rationale as create)
+              const { columns: portableColumns } = reverseMapKnownColumns(columns, inferredMapping);
+              const safeColumns = sanitizeTemplateColumns(portableColumns);
               const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
               await updateMasterView(activeView.id, {
                 name: activeView.id !== 'raw' ? name : undefined,

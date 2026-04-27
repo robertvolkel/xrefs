@@ -33,9 +33,11 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, SupplierQuote, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import SupplierBreakdownPopover from './SupplierBreakdownPopover';
+import CheapestViablePopover from './CheapestViablePopover';
 import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
-import { ColumnDefinition, getCellValue } from '@/lib/columnDefinitions';
+import { ColumnDefinition, getCellValue, computePriceDelta, getColumnDisplayLabel, resolveBestRecPrice, pickCheapestViableRecs } from '@/lib/columnDefinitions';
 
 // Column IDs that display replacement data
 const REPLACEMENT_COLUMN_IDS = new Set([
@@ -44,6 +46,7 @@ const REPLACEMENT_COLUMN_IDS = new Set([
   'sys:top_suggestion_price',
   'sys:top_suggestion_stock',
   'sys:top_suggestion_supplier',
+  'sys:priceDelta',
 ]);
 
 /**
@@ -371,10 +374,96 @@ function EditableCell({
 
 function formatPrice(value: number, currency: string): string {
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value);
+    // min 2 / max 4 decimals — keeps standard prices ($1.23) clean, but preserves
+    // significant digits on sub-cent passives ($0.0035) instead of rounding to $0.00.
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
   } catch {
-    return `${value.toFixed(2)} ${currency}`;
+    return `${value.toFixed(4)} ${currency}`;
   }
+}
+
+/** Click-to-reveal wrapper for the "Lowest Repl. Price" cell. Same visual
+ *  affordance as SupplierBreakdownTrigger — bubbles the row's cheapest viable
+ *  recs up to PartsListTable's CheapestViablePopover. */
+function CheapestViableTrigger({
+  onClick,
+  recs,
+  sourceMpn,
+  rowIndex,
+  isFallback,
+  children,
+}: {
+  onClick?: (
+    anchor: HTMLElement,
+    info: { recs: XrefRecommendation[]; sourceMpn: string; rowIndex: number; isFallback?: boolean },
+  ) => void;
+  recs: XrefRecommendation[] | undefined;
+  sourceMpn: string;
+  rowIndex: number;
+  isFallback?: boolean;
+  children: React.ReactNode;
+}) {
+  if (!onClick || !recs || recs.length === 0) return <>{children}</>;
+  return (
+    <Box
+      component="span"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e.currentTarget as HTMLElement, { recs, sourceMpn, rowIndex, isFallback });
+      }}
+      sx={{
+        cursor: 'pointer',
+        textDecoration: 'underline dotted',
+        textUnderlineOffset: '2px',
+        textDecorationColor: 'text.disabled',
+        '&:hover': { textDecorationColor: 'primary.main', color: 'primary.main' },
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
+/** Click-to-reveal wrapper for FC-aggregated price/stock cells. Renders the
+ *  numeric value with a subtle dotted underline + pointer cursor; clicking
+ *  bubbles up the cell anchor + supplier data to PartsListTable's popover. */
+function SupplierBreakdownTrigger({
+  onClick,
+  supplierQuotes,
+  mpn,
+  manufacturer,
+  title,
+  children,
+}: {
+  onClick?: (
+    anchor: HTMLElement,
+    info: { supplierQuotes: SupplierQuote[] | undefined; mpn: string; manufacturer: string; title?: string },
+  ) => void;
+  supplierQuotes: SupplierQuote[] | undefined;
+  mpn: string;
+  manufacturer: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  if (!onClick) return <>{children}</>;
+  return (
+    <Box
+      component="span"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e.currentTarget as HTMLElement, { supplierQuotes, mpn, manufacturer, title });
+      }}
+      sx={{
+        cursor: 'pointer',
+        textDecoration: 'underline dotted',
+        textUnderlineOffset: '2px',
+        textDecorationColor: 'text.disabled',
+        '&:hover': { textDecorationColor: 'primary.main', color: 'primary.main' },
+      }}
+    >
+      {children}
+    </Box>
+  );
 }
 
 /** A rec is "known zero stock" iff supplierQuotes has data AND sums to 0. Unknown stock stays visible. */
@@ -432,6 +521,8 @@ function CellRenderer({
   buckets,
   onAmbiguousClick,
   columnMapping,
+  onSupplierBreakdownClick,
+  onCheapestViableClick,
 }: {
   column: ColumnDefinition;
   row: PartsListRow;
@@ -449,6 +540,18 @@ function CellRenderer({
   buckets?: RecommendationBucket[];
   onAmbiguousClick?: (rowIndex: number) => void;
   columnMapping?: ColumnMapping | null;
+  /** Click handler for FC-aggregated price/stock cells. Opens a popover
+   *  showing per-distributor pricing & stock for the relevant part. */
+  onSupplierBreakdownClick?: (
+    anchor: HTMLElement,
+    info: { supplierQuotes: SupplierQuote[] | undefined; mpn: string; manufacturer: string; title?: string },
+  ) => void;
+  /** Click handler for the "Lowest Repl. Price" cell. Opens a popover listing
+   *  the row's top viable replacements ranked by best FC price. */
+  onCheapestViableClick?: (
+    anchor: HTMLElement,
+    info: { recs: XrefRecommendation[]; sourceMpn: string; rowIndex: number; isFallback?: boolean },
+  ) => void;
 }) {
   const { t } = useTranslation();
 
@@ -638,7 +741,18 @@ function CellRenderer({
           ?.map(q => q.unitPrice)
           .filter((p): p is number => p != null && p > 0);
         const best = prices && prices.length > 0 ? Math.min(...prices) : topRec.part.unitPrice;
-        return best != null ? <>{formatPrice(best, currency)}</> : null;
+        if (best == null) return null;
+        return (
+          <SupplierBreakdownTrigger
+            onClick={onSupplierBreakdownClick}
+            supplierQuotes={topRec.part.supplierQuotes}
+            mpn={topRec.part.mpn}
+            manufacturer={topRec.part.manufacturer}
+            title={`Replacement: ${topRec.part.mpn}`}
+          >
+            {formatPrice(best, currency)}
+          </SupplierBreakdownTrigger>
+        );
       }
 
       case 'sys:top_suggestion_stock': {
@@ -649,7 +763,18 @@ function CellRenderer({
         const stock = totals && totals.length > 0
           ? totals.reduce((a, b) => a + b, 0)
           : topRec.part.quantityAvailable;
-        return stock != null ? <>{stock.toLocaleString()}</> : null;
+        if (stock == null) return null;
+        return (
+          <SupplierBreakdownTrigger
+            onClick={onSupplierBreakdownClick}
+            supplierQuotes={topRec.part.supplierQuotes}
+            mpn={topRec.part.mpn}
+            manufacturer={topRec.part.manufacturer}
+            title={`Replacement: ${topRec.part.mpn}`}
+          >
+            {stock.toLocaleString()}
+          </SupplierBreakdownTrigger>
+        );
       }
 
       case 'sys:top_suggestion_supplier': {
@@ -659,6 +784,53 @@ function CellRenderer({
         const display = SUPPLIER_DISPLAY[winner.toLowerCase()]
           ?? winner.charAt(0).toUpperCase() + winner.slice(1);
         return <OverflowTooltip>{display}</OverflowTooltip>;
+      }
+
+      case 'sys:priceDelta': {
+        const delta = computePriceDelta({ ...row, replacement: topRec });
+        if (delta === undefined) return null;
+        const sign = delta > 0 ? '+' : delta < 0 ? '−' : '';
+        const color = delta > 0 ? 'success.main' : delta < 0 ? 'error.main' : 'text.primary';
+        return (
+          <Box component="span" sx={{ color }}>
+            {sign}{formatPrice(Math.abs(delta), currency)}
+          </Box>
+        );
+      }
+
+      case 'sys:cheapest_viable_price': {
+        if (isSubRow) return null; // row-level field — skip on alternate sub-rows
+        // Prefer the validation-time computed list. If absent (column was added
+        // to the view after rows were validated, or row was saved before this
+        // field existed), fall back to the persisted top-5 (replacement +
+        // replacementAlternates). The fallback is bounded by what's stored, so
+        // it might miss cheaper recs at position 6+; the next refresh fixes it.
+        const persistedRecs = row.cheapestViableRecs;
+        const fallbackPool: XrefRecommendation[] = persistedRecs && persistedRecs.length > 0
+          ? persistedRecs
+          : [
+              ...(row.replacement ? [row.replacement] : []),
+              ...(row.replacementAlternates ?? []),
+            ];
+        const recs = persistedRecs && persistedRecs.length > 0
+          ? persistedRecs
+          : pickCheapestViableRecs(fallbackPool);
+        const cheapest = recs[0];
+        if (!cheapest) return null;
+        const price = resolveBestRecPrice(cheapest);
+        if (price == null) return null;
+        const isFallback = !persistedRecs || persistedRecs.length === 0;
+        return (
+          <CheapestViableTrigger
+            onClick={onCheapestViableClick}
+            recs={recs}
+            sourceMpn={row.resolvedPart?.mpn ?? row.rawMpn}
+            rowIndex={row.rowIndex}
+            isFallback={isFallback}
+          >
+            {formatPrice(price, currency)}
+          </CheapestViableTrigger>
+        );
       }
 
       case 'sys:row_actions':
@@ -718,13 +890,32 @@ function CellRenderer({
   // Numeric columns
   if (column.isNumeric && typeof value === 'number') {
     const calcFormat = column.calculatedField?.format;
-    if (calcFormat === 'currency' || column.id.includes('Price') || column.id.includes('unitPrice')) {
-      return <>{formatPrice(value, currency)}</>;
+    const isPrice = calcFormat === 'currency' || column.id.includes('Price') || column.id.includes('unitPrice');
+    const formatted = isPrice
+      ? formatPrice(value, currency)
+      : calcFormat === 'percentage'
+        ? `${(value * 100).toFixed(1)}%`
+        : value.toLocaleString();
+
+    // FC-aggregated source-part columns become clickable, opening the
+    // per-distributor breakdown popover for the row's source data.
+    if (column.id === 'commercial:bestPrice' || column.id === 'commercial:totalStock') {
+      const sourceMpn = row.enrichedData?.mpn ?? row.resolvedPart?.mpn ?? row.rawMpn;
+      const sourceMfr = row.enrichedData?.manufacturer ?? row.resolvedPart?.manufacturer ?? row.rawManufacturer;
+      return (
+        <SupplierBreakdownTrigger
+          onClick={onSupplierBreakdownClick}
+          supplierQuotes={row.enrichedData?.supplierQuotes}
+          mpn={sourceMpn}
+          manufacturer={sourceMfr}
+          title={`Source: ${sourceMpn}`}
+        >
+          {formatted}
+        </SupplierBreakdownTrigger>
+      );
     }
-    if (calcFormat === 'percentage') {
-      return <>{(value * 100).toFixed(1)}%</>;
-    }
-    return <>{value.toLocaleString()}</>;
+
+    return <>{formatted}</>;
   }
 
   // Default: text with ellipsis
@@ -772,6 +963,36 @@ export default function PartsListTable({
   const total = rows.length;
   const processed = rows.filter(r => r.status !== 'pending' && r.status !== 'validating').length;
   const hasSelection = selectedRows !== undefined && onToggleRow !== undefined;
+
+  // Per-distributor breakdown popover (FC-aggregated price/stock cell clicks)
+  const [supplierPopover, setSupplierPopover] = useState<{
+    anchor: HTMLElement;
+    supplierQuotes: SupplierQuote[] | undefined;
+    mpn: string;
+    manufacturer: string;
+    title?: string;
+  } | null>(null);
+  const handleSupplierBreakdownClick = useCallback(
+    (anchor: HTMLElement, info: { supplierQuotes: SupplierQuote[] | undefined; mpn: string; manufacturer: string; title?: string }) => {
+      setSupplierPopover({ anchor, ...info });
+    },
+    [],
+  );
+
+  // Cheapest-viable popover (Lowest Repl. Price cell clicks)
+  const [cheapestPopover, setCheapestPopover] = useState<{
+    anchor: HTMLElement;
+    recs: XrefRecommendation[];
+    sourceMpn: string;
+    rowIndex: number;
+    isFallback?: boolean;
+  } | null>(null);
+  const handleCheapestViableClick = useCallback(
+    (anchor: HTMLElement, info: { recs: XrefRecommendation[]; sourceMpn: string; rowIndex: number; isFallback?: boolean }) => {
+      setCheapestPopover({ anchor, ...info });
+    },
+    [],
+  );
   const allSelected = hasSelection && rows.length > 0 && rows.every(r => selectedRows!.has(r.rowIndex));
   const someSelected = hasSelection && rows.some(r => selectedRows!.has(r.rowIndex));
   const hasReplacementColumns = columns.some(col => REPLACEMENT_COLUMN_IDS.has(col.id));
@@ -853,7 +1074,12 @@ export default function PartsListTable({
                       fontSize: '0.75rem',
                       px: 1,
                       textAlign: col.align ?? 'left',
-                      whiteSpace: 'nowrap',
+                      // Allow long headers to wrap to 2 lines instead of overflowing
+                      // into the adjacent column. Keep line-height tight so wrapped
+                      // headers don't bloat the row height.
+                      whiteSpace: 'normal',
+                      lineHeight: 1.2,
+                      verticalAlign: 'bottom',
                     }}
                   >
                     {isSortable ? (
@@ -868,7 +1094,7 @@ export default function PartsListTable({
                           ...(col.align === 'right' && { width: '100%', flexDirection: 'row-reverse' }),
                         }}
                       >
-                        {col.label}
+                        {getColumnDisplayLabel(col)}
                         {portableColumnIds?.has(col.id) && (
                           <Tooltip title="Matched from your data" arrow>
                             <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
@@ -877,7 +1103,7 @@ export default function PartsListTable({
                       </TableSortLabel>
                     ) : (
                       <>
-                        {col.label}
+                        {getColumnDisplayLabel(col)}
                         {portableColumnIds?.has(col.id) && (
                           <Tooltip title="Matched from your data" arrow>
                             <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
@@ -951,6 +1177,8 @@ export default function PartsListTable({
                           buckets={buckets}
                           onAmbiguousClick={onAmbiguousClick}
                           columnMapping={columnMapping}
+                          onSupplierBreakdownClick={handleSupplierBreakdownClick}
+                          onCheapestViableClick={handleCheapestViableClick}
                         />
                       </TableCell>
                     ))}
@@ -994,6 +1222,7 @@ export default function PartsListTable({
                               currency={currency}
                               hideZeroStock={hideZeroStock}
                               buckets={buckets}
+                              onSupplierBreakdownClick={handleSupplierBreakdownClick}
                             />
                           ) : null}
                         </TableCell>
@@ -1006,6 +1235,37 @@ export default function PartsListTable({
           </TableBody>
         </Table>
       </TableContainer>
+
+      <SupplierBreakdownPopover
+        open={supplierPopover !== null}
+        anchorEl={supplierPopover?.anchor ?? null}
+        supplierQuotes={supplierPopover?.supplierQuotes}
+        mpn={supplierPopover?.mpn}
+        manufacturer={supplierPopover?.manufacturer}
+        title={supplierPopover?.title}
+        onClose={() => setSupplierPopover(null)}
+      />
+
+      <CheapestViablePopover
+        open={cheapestPopover !== null}
+        anchorEl={cheapestPopover?.anchor ?? null}
+        recs={cheapestPopover?.recs}
+        sourceMpn={cheapestPopover?.sourceMpn}
+        isFallback={cheapestPopover?.isFallback}
+        onRefresh={cheapestPopover && onRefreshRow ? () => {
+          const rowIdx = cheapestPopover.rowIndex;
+          setCheapestPopover(null);
+          onRefreshRow(rowIdx);
+        } : undefined}
+        onClose={() => setCheapestPopover(null)}
+        onSelectRec={cheapestPopover ? () => {
+          // Click a card → open the row's full Recommendations modal so the
+          // user can compare/confirm the cheaper candidate among the full set.
+          const rowIdx = cheapestPopover.rowIndex;
+          setCheapestPopover(null);
+          onRowClick(rowIdx);
+        } : undefined}
+      />
     </Box>
   );
 }

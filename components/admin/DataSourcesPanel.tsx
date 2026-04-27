@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Box, Card, CardContent, Chip, Typography } from '@mui/material';
+import { Box, Button, Card, CardContent, Chip, MenuItem, Snackbar, TextField, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
+
+const PURGE_SERVICES = ['findchips', 'digikey', 'partsio', 'mouser', 'search'] as const;
+type PurgeService = typeof PURGE_SERVICES[number];
 
 interface DataSourcesInfo {
   digikey: { configured: boolean; clientIdPrefix: string; baseUrl: string };
@@ -61,6 +64,10 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 export default function DataSourcesPanel() {
   const { t } = useTranslation();
   const [data, setData] = useState<DataSourcesInfo | null>(null);
+  const [purgeMpn, setPurgeMpn] = useState('');
+  const [purgeService, setPurgeService] = useState<PurgeService>('findchips');
+  const [purging, setPurging] = useState(false);
+  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/admin/data-sources')
@@ -68,6 +75,26 @@ export default function DataSourcesPanel() {
       .then(setData)
       .catch(() => {});
   }, []);
+
+  const handlePurge = async () => {
+    const mpn = purgeMpn.trim();
+    if (!mpn) return;
+    setPurging(true);
+    try {
+      const params = new URLSearchParams({ service: purgeService, mpn });
+      const res = await fetch(`/api/admin/cache?${params.toString()}`, { method: 'DELETE' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPurgeMessage(body?.error ?? `Failed (${res.status})`);
+      } else {
+        setPurgeMessage(`Purged ${body?.deleted ?? 0} cache row${body?.deleted === 1 ? '' : 's'} for ${mpn}`);
+      }
+    } catch (err) {
+      setPurgeMessage(err instanceof Error ? err.message : 'Purge failed');
+    } finally {
+      setPurging(false);
+    }
+  };
 
   if (!data) {
     return (
@@ -114,6 +141,55 @@ export default function DataSourcesPanel() {
           <InfoRow label={t('admin.dsUsage', 'Usage')} value={t('admin.dsMouserUsage', 'Pricing, stock, lifecycle, compliance')} />
         </SourceCard>
       </Box>
+
+      <Card variant="outlined" sx={{ bgcolor: 'background.default', mt: 3 }}>
+        <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+            Purge cache for one MPN
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            Drops every cached row (parametric, lifecycle, commercial, recommendations) for the given MPN on the selected service. Useful when a part is showing thin/stale distributor data.
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            <TextField
+              size="small"
+              label="MPN"
+              value={purgeMpn}
+              onChange={(e) => setPurgeMpn(e.target.value)}
+              sx={{ minWidth: 280 }}
+              disabled={purging}
+            />
+            <TextField
+              select
+              size="small"
+              label="Service"
+              value={purgeService}
+              onChange={(e) => setPurgeService(e.target.value as PurgeService)}
+              sx={{ minWidth: 160 }}
+              disabled={purging}
+            >
+              {PURGE_SERVICES.map((s) => (
+                <MenuItem key={s} value={s}>{s}</MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={handlePurge}
+              disabled={purging || !purgeMpn.trim()}
+            >
+              {purging ? 'Purging…' : 'Purge'}
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Snackbar
+        open={!!purgeMessage}
+        autoHideDuration={4000}
+        onClose={() => setPurgeMessage(null)}
+        message={purgeMessage}
+      />
     </Box>
   );
 }

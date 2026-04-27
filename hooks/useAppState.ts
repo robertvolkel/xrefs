@@ -77,6 +77,8 @@ export function useAppState() {
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track whether context questions have been asked (ref avoids stale closure)
   const contextAskedRef = useRef(false);
+  // Track whether the missing-attributes prompt has already been shown this xref cycle
+  const attributesAskedRef = useRef(false);
   // Track original search query for search history logging
   const queryRef = useRef<string>('');
   const loggedRef = useRef(false);
@@ -224,9 +226,10 @@ export function useAppState() {
       addMessage('assistant', summaryMsg);
       setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
 
-      // Push context to conversation history for the orchestrator
+      // Push the trigger to conversation history. The summaryMsg is a UI-only
+      // status line — the orchestrator injects rec context onto the last user
+      // message (llmOrchestrator.ts), so the trigger must remain last.
       conversationRef.current.push({ role: 'user', content: conversationContext });
-      conversationRef.current.push({ role: 'assistant', content: summaryMsg });
 
       // Fire LLM assessment and Mouser enrichment in background (non-blocking)
       if (recs.length > 0) {
@@ -301,7 +304,7 @@ export function useAppState() {
       const missingAttrs = logicTable ? detectMissingAttributes(sourceAttrs, logicTable) : [];
       const criticalMissing = missingAttrs.filter(a => a.weight >= 7);
 
-      if (criticalMissing.length > 0 && missingAttrs.length <= 6) {
+      if (!attributesAskedRef.current && criticalMissing.length > 0 && missingAttrs.length <= 6) {
         addMessage('assistant', `I'm missing some information that's important for finding accurate replacements.`, {
           type: 'attribute-query',
           missingAttributes: missingAttrs,
@@ -311,6 +314,7 @@ export function useAppState() {
           role: 'assistant',
           content: `Asking for missing attribute values before finding replacements for ${mpn}.`,
         });
+        attributesAskedRef.current = true;
         setState((prev) => ({ ...prev, phase: 'awaiting-attributes' }));
         return; // handleAttributeResponse → handleFindReplacements (re-enters)
       }
@@ -445,7 +449,10 @@ export function useAppState() {
         const searchResult = response.searchResult;
 
         // When a new search is initiated, clear stale data from previous part
-        if (searchResult) contextAskedRef.current = false;
+        if (searchResult) {
+          contextAskedRef.current = false;
+          attributesAskedRef.current = false;
+        }
         const partResetFields = searchResult ? {
           sourcePart: null as AppState['sourcePart'],
           sourceAttributes: null as AppState['sourceAttributes'],
@@ -759,6 +766,7 @@ export function useAppState() {
     abortRef.current = null;
     conversationRef.current = [];
     contextAskedRef.current = false;
+    attributesAskedRef.current = false;
     setStatus('');
     setState(initialState);
   }, [setStatus]);
@@ -839,6 +847,7 @@ export function useAppState() {
                 content: `Received attribute values. Now asking application context questions for ${mpn} before finding replacements.`,
               });
               pendingOverridesRef.current = overrides;
+              contextAskedRef.current = true;
               setState((prev) => ({ ...prev, phase: 'awaiting-context' }));
               return; // Wait for handleContextResponse
             }

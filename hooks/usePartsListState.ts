@@ -18,6 +18,7 @@ import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch, backfillListCounts } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
+import { pickCheapestViableRecs } from '@/lib/columnDefinitions';
 import { findDuplicateGroups, consolidateDuplicates } from '@/lib/services/bomDeduper';
 import { canonicalizeRowManufacturers } from '@/lib/services/manufacturerAliasClient';
 import {
@@ -341,6 +342,9 @@ export function usePartsListState() {
           : {}),
         ...(mapping.qtyColumn != null && mapping.qtyColumn >= 0
           ? { rawQty: row[mapping.qtyColumn] ?? '' }
+          : {}),
+        ...(mapping.unitCostColumn != null && mapping.unitCostColumn >= 0
+          ? { rawUnitCost: row[mapping.unitCostColumn] ?? '' }
           : {}),
         rawCells: row,
         status: 'pending' as const,
@@ -678,6 +682,7 @@ export function usePartsListState() {
             logicDrivenCount: recCounts.logicDrivenCount,
             mfrCertifiedCount: recCounts.mfrCertifiedCount,
             accurisCertifiedCount: recCounts.accurisCertifiedCount,
+            cheapestViableRecs: pickCheapestViableRecs(recs),
           } : {}),
         };
       }
@@ -985,6 +990,7 @@ export function usePartsListState() {
                   errorMessage: item.errorMessage,
                   preferredMpn,
                   candidateMatches: item.candidateMatches,
+                  cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
                 };
               }
               const pending = newRows.filter(r => indexSet.has(r.rowIndex) && r.status === 'pending').length;
@@ -1288,6 +1294,7 @@ export function usePartsListState() {
                     mfrCertifiedCount: streamCounts.mfrCertifiedCount,
                     accurisCertifiedCount: streamCounts.accurisCertifiedCount,
                     candidateMatches: item.candidateMatches,
+                    cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
                   };
                 }
                 return { ...prev, rows: newRows, phase: 'results', lastRefreshedAt: new Date() };

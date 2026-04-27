@@ -22,6 +22,8 @@ export interface StoredRow {
   rawIpn?: string;
   /** Quantity (optional mapped column) */
   rawQty?: string;
+  /** Current unit cost (optional mapped column) */
+  rawUnitCost?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRow['status'];
@@ -50,6 +52,10 @@ export interface StoredRow {
   /** Top search candidates when status='ambiguous' — persisted so the picker
    *  can render them after a page reload without re-running batch validation. */
   candidateMatches?: PartSummary[];
+  /** Up to 5 viable replacements (certified or rule-passing) sorted by best FC
+   *  unit price ascending — persisted so the "Lowest Repl. Price (FC)" column
+   *  survives reload without re-fetching full recs. */
+  cheapestViableRecs?: XrefRecommendation[];
 }
 
 /** A saved parts list */
@@ -123,6 +129,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawCpn: r.rawCpn,
       rawIpn: r.rawIpn,
       rawQty: r.rawQty,
+      rawUnitCost: r.rawUnitCost,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,

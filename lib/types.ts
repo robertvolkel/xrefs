@@ -905,6 +905,9 @@ export interface PartsListRow {
   /** Quantity (optional mapped column) — kept as the raw string so free-form
    *  values like "10 pcs" round-trip; numeric parsing happens at point-of-use. */
   rawQty?: string;
+  /** Current unit cost (optional mapped column) — raw string so "$1.25" /
+   *  "1,25 €" round-trip; parsed numerically at point-of-use (sys:priceDelta). */
+  rawUnitCost?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRowStatus;
@@ -928,6 +931,10 @@ export interface PartsListRow {
   /** Top search candidates surfaced when status='ambiguous' — populated by the
    *  batch validator so the row-identity picker can render them without refetching. */
   candidateMatches?: PartSummary[];
+  /** Up to 5 viable replacements (certified or with no failing rules) sorted by
+   *  best FC unit price ascending. Drives the "Lowest Repl. Price (FC)" column.
+   *  Persisted so the price floor survives reload without re-fetching full recs. */
+  cheapestViableRecs?: XrefRecommendation[];
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
@@ -946,6 +953,8 @@ export interface ColumnMapping {
   ipnColumn?: number;
   /** Optional Quantity column — unlocks qty summing in the dedupe flow */
   qtyColumn?: number;
+  /** Optional current unit cost column — powers sys:priceDelta savings column */
+  unitCostColumn?: number;
 }
 
 /** A group of rows that share the same (MPN, MFR) — result of dedupe scan */

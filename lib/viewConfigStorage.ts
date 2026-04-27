@@ -212,6 +212,7 @@ export function reverseMapKnownColumns(
   if (inferredMapping.descriptionColumn >= 0) reverseMap[inferredMapping.descriptionColumn] = 'mapped:description';
   if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) reverseMap[inferredMapping.cpnColumn] = 'mapped:cpn';
   if (inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0) reverseMap[inferredMapping.ipnColumn] = 'mapped:ipn';
+  if (inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0) reverseMap[inferredMapping.unitCostColumn] = 'mapped:unitCost';
 
   const existingMapped = new Set(columns.filter(id => id.startsWith('mapped:')));
   const reverseMapped: Record<string, string> = {};
