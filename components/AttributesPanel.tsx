@@ -17,7 +17,6 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -91,18 +90,6 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
               {attributes.part.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
-              {attributes.part.datasheetUrl && (
-                <Tooltip title="View datasheet" arrow>
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={() => window.open(attributes.part.datasheetUrl, '_blank')}
-                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
-                </Tooltip>
-              )}
             </Stack>
             <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
               {attributes.part.manufacturer}

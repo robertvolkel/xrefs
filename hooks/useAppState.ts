@@ -214,16 +214,16 @@ export function useAppState() {
     (
       recs: XrefRecommendation[],
       mpn: string,
-      paramCount: number,
       conversationContext: string,
       signal: AbortSignal,
     ) => {
-      // Show recs immediately — panels appear without waiting for LLM
-      const summaryMsg = recs.length > 0
-        ? `Loaded ${paramCount} parameters · Found **${recs.length} replacement${recs.length !== 1 ? 's' : ''}** for ${mpn}`
-        : `No cross-references found for ${mpn}.`;
-
-      addMessage('assistant', summaryMsg);
+      // Show recs immediately — panels appear without waiting for LLM. The
+      // success summary ("Loaded N · Found M") is omitted from chat: the LLM
+      // assessment that follows restates the same info. The empty-result case
+      // is still a persistent chat message since no LLM follow-up arrives.
+      if (recs.length === 0) {
+        addMessage('assistant', `No cross-references found for ${mpn}.`);
+      }
       setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
 
       // Push the trigger to conversation history. The summaryMsg is a UI-only
@@ -355,9 +355,8 @@ export function useAppState() {
           if (hasAutoAnswers) {
             const autoContext: ApplicationContext = { familyId: logicTable.familyId, answers: autoAnswers };
             setState((prev) => ({ ...prev, applicationContext: autoContext }));
-            // Continue to find recs with this context
-            addMessage('assistant', `Finding cross-references for **${mpn}**...`);
-            setStatus('Evaluating candidates against replacement rules...');
+            // Continue to find recs with this context — status only, no chat bubble
+            setStatus(`Finding cross-references for ${mpn}…`);
             setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
 
             try {
@@ -365,7 +364,7 @@ export function useAppState() {
               const hasOverrides = Object.keys(overrides).length > 0;
               const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs);
               if (signal.aborted) return;
-              showRecsAndDeferAssessment(recs, mpn, sourceAttrs.parameters.length, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal);
+              showRecsAndDeferAssessment(recs, mpn, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal);
             } catch {
               setStatus('');
               addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -379,9 +378,8 @@ export function useAppState() {
         }
       }
 
-      // Step 3: Find replacements
-      addMessage('assistant', `Finding cross-references for **${mpn}**...`);
-      setStatus('Evaluating candidates against replacement rules...');
+      // Step 3: Find replacements — status only, no chat bubble
+      setStatus(`Finding cross-references for ${mpn}…`);
       setState((prev) => ({ ...prev, phase: 'finding-matches' as AppPhase }));
 
       try {
@@ -399,7 +397,7 @@ export function useAppState() {
         const contextMsg = effectiveContext
           ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
           : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
-        showRecsAndDeferAssessment(recs, mpn, sourceAttrs.parameters.length, contextMsg, signal);
+        showRecsAndDeferAssessment(recs, mpn, contextMsg, signal);
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');

@@ -18,7 +18,6 @@ import {
   ToggleButtonGroup,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -27,6 +26,7 @@ import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 import DomainChip from './DomainChip';
+import MatchPercentageBadge from './MatchPercentageBadge';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -215,18 +215,6 @@ export default function ComparisonView({
                   </>
                 );
               })()}
-              {replPart.datasheetUrl && (
-                <Tooltip title="View datasheet" arrow>
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={() => window.open(replPart.datasheetUrl, '_blank')}
-                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
-                </Tooltip>
-              )}
             </Stack>
             <Typography
               variant="body2"
@@ -245,6 +233,12 @@ export default function ComparisonView({
               {replPart.manufacturer}
             </Typography>
           </Box>
+          <MatchPercentageBadge
+            percentage={Math.round(recommendation.matchPercentage)}
+            size="small"
+            hasFailures={recommendation.matchDetails.some(d => d.ruleResult === 'fail')}
+            hasReviews={recommendation.matchDetails.some(d => d.ruleResult === 'review')}
+          />
         </Stack>
         {/* Pill segment control */}
         <ToggleButtonGroup

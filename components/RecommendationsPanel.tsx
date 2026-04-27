@@ -5,7 +5,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
@@ -41,6 +41,13 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const [showCommercial, setShowCommercial] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
+  // Hide candidates with >2 real mismatches by default. Certified crosses bypass.
+  const MAX_MISMATCHES = 2;
+  const [hideHighFails, setHideHighFails] = useState(true);
+  const highFailHiddenCount = useMemo(
+    () => sorted.filter(r => !isCertifiedCross(r) && countRealMismatches(r) > MAX_MISMATCHES).length,
+    [sorted],
+  );
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
   const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
@@ -54,14 +61,16 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     if (selectedMfr) count++;
     if (showCnOnly) count++;
     if (selectedCategory !== 'all') count++;
+    if (!hideHighFails) count++;
     return count;
-  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory]);
+  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory, hideHighFails]);
 
   const handleClearFilters = () => {
     setActiveOnly(true);
     setSelectedMfr('');
     setShowCnOnly(false);
     setSelectedCategory('all');
+    setHideHighFails(true);
   };
 
   const handleToggleCnOnly = (checked: boolean) => {
@@ -98,7 +107,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       const total = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
       return total > 0;
     })
-    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
+    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory))
+    // Mismatch-count filter (toggleable via "Show all" in the filter popover).
+    // Certified crosses always bypass — explicit human verification overrides.
+    .filter(r => !hideHighFails || isCertifiedCross(r) || countRealMismatches(r) <= MAX_MISMATCHES);
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -195,6 +207,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
           />
         )}
+        {!hideHighFails && (
+          <Chip label="Showing high-fail" size="small" onDelete={() => setHideHighFails(true)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
 
         <Box sx={{ flex: 1 }} />
 
@@ -240,6 +256,18 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             <Checkbox checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
           }
           label={`Active only${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}`}
+          sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+        />
+
+        {/* QUALITY section */}
+        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+          Quality
+        </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox checked={hideHighFails} onChange={(e) => setHideHighFails(e.target.checked)} size="small" sx={{ p: 0.5 }} />
+          }
+          label={`Hide >${MAX_MISMATCHES} failed parameters${highFailHiddenCount > 0 ? ` (${highFailHiddenCount} hidden)` : ''}`}
           sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
         />
 

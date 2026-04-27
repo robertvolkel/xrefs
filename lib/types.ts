@@ -188,6 +188,36 @@ export function computeRecommendationCounts(recs: XrefRecommendation[] | undefin
   return out;
 }
 
+/** True for human-verified crosses (MFR upload or Accuris parts.io). These
+ *  bypass post-scoring filters because explicit certification outranks any
+ *  inferred rejection. */
+export function isCertifiedCross(rec: XrefRecommendation): boolean {
+  if (!rec.certifiedBy || rec.certifiedBy.length === 0) return false;
+  return rec.certifiedBy.some(s => s === 'manufacturer' || s.startsWith('partsio_'));
+}
+
+/** Count "real mismatches" — fail rules where the replacement value is known
+ *  and disagrees with the source. Missing-attribute fails (replacementValue
+ *  === 'N/A') don't count: they could pass if the attribute is filled in. */
+export function countRealMismatches(rec: XrefRecommendation): number {
+  return rec.matchDetails.filter(d => d.ruleResult === 'fail' && d.replacementValue !== 'N/A').length;
+}
+
+/** Drop candidates with too many real mismatches. Always-keep: certified
+ *  crosses (MFR/Accuris). Always-drop: Obsolete/Discontinued. Threshold by
+ *  caller — batch uses 1, single-part xref UI uses 2. */
+export function filterRecsByMismatchCount(
+  recs: XrefRecommendation[],
+  maxRealMismatches: number,
+): XrefRecommendation[] {
+  return recs.filter(rec => {
+    const status = rec.part.status;
+    if (status === 'Obsolete' || status === 'Discontinued') return false;
+    if (isCertifiedCross(rec)) return true;
+    return countRealMismatches(rec) <= maxRealMismatches;
+  });
+}
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;

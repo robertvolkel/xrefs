@@ -4354,3 +4354,73 @@ The convention is `dataSource`-driven, not ID-prefix driven. So `dk:riskRank` (w
 ### Extensibility
 
 Adding a new data source becomes a one-line change in `SOURCE_SUFFIX`. Parametric (`dkp:*`) columns auto-inherit the correct suffix from whichever source populated their value (Atlas/Digikey/parts.io) via the existing `parameterKeys` source field — no per-column work needed.
+
+---
+
+## Decision #158 — FindChips Commercial Cache: Drop L2 Persistence (Apr 2026)
+
+**Context:** User reported that the Source Part Commercial tab on `TNC0402GTC10K0F345` showed only Digikey, while findchips.com showed 4+ distributors for the same MPN. Investigation traced this to the L2 cache: `getFindchipsResults()` was writing the full `FCDistributorResult[]` blob (price + stock + lifecycle + compliance + distributor list) to `part_data_cache` under variant `fc-results`, `cache_tier='commercial'`, with `TTL_COMMERCIAL_MS = 24h`. A previous request that hit FC during a transient hiccup (1 distributor returned) pinned that thin response for 24 hours; subsequent requests during that window saw "only Digikey" even though FC's API would now return the full set. Beyond the immediate stale-distributor bug, the user's broader concern: "the only thing that should be cached is technical attributes, NOT price and stock."
+
+### Decision
+
+**Stop persisting FindChips commercial data at L2.** Specifically:
+
+1. **L2 (Supabase) `fc-results` writes removed.** [lib/services/findchipsClient.ts](lib/services/findchipsClient.ts) no longer calls `setCachedResponse('findchips', ...)`. Existing rows expire on their 24h TTL — no manual purge required. Likewise removed the L2 reads at the top of `getFindchipsResults()` and the batch L2 read in `getFindchipsResultsBatch()`. Imports of `getCachedResponse`, `getCachedResponseBatch`, `setCachedResponse`, `isNotFoundSentinel`, `TTL_COMMERCIAL_MS` dropped.
+
+2. **L1 in-memory TTL dropped 30 min → 5 min.** Intra-render dedup is preserved (multiple components on the same page hitting the same MPN within a render tick still hit L1), but no decision-grade pricing is shown on data older than 5 min.
+
+3. **Per-MPN admin purge UI surfaced** on [components/admin/DataSourcesPanel.tsx](components/admin/DataSourcesPanel.tsx). MPN text input + service dropdown (`findchips`/`digikey`/`partsio`/`mouser`/`search`) + "Purge" button calls the existing `DELETE /api/admin/cache?service=...&mpn=...` endpoint; result count + errors surface via Snackbar. Diagnostic for cases where stale cache is suspected.
+
+### Trade
+
+**Cost:** every cold L1 (5+ min idle) hits the live FC API. With ~5000/day budget and current usage well under that, this is fine. The user explicitly accepted this trade in exchange for live pricing/stock.
+
+**Carve-out, not a wholesale L2 removal:** Decision #99's three-tier cache (parametric / lifecycle / commercial 24h) stays intact for everyone else. Digikey's commercial slice (`commercial:${currency}` variant in [digikeyClient.ts](lib/services/digikeyClient.ts)) still uses the 24h tier — flagged for the user but not changed in this session. If/when they call it out, apply the same fix.
+
+### Files
+
+- [lib/services/findchipsClient.ts](lib/services/findchipsClient.ts) — cache reads/writes removed; L1 TTL constant changed to 5 min; `partDataCache` import block deleted.
+- [components/admin/DataSourcesPanel.tsx](components/admin/DataSourcesPanel.tsx) — new "Purge cache for one MPN" card + handler + Snackbar.
+
+### Memory
+
+Captured as a feedback memory (`feedback_no_caching_pricing_stock.md`): pricing/stock should never live in L2; only technical attributes / lifecycle / compliance / distributor identity may. Re-read before introducing any new cache layer.
+
+---
+
+## Decision #159 — Mismatch-Count Filter: Client-Side Toggle on Single-Part Path (Apr 2026, extends #109)
+
+**Context:** Decision #109 introduced `filterRecsForBatch` — a post-scoring filter dropping candidates with `>1 real mismatch` (a `fail` rule with `replacementValue !== 'N/A'`; missing-attribute fails are ignored). It only ran on the BOM batch path (`filterForBatch: true`). The single-part xref panel never invoked it, so cards with 2, 3, or more failed parameters routinely surfaced. User asked: "feels silly to show a part with more than 2 failing parameters."
+
+### Decision
+
+**Apply the filter to the single-part path too — client-side and toggleable, threshold `≤2`.** Architectural details:
+
+1. **Promote helpers to client-importable [lib/types.ts](lib/types.ts).** New exports: `isCertifiedCross(rec)`, `countRealMismatches(rec)`, `filterRecsByMismatchCount(recs, max)`. Server-side copies in `partDataService.ts` deleted; that file now imports from `../types`. Renamed from `filterRecsForBatch` to `filterRecsByMismatchCount` since the helper is no longer batch-specific.
+
+2. **Server-side single-part filter REMOVED.** `getRecommendations()` only calls `filterRecsByMismatchCount(recs, 1)` when `options.filterForBatch === true`. Single-part returns the full candidate set so the client can toggle without a refetch.
+
+3. **Client-side filter in [components/RecommendationsPanel.tsx](components/RecommendationsPanel.tsx).** New state `hideHighFails: boolean` (default `true`, threshold constant `MAX_MISMATCHES = 2`). Applied as the final `.filter(...)` in the rendering pipeline, certified-cross bypass preserved. UI:
+   - Filter popover gains a "Quality" section with checkbox `Hide >2 failed parameters (N hidden)`.
+   - Filter row shows dismissible chip `Showing high-fail` when toggle is OFF (mirrors existing "Include inactive" pattern).
+   - `activeFilterCount` and `handleClearFilters` updated so the toggle counts in the badge and resets to default on Clear all.
+
+4. **Cache invalidation.** `RECS_CACHE_SCHEMA_VERSION` bumped `v7 → v9`. The intermediate `v8` (briefly committed during this session as a server-side-only single-part filter at `≤2`) is discarded — old `v8` rows would have been pre-filtered and missing the `>2-fail` candidates the client now wants to toggle into view. Single bump documented; no manual purge needed since old rows are unreachable under the new key.
+
+### Why client-side, not server-side
+
+Server-side at `≤2` would force a refetch whenever the user toggled "Show all," with both states cache-keyed separately and 30-day TTL apart. Client-side gives an instant toggle, no refetch, single cache variant. Trade: ~2× the data over the wire on the single-part path (full candidate set vs. pre-filtered). Acceptable — the candidate set is bounded by the matching-engine output (typically ≤50 recs), and FindChips enrichment is already deferred.
+
+### What's preserved
+
+- **Certified-cross bypass** — MFR-uploaded and Accuris parts.io equivalents flow through regardless of mismatch count, on both batch and single-part paths.
+- **Missing-attribute fails ignored** — only `replacementValue !== 'N/A'` fails count.
+- **Batch threshold = 1** — BOM flow unchanged; users in that view have no UI to override.
+- **Obsolete/Discontinued exclusion** — still always drops in `filterRecsByMismatchCount`.
+
+### Files
+
+- [lib/types.ts](lib/types.ts) — three new exports.
+- [lib/services/partDataService.ts](lib/services/partDataService.ts) — local helpers removed; imports from `../types`; single-part filter call deleted.
+- [lib/services/partDataCache.ts](lib/services/partDataCache.ts) — `RECS_CACHE_SCHEMA_VERSION = 'v9'`.
+- [components/RecommendationsPanel.tsx](components/RecommendationsPanel.tsx) — `hideHighFails` state, filter pipeline addition, popover section, dismissible chip, badge counter, clear-all reset.

@@ -5,6 +5,7 @@ import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { computePriceRange, formatPrice } from './AttributesTabContent';
 import DomainChip from './DomainChip';
+import MatchPercentageBadge from './MatchPercentageBadge';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -49,7 +50,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
     >
       <CardActionArea onClick={onClick}>
         <CardContent sx={{ py: 1.5, px: { xs: 1.5, sm: 2 }, '&:last-child': { pb: 1.5 } }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
+          <Stack direction="row" alignItems="flex-start" spacing={2}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Stack direction="row" alignItems="center" spacing={0.75}>
                 <Typography
@@ -207,6 +208,12 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 </>
               )}
             </Box>
+            <MatchPercentageBadge
+              percentage={Math.round(recommendation.matchPercentage)}
+              size="small"
+              hasFailures={failCount > 0}
+              hasReviews={reviewCount > 0}
+            />
           </Stack>
         </CardContent>
       </CardActionArea>

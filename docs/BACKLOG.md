@@ -79,6 +79,21 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Side-by-side comparison panel — align section headers across panels
+
+**Files:** `components/AttributesTabContent.tsx` (`OverviewContent`), `components/ComparisonView.tsx`, `components/AttributesPanel.tsx`
+
+When viewing a source part next to a `Comparing With` replacement, the two panels render `OverviewContent` independently, so each section's height is driven by its own row count — Distribution might be 4 rows on the left and 1 on the right, sliding every header below it out of vertical sync. Make section headers (`Attributes`, `Distribution`, `Qualifications`, `Environmental & Export`) align horizontally across panels in comparison mode so the eye can move left-right between equivalent sections.
+
+**Approach (deferred from session 2026-04-26):** extract a `<ComparisonOverview source repl />` parent that renders the two sides as a single section-by-section grid. For each section in fixed order, measure the taller side's row count and pad the shorter side with empty rows up to that height. Cross References stays last and source-only (already moved in this session) so it has no right-side counterpart. Two visually independent panels remain — only the layout coordination is shared.
+
+**Open questions to settle before planning:**
+1. Should the two panels scroll in lockstep when in comparison mode, or remain independently scrollable? (Independent scrolling breaks alignment as soon as one side moves.)
+2. When a section is conditional on either side (e.g., source has Qualifications, replacement doesn't), always render both headers with "—" on the empty side, or skip on both? Predictability vs. visual sparsity.
+3. Within-section row alignment is explicitly out of scope — only headers align. (User confirmed this is acceptable.)
+
+The standalone source-part view (no replacement selected) keeps the existing `OverviewContent` layout — comparison reordering only kicks in when a replacement is selected.
+
 ### Cost-optimization follow-ups (Decision #156)
 
 Phase 1 shipped `mapped:unitCost` auto-detection + `sys:priceDelta` (Repl. Savings) column. Natural extensions:

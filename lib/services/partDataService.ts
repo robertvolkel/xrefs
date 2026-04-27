@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -1200,12 +1200,16 @@ export async function getRecommendations(
       );
     }
 
-    // Batch filter: keep only actionable recommendations (Decision #109)
+    // Mismatch-count filter (Decision #109): batch path drops candidates with
+    // >1 real mismatch server-side. The single-part xref UI applies the same
+    // filter client-side (with a "Show all" toggle), so we don't drop here on
+    // that path — we want all candidates flowing through to the panel and let
+    // the client choose what to render.
     if (options?.filterForBatch) {
       const preCount = recs.length;
-      recs = filterRecsForBatch(recs);
+      recs = filterRecsByMismatchCount(recs, 1);
       if (preCount !== recs.length) {
-        console.log(`[perf] batch filter: ${preCount} → ${recs.length} recs (removed ${preCount - recs.length} non-actionable)`);
+        console.log(`[perf] batch mismatch filter: ${preCount} → ${recs.length} recs`);
       }
     }
 
@@ -1271,46 +1275,8 @@ export async function getRecommendations(
 // BATCH RECOMMENDATION FILTER (Decision #109)
 // ============================================================
 
-/**
- * Does this recommendation carry a human certification (manufacturer upload
- * or Accuris/parts.io equivalence) strong enough to override our blocking-
- * rule inferences? Used to exempt certified crosses from post-scoring
- * filters and batch actionability filters.
- */
-function isCertifiedCross(rec: XrefRecommendation): boolean {
-  if (!rec.certifiedBy || rec.certifiedBy.length === 0) return false;
-  return rec.certifiedBy.some(s => s === 'manufacturer' || s.startsWith('partsio_'));
-}
-
-/**
- * Filter recommendations for batch/list validation — keep only actionable results.
- *
- * Keep if ANY of:
- * - No failing rules (clean match)
- * - All fails are due to missing attributes (could pass if found manually)
- * - At most 1 real mismatch (fail where both attributes exist)
- * - MFR-certified or Accuris-certified (human-verified, kept regardless of fails)
- *
- * Always exclude: Obsolete or Discontinued parts (pre-filtered before scoring,
- * but double-check here for safety).
- */
-function filterRecsForBatch(recs: XrefRecommendation[]): XrefRecommendation[] {
-  return recs.filter(rec => {
-    // Always exclude obsolete/discontinued
-    const status = rec.part.status;
-    if (status === 'Obsolete' || status === 'Discontinued') return false;
-
-    // Always keep MFR-certified and Accuris-certified crosses
-    if (isCertifiedCross(rec)) return true;
-
-    // Count real mismatches (fail + attribute exists) vs missing-attribute fails
-    const fails = rec.matchDetails.filter(d => d.ruleResult === 'fail');
-    const realMismatches = fails.filter(d => d.replacementValue !== 'N/A');
-
-    // Keep if: no fails, all fails are missing-attribute, or at most 1 real mismatch
-    return realMismatches.length <= 1;
-  });
-}
+// `isCertifiedCross` and `filterRecsByMismatchCount` now live in lib/types.ts
+// so the single-part client UI can apply the same filter as a live toggle.
 
 // ============================================================
 // PARTS.IO EQUIVALENT CANDIDATE FETCHER
