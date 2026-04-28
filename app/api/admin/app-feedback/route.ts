@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
-import { AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory } from '@/lib/types';
+import { AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackAttachment, AppFeedbackAttachmentView } from '@/lib/types';
+
+const BUCKET = 'app-feedback-attachments';
+const SIGNED_URL_TTL_SECONDS = 3600;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -89,9 +92,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const items: AppFeedbackListItem[] = (fbRows ?? []).map((row: Record<string, unknown>) => {
+    const items: AppFeedbackListItem[] = await Promise.all((fbRows ?? []).map(async (row: Record<string, unknown>) => {
       const profile = profileMap.get(row.user_id as string);
       const resolvedByProfile = row.resolved_by ? profileMap.get(row.resolved_by as string) : undefined;
+      const rawAttachments = (row.attachments as AppFeedbackAttachment[] | null) ?? [];
+      const attachments: AppFeedbackAttachmentView[] = await Promise.all(
+        rawAttachments.map(async (att) => {
+          const { data: signed } = await supabase.storage
+            .from(BUCKET)
+            .createSignedUrl(att.path, SIGNED_URL_TTL_SECONDS);
+          return { ...att, signedUrl: signed?.signedUrl ?? '' };
+        }),
+      );
       return {
         id: row.id as string,
         userId: row.user_id as string,
@@ -108,8 +120,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         userEmail: profile?.email,
         userName: profile?.full_name,
         resolvedByName: resolvedByProfile?.full_name,
+        attachments,
       };
-    });
+    }));
 
     // Status counts (unfiltered by status, filtered by category if set)
     const statusCounts: AppFeedbackStatusCounts = { open: 0, reviewed: 0, resolved: 0, dismissed: 0 };
