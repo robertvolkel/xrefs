@@ -32,9 +32,10 @@ interface AttributesPanelProps {
   activeTab: AttributesTab;
   onTabChange: (tab: AttributesTab) => void;
   allRecommendations?: XrefRecommendation[];
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -91,8 +92,27 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
             </Stack>
-            <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
-              {attributes.part.manufacturer}
+            <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap component="div">
+              {onManufacturerClick && attributes.part.manufacturer ? (
+                <Box
+                  component="span"
+                  onClick={() => onManufacturerClick(attributes.part.manufacturer)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { color: 'primary.main', textDecoration: 'underline' },
+                    transition: 'color 0.15s ease',
+                  }}
+                >
+                  {attributes.part.manufacturer}
+                </Box>
+              ) : (
+                attributes.part.manufacturer
+              )}
+              {attributes.part.mfrOrigin === 'atlas' && (
+                <Tooltip title="Chinese manufacturer" arrow>
+                  <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                </Tooltip>
+              )}
             </Typography>
             {/* Pill segment control */}
             <ToggleButtonGroup

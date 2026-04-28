@@ -34,6 +34,7 @@ function formatThirdPartyTooltip(sources: CertificationSource[]): string {
 
 export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred, isEnrichingFC, contextActive }: RecommendationCardProps) {
   const { part, matchDetails, dataSource, certifiedBy, enrichedFrom } = recommendation;
+  const mfrOrigin = part.mfrOrigin;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
@@ -126,8 +127,8 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 ) : (
                   part.manufacturer
                 )}
-                {dataSource === 'atlas' && (
-                  <Tooltip title="Atlas — Chinese manufacturer" arrow>
+                {mfrOrigin === 'atlas' && (
+                  <Tooltip title="Chinese manufacturer" arrow>
                     <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
                   </Tooltip>
                 )}

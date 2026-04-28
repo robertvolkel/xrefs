@@ -38,6 +38,10 @@ export interface Part {
   // matching engine can apply the cross-domain exclusion matrix and the UI can
   // render the appropriate domain badge.
   qualificationDomain?: DomainClassification;
+  /** Manufacturer identity origin from the alias resolver. Drives the country
+   *  flag badge on the source-attributes panel and recommendation cards
+   *  regardless of which dataset the attributes came from. Decision #161. */
+  mfrOrigin?: 'atlas' | 'western' | 'unknown';
 }
 
 /** High-level reliability/qualification category a part is designed and sold for.

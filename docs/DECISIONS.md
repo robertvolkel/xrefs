@@ -4531,3 +4531,46 @@ i18n strings added under `proposeAlias.*` in `en.json` and `zh-CN.json`.
 - Compound numeric values where the qualifier matters (e.g. `22.1 mA @ 100 kHz` test conditions) — `getNumeric()` extracts the leading number; if the qualifier is load-bearing for a specific rule, that's per-rule custom logic, not aliases.
 - Atlas Chinese parameter NAME → English mapping (separate concern, handled by family dictionaries in `atlasMapper.ts`).
 - Cross-source value disagreements that aren't synonyms (data quality, not matching).
+
+## Decision #161 — MFR Profile Panel Wired to atlas_manufacturers + Identity-Based CN Flag (Apr 2026)
+
+### Decision
+
+Two coupled changes, both leaning on the existing manufacturer alias resolver (Decision #148):
+
+1. **MFR profile panel wired to `atlas_manufacturers`.** Clicking an MFR name in the recommendations list resolves through `resolveManufacturerAlias()` → fetches the matching `atlas_manufacturers` row → renders real profile data (summary, logo, headquarters, founded year, certifications, core products, compliance flags). Western MFRs not yet covered by `manufacturer_companies` fall back to the legacy `mockManufacturerData.ts` set; truly unknown MFRs open the panel with an empty-state body. Previously: hardcoded ~10-MFR mock map silently no-op'd for everyone else, which meant every Chinese MFR.
+
+2. **Country flag is now identity-based, not source-based, on both source-attributes panel and recommendation cards.** Single field `Part.mfrOrigin: 'atlas' | 'western' | 'unknown'` carries the resolver verdict everywhere a `Part` is rendered. `getRecommendations()` resolves each unique candidate manufacturer through the alias resolver in parallel (~5-min cached) and tags every `rec.part.mfrOrigin`. `app/api/attributes/[mpn]/route.ts` does the same on the source attributes response (resolved at response time so cached `PartAttributes` rows don't need a schema bump). `RecommendationCard` and `AttributesPanel` both render the 🇨🇳 flag off `part.mfrOrigin === 'atlas'`. Net effect: GIGADEVICE / 3PEAK / etc. show the flag on the source panel AND every rec card, regardless of whether the attributes came from Digikey, Atlas, Mouser, or parts.io. The "Attributes: <source>" footer line keeps using `dataSource` — that line is genuinely about provenance.
+
+**Source-attributes panel also clickable.** `AttributesPanel` accepts an optional `onManufacturerClick` prop; both desktop and mobile layouts pass `mfr.handleManufacturerClick` through. Clicking the MFR name in the source panel opens the same profile side panel as clicking it on a rec card.
+
+### Why bundle them
+
+Both lookups need the same per-MFR alias resolution. Doing them as one change avoids resolving the same MFR twice (once for flag rendering, once for profile fetch) and keeps `atlas_manufacturers` as the single source of truth for MFR identity.
+
+### Files
+
+**New:**
+- `lib/utils/countryFlag.ts` — ISO-2 → regional-indicator emoji helper.
+- `lib/services/manufacturerProfileService.ts` — `mapAtlasToManufacturerProfile()` + `getProfileForManufacturer()`. Resolves alias → fetches `atlas_manufacturers` row → maps to `ManufacturerProfile` shape. Mock fallback chain.
+- `app/api/manufacturer-profile/route.ts` — `GET /api/manufacturer-profile?name=<encoded>`. `requireAuth()` gated. Returns `{ profile, source: 'atlas' | 'mock' }` or 404.
+
+**Modified:**
+- `hooks/useManufacturerProfile.ts` — async `handleManufacturerClick` with placeholder-on-open (panel slides in instantly), `mfrLoading` + `mfrSource` state, in-flight request id to drop stale resolutions on rapid clicks.
+- `components/ManufacturerProfilePanel.tsx` — "Sample Data" chip now conditional on `source === 'mock'`, loading skeleton, empty-state body for unenriched MFRs.
+- `components/AppShell.tsx`, `components/DesktopLayout.tsx`, `components/MobileAppLayout.tsx` — thread `mfrSource` + `mfrLoading` through to the panel.
+- `lib/types.ts` — `mfrOrigin?: 'atlas' | 'western' | 'unknown'` on `Part` (single source of truth — both source attrs and rec.part read it).
+- `lib/services/partDataService.ts` — resolve unique MFRs in parallel before the rec post-processing `.map`, tag `rec.part.mfrOrigin`.
+- `app/api/attributes/[mpn]/route.ts` — tag source-part `mfrOrigin` at response time (post-cache).
+- `components/AttributesPanel.tsx` — clickable MFR name + 🇨🇳 flag, accepts new `onManufacturerClick` prop.
+- `components/DesktopLayout.tsx`, `components/MobileAppLayout.tsx` — pass `onManufacturerClick` to `AttributesPanel`.
+- `components/RecommendationCard.tsx` — flag condition swapped from `dataSource === 'atlas'` to `part.mfrOrigin === 'atlas'`.
+- `lib/services/partDataCache.ts` — bumped `RECS_CACHE_SCHEMA_VERSION` v9 → v10 so existing cached recs re-render with the new flag logic.
+- `lib/api.ts` — `fetchManufacturerProfile()` client wrapper.
+
+### What this does NOT change
+
+- Western MFR coverage — Decision #149 P1 still blocked on data file. Mock data remains the Western fallback for now.
+- Admin manufacturer detail page (`/admin/manufacturers/[slug]`) — uses its own admin route; unchanged.
+- Parts-list source attributes (`PartDetailModal.tsx`) — `app/api/parts-list/validate/route.ts` doesn't tag `mfrOrigin` yet. Flag won't render in the per-row modal until validate is updated. Logic-driven recs in lists are unaffected (those already get tagged via `getRecommendations`).
+

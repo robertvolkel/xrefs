@@ -37,6 +37,11 @@ export default function AppShell() {
 
   const isMobile = useIsMobile();
 
+  // Auto-collapse chat only when MFR profile + recs are both visible — that's
+  // the 4-panel crowding scenario. With MFR + attrs only (3 panels) chat fits
+  // comfortably and shouldn't auto-collapse.
+  const effectiveChatCollapsed = mfr.chatCollapsed || (mfr.mfrOpen && panels.showRightPanel);
+
   if (isMobile) {
     return (
       <MobileAppLayout
@@ -48,6 +53,8 @@ export default function AppShell() {
         recommendations={appState.recommendations}
         selectedRecommendation={appState.selectedRecommendation}
         mfrProfile={mfr.mfrProfile}
+        mfrSource={mfr.mfrSource}
+        mfrLoading={mfr.mfrLoading}
         showAttributesPanel={panels.showAttributesPanel}
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
@@ -84,9 +91,11 @@ export default function AppShell() {
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
         isEnrichingFC={appState.isEnrichingFC}
-        chatCollapsed={mfr.chatCollapsed}
+        chatCollapsed={effectiveChatCollapsed}
         mfrOpen={mfr.mfrOpen}
         mfrProfile={mfr.mfrProfile}
+        mfrSource={mfr.mfrSource}
+        mfrLoading={mfr.mfrLoading}
         historyOpen={persistence.historyOpen}
         conversations={persistence.conversations}
         convoLoading={persistence.convoLoading}

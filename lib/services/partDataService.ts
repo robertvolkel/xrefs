@@ -1100,6 +1100,20 @@ export async function getRecommendations(
     );
     console.timeEnd('[perf] findReplacements (scoring)');
 
+    // Resolve manufacturer origin per unique MFR — drives the country flag badge
+    // independently of which dataset the attributes came from. Alias resolver is
+    // 5-min cached, so this is cheap on warm cache.
+    const uniqueMfrs = Array.from(new Set(recs.map(r => r.part.manufacturer).filter(Boolean)));
+    const mfrOriginMap = new Map<string, 'atlas' | 'western' | 'unknown'>();
+    await Promise.all(uniqueMfrs.map(async mfr => {
+      try {
+        const match = await resolveManufacturerAlias(mfr);
+        mfrOriginMap.set(mfr.toLowerCase(), match?.source ?? 'unknown');
+      } catch {
+        mfrOriginMap.set(mfr.toLowerCase(), 'unknown');
+      }
+    }));
+
     // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps.
     // Also attach the qualification domain to rec.part and compute the deviation flag
     // against the user-selected context (Decision #155).
@@ -1119,9 +1133,11 @@ export async function getRecommendations(
         domain.domain !== 'unknown' &&
         expectedDomains.size > 0 &&
         !expectedDomains.has(domain.domain);
+      const origin = mfrOriginMap.get(rec.part.manufacturer?.toLowerCase() ?? '') ?? 'unknown';
+      const partWithDomain = domain ? { ...rec.part, qualificationDomain: domain } : rec.part;
       return {
         ...rec,
-        part: domain ? { ...rec.part, qualificationDomain: domain } : rec.part,
+        part: { ...partWithDomain, mfrOrigin: origin },
         dataSource: dataSourceMap.get(key),
         certifiedBy,
         equivalenceType,

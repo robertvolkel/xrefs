@@ -37,7 +37,7 @@ import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, Colum
 import SupplierBreakdownPopover from './SupplierBreakdownPopover';
 import CheapestViablePopover from './CheapestViablePopover';
 import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
-import { ColumnDefinition, getCellValue, computePriceDelta, getColumnDisplayLabel, resolveBestRecPrice, pickCheapestViableRecs } from '@/lib/columnDefinitions';
+import { ColumnDefinition, getCellValue, computePriceDelta, computeMaxPriceDelta, getColumnDisplayLabel, resolveBestRecPrice, pickCheapestViableRecs } from '@/lib/columnDefinitions';
 
 // Column IDs that display replacement data
 const REPLACEMENT_COLUMN_IDS = new Set([
@@ -788,6 +788,19 @@ function CellRenderer({
 
       case 'sys:priceDelta': {
         const delta = computePriceDelta({ ...row, replacement: topRec });
+        if (delta === undefined) return null;
+        const sign = delta > 0 ? '+' : delta < 0 ? '−' : '';
+        const color = delta > 0 ? 'success.main' : delta < 0 ? 'error.main' : 'text.primary';
+        return (
+          <Box component="span" sx={{ color }}>
+            {sign}{formatPrice(Math.abs(delta), currency)}
+          </Box>
+        );
+      }
+
+      case 'sys:maxPriceDelta': {
+        if (isSubRow) return null; // row-level field — pairs with sys:cheapest_viable_price
+        const delta = computeMaxPriceDelta(row);
         if (delta === undefined) return null;
         const sign = delta > 0 ? '+' : delta < 0 ? '−' : '';
         const color = delta > 0 ? 'success.main' : delta < 0 ? 'error.main' : 'text.primary';

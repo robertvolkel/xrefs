@@ -105,8 +105,9 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true, dataSource: 'findchips' },
   { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips' },
   { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px', dataSource: 'findchips' },
-  { id: 'sys:priceDelta', label: 'Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'sys:priceDelta', label: 'Top Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true },
   { id: 'sys:cheapest_viable_price', label: 'Lowest Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'sys:maxPriceDelta', label: 'Max Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -165,6 +166,36 @@ export function pickCheapestViableRecs(
     .sort((a, b) => a.price - b.price)
     .slice(0, cap)
     .map(({ rec }) => rec);
+}
+
+/**
+ * Resolve the lowest viable replacement unit price for a row. Mirrors the
+ * fallback chain used by the "Lowest Repl. Price (FC)" cell:
+ *   1. validation-time `cheapestViableRecs[0]` if present
+ *   2. otherwise compute on the fly from the persisted top-5 (replacement +
+ *      replacementAlternates) so existing rows produce a value without a refresh
+ */
+export function resolveLowestViableReplacementPrice(row: PartsListRow): number | undefined {
+  const persisted = row.cheapestViableRecs;
+  if (persisted && persisted.length > 0) return resolveBestRecPrice(persisted[0]);
+  const fallback = pickCheapestViableRecs([
+    ...(row.replacement ? [row.replacement] : []),
+    ...(row.replacementAlternates ?? []),
+  ]);
+  return fallback.length > 0 ? resolveBestRecPrice(fallback[0]) : undefined;
+}
+
+/**
+ * Compute MAX replacement savings: (unit cost − lowest viable rep. unit price).
+ * Pairs with the "Lowest Repl. Price (FC)" column — answers "what's the most I
+ * could save by switching to the cheapest viable rec?" Independent of which
+ * rec is the displayed top suggestion (so unaffected by `preferredMpn`).
+ */
+export function computeMaxPriceDelta(row: PartsListRow): number | undefined {
+  const current = toNumber(row.rawUnitCost);
+  const lowest = resolveLowestViableReplacementPrice(row);
+  if (current === undefined || lowest === undefined) return undefined;
+  return current - lowest;
 }
 
 /**

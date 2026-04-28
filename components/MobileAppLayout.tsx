@@ -60,6 +60,8 @@ interface MobileAppLayoutProps {
   recommendations: XrefRecommendation[];
   selectedRecommendation: XrefRecommendation | null;
   mfrProfile: ManufacturerProfile | null;
+  mfrSource: 'atlas' | 'mock' | 'unknown';
+  mfrLoading: boolean;
   // Derived flags
   showAttributesPanel: boolean;
   showRightPanel: boolean;
@@ -90,6 +92,8 @@ export default function MobileAppLayout({
   recommendations,
   selectedRecommendation,
   mfrProfile,
+  mfrSource,
+  mfrLoading,
   showAttributesPanel,
   showRightPanel,
   isLoadingRecs,
@@ -258,6 +262,7 @@ export default function MobileAppLayout({
               activeTab={attributesTab}
               onTabChange={setAttributesTab}
               allRecommendations={recommendations}
+              onManufacturerClick={onManufacturerClick}
             />
           </Box>
         )}
@@ -325,7 +330,12 @@ export default function MobileAppLayout({
               zIndex: activePanel === 'manufacturer' ? 1 : 0,
             }}
           >
-            <ManufacturerProfilePanel profile={mfrProfile} onClose={onCloseMfrProfile} />
+            <ManufacturerProfilePanel
+              profile={mfrProfile}
+              onClose={onCloseMfrProfile}
+              source={mfrSource}
+              loading={mfrLoading}
+            />
           </Box>
         )}
       </Box>

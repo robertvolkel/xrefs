@@ -34,9 +34,19 @@ function getGridColumns(
   chatCollapsed: boolean,
   mfrOpen: boolean,
 ): string {
-  if (chatCollapsed && mfrOpen) return '60px 3fr 3fr 3fr';
+  // 4-panel crowded: nav + attrs + recs + mfr
+  if (chatCollapsed && mfrOpen && showRecs) return '60px 3fr 3fr 3fr';
+  // 3-panel: nav + attrs + mfr (chat manually collapsed, no recs)
+  if (chatCollapsed && mfrOpen) return '60px 1fr 0fr 1fr';
+  // 3-panel: nav + attrs + recs
   if (chatCollapsed) return '60px 1fr 1fr 0fr';
+  // 3-panel: chat + attrs + mfr (no recs yet)
+  if (mfrOpen && showAttrs) return '1fr 1fr 0fr 1fr';
+  // 2-panel: chat + mfr (mfr opened from idle / pre-attrs — uncommon but safe)
+  if (mfrOpen) return '1fr 0fr 0fr 1fr';
+  // 3-panel: chat + attrs + recs
   if (showRecs) return '1fr 1fr 1fr 0fr';
+  // 2-panel: chat + attrs
   if (showAttrs) return '2fr 1fr 0fr 0fr';
   return '1fr 0fr 0fr 0fr';
 }
@@ -99,6 +109,8 @@ export interface DesktopLayoutProps {
   chatCollapsed: boolean;
   mfrOpen: boolean;
   mfrProfile: ManufacturerProfile | null;
+  mfrSource: 'atlas' | 'mock' | 'unknown';
+  mfrLoading: boolean;
 
   // Chat history
   historyOpen: boolean;
@@ -135,7 +147,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
     recommendations, selectedRecommendation, conversationId,
     showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
-    chatCollapsed, mfrOpen, mfrProfile,
+    chatCollapsed, mfrOpen, mfrProfile, mfrSource, mfrLoading,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
     onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext, onChoiceSelect,
@@ -255,7 +267,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             transition: showAttributesPanel
               ? 'opacity 0.3s ease 0.35s'   // Entrance: staggered fade-in after grid expands
               : 'opacity 0.2s ease',          // Exit: fade out immediately before grid collapses
-            borderRight: (showRightPanel || chatCollapsed) ? 1 : 0,
+            borderRight: (showRightPanel || chatCollapsed || mfrOpen) ? 1 : 0,
             borderColor: 'divider',
             minWidth: 0,
             position: 'relative',
@@ -269,6 +281,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             activeTab={attributesTab}
             onTabChange={setAttributesTab}
             allRecommendations={recommendations}
+            onManufacturerClick={onManufacturerClick}
           />
         </Box>
 
@@ -342,7 +355,12 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           }}
         >
           {mfrProfile && (
-            <ManufacturerProfilePanel profile={mfrProfile} onClose={onExpandChat} />
+            <ManufacturerProfilePanel
+              profile={mfrProfile}
+              onClose={onExpandChat}
+              source={mfrSource}
+              loading={mfrLoading}
+            />
           )}
         </Box>
         </Box>
