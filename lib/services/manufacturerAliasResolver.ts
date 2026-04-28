@@ -17,6 +17,12 @@
  * return null and are logged.
  */
 import { createClient } from '../supabase/server';
+import {
+  getCachedResponse,
+  setCachedResponse,
+  invalidateCache,
+  TTL_LIFECYCLE_MS,
+} from './partDataCache';
 
 export type ManufacturerAliasSource = 'atlas' | 'western';
 
@@ -267,7 +273,25 @@ function buildWesternIndex(
 
 // ─── Cache ───────────────────────────────────────────────
 
+// L1 in-memory cache: per-process, fast.
 const CACHE_TTL_MS = 5 * 60_000;
+
+// L2 persistent cache (Supabase part_data_cache): survives cold starts. Stores
+// raw rows; index is rebuilt in-memory on hit. The Supabase scan + parent-chain
+// walk costs ~400-600ms cold; L2 read collapses that to a single round-trip.
+// Bump MFR_ALIAS_L2_VERSION when row shapes change.
+const MFR_ALIAS_L2_SERVICE = 'search' as const;
+const MFR_ALIAS_L2_MPN = '__mfr_alias_index__';
+const MFR_ALIAS_L2_VARIANT = 'v1';
+const MFR_ALIAS_L2_VERSION = 1;
+const MFR_ALIAS_L2_TTL_MS = TTL_LIFECYCLE_MS; // 6 months — alias graph changes infrequently; admin writes invalidate explicitly.
+
+interface CachedAliasRows {
+  v: number;
+  atlas: AtlasRow[];
+  westernCompanies: WesternCompanyRow[];
+  westernAliases: WesternAliasRow[];
+}
 
 let variantToMatch: Map<string, ManufacturerAliasMatch> | null = null;
 let canonicalToMatch: Map<string, ManufacturerAliasMatch> | null = null;
@@ -345,11 +369,56 @@ async function fetchWestern(): Promise<{ companies: WesternCompanyRow[]; aliases
   }
 }
 
+async function loadFromL2(): Promise<CachedAliasRows | null> {
+  try {
+    const cached = await getCachedResponse<CachedAliasRows>(
+      MFR_ALIAS_L2_SERVICE,
+      MFR_ALIAS_L2_MPN,
+      MFR_ALIAS_L2_VARIANT,
+    );
+    if (!cached) return null;
+    if (cached.data?.v !== MFR_ALIAS_L2_VERSION) return null;
+    return cached.data;
+  } catch (err) {
+    console.warn('manufacturerAliasResolver: L2 read failed:', err);
+    return null;
+  }
+}
+
+function writeToL2(payload: CachedAliasRows): void {
+  setCachedResponse(
+    MFR_ALIAS_L2_SERVICE,
+    MFR_ALIAS_L2_MPN,
+    MFR_ALIAS_L2_VARIANT,
+    'parametric',
+    payload,
+    MFR_ALIAS_L2_TTL_MS,
+  );
+}
+
 async function refreshCache(): Promise<void> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const [atlasRows, westernRaw] = await Promise.all([fetchAtlas(), fetchWestern()]);
+      // L2 first — collapses 3 Supabase scans + walk into one round-trip on cold start.
+      const l2 = await loadFromL2();
+      let atlasRows: AtlasRow[] | null;
+      let westernRaw: { companies: WesternCompanyRow[]; aliases: WesternAliasRow[] } | null;
+      if (l2) {
+        atlasRows = l2.atlas;
+        westernRaw = { companies: l2.westernCompanies, aliases: l2.westernAliases };
+      } else {
+        [atlasRows, westernRaw] = await Promise.all([fetchAtlas(), fetchWestern()]);
+        // Persist for next cold start. Fire-and-forget.
+        if (atlasRows && westernRaw) {
+          writeToL2({
+            v: MFR_ALIAS_L2_VERSION,
+            atlas: atlasRows,
+            westernCompanies: westernRaw.companies,
+            westernAliases: westernRaw.aliases,
+          });
+        }
+      }
 
       const nextVariant = new Map<string, ManufacturerAliasMatch>();
       const nextCanonical = new Map<string, ManufacturerAliasMatch>();
@@ -458,4 +527,11 @@ export function invalidateManufacturerAliasCache(): void {
   western = null;
   cachedAt = 0;
   inflight = null;
+  // Fire-and-forget L2 purge so the next cold start rebuilds from Supabase.
+  invalidateCache({
+    service: MFR_ALIAS_L2_SERVICE,
+    mpn: MFR_ALIAS_L2_MPN,
+  }).catch((err) => {
+    console.warn('manufacturerAliasResolver: L2 invalidation failed:', err);
+  });
 }

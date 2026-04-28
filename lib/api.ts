@@ -151,11 +151,12 @@ export async function getRecommendationsWithOverrides(
   signal?: AbortSignal,
   sourceAttributes?: PartAttributes,
   replacementPriorities?: ReplacementPriorities,
+  skipPartsioEnrichment?: boolean,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment }),
     signal,
   });
 }
@@ -165,11 +166,12 @@ export async function getRecommendationsWithContext(
   applicationContext: ApplicationContext,
   signal?: AbortSignal,
   replacementPriorities?: ReplacementPriorities,
+  skipPartsioEnrichment?: boolean,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applicationContext, replacementPriorities }),
+    body: JSON.stringify({ applicationContext, replacementPriorities, skipPartsioEnrichment }),
     signal,
   });
 }
