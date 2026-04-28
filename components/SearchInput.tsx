@@ -1,9 +1,8 @@
 'use client';
 import { useState, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Button, IconButton, InputBase, Paper } from '@mui/material';
+import { Box, IconButton, InputBase, Paper } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 
 interface SearchInputProps {
   onSubmit: (query: string) => void;
@@ -145,27 +144,10 @@ export default function SearchInput({ onSubmit, disabled, landing }: SearchInput
           sx={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            justifyContent: 'flex-end',
             mt: 0.5,
           }}
         >
-          <Button
-            size="small"
-            endIcon={<KeyboardArrowDownIcon />}
-            sx={{
-              color: 'text.secondary',
-              fontSize: '0.8rem',
-              textTransform: 'none',
-              fontWeight: 400,
-              px: 0,
-              pl: 0,
-              '&:hover': {
-                bgcolor: 'action.hover',
-              },
-            }}
-          >
-            Find Replacements
-          </Button>
           <IconButton
             onClick={handleSubmit}
             disabled={disabled || !value.trim()}
