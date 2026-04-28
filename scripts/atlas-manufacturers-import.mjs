@@ -103,15 +103,34 @@ function slugify(str) {
 }
 
 /**
- * Parse semicolon-separated aliases into a clean array.
- * "gigadevice; 兆易创新; gd/兆易创新" → ["gigadevice", "兆易创新", "gd/兆易创新"]
+ * Parse separator-delimited aliases into a clean array. The source master
+ * file uses three separator styles (verified Apr 2026, Decision #154):
+ *   - ASCII semicolon ";"        (241 rows)
+ *   - CJK semicolon "；" (full)  (10 rows — e.g. SWST, RESI, 2Pai Semi)
+ *   - Comma ","                   (2 rows — e.g. KOHER, when no semi present)
+ *
+ * Rules:
+ *   1. Always split on BOTH semicolon variants (neither occurs inside a
+ *      company name, safe for every row).
+ *   2. If no semicolon produced a split, fall back to comma splitting.
+ *      Guarded so rows that legitimately use `;` as separator but contain
+ *      commas inside company names (e.g. "Xiamen Hongfa Electroacoustic
+ *      Co.,Ltd.") don't get over-split.
+ *
+ * "gigadevice; 兆易创新; gd/兆易创新"              → ["gigadevice", "兆易创新", "gd/兆易创新"]
+ * "先科；st/先科；st(先科)；先科(st)"               → ["先科", "st/先科", "st(先科)", "先科(st)"]
+ * "koher,科或（上海）电子有限公司,科或,KOHERelec"  → 4 entries
+ * "hongfa; xiamen hongfa co.,ltd.; 宏发"         → 3 entries (comma inside preserved)
  */
 function parseAliases(raw) {
   if (!raw) return [];
-  return raw
-    .split(/;\s*/)
-    .map(a => a.trim())
-    .filter(Boolean);
+  // Step 1: split on any semicolon variant.
+  let parts = raw.split(/[;；]/);
+  // Step 2: if still one piece, try commas.
+  if (parts.length === 1) {
+    parts = parts[0].split(',');
+  }
+  return parts.map(a => a.trim()).filter(Boolean);
 }
 
 // ─── Read Excel file ─────────────────────────────────────
@@ -162,7 +181,11 @@ for (const row of rows) {
     name_en: en,
     name_zh: zh,
     name_display: nameDisplay,
-    aliases: JSON.stringify(aliases),
+    // Pass array directly — supabase-js JSON-encodes the whole body for us.
+    // Calling JSON.stringify here double-encodes and lands a string in a
+    // JSONB array column. Early versions of this script did that; the fix
+    // was paired with a one-shot migration that re-writes existing rows.
+    aliases,
     partsio_id: partsioId,
     partsio_name: partsioName,
     country: 'CN',
@@ -179,7 +202,7 @@ for (const row of rows) {
 }
 
 console.log(`Parsed ${manufacturers.length} manufacturers`);
-console.log(`  With aliases: ${manufacturers.filter(m => JSON.parse(m.aliases).length > 0).length}`);
+console.log(`  With aliases: ${manufacturers.filter(m => (m.aliases ?? []).length > 0).length}`);
 console.log(`  With parts.io: ${manufacturers.filter(m => m.partsio_id).length}`);
 
 // ─── Dry run exit ────────────────────────────────────────
@@ -356,5 +379,9 @@ if (mfrsWithProducts) {
   const noProducts = manufacturers.filter(m => !productMfrSet.has(m.name_display));
   console.log(`  ${noProducts.length} manufacturers have no ingested products (expected — master list is larger)`);
 }
+
+// Invalidate Atlas Coverage cache so admin pages recompute on next visit
+await supabase.from('admin_stats_cache').delete().eq('key', 'atlas-coverage');
+console.log('  Atlas Coverage cache invalidated.');
 
 console.log('\nDone!');

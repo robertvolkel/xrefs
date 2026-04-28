@@ -70,6 +70,10 @@ export const chipResistorsLogicTable: LogicTable = {
       attributeName: 'Composition / Technology',
       logicType: 'identity_upgrade',
       upgradeHierarchy: ['Thin Film', 'Thick Film'],
+      valueAliases: [
+        ['Thick Film', 'Metal Glaze/Thick Film', 'METAL GLAZE/THICK FILM', '厚膜', '厚膜电阻'],
+        ['Thin Film', '薄膜', '薄膜电阻'],
+      ],
       weight: 5,
       engineeringReason: 'Thin Film offers better precision, lower noise, and tighter TCR than Thick Film. Upgrading from Thick to Thin Film is always acceptable.',
       sortOrder: 7,

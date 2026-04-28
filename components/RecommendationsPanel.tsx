@@ -1,14 +1,15 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Badge, Box, Checkbox, Chip, CircularProgress, FormControlLabel, IconButton, MenuItem, Popover, Select, Tooltip, Typography } from '@mui/material';
+import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, LinearProgress, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
+import { inferContextActive } from './DomainChip';
 
 // Re-export for backward compatibility with existing consumers (e.g. useAppState)
 export { sortRecommendationsForDisplay };
@@ -23,9 +24,12 @@ interface RecommendationsPanelProps {
   isEnrichingFC?: boolean;
   /** List-level setting from Replacement Preferences — hide recs with known zero stock */
   hideZeroStock?: boolean;
+  /** Use a compact header height. True when paired with a panel that has no header
+   *  (e.g. the modal chat panel) so we don't render a 116px block of dead space. */
+  compactHeader?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
@@ -37,6 +41,13 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const [showCommercial, setShowCommercial] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
+  // Hide candidates with >2 real mismatches by default. Certified crosses bypass.
+  const MAX_MISMATCHES = 2;
+  const [hideHighFails, setHideHighFails] = useState(true);
+  const highFailHiddenCount = useMemo(
+    () => sorted.filter(r => !isCertifiedCross(r) && countRealMismatches(r) > MAX_MISMATCHES).length,
+    [sorted],
+  );
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
   const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
@@ -50,14 +61,16 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     if (selectedMfr) count++;
     if (showCnOnly) count++;
     if (selectedCategory !== 'all') count++;
+    if (!hideHighFails) count++;
     return count;
-  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory]);
+  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory, hideHighFails]);
 
   const handleClearFilters = () => {
     setActiveOnly(true);
     setSelectedMfr('');
     setShowCnOnly(false);
     setSelectedCategory('all');
+    setHideHighFails(true);
   };
 
   const handleToggleCnOnly = (checked: boolean) => {
@@ -94,7 +107,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       const total = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
       return total > 0;
     })
-    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
+    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory))
+    // Mismatch-count filter (toggleable via "Show all" in the filter popover).
+    // Certified crosses always bypass — explicit human verification overrides.
+    .filter(r => !hideHighFails || isCertifiedCross(r) || countRealMismatches(r) <= MAX_MISMATCHES);
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -106,14 +122,19 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <Box
         sx={{
-          height: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
-          minHeight: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          height: compactHeader
+            ? 52
+            : { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          minHeight: compactHeader
+            ? 52
+            : { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
           px: 2,
-          py: 1.5,
+          py: compactHeader ? 0.75 : 1.5,
           borderBottom: 1,
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
+          justifyContent: 'center',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -122,12 +143,17 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           </Typography>
         </Box>
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
-          {activeOnly && hiddenCount > 0
-            ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
-            : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+          {loading
+            ? t('recommendations.loading', 'Loading recommendations…')
+            : activeOnly && hiddenCount > 0
+              ? t('recommendations.headerFiltered', { activeCount, hiddenCount, matchWord: activeCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+              : t('recommendations.headerUnfiltered', { count: recommendations.length, matchWord: recommendations.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
         </Typography>
       </Box>
+
+      {/* Refresh progress bar — signals that recommendations are being reprocessed (e.g. after context answers). */}
+      {loading && <LinearProgress sx={{ height: 2 }} />}
 
       {/* Filter row — single compact row with filter icon + active filter chips + price toggle */}
       <Box
@@ -181,6 +207,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
           />
         )}
+        {!hideHighFails && (
+          <Chip label="Showing high-fail" size="small" onDelete={() => setHideHighFails(true)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
 
         <Box sx={{ flex: 1 }} />
 
@@ -226,6 +256,18 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             <Checkbox checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
           }
           label={`Active only${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}`}
+          sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+        />
+
+        {/* QUALITY section */}
+        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+          Quality
+        </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox checked={hideHighFails} onChange={(e) => setHideHighFails(e.target.checked)} size="small" sx={{ p: 0.5 }} />
+          }
+          label={`Hide >${MAX_MISMATCHES} failed parameters${highFailHiddenCount > 0 ? ` (${highFailHiddenCount} hidden)` : ''}`}
           sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
         />
 
@@ -298,6 +340,16 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       </Popover>
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+        {/* Stale-while-revalidate: dim existing cards while a refresh is in flight.
+            Skeletons render below this wrapper at full opacity. */}
+        <Box
+          sx={{
+            transition: 'opacity 0.2s ease',
+            ...(loading && filtered.length > 0
+              ? { opacity: 0.5, pointerEvents: 'none' }
+              : {}),
+          }}
+        >
         {filtered.map((rec) => {
           const isNonActive = rec.part.status !== 'Active';
           const shouldHide = activeOnly && isNonActive;
@@ -322,33 +374,43 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                   onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
                 } : undefined}
                 isEnrichingFC={isEnrichingFC}
+                contextActive={inferContextActive(recommendations)}
               />
             </Box>
           );
         })}
-      </Box>
-
-      {/* Loading overlay while recommendations are refreshing */}
-      {loading && (
-        <Box
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            bgcolor: 'rgba(0, 0, 0, 0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            gap: 1.5,
-            zIndex: 1,
-          }}
-        >
-          <CircularProgress size={32} />
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-            {t('recommendations.updating', 'Updating recommendations...')}
-          </Typography>
         </Box>
-      )}
+
+        {/* Skeleton cards while recommendations are loading. Rendered inline
+            (not as a scrim overlay) so the user sees exactly where cards will
+            land. Count backs off if some real cards already exist. */}
+        {loading && (
+          <>
+            {Array.from({ length: Math.max(0, 3 - filtered.length) }).map((_, i) => (
+              <Box
+                key={`skeleton-${i}`}
+                sx={{
+                  mb: 1.5,
+                  p: 1.5,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  bgcolor: 'background.paper',
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+                  <Skeleton variant="text" width={140} height={20} />
+                  <Skeleton variant="rounded" width={52} height={18} />
+                  <Skeleton variant="rounded" width={110} height={18} />
+                </Box>
+                <Skeleton variant="text" width="35%" height={16} sx={{ mb: 0.5 }} />
+                <Skeleton variant="text" width="80%" height={14} />
+                <Skeleton variant="text" width="55%" height={14} />
+              </Box>
+            ))}
+          </>
+        )}
+      </Box>
     </Box>
   );
 }

@@ -262,10 +262,15 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
           <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
         </FieldRow>
       )}
-      {part.yteol != null && (
-        <FieldRow label="Years to EOL" value={`${part.yteol.toFixed(1)} yrs`} source="partsio" />
-      )}
-      {part.riskRank != null && (
+      {/* parts.io-sourced rows — always rendered so section heights stay aligned
+          between the source and the side-by-side comparison panel. Values fall
+          back to "—" when parts.io has no data for the part. */}
+      <FieldRow
+        label="Years to EOL"
+        value={part.yteol != null ? `${part.yteol.toFixed(1)} yrs` : '—'}
+        source="partsio"
+      />
+      {part.riskRank != null ? (
         <FieldRow label={t('attributes.riskRank')} source="partsio">
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: part.riskRank <= 2 ? '#69F0AE' : part.riskRank <= 5 ? '#FFD54F' : '#FF5252', flexShrink: 0 }} />
@@ -274,8 +279,10 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
             </Typography>
           </Stack>
         </FieldRow>
+      ) : (
+        <FieldRow label={t('attributes.riskRank')} value="—" source="partsio" />
       )}
-      {part.countryOfOrigin && <FieldRow label={t('attributes.countryOfOrigin')} value={part.countryOfOrigin} source="partsio" />}
+      <FieldRow label={t('attributes.countryOfOrigin')} value={part.countryOfOrigin || '—'} source="partsio" />
       {part.lifecycleInfo?.filter(l => l.suggestedReplacement).map(l => (
         <FieldRow key={l.source} label={t('attributes.suggestedReplacement')} value={l.suggestedReplacement!} source={l.source as DataSource} />
       ))}
@@ -319,7 +326,24 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
         </>
       )}
 
-      {/* Cross References (source-side only) */}
+      {/* Environmental & Export */}
+      {hasCompliance && (
+        <>
+          <SectionHeader label="Environmental & Export" />
+          {part.rohsStatus && <FieldRow label={t('attributes.rohsStatus')} value={part.rohsStatus} source="mouser" />}
+          {part.reachCompliance && <FieldRow label={t('attributes.reachCompliance')} value={part.reachCompliance} source="partsio" />}
+          {part.eccnCode && <FieldRow label={t('attributes.eccnCode')} value={part.eccnCode} source="partsio" />}
+          {part.htsCode && <FieldRow label={t('attributes.htsCode')} value={part.htsCode} source="partsio" />}
+          {part.complianceData?.filter(c => c.htsCodesByRegion).map(c => (
+            Object.entries(c.htsCodesByRegion!).map(([region, code]) => (
+              <FieldRow key={`${c.source}-${region}`} label={`HTS (${region.toUpperCase()})`} value={code} source={c.source as DataSource} />
+            ))
+          ))}
+        </>
+      )}
+
+      {/* Cross References (source-side only) — last so it doesn't fight for
+          alignment with the comparison panel's Environmental & Export. */}
       {xrefSummary && (
         <>
           <SectionHeader label="Cross References" />
@@ -398,22 +422,6 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
           )}
         </>
       )}
-
-      {/* Environmental & Export */}
-      {hasCompliance && (
-        <>
-          <SectionHeader label="Environmental & Export" />
-          {part.rohsStatus && <FieldRow label={t('attributes.rohsStatus')} value={part.rohsStatus} source="mouser" />}
-          {part.reachCompliance && <FieldRow label={t('attributes.reachCompliance')} value={part.reachCompliance} source="partsio" />}
-          {part.eccnCode && <FieldRow label={t('attributes.eccnCode')} value={part.eccnCode} source="partsio" />}
-          {part.htsCode && <FieldRow label={t('attributes.htsCode')} value={part.htsCode} source="partsio" />}
-          {part.complianceData?.filter(c => c.htsCodesByRegion).map(c => (
-            Object.entries(c.htsCodesByRegion!).map(([region, code]) => (
-              <FieldRow key={`${c.source}-${region}`} label={`HTS (${region.toUpperCase()})`} value={code} source={c.source as DataSource} />
-            ))
-          ))}
-        </>
-      )}
     </Box>
   );
 }
@@ -437,7 +445,7 @@ export function formatPrice(price: number, currency?: string): string {
 }
 
 /* ── Supplier quote card ── */
-function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
+export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
   const supplierLabel = SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
 

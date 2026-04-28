@@ -13,13 +13,6 @@
  */
 
 import { logApiCall } from './apiUsageLogger';
-import {
-  getCachedResponse,
-  getCachedResponseBatch,
-  setCachedResponse,
-  isNotFoundSentinel,
-  TTL_COMMERCIAL_MS,
-} from './partDataCache';
 
 const BASE_URL = 'https://api.findchips.com/v1/fcl-search';
 
@@ -101,8 +94,11 @@ export function isFindchipsConfigured(): boolean {
 }
 
 // ============================================================
-// IN-MEMORY L1 CACHE (30-min TTL)
+// IN-MEMORY L1 CACHE (5-min TTL)
 // ============================================================
+// Pricing and stock are time-sensitive — we keep this short so users making
+// purchasing decisions never see hours-stale numbers. L2 (Supabase) is no
+// longer used for FC commercial data; every L1 miss goes live to the API.
 
 interface CacheEntry {
   results: FCDistributorResult[] | null;
@@ -110,7 +106,7 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getCached(mpn: string): FCDistributorResult[] | null | undefined {
   const entry = cache.get(mpn.toLowerCase());
@@ -226,7 +222,8 @@ async function fcFetch(mpn: string, exactMatch: boolean = true): Promise<FCSearc
 /**
  * Fetch FindChips results for a single MPN.
  * Returns array of distributor results, or null if not found / unavailable.
- * Uses 3-level cache: L1 in-memory → L2 Supabase → L3 live API.
+ * Cache: L1 in-memory only (5 min). Pricing/stock are intentionally NOT
+ * persisted in L2 — every L1 miss hits the live API.
  */
 export async function getFindchipsResults(
   mpn: string,
@@ -240,19 +237,9 @@ export async function getFindchipsResults(
   const l1 = getCached(mpnLower);
   if (l1 !== undefined) return l1;
 
-  // L2: Supabase persistent cache (only populated when the API returns hits;
-  // empty/null responses are not cached — see write path below)
-  try {
-    const l2 = await getCachedResponse<FCDistributorResult[]>(
-      'findchips', mpnLower, 'fc-results',
-    );
-    if (l2 && !isNotFoundSentinel(l2.data)) {
-      setCache(mpnLower, l2.data as FCDistributorResult[]);
-      return l2.data as FCDistributorResult[];
-    }
-  } catch { /* L2 miss — proceed to API */ }
+  // L2 (Supabase): intentionally skipped for FC. Pricing and stock change
+  // constantly, so we always go live for fresh data.
 
-  // L3: Live API
   if (!hasFindchipsBudget()) {
     console.warn('[findchips] Daily budget exhausted — skipping');
     return null;
@@ -261,10 +248,8 @@ export async function getFindchipsResults(
   const slotAcquired = await acquireRateSlot();
   if (!slotAcquired) return null;
 
-  const startMs = Date.now();
   try {
     const response = await fcFetch(mpn);
-    const elapsedMs = Date.now() - startMs;
 
     if (userId) {
       logApiCall({ userId, service: 'findchips', operation: 'batch_search' }).catch(() => {});
@@ -276,11 +261,8 @@ export async function getFindchipsResults(
 
     if (hasResults) {
       setCache(mpnLower, results);
-      setCachedResponse('findchips', mpnLower, 'fc-results', 'commercial', results, TTL_COMMERCIAL_MS);
       return results;
     }
-    // Empty results are NOT cached — re-query next time so transient misses
-    // (rate limit, API hiccup, stale index) self-heal on the next request.
     return null;
   } catch (err) {
     console.error('[findchips] API error:', err instanceof Error ? err.message : err);
@@ -320,30 +302,9 @@ export async function getFindchipsResultsBatch(
 
   if (uncached.length === 0) return results;
 
-  // Check L2 cache for remaining — legacy NOT_FOUND sentinels are ignored so
-  // historical empty-response rows don't keep masking live results.
-  try {
-    const l2Results = await getCachedResponseBatch<FCDistributorResult[]>(
-      'findchips', uncached, 'fc-results',
-    );
-    const stillUncached: string[] = [];
-    for (const mpn of uncached) {
-      const l2 = l2Results.get(mpn.toLowerCase());
-      if (l2 && !isNotFoundSentinel(l2)) {
-        const data = l2 as FCDistributorResult[];
-        results.set(mpn.toLowerCase(), data);
-        setCache(mpn, data);
-      } else {
-        stillUncached.push(mpn);
-      }
-    }
-    uncached.length = 0;
-    uncached.push(...stillUncached);
-  } catch { /* L2 miss — proceed to API */ }
+  // L2 (Supabase) intentionally skipped — see getFindchipsResults() above.
 
-  if (uncached.length === 0) return results;
-
-  // L3: Concurrent API calls with limiter
+  // Live API: Concurrent calls with limiter
   const chunks: string[][] = [];
   for (let i = 0; i < uncached.length; i += BATCH_CONCURRENCY) {
     chunks.push(uncached.slice(i, i + BATCH_CONCURRENCY));

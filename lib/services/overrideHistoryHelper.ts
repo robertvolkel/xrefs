@@ -11,7 +11,7 @@ import { createClient } from '@/lib/supabase/server';
 /** Mutable rule fields stored in the override snapshot (snake_case DB format). */
 const SNAPSHOT_FIELDS = [
   'weight', 'logic_type', 'threshold_direction', 'upgrade_hierarchy',
-  'block_on_missing', 'tolerance_percent', 'engineering_reason',
+  'block_on_missing', 'tolerance_percent', 'value_aliases', 'engineering_reason',
   'attribute_name', 'sort_order', 'action',
 ] as const;
 
@@ -22,6 +22,7 @@ const CAMEL_TO_SNAKE: Record<string, string> = {
   upgradeHierarchy: 'upgrade_hierarchy',
   blockOnMissing: 'block_on_missing',
   tolerancePercent: 'tolerance_percent',
+  valueAliases: 'value_aliases',
   engineeringReason: 'engineering_reason',
   attributeName: 'attribute_name',
   sortOrder: 'sort_order',

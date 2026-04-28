@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, IconButton, InputAdornment, TextField, Typography } from '@mui/material';
+import { Box, IconButton, InputAdornment, TextField } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import { useTranslation } from 'react-i18next';
 import { PartsListRow, XrefRecommendation } from '@/lib/types';
 import MessageBubble from '../MessageBubble';
+import TypingIndicator from '../TypingIndicator';
 import { useModalChat } from '@/hooks/useModalChat';
 
 interface ModalChatPanelProps {
@@ -50,6 +51,7 @@ export default function ModalChatPanel({ row, open, onRecommendationsRefreshed, 
   }, [inputValue, isLoading, handleSendMessage]);
 
   const showInput = phase === 'open-chat';
+  const showTyping = isLoading || (!row?.sourceAttributes && phase === 'init');
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -75,13 +77,7 @@ export default function ModalChatPanel({ row, open, onRecommendationsRefreshed, 
           />
         ))}
 
-        {isLoading && (
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', px: 1, pb: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Thinking...
-            </Typography>
-          </Box>
-        )}
+        {showTyping && <TypingIndicator />}
       </Box>
 
       {/* Text input (phase 2 only) */}

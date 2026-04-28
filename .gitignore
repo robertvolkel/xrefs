@@ -36,6 +36,9 @@ yarn-error.log*
 # Atlas data files (proprietary manufacturer data)
 data/atlas/*.json
 
+# Mining script outputs (regenerated on each run)
+scripts/mine-identity-fails-output.*
+
 # vercel
 .vercel
 

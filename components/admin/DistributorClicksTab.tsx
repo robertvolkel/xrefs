@@ -17,7 +17,6 @@ import {
   InputAdornment,
   TextField,
   Button,
-  CircularProgress,
   Link,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
@@ -26,6 +25,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { useTranslation } from 'react-i18next';
 import { DistributorClickEntry } from '@/lib/types';
 import { getAdminDistributorClicks } from '@/lib/api';
+import PaginatedTableSkeleton from './PaginatedTableSkeleton';
 
 const DISTRIBUTOR_FILTERS = ['All', 'Digikey', 'Mouser', 'Arrow', 'LCSC', 'Farnell', 'RS', 'TME'] as const;
 
@@ -144,9 +144,7 @@ export default function DistributorClicksTab() {
       {/* Table */}
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
         {loading ? (
-          <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={24} />
-          </Box>
+          <PaginatedTableSkeleton columns={columns} />
         ) : clicks.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>

@@ -57,6 +57,30 @@ function normalize(value: string): string {
 }
 
 /**
+ * Check whether two values land in the same alias group on this rule.
+ * Returns true only when both values appear in the same group; any value
+ * not in any group is treated as ungrouped (returns false).
+ * Comparison uses `normalize()` so casing/whitespace differences don't matter.
+ */
+function inSameAliasGroup(rule: MatchingRule, a: string, b: string): boolean {
+  const groups = rule.valueAliases;
+  if (!groups || groups.length === 0) return false;
+  const an = normalize(a);
+  const bn = normalize(b);
+  for (const group of groups) {
+    let hasA = false;
+    let hasB = false;
+    for (const member of group) {
+      const mn = normalize(member);
+      if (mn === an) hasA = true;
+      if (mn === bn) hasB = true;
+      if (hasA && hasB) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Parse a parametric value into a numeric range { min, max }.
  * Handles formats:
  *   "-0.5V to -6V", "1mA ~ 5mA", "2...8V", "-3V" (single → degenerate range)
@@ -140,6 +164,13 @@ function evaluateIdentity(
   // false fails when Digikey (normalized, e.g. 3.3e-7) and parts.io (raw, e.g. 0.33)
   // supply the same attribute for different parts in a comparison.
   let match = normalize(sourceValue) === normalize(candidateValue);
+
+  // Per-rule value aliases — different sources often emit synonyms for the
+  // same categorical state (e.g. Digikey "Polar" vs Atlas "POLARIZED"). When
+  // both sides land in the same alias group on this rule, treat them as equal.
+  if (!match && inSameAliasGroup(rule, sourceValue, candidateValue)) {
+    match = true;
+  }
 
   // Numeric comparison (with relative tolerance for float rounding) only
   // when strings genuinely differ — catches "0.33µF" vs "330nF" style equivalence.
@@ -283,9 +314,27 @@ function evaluateIdentityUpgrade(
   if (srcIdx === -1) srcIdx = hierarchy.findIndex(h => srcNorm.includes(h.toUpperCase()));
   if (candIdx === -1) candIdx = hierarchy.findIndex(h => candNorm.includes(h.toUpperCase()));
 
-  // If neither is in hierarchy, do exact string match
+  // Alias-aware fallback: if a value isn't in the hierarchy directly, see
+  // whether any of its alias-group mates is. Lets per-rule synonyms map onto
+  // hierarchy positions without bloating the hierarchy itself.
+  if ((srcIdx === -1 || candIdx === -1) && rule.valueAliases?.length) {
+    for (const group of rule.valueAliases) {
+      const groupNormed = group.map(v => normalize(v));
+      const groupHasSrc = groupNormed.includes(srcNorm);
+      const groupHasCand = groupNormed.includes(candNorm);
+      if (!groupHasSrc && !groupHasCand) continue;
+      const groupHierarchyIdx = hierarchy.findIndex(h =>
+        groupNormed.includes(h.toUpperCase())
+      );
+      if (groupHierarchyIdx === -1) continue;
+      if (srcIdx === -1 && groupHasSrc) srcIdx = groupHierarchyIdx;
+      if (candIdx === -1 && groupHasCand) candIdx = groupHierarchyIdx;
+    }
+  }
+
+  // If neither is in hierarchy, do exact string match (with alias fallback)
   if (srcIdx === -1 && candIdx === -1) {
-    const match = srcNorm === candNorm;
+    const match = srcNorm === candNorm || inSameAliasGroup(rule, sourceValue, candidateValue);
     return {
       attributeId: rule.attributeId,
       attributeName: rule.attributeName,
@@ -911,8 +960,30 @@ export function evaluateCandidate(
   };
 }
 
-/** Check if a manufacturer name matches any preferred manufacturer (case-insensitive partial match) */
-function isPreferredManufacturer(manufacturer: string, preferred: string[]): boolean {
+/**
+ * Check if a manufacturer matches any preferred manufacturer.
+ *
+ * When `manufacturerSlugLookup` is supplied (built by the caller via
+ * `manufacturerAliasResolver`), compare canonical slugs — this collapses
+ * acquired-brand families so "prefer Analog Devices" also floats Linear
+ * Technology / Maxim / Hittite parts. Falls back to the original substring
+ * check for any input that doesn't resolve (non-Atlas/Western MFRs, blanks).
+ */
+function isPreferredManufacturer(
+  manufacturer: string,
+  preferred: string[],
+  manufacturerSlugLookup?: Map<string, string>,
+): boolean {
+  if (manufacturerSlugLookup) {
+    const candidateSlug = manufacturerSlugLookup.get(manufacturer.toLowerCase());
+    if (candidateSlug) {
+      for (const p of preferred) {
+        const preferredSlug = manufacturerSlugLookup.get(p.toLowerCase());
+        if (preferredSlug && preferredSlug === candidateSlug) return true;
+      }
+    }
+    // Fall through to substring check for inputs that didn't resolve.
+  }
   const mfrLower = manufacturer.toLowerCase();
   return preferred.some(p => mfrLower.includes(p.toLowerCase()) || p.toLowerCase().includes(mfrLower));
 }
@@ -923,6 +994,7 @@ export function findReplacements(
   source: PartAttributes,
   candidates: PartAttributes[],
   preferredManufacturers?: string[],
+  manufacturerSlugLookup?: Map<string, string>,
 ): XrefRecommendation[] {
   // Filter out the source part itself
   const filteredCandidates = candidates.filter(
@@ -939,8 +1011,8 @@ export function findReplacements(
     if (a.passed !== b.passed) return a.passed ? -1 : 1;
     // Apply manufacturer preference: preferred manufacturers sort above non-preferred at equal/close scores
     if (hasPreferred) {
-      const aPreferred = isPreferredManufacturer(a.candidate.part.manufacturer, preferredManufacturers);
-      const bPreferred = isPreferredManufacturer(b.candidate.part.manufacturer, preferredManufacturers);
+      const aPreferred = isPreferredManufacturer(a.candidate.part.manufacturer, preferredManufacturers, manufacturerSlugLookup);
+      const bPreferred = isPreferredManufacturer(b.candidate.part.manufacturer, preferredManufacturers, manufacturerSlugLookup);
       if (aPreferred !== bPreferred) {
         // Only boost if scores are within 5% of each other
         if (Math.abs(a.matchPercentage - b.matchPercentage) <= 5) {

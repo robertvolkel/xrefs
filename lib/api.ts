@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, ReplacementPriorities } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, ReplacementPriorities, ManufacturerProfile } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -242,6 +242,18 @@ export async function listAgentChat(
     body: JSON.stringify({ messages, listContext, listId }),
     signal,
   });
+}
+
+// ── Manufacturer Profile ──────────────────────────────────
+
+export async function fetchManufacturerProfile(
+  name: string,
+  signal?: AbortSignal,
+): Promise<{ profile: ManufacturerProfile; source: 'atlas' | 'mock' } | null> {
+  const res = await fetch(`${BASE}/manufacturer-profile?name=${encodeURIComponent(name)}`, { signal });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Manufacturer profile fetch failed: ${res.status}`);
+  return res.json();
 }
 
 // ── Admin API ──────────────────────────────────────────────

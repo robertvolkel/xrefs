@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -19,6 +19,7 @@ import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from '.
 import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
 import { findReplacements } from './matchingEngine';
+import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { sortRecommendationsForDisplay } from './recommendationSort';
 import { computeCompositeScore } from './compositeScore';
 import { getContextQuestionsForFamily } from '../contextQuestions';
@@ -34,6 +35,12 @@ import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMappe
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
+import {
+  classifyQualificationDomain,
+  upgradeFromAttributes,
+  isDomainCompatible,
+  contextExpectedDomains,
+} from './qualificationDomain';
 
 // ============================================================
 // PARTS.IO LIFECYCLE METADATA HELPER
@@ -1040,11 +1047,77 @@ export async function getRecommendations(
       ...(userPreferences?.preferredManufacturers ?? []),
     ];
 
+    // Pre-resolve MFR aliases to canonical slugs so the matching engine's
+    // preferred-MFR tiebreaker catches acquired-brand families (Decision #151):
+    // "prefer Analog Devices" floats Linear Tech / Maxim / Hittite too.
+    // Lookup covers both sides (preferred + every candidate MFR) so isPreferredManufacturer
+    // can compare slug-to-slug via Map.get() — sync inside findReplacements.
+    const manufacturerSlugLookup = new Map<string, string>();
+    if (mergedPreferred.length > 0) {
+      const resolveOne = async (raw: string) => {
+        const key = raw.toLowerCase();
+        if (manufacturerSlugLookup.has(key)) return;
+        const match = await resolveManufacturerAlias(raw);
+        if (match) manufacturerSlugLookup.set(key, match.slug);
+      };
+      await Promise.all([
+        ...mergedPreferred.map(resolveOne),
+        ...allCandidates
+          .map(c => c.part.manufacturer)
+          .filter((m): m is string => !!m)
+          .map(resolveOne),
+      ]);
+    }
+
+    // Qualification-domain classification (Decision #155, Phase 1).
+    // Classify source + build a per-candidate classification map so the
+    // exclusion filter + deviation flag can be applied after scoring. Both
+    // steps also check for a positive `aec_q200` parametric attribute that
+    // can upgrade an unknown classification to automotive_q200.
+    const sourceAecQ200 = sourceAttrs.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+    sourceAttrs.part.qualificationDomain = upgradeFromAttributes(
+      classifyQualificationDomain(sourceAttrs.part),
+      sourceAecQ200,
+    );
+    const candidateDomainByMpn = new Map<string, import('../types').DomainClassification>();
+    for (const c of allCandidates) {
+      const key = c.part.mpn.toLowerCase();
+      if (candidateDomainByMpn.has(key)) continue;
+      const aecVal = c.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+      candidateDomainByMpn.set(
+        key,
+        upgradeFromAttributes(classifyQualificationDomain(c.part), aecVal),
+      );
+    }
+
     console.time('[perf] findReplacements (scoring)');
-    let recs = findReplacements(effectiveTable, sourceAttrs, allCandidates, mergedPreferred.length > 0 ? mergedPreferred : undefined);
+    let recs = findReplacements(
+      effectiveTable,
+      sourceAttrs,
+      allCandidates,
+      mergedPreferred.length > 0 ? mergedPreferred : undefined,
+      manufacturerSlugLookup.size > 0 ? manufacturerSlugLookup : undefined,
+    );
     console.timeEnd('[perf] findReplacements (scoring)');
 
-    // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps
+    // Resolve manufacturer origin per unique MFR — drives the country flag badge
+    // independently of which dataset the attributes came from. Alias resolver is
+    // 5-min cached, so this is cheap on warm cache.
+    const uniqueMfrs = Array.from(new Set(recs.map(r => r.part.manufacturer).filter(Boolean)));
+    const mfrOriginMap = new Map<string, 'atlas' | 'western' | 'unknown'>();
+    await Promise.all(uniqueMfrs.map(async mfr => {
+      try {
+        const match = await resolveManufacturerAlias(mfr);
+        mfrOriginMap.set(mfr.toLowerCase(), match?.source ?? 'unknown');
+      } catch {
+        mfrOriginMap.set(mfr.toLowerCase(), 'unknown');
+      }
+    }));
+
+    // Propagate dataSource, certifiedBy, equivalenceType, and enrichedFrom from pre-dedup maps.
+    // Also attach the qualification domain to rec.part and compute the deviation flag
+    // against the user-selected context (Decision #155).
+    const expectedDomains = contextExpectedDomains(applicationContext);
     recs = recs.map(rec => {
       const key = rec.part.mpn.toLowerCase();
       const certs = certificationMap.get(key);
@@ -1054,19 +1127,50 @@ export async function getRecommendations(
         certs?.has('partsio_fff') ? 'fff' :
         certs?.has('partsio_functional') ? 'functional' :
         undefined;
+      const domain = candidateDomainByMpn.get(key);
+      const domainDeviation =
+        !!domain &&
+        domain.domain !== 'unknown' &&
+        expectedDomains.size > 0 &&
+        !expectedDomains.has(domain.domain);
+      const origin = mfrOriginMap.get(rec.part.manufacturer?.toLowerCase() ?? '') ?? 'unknown';
+      const partWithDomain = domain ? { ...rec.part, qualificationDomain: domain } : rec.part;
       return {
         ...rec,
+        part: { ...partWithDomain, mfrOrigin: origin },
         dataSource: dataSourceMap.get(key),
         certifiedBy,
         equivalenceType,
         mfrEquivalenceType: mfrEquivalenceTypeMap.get(key),
         enrichedFrom: enrichedFromMap.get(key),
+        domainDeviation: domainDeviation || undefined,
       };
     });
 
+    // Qualification-domain hard exclusion (Decision #155). Runs BEFORE
+    // withCertifiedBypass so certified-cross bypass cannot route a
+    // cross-domain substitution (e.g. medical_implant → automotive) around
+    // the gate. Phase 1 only wires the `automotive` row of the matrix;
+    // non-automotive contexts skip this filter.
+    let domainExcludedCount = 0;
+    if (expectedDomains.size > 0) {
+      const preDomainCount = recs.length;
+      recs = recs.filter(rec => {
+        const domain = rec.part.qualificationDomain?.domain ?? 'unknown';
+        const check = isDomainCompatible(applicationContext, domain);
+        return check.compatible;
+      });
+      domainExcludedCount = preDomainCount - recs.length;
+      if (domainExcludedCount > 0) {
+        console.log(`[perf] qualification-domain filter: ${preDomainCount} → ${recs.length} recs (excluded ${domainExcludedCount} cross-domain)`);
+      }
+    }
+
     // Post-scoring blocking-rule filters are bypassed for MFR-certified and
     // Accuris-certified crosses — an explicit human certification outranks
-    // our inferred blocking-rule rejection.
+    // our inferred blocking-rule rejection. Domain filter above is NOT part
+    // of this bypass — cross-domain substitution is unsafe regardless of
+    // certification.
     const withCertifiedBypass = (filter: (r: XrefRecommendation[], s: PartAttributes) => XrefRecommendation[]) => {
       const certified: XrefRecommendation[] = [];
       const uncertified: XrefRecommendation[] = [];
@@ -1112,12 +1216,16 @@ export async function getRecommendations(
       );
     }
 
-    // Batch filter: keep only actionable recommendations (Decision #109)
+    // Mismatch-count filter (Decision #109): batch path drops candidates with
+    // >1 real mismatch server-side. The single-part xref UI applies the same
+    // filter client-side (with a "Show all" toggle), so we don't drop here on
+    // that path — we want all candidates flowing through to the panel and let
+    // the client choose what to render.
     if (options?.filterForBatch) {
       const preCount = recs.length;
-      recs = filterRecsForBatch(recs);
+      recs = filterRecsByMismatchCount(recs, 1);
       if (preCount !== recs.length) {
-        console.log(`[perf] batch filter: ${preCount} → ${recs.length} recs (removed ${preCount - recs.length} non-actionable)`);
+        console.log(`[perf] batch mismatch filter: ${preCount} → ${recs.length} recs`);
       }
     }
 
@@ -1139,9 +1247,35 @@ export async function getRecommendations(
     // Apply display-priority sort server-side so `row.replacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
     // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
-    recs = sortRecommendationsForDisplay(recs);
+    recs = sortRecommendationsForDisplay(recs, undefined, applicationContext);
 
-    const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource };
+    // Qualification-domain telemetry (Decision #155). Only populated when
+    // the domain filter is active (Phase 1: automotive context). Forwarded
+    // into QC logs to drive Phase 2 MFR classifier prioritization —
+    // unknown-rate split by reason tells us whether the bottleneck is
+    // classifier coverage, classifier quality, or upstream data.
+    let domainStats: import('../types').DomainStats | undefined;
+    if (expectedDomains.size > 0) {
+      const stats = {
+        excludedByDomain: domainExcludedCount,
+        knownMatched: 0,
+        unknown: { no_classifier: 0, ambiguous_series: 0, no_signal: 0 },
+        deviationCount: 0,
+      };
+      for (const rec of recs) {
+        const d = rec.part.qualificationDomain;
+        if (!d || d.domain === 'unknown') {
+          const reason = d?.reason ?? 'no_signal';
+          stats.unknown[reason]++;
+          continue;
+        }
+        if (expectedDomains.has(d.domain)) stats.knownMatched++;
+        else stats.deviationCount++;
+      }
+      domainStats = stats;
+    }
+
+    const result: RecommendationResult = { recommendations: recs, sourceAttributes: sourceAttrs, familyId, familyName, dataSource: resultDataSource, domainStats };
     setCachedResponse('search', mpn, recsCacheVariant, 'recommendations', result, TTL_RECOMMENDATIONS_MS);
     console.log(`[perf] getRecommendations total: ${(performance.now() - recsStart).toFixed(0)}ms`);
     return result;
@@ -1157,46 +1291,8 @@ export async function getRecommendations(
 // BATCH RECOMMENDATION FILTER (Decision #109)
 // ============================================================
 
-/**
- * Does this recommendation carry a human certification (manufacturer upload
- * or Accuris/parts.io equivalence) strong enough to override our blocking-
- * rule inferences? Used to exempt certified crosses from post-scoring
- * filters and batch actionability filters.
- */
-function isCertifiedCross(rec: XrefRecommendation): boolean {
-  if (!rec.certifiedBy || rec.certifiedBy.length === 0) return false;
-  return rec.certifiedBy.some(s => s === 'manufacturer' || s.startsWith('partsio_'));
-}
-
-/**
- * Filter recommendations for batch/list validation — keep only actionable results.
- *
- * Keep if ANY of:
- * - No failing rules (clean match)
- * - All fails are due to missing attributes (could pass if found manually)
- * - At most 1 real mismatch (fail where both attributes exist)
- * - MFR-certified or Accuris-certified (human-verified, kept regardless of fails)
- *
- * Always exclude: Obsolete or Discontinued parts (pre-filtered before scoring,
- * but double-check here for safety).
- */
-function filterRecsForBatch(recs: XrefRecommendation[]): XrefRecommendation[] {
-  return recs.filter(rec => {
-    // Always exclude obsolete/discontinued
-    const status = rec.part.status;
-    if (status === 'Obsolete' || status === 'Discontinued') return false;
-
-    // Always keep MFR-certified and Accuris-certified crosses
-    if (isCertifiedCross(rec)) return true;
-
-    // Count real mismatches (fail + attribute exists) vs missing-attribute fails
-    const fails = rec.matchDetails.filter(d => d.ruleResult === 'fail');
-    const realMismatches = fails.filter(d => d.replacementValue !== 'N/A');
-
-    // Keep if: no fails, all fails are missing-attribute, or at most 1 real mismatch
-    return realMismatches.length <= 1;
-  });
-}
+// `isCertifiedCross` and `filterRecsByMismatchCount` now live in lib/types.ts
+// so the single-part client UI can apply the same filter as a live toggle.
 
 // ============================================================
 // PARTS.IO EQUIVALENT CANDIDATE FETCHER

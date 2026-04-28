@@ -18,7 +18,6 @@ import {
   Badge,
   TextField,
   Button,
-  CircularProgress,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -33,6 +32,7 @@ import {
 } from '@/lib/types';
 import { getAdminAppFeedbackList } from '@/lib/api';
 import AppFeedbackDetailView from './AppFeedbackDetailView';
+import PaginatedTableSkeleton from './PaginatedTableSkeleton';
 
 type StatusFilter = AppFeedbackStatus | 'all';
 type CategoryFilter = AppFeedbackCategory | 'all';
@@ -236,9 +236,7 @@ export default function AppFeedbackTab() {
       {/* Table */}
       <TableContainer sx={{ flex: 1, overflowY: 'auto' }}>
         {loading ? (
-          <Box sx={{ p: 4, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={24} />
-          </Box>
+          <PaginatedTableSkeleton columns={columns} />
         ) : items.length === 0 ? (
           <Box sx={{ p: 4, textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>

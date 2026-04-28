@@ -79,6 +79,110 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Value-alias system follow-ups (Decision #160)
+
+Phases 1, 2, and 3 (Inline "Propose alias" button) all shipped same session. 6 alias rules now active (polarization seed, MLCC C0G/NP0, D2 speed_class, 52 composition, C7 protocol, C9 architecture). Remaining work, in priority order:
+
+1. **`package_case` formatting drift** — Digikey appends ` (NNNN Metric)` to EIA codes (`0603` ↔ `0603 (1608 Metric)`), recurs across many families. Cleaner fix: small enhancement to engine's `normalize()` to strip the parenthetical metric suffix on package values. NOT per-family aliases (doesn't scale across 43 families × ~20 EIA sizes). 8× hits in mining output on family 52, plus more on B5/B8.
+2. **Mapper / param-map bugs surfaced by mining** (yellow-bucket pairs from `scripts/mine-identity-fails-output.csv`): `B1/configuration` "BRIDGE, 4 ELEMENTS" vs "Single Phase" (82×), `E1/output_transistor_type` (45×), `C7/operating_mode` "Full-Duplex" vs "LINE TRANSCEIVER" (28×) and "DIGITAL ISOLATOR" vs "INTERFACE CIRCUIT" (15×), `B8/package_case` 0603 appearing for thyristors (data quality — wrong source data), `C1/enable_pin` "Absent" vs "Current Limit". Wrong-field-mapping at the Digikey/Atlas mapper layer, not synonym problems. Triage by family.
+3. **Re-mining cadence** — re-run `npx tsx scripts/mine-identity-fails.ts` every 4-8 weeks (or whenever logging volume jumps). Incremental discovery from ongoing usage. The script's filter step 5 already drops pairs covered by existing `valueAliases`, so re-runs only show new patterns. Lower priority than (1) and (2) since the inline "Propose alias" button now handles per-incident maintenance — re-mining is just a periodic safety net for patterns admins haven't proactively flagged.
+4. **Optional: dashboard surfacing** — instead of waiting for admin to bump into a fail, surface "N new identity fails this week" as a small admin-home card with one-click into the propose-alias flow. Only build if (3) re-mining shows the inline-button path isn't keeping up.
+
+### Side-by-side comparison panel — align section headers across panels
+
+**Files:** `components/AttributesTabContent.tsx` (`OverviewContent`), `components/ComparisonView.tsx`, `components/AttributesPanel.tsx`
+
+When viewing a source part next to a `Comparing With` replacement, the two panels render `OverviewContent` independently, so each section's height is driven by its own row count — Distribution might be 4 rows on the left and 1 on the right, sliding every header below it out of vertical sync. Make section headers (`Attributes`, `Distribution`, `Qualifications`, `Environmental & Export`) align horizontally across panels in comparison mode so the eye can move left-right between equivalent sections.
+
+**Approach (deferred from session 2026-04-26):** extract a `<ComparisonOverview source repl />` parent that renders the two sides as a single section-by-section grid. For each section in fixed order, measure the taller side's row count and pad the shorter side with empty rows up to that height. Cross References stays last and source-only (already moved in this session) so it has no right-side counterpart. Two visually independent panels remain — only the layout coordination is shared.
+
+**Open questions to settle before planning:**
+1. Should the two panels scroll in lockstep when in comparison mode, or remain independently scrollable? (Independent scrolling breaks alignment as soon as one side moves.)
+2. When a section is conditional on either side (e.g., source has Qualifications, replacement doesn't), always render both headers with "—" on the empty side, or skip on both? Predictability vs. visual sparsity.
+3. Within-section row alignment is explicitly out of scope — only headers align. (User confirmed this is acceptable.)
+
+The standalone source-part view (no replacement selected) keeps the existing `OverviewContent` layout — comparison reordering only kicks in when a replacement is selected.
+
+### Cost-optimization follow-ups (Decision #156)
+
+Phase 1 shipped `mapped:unitCost` auto-detection + `sys:priceDelta` (Repl. Savings) column. Natural extensions:
+
+1. **Extended cost column** — `Unit Cost × Quantity` and `Repl. Price × Quantity`, plus a "total project savings" rollup. Requires the existing optional `qtyColumn` to be populated.
+2. **Percentage savings** — `(unitCost − replacementPrice) / unitCost`. Useful for sorting by ROI rather than absolute dollars. Could ride on the existing `calc:*` infra now that `toNumber()` is exported, OR be a second built-in `sys:priceDeltaPct`.
+3. **Cost-optimization view template preset** — ship a default master template tuned for cost reduction (Unit Cost + Repl. Price + Repl. Savings + Repl. Distributor + sort by savings). Surface it as a one-click "apply" in the view picker.
+4. **Multi-currency reconciliation** — when the user's unit-cost currency differs from the replacement quote's currency, today the math runs blind. Need either FX conversion or an explicit warning/per-row currency tag.
+
+### Qualification-domain Phase 2 — MFR classifier coverage (Decision #155)
+
+Phase 1 shipped the qualification-domain filter for Murata MLCCs only. Non-Murata parts universally classify `unknown/no_classifier` today, rank below context-matched in automotive searches, and show the amber "Domain unknown — verify" chip. That's a deliberate ranking tier, not an exclusion — but every non-Murata BOM hits it, so Phase 2 classifier coverage is on the critical path.
+
+**Prioritization:** Once Phase 1 is in prod for a week or two, query `recommendation_log.snapshot.domainStats.unknown.no_classifier` grouped by source MFR. Build the classifiers with the highest unknown hit count first. Initial guess at order (refine with telemetry):
+
+1. **TDK** — CGA (AEC-Q200 automotive), C (commercial), CGJ (AEC-Q200 automotive high-CV), medical-spec CNC series
+2. **Samsung Electro-Mechanics** — CL (AEC-Q200 automotive), CIH (implantable medical)
+3. **Yageo** — AC (AEC-Q200 automotive), CC (commercial)
+4. **KEMET** — C0G/X7R automotive vs commercial split, mil-spec (MIL-PRF-55681)
+5. **AVX (now Kyocera AVX)** — Automotive X7R/NP0 series
+6. **Kyocera** — MLCC automotive series
+7. **Taiyo Yuden** — AMK (automotive), HMK (commercial)
+
+**Files:** add `lib/services/classifiers/<mfr>Mlcc.ts` per MFR, register in `lib/services/qualificationDomain.ts:getClassifiers()`. No schema change — classifiers implement the existing `MfrClassifier` interface.
+
+### Re-enable amber "unknown domain" chip once classifier coverage is high enough (Decision #155)
+
+Phase 1 ships the `unknown`-domain chip in suppressed state — classification is still computed (drives sort tiebreak + QC telemetry) but the badge is not rendered. Reason: with only the Murata MLCC classifier registered, most candidates in a typical search classify unknown, so the chip fires everywhere and users learn to ignore it. The label "Domain unknown — verify" was also too vague — users couldn't tell what domain or what to verify.
+
+**Re-enable criterion:** per-family classifier coverage ≥ ~50% non-unknown under the `automotive` context (query from `recommendation_log.snapshot.domainStats.unknown.*` grouped by family). Below that threshold the chip is noise; above it, the chip legitimately flags the minority of unclassified parts that need attention.
+
+**Also rewrite the copy** before re-enabling — "Domain unknown — verify" is jargon. Candidates: "AEC status unverified for this part" / "Not confirmed AEC-Q200" / "Verification pending" — whichever reads best in the actual UI.
+
+**Files:** single site — `domainBadge()` in [lib/services/qualificationDomain.ts](lib/services/qualificationDomain.ts) (currently returns `null` for the unknown branch).
+
+### Qualification-domain Phase 2 — mechanism extensions (Decision #155)
+
+After MFR coverage stabilizes, wire the remaining mechanism pieces:
+
+1. **Remaining rows of the exclusion matrix** — medical/industrial/mil_spec/space contexts. Matrix shape is already commented in `qualificationDomain.ts`; just needs `isDomainCompatible` + `contextExpectedDomains` extension as family context questions surface those environments.
+2. **Severity follow-up for automotive** — powertrain / safety-critical / infotainment / aftermarket. Refines which non-Q200 domains are tolerable as deviations (infotainment might accept commercial+warning; powertrain must not).
+3. **Other families** — B1–B9 (AEC-Q101), C1–C10 (AEC-Q100), D1–D2, E1 (AEC-Q101 for optos), F1–F2. Same mechanism, per-family MFR classifiers.
+4. **Per-query "strict AEC-Q200 only" user filter** — opt-in hard-mode that also excludes unknowns (makes Phase 1's ranking-tier behavior Option-2-like, as a user choice rather than system default).
+5. **Datasheet-extraction classifier fallback** — reuse Atlas `descriptionExtractor` pattern to infer domain from datasheet text when no MPN-prefix rule matches. Cost/benefit depends on Phase 2 telemetry.
+
+### Audit certified-cross bypass for safety-class filters (Decision #155)
+
+Decision #133 bypasses 13 post-scoring family filters for MFR-certified and Accuris-certified crosses, on the principle that a human certification outranks our inferred blocking-rule rejection. Decision #155's qualification-domain filter runs **before** that bypass, which is correct for cross-domain substitution — but the 13 family filters themselves mix two kinds of constraints:
+
+- **Safety-class** — e.g. F2 TRIAC-on-DC latch-up, C10 voltage/current output incompatibility, F1 AC/DC contact voltage, C7 protocol boundaries. These aren't preferences; they're physics. A certified cross that violates them is still unsafe.
+- **Compatibility/preference** — e.g. C5 logic-function codes, C6 series-vs-shunt architecture. Certified crosses might legitimately pin-swap across these when the vendor has done the qualification work.
+
+**Task:** audit each of the 13 filters in `lib/services/partDataService.ts` (C2, C4–C10, D1–D2, E1, F1–F2) and classify as safety-class or compatibility. Scope the certified-cross bypass to compatibility-only; safety-class filters should apply even to certified crosses. Likely requires splitting each `filter*Mismatches` into two predicates.
+
+### Request-session memoization for qualification-domain classification (Decision #155)
+
+`getRecommendations` currently memoizes classifier results per call in a `Map<mpn, DomainClassification>`. In batch parts-list validation, the same candidate MPNs frequently appear across source rows (e.g. the whole 0603/X7R/0.1 µF subspace dedups to a few dozen MFR series), so a session-scoped cache would avoid redundant classifier runs.
+
+Low priority — classifier cost is microseconds today since it's pure-function MPN-prefix matching. Revisit when we add datasheet-extraction classifiers (LLM round-trip) in Phase 2+.
+
+### ~~Wire Chinese-MFR aliases into hot lookup paths~~ COMPLETED
+
+Shipped Apr 2026 (Decision #148). New [lib/services/manufacturerAliasResolver.ts](../lib/services/manufacturerAliasResolver.ts) exposes `resolveManufacturerAlias()` + `getAllManufacturerVariants()` with a 5-min cache over `atlas_manufacturers` (`name_display`, `name_en`, `name_zh`, `aliases[]`). Client-safe wrapper `manufacturerAliasClient.ts` proxies through `POST /api/manufacturer-aliases/canonicalize`. Forward-compat contract (`source: 'atlas' | 'western'`, reserved `companyUid`/`lineage`) so the Western follow-on is purely additive.
+
+Wired into four hot paths: Atlas search (dual-query + dedup by id), BOM dedup pre-canonicalization in `usePartsListState`, AddPart mismatch suppression in `search-quick`, admin manufacturer aggregation (both list and per-slug products routes). Cache invalidated from the atlas/manufacturers toggle.
+
+**Deferred (not shipped):** matching-engine preferred-MFR `includes()` check (lower ROI), xref lookup (MPN-only today, no MFR filter), Digikey/parts.io alias expansion (those catalogs don't know Chinese aliases).
+
+### ~~Western MFR aliases — company-identity graph ingestion~~ COMPLETED
+
+Shipped Apr 2026 (Decision #149). New tables `manufacturer_companies` (25,861 rows, parent-chain graph, status enum) + `manufacturer_aliases` (8,543 rows, 15-context taxonomy). Resolver extended with parent-walk + `acquired_by`/`merged_into` alias chain, variants union from all descendants, per-resolve `lineage`, corporate/active canonical collision policy. Full context in [docs/DECISIONS.md](DECISIONS.md) Decision #149.
+
+### ~~BOM batch-validate MFR-aware match selection~~ COMPLETED
+
+Shipped Apr 2026 (Decision #150). Closes the last alias-wiring gap: `app/api/parts-list/validate/route.ts` now uses `pickMfrAwareMatch()` (in new `lib/services/mfrMatchPicker.ts`) to prefer a search candidate whose MFR canonically matches the user's input over blind `matches[0]`. Falls through to existing behavior on any ambiguity (blank input, unresolvable input, no canonical match among candidates). +8 tests.
+
+### ~~Admin alias editor — dedicated Aliases tab~~ COMPLETED
+
+Shipped Apr 2026 (Decision #152). New "Aliases" tab on `/admin/manufacturers/[slug]` (sibling of Products / Flagged / Coverage / Cross-Refs / Profile, shows alias count in the label). Fully editable — click × on any chip to remove, type into the "Add alias" field + Enter to add. Optimistic saves, rollback on PATCH failure, immediate resolver cache invalidation so edits take effect without waiting out the 5-min TTL. New `normalizeAliasInput()` helper in [app/api/admin/manufacturers/[slug]/route.ts](../app/api/admin/manufacturers/[slug]/route.ts) validates shape (array of strings), caps length (50 entries, 100 chars each), dedupes case-insensitively, trims whitespace. +10 validation tests. Atlas only — Western `manufacturer_companies` / `manufacturer_aliases` editor remains deferred.
+
 ### Phase 2: Deep-fetch for `suggestionBuckets` shortfall (Decision #146)
 
 Phase 1 shipped `maxSuggestions` (1–5) + `suggestionBuckets` multi-select as display-time filters over the persisted top-5 (`suggestedReplacement` + up to 4 `topNonFailingRecs`). If a row's persisted top-5 doesn't contain enough recs matching the user's selected buckets (e.g. user picks "5 Accuris-only" but the row's persisted set is 2 Accuris + 2 MFR + 1 Logic), the user sees fewer than max.
@@ -643,3 +747,14 @@ Heuristic detection of non-electronic parts from description text (e.g., "heatsi
 **Status:** Completed
 
 Master views now stored in Supabase `view_templates` table (user-scoped). localStorage templates migrated on first load. Future: expand to org-level sharing when company model is built.
+
+### ~~Matching-engine preferred-MFR filter should use alias resolver~~ COMPLETED
+
+Shipped Apr 2026 (Decision #151). `isPreferredManufacturer()` now accepts an optional `manufacturerSlugLookup: Map<string, string>` for canonical-slug comparison; `partDataService.getRecommendations()` pre-resolves preferred + candidate MFRs and passes the lookup in. Substring fallback preserved for non-resolving inputs. +5 tests in `matchingEngine.test.ts`.
+
+### Xref lookup could filter by manufacturer
+**Status:** Not started
+**Priority:** P2
+**File:** [lib/services/manufacturerCrossRefService.ts](../lib/services/manufacturerCrossRefService.ts)
+
+`fetchManufacturerCrossRefs()` today matches on MPN alone. If a customer ever uploads cross-refs with an `original_manufacturer` column + two different MFRs ship the same MPN string, we'd conflate them. Adding a `resolveManufacturerAlias()`-based filter would disambiguate. Not a current bug (xrefs aren't dense enough for collisions yet), just preemptive. Deferred from Decision #148.

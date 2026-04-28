@@ -10,6 +10,7 @@
 import { PartsListRow, BatchValidateItem, computeRecommendationCounts } from './types';
 import { validatePartsList } from './api';
 import { updatePartsListSupabase } from './supabasePartsListStorage';
+import { pickCheapestViableRecs } from './columnDefinitions';
 
 export type ValidationSubscriber = (
   rows: PartsListRow[],
@@ -148,7 +149,8 @@ export async function startBackgroundValidation(
               ...active.rows[idx],
               status: item.status,
               // Auto-classify as electronic when catalog validation resolves
-              ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
+              // (ambiguous still counts as an electronic-catalog hit — we found candidates)
+              ...(item.status === 'resolved' || item.status === 'ambiguous' ? { partType: 'electronic' as const } : {}),
               resolvedPart: item.resolvedPart,
               sourceAttributes: item.sourceAttributes,
               replacement: item.replacement,
@@ -159,6 +161,8 @@ export async function startBackgroundValidation(
               logicDrivenCount: counts.logicDrivenCount,
               mfrCertifiedCount: counts.mfrCertifiedCount,
               accurisCertifiedCount: counts.accurisCertifiedCount,
+              candidateMatches: item.candidateMatches,
+              cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
             };
           }
 

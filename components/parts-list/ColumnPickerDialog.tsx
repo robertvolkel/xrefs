@@ -35,7 +35,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import Tooltip from '@mui/material/Tooltip';
 import { useTranslation } from 'react-i18next';
-import { ColumnDefinition, GROUP_ORDER } from '@/lib/columnDefinitions';
+import { ColumnDefinition, GROUP_ORDER, getColumnDisplayLabel, SOURCE_SUFFIX } from '@/lib/columnDefinitions';
 import { SavedView } from '@/lib/viewConfigStorage';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import CalculatedFieldEditor from './CalculatedFieldEditor';
@@ -52,6 +52,9 @@ const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
 
 function SourceBadge({ dataSource }: { dataSource?: string }) {
   if (!dataSource || !SOURCE_LABELS[dataSource]) return null;
+  // Skip sources whose label already carries a (suffix) via getColumnDisplayLabel —
+  // avoids a redundant chip next to "Risk Rank (FC)" etc.
+  if (SOURCE_SUFFIX[dataSource]) return null;
   const { label, color } = SOURCE_LABELS[dataSource];
   return (
     <Chip
@@ -176,7 +179,7 @@ export default function ColumnPickerDialog({
     const filtered = new Map<string, ColumnDefinition[]>();
     for (const [group, cols] of grouped) {
       const matching = cols.filter(
-        c => c.label.toLowerCase().includes(lower) || group.toLowerCase().includes(lower),
+        c => getColumnDisplayLabel(c).toLowerCase().includes(lower) || group.toLowerCase().includes(lower),
       );
       if (matching.length > 0) filtered.set(group, matching);
     }
@@ -492,7 +495,7 @@ export default function ColumnPickerDialog({
                         <ListItemText
                           primary={
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                              <span>{col.label}</span>
+                              <span>{getColumnDisplayLabel(col)}</span>
                               <SourceBadge dataSource={col.dataSource} />
                               <PortableBadge colId={col.id} viewScope={viewScope} columnMeta={initialView?.columnMeta} />
                             </Box>
@@ -565,7 +568,7 @@ export default function ColumnPickerDialog({
                     <ListItemText
                       primary={
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <span>{col.label || t('columnPicker.actionColumn')}</span>
+                          <span>{getColumnDisplayLabel(col) || t('columnPicker.actionColumn')}</span>
                           <SourceBadge dataSource={col.dataSource} />
                           <PortableBadge colId={col.id} viewScope={viewScope} columnMeta={initialView?.columnMeta} />
                         </Box>

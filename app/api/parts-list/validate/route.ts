@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/supabase/auth-guard';
 import { buildEnrichedData } from '@/lib/services/enrichedDataBuilder';
 import { logRecommendation } from '@/lib/services/recommendationLogger';
 import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
+import { pickMfrAwareMatch } from '@/lib/services/mfrMatchPicker';
 
 const CONCURRENCY = 5;
 
@@ -25,6 +26,7 @@ async function processItem(
 
     let resolvedPart: PartSummary;
     let prefetchedAttributes: PartAttributes | undefined;
+    let candidateMatches: PartSummary[] | undefined;
 
     if (item.skipSearch) {
       // MPN already confirmed via search picker — skip straight to attributes.
@@ -56,14 +58,32 @@ async function processItem(
         };
         prefetchedAttributes = directAttrs;
       } else {
-        resolvedPart = searchResult.matches[0];
+        // Alias-aware pick: prefer the candidate whose MFR canonically matches
+        // the user's input MFR when multiple candidates exist. Falls back to
+        // matches[0] when the input MFR doesn't resolve or no candidate MFR
+        // resolves to the same canonical.
+        resolvedPart = await pickMfrAwareMatch(searchResult.matches, item.manufacturer);
+        // Flag ambiguity when multiple matches exist and the top hit isn't an
+        // exact MPN match (case-insensitive). The user sees candidates to pick from.
+        if (searchResult.matches.length > 1) {
+          const inputMpn = item.mpn.trim().toLowerCase();
+          const topMpn = resolvedPart.mpn.trim().toLowerCase();
+          if (!inputMpn || inputMpn !== topMpn) {
+            candidateMatches = searchResult.matches.slice(0, 5);
+          }
+        }
       }
     }
 
     // Step 2: Get attributes
     const sourceAttributes = prefetchedAttributes ?? await getAttributes(resolvedPart.mpn, currency, userId, { skipFindchips: true });
     if (!sourceAttributes) {
-      return { rowIndex: item.rowIndex, status: 'resolved', resolvedPart };
+      return {
+        rowIndex: item.rowIndex,
+        status: candidateMatches ? 'ambiguous' : 'resolved',
+        resolvedPart,
+        candidateMatches,
+      };
     }
 
     // When search was skipped, backfill resolvedPart from attributes
@@ -103,6 +123,7 @@ async function processItem(
         snapshot: {
           sourceAttributes: recResult.sourceAttributes,
           recommendations: recs,
+          domainStats: recResult.domainStats,
         },
       });
     }
@@ -112,12 +133,13 @@ async function processItem(
 
     return {
       rowIndex: item.rowIndex,
-      status: 'resolved',
+      status: candidateMatches ? 'ambiguous' : 'resolved',
       resolvedPart,
       sourceAttributes,
       replacement,
       allRecommendations: recs,
       enrichedData,
+      candidateMatches,
     };
   } catch (error) {
     return {

@@ -25,6 +25,10 @@ interface PartDetailModalProps {
   selectedRec: XrefRecommendation | null;
   comparisonAttrs: PartAttributes | null;
   isComparing: boolean;
+  /** True while the opener's initial attributes/recs fetch is in flight.
+   *  Drives the RecommendationsPanel loading overlay so the right pane doesn't
+   *  read as "1 match found + blank space" before the full recs list lands. */
+  initialFetching?: boolean;
   onClose: () => void;
   onSelectRec: (rec: XrefRecommendation) => void;
   onBackToRecs: () => void;
@@ -44,6 +48,7 @@ export default function PartDetailModal({
   selectedRec,
   comparisonAttrs,
   isComparing,
+  initialFetching,
   onClose,
   onSelectRec,
   onBackToRecs,
@@ -60,7 +65,10 @@ export default function PartDetailModal({
 
   if (!row) return null;
 
-  const recs = row.allRecommendations ?? (row.replacement ? [row.replacement] : []);
+  const seeded = row.replacement
+    ? [row.replacement, ...(row.replacementAlternates ?? [])]
+    : [];
+  const recs = row.allRecommendations ?? seeded;
   const title = row.resolvedPart
     ? `${row.resolvedPart.mpn} — ${row.resolvedPart.manufacturer}`
     : row.rawMpn;
@@ -99,10 +107,11 @@ export default function PartDetailModal({
             <RecommendationsPanel
               recommendations={recs}
               onSelect={onSelectRec}
-              loading={recsLoading}
+              loading={recsLoading || !!initialFetching}
               preferredMpn={preferredMpn}
               onTogglePreferred={onTogglePreferred}
               hideZeroStock={hideZeroStock}
+              compactHeader
             />
           </Box>
         )}

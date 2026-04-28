@@ -50,6 +50,19 @@ export const interfaceICsLogicTable: LogicTable = {
       blockOnMissing: true,
       engineeringReason: 'Protocol must match exactly. RS-485, CAN, I2C, and USB transceivers use fundamentally different signaling standards, bus arbitration mechanisms, and termination strategies. No cross-protocol substitution is possible without redesigning the interface circuit. Post-scoring filter removes confirmed protocol mismatches.',
       sortOrder: 1,
+      valueAliases: [
+        [
+          'RS-232', 'RS232', 'EIA-232', 'EIA-232-E', 'EIA-232-F', 'TIA-232',
+          'TIA-232-E', 'TIA-232-F', 'V.28',
+          'EIA-232-F; TIA-232-F; V.28', 'EIA-232-E; TIA-232-E; V.28',
+          'EIA-232; TIA-232; V.28', 'EIA-232-F; V.28', 'EIA-232-E; TIA-232-E',
+        ],
+        ['RS-485', 'RS485', 'EIA-485', 'TIA-485'],
+        ['RS-422', 'RS422', 'EIA-422', 'TIA-422'],
+        ['I²C', 'I2C', 'IIC', 'Inter-Integrated Circuit'],
+        ['CAN', 'CAN Bus', 'Controller Area Network'],
+        ['CAN FD', 'CAN-FD', 'CAN Flexible Data-Rate'],
+      ],
     },
     {
       attributeId: 'operating_mode',

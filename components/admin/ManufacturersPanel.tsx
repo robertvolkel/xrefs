@@ -20,6 +20,7 @@ import {
   Typography,
   Chip,
   Switch,
+  Skeleton,
   InputAdornment,
 } from '@mui/material';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
@@ -237,9 +238,7 @@ export default function ManufacturersPanel() {
               Stats unavailable: {fetchError}
             </Alert>
           ) : !data ? (
-            <Typography variant="body2" color="text.secondary">
-              {t('common.loading')}
-            </Typography>
+            <ManufacturersPanelSkeleton />
           ) : (
             <Box>
               {(() => {
@@ -454,6 +453,68 @@ export default function ManufacturersPanel() {
       {activeTab === 1 && <AtlasExplorerTab />}
 
       {activeTab === 2 && <FlaggedProductsTab />}
+    </Box>
+  );
+}
+
+function ManufacturersPanelSkeleton() {
+  return (
+    <Box>
+      {/* Summary + action buttons row */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
+        <Skeleton variant="text" width={460} height={20} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+          <Skeleton variant="text" width={110} height={16} />
+          <Skeleton variant="rounded" width={140} height={30} />
+          <Skeleton variant="rounded" width={105} height={30} />
+        </Box>
+      </Box>
+
+      {/* Search field */}
+      <Skeleton variant="rounded" width={320} height={40} sx={{ mb: 2 }} />
+
+      {/* Table */}
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              {['Manufacturer', 'Products', 'Scorable', 'Coverage', 'MFR Crosses', 'Families', 'Last Modified', 'Enabled'].map((col) => (
+                <TableCell
+                  key={col}
+                  align={['Products', 'Scorable', 'Coverage', 'MFR Crosses'].includes(col) ? 'right' : col === 'Enabled' ? 'center' : 'left'}
+                >
+                  <Skeleton variant="text" width={col === 'Manufacturer' || col === 'Last Modified' ? 100 : 70} height={18} />
+                </TableCell>
+              ))}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {Array.from({ length: 12 }).map((_, i) => (
+              <TableRow key={i}>
+                <TableCell>
+                  <Skeleton variant="text" width={160} height={18} />
+                  <Skeleton variant="text" width={110} height={14} />
+                </TableCell>
+                <TableCell align="right"><Skeleton variant="text" width={50} sx={{ ml: 'auto' }} /></TableCell>
+                <TableCell align="right"><Skeleton variant="text" width={50} sx={{ ml: 'auto' }} /></TableCell>
+                <TableCell align="right"><Skeleton variant="text" width={40} sx={{ ml: 'auto' }} /></TableCell>
+                <TableCell align="right"><Skeleton variant="text" width={40} sx={{ ml: 'auto' }} /></TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                    {Array.from({ length: (i % 3) + 1 }).map((_, j) => (
+                      <Skeleton key={j} variant="rounded" width={36} height={22} />
+                    ))}
+                  </Box>
+                </TableCell>
+                <TableCell><Skeleton variant="text" width={80} /></TableCell>
+                <TableCell align="center" sx={{ width: 60 }}>
+                  <Skeleton variant="rounded" width={30} height={18} sx={{ mx: 'auto' }} />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </Box>
   );
 }

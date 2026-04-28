@@ -87,10 +87,17 @@ export const mlccContext: FamilyContextConfig = {
         {
           value: 'automotive',
           label: 'Automotive',
-          description: 'AEC-Q200 qualification becomes mandatory',
-          attributeEffects: [
-            { attributeId: 'aec_q200', effect: 'escalate_to_mandatory', note: 'Automotive application — AEC-Q200 qualification is required' },
-          ],
+          description: 'AEC-Q200 qualification required',
+          // No attributeEffects. The `aec_q200` rule stays at its base weight —
+          // enforcement now lives in the qualification-domain filter
+          // (Decision #155), which hard-excludes medical/mil-spec/space
+          // candidates and flags commercial/industrial as deviations. The
+          // legacy `escalate_to_mandatory` on aec_q200 was a near-noop once
+          // domain became the real mechanism (bumping 8→10 only shifted the
+          // denominator when both source and candidate had AEC data — doesn't
+          // change pass/fail), so it was removed to keep a single clear
+          // enforcement path.
+          attributeEffects: [],
         },
         {
           value: 'industrial',

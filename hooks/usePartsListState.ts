@@ -18,7 +18,9 @@ import { parseSpreadsheetFile, autoDetectColumns } from '@/lib/excelParser';
 import { getPartAttributes, getRecommendations, validatePartsList, enrichWithFCBatch, backfillListCounts } from '@/lib/api';
 import { PartsListSummary } from '@/lib/partsListStorage';
 import { ViewState } from '@/lib/viewConfigStorage';
+import { pickCheapestViableRecs } from '@/lib/columnDefinitions';
 import { findDuplicateGroups, consolidateDuplicates } from '@/lib/services/bomDeduper';
+import { canonicalizeRowManufacturers } from '@/lib/services/manufacturerAliasClient';
 import {
   getSavedListsSupabase,
   savePartsListSupabase,
@@ -51,6 +53,10 @@ interface PartsListState {
   modalSelectedRec: XrefRecommendation | null;
   modalComparisonAttrs: PartAttributes | null;
   modalComparing: boolean;
+  /** True while handleOpenModal's initial attributes/recs fetch is in flight.
+   *  Drives the RecommendationsPanel loading overlay inside PartDetailModal so
+   *  the modal doesn't read as "1 match found + blank space" before data lands. */
+  modalInitialFetching: boolean;
   error: string | null;
   /** ID of the currently active saved list (null if unsaved) */
   activeListId: string | null;
@@ -94,6 +100,7 @@ const INITIAL_STATE: PartsListState = {
   modalSelectedRec: null,
   modalComparisonAttrs: null,
   modalComparing: false,
+  modalInitialFetching: false,
   error: null,
   activeListId: null,
   listName: null,
@@ -131,6 +138,24 @@ export function usePartsListState() {
   // Retain the uploaded File so we can re-parse a different sheet from the
   // column-mapping dialog without re-prompting the user.
   const pendingFileRef = useRef<File | null>(null);
+
+  // Row-identity picker state — drives the shared AddPartDialog in 'replace' mode.
+  // Populated on MPN cell edit (cancel reverts) or on ambiguous status chip click.
+  const [pickerState, setPickerState] = useState<{
+    rowIndex: number;
+    mpn: string;
+    manufacturer: string;
+    candidates?: PartSummary[];
+    /** Snapshot captured on cell-edit open so cancel can revert the unsaved edit.
+     *  Absent when picker was opened from the ambiguous chip (no revert needed). */
+    revertSnapshot?: { rawCells: string[]; rawMpn: string };
+  } | null>(null);
+
+  // Scope of the most recent validation run. PartsListShell reads this to
+  // decide whether to show list-level summary notifications ("N parts could
+  // not be found") — those make sense after a full-list validation but are
+  // misleading after a single-row refresh (e.g. picker confirmation).
+  const lastValidationScopeRef = useRef<'full' | 'partial'>('full');
 
   // Load saved lists on mount
   useEffect(() => {
@@ -287,8 +312,10 @@ export function usePartsListState() {
         activeListIdRef.current = listId;
         setState(prev => ({ ...prev, activeListId: listId }));
       }
+      lastValidationScopeRef.current = 'full';
       startBackgroundValidation(listId || '', rows, listCurrencyRef.current);
     } catch {
+      lastValidationScopeRef.current = 'full';
       startBackgroundValidation('', rows, listCurrencyRef.current);
     }
   }, []);
@@ -316,6 +343,9 @@ export function usePartsListState() {
         ...(mapping.qtyColumn != null && mapping.qtyColumn >= 0
           ? { rawQty: row[mapping.qtyColumn] ?? '' }
           : {}),
+        ...(mapping.unitCostColumn != null && mapping.unitCostColumn >= 0
+          ? { rawUnitCost: row[mapping.unitCostColumn] ?? '' }
+          : {}),
         rawCells: row,
         status: 'pending' as const,
       }));
@@ -335,6 +365,16 @@ export function usePartsListState() {
     if (validRows.length === 0) {
       setState(prev => ({ ...prev, phase: 'validating' }));
       return;
+    }
+
+    // Canonicalize manufacturer names against atlas_manufacturers aliases BEFORE
+    // duplicate detection. Rows under "GD", "GigaDevice", and "兆易创新" collapse
+    // to one `name_display` so findDuplicateGroups groups them. Unresolved names
+    // pass through unchanged. Failure (auth, network) is non-blocking.
+    const canonicalized = await canonicalizeRowManufacturers(validRows);
+    if (canonicalized !== validRows) {
+      validRows = canonicalized;
+      setState(prev => ({ ...prev, rows: validRows }));
     }
 
     // Scan for duplicate MPN+MFR pairs before saving. If any are found, park
@@ -503,7 +543,7 @@ export function usePartsListState() {
     // Cache-only backfill of per-bucket counts for rows saved before those fields
     // existed. Zero live-API cost — server reads from L2 recs cache only.
     const needsBackfill = loaded.rows.some(
-      r => r.status === 'resolved'
+      r => (r.status === 'resolved' || r.status === 'ambiguous')
         && (r.recommendationCount ?? 0) > 0
         && r.logicDrivenCount === undefined
         && r.mfrCertifiedCount === undefined
@@ -594,15 +634,18 @@ export function usePartsListState() {
   // ----------------------------------------------------------
 
   const handleOpenModal = useCallback(async (rowIndex: number) => {
+    const currentRow = state.rows.find(r => r.rowIndex === rowIndex);
+    const willFetch = !!currentRow?.resolvedPart && (!currentRow.sourceAttributes || !currentRow.allRecommendations);
+
     setState(prev => ({
       ...prev,
       modalRowIndex: rowIndex,
       modalSelectedRec: null,
       modalComparisonAttrs: null,
       modalComparing: false,
+      modalInitialFetching: willFetch,
     }));
 
-    const currentRow = state.rows.find(r => r.rowIndex === rowIndex);
     if (!currentRow?.resolvedPart) return;
 
     const mpn = currentRow.resolvedPart.mpn;
@@ -639,6 +682,7 @@ export function usePartsListState() {
             logicDrivenCount: recCounts.logicDrivenCount,
             mfrCertifiedCount: recCounts.mfrCertifiedCount,
             accurisCertifiedCount: recCounts.accurisCertifiedCount,
+            cheapestViableRecs: pickCheapestViableRecs(recs),
           } : {}),
         };
       }
@@ -651,7 +695,7 @@ export function usePartsListState() {
         });
       }
 
-      return { ...prev, rows: newRows };
+      return { ...prev, rows: newRows, modalInitialFetching: false };
     });
   }, [state.rows]);
 
@@ -662,6 +706,7 @@ export function usePartsListState() {
       modalSelectedRec: null,
       modalComparisonAttrs: null,
       modalComparing: false,
+      modalInitialFetching: false,
     }));
   }, []);
 
@@ -831,18 +876,34 @@ export function usePartsListState() {
   // Refresh selected rows (re-validate)
   // ----------------------------------------------------------
 
-  const handleRefreshRows = useCallback(async (rowIndices: number[]) => {
+  const handleRefreshRows = useCallback(async (
+    rowIndices: number[],
+    options?: {
+      skipSearch?: boolean;
+      /** Per-row overrides for the validate request — used when the caller has
+       *  already mutated row identity (e.g. picker confirmed a new PartSummary)
+       *  and can't rely on the closure's stale state.rows snapshot. */
+      itemOverrides?: Record<number, { mpn?: string; manufacturer?: string; description?: string }>;
+    },
+  ) => {
     if (rowIndices.length === 0) return;
     const indexSet = new Set(rowIndices);
+    const skipSearch = options?.skipSearch ?? false;
+    const itemOverrides = options?.itemOverrides ?? {};
+    // A refresh covering every row counts as full-list (Refresh All button);
+    // anything smaller is treated as a per-row refresh and suppresses the
+    // list-level summary snackbar.
+    lastValidationScopeRef.current = rowIndices.length >= state.rows.length ? 'full' : 'partial';
 
-    // Reset selected rows to pending
+    // Reset selected rows to pending (also clear any stale candidateMatches
+    // so the ambiguous chip disappears while re-validating)
     setState(prev => ({
       ...prev,
       phase: 'validating',
       error: null,
       rows: prev.rows.map(r =>
         indexSet.has(r.rowIndex)
-          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, replacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined /* preferredMpn deliberately preserved */ }
+          ? { ...r, status: 'pending' as const, resolvedPart: undefined, sourceAttributes: undefined, replacement: undefined, allRecommendations: undefined, enrichedData: undefined, errorMessage: undefined, candidateMatches: undefined /* preferredMpn deliberately preserved */ }
           : r,
       ),
     }));
@@ -851,11 +912,13 @@ export function usePartsListState() {
     const items = rowIndices.map(idx => {
       // Read from current state via a synchronous snapshot
       const row = state.rows.find(r => r.rowIndex === idx);
+      const override = itemOverrides[idx] ?? {};
       return {
         rowIndex: idx,
-        mpn: row?.rawMpn ?? '',
-        manufacturer: row?.rawManufacturer || undefined,
-        description: row?.rawDescription || undefined,
+        mpn: override.mpn ?? row?.rawMpn ?? '',
+        manufacturer: override.manufacturer ?? (row?.rawManufacturer || undefined),
+        description: override.description ?? (row?.rawDescription || undefined),
+        skipSearch,
       };
     });
 
@@ -917,7 +980,8 @@ export function usePartsListState() {
                   ...existingRow,
                   status: item.status,
                   // Auto-classify as electronic when catalog validation resolves
-                  ...(item.status === 'resolved' ? { partType: 'electronic' as const } : {}),
+                  // (ambiguous counts — we got candidates back from the catalog)
+                  ...(item.status === 'resolved' || item.status === 'ambiguous' ? { partType: 'electronic' as const } : {}),
                   resolvedPart: item.resolvedPart,
                   sourceAttributes: item.sourceAttributes,
                   replacement,
@@ -925,6 +989,8 @@ export function usePartsListState() {
                   enrichedData: item.enrichedData,
                   errorMessage: item.errorMessage,
                   preferredMpn,
+                  candidateMatches: item.candidateMatches,
+                  cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
                 };
               }
               const pending = newRows.filter(r => indexSet.has(r.rowIndex) && r.status === 'pending').length;
@@ -1173,6 +1239,7 @@ export function usePartsListState() {
     }
 
     // Phase 2: Full validation in background (fire-and-forget — dialog closes immediately)
+    lastValidationScopeRef.current = 'partial';
     (async () => {
       try {
         // Create abort controller for this single-part validation
@@ -1226,6 +1293,8 @@ export function usePartsListState() {
                     logicDrivenCount: streamCounts.logicDrivenCount,
                     mfrCertifiedCount: streamCounts.mfrCertifiedCount,
                     accurisCertifiedCount: streamCounts.accurisCertifiedCount,
+                    candidateMatches: item.candidateMatches,
+                    cheapestViableRecs: pickCheapestViableRecs(item.allRecommendations),
                   };
                 }
                 return { ...prev, rows: newRows, phase: 'results', lastRefreshedAt: new Date() };
@@ -1269,9 +1338,66 @@ export function usePartsListState() {
     if (!match) return;
     const ssIndex = Number(match[1]);
 
-    const mapping = state.columnMapping;
+    // Prefer the persisted column mapping, but fall back to row-data inference
+    // for lists saved before column mapping was persisted (mirrors the same
+    // inference that useColumnCatalog performs for the table).
+    let mapping = state.columnMapping;
+    if (!mapping) {
+      const sample = state.rows.find(r => r.rawMpn && r.rawCells?.length);
+      if (sample) {
+        mapping = {
+          mpnColumn: sample.rawCells.findIndex(c => c === sample.rawMpn),
+          manufacturerColumn: sample.rawManufacturer
+            ? sample.rawCells.findIndex(c => c === sample.rawManufacturer)
+            : -1,
+          descriptionColumn: sample.rawCells.findIndex(c => c === sample.rawDescription),
+        };
+      }
+    }
     const isMpnColumn = mapping && ssIndex === mapping.mpnColumn;
     const isMfrColumn = mapping && ssIndex === mapping.manufacturerColumn;
+
+    // MPN edits open the row-identity picker instead of running a silent
+    // background re-validation. The picker forces the user to explicitly
+    // confirm a catalog match so MFR/description don't drift out of sync
+    // with the new MPN. Cancel reverts the cell (edit is not persisted yet).
+    // Always opens — even when the value is unchanged — so pressing Enter on
+    // a Not Found row is a valid "retry this MPN" gesture.
+    if (isMpnColumn) {
+      const trimmed = newValue.trim();
+      const rowSnapshot = state.rows.find(r => r.rowIndex === rowIndex);
+      if (!rowSnapshot) return;
+      const previousCells = [...(rowSnapshot.rawCells ?? [])];
+      const previousMpn = rowSnapshot.rawMpn ?? '';
+      const valueChanged = trimmed !== previousMpn.trim();
+
+      // Only mutate the cell locally if the user actually typed a new value.
+      // Still open the picker in both cases.
+      if (valueChanged) {
+        setState(prev => {
+          const idx = prev.rows.findIndex(r => r.rowIndex === rowIndex);
+          if (idx < 0) return prev;
+          const nextCells = [...(prev.rows[idx].rawCells ?? [])];
+          nextCells[ssIndex] = newValue;
+          const newRows = [...prev.rows];
+          newRows[idx] = { ...prev.rows[idx], rawCells: nextCells, rawMpn: newValue };
+          return { ...prev, rows: newRows };
+        });
+      }
+
+      setPickerState({
+        rowIndex,
+        mpn: trimmed,
+        manufacturer: rowSnapshot.rawManufacturer ?? '',
+        // Only capture a revert snapshot when the cell was actually modified —
+        // no-op Enter shouldn't revert anything on cancel.
+        revertSnapshot: valueChanged ? { rawCells: previousCells, rawMpn: previousMpn } : undefined,
+      });
+
+      // Clear any stale MFR-edit debounce scheduled before this MPN edit.
+      if (cellEditTimerRef.current) clearTimeout(cellEditTimerRef.current);
+      return;
+    }
 
     setState(prev => {
       const newRows = [...prev.rows];
@@ -1283,7 +1409,6 @@ export function usePartsListState() {
       rawCells[ssIndex] = newValue;
       row.rawCells = rawCells;
 
-      if (isMpnColumn) row.rawMpn = newValue;
       if (isMfrColumn) row.rawManufacturer = newValue;
 
       newRows[idx] = row;
@@ -1299,14 +1424,116 @@ export function usePartsListState() {
       });
     }
 
-    // If MPN or MFR changed, debounce re-validation
-    if (isMpnColumn || isMfrColumn) {
+    // MFR edits keep the existing silent debounced revalidation — MFR alone
+    // doesn't change row identity, so a background refresh is safe.
+    if (isMfrColumn) {
       if (cellEditTimerRef.current) clearTimeout(cellEditTimerRef.current);
       cellEditTimerRef.current = setTimeout(() => {
         handleRefreshRows([rowIndex]);
       }, 500);
     }
+  }, [state.columnMapping, state.rows, handleRefreshRows]);
+
+  // ----------------------------------------------------------
+  // Row-identity picker (MPN edit + ambiguous row disambiguation)
+  // ----------------------------------------------------------
+
+  /** Commit a user-picked PartSummary to a row: overwrite identity cells,
+   *  clear stale match data, persist, and kick off a skipSearch revalidation. */
+  const handleReplaceRowIdentity = useCallback((rowIndex: number, picked: PartSummary) => {
+    const mapping = state.columnMapping;
+    const pickedMpn = picked.mpn ?? '';
+    const pickedMfr = picked.manufacturer ?? '';
+    const pickedDesc = picked.description ?? '';
+
+    setState(prev => {
+      const idx = prev.rows.findIndex(r => r.rowIndex === rowIndex);
+      if (idx < 0) return prev;
+      const row = prev.rows[idx];
+      const nextCells = [...(row.rawCells ?? [])];
+
+      if (mapping) {
+        if (mapping.mpnColumn >= 0) nextCells[mapping.mpnColumn] = pickedMpn;
+        if (mapping.manufacturerColumn >= 0) nextCells[mapping.manufacturerColumn] = pickedMfr;
+        if (mapping.descriptionColumn >= 0) nextCells[mapping.descriptionColumn] = pickedDesc;
+      }
+
+      const newRows = [...prev.rows];
+      newRows[idx] = {
+        ...row,
+        rawMpn: pickedMpn,
+        rawManufacturer: pickedMfr,
+        rawDescription: pickedDesc,
+        rawCells: nextCells,
+        status: 'pending' as const,
+        candidateMatches: undefined,
+        // Clear prior match data so the UI doesn't render stale attrs during revalidation
+        resolvedPart: undefined,
+        sourceAttributes: undefined,
+        replacement: undefined,
+        replacementAlternates: undefined,
+        allRecommendations: undefined,
+        enrichedData: undefined,
+        errorMessage: undefined,
+        recommendationCount: undefined,
+        logicDrivenCount: undefined,
+        mfrCertifiedCount: undefined,
+        accurisCertifiedCount: undefined,
+      };
+      return { ...prev, rows: newRows };
+    });
+
+    setPickerState(null);
+
+    const listId = activeListIdRef.current;
+    if (listId) {
+      setState(prev => {
+        updatePartsListSupabase(listId, prev.rows).catch(() => {});
+        return prev;
+      });
+    }
+
+    // We already have a verified catalog identity — skip search, go straight to
+    // getAttributes + recommendations. Pass itemOverrides so the refresh closure
+    // doesn't read a stale rawMpn snapshot before the setState above commits.
+    handleRefreshRows([rowIndex], {
+      skipSearch: true,
+      itemOverrides: { [rowIndex]: { mpn: pickedMpn, manufacturer: pickedMfr, description: pickedDesc } },
+    });
   }, [state.columnMapping, handleRefreshRows]);
+
+  /** Open the picker for an ambiguous row (status='ambiguous') without any
+   *  revert snapshot — the row's current identity stays put if the user cancels. */
+  const handleOpenAmbiguousPicker = useCallback((rowIndex: number) => {
+    const row = state.rows.find(r => r.rowIndex === rowIndex);
+    if (!row) return;
+    setPickerState({
+      rowIndex,
+      mpn: row.rawMpn ?? '',
+      manufacturer: row.rawManufacturer ?? '',
+      candidates: row.candidateMatches,
+    });
+  }, [state.rows]);
+
+  /** Close the picker. If it was opened from an MPN cell edit, revert the
+   *  unsaved cell mutation so the row remains consistent with the original data. */
+  const handlePickerCancel = useCallback(() => {
+    setPickerState(ps => {
+      if (!ps) return null;
+      if (ps.revertSnapshot) {
+        const { rawCells, rawMpn } = ps.revertSnapshot;
+        const rowIndex = ps.rowIndex;
+        setState(prev => {
+          const idx = prev.rows.findIndex(r => r.rowIndex === rowIndex);
+          if (idx < 0) return prev;
+          const newRows = [...prev.rows];
+          newRows[idx] = { ...prev.rows[idx], rawCells: [...rawCells], rawMpn };
+          return { ...prev, rows: newRows };
+        });
+      }
+      return null;
+    });
+  }, []);
 
   // ----------------------------------------------------------
   // Reset
@@ -1351,7 +1578,10 @@ export function usePartsListState() {
     const rowsWithSourceNeed = new Set<number>();
     const rowsWithRecNeed = new Set<number>();
     for (const r of state.rows) {
-      if (r.status !== 'resolved') continue;
+      // Ambiguous rows still render with a top-match snapshot (MFR/Repl. Price /
+      // Repl. Stock columns need FC enrichment to populate). Skip only rows that
+      // genuinely have nothing to enrich.
+      if (r.status !== 'resolved' && r.status !== 'ambiguous') continue;
       if (r.enrichedData && r.resolvedPart?.mpn && !r.enrichedData.supplierQuotes?.length) {
         mpnsToEnrich.add(r.resolvedPart.mpn);
         rowsWithSourceNeed.add(r.rowIndex);
@@ -1734,5 +1964,13 @@ export function usePartsListState() {
     handleCancelValidation,
     handleRetryFCEnrichment,
     getFCEnrichResult,
+    // Row-identity picker
+    pickerState,
+    handleReplaceRowIdentity,
+    handleOpenAmbiguousPicker,
+    handlePickerCancel,
+    /** Returns the scope of the most recent validation run. PartsListShell uses
+     *  this to suppress list-level summary snackbars after per-row refreshes. */
+    getLastValidationScope: () => lastValidationScopeRef.current,
   };
 }

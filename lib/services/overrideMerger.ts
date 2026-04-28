@@ -31,6 +31,7 @@ interface RuleOverrideRow {
   upgrade_hierarchy: string[] | null;
   block_on_missing: boolean | null;
   tolerance_percent: number | null;
+  value_aliases: string[][] | null;
   engineering_reason: string | null;
   attribute_name: string | null;
   sort_order: number | null;
@@ -163,6 +164,7 @@ export async function applyRuleOverrides(baseTable: LogicTable): Promise<LogicTa
     if (ov.upgrade_hierarchy !== null) rule.upgradeHierarchy = ov.upgrade_hierarchy;
     if (ov.block_on_missing !== null) rule.blockOnMissing = ov.block_on_missing;
     if (ov.tolerance_percent !== null) rule.tolerancePercent = ov.tolerance_percent;
+    if (ov.value_aliases !== null) rule.valueAliases = ov.value_aliases;
     if (ov.engineering_reason !== null) rule.engineeringReason = ov.engineering_reason;
     if (ov.attribute_name !== null) rule.attributeName = ov.attribute_name;
     if (ov.sort_order !== null) rule.sortOrder = ov.sort_order;
@@ -185,6 +187,7 @@ export async function applyRuleOverrides(baseTable: LogicTable): Promise<LogicTa
         ...(a.upgrade_hierarchy ? { upgradeHierarchy: a.upgrade_hierarchy } : {}),
         ...(a.block_on_missing != null ? { blockOnMissing: a.block_on_missing } : {}),
         ...(a.tolerance_percent != null ? { tolerancePercent: a.tolerance_percent } : {}),
+        ...(a.value_aliases ? { valueAliases: a.value_aliases } : {}),
       });
     }
   }
@@ -200,6 +203,9 @@ export async function applyRuleOverrides(baseTable: LogicTable): Promise<LogicTa
     }
     if (rule.logicType !== 'identity') {
       delete (rule as Partial<MatchingRule>).tolerancePercent;
+    }
+    if (rule.logicType !== 'identity' && rule.logicType !== 'identity_upgrade') {
+      delete (rule as Partial<MatchingRule>).valueAliases;
     }
   }
 

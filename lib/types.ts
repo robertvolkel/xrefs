@@ -33,6 +33,49 @@ export interface Part {
   supplierQuotes?: SupplierQuote[];
   lifecycleInfo?: LifecycleInfo[];
   complianceData?: ComplianceData[];
+  // Qualification-domain classification (Decision #155 — Phase 1: Murata MLCCs).
+  // Populated during getRecommendations() for source + every candidate so the
+  // matching engine can apply the cross-domain exclusion matrix and the UI can
+  // render the appropriate domain badge.
+  qualificationDomain?: DomainClassification;
+  /** Manufacturer identity origin from the alias resolver. Drives the country
+   *  flag badge on the source-attributes panel and recommendation cards
+   *  regardless of which dataset the attributes came from. Decision #161. */
+  mfrOrigin?: 'atlas' | 'western' | 'unknown';
+}
+
+/** High-level reliability/qualification category a part is designed and sold for.
+ *  This is categorical — cross-domain substitution (e.g. automotive ↔ medical_implant)
+ *  is unsafe even when a vendor's FFF table says the parts are electrically equivalent.
+ *  Decision #155. */
+export type QualificationDomain =
+  | 'automotive_q200'   // AEC-Q200 passives
+  | 'automotive_q100'   // AEC-Q100 ICs (Phase 2+ — reserved in type)
+  | 'automotive_q101'   // AEC-Q101 discretes (Phase 2+ — reserved in type)
+  | 'industrial_harsh'  // wide-temp industrial, sulfur-exposed
+  | 'commercial'        // general-purpose / consumer
+  | 'medical_implant'   // GHTF Class D implantable (e.g. Murata GCH)
+  | 'medical_general'   // non-implant medical
+  | 'mil_spec'          // MIL-PRF / MIL-STD
+  | 'space'             // space / rad-hard
+  | 'unknown';          // no classifier signal — NOT "probably commercial"
+
+/** Why a classification landed on `unknown`. Drives UI copy and telemetry splits:
+ *  these three reasons map to different Phase 2 workstreams (MFR coverage vs
+ *  classifier quality vs upstream data completeness) and must be distinguishable. */
+export type UnknownReason =
+  | 'no_classifier'     // no classifier registered for the part's MFR
+  | 'ambiguous_series'  // classifier ran but couldn't decide
+  | 'no_signal';        // classifier ran, no applicable data
+
+export interface DomainClassification {
+  domain: QualificationDomain;
+  confidence: 'high' | 'medium' | 'low';
+  source: 'mpn_prefix' | 'attribute_flag' | 'datasheet_extract' | 'series_metadata';
+  /** Populated only when domain === 'unknown'. */
+  reason?: UnknownReason;
+  /** Human-readable provenance, e.g. "Murata GCH series — GHTF Class D". */
+  evidence?: string;
 }
 
 export type PartStatus = 'Active' | 'Obsolete' | 'Discontinued' | 'NRND' | 'LastTimeBuy';
@@ -149,6 +192,36 @@ export function computeRecommendationCounts(recs: XrefRecommendation[] | undefin
   return out;
 }
 
+/** True for human-verified crosses (MFR upload or Accuris parts.io). These
+ *  bypass post-scoring filters because explicit certification outranks any
+ *  inferred rejection. */
+export function isCertifiedCross(rec: XrefRecommendation): boolean {
+  if (!rec.certifiedBy || rec.certifiedBy.length === 0) return false;
+  return rec.certifiedBy.some(s => s === 'manufacturer' || s.startsWith('partsio_'));
+}
+
+/** Count "real mismatches" — fail rules where the replacement value is known
+ *  and disagrees with the source. Missing-attribute fails (replacementValue
+ *  === 'N/A') don't count: they could pass if the attribute is filled in. */
+export function countRealMismatches(rec: XrefRecommendation): number {
+  return rec.matchDetails.filter(d => d.ruleResult === 'fail' && d.replacementValue !== 'N/A').length;
+}
+
+/** Drop candidates with too many real mismatches. Always-keep: certified
+ *  crosses (MFR/Accuris). Always-drop: Obsolete/Discontinued. Threshold by
+ *  caller — batch uses 1, single-part xref UI uses 2. */
+export function filterRecsByMismatchCount(
+  recs: XrefRecommendation[],
+  maxRealMismatches: number,
+): XrefRecommendation[] {
+  return recs.filter(rec => {
+    const status = rec.part.status;
+    if (status === 'Obsolete' || status === 'Discontinued') return false;
+    if (isCertifiedCross(rec)) return true;
+    return countRealMismatches(rec) <= maxRealMismatches;
+  });
+}
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;
@@ -170,6 +243,11 @@ export interface XrefRecommendation {
   compositeScore?: number;
   /** Per-axis 0-1 deltas behind the composite score. For future UI surfacing ("$ 12% cheaper"). */
   compositeAxisDeltas?: Partial<Record<ReplacementAxis, number>>;
+  /** True when the candidate's qualification domain is known AND does not match
+   *  the user's selected context (e.g. classifier says `industrial_harsh` but
+   *  the user picked Automotive). `unknown` candidates never get this flag —
+   *  unknown is a ranking signal, not a deviation. Decision #155. */
+  domainDeviation?: boolean;
 }
 
 /** Axes used for composite "better than source" ranking (Decision #145) */
@@ -562,6 +640,14 @@ export interface MatchingRule {
   blockOnMissing?: boolean;
   /** For identity rules: allow ±% tolerance band before failing (e.g., 10 = ±10% for fsw). */
   tolerancePercent?: number;
+  /**
+   * Per-rule value aliases for identity / identity_upgrade comparisons.
+   * Each inner array is a group of equivalent values; any value in a group
+   * is treated as equal to any other value in the same group for this rule.
+   * Comparison uses the same case/whitespace normalization as the engine.
+   * Example: [['Polar', 'Polarized', 'Uni-Polar'], ['Bi-Polar', 'Bipolar', 'Non-Polar']]
+   */
+  valueAliases?: string[][];
 }
 
 /** A complete logic table for a component family */
@@ -748,8 +834,10 @@ export interface AtlasManufacturerSummary {
 // PARTS LIST TYPES
 // ============================================================
 
-/** Status of an individual row during batch validation */
-export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'not-found' | 'error';
+/** Status of an individual row during batch validation.
+ *  'ambiguous' = search returned multiple plausible candidates but no exact MPN match;
+ *  user should pick from `candidateMatches` to confirm row identity. */
+export type PartsListRowStatus = 'pending' | 'validating' | 'resolved' | 'ambiguous' | 'not-found' | 'error';
 
 /** Classification of a BOM line item — determines whether catalog validation is attempted */
 export type PartType = 'electronic' | 'mechanical' | 'pcb' | 'custom' | 'other';
@@ -859,6 +947,9 @@ export interface PartsListRow {
   /** Quantity (optional mapped column) — kept as the raw string so free-form
    *  values like "10 pcs" round-trip; numeric parsing happens at point-of-use. */
   rawQty?: string;
+  /** Current unit cost (optional mapped column) — raw string so "$1.25" /
+   *  "1,25 €" round-trip; parsed numerically at point-of-use (sys:priceDelta). */
+  rawUnitCost?: string;
   /** All original cell values from the uploaded spreadsheet row */
   rawCells: string[];
   status: PartsListRowStatus;
@@ -879,6 +970,13 @@ export interface PartsListRow {
   accurisCertifiedCount?: number;
   /** MPN explicitly chosen by user as preferred alternate — survives re-validation */
   preferredMpn?: string;
+  /** Top search candidates surfaced when status='ambiguous' — populated by the
+   *  batch validator so the row-identity picker can render them without refetching. */
+  candidateMatches?: PartSummary[];
+  /** Up to 5 viable replacements (certified or with no failing rules) sorted by
+   *  best FC unit price ascending. Drives the "Lowest Repl. Price (FC)" column.
+   *  Persisted so the price floor survives reload without re-fetching full recs. */
+  cheapestViableRecs?: XrefRecommendation[];
   /** Flattened Digikey data stored during validation */
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
@@ -897,6 +995,8 @@ export interface ColumnMapping {
   ipnColumn?: number;
   /** Optional Quantity column — unlocks qty summing in the dedupe flow */
   qtyColumn?: number;
+  /** Optional current unit cost column — powers sys:priceDelta savings column */
+  unitCostColumn?: number;
 }
 
 /** A group of rows that share the same (MPN, MFR) — result of dedupe scan */
@@ -981,7 +1081,7 @@ export interface BatchValidateRequest {
 /** Single item response from batch validation */
 export interface BatchValidateItem {
   rowIndex: number;
-  status: 'resolved' | 'not-found' | 'error';
+  status: 'resolved' | 'ambiguous' | 'not-found' | 'error';
   resolvedPart?: PartSummary;
   sourceAttributes?: PartAttributes;
   /** The top replacement proposed for this row (singular). */
@@ -989,6 +1089,9 @@ export interface BatchValidateItem {
   allRecommendations?: XrefRecommendation[];
   enrichedData?: EnrichedPartData;
   errorMessage?: string;
+  /** Top N search candidates when multiple matches exist but none is an exact
+   *  MPN hit. Surfaced to the row-identity picker so the user can disambiguate. */
+  candidateMatches?: PartSummary[];
 }
 
 /** Response from the batch validate API */
@@ -1073,6 +1176,29 @@ export interface RecommendationResult {
   familyName?: string;
   dataSource?: 'digikey' | 'partsio' | 'atlas' | 'mock';
   unsupportedFamily?: boolean;
+  /** Per-call qualification-domain telemetry (Decision #155). Only populated
+   *  when the user selected a context that drives domain gating (Phase 1:
+   *  automotive). Forwarded into QC logs so we can track unknown-rate by
+   *  reason per family to prioritize Phase 2 MFR classifier coverage. */
+  domainStats?: DomainStats;
+}
+
+/** Domain-classification telemetry for a single getRecommendations call. */
+export interface DomainStats {
+  /** Count of candidates hard-excluded by the domain matrix BEFORE rendering. */
+  excludedByDomain: number;
+  /** Survivors whose domain matches the context-expected set. */
+  knownMatched: number;
+  /** Survivors classified `unknown`, split by reason so we can prioritize
+   *  Phase 2 workstreams: MFR coverage vs classifier quality vs upstream data. */
+  unknown: {
+    no_classifier: number;
+    ambiguous_series: number;
+    no_signal: number;
+  };
+  /** Survivors whose domain is known but doesn't match the context-expected
+   *  set (e.g. commercial/industrial under automotive). */
+  deviationCount: number;
 }
 
 /** The stage of the recommendation pipeline being questioned */
@@ -1091,6 +1217,8 @@ export interface RecommendationLogSnapshot {
   contextQuestions?: ContextQuestion[];
   contextAnswers?: ApplicationContext;
   attributeOverrides?: Record<string, string>;
+  /** Qualification-domain telemetry (Decision #155). */
+  domainStats?: DomainStats;
 }
 
 /** A recommendation log entry (from the admin API) */
@@ -1304,6 +1432,7 @@ export interface RuleOverrideRecord {
   upgradeHierarchy?: string[];
   blockOnMissing?: boolean;
   tolerancePercent?: number;
+  valueAliases?: string[][];
   engineeringReason?: string;
   attributeName?: string;
   sortOrder?: number;

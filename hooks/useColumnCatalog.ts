@@ -36,6 +36,7 @@ export function useColumnCatalog(
       if (!row) return null;
       const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
       const ipnIdx = row.rawIpn ? row.rawCells.findIndex(c => c === row.rawIpn) : -1;
+      const unitCostIdx = row.rawUnitCost ? row.rawCells.findIndex(c => c === row.rawUnitCost) : -1;
       return {
         mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
         manufacturerColumn: row.rawManufacturer
@@ -44,6 +45,7 @@ export function useColumnCatalog(
         descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
         ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
         ...(ipnIdx >= 0 ? { ipnColumn: ipnIdx } : {}),
+        ...(unitCostIdx >= 0 ? { unitCostColumn: unitCostIdx } : {}),
       };
     })();
 
@@ -53,6 +55,7 @@ export function useColumnCatalog(
       if (mapping?.descriptionColumn === i) return 'Description';
       if (mapping?.cpnColumn === i) return 'Customer Part #';
       if (mapping?.ipnColumn === i) return 'Internal Part #';
+      if (mapping?.unitCostColumn === i) return 'Unit Cost';
       return `Column ${i + 1}`;
     });
   }, [spreadsheetHeaders, rows, columnMapping]);
@@ -77,8 +80,14 @@ export function useColumnCatalog(
         if (col.source !== 'spreadsheet') return true;
         // Portable mapped:* columns always pass (they resolve at render time)
         if (col.id.startsWith('mapped:')) return true;
-        // Raw ss:* columns only if they contain non-empty data
-        return col.spreadsheetIndex !== undefined && nonEmptyIndices.has(col.spreadsheetIndex);
+        if (col.spreadsheetIndex === undefined) return false;
+        // If the user gave the column a real header, it's selectable — trust the
+        // user's intent even when the data scan flags it as empty (numeric/currency
+        // cells can slip past the stringified-trim check on certain lists).
+        const rawHeader = effectiveHeaders[col.spreadsheetIndex];
+        if (typeof rawHeader === 'string' && rawHeader.trim() !== '') return true;
+        // Unlabeled columns: require actual data to avoid surfacing phantom trailing columns.
+        return nonEmptyIndices.has(col.spreadsheetIndex);
       })
       .map(col => {
         if (col.source !== 'spreadsheet' || col.spreadsheetIndex === undefined) return col;
@@ -105,6 +114,11 @@ export function useColumnCatalog(
     if (!row) return null;
     const cpnIdx = row.rawCpn ? row.rawCells.findIndex(c => c === row.rawCpn) : -1;
     const ipnIdx = row.rawIpn ? row.rawCells.findIndex(c => c === row.rawIpn) : -1;
+    // unitCost must be inferred too — columnMapping isn't persisted to Supabase,
+    // so on every reload this fallback is what reverseMapKnownColumns and the
+    // mapped:* → ss:N resolver in PartsListShell rely on. Missing it caused
+    // Unit Cost columns to silently vanish from master views on save.
+    const unitCostIdx = row.rawUnitCost ? row.rawCells.findIndex(c => c === row.rawUnitCost) : -1;
     return {
       mpnColumn: row.rawCells.findIndex(c => c === row.rawMpn),
       manufacturerColumn: row.rawManufacturer
@@ -113,6 +127,7 @@ export function useColumnCatalog(
       descriptionColumn: row.rawCells.findIndex(c => c === row.rawDescription),
       ...(cpnIdx >= 0 ? { cpnColumn: cpnIdx } : {}),
       ...(ipnIdx >= 0 ? { ipnColumn: ipnIdx } : {}),
+      ...(unitCostIdx >= 0 ? { unitCostColumn: unitCostIdx } : {}),
     };
   }, [columnMapping, rows]);
 

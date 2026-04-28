@@ -7,13 +7,14 @@ import {
   Chip,
   Divider,
   Avatar,
+  Skeleton,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import FactoryIcon from '@mui/icons-material/Factory';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
 import BuildIcon from '@mui/icons-material/Build';
 import { ManufacturerProfile } from '@/lib/types';
-import { HEADER_HEIGHT, HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, SECTION_PY } from '@/lib/layoutConstants';
+import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, SECTION_PY } from '@/lib/layoutConstants';
 
 function getCertColor(category: string): string {
   switch (category) {
@@ -68,16 +69,27 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 interface ManufacturerProfilePanelProps {
   profile: ManufacturerProfile;
   onClose: () => void;
+  source?: 'atlas' | 'mock' | 'unknown';
+  loading?: boolean;
 }
 
-export default function ManufacturerProfilePanel({ profile, onClose }: ManufacturerProfilePanelProps) {
+export default function ManufacturerProfilePanel({ profile, onClose, source = 'unknown', loading = false }: ManufacturerProfilePanelProps) {
+  const hasAnyContent =
+    !!profile.summary ||
+    profile.productCategories.length > 0 ||
+    profile.certifications.length > 0 ||
+    profile.manufacturingLocations.length > 0 ||
+    profile.authorizedDistributors.length > 0 ||
+    profile.complianceFlags.length > 0 ||
+    profile.designResources.length > 0;
+  const showEmptyState = !loading && source !== 'mock' && !hasAnyContent;
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
+      {/* Header — aligned with AttributesPanel / RecommendationsPanel divider */}
       <Box
         sx={{
-          height: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
-          minHeight: { xs: HEADER_HEIGHT_MOBILE, md: HEADER_HEIGHT },
+          height: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
+          minHeight: { xs: ATTRIBUTES_HEADER_HEIGHT_MOBILE, md: ATTRIBUTES_HEADER_HEIGHT },
           px: 2,
           py: 1.5,
           borderBottom: 1,
@@ -104,7 +116,9 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
             <Typography variant="subtitle2" sx={{ fontSize: '0.9rem', fontWeight: 600, lineHeight: 1.3 }} noWrap>
               {profile.name}
             </Typography>
-            <Chip label="Sample Data" size="small" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
+            {source === 'mock' && (
+              <Chip label="Sample Data" size="small" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
+            )}
           </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE } }} noWrap>
             {profile.countryFlag} {profile.headquarters}
@@ -118,13 +132,37 @@ export default function ManufacturerProfilePanel({ profile, onClose }: Manufactu
 
       {/* Scrollable body */}
       <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 2 }}>
+        {loading && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <Skeleton variant="text" width="40%" sx={{ mb: 1 }} />
+            <Skeleton variant="text" width="100%" />
+            <Skeleton variant="text" width="100%" />
+            <Skeleton variant="text" width="70%" />
+            <Stack direction="row" spacing={0.75} sx={{ mt: 2 }}>
+              <Skeleton variant="rounded" width={80} height={22} />
+              <Skeleton variant="rounded" width={64} height={22} />
+              <Skeleton variant="rounded" width={96} height={22} />
+            </Stack>
+          </Box>
+        )}
+
+        {showEmptyState && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic', fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.7 }}>
+              Detailed profile not available yet for this manufacturer.
+            </Typography>
+          </Box>
+        )}
+
         {/* About */}
-        <Box sx={{ mb: SECTION_PY }}>
-          <SectionHeader>About</SectionHeader>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.7 }}>
-            {profile.summary}
-          </Typography>
-        </Box>
+        {!loading && profile.summary && (
+          <Box sx={{ mb: SECTION_PY }}>
+            <SectionHeader>About</SectionHeader>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE }, lineHeight: 1.7 }}>
+              {profile.summary}
+            </Typography>
+          </Box>
+        )}
 
         {/* Product Categories */}
         {profile.productCategories.length > 0 && (

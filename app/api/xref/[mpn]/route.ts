@@ -33,6 +33,7 @@ export async function GET(
       snapshot: {
         sourceAttributes: result.sourceAttributes,
         recommendations: result.recommendations,
+        domainStats: result.domainStats,
       },
     }).catch((err) => console.error('[qc] Failed to log recommendation:', err));
 
@@ -80,6 +81,7 @@ export async function POST(
         recommendations: result.recommendations,
         contextAnswers: applicationContext,
         attributeOverrides: overrides,
+        domainStats: result.domainStats,
       },
     }).catch((err) => console.error('[qc] Failed to log recommendation:', err));
 

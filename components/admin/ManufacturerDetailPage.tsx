@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   Switch,
   Tab,
@@ -138,6 +139,14 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
   const [crossRefCount, setCrossRefCount] = useState(0);
   const [enabledUpdating, setEnabledUpdating] = useState(false);
 
+  // Alias editor state (Decision #152) — lifted from data.manufacturer.aliases
+  // on mount/MFR change so optimistic edits don't require full refetch.
+  const [aliases, setAliases] = useState<string[]>([]);
+  const [aliasPending, setAliasPending] = useState(false);
+  const [aliasError, setAliasError] = useState<string | null>(null);
+  const [aliasInput, setAliasInput] = useState('');
+  const [aliasInputError, setAliasInputError] = useState(false);
+
   // Fetch manufacturer data
   useEffect(() => {
     setLoading(true);
@@ -267,6 +276,62 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
     }
   }, [data, slug, enabledUpdating]);
 
+  // Sync alias state whenever server data arrives (initial load or after save).
+  useEffect(() => {
+    if (data?.manufacturer) {
+      setAliases(Array.isArray(data.manufacturer.aliases) ? data.manufacturer.aliases : []);
+      setAliasError(null);
+    }
+  }, [data?.manufacturer]);
+
+  const patchAliases = useCallback(async (next: string[], prev: string[]) => {
+    setAliasPending(true);
+    setAliasError(null);
+    try {
+      const res = await fetch(`/api/admin/manufacturers/${slug}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aliases: next }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Update failed');
+      }
+    } catch (err) {
+      setAliases(prev); // rollback
+      setAliasError(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setAliasPending(false);
+    }
+  }, [slug]);
+
+  const handleAddAlias = useCallback(() => {
+    const trimmed = aliasInput.trim();
+    if (!trimmed) {
+      setAliasInputError(true);
+      return;
+    }
+    const exists = aliases.some(a => a.toLowerCase() === trimmed.toLowerCase());
+    if (exists) {
+      setAliasInputError(true);
+      return;
+    }
+    const prev = aliases;
+    const next = [...aliases, trimmed];
+    setAliases(next);
+    setAliasInput('');
+    setAliasInputError(false);
+    void patchAliases(next, prev);
+  }, [aliasInput, aliases, patchAliases]);
+
+  const handleDeleteAlias = useCallback((target: string) => {
+    if (aliasPending) return;
+    const prev = aliases;
+    const next = aliases.filter(a => a !== target);
+    setAliases(next);
+    void patchAliases(next, prev);
+  }, [aliases, aliasPending, patchAliases]);
+
   if (loading) {
     return (
       <Box sx={{ p: 3 }}>
@@ -340,6 +405,7 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
           <Tab label="Coverage" />
           <Tab label={`Cross-References${crossRefCount > 0 ? ` (${crossRefCount})` : ''}`} />
           <Tab label="Profile" />
+          <Tab label={`Aliases${aliases.length > 0 ? ` (${aliases.length})` : ''}`} />
         </Tabs>
       </Box>
 
@@ -437,17 +503,6 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                   {mfr.coreProducts.split(/[,;]/).map((p: string) => p.trim()).filter(Boolean).map((p: string) => (
                     <Chip key={p} label={p} size="small" variant="outlined" sx={{ fontSize: '0.75rem' }} />
-                  ))}
-                </Box>
-              </Box>
-            )}
-
-            {Array.isArray(mfr.aliases) && mfr.aliases.length > 0 && (
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="subtitle2" gutterBottom>Aliases</Typography>
-                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                  {(mfr.aliases as string[]).map((a: string) => (
-                    <Chip key={a} label={a} size="small" variant="outlined" sx={{ fontSize: '0.75rem' }} />
                   ))}
                 </Box>
               </Box>
@@ -735,6 +790,81 @@ export default function ManufacturerDetailPage({ slug }: { slug: string }) {
             manufacturerName={mfr?.nameDisplay || slug}
             lastUploadedAt={data.timestamps?.crossRefs ?? null}
           />
+        )}
+
+        {/* ── Aliases Tab (Decision #152) ── */}
+        {activeTab === 5 && (
+          <Box sx={{ maxWidth: 720 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="subtitle1">Aliases</Typography>
+              {aliasPending && <CircularProgress size={14} />}
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Variant spellings, abbreviations, and translations for this manufacturer.
+              Any BOM row, AddPart input, or search query that matches one of these
+              canonicalizes to <strong>{mfr.nameDisplay}</strong>. Case-insensitive exact match.
+            </Typography>
+
+            {aliasError && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setAliasError(null)}>
+                {aliasError}
+              </Alert>
+            )}
+
+            <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2, minHeight: 32 }}>
+              {aliases.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  No aliases yet. Add the first one below.
+                </Typography>
+              ) : (
+                aliases.map((a) => (
+                  <Chip
+                    key={a}
+                    label={a}
+                    size="small"
+                    variant="outlined"
+                    onDelete={aliasPending ? undefined : () => handleDeleteAlias(a)}
+                  />
+                ))
+              )}
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <TextField
+                size="small"
+                placeholder="Add alias (e.g. GD, gigadevice, 兆易创新)"
+                value={aliasInput}
+                error={aliasInputError}
+                onChange={(e) => {
+                  setAliasInput(e.target.value);
+                  if (aliasInputError) setAliasInputError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddAlias();
+                  }
+                }}
+                disabled={aliasPending}
+                sx={{ flex: '0 1 360px' }}
+                inputProps={{ maxLength: 100 }}
+                helperText={aliasInputError ? 'Empty or duplicate alias' : ' '}
+              />
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleAddAlias}
+                disabled={aliasPending || !aliasInput.trim()}
+                sx={{ mb: aliasInputError ? 2.5 : 2.5 }}
+              >
+                Add
+              </Button>
+            </Box>
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Max 50 aliases, 100 chars each. Saves immediately on add or delete.
+            </Typography>
+          </Box>
         )}
 
       </Box>

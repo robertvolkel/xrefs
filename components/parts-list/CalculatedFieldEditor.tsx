@@ -13,7 +13,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { ColumnDefinition } from '@/lib/columnDefinitions';
+import { ColumnDefinition, getColumnDisplayLabel } from '@/lib/columnDefinitions';
 import {
   CalculatedFieldDef,
   FormulaExpression,
@@ -140,7 +140,7 @@ export default function CalculatedFieldEditor({
           >
             {operandColumns.map(col => (
               <MenuItem key={col.id} value={col.id}>
-                {col.label}
+                {getColumnDisplayLabel(col)}
               </MenuItem>
             ))}
           </Select>
@@ -171,7 +171,7 @@ export default function CalculatedFieldEditor({
             >
               {operandColumns.map(col => (
                 <MenuItem key={col.id} value={col.id}>
-                  {col.label}
+                  {getColumnDisplayLabel(col)}
                 </MenuItem>
               ))}
             </Select>

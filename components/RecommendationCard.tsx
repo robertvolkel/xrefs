@@ -4,6 +4,8 @@ import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { computePriceRange, formatPrice } from './AttributesTabContent';
+import DomainChip from './DomainChip';
+import MatchPercentageBadge from './MatchPercentageBadge';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -13,6 +15,9 @@ interface RecommendationCardProps {
   isPreferred?: boolean;
   onTogglePreferred?: () => void;
   isEnrichingFC?: boolean;
+  /** Whether the user's application context activates qualification-domain
+   *  gating (Decision #155). Drives visibility of the unknown-domain chip. */
+  contextActive?: boolean;
 }
 
 const THIRD_PARTY_LABELS: Record<string, string> = {
@@ -27,8 +32,9 @@ function formatThirdPartyTooltip(sources: CertificationSource[]): string {
   return thirdParty.map(s => THIRD_PARTY_LABELS[s] || s).join(', ');
 }
 
-export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred, isEnrichingFC }: RecommendationCardProps) {
+export default function RecommendationCard({ recommendation, onClick, onManufacturerClick, showCommercial, isPreferred, onTogglePreferred, isEnrichingFC, contextActive }: RecommendationCardProps) {
   const { part, matchDetails, dataSource, certifiedBy, enrichedFrom } = recommendation;
+  const mfrOrigin = part.mfrOrigin;
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
@@ -45,7 +51,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
     >
       <CardActionArea onClick={onClick}>
         <CardContent sx={{ py: 1.5, px: { xs: 1.5, sm: 2 }, '&:last-child': { pb: 1.5 } }}>
-          <Stack direction="row" alignItems="center" spacing={2}>
+          <Stack direction="row" alignItems="flex-start" spacing={2}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Stack direction="row" alignItems="center" spacing={0.75}>
                 <Typography
@@ -57,6 +63,11 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   {part.mpn}
                 </Typography>
                 <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                <DomainChip
+                  classification={part.qualificationDomain}
+                  deviation={recommendation.domainDeviation}
+                  contextActive={contextActive}
+                />
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
@@ -116,8 +127,8 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 ) : (
                   part.manufacturer
                 )}
-                {dataSource === 'atlas' && (
-                  <Tooltip title="Atlas — Chinese manufacturer" arrow>
+                {mfrOrigin === 'atlas' && (
+                  <Tooltip title="Chinese manufacturer" arrow>
                     <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
                   </Tooltip>
                 )}
@@ -198,6 +209,12 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 </>
               )}
             </Box>
+            <MatchPercentageBadge
+              percentage={Math.round(recommendation.matchPercentage)}
+              size="small"
+              hasFailures={failCount > 0}
+              hasReviews={reviewCount > 0}
+            />
           </Stack>
         </CardContent>
       </CardActionArea>

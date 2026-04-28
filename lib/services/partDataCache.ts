@@ -74,7 +74,7 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
 /** Bump this when scoring logic changes (logic table edits, scoring engine
  *  changes, new rule types). Cached results from older versions become
  *  unreachable automatically — no need for manual purges. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v5';
+export const RECS_CACHE_SCHEMA_VERSION = 'v10';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

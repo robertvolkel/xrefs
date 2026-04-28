@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS rule_overrides (
   upgrade_hierarchy JSONB,            -- string[] for identity_upgrade
   block_on_missing BOOLEAN,
   tolerance_percent NUMERIC,
+  value_aliases JSONB,                 -- string[][] for identity / identity_upgrade
   engineering_reason TEXT,
   attribute_name TEXT,                 -- required for 'add' action
   sort_order INTEGER,                 -- required for 'add' action

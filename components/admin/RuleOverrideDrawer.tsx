@@ -80,6 +80,7 @@ const FIELD_LABELS: Record<string, string> = {
   upgrade_hierarchy: 'Hierarchy',
   block_on_missing: 'Block on Missing',
   tolerance_percent: 'Tolerance %',
+  value_aliases: 'Value Aliases',
   engineering_reason: 'Engineering Reason',
   attribute_name: 'Attribute Name',
   sort_order: 'Sort Order',
@@ -90,7 +91,13 @@ const FIELD_LABELS: Record<string, string> = {
 function formatDiffValue(val: unknown): string {
   if (val === null || val === undefined) return '\u2014';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-  if (Array.isArray(val)) return val.join(' > ');
+  if (Array.isArray(val)) {
+    // string[][] (value aliases) — render each group on its own line
+    if (val.length > 0 && Array.isArray(val[0])) {
+      return (val as unknown[][]).map(g => g.join(', ')).join(' | ');
+    }
+    return (val as unknown[]).join(' > ');
+  }
   return String(val);
 }
 
@@ -110,6 +117,7 @@ function computeDiffs(
     upgrade_hierarchy: current.upgradeHierarchy,
     block_on_missing: current.blockOnMissing,
     tolerance_percent: current.tolerancePercent,
+    value_aliases: current.valueAliases,
     engineering_reason: current.engineeringReason,
     attribute_name: current.attributeName,
     sort_order: current.sortOrder,
@@ -185,6 +193,7 @@ export default function RuleOverrideDrawer({
   const [upgradeHierarchy, setUpgradeHierarchy] = useState('');
   const [blockOnMissing, setBlockOnMissing] = useState(false);
   const [tolerancePercent, setTolerancePercent] = useState('');
+  const [valueAliases, setValueAliases] = useState('');
   const [engineeringReason, setEngineeringReason] = useState('');
   const [changeReason, setChangeReason] = useState('');
   const [saving, setSaving] = useState(false);
@@ -240,6 +249,7 @@ export default function RuleOverrideDrawer({
       setUpgradeHierarchy('');
       setBlockOnMissing(false);
       setTolerancePercent('');
+      setValueAliases('');
       setEngineeringReason('');
     } else {
       // Populate from override (if exists) or base rule
@@ -255,6 +265,10 @@ export default function RuleOverrideDrawer({
       setBlockOnMissing(ov?.blockOnMissing ?? baseRule.blockOnMissing ?? false);
       setTolerancePercent(
         String(ov?.tolerancePercent ?? baseRule.tolerancePercent ?? ''),
+      );
+      const initialAliases = ov?.valueAliases ?? baseRule.valueAliases;
+      setValueAliases(
+        initialAliases?.map(group => group.join(', ')).join('\n') ?? '',
       );
       setEngineeringReason(ov?.engineeringReason ?? baseRule.engineeringReason);
     }
@@ -275,6 +289,7 @@ export default function RuleOverrideDrawer({
   const needsDirection = logicType === 'threshold' || logicType === 'fit';
   const needsHierarchy = logicType === 'identity_upgrade';
   const needsTolerance = logicType === 'identity';
+  const needsValueAliases = logicType === 'identity' || logicType === 'identity_upgrade';
 
   const handleSave = useCallback(async () => {
     if (!changeReason.trim()) {
@@ -290,6 +305,10 @@ export default function RuleOverrideDrawer({
         .split(',')
         .map(s => s.trim())
         .filter(Boolean);
+      const aliasGroups = valueAliases
+        .split('\n')
+        .map(line => line.split(',').map(s => s.trim()).filter(Boolean))
+        .filter(group => group.length > 0);
 
       const data = {
         familyId,
@@ -301,6 +320,7 @@ export default function RuleOverrideDrawer({
         ...(needsHierarchy && hierarchy.length > 0 ? { upgradeHierarchy: hierarchy } : {}),
         blockOnMissing,
         ...(needsTolerance && tolerancePercent ? { tolerancePercent: parseFloat(tolerancePercent) } : {}),
+        ...(needsValueAliases && aliasGroups.length > 0 ? { valueAliases: aliasGroups } : {}),
         engineeringReason,
         ...(isAddMode ? { attributeName } : {}),
         changeReason: changeReason.trim(),
@@ -324,8 +344,8 @@ export default function RuleOverrideDrawer({
   }, [
     familyId, baseRule, isAddMode, existingOverride,
     attributeId, attributeName, logicType, weight, thresholdDirection,
-    upgradeHierarchy, blockOnMissing, tolerancePercent, engineeringReason,
-    changeReason, needsDirection, needsHierarchy, needsTolerance,
+    upgradeHierarchy, blockOnMissing, tolerancePercent, valueAliases, engineeringReason,
+    changeReason, needsDirection, needsHierarchy, needsTolerance, needsValueAliases,
     onSaved, onClose, t,
   ]);
 
@@ -560,6 +580,21 @@ export default function RuleOverrideDrawer({
                   fullWidth
                   type="number"
                   placeholder={t('adminOverride.placeholderTolerance')}
+                />
+              )}
+
+              {/* Value Aliases (conditional) */}
+              {needsValueAliases && (
+                <TextField
+                  label={t('adminOverride.valueAliases')}
+                  value={valueAliases}
+                  onChange={e => setValueAliases(e.target.value)}
+                  size="small"
+                  fullWidth
+                  multiline
+                  rows={3}
+                  placeholder={t('adminOverride.valueAliasesPlaceholder')}
+                  helperText={t('adminOverride.valueAliasesHelper')}
                 />
               )}
 

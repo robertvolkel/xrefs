@@ -33,6 +33,7 @@ import {
 } from '@/lib/types';
 import { getAdminQcLogDetail } from '@/lib/api';
 import { getLogicTable } from '@/lib/logicTables';
+import ProposeAliasButton from './ProposeAliasButton';
 import { DOT_GREEN, DOT_YELLOW, DOT_RED, DOT_GREY, resultDotColor, statusColor } from './qcConstants';
 import QcRecommendationSummary from './QcRecommendationSummary';
 
@@ -471,6 +472,23 @@ export default function QcFeedbackDetailView({ feedback, onBack, onStatusChange 
                                       </Typography>
                                     </Tooltip>
                                   )}
+                                  <ProposeAliasButton
+                                    familyId={logDetail?.familyId ?? null}
+                                    attributeId={row.parameterId}
+                                    attributeName={row.parameterName}
+                                    sourceValue={row.sourceValue}
+                                    replacementValue={row.replacementValue}
+                                    ruleResult={row.ruleResult}
+                                    onSuccess={async () => {
+                                      if (feedback.status === 'open' || feedback.status === 'reviewed') {
+                                        await onStatusChange(
+                                          feedback.id,
+                                          'resolved',
+                                          (notes.trim() ? notes.trim() + '\n\n' : '') + 'Resolved by adding value alias.',
+                                        );
+                                      }
+                                    }}
+                                  />
                                 </Stack>
                               )}
                             </TableCell>

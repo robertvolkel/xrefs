@@ -1,5 +1,5 @@
 'use client';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Typography } from '@mui/material';
 
 interface MatchPercentageBadgeProps {
   percentage: number;
@@ -9,43 +9,31 @@ interface MatchPercentageBadgeProps {
 }
 
 function getColor(pct: number, hasFailures?: boolean, hasReviews?: boolean): string {
-  if (hasFailures) return '#FF5252';
-  if (hasReviews) return '#FFD54F';
-  if (pct >= 85) return '#69F0AE';
-  if (pct >= 60) return '#FFD54F';
-  return '#FF5252';
+  // Only high-confidence matches with no issues highlight green; everything
+  // else falls back to the muted description-text color.
+  if (!hasFailures && !hasReviews && pct >= 85) return '#69F0AE';
+  return 'text.secondary';
 }
 
 export default function MatchPercentageBadge({ percentage, size = 'medium', hasFailures, hasReviews }: MatchPercentageBadgeProps) {
-  const dim = size === 'small' ? 40 : 52;
-  const fontSize = size === 'small' ? '0.65rem' : '0.75rem';
+  const fontSize = size === 'small' ? '0.8rem' : '0.95rem';
   const color = getColor(percentage, hasFailures, hasReviews);
 
   return (
-    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-      <CircularProgress
-        variant="determinate"
-        value={percentage}
-        size={dim}
-        thickness={3}
-        sx={{ color }}
-      />
-      <Box
-        sx={{
-          top: 0,
-          left: 0,
-          bottom: 0,
-          right: 0,
-          position: 'absolute',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Typography variant="caption" sx={{ fontWeight: 700, fontSize, color }}>
-          {percentage}%
-        </Typography>
-      </Box>
-    </Box>
+    <Typography
+      component="span"
+      sx={{
+        fontWeight: 700,
+        fontSize,
+        color,
+        // Match the 18px chip-row height so the badge baseline-aligns with
+        // adjacent chips (Active, AEC-Q200, etc.) when placed in a chip row.
+        lineHeight: '18px',
+        display: 'inline-block',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {percentage}%
+    </Typography>
   );
 }

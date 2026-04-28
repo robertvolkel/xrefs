@@ -7,6 +7,7 @@ export interface RuleOverride {
   logicType?: LogicType;
   thresholdDirection?: ThresholdDirection;
   upgradeHierarchy?: string[];
+  valueAliases?: string[][];
   engineeringReason?: string;
   attributeName?: string;
 }
@@ -59,6 +60,7 @@ export function buildDerivedLogicTable(
         if (ov.logicType !== undefined) existing.logicType = ov.logicType;
         if (ov.thresholdDirection !== undefined) existing.thresholdDirection = ov.thresholdDirection;
         if (ov.upgradeHierarchy !== undefined) existing.upgradeHierarchy = ov.upgradeHierarchy;
+        if (ov.valueAliases !== undefined) existing.valueAliases = ov.valueAliases;
         if (ov.engineeringReason !== undefined) existing.engineeringReason = ov.engineeringReason;
         if (ov.attributeName !== undefined) existing.attributeName = ov.attributeName;
       }
@@ -88,6 +90,9 @@ export function buildDerivedLogicTable(
     }
     if (rule.logicType !== 'identity') {
       delete (rule as Partial<MatchingRule>).tolerancePercent;
+    }
+    if (rule.logicType !== 'identity' && rule.logicType !== 'identity_upgrade') {
+      delete (rule as Partial<MatchingRule>).valueAliases;
     }
   }
 

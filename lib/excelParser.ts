@@ -115,6 +115,18 @@ export const QTY_PATTERNS = [
   'qty', 'quantity', 'qnty', 'count', 'amount', 'qty.',
 ];
 
+// Longer / more specific phrases first so scoreHeader favors them over the
+// bare 'cost' / 'price' fallbacks. "extended cost" / "total cost" / "list price"
+// intentionally won't match — those aren't per-unit current costs.
+export const UNIT_COST_PATTERNS = [
+  'current unit cost', 'current unit price',
+  'existing unit cost', 'existing unit price',
+  'unit cost', 'unit price', 'unit $',
+  'current cost', 'existing cost', 'our cost',
+  'current price', 'existing price',
+  'cost', 'price',
+];
+
 /**
  * Score how well a header matches a set of patterns.
  * Exact match = 1000 + pattern length (highly specific).
@@ -163,8 +175,8 @@ function scoreContentAsMPN(rows: string[][], colIndex: number): number {
  * with content-based heuristics as a tiebreaker.
  */
 export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnMapping | null {
-  type Field = 'mpn' | 'mfr' | 'desc' | 'cpn' | 'ipn' | 'qty';
-  const fields: Field[] = ['mpn', 'mfr', 'desc', 'cpn', 'ipn', 'qty'];
+  type Field = 'mpn' | 'mfr' | 'desc' | 'cpn' | 'ipn' | 'qty' | 'unitCost';
+  const fields: Field[] = ['mpn', 'mfr', 'desc', 'cpn', 'ipn', 'qty', 'unitCost'];
   const patternMap: Record<Field, string[]> = {
     mpn: MPN_PATTERNS,
     mfr: MFR_PATTERNS,
@@ -172,6 +184,7 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     cpn: CPN_PATTERNS,
     ipn: IPN_PATTERNS,
     qty: QTY_PATTERNS,
+    unitCost: UNIT_COST_PATTERNS,
   };
 
   // Score every column for every field (header-based)
@@ -182,6 +195,7 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     cpn: headers.map((h) => scoreHeader(h, patternMap.cpn)),
     ipn: headers.map((h) => scoreHeader(h, patternMap.ipn)),
     qty: headers.map((h) => scoreHeader(h, patternMap.qty)),
+    unitCost: headers.map((h) => scoreHeader(h, patternMap.unitCost)),
   };
 
   // Add content-based bonus when rows are available
@@ -192,10 +206,10 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     }
   }
 
-  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC > CPN > IPN > QTY).
+  // Greedy assignment: pick highest-scoring column per field (MPN > MFR > DESC > CPN > IPN > QTY > Unit Cost).
   // Each column can only be assigned to one field.
   const assigned = new Set<number>();
-  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1, cpn: -1, ipn: -1, qty: -1 };
+  const result: Record<Field, number> = { mpn: -1, mfr: -1, desc: -1, cpn: -1, ipn: -1, qty: -1, unitCost: -1 };
 
   for (const field of fields) {
     let bestIdx = -1;
@@ -222,5 +236,6 @@ export function autoDetectColumns(headers: string[], rows?: string[][]): ColumnM
     ...(result.cpn >= 0 ? { cpnColumn: result.cpn } : {}),
     ...(result.ipn >= 0 ? { ipnColumn: result.ipn } : {}),
     ...(result.qty >= 0 ? { qtyColumn: result.qty } : {}),
+    ...(result.unitCost >= 0 ? { unitCostColumn: result.unitCost } : {}),
   };
 }

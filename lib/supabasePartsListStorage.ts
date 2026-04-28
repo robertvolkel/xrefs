@@ -32,6 +32,7 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       rawCpn: r.rawCpn,
       rawIpn: r.rawIpn,
       rawQty: r.rawQty,
+      rawUnitCost: r.rawUnitCost,
       rawCells: r.rawCells ?? [],
       status: r.status,
       resolvedPart: r.resolvedPart,
@@ -45,6 +46,8 @@ function toStoredRows(rows: PartsListRow[]): StoredRow[] {
       enrichedData: r.enrichedData,
       errorMessage: r.errorMessage,
       partType: r.partType,
+      candidateMatches: r.candidateMatches,
+      cheapestViableRecs: r.cheapestViableRecs,
     };
   });
 }
@@ -75,6 +78,8 @@ function fromStoredRows(stored: StoredRow[]): PartsListRow[] {
       accurisCertifiedCount: r.accurisCertifiedCount,
       preferredMpn: r.preferredMpn,
       partType: r.partType,
+      candidateMatches: r.candidateMatches,
+      cheapestViableRecs: r.cheapestViableRecs,
     };
   });
 }

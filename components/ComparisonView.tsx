@@ -18,7 +18,6 @@ import {
   ToggleButtonGroup,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -26,6 +25,10 @@ import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import DomainChip from './DomainChip';
+import MatchPercentageBadge from './MatchPercentageBadge';
+import ProposeAliasButton from './admin/ProposeAliasButton';
+import { getLogicTableForSubcategory } from '@/lib/logicTables';
 
 interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
@@ -122,6 +125,12 @@ export default function ComparisonView({
 
   const sourceParamIds = new Set(sourceAttributes.parameters.map((p) => p.parameterId));
 
+  // Resolve the family the engine used so admin "Propose alias" buttons can
+  // attach overrides to the right rule. Falls back to base family for variants.
+  const familyId =
+    getLogicTableForSubcategory(sourceAttributes.part.subcategory, sourceAttributes)?.familyId
+    ?? null;
+
   const rowsFromSource = sourceAttributes.parameters
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((sourceParam) => {
@@ -190,6 +199,11 @@ export default function ComparisonView({
                 {replPart.mpn}
               </Typography>
               <Chip label={replPart.status} size="small" color={replPart.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              <DomainChip
+                classification={replPart.qualificationDomain}
+                deviation={recommendation.domainDeviation}
+                contextActive={recommendation.domainDeviation === true || !!replPart.qualificationDomain}
+              />
               {replPart.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
@@ -209,18 +223,6 @@ export default function ComparisonView({
                   </>
                 );
               })()}
-              {replPart.datasheetUrl && (
-                <Tooltip title="View datasheet" arrow>
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={() => window.open(replPart.datasheetUrl, '_blank')}
-                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
-                </Tooltip>
-              )}
             </Stack>
             <Typography
               variant="body2"
@@ -239,6 +241,12 @@ export default function ComparisonView({
               {replPart.manufacturer}
             </Typography>
           </Box>
+          <MatchPercentageBadge
+            percentage={Math.round(recommendation.matchPercentage)}
+            size="small"
+            hasFailures={recommendation.matchDetails.some(d => d.ruleResult === 'fail')}
+            hasReviews={recommendation.matchDetails.some(d => d.ruleResult === 'review')}
+          />
         </Stack>
         {/* Pill segment control */}
         <ToggleButtonGroup
@@ -275,7 +283,7 @@ export default function ComparisonView({
                     <TableCell sx={{ bgcolor: 'background.paper', fontSize: '0.7rem', fontWeight: 600, borderColor: 'divider', color: 'text.secondary', py: { xs: ROW_PY_MOBILE, md: ROW_PY } }}>
                       {t('comparison.valueHeader')}
                     </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32 }} />
+                    <TableCell sx={{ bgcolor: 'background.paper', borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 56 }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -327,15 +335,25 @@ export default function ComparisonView({
                           </Stack>
                         </TableCell>
                         <TableCell
-                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 32, lineHeight: 0 }}
+                          sx={{ borderColor: 'divider', py: { xs: ROW_PY_MOBILE, md: ROW_PY }, px: 0.5, width: 56, lineHeight: 0 }}
                         >
-                          {row.note ? (
-                            <Tooltip title={row.note} placement="left" arrow>
-                              {resultContent}
-                            </Tooltip>
-                          ) : (
-                            resultContent
-                          )}
+                          <Stack direction="row" alignItems="center" spacing={0.25} justifyContent="flex-start">
+                            {row.note ? (
+                              <Tooltip title={row.note} placement="left" arrow>
+                                {resultContent}
+                              </Tooltip>
+                            ) : (
+                              resultContent
+                            )}
+                            <ProposeAliasButton
+                              familyId={familyId}
+                              attributeId={row.parameterId}
+                              attributeName={row.parameterName}
+                              sourceValue={row.sourceValue}
+                              replacementValue={row.replacementValue}
+                              ruleResult={row.ruleResult}
+                            />
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     );

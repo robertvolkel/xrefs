@@ -50,6 +50,7 @@ export default function ColumnMappingDialog({
   const [descCol, setDescCol] = useState<number>(NOT_MAPPED);
   const [cpnCol, setCpnCol] = useState<number>(NOT_MAPPED);
   const [qtyCol, setQtyCol] = useState<number>(NOT_MAPPED);
+  const [unitCostCol, setUnitCostCol] = useState<number>(NOT_MAPPED);
 
   // Sync from auto-detected mapping when dialog opens or when the user
   // switches sheets (which produces a fresh mapping from auto-detect).
@@ -61,12 +62,14 @@ export default function ColumnMappingDialog({
       setDescCol(initialMapping.descriptionColumn);
       setCpnCol(initialMapping.cpnColumn ?? NOT_MAPPED);
       setQtyCol(initialMapping.qtyColumn ?? NOT_MAPPED);
+      setUnitCostCol(initialMapping.unitCostColumn ?? NOT_MAPPED);
     } else {
       setMpnCol(NOT_MAPPED);
       setMfrCol(NOT_MAPPED);
       setDescCol(NOT_MAPPED);
       setCpnCol(NOT_MAPPED);
       setQtyCol(NOT_MAPPED);
+      setUnitCostCol(NOT_MAPPED);
     }
   }, [open, initialMapping]);
 
@@ -180,6 +183,20 @@ export default function ColumnMappingDialog({
               ))}
             </Select>
           </FormControl>
+
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel>Unit Cost (optional)</InputLabel>
+            <Select
+              value={unitCostCol}
+              label="Unit Cost (optional)"
+              onChange={(e) => setUnitCostCol(e.target.value as number)}
+            >
+              <MenuItem value={NOT_MAPPED}><em>{t('columnMapping.notMapped')}</em></MenuItem>
+              {headers.map((h, i) => (
+                <MenuItem key={i} value={i}>{h || t('columnMapping.columnFallback', { number: i + 1 })}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
 
         {/* Preview table */}
@@ -196,7 +213,7 @@ export default function ColumnMappingDialog({
                     sx={{
                       fontWeight: 600,
                       fontSize: '0.75rem',
-                      bgcolor: i === mpnCol || i === mfrCol || i === descCol || i === cpnCol || i === qtyCol
+                      bgcolor: i === mpnCol || i === mfrCol || i === descCol || i === cpnCol || i === qtyCol || i === unitCostCol
                         ? 'rgba(160, 196, 255, 0.15)'
                         : 'background.paper',
                     }}
@@ -214,7 +231,7 @@ export default function ColumnMappingDialog({
                       key={ci}
                       sx={{
                         fontSize: '0.75rem',
-                        bgcolor: ci === mpnCol || ci === mfrCol || ci === descCol || ci === cpnCol || ci === qtyCol
+                        bgcolor: ci === mpnCol || ci === mfrCol || ci === descCol || ci === cpnCol || ci === qtyCol || ci === unitCostCol
                           ? 'rgba(160, 196, 255, 0.08)'
                           : 'transparent',
                       }}
@@ -237,6 +254,7 @@ export default function ColumnMappingDialog({
             descriptionColumn: descCol,
             ...(cpnCol !== NOT_MAPPED ? { cpnColumn: cpnCol } : {}),
             ...(qtyCol !== NOT_MAPPED ? { qtyColumn: qtyCol } : {}),
+            ...(unitCostCol !== NOT_MAPPED ? { unitCostColumn: unitCostCol } : {}),
           })}
           variant="contained"
           disabled={!canConfirm}

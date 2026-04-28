@@ -37,6 +37,10 @@ export const aluminumElectrolyticLogicTable: LogicTable = {
       weight: 9,
       engineeringReason: 'Polar and non-polar (bipolar) types are not interchangeable. A polar cap in an AC circuit will fail catastrophically.',
       sortOrder: 3,
+      valueAliases: [
+        ['Polar', 'Polarized', 'Uni-Polar', 'Unipolar'],
+        ['Bi-Polar', 'Bipolar', 'Non-Polar', 'Non Polar'],
+      ],
     },
     {
       attributeId: 'mounting_type',

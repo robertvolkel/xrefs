@@ -26,7 +26,7 @@ import {
   getSortValue,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
-import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields } from '@/lib/viewConfigStorage';
+import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields, reverseMapKnownColumns } from '@/lib/viewConfigStorage';
 import PromoteViewDialog, { viewNeedsPromoteDialog, buildFastPathPromoteResult } from './PromoteViewDialog';
 import type { CalculatedFieldDef } from '@/lib/calculatedFields';
 import type { PartsListRow } from '@/lib/types';
@@ -55,7 +55,7 @@ export default function PartsListShell() {
     listName, listDescription, listCurrency, listCustomer, listDefaultViewId,
     spreadsheetHeaders, activeListId, listViewConfigs, replacementPriorities,
     backfillCountsResult,
-    modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing,
+    modalRow, modalSelectedRec, modalComparisonAttrs, modalComparing, modalInitialFetching,
     handleFileSelected, handleParsedDataReady,
     handleColumnMappingConfirmed, handleColumnMappingCancelled, handleSheetChange,
     handleConsolidateDuplicates, handleLeaveDuplicatesAsIs,
@@ -67,6 +67,8 @@ export default function PartsListShell() {
     handleUpdateListDetails, handleRefreshRows, handleSetPartType, handleDeleteRows,
     handleCreateEmptyList, handleAddPart, handleCellEdit, handleCancelValidation,
     handleRetryFCEnrichment, getFCEnrichResult,
+    pickerState, handleReplaceRowIdentity, handleOpenAmbiguousPicker, handlePickerCancel,
+    getLastValidationScope,
   } = usePartsListState();
 
   const {
@@ -206,6 +208,11 @@ export default function PartsListShell() {
     prevPhaseRef.current = phase;
     if (!wasValidating || phase !== 'results') return;
 
+    // Skip list-level summary snackbars after per-row refreshes (picker
+    // confirmation, row action Refresh, Add Part, inline MFR edit). They're
+    // intended as a post-upload / refresh-all summary, not a per-row signal.
+    if (getLastValidationScope() === 'partial') return;
+
     // Check for validation failures
     const errorCount = rows.filter(r => r.status === 'error').length;
     const notFoundCount = rows.filter(r => r.status === 'not-found').length;
@@ -248,7 +255,7 @@ export default function PartsListShell() {
     }, 3000); // Wait for FC enrichment to finish
 
     return () => clearTimeout(timer);
-  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment]);
+  }, [phase, rows, t, getFCEnrichResult, handleRetryFCEnrichment, getLastValidationScope]);
 
   // Notify when the cache-only bucket-count backfill has results to report
   const backfillRowsRef = useRef<PartsListRow[]>(rows);
@@ -336,6 +343,10 @@ export default function PartsListShell() {
             if (inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0) return `ss:${inferredMapping.ipnColumn}`;
             return 'mapped:ipn'; // Will be filtered out below
           }
+          if (id === 'mapped:unitCost') {
+            if (inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0) return `ss:${inferredMapping.unitCostColumn}`;
+            return 'mapped:unitCost'; // Will be filtered out below
+          }
           return id;
         })
         .filter(id => !id.startsWith('mapped:'));
@@ -372,6 +383,8 @@ export default function PartsListShell() {
           ids.add(`ss:${inferredMapping.cpnColumn}`);
         if (id === 'mapped:ipn' && inferredMapping.ipnColumn != null && inferredMapping.ipnColumn >= 0)
           ids.add(`ss:${inferredMapping.ipnColumn}`);
+        if (id === 'mapped:unitCost' && inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0)
+          ids.add(`ss:${inferredMapping.unitCostColumn}`);
       }
     }
 
@@ -567,6 +580,8 @@ export default function PartsListShell() {
           hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
           buckets={replacementPriorities?.buckets ?? replacementPriorities?.suggestionBuckets}
           maxReplacements={replacementPriorities?.maxReplacements ?? replacementPriorities?.maxSuggestions}
+          onAmbiguousClick={handleOpenAmbiguousPicker}
+          columnMapping={inferredMapping}
         />
       )}
 
@@ -593,6 +608,7 @@ export default function PartsListShell() {
         selectedRec={modalSelectedRec}
         comparisonAttrs={modalComparisonAttrs}
         isComparing={modalComparing}
+        initialFetching={modalInitialFetching}
         onClose={handleCloseModal}
         onSelectRec={handleModalSelectRec}
         onBackToRecs={handleModalBackToRecs}
@@ -625,10 +641,16 @@ export default function PartsListShell() {
           }
           const columnMeta = Object.keys(meta).length > 0 ? meta : undefined;
 
+          // For master views: reverse-map ss:N indices that correspond to known
+          // mapped fields (mpn / manufacturer / description / cpn / ipn / unitCost)
+          // back to their portable mapped:* form BEFORE sanitize strips list-specific
+          // ss:* entries. Otherwise Your Data columns silently vanish on save because
+          // the picker expands mapped:* → ss:N on open, and sanitize drops all ss:*.
           if (pickerMode === 'create') {
             if (scope === 'master') {
-              // Create as master view (sanitize ss:* columns)
-              const safeColumns = sanitizeTemplateColumns(columns);
+              // Create as master view (reverse-map known ss:* then strip remaining list-specific ss:*)
+              const { columns: portableColumns } = reverseMapKnownColumns(columns, inferredMapping);
+              const safeColumns = sanitizeTemplateColumns(portableColumns);
               const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
               const created = await createMasterView({
                 name,
@@ -644,8 +666,9 @@ export default function PartsListShell() {
           } else {
             // Edit mode
             if (activeView.scope === 'master') {
-              // Update master view via API
-              const safeColumns = sanitizeTemplateColumns(columns);
+              // Update master view via API (reverse-map + sanitize, same rationale as create)
+              const { columns: portableColumns } = reverseMapKnownColumns(columns, inferredMapping);
+              const safeColumns = sanitizeTemplateColumns(portableColumns);
               const safeCalcFields = sanitizeTemplateCalcFields(calcFields);
               await updateMasterView(activeView.id, {
                 name: activeView.id !== 'raw' ? name : undefined,
@@ -672,6 +695,24 @@ export default function PartsListShell() {
           if (idx != null) setHighlightedRowIndex(idx);
         }}
         onCancel={() => setAddPartOpen(false)}
+        spreadsheetHeaders={effectiveHeaders}
+        inferredMapping={inferredMapping}
+      />
+
+      {/* Row-identity picker — same dialog in 'replace' mode. Opens on MPN cell
+          edit (to force Search → Select confirmation) or on ambiguous status
+          chip click (to let the user pick from batch-validator candidates). */}
+      <AddPartDialog
+        open={pickerState !== null}
+        mode="replace"
+        initialMpn={pickerState?.mpn}
+        initialManufacturer={pickerState?.manufacturer}
+        initialCandidates={pickerState?.candidates}
+        onReplace={(picked) => {
+          if (pickerState) handleReplaceRowIdentity(pickerState.rowIndex, picked);
+        }}
+        onAdd={() => { /* unused in replace mode */ }}
+        onCancel={handlePickerCancel}
         spreadsheetHeaders={effectiveHeaders}
         inferredMapping={inferredMapping}
       />

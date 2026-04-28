@@ -27,16 +27,23 @@ export async function GET(
 
     const supabase = await createClient();
 
-    // Resolve slug → name_display
+    // Resolve slug → manufacturer identity + every alias spelling.
+    // Products get imported under alias names more often than you'd think
+    // (Excel sources use English only; name_display is "ENGLISH Chinese"),
+    // so filtering purely on name_display misses real products.
     const { data: mfr } = await supabase
       .from('atlas_manufacturers')
-      .select('name_display, name_en')
+      .select('name_display, name_en, name_zh, aliases')
       .eq('slug', slug)
       .single();
 
     if (!mfr) {
       return NextResponse.json({ error: 'Manufacturer not found' }, { status: 404 });
     }
+
+    const mfrVariants = Array.from(new Set(
+      [mfr.name_display, mfr.name_en, mfr.name_zh, ...(mfr.aliases ?? [])].filter((v): v is string => !!v)
+    ));
 
     const columns = 'id, mpn, description, clean_description, family_id, category, subcategory, status, package, parameters';
     const familyRuleAttrs = new Map<string, Set<string>>();
@@ -91,7 +98,7 @@ export async function GET(
         let q = supabase
           .from('atlas_products')
           .select(columns)
-          .or(`manufacturer.eq.${mfr.name_display},manufacturer.eq.${mfr.name_en}`)
+          .in('manufacturer', mfrVariants)
           .order('id')
           .range(fetchOffset, fetchOffset + PAGE_SIZE - 1);
         if (family) q = q.eq('family_id', family);
@@ -131,7 +138,7 @@ export async function GET(
     let query = supabase
       .from('atlas_products')
       .select(columns, { count: 'exact' })
-      .or(`manufacturer.eq.${mfr.name_display},manufacturer.eq.${mfr.name_en}`)
+      .in('manufacturer', mfrVariants)
       .order('mpn')
       .range(offset, offset + limit - 1);
 

@@ -56,7 +56,7 @@ export function isLiteralRef(ref: ColumnRef | LiteralRef): ref is LiteralRef {
 }
 
 /** Parse a cell value to a number, handling locale-formatted strings */
-function toNumber(val: string | number | undefined): number | undefined {
+export function toNumber(val: string | number | undefined): number | undefined {
   if (val === undefined || val === null || val === '') return undefined;
   if (typeof val === 'number') return isNaN(val) ? undefined : val;
   // Strip commas and whitespace, then parse

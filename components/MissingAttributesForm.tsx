@@ -22,14 +22,35 @@ interface MissingAttributesFormProps {
   onSkip: () => void;
 }
 
+const CATEGORICAL_FLAG_EXAMPLES: Record<string, string> = {
+  body_material: 'Ceramic',
+  safety_certification: 'UL248',
+  output_transistor_type: 'Phototransistor',
+  package_format: '5×20mm',
+};
+
+function parseEnumHint(attributeName: string): string | null {
+  const match = attributeName.match(/\(([^)]+)\)/);
+  if (!match) return null;
+  const inner = match[1].trim();
+  const parts = inner.split(/\s*\/\s*/).map(s => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  return parts.slice(0, 2).join(' or ');
+}
+
 function getPlaceholder(attr: MissingAttributeInfo, t: (key: string) => string): string {
   switch (attr.logicType) {
     case 'identity':
       return `e.g., ${attr.attributeName === 'Capacitance' ? '100nF' : attr.attributeName === 'Package / Case' ? '0603' : attr.attributeName === 'Resistance' ? '10kΩ' : '...'}`;
     case 'identity_upgrade':
       return `e.g., ${attr.attributeName === 'Dielectric' ? 'X7R' : attr.attributeName === 'Resistor Type' ? 'Thick Film' : '...'}`;
-    case 'identity_flag':
+    case 'identity_flag': {
+      const hint = parseEnumHint(attr.attributeName);
+      if (hint) return `e.g., ${hint}`;
+      const override = CATEGORICAL_FLAG_EXAMPLES[attr.attributeId];
+      if (override) return `e.g., ${override}`;
       return t('chat.yesOrNo');
+    }
     case 'threshold':
     case 'fit':
       return `e.g., ${attr.attributeName.includes('Voltage') ? '50V' : attr.attributeName.includes('Tolerance') ? '±10%' : attr.attributeName.includes('Temp') ? '-55°C to 125°C' : '...'}`;

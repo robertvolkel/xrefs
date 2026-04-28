@@ -17,13 +17,13 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import DomainChip, { inferContextActive } from './DomainChip';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -32,9 +32,10 @@ interface AttributesPanelProps {
   activeTab: AttributesTab;
   onTabChange: (tab: AttributesTab) => void;
   allRecommendations?: XrefRecommendation[];
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -83,24 +84,35 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                 {attributes.part.mpn}
               </Typography>
               <Chip label={attributes.part.status} size="small" color={attributes.part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+              <DomainChip
+                classification={attributes.part.qualificationDomain}
+                contextActive={inferContextActive(allRecommendations ?? [])}
+              />
               {attributes.part.qualifications?.map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
-              {attributes.part.datasheetUrl && (
-                <Tooltip title="View datasheet" arrow>
-                  <Box
-                    component="span"
-                    role="link"
-                    onClick={() => window.open(attributes.part.datasheetUrl, '_blank')}
-                    sx={{ cursor: 'pointer', display: 'inline-flex', '&:hover': { opacity: 0.8 } }}
-                  >
-                    <PictureAsPdfOutlinedIcon sx={{ fontSize: 14, color: '#E57373' }} />
-                  </Box>
+            </Stack>
+            <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap component="div">
+              {onManufacturerClick && attributes.part.manufacturer ? (
+                <Box
+                  component="span"
+                  onClick={() => onManufacturerClick(attributes.part.manufacturer)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { color: 'primary.main', textDecoration: 'underline' },
+                    transition: 'color 0.15s ease',
+                  }}
+                >
+                  {attributes.part.manufacturer}
+                </Box>
+              ) : (
+                attributes.part.manufacturer
+              )}
+              {attributes.part.mfrOrigin === 'atlas' && (
+                <Tooltip title="Chinese manufacturer" arrow>
+                  <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
                 </Tooltip>
               )}
-            </Stack>
-            <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap>
-              {attributes.part.manufacturer}
             </Typography>
             {/* Pill segment control */}
             <ToggleButtonGroup

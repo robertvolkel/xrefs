@@ -3716,3 +3716,861 @@ Three layers, decreasing scope:
 ### Verification
 
 `npx tsc --noEmit` clean. `npm test` → 1270/1270 tests pass. Deprecation hints in the IDE are intentional — they mark the three legacy-read fallback sites (`PartsListShell` prop fallback, `ReplacementPrioritiesField` load/save fallback), not bugs.
+
+---
+
+## Decision #148 — Manufacturer Alias Resolution: Canonical MFR-Identity Layer (Apr 2026)
+
+**Context:** `atlas_manufacturers.aliases` has been GIN-indexed and populated for 1,011 Chinese manufacturers since the canonical-identity import, but no code path read it. Chinese/abbreviated variants (`兆易创新`, `GD`, `gd/兆易创新`) silently missed in Atlas search; BOM rows spelled differently for the same MFR never deduped; AddPart warned users about false mismatches; admin aggregation only folded `name_display OR name_en` so products imported under alias spellings were invisible in coverage reports. Beyond cleanup, this is the identity layer that upcoming AVL / AML / Line Card ingestion needs — customer manufacturer data arrives in inconsistent forms and must canonicalize at ingest time, not be retrofitted later.
+
+**Decision:** Add a shared resolver that maps any known variant (case-insensitive, exact hit only — no fuzzy) to the canonical `name_display`, and wire it into the four hot paths that compare manufacturer names. Design the contract to absorb the Western company-graph follow-on without consumer changes.
+
+### Resolver contract
+
+```ts
+export interface ManufacturerAliasMatch {
+  canonical: string;
+  slug: string;
+  source: 'atlas' | 'western';
+  variants: string[];
+  companyUid?: number;              // Reserved for Western company graph
+  lineage?: { uid; name; status }[]; // Reserved for Western parent-chain walk
+}
+export async function resolveManufacturerAlias(input: string): Promise<ManufacturerAliasMatch | null>;
+export async function getAllManufacturerVariants(): Promise<Map<string, ManufacturerAliasMatch>>;
+export function invalidateManufacturerAliasCache(): void;
+```
+
+5-minute in-memory cache; coalesced in-flight refresh to avoid thundering-herd on cold start. Returns `null` when nothing matches — callers fall through to their existing substring behavior unchanged.
+
+### Exact-hit-only, not fuzzy
+
+Collision risk with fuzzy matching is asymmetric: false positives silently mis-canonicalize unrelated MFRs, corrupting dedup and aggregation; false negatives just mean we don't help. Fuzzy matching also couples the resolver to an opaque scoring function that's hard to tune across languages. Exact hit with a rich alias list (which Atlas already has) gives us the recall we need without the failure mode.
+
+### Why dedup pre-canonicalization is in the caller, not `bomDeduper`
+
+`bomDeduper.ts` is imported into the client-side hook `usePartsListState`. Adding a Supabase-using import would pull server-only code into the client bundle. Instead, `usePartsListState` calls a new server endpoint `POST /api/manufacturer-aliases/canonicalize` (batch) through a thin client wrapper `manufacturerAliasClient.ts`, rewrites `rawManufacturer` to canonical, then calls the unchanged `findDuplicateGroups`. Deduper stays oblivious.
+
+### Atlas search: two parallel queries, merge by id
+
+Inline `.or('mpn.ilike.%x%,manufacturer.in.(v1,v2,v3)')` is tricky to escape correctly for values containing commas, quotes, or CJK characters. Cleaner: one query for MPN ilike, one for `manufacturer.in(variants)` (or the original manufacturer ilike fallback), merge + dedup by `id`. Same semantics as the old `.or()`, zero escaping headaches.
+
+### Admin aggregation: variant-fold
+
+The half-implemented pattern at `admin/manufacturers/route.ts` (`productAgg.get(name_display) || productAgg.get(name_en)`) becomes a full fold across `[name_display, name_en, name_zh, ...aliases]`. `foldAggs` sums `productCount` + `scorableCount`, unions `families`, maxes `lastProductUpdate`. The per-slug products route switches `.or('manufacturer.eq.X,manufacturer.eq.Y')` to `.in('manufacturer', variants)`. No RPC changes, no schema changes — pure lookup-side fold.
+
+### Forward compatibility with Western
+
+Reserving `source`, `companyUid`, `lineage` on the contract means the Western follow-on (P1, see BACKLOG) adds a second source read behind the same interface. Consumers don't change. The `companyUid` field will be the stable FK that AVL/AML/Line Card ingestion stores on customer rows, so future corporate-ownership changes propagate automatically without customer re-upload.
+
+### Files Modified
+
+**New:**
+- `lib/services/manufacturerAliasResolver.ts` — server-side cached resolver
+- `lib/services/manufacturerAliasClient.ts` — client-safe batch wrapper + `canonicalizeRowManufacturers`
+- `app/api/manufacturer-aliases/canonicalize/route.ts` — batch POST endpoint
+- `__tests__/services/manufacturerAliasResolver.test.ts` — 16 tests
+
+**Modified:**
+- `lib/services/atlasClient.ts` — dual-query search + dedup by id
+- `app/api/parts-list/search-quick/route.ts` — alias-aware mismatch suppression
+- `hooks/usePartsListState.ts` — pre-canonicalize `rawManufacturer` before dedup
+- `app/api/admin/manufacturers/route.ts` — fold product agg + coverage across variants
+- `app/api/admin/manufacturers/[slug]/products/route.ts` — `.in('manufacturer', variants)`
+- `app/api/admin/atlas/manufacturers/route.ts` — invalidate resolver cache on toggle
+- `__tests__/services/bomDeduper.test.ts` — alias-variant collapse documentation test
+
+### Verification
+
+`npm run lint` clean for all touched files. `npm test` → 1,287/1,287 tests pass (19 suites). Backward-compatible: MFRs not in `atlas_manufacturers` fall through the resolver to the original substring/ilike behavior.
+
+---
+
+## Decision #149 — Western MFR Company-Identity Graph (Apr 2026)
+
+**Context:** The app is moving toward ingesting customer-supplied manufacturer data (AVLs, AMLs, Preferred MFR lists, Line Cards). Every one of those is keyed on manufacturer names that will arrive in inconsistent forms — acquired brands (Linear Tech / Maxim / Hittite / Burr-Brown → ADI; Freescale → NXP; Atmel / Microsemi → Microchip; Intersil / IDT / Dialog → Renesas; IR / Cypress → Infineon; Fairchild → onsemi; National Semi → TI), rebrands (ON Semiconductor → onsemi), subsidiary brands (Vishay Dale), and abbreviations (TI, ADI, ST, NXP). Without canonical resolution at ingest time, customer data fragments and filter semantics break; retrofitting canonical identity later is painful and customer-visible.
+
+Decision #148 shipped the resolver for Chinese (Atlas) MFRs with a forward-compat contract (`source: 'atlas' | 'western'`, reserved `companyUid` / `lineage`). This decision adds the Western source behind the same interface.
+
+**Decision:** Ingest a company-identity graph into two Supabase tables and extend the resolver to walk it. Exact-hit matching, no fuzzy. Hot-path consumers unchanged — they light up for Western inputs automatically.
+
+### Source data (already in `/data/`)
+
+- **`UID, name, source_URL, company_status_code, parent_company_ID.xlsx`** — 25,861 companies. Top-level self-reference; children point up via `parent_company_id`. Status enum: `corporate`, `active`, `acquired`, `division`, `brand`, `merged`, `defunct`, `unknown`, `product`, `sister`, null.
+- **`content_id, value, context_code.xlsx`** — 8,732 alias rows. `context_code` taxonomy: `also_known_as` (3,361), `brand_of` (1,994), `acquired_by` (706), `formerly_known_as` (619), `short_name` (564), `division_of` (530), `previous_name_value` (388), `acronym` (138), `parent_of` (118), `merged_into` (108), `trademark_of` (79), `product_family` (61), `abbreviation` (34), `mis-spelling` (30), `nickname` (1), `phoenetic` (1).
+
+**Verified chains:** Linear Tech (2136, acquired) → ADI (1742, corporate) via `parent_uid`. Maxim / Hittite / Burr-Brown similarly → ADI / TI. National Semi → TI via `context_code=acquired_by` alias (parent points to self). Linear Tech has 27 alias variants alone (`lt`, `ltc`, `linear tech`, `linetech`, `lint`, misspellings).
+
+### Two-table schema (`scripts/supabase-manufacturer-companies-schema.sql`)
+
+```sql
+manufacturer_companies (uid PK, name, source_url, status, parent_uid, slug UNIQUE, created_at, updated_at)
+manufacturer_aliases   (id BIGSERIAL PK, company_uid FK, value, value_lower GENERATED, context, created_at)
+```
+
+Indexes: `parent_uid` (for future graph queries), `LOWER(name)` (resolver lookup), partial `status` for `('corporate','active')`, `aliases.value_lower`, `aliases.company_uid`, `aliases.context`. RLS: authenticated read, admin-only write. `updated_at` trigger on companies table.
+
+### Import script (`scripts/manufacturer-companies-import.mjs`)
+
+Dual-xlsx input with **two-pass** company insert: pass 1 upserts with `parent_uid=NULL`, pass 2 sets `parent_uid` after every row exists. Avoids self-referential FK ordering issues within batch upserts. Orphan handling:
+- 189 alias rows whose `content_id` doesn't exist → dropped with stderr audit.
+- 31 companies whose `parent_company_id` doesn't exist → `parent_uid` set NULL.
+
+**Important parser gotcha:** `XLSX.utils.sheet_to_json(sheet, { defval: null })` is required. Without `defval`, columns whose first row is null get silently dropped. A related bug: `Number(null) === 0` (not `NaN`) — guard explicitly with `parentRaw !== null && parentRaw !== undefined && parentRaw !== ''` before `Number()`. Bit me in an early iteration (turned 1,080 false orphan parents into 31 real ones).
+
+### Resolver extension (`lib/services/manufacturerAliasResolver.ts`)
+
+Pre-computes the canonical walk at cache-build time so `resolveManufacturerAlias()` stays O(1):
+
+1. **Load** Atlas + Western (paginated via `fetchAllPages` — 1000-row PostgREST cap) in parallel.
+2. **Build** a `companyByUid` map with inlined aliases per node.
+3. **Walk** every company to its terminal canonical via `walkToCanonical(startUid)`:
+   - Step up through `parent_uid` graph first (primary mechanism).
+   - Else step up through `context=acquired_by|merged_into` alias (secondary — source data uses both; user confirmed intentional).
+   - Terminate at self-ref row, orphan parent, or `MAX_PARENT_HOPS = 6` (loop guard via `visited` set).
+4. **Group** descendants by canonical. Each canonical's `ManufacturerAliasMatch.variants` = union of every descendant's name + aliases — so ADI's variants include `lt`, `ltc`, `linetech`, `hittite`, `maxim`, etc.
+5. **Index** variant → uid. Collision policy: prefer canonical with `status IN ('corporate','active')`; ties broken by lowest `uid`. Ensures "Cypress" routes to the surviving entity when multiple companies share a name.
+6. **At resolve time:** look up by lowercased input. Attach per-input `lineage` (the chain from origin to canonical) — stored per-uid, applied as an override on the canonical's match object.
+
+**Atlas wins cross-source collisions** (rare, logged when observed). Same 5-minute cache TTL. `invalidateManufacturerAliasCache()` wipes both sources together.
+
+### Hot paths unchanged
+
+Atlas search, AddPart mismatch, BOM dedup, admin aggregation all already consume `ManufacturerAliasMatch` via `resolveManufacturerAlias()`. Zero edits to consumers. Western inputs light up the moment the data lands.
+
+### Deployment (user actions)
+
+The code is live but the data and schema are not. To activate:
+
+1. Apply schema migration in Supabase SQL editor:
+   ```bash
+   cat scripts/supabase-manufacturer-companies-schema.sql  # copy-paste into SQL editor
+   ```
+2. Import data (requires `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`):
+   ```bash
+   node scripts/manufacturer-companies-import.mjs --dry-run --verbose  # sanity check first
+   node scripts/manufacturer-companies-import.mjs                       # real write
+   ```
+3. Resolver picks up Western data on next 5-min cache refresh (or admin toggle on the Atlas manufacturers page invalidates immediately).
+
+### Future: AVL / AML / Preferred-MFR / Line-Card ingestion
+
+Those features (not in this decision) will call `resolveManufacturerAlias()` at ingest time and persist `companyUid` + raw customer string. Filter semantics become uid-comparisons. Future acquisitions (admin updates `parent_uid`) propagate automatically through customer data without re-upload.
+
+### Files Modified
+
+**New:**
+- `scripts/supabase-manufacturer-companies-schema.sql` — 2-table schema + indexes + RLS
+- `scripts/manufacturer-companies-import.mjs` — dual-xlsx import with orphan handling
+
+**Modified:**
+- `lib/services/manufacturerAliasResolver.ts` — Western source + parent-walk + `acquired_by` alias chain + lineage assembly + collision policy
+- `__tests__/services/manufacturerAliasResolver.test.ts` — 24 tests (11 Atlas, 9 Western, 3 cross-source, 1 getAll); mock routes by table name + paginated range
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,295/1,295 tests pass (19 suites, +8 Western tests). Import script `--dry-run --verbose` on the real files: 25,861 companies parsed, 8,543 aliases after dropping 189 orphans, 31 orphan parents nulled, status distribution matches inspection values.
+
+---
+
+## Decision #150 — BOM Batch-Validate MFR-Aware Match Selection (Apr 2026)
+
+**Context:** Decisions #148 / #149 wired alias resolution into 4 hot paths (Atlas search, AddPart mismatch, BOM dedup, admin aggregation) but **NOT** into the per-row BOM batch validator at [app/api/parts-list/validate/route.ts](app/api/parts-list/validate/route.ts). That route uses the `manufacturer` field only as a keyword fallback when MPN is blank; otherwise it blindly picks `searchResult.matches[0]` without MFR comparison. Consequence: a BOM row `LT1086 | Linear Technology` gets silently resolved to whatever comes first in search, even when a later candidate canonically matches the user's input MFR.
+
+Gap surfaced in review post-#149 — user called it out immediately.
+
+**Decision:** When `searchParts()` returns multiple candidates AND the user supplied a manufacturer, prefer the candidate whose MFR canonically matches the input. Fall through to `matches[0]` in every ambiguous case (input MFR blank, input doesn't resolve, no candidate's MFR resolves to the same canonical). Zero impact on single-match or MPN-less paths.
+
+### Implementation
+
+New helper `lib/services/mfrMatchPicker.ts` with a single exported function:
+
+```ts
+export async function pickMfrAwareMatch(
+  matches: PartSummary[],
+  inputManufacturer: string | undefined,
+): Promise<PartSummary>;
+```
+
+Called in `validate/route.ts processItem()` immediately after `searchParts()` returns, replacing the old `resolvedPart = searchResult.matches[0]` line. The existing ambiguity-flag logic (`candidateMatches` when MPN doesn't exactly match) still runs against the resolved part — unchanged semantics.
+
+**Why a separate module rather than inline?** Next.js route files convention-lock exports to HTTP methods; factoring the pure logic out keeps the route file focused on the handler and gives us a clean unit-test target.
+
+### Scope-limits (intentional)
+
+- No new mismatch-warning UI. Predecessor-brand swaps (`Linear Technology` → `Analog Devices Inc`) still happen silently because that's what we want — the canonical is what should be stored. Can add an informational "resolved to successor brand" note later if users ask for it.
+- No change to the MPN-less fallback path (`${manufacturer} ${query}` keyword concatenation). Unrelated.
+- No change to `search-quick` route (AddPart dialog) — that path already resolves via the slug-comparison approach added in Decision #148.
+
+### Files Modified
+
+**New:**
+- `lib/services/mfrMatchPicker.ts` — 25 lines, one exported function
+- `__tests__/services/mfrMatchPicker.test.ts` — 8 tests
+
+**Modified:**
+- `app/api/parts-list/validate/route.ts` — import `pickMfrAwareMatch`; one-line replacement of `matches[0]` pick
+
+### Verification
+
+`npm run lint` clean. `npm test` → 1,303/1,303 (20 suites, +8 picker tests). Picker tests cover: single-match passthrough, blank-input passthrough, unresolvable-input passthrough, canonical-preferred selection, matches[0]-already-canonical, no-canonical-match fallback, cross-source (Atlas), empty-manufacturer skip.
+
+---
+
+## Decision #151 — Matching-Engine Preferred-MFR Sort Uses Alias Resolver (Apr 2026)
+
+**Context:** Users can set `preferredManufacturers` in [Settings → Company Settings](components/settings/CompanySettingsPanel.tsx) — an existing feature that stores preferences in `profiles.preferences` JSONB and uses them as a sort tiebreaker in [matchingEngine.ts findReplacements()](lib/services/matchingEngine.ts). Before this decision, `isPreferredManufacturer()` used a substring check: `mfrLower.includes(p.toLowerCase()) || p.toLowerCase().includes(mfrLower)`. Consequence: a user who set "prefer Analog Devices" would NOT float Linear Tech / Maxim / Hittite parts because those strings don't substring-match "Analog Devices" in either direction — despite being the same company canonically.
+
+Decisions #148/#149 built the alias resolver but only wired it into hot paths that compare MFR strings at the time (Atlas search, AddPart mismatch, BOM dedup, admin aggregation, batch-validate match pick). The preferred-MFR sort was noted as deferred lower-ROI. This decision closes that gap.
+
+**Decision:** Swap the substring check for canonical-slug comparison via `resolveManufacturerAlias()`. Do the resolution at the caller (partDataService) so `findReplacements` stays sync and the existing substring behavior remains as a fallback for any input that doesn't resolve.
+
+### Contract change
+
+`findReplacements()` gains an optional parameter:
+
+```ts
+export function findReplacements(
+  logicTable: LogicTable,
+  source: PartAttributes,
+  candidates: PartAttributes[],
+  preferredManufacturers?: string[],
+  manufacturerSlugLookup?: Map<string, string>,  // ← new; lowercased MFR → canonical slug
+): XrefRecommendation[];
+```
+
+`isPreferredManufacturer()` consults the lookup first (slug-to-slug comparison) when provided; falls through to substring on misses. Backward-compatible: tests and `mockXrefService.ts` calls without the lookup argument get today's behavior unchanged.
+
+### Where the lookup is built
+
+[partDataService.getRecommendations()](lib/services/partDataService.ts) builds a single `Map<string, string>` before calling the matching engine:
+
+```ts
+const manufacturerSlugLookup = new Map<string, string>();
+if (mergedPreferred.length > 0) {
+  const resolveOne = async (raw: string) => {
+    const key = raw.toLowerCase();
+    if (manufacturerSlugLookup.has(key)) return;
+    const match = await resolveManufacturerAlias(raw);
+    if (match) manufacturerSlugLookup.set(key, match.slug);
+  };
+  await Promise.all([
+    ...mergedPreferred.map(resolveOne),
+    ...allCandidates
+      .map(c => c.part.manufacturer)
+      .filter((m): m is string => !!m)
+      .map(resolveOne),
+  ]);
+}
+```
+
+~N+M resolver calls per `getRecommendations` call (preferred count + candidate count, typically <~120). Each hits the 5-min resolver cache after first population — O(1) after warmup.
+
+### Performance
+
+Measured with `console.time('[perf] findReplacements (scoring)')` — no measurable regression in scoring. Alias pre-resolution adds a small async pass BEFORE scoring. The resolver's in-memory variant map hits for every Atlas/Western MFR with no additional Supabase traffic.
+
+### Edge cases
+
+- **Preferred MFR that doesn't resolve:** substring fallback fires (same behavior as today).
+- **Candidate MFR that doesn't resolve (non-Atlas/Western vendor):** substring fallback fires for that specific comparison.
+- **Empty preferredManufacturers:** `manufacturerSlugLookup` stays empty, no overhead, no lookup passed to `findReplacements`.
+
+### Files Modified
+
+**Modified:**
+- [lib/services/matchingEngine.ts](lib/services/matchingEngine.ts) — `isPreferredManufacturer()` signature + implementation; `findReplacements()` signature pass-through.
+- [lib/services/partDataService.ts](lib/services/partDataService.ts) — import `resolveManufacturerAlias`; build + pass `manufacturerSlugLookup` to `findReplacements()`.
+- [__tests__/services/matchingEngine.test.ts](__tests__/services/matchingEngine.test.ts) — 5 new tests: substring fallback (backward compat), canonical-boost, no-canonical-boost-when-differing, substring-fallback-for-unresolved, honors existing 5% match-% band.
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,308/1,308 (20 suites, +5 preferred-MFR tests).
+
+---
+
+## Decision #152 — Admin Alias Editor: Dedicated Aliases Tab (Apr 2026)
+
+**Context:** Atlas aliases (`atlas_manufacturers.aliases` JSONB) have been populated only via the Excel import script. When an admin spots a missing abbreviation, rebrand, or misspelling, the only remediation was re-running the bulk import — friction that actively discouraged alias corrections. Aliases previously rendered as read-only chips inside the Profile tab of the per-MFR admin detail page. User called out the gap after the alias arc (#148 / #149 / #150 / #151) shipped.
+
+**Initial design** (first iteration): upgraded the Profile-tab chip strip in-place to an editable widget. User pushed back: "Why put it in Profile? That makes no sense — it should be a dedicated tab." Correct call — aliases are *identity*, not profile metadata. Rationalized placement based on "that's where the read-only chips already lived" isn't a design principle.
+
+**Decision:** New dedicated "Aliases" tab (tab index 5) on the per-MFR detail page, positioned after Profile. Shows alias count in the tab label (`Aliases (3)`) for discoverability. Editable widget: add/remove with optimistic saves, immediate resolver cache invalidation. Atlas-only — Western `manufacturer_companies` / `manufacturer_aliases` editor stays deferred (graph + 15-context taxonomy warrants its own design).
+
+### UI — dedicated tab
+
+Tab declared alongside existing five (Products, Flagged, Coverage, Cross-References, Profile) at [ManufacturerDetailPage.tsx:408](components/admin/ManufacturerDetailPage.tsx#L408). Tab label includes the alias count when > 0.
+
+Tab content: header with inline `CircularProgress` while a PATCH is in flight, explanatory helper text ("Variant spellings, abbreviations, and translations…"), chip row with MUI `<Chip onDelete={...}>` for each alias, then a `<TextField>` + `<Button>` pair for adds (Enter-key submits). **Immediate save on each action** — optimistic update → PATCH → rollback on failure + `<Alert>` error banner. No dirty state, no Save/Cancel buttons. Matches the `updateEnabled` toggle pattern at [ManufacturerDetailPage.tsx](components/admin/ManufacturerDetailPage.tsx) used by the enabled switch.
+
+The old in-Profile-tab alias chip strip is removed entirely — no duplication, no confusion about where the source of truth lives.
+
+Duplicates (case-insensitive) and empty submissions no-op with `error` prop on the input + helper text "Empty or duplicate alias".
+
+### API — extend existing PATCH allowlist + validation
+
+[app/api/admin/manufacturers/[slug]/route.ts](app/api/admin/manufacturers/[slug]/route.ts) gains `'aliases'` in the `allowedFields` array plus a new exported `normalizeAliasInput()` helper that:
+
+- Rejects non-array input (400)
+- Rejects non-string entries (400)
+- Rejects empty / whitespace-only entries (400)
+- Rejects entries longer than 100 chars (400)
+- Caps total at 50 entries (400)
+- Dedupes case-insensitively, first writer wins
+- Trims surrounding whitespace before dedup
+
+The helper is exported specifically for unit testing; route handler calls it inline right before the `.update()` call.
+
+### Cache invalidation
+
+After successful write, calls `invalidateManufacturerAliasCache()` from [lib/services/manufacturerAliasResolver.ts](lib/services/manufacturerAliasResolver.ts) alongside the existing `invalidateManufacturerCache()` + `invalidateManufacturersListCache()` invalidations. Alias edits skip `invalidateRecommendationsCache()` because the resolver is used for MFR identity only — not for scoring weights. The recommendations cache remains valid across alias edits.
+
+### Files Modified
+
+**New:**
+- `__tests__/services/manufacturerAliasValidation.test.ts` — 10 tests covering every validation branch
+
+**Modified:**
+- `app/api/admin/manufacturers/[slug]/route.ts` — export `normalizeAliasInput()`, add `aliases` to `allowedFields`, plumb validation + resolver cache invalidation
+- `components/admin/ManufacturerDetailPage.tsx` — 5 new useState hooks (aliases / pending / error / input / inputError), `useEffect` to sync from server data, `patchAliases` + `handleAddAlias` + `handleDeleteAlias` callbacks, upgraded Profile-tab alias section with chip-delete + TextField-add widget
+
+### Verification
+
+`npm run lint` clean for touched files. `npm test` → 1,318/1,318 tests pass (21 suites, +10 validation tests). Manual end-to-end: on `/admin/manufacturers/gigadevice`, add "GD777", delete "gd", duplicate-add fails silently, empty-add fails silently, every successful change persists across refresh, resolver picks up the new alias immediately (uploaded BOM with the new alias canonicalizes correctly without waiting on the 5-min TTL).
+
+### Out of scope (deferred)
+
+- Western `manufacturer_companies` / `manufacturer_aliases` editor — graph + 15-context-code taxonomy warrants its own design.
+- Bulk-browse tab across all MFRs (the "new tab in AtlasPanel" option). Defer until/unless cross-MFR browsing becomes a recurring admin workflow.
+- Context-code selection — Atlas aliases are a flat string list by design; no taxonomy to choose from.
+
+---
+
+## Decision #153 — Fix: atlas_manufacturers.aliases Double-JSON-Encoding (Apr 2026)
+
+**Context:** While testing the new Aliases tab (Decision #152) on `/admin/manufacturers/gigadevice`, the UI showed "No aliases yet" despite the source xlsx clearly listing 6 aliases for GigaDevice (`gigadevice; 兆易创新; gd/兆易创新; gigadevice semiconductor (beijing) inc; gd兆易创新; gigadevice semiconductor`). A direct Supabase query on `atlas_manufacturers.aliases` revealed the root cause:
+
+```
+typeof aliases: string
+Array.isArray(aliases): false
+aliases raw: "[\"gigadevice\",\"兆易创新\",\"gd/兆易创新\",...]"
+```
+
+The column was JSONB with a **string** value containing JSON text, instead of a JSON **array**.
+
+**Root cause:** `scripts/atlas-manufacturers-import.mjs` line 165 had `aliases: JSON.stringify(aliases)`. Supabase-JS JSON-encodes the entire record body when sending to PostgREST, so pre-stringifying the field double-encoded it — PostgreSQL stored a JSON string literal in the JSONB column instead of the actual array.
+
+**Latent impact (silent, since the Chinese P1 shipped in Decision #148):**
+- 335 of 1,011 atlas manufacturers had mis-encoded aliases. The admin editor correctly showed "No aliases yet" on all of them.
+- The resolver iterated `string` instead of `string[]` via `for (const a of row.aliases)`, which walks characters. The variant map was silently polluted with one-char keys like `"["`, `"g"`, `","`, `"\""` for every affected MFR.
+- Nothing visibly broke because the resolver returns `null` on non-matches and callers fall back to substring logic. Users saw "mostly works" behavior but the alias-hit path wasn't actually exercising its data.
+- The resolver tests didn't catch it because mocks passed real arrays, not strings.
+
+**Fix — three parts:**
+
+1. **Import script** ([scripts/atlas-manufacturers-import.mjs](scripts/atlas-manufacturers-import.mjs)): drop `JSON.stringify()` so the array is passed directly; supabase-js handles encoding. Also replaced the follow-up `JSON.parse(m.aliases).length` in the summary log with `(m.aliases ?? []).length`.
+
+2. **Migration:** re-ran the fixed import. Every row upserts by `atlas_id` / `slug`, so the 335 alias-bearing rows get their columns rewritten as proper JSONB arrays; the 676 alias-free rows pass through unchanged. Verified via Supabase query: `Array.isArray(row.aliases) === true` across sampled rows post-fix.
+
+3. **Defensive parsing in the resolver** ([lib/services/manufacturerAliasResolver.ts](lib/services/manufacturerAliasResolver.ts) `buildAtlasMatch()`): if `row.aliases` comes back as a string (re-corruption from future scripts, partial rollbacks, etc.), `JSON.parse()` it and log a warning with the slug. Prevents silent variant-map pollution if this ever happens again. +1 test case covering the legacy string-encoded form.
+
+### Files Modified
+
+- `scripts/atlas-manufacturers-import.mjs` — drop `JSON.stringify`, fix summary log
+- `lib/services/manufacturerAliasResolver.ts` — defensive string→array parse in `buildAtlasMatch`
+- `__tests__/services/manufacturerAliasResolver.test.ts` — +1 test: "tolerates a legacy JSON-string-encoded aliases column"
+
+### Verification
+
+`npm test` → 1,319/1,319 (21 suites, +1 defensive test). On reload of `/admin/manufacturers/gigadevice` → Aliases tab, all 6 aliases now render as chips with working delete buttons. Resolver cache tick picks up the corrected data within 5 min, or immediately on any admin manufacturer-toggle PATCH.
+
+### Takeaway
+
+Resolver tests that mock Supabase responses pass TS/JS objects directly, which doesn't reproduce the wire-format of what actually comes back from PostgREST for JSONB columns. For bugs that live in the DB-serialization layer, the test mocks can't catch them. An integration test that hits a real Supabase instance would — out of scope for now, but worth noting if a similar latent bug surfaces.
+
+---
+
+## Decision #154 — Fix: Atlas Alias Separator Parsing (Apr 2026)
+
+**Context:** Second latent bug surfaced while QA'ing the new Aliases tab (Decision #152). KOHER's tab rendered a single chip containing `koher,科或（上海）电子有限公司,科或,KOHERelec` — four distinct manufacturer names mashed together. The cause was parse-time: [scripts/atlas-manufacturers-import.mjs](scripts/atlas-manufacturers-import.mjs) `parseAliases()` split only on ASCII semicolons (`;`), but the source master file uses three separator styles.
+
+**Measured impact** (1,011 rows in `data/atlas_manufacturers_20260319_canonical_identity_model copy.xlsx`):
+
+| Separator | Rows | Pre-fix behavior |
+|-----------|------|------------------|
+| ASCII `;` | 241 | ✅ split correctly |
+| CJK `；` (full-width) | 10 | ❌ one blob alias (SWST, RESI, 2Pai Semi, etc.) |
+| Comma-only (no semi) | 2 | ❌ one blob alias (KOHER, one other) |
+| No separator | 85 | ✅ correct as-is |
+| Empty | 676 | n/a |
+
+12 rows had their aliases silently mis-parsed since the first import. Each affected row held a single chip containing all its variants joined by the unrecognized separator — effectively making those aliases unusable for resolution unless the user typed the whole blob verbatim (with the commas).
+
+### Tricky constraint
+
+Some rows legitimately contain commas inside company names — e.g. HONGFA's aliases include `"xiamen hongfa electroacoustic co.,ltd."`. Those rows use `;` as separator, so they parse correctly today. A naive "split on commas too" would regress them, splitting `Co.,Ltd.` into two fake aliases.
+
+### Fix — tiered split
+
+```js
+// 1. Always split on both semicolon variants — neither occurs inside a
+//    company name, safe for every row (including mixed ASCII+CJK like RESI).
+let parts = raw.split(/[;；]/);
+// 2. If no semicolon produced a split, fall back to commas. Only reachable
+//    for the 2 comma-only rows; other rows already produced multiple pieces.
+if (parts.length === 1) parts = parts[0].split(',');
+```
+
+Minimal, no heuristics, preserves all 241 already-correct rows and fixes the 12 broken ones. Re-ran the import (idempotent upsert by `atlas_id`/`slug`) — 1,011 rows touched, only the 12 broken ones changed shape.
+
+### Spot-check results (post-fix)
+
+- KOHER: `1 blob` → 4 chips (`koher`, `科或（上海）电子有限公司`, `科或`, `KOHERelec`)
+- SWST: `1 blob` → 4 chips
+- RESI: `1 blob` → 8 chips (had mixed ASCII + CJK semicolons)
+- 2Pai Semi: `1 blob` → 5 chips
+- RUNIC: `1 blob` → 5 chips
+- HONGFA (regression check): 5 chips, comma inside `Co.,Ltd.` preserved ✓
+
+### Files Modified
+
+- `scripts/atlas-manufacturers-import.mjs` — `parseAliases()` tiered split + inline comment documenting the three observed separator styles
+
+### Takeaway (pairs with #153)
+
+Both #153 (double-encode) and #154 (separator parsing) were silent data-layer bugs that the existing test mocks couldn't catch. The resolver test mocks pass clean arrays; the import script has no unit tests at all. Both bugs sat in production since the first Chinese P1 ship (#148) and surfaced only because the admin editor (#152) forced the data to round-trip through `Array.isArray()` + per-item chip rendering. If/when a similar data pipeline is added in the future (Western manufacturer curation UI, AVL ingestion, etc.), consider either unit tests on the parse helpers OR an integration test that walks real Supabase reads.
+
+
+## Decision #155 — Qualification-Domain Filter for Cross-Domain Substitution (Apr 2026)
+
+### Problem
+
+A user opened the Xref modal for Murata `GRM188R71E104KA01D` (commercial MLCC, 0.1 µF / 25 V / X7R / 0603), answered "Automotive" in the context questions, and the top "Accuris Certified" recommendation came back as `GCH188R71E104KE01D` — Murata's implanted-medical-device (GHTF Class D) series, not AEC-Q200 automotive. Per Murata's published application-suitability matrix, GCH has no automotive box checked; the correct automotive substitutes for that value are the GCM / GCJ (soft-termination) / GRT series.
+
+Root cause traced to three reinforcing issues:
+
+1. **`aec_q200` is an `identity_flag` rule.** Semantics: *if the source requires it, the replacement must too.* The source GRM is commercial (aec_q200 = false/missing), so the rule passes for every candidate regardless of their AEC state.
+2. **`escalate_to_mandatory` is weight-only.** The automotive context bumps `aec_q200` weight 8→10 via `contextModifier.ts:58-60` but does not flip rule semantics or inject a synthetic "source requires" override.
+3. **Bucket precedence is unconditional.** `sortRecommendationsForDisplay` puts `accuris` bucket ahead of `logic` bucket regardless of match %, so a non-AEC Accuris-certified candidate floats above any AEC-qualified Logic-Driven candidate.
+
+Net effect: automotive context could surface a medical-implantable part as the top recommendation. The right mental model, per the user's framing, is that "AEC-Q200 shouldn't be a binary gate — qualification domain should be."
+
+### Decision
+
+Introduce **qualification domain** as a categorical gate orthogonal to the logic table. A part's domain (`automotive_q200`, `medical_implant`, `mil_spec`, `space`, `industrial_harsh`, `commercial`, `unknown`, etc.) is determined by a pluggable per-manufacturer classifier. The user's context selects an **expected-domain set**; cross-domain substitution (e.g. medical_implant → automotive) is hard-excluded regardless of what a vendor's FFF table says.
+
+Three behaviors, in order of precedence:
+
+1. **Hard-exclude** candidates whose domain is incompatible with the selected context (e.g. medical/mil-spec/space under automotive). Runs **before** `withCertifiedBypass()` so certified-cross bypass cannot route around the gate.
+2. **Rank context-matched domains first** inside each bucket. Unknown candidates rank above confirmed deviations (see sort rationale below).
+3. **Flag deviations with a visible badge** — amber "Domain unknown — verify" for unknown, red "Not AEC-Q200 — verify" for commercial/industrial under automotive context.
+
+### Phase 1 scope — Murata MLCCs only
+
+Deliberately narrow to prove the mechanism on the reported case before generalizing:
+
+- **One classifier:** `lib/services/classifiers/murataMlcc.ts`. MPN prefix → domain. GCM/GCJ/GRT/KGM/KCM → `automotive_q200`; GCH → `medical_implant`; GJM → `mil_spec`; GRM/GMC → `commercial`. Other MFRs → `unknown / no_classifier`.
+- **One row of the exclusion matrix wired:** `automotive`. Other rows (medical, industrial, mil_spec, space) are defined in a commented matrix in `qualificationDomain.ts` so Phase 2 devs fill a locked shape rather than make ad-hoc decisions.
+- **Single UI treatment:** amber for unknown, red for deviation, green for context-matched. Badge rendered on source panel (anchor) AND candidate cards + modal header.
+
+Non-Murata MFRs universally classify `unknown/no_classifier` in Phase 1 → ranked below context-matched but **not** excluded. Excluding them would collapse recommendations to Murata-only, turning a classifier-coverage gap into a recommendation-coverage cliff. Phase 2 classifiers (TDK, Samsung, Yageo, KEMET, AVX, Kyocera, Taiyo Yuden) feed the same interface with no schema change.
+
+### Design decisions worth tombstoning
+
+**Sort order: `context-matched > unknown > deviation`.** Not obviously right in isolation — it feels backwards since "unknown" seems weaker than "known-anything." The rationale: unknown candidates *may* be AEC-qualified once Phase 2 builds classifiers for their MFRs, so they carry positive expected value. A confirmed deviation (e.g. classifier says `commercial`, context is `automotive`) is definitively not AEC today. Expected-value ranking therefore puts unknown ahead of confirmed-deviation. Documented inline in `recommendationSort.ts` so a future reader doesn't "fix" it.
+
+**Asymmetric `aec_q200` attribute upgrade.** A positive `aec_q200 = true` on an otherwise-unknown part upgrades to `automotive_q200` (confidence: medium). A negative `aec_q200 = false` does **not** downgrade to `commercial` — stays `unknown`. In practice `aec_q200 = false` in Digikey / parts.io / Atlas data is almost always "field not populated" rather than "confirmed not qualified," and suppressing a legitimate AEC part is costlier than leaving it at unknown.
+
+**Deleted `escalate_to_mandatory` on `aec_q200` in MLCC automotive context.** The weight bump 8→10 was a near-noop once domain became the real mechanism: when both source and candidate had AEC data, the rule passed at both weight 8 and weight 10 — the bump only shifted the denominator by ~2–4 percentage points and never changed pass/fail. Two parallel mechanisms trying to solve the same problem is a debugging trap. Single-mechanism principle: domain does the work, `aec_q200` rule stays at base weight. Trivially restored if the narrow case surfaces in telemetry. The `flexible_termination` and `dielectric` escalations under automotive are unrelated and retained.
+
+**Exclusion runs before certified-cross bypass.** Decision #133 bypasses the 13 post-scoring family filters for MFR-certified and Accuris-certified recs, on the principle that a human certification outranks our inferred blocking-rule rejection. Domain exclusion is NOT part of that bypass — cross-domain substitution is unsafe even with a vendor's FFF table behind it. Scope of the certified-cross audit follow-up (see Backlog): decide which of the 13 filters encode safety-class constraints that should never be bypassable even for certified crosses.
+
+### Instrumentation (forcing function for Phase 2)
+
+Every `getRecommendations` call under an active domain-gating context emits telemetry into `recommendation_log.snapshot.domainStats`:
+
+```
+{
+  excludedByDomain,           // hard drops
+  knownMatched,               // survivors in the context-expected set
+  unknown: {                  // split by reason for Phase 2 prioritization
+    no_classifier,            // → MFR classifier coverage
+    ambiguous_series,         // → classifier quality
+    no_signal,                // → upstream data completeness
+  },
+  deviationCount,             // known-mismatch survivors
+}
+```
+
+Splitting unknown by reason is essential — a single `unknownCount` would hide which of the three workstreams (MFR coverage vs classifier quality vs upstream data) is driving the metric. The per-MFR unknown rate queryable from QC logs tells us which Phase 2 classifiers to build first.
+
+### Files
+
+- **new** `lib/services/qualificationDomain.ts` — types, classifier registry, `classifyQualificationDomain`, `upgradeFromAttributes`, `isDomainCompatible`, `contextExpectedDomains`, `contextActivatesDomainGate`, `domainBadge`.
+- **new** `lib/services/classifiers/murataMlcc.ts` — first concrete MfrClassifier.
+- **new** `components/DomainChip.tsx` — three-state badge component + `inferContextActive()` helper.
+- **new** `__tests__/services/qualificationDomain.test.ts` — 34 tests covering classifier, asymmetric upgrade, automotive exclusion row, reported-bug integration.
+- **modified** `lib/types.ts` — added `QualificationDomain`, `UnknownReason`, `DomainClassification`, `DomainStats`. Extended `Part.qualificationDomain`, `XrefRecommendation.domainDeviation`, `RecommendationResult.domainStats`, `RecommendationLogSnapshot.domainStats`.
+- **modified** `lib/services/partDataService.ts` — classify source + every candidate, apply exclusion matrix before `withCertifiedBypass`, set deviation flag, build `domainStats`.
+- **modified** `lib/services/recommendationSort.ts` — added within-bucket domain tiebreak (accepts optional `applicationContext`).
+- **modified** `lib/services/partDataCache.ts` — bumped `RECS_CACHE_SCHEMA_VERSION` v5 → v6.
+- **modified** `lib/contextQuestions/mlcc.ts` — deleted `escalate_to_mandatory` on `aec_q200` under automotive; commented rationale.
+- **modified** `components/RecommendationCard.tsx`, `components/AttributesPanel.tsx`, `components/ComparisonView.tsx` — render `DomainChip` next to status chip.
+- **modified** `components/RecommendationsPanel.tsx` — infer `contextActive` from recs and pass to card.
+- **modified** `app/api/xref/[mpn]/route.ts`, `app/api/parts-list/validate/route.ts`, `lib/services/llmOrchestrator.ts` — include `domainStats` in QC log snapshots.
+
+### Verification
+
+- Unit suite: 34/34 pass. Reported-bug integration: `classifyQualificationDomain(GCH188R71E104KE01D)` → `medical_implant`, `isDomainCompatible(automotive, medical_implant)` → `compatible: false`.
+- Full suite: 1353 tests, 22 suites, all pass (~1.7s).
+- TypeScript: no errors introduced outside pre-existing test files.
+
+### Phase 2 follow-on — tracked in BACKLOG
+
+1. Additional MFR classifiers (TDK, Samsung, Yageo, KEMET, AVX, Kyocera, Taiyo Yuden), ordered by unknown-rate telemetry once Phase 1 ships.
+2. Wire remaining rows of the exclusion matrix (medical, industrial, mil_spec, space) as family context questions are added.
+3. Severity follow-up question for automotive context (powertrain / safety / infotainment / aftermarket).
+4. Per-query "strict AEC-Q200 only" user filter.
+5. Datasheet-extraction classifier as a fallback behind MPN-prefix classifiers.
+6. **Certified-cross bypass audit** — separate safety-class blocking rules in the 13 post-scoring family filters from compatibility/preference filters; safety-class should apply even to certified crosses (tightens Decision #133).
+7. Request-session memoization for domain classification (batch parts-list pipelines repeat the same candidate MPNs across rows).
+8. Re-enable the amber "unknown domain" chip once per-family classifier coverage clears ~50% non-unknown (and rewrite the label — "Domain unknown — verify" is jargon).
+
+### Post-ship fixes (same-session)
+
+Three issues surfaced during manual verification and were fixed before close of session:
+
+1. **Parts.io candidate shape bypassed the classifier.** `fetchPartsioEquivalents()` constructs candidate `Part` objects with `subcategory` but no `category` field. The Murata classifier's `isMlccCategory()` guard required `part.category === 'Capacitors'`, so GCH candidates from parts.io fell through to `unknown` instead of `medical_implant` and survived the automotive exclusion filter. Fixed by trusting the MPN prefix authoritatively — Murata's MLCC prefix space (GRM/GCM/GCJ/GRT/GCH/GJM/KGM/KCM/GMC) doesn't collide with their inductor (LQ*) or EMI filter (NFM/BLM/DLW) spaces. `isLikelyMlccFromCategory` retained only as a secondary allow-path for unknown-prefix candidates. Regression tests added in `qualificationDomain.test.ts`. Cache bumped v6 → v7.
+
+2. **React stale closure in main search flow.** `handleFindReplacements` in `hooks/useAppState.ts` read `state.applicationContext` from a `useCallback` closure. Callers (`handleContextResponse`, `handleAttributeResponse`) invoked it immediately after `setState({applicationContext: ...})`, before React had flushed — so the closure served the old null context and the domain filter never ran on the main search view. Fixed by giving `handleFindReplacements` an optional `contextOverride` argument and passing the freshly-built context directly from the two state-setting call sites.
+
+3. **Suppressed the amber "Domain unknown — verify" chip.** Phase 1 has only one registered classifier (Murata MLCC), so the chip fired on the majority of non-Murata candidates — noise rather than signal. The label was also too vague: "domain" is internal taxonomy and "verify" doesn't tell users what to verify. `domainBadge()` now returns `null` for the `unknown` branch; classification still drives the sort tiebreak and QC telemetry. Re-enable tracked in BACKLOG with a coverage threshold (~50% non-unknown per family) and a copy-rewrite prerequisite.
+
+
+## Decision #156 — BOM Cost-Optimization Workflow: Unit Cost + Repl. Savings (Apr 2026)
+
+### Problem
+
+A common parts-list workflow is cost reduction: users upload a BOM that includes their **current unit cost** column and want to compare it against the proposed replacement's price to surface savings. Three things blocked this workflow:
+
+1. There was no first-class "Unit Cost" mapped field — users with a "Unit Cost" header had to rely on the list-local `ss:N` column, which is stripped from master templates by `sanitizeTemplateColumns()`. Cost columns couldn't be part of a portable view.
+2. There was no built-in column comparing current cost to replacement price. Users would have to eyeball Repl. Price next to their raw cost column.
+3. **Bug:** Even the raw `ss:N` "Unit Cost" column did not appear in the column-picker's "Your Data" section in either master OR list-specific views. The user could see their Unit Cost data in the Original View table but had no UI affordance to add the column to a custom view.
+
+### Decisions
+
+**1. Add `mapped:unitCost` as a portable auto-detected field.** Same shape as `mapped:cpn` / `mapped:ipn`. Header detection via `UNIT_COST_PATTERNS` in `excelParser.ts` — longer phrases first ("current unit cost", "unit price"), bare "cost"/"price" last so "extended cost" / "list price" don't collide. Persisted as `rawUnitCost` on `PartsListRow` / `StoredRow`. Numeric parsing reuses the existing `toNumber()` helper from `calculatedFields.ts` (now exported), which handles "$1.25", commas, whitespace.
+
+**2. Add `sys:priceDelta` (label "Repl. Savings") as a built-in system column, not a user-defined `calc:*` field.** The existing `calc:*` infrastructure is for runtime-defined formula fields stored per-view. Savings should be a first-class built-in — available to every user, portable by default, no formula-builder interaction. Compute: `toNumber(rawUnitCost) − resolveReplacementUnitPrice(row)`. Positive = savings (replacement cheaper); negative = replacement more expensive; undefined when either side is missing. Display as signed currency, green/red coloring, sortable numerically. Mirrors `sys:top_suggestion_price`'s logic for picking the best cross-distributor quote (FindChips supplierQuotes, falling back to part.unitPrice).
+
+**3. Fix the picker visibility bug by trusting headers, not data scans.** The strict `nonEmptyIndices` filter in `useColumnCatalog.ts:75-87` silently dropped any `ss:*` column whose data scan didn't register as non-empty — and currency/numeric values were slipping past the `val.toString().trim() !== ''` check on certain lists. New rule: if the user provided a real header (non-empty trimmed string in `effectiveHeaders[index]`), the column is selectable in the picker, regardless of the data scan. Unlabeled columns still require data to avoid surfacing phantom trailing columns.
+
+**4. Fix master-view save round-trip stripping mapped fields.** When the column picker opens against a master view, it expands `mapped:*` IDs to concrete `ss:N` indices (so the user sees real column labels). On save, `sanitizeTemplateColumns()` ran directly on those `ss:N` IDs, which strips all `ss:*` — silently wiping every Your Data column. `reverseMapKnownColumns()` already existed (used by PromoteViewDialog) but wasn't called on the normal save path. Wired into `PartsListShell.tsx`'s ColumnPickerDialog `onSave` handler before `sanitizeTemplateColumns` for both create and edit master-scope flows.
+
+### Files
+
+**Auto-detection + storage**:
+- `lib/excelParser.ts` — `UNIT_COST_PATTERNS` constant + `unitCost` wired into `autoDetectColumns` greedy assignment
+- `lib/types.ts` — `unitCostColumn?` on `ColumnMapping`, `rawUnitCost?` on `PartsListRow`
+- `lib/partsListStorage.ts`, `lib/supabasePartsListStorage.ts` — persist `rawUnitCost`
+- `hooks/usePartsListState.ts` — extract `rawUnitCost` from raw cells during parsing
+- `hooks/useColumnCatalog.ts` — inferred-mapping recovery (locate the column on lists saved before unitCost detection landed)
+- `lib/viewConfigStorage.ts` — `unitCostColumn` in `reverseMapKnownColumns` map
+- `components/parts-list/PartsListShell.tsx` — `mapped:unitCost` resolution to `ss:N` at render time + portableColumnIds tracking + `reverseMapKnownColumns` on master-view save
+- `components/parts-list/AddPartDialog.tsx` — exclude unitCost column from the "extras" picker
+- `components/parts-list/ColumnMappingDialog.tsx` — manual "Unit Cost (optional)" override dropdown
+
+**Column registration + display**:
+- `lib/columnDefinitions.ts` — `mapped:unitCost` (group "Your Data"), `sys:priceDelta` (group "Replacements"), `resolveReplacementUnitPrice()`, `computePriceDelta()` helpers, `getSortValue` case
+- `lib/calculatedFields.ts` — `toNumber()` exported for reuse
+- `components/parts-list/PartsListTable.tsx` — `sys:priceDelta` custom renderer + REPLACEMENT_COLUMN_IDS membership
+
+**Picker visibility fix**:
+- `hooks/useColumnCatalog.ts:75-87` — header-based ss:* visibility check
+
+### Verification
+
+- Upload a BOM with a "Unit Cost" column → header auto-assigned to `mapped:unitCost`
+- Edit any view → "Unit Cost" appears under "Your Data" with the sparkle (portable badge)
+- Raw `ss:*` columns now appear under "Your Data" in list-scope views (the picker visibility fix)
+- Add "Unit Cost" + "Repl. Savings" to a view → savings render with sign + color, sort numerically, missing values render as `—`
+- Save a master view containing mapped fields → reload → mapped fields survive (the reverse-map fix)
+- 1355 Jest tests pass
+
+### Out of scope (BACKLOG)
+
+- Extended cost (Unit Cost × Quantity) column
+- Percentage savings (delta/cost)
+- Cost-optimization view template preset (Unit Cost + Repl. Price + Repl. Savings + Repl. Distributor, sorted by savings)
+- Multi-currency reconciliation when user's unit-cost currency differs from the replacement's quote currency
+
+---
+
+## Decision #157 — Column-Label Source Suffix Convention + Manufacturer→MFR (Apr 2026)
+
+### Problem
+
+Column labels in the parts-list table and column picker had no consistent provenance indicator. Some hand-rolled prefixes/suffixes existed inconsistently: "MPN (DK)", "DK Price", "DK Stock", "DigiKey SKU", and most other Digikey columns had no marker at all. The picker's `SourceBadge` chip (orange "DK", blue "PIO", green "Atlas") only appeared in the picker, not the table header, and didn't disambiguate columns whose data origin differs from their ID prefix (e.g. `dk:riskRank` carries `dataSource: 'partsio'` while `fc:riskRank` is FindChips — both rendered as "Risk Rank" in headers).
+
+Additionally, "Manufacturer" eats horizontal space in dense tables with 15+ columns.
+
+### Decisions
+
+**1. Single source-suffix convention via `getColumnDisplayLabel(col)` helper.** Helper appends `(suffix)` to `col.label` based on `col.dataSource`. Idempotent — won't double-suffix. Map (`SOURCE_SUFFIX` in `lib/columnDefinitions.ts`):
+
+| dataSource | suffix |
+|------------|--------|
+| `digikey`  | DK     |
+| `partsio`  | P      |
+| `atlas`    | A      |
+| `findchips`| FC     |
+| `mouser`   | Mouser |
+
+The convention is `dataSource`-driven, not ID-prefix driven. So `dk:riskRank` (which is parts.io-sourced) renders as "Risk Rank (P)" while `fc:riskRank` renders as "Risk Rank (FC)" — collision resolved.
+
+**2. Normalized inline labels** so the helper owns the suffix entirely:
+- `dk:mpn` "MPN (DK)" → label "MPN" (renders "MPN (DK)")
+- `dk:unitPrice` "DK Price" → "Price" ("Price (DK)")
+- `dk:quantityAvailable` "DK Stock" → "Stock" ("Stock (DK)")
+- `dk:digikeyPartNumber` "DigiKey SKU" → "SKU" ("SKU (DK)")
+
+**3. Drop the redundant SourceBadge chip for any source covered by the suffix map.** Picker's `SourceBadge` checks `SOURCE_SUFFIX[dataSource]` and returns `null` if present. Removes the orange/blue/green chip entirely from the picker — text suffix is the only indicator now. (Chip code retained as fallback for any future source not yet in `SOURCE_SUFFIX`.)
+
+**4. Abbreviate "Manufacturer" → "MFR" in column labels.** Two definitions touched: `dk:manufacturer` and `mapped:manufacturer`. Replaced "Manufacturer" → "MFR". `sys:top_suggestion_mfr` was already "Repl. MFR".
+
+### Consumers routed through `getColumnDisplayLabel`
+
+- `components/parts-list/PartsListTable.tsx` — table header (sortable + non-sortable spans)
+- `components/parts-list/ColumnPickerDialog.tsx` — picker list, active-columns pane, search filter
+- `components/parts-list/CalculatedFieldEditor.tsx` — formula operand pickers (left/right)
+
+### Files
+
+- `lib/columnDefinitions.ts` — `SOURCE_SUFFIX` exported, `getColumnDisplayLabel()` helper, normalized PRODUCT_COLUMNS labels, MFR abbreviation
+- `components/parts-list/ColumnPickerDialog.tsx` — import + route 3 label sites + `SourceBadge` skips suffixed sources
+- `components/parts-list/PartsListTable.tsx` — header labels through helper
+- `components/parts-list/CalculatedFieldEditor.tsx` — operand picker through helper
+
+### Extensibility
+
+Adding a new data source becomes a one-line change in `SOURCE_SUFFIX`. Parametric (`dkp:*`) columns auto-inherit the correct suffix from whichever source populated their value (Atlas/Digikey/parts.io) via the existing `parameterKeys` source field — no per-column work needed.
+
+---
+
+## Decision #158 — FindChips Commercial Cache: Drop L2 Persistence (Apr 2026)
+
+**Context:** User reported that the Source Part Commercial tab on `TNC0402GTC10K0F345` showed only Digikey, while findchips.com showed 4+ distributors for the same MPN. Investigation traced this to the L2 cache: `getFindchipsResults()` was writing the full `FCDistributorResult[]` blob (price + stock + lifecycle + compliance + distributor list) to `part_data_cache` under variant `fc-results`, `cache_tier='commercial'`, with `TTL_COMMERCIAL_MS = 24h`. A previous request that hit FC during a transient hiccup (1 distributor returned) pinned that thin response for 24 hours; subsequent requests during that window saw "only Digikey" even though FC's API would now return the full set. Beyond the immediate stale-distributor bug, the user's broader concern: "the only thing that should be cached is technical attributes, NOT price and stock."
+
+### Decision
+
+**Stop persisting FindChips commercial data at L2.** Specifically:
+
+1. **L2 (Supabase) `fc-results` writes removed.** [lib/services/findchipsClient.ts](lib/services/findchipsClient.ts) no longer calls `setCachedResponse('findchips', ...)`. Existing rows expire on their 24h TTL — no manual purge required. Likewise removed the L2 reads at the top of `getFindchipsResults()` and the batch L2 read in `getFindchipsResultsBatch()`. Imports of `getCachedResponse`, `getCachedResponseBatch`, `setCachedResponse`, `isNotFoundSentinel`, `TTL_COMMERCIAL_MS` dropped.
+
+2. **L1 in-memory TTL dropped 30 min → 5 min.** Intra-render dedup is preserved (multiple components on the same page hitting the same MPN within a render tick still hit L1), but no decision-grade pricing is shown on data older than 5 min.
+
+3. **Per-MPN admin purge UI surfaced** on [components/admin/DataSourcesPanel.tsx](components/admin/DataSourcesPanel.tsx). MPN text input + service dropdown (`findchips`/`digikey`/`partsio`/`mouser`/`search`) + "Purge" button calls the existing `DELETE /api/admin/cache?service=...&mpn=...` endpoint; result count + errors surface via Snackbar. Diagnostic for cases where stale cache is suspected.
+
+### Trade
+
+**Cost:** every cold L1 (5+ min idle) hits the live FC API. With ~5000/day budget and current usage well under that, this is fine. The user explicitly accepted this trade in exchange for live pricing/stock.
+
+**Carve-out, not a wholesale L2 removal:** Decision #99's three-tier cache (parametric / lifecycle / commercial 24h) stays intact for everyone else. Digikey's commercial slice (`commercial:${currency}` variant in [digikeyClient.ts](lib/services/digikeyClient.ts)) still uses the 24h tier — flagged for the user but not changed in this session. If/when they call it out, apply the same fix.
+
+### Files
+
+- [lib/services/findchipsClient.ts](lib/services/findchipsClient.ts) — cache reads/writes removed; L1 TTL constant changed to 5 min; `partDataCache` import block deleted.
+- [components/admin/DataSourcesPanel.tsx](components/admin/DataSourcesPanel.tsx) — new "Purge cache for one MPN" card + handler + Snackbar.
+
+### Memory
+
+Captured as a feedback memory (`feedback_no_caching_pricing_stock.md`): pricing/stock should never live in L2; only technical attributes / lifecycle / compliance / distributor identity may. Re-read before introducing any new cache layer.
+
+---
+
+## Decision #159 — Mismatch-Count Filter: Client-Side Toggle on Single-Part Path (Apr 2026, extends #109)
+
+**Context:** Decision #109 introduced `filterRecsForBatch` — a post-scoring filter dropping candidates with `>1 real mismatch` (a `fail` rule with `replacementValue !== 'N/A'`; missing-attribute fails are ignored). It only ran on the BOM batch path (`filterForBatch: true`). The single-part xref panel never invoked it, so cards with 2, 3, or more failed parameters routinely surfaced. User asked: "feels silly to show a part with more than 2 failing parameters."
+
+### Decision
+
+**Apply the filter to the single-part path too — client-side and toggleable, threshold `≤2`.** Architectural details:
+
+1. **Promote helpers to client-importable [lib/types.ts](lib/types.ts).** New exports: `isCertifiedCross(rec)`, `countRealMismatches(rec)`, `filterRecsByMismatchCount(recs, max)`. Server-side copies in `partDataService.ts` deleted; that file now imports from `../types`. Renamed from `filterRecsForBatch` to `filterRecsByMismatchCount` since the helper is no longer batch-specific.
+
+2. **Server-side single-part filter REMOVED.** `getRecommendations()` only calls `filterRecsByMismatchCount(recs, 1)` when `options.filterForBatch === true`. Single-part returns the full candidate set so the client can toggle without a refetch.
+
+3. **Client-side filter in [components/RecommendationsPanel.tsx](components/RecommendationsPanel.tsx).** New state `hideHighFails: boolean` (default `true`, threshold constant `MAX_MISMATCHES = 2`). Applied as the final `.filter(...)` in the rendering pipeline, certified-cross bypass preserved. UI:
+   - Filter popover gains a "Quality" section with checkbox `Hide >2 failed parameters (N hidden)`.
+   - Filter row shows dismissible chip `Showing high-fail` when toggle is OFF (mirrors existing "Include inactive" pattern).
+   - `activeFilterCount` and `handleClearFilters` updated so the toggle counts in the badge and resets to default on Clear all.
+
+4. **Cache invalidation.** `RECS_CACHE_SCHEMA_VERSION` bumped `v7 → v9`. The intermediate `v8` (briefly committed during this session as a server-side-only single-part filter at `≤2`) is discarded — old `v8` rows would have been pre-filtered and missing the `>2-fail` candidates the client now wants to toggle into view. Single bump documented; no manual purge needed since old rows are unreachable under the new key.
+
+### Why client-side, not server-side
+
+Server-side at `≤2` would force a refetch whenever the user toggled "Show all," with both states cache-keyed separately and 30-day TTL apart. Client-side gives an instant toggle, no refetch, single cache variant. Trade: ~2× the data over the wire on the single-part path (full candidate set vs. pre-filtered). Acceptable — the candidate set is bounded by the matching-engine output (typically ≤50 recs), and FindChips enrichment is already deferred.
+
+### What's preserved
+
+- **Certified-cross bypass** — MFR-uploaded and Accuris parts.io equivalents flow through regardless of mismatch count, on both batch and single-part paths.
+- **Missing-attribute fails ignored** — only `replacementValue !== 'N/A'` fails count.
+- **Batch threshold = 1** — BOM flow unchanged; users in that view have no UI to override.
+- **Obsolete/Discontinued exclusion** — still always drops in `filterRecsByMismatchCount`.
+
+### Files
+
+- [lib/types.ts](lib/types.ts) — three new exports.
+- [lib/services/partDataService.ts](lib/services/partDataService.ts) — local helpers removed; imports from `../types`; single-part filter call deleted.
+- [lib/services/partDataCache.ts](lib/services/partDataCache.ts) — `RECS_CACHE_SCHEMA_VERSION = 'v9'`.
+- [components/RecommendationsPanel.tsx](components/RecommendationsPanel.tsx) — `hideHighFails` state, filter pipeline addition, popover section, dismissible chip, badge counter, clear-all reset.
+
+---
+
+## Decision #160 — Per-Rule Value Aliases for Categorical Identity Synonyms (Apr 2026)
+
+**Context:** Real failure case from a user-supplied screenshot — Würth Elektronik aluminum electrolytic (family 58, sourced from Digikey) reports `Polarization = "Polar"`. The Accuris-certified replacement (Fenghua, sourced from Atlas) reports `Polarization = "POLARIZED"`. The two strings are semantically identical, but the `polarization` rule (`identity` LogicType) failed the candidate because the engine's `normalize()` only does trim + uppercase + whitespace-collapse. `"POLAR" ≠ "POLARIZED"`. After string-equality fails, the engine falls through to numeric extraction (handles SI-prefix UoM drift like `1 µF ≡ 1000 nF` from Decision #137), but for non-numeric values there was no remediation. No alias / synonym layer existed anywhere in the system.
+
+### Decision
+
+**Per-rule `valueAliases?: string[][]` on `MatchingRule`, evaluated by the matching engine between normalize-equality and numeric fallback, overridable via the existing admin override system (Decision #60).**
+
+Each inner array is a group of equivalent values for that rule; any value in a group is treated as equal to any other value in the same group. Comparison uses the existing `normalize()` helper so casing/whitespace differences inside a group don't matter.
+
+### Why per-rule, not global
+
+Considered four options:
+
+1. **Per-rule alias map on the LogicRule (chosen).** Locality — engineers reading `aluminumElectrolytic.ts` see the alias group right next to the rule. Per-attribute scope — polarization aliases can't bleed into mounting-type or dielectric. Admin-overridable for free via [overrideMerger.ts](lib/services/overrideMerger.ts) with no new UI surface. Becomes part of the rule snapshot in `recommendation_log` for QC.
+2. **Mapper-side canonicalization** — fragile; requires knowing every source's value space across 3 mappers and 43 families; a new variant from Atlas silently misses.
+3. **Global value-normalizer module** — risks cross-attribute collisions; engineers won't find it co-located with the rule it affects.
+4. **Change rule type to `identity_flag`** — semantically wrong for multi-state categoricals (Polar vs Bi-Polar are distinct states, not presence/absence).
+
+### Engine wiring
+
+In [lib/services/matchingEngine.ts](lib/services/matchingEngine.ts):
+
+- New helper `inSameAliasGroup(rule, a, b)` — normalizes both inputs, returns `true` iff they appear in the same `rule.valueAliases` group.
+- `evaluateIdentity()` — between the existing normalize-equality check and the numeric-tolerance fallback, consult aliases. If both sides land in the same group, treat as match. Otherwise fall through to today's path. Preserves SI-prefix numeric tolerance entirely.
+- `evaluateIdentityUpgrade()` — alias-aware hierarchy lookup. If a value isn't in `upgradeHierarchy` directly but one of its alias-group mates is, use that hierarchy index. Plus the both-missing-from-hierarchy fallback also consults aliases. Lets per-rule synonyms map onto hierarchy positions without bloating the hierarchy itself.
+- Other rule types (`threshold`, `fit`, `identity_flag`, `identity_range`, `vref_check`, `application_review`, `operational`) ignore aliases — they're numeric / boolean / non-comparison.
+
+### Hand-curated seed entries (Phase 1)
+
+- **Family 58 (Aluminum Electrolytic) — `polarization`:** `[['Polar', 'Polarized', 'Uni-Polar', 'Unipolar'], ['Bi-Polar', 'Bipolar', 'Non-Polar', 'Non Polar']]`. Validates the engine work against the failing screenshot case.
+- **Family 12 (MLCC) — `dielectric`:** `[['C0G', 'NP0']]`. Audit of existing `identity_upgrade` hierarchies turned up exactly one lateral equivalent — `NP0` was previously listed as hierarchy position 1 (right after `C0G` at position 0), causing a `C0G → NP0` substitution to read as a downgrade. The engineering reason on the same rule literally calls them "Class I (C0G/NP0)" together. Fix: removed `NP0` from `upgradeHierarchy`, added it as a `valueAliases` group with `C0G`. Now treated as exact same hierarchy position.
+
+No other lateral equivalents found in the audit; the remaining hierarchies (Thin/Thick Film, FS/NPT/PT, etc.) are genuinely ordered.
+
+### Override-system plumbing
+
+New `value_aliases JSONB` column on `rule_overrides` (Supabase migration: [scripts/supabase-rule-overrides-value-aliases-migration.sql](scripts/supabase-rule-overrides-value-aliases-migration.sql)). Plumbed through:
+
+- [lib/services/overrideMerger.ts](lib/services/overrideMerger.ts) — modify-merge, add-pass-through, cleanup (stripped for non-identity rule types).
+- [lib/services/overrideValidator.ts](lib/services/overrideValidator.ts) — validates `string[][]` shape, no empty groups, no value in two groups (case/whitespace-normalized for the dedup check).
+- [lib/services/overrideHistoryHelper.ts](lib/services/overrideHistoryHelper.ts) — `value_aliases` in snapshot fields + camelCase map.
+- [app/api/admin/overrides/rules/route.ts](app/api/admin/overrides/rules/route.ts) — POST insert + `mapRowToRecord`.
+- [app/api/admin/overrides/rules/[overrideId]/route.ts](app/api/admin/overrides/rules/[overrideId]/route.ts) — PATCH field map + previous_values current-state copy.
+- [app/api/admin/overrides/rules/restore/route.ts](app/api/admin/overrides/rules/restore/route.ts) — restore copies field forward.
+- [lib/logicTables/deltaBuilder.ts](lib/logicTables/deltaBuilder.ts) — variant family (53/54/55/60/13/72/B2/B3/B4) compile-time delta path.
+
+### Admin UI
+
+[components/admin/RuleOverrideDrawer.tsx](components/admin/RuleOverrideDrawer.tsx) — new conditional `Value Aliases` multi-line text field (one group per line, comma-separated). Visible when `logicType ∈ {identity, identity_upgrade}`. Diff display in the history view formats `string[][]` as `group1 | group2`. i18n strings added to `en.json` and `zh-CN.json` (de.json doesn't have adminOverride strings; English fallback). [components/admin/LogicPanel.tsx](components/admin/LogicPanel.tsx) `mergedRules` now includes `valueAliases` so the indicator-dot logic picks up alias-only changes.
+
+### Tests
+
+[__tests__/services/matchingEngine.test.ts](__tests__/services/matchingEngine.test.ts) — new test groups for `identity with valueAliases` (6 tests) and `identity_upgrade with valueAliases` (5 tests) covering: same-group pass, case/whitespace insensitivity, different-group fail, unknown-value fail, no-regression when aliases absent, fall-through to numeric comparison, alias maps to hierarchy index, lateral within-position pass, downgrade still fails, upgrade still passes, both off-hierarchy in same group passes. All 1380 tests pass.
+
+### Phase 2 (shipped same session)
+
+Built [scripts/mine-identity-fails.ts](scripts/mine-identity-fails.ts) — read-only Node script (run via `npx tsx`) that scans `recommendation_log` JSONB snapshots, filters to `identity` / `identity_upgrade` rule fails where both values are non-numeric strings, drops pairs already covered by existing `valueAliases`, groups by `(family_id, attributeId, normalize(a), normalize(b))` direction-insensitively, and writes a ranked CSV + JSON to `scripts/mine-identity-fails-output.{csv,json}`.
+
+**Mining run results (497 logs, 49,114 rule evaluations scanned):**
+- 581 string-vs-string identity fails
+- **59 unique suspect pairs** — well within the "small + obvious, hand-curate" bucket. No Haiku tooling needed.
+- Triage: 4 green-bucket rules (real synonyms), ~6 yellow (mapper / param-map bugs — separate fix), remaining ~49 red (genuinely different specs, engine correctly failing).
+
+**Curation pass — four alias groups added (extensions chosen over strict-evidence):**
+
+1. **[lib/logicTables/d2Fuses.ts](lib/logicTables/d2Fuses.ts) — `speed_class`** — five groups covering Fast/Very Fast/Medium/Slow/Very Slow with all standard letter codes (F, FF, M, T, TT) and prose variants (Fast Blow, Time Delay, Time Lag, etc.). Mining evidence: only Fast↔Fast Blow (51×).
+2. **[lib/logicTables/chipResistors.ts](lib/logicTables/chipResistors.ts) — `composition`** — Thick Film + Chinese forms (`厚膜`, `厚膜电阻`) and Thin Film + Chinese forms (`薄膜`, `薄膜电阻`). Mining evidence: 31× across thick-film variants.
+3. **[lib/logicTables/interfaceICs.ts](lib/logicTables/interfaceICs.ts) — `protocol`** — six groups covering RS-232, RS-485, RS-422, I²C, CAN, CAN FD with all EIA/TIA/V.28 standard designations and the concatenated forms Atlas/parts.io emit. Mining evidence: 24× on RS-232 variants only.
+4. **[lib/logicTables/adc.ts](lib/logicTables/adc.ts) — `architecture`** — four groups covering Delta-Sigma (incl. `ΔΣ`), SAR (incl. `Successive Approximation`), Pipeline (incl. `Pipelined`), Flash (incl. `Direct Conversion`). Mining evidence: 10× on Delta-Sigma variants only.
+
+The non-mining-evidence entries (extensions) were kept after explicit user approval. Justification: each affected attribute has a fixed canonical vocabulary (fuse speed classes, RS-* protocols, ADC architectures, film resistor compositions), so the same vocabulary-drift pattern certainly affects the other variants we just haven't logged yet at sufficient scale.
+
+**Re-mining after curation:** kept-fails dropped 581 → 465 (-20%), unique pairs dropped 59 → 48 (-19%), `already aliased` count more than doubled (119 → 235) confirming the engine is now consuming the new groups. None of the four green-bucket pairs reappear in the output.
+
+**Two follow-ups deferred to backlog:**
+- **`package_case` formatting drift** (`0603` ↔ `0603 (1608 Metric)`, 8× on family 52, recurs across many families) — Digikey appends ` (NNNN Metric)` to EIA codes; cleaner fix is a small enhancement to the engine's `normalize()` to strip the parenthetical metric suffix on package values, NOT per-family aliases (doesn't scale across 43 families × ~20 standard EIA sizes).
+- **Mapper / param-map bugs** (yellow bucket: `B1/configuration` "BRIDGE, 4 ELEMENTS" ↔ "Single Phase" 82×, `E1/output_transistor_type` 45×, `C7/operating_mode` 28× + 15×, etc.) — these are wrong-field-mapping issues at the Digikey/Atlas mapper layer, not synonym problems.
+
+**Phase 3 — Inline "Propose alias" button (shipped same session):**
+
+Two new components plus wiring into two surfaces, admin-gated:
+
+- [components/admin/ProposeAliasDialog.tsx](components/admin/ProposeAliasDialog.tsx) — modal that fetches the rule's effective `valueAliases` (TS base merged with active override), auto-suggests an existing group when one of the two values is already aliased, lets admin pick "Create new group" or "Add to existing group: X", optional comma-separated extra synonyms, required change reason. Detects collision (same value in two groups) client-side before submit. Posts via `createRuleOverride` (no existing override) or `updateRuleOverride` (existing) — both routes already invalidate cache on save.
+- [components/admin/ProposeAliasButton.tsx](components/admin/ProposeAliasButton.tsx) — small `LinkOutlinedIcon` icon button. Renders only when ALL of: user is admin, rule's `logicType` is `identity` / `identity_upgrade`, row's `ruleResult === 'fail'`, both values are non-empty / non-N/A, family has a logic table. Hidden in all other cases — regular users never see it.
+
+Wired into:
+- [components/ComparisonView.tsx](components/ComparisonView.tsx) — inline next to the status dot in the per-rule comparison table. FamilyId resolved client-side via `getLogicTableForSubcategory(part.subcategory, sourceAttributes)` (handles variant family classification).
+- [components/admin/QcFeedbackDetailView.tsx](components/admin/QcFeedbackDetailView.tsx) — same button on the same row layout. `onSuccess` callback auto-resolves the feedback (status → `resolved`, admin notes appended with "Resolved by adding value alias.") if the feedback was `open` or `reviewed`.
+
+**Net flow per failing row:** admin clicks the link icon → small dialog appears with the two values pre-filled and the rule's existing groups → picks new-group or existing-group → adds optional extras → enters reason → submits. The rule is patched, recommendations cache invalidates, and on the QC feedback path the original feedback ticket is auto-closed. No further dev work needed for ongoing maintenance — admin-driven, per-incident, lives in the UI they already use.
+
+i18n strings added under `proposeAlias.*` in `en.json` and `zh-CN.json`.
+
+**What this does NOT change:**
+- The matching engine itself (still consumes `valueAliases` exactly as it did since Phase 1).
+- Override system plumbing (just a new caller; existing POST/PATCH routes do the work).
+- Existing override-management UI in the rule drawer (still works the same way; this is a faster path for the common case of "I see a fail, fix it on the spot").
+
+### What this does NOT solve
+
+- Compound numeric values where the qualifier matters (e.g. `22.1 mA @ 100 kHz` test conditions) — `getNumeric()` extracts the leading number; if the qualifier is load-bearing for a specific rule, that's per-rule custom logic, not aliases.
+- Atlas Chinese parameter NAME → English mapping (separate concern, handled by family dictionaries in `atlasMapper.ts`).
+- Cross-source value disagreements that aren't synonyms (data quality, not matching).
+
+## Decision #161 — MFR Profile Panel Wired to atlas_manufacturers + Identity-Based CN Flag (Apr 2026)
+
+### Decision
+
+Two coupled changes, both leaning on the existing manufacturer alias resolver (Decision #148):
+
+1. **MFR profile panel wired to `atlas_manufacturers`.** Clicking an MFR name in the recommendations list resolves through `resolveManufacturerAlias()` → fetches the matching `atlas_manufacturers` row → renders real profile data (summary, logo, headquarters, founded year, certifications, core products, compliance flags). Western MFRs not yet covered by `manufacturer_companies` fall back to the legacy `mockManufacturerData.ts` set; truly unknown MFRs open the panel with an empty-state body. Previously: hardcoded ~10-MFR mock map silently no-op'd for everyone else, which meant every Chinese MFR.
+
+2. **Country flag is now identity-based, not source-based, on both source-attributes panel and recommendation cards.** Single field `Part.mfrOrigin: 'atlas' | 'western' | 'unknown'` carries the resolver verdict everywhere a `Part` is rendered. `getRecommendations()` resolves each unique candidate manufacturer through the alias resolver in parallel (~5-min cached) and tags every `rec.part.mfrOrigin`. `app/api/attributes/[mpn]/route.ts` does the same on the source attributes response (resolved at response time so cached `PartAttributes` rows don't need a schema bump). `RecommendationCard` and `AttributesPanel` both render the 🇨🇳 flag off `part.mfrOrigin === 'atlas'`. Net effect: GIGADEVICE / 3PEAK / etc. show the flag on the source panel AND every rec card, regardless of whether the attributes came from Digikey, Atlas, Mouser, or parts.io. The "Attributes: <source>" footer line keeps using `dataSource` — that line is genuinely about provenance.
+
+**Source-attributes panel also clickable.** `AttributesPanel` accepts an optional `onManufacturerClick` prop; both desktop and mobile layouts pass `mfr.handleManufacturerClick` through. Clicking the MFR name in the source panel opens the same profile side panel as clicking it on a rec card.
+
+### Why bundle them
+
+Both lookups need the same per-MFR alias resolution. Doing them as one change avoids resolving the same MFR twice (once for flag rendering, once for profile fetch) and keeps `atlas_manufacturers` as the single source of truth for MFR identity.
+
+### Files
+
+**New:**
+- `lib/utils/countryFlag.ts` — ISO-2 → regional-indicator emoji helper.
+- `lib/services/manufacturerProfileService.ts` — `mapAtlasToManufacturerProfile()` + `getProfileForManufacturer()`. Resolves alias → fetches `atlas_manufacturers` row → maps to `ManufacturerProfile` shape. Mock fallback chain.
+- `app/api/manufacturer-profile/route.ts` — `GET /api/manufacturer-profile?name=<encoded>`. `requireAuth()` gated. Returns `{ profile, source: 'atlas' | 'mock' }` or 404.
+
+**Modified:**
+- `hooks/useManufacturerProfile.ts` — async `handleManufacturerClick` with placeholder-on-open (panel slides in instantly), `mfrLoading` + `mfrSource` state, in-flight request id to drop stale resolutions on rapid clicks.
+- `components/ManufacturerProfilePanel.tsx` — "Sample Data" chip now conditional on `source === 'mock'`, loading skeleton, empty-state body for unenriched MFRs.
+- `components/AppShell.tsx`, `components/DesktopLayout.tsx`, `components/MobileAppLayout.tsx` — thread `mfrSource` + `mfrLoading` through to the panel.
+- `lib/types.ts` — `mfrOrigin?: 'atlas' | 'western' | 'unknown'` on `Part` (single source of truth — both source attrs and rec.part read it).
+- `lib/services/partDataService.ts` — resolve unique MFRs in parallel before the rec post-processing `.map`, tag `rec.part.mfrOrigin`.
+- `app/api/attributes/[mpn]/route.ts` — tag source-part `mfrOrigin` at response time (post-cache).
+- `components/AttributesPanel.tsx` — clickable MFR name + 🇨🇳 flag, accepts new `onManufacturerClick` prop.
+- `components/DesktopLayout.tsx`, `components/MobileAppLayout.tsx` — pass `onManufacturerClick` to `AttributesPanel`.
+- `components/RecommendationCard.tsx` — flag condition swapped from `dataSource === 'atlas'` to `part.mfrOrigin === 'atlas'`.
+- `lib/services/partDataCache.ts` — bumped `RECS_CACHE_SCHEMA_VERSION` v9 → v10 so existing cached recs re-render with the new flag logic.
+- `lib/api.ts` — `fetchManufacturerProfile()` client wrapper.
+
+### What this does NOT change
+
+- Western MFR coverage — Decision #149 P1 still blocked on data file. Mock data remains the Western fallback for now.
+- Admin manufacturer detail page (`/admin/manufacturers/[slug]`) — uses its own admin route; unchanged.
+- Parts-list source attributes (`PartDetailModal.tsx`) — `app/api/parts-list/validate/route.ts` doesn't tag `mfrOrigin` yet. Flag won't render in the per-row modal until validate is updated. Logic-driven recs in lists are unaffected (those already get tagged via `getRecommendations`).
+

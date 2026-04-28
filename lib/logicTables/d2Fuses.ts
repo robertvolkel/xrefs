@@ -99,6 +99,13 @@ export const d2FusesLogicTable: LogicTable = {
       blockOnMissing: true,
       engineeringReason: 'HARD GATE. Fast-blow (F) / Medium / Slow-blow (T, time-delay) / Very Fast (FF, semiconductor protection) / Very Slow (TT). Speed class determines the time-current characteristic — how quickly the fuse blows at various multiples of rated current. Fast-blow: clears within milliseconds at 2× rated — required for semiconductor protection. Slow-blow: rides through inrush (motor start, capacitor charging, transformer inrush) — clears slowly at moderate overcurrent but quickly at high fault current. Slow-blow in a semiconductor circuit = semiconductor destroyed before fuse clears. Fast-blow in a motor circuit = fuse blows every startup. BLOCK cross-class substitutions unconditionally.',
       sortOrder: 4,
+      valueAliases: [
+        ['Fast', 'Fast Blow', 'Fast-Blow', 'Fast Acting', 'Fast-Acting', 'F'],
+        ['Very Fast', 'Very Fast Blow', 'Very-Fast', 'FF'],
+        ['Medium', 'Medium Acting', 'Medium Blow', 'M', 'Normal'],
+        ['Slow', 'Slow Blow', 'Slow-Blow', 'Time Delay', 'Time-Delay', 'Time Lag', 'Time-Lag', 'T'],
+        ['Very Slow', 'Very Slow Blow', 'Very-Slow', 'TT'],
+      ],
     },
     {
       attributeId: 'i2t_rating_a2s',

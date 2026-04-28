@@ -31,6 +31,7 @@ export function validateRuleOverride(body: {
   upgradeHierarchy?: string[];
   blockOnMissing?: boolean;
   tolerancePercent?: number;
+  valueAliases?: unknown;
   engineeringReason?: string;
   attributeName?: string;
   sortOrder?: number;
@@ -93,6 +94,34 @@ export function validateRuleOverride(body: {
   if (effectiveType === 'identity_upgrade') {
     if (!body.upgradeHierarchy && !existingRule?.upgradeHierarchy) {
       return { valid: false, error: 'upgradeHierarchy required for identity_upgrade rules' };
+    }
+  }
+
+  // valueAliases: only meaningful for identity / identity_upgrade rules.
+  // Shape must be string[][], no empty groups, no value appearing in two groups.
+  if (body.valueAliases !== undefined && body.valueAliases !== null) {
+    if (effectiveType !== 'identity' && effectiveType !== 'identity_upgrade') {
+      return { valid: false, error: 'valueAliases only applies to identity / identity_upgrade rules' };
+    }
+    if (!Array.isArray(body.valueAliases)) {
+      return { valid: false, error: 'valueAliases must be an array of arrays' };
+    }
+    const seen = new Map<string, number>();
+    for (let g = 0; g < body.valueAliases.length; g++) {
+      const group = body.valueAliases[g];
+      if (!Array.isArray(group) || group.length === 0) {
+        return { valid: false, error: 'valueAliases groups must be non-empty arrays' };
+      }
+      for (const member of group) {
+        if (typeof member !== 'string' || !member.trim()) {
+          return { valid: false, error: 'valueAliases members must be non-empty strings' };
+        }
+        const key = member.trim().toUpperCase().replace(/\s+/g, ' ');
+        if (seen.has(key) && seen.get(key) !== g) {
+          return { valid: false, error: `valueAliases value "${member}" appears in multiple groups` };
+        }
+        seen.set(key, g);
+      }
     }
   }
 

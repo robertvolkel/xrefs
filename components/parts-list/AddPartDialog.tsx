@@ -14,6 +14,7 @@ import {
   DialogContent,
   DialogTitle,
   Link,
+  Skeleton,
   TextField,
   Typography,
 } from '@mui/material';
@@ -28,6 +29,14 @@ interface AddPartDialogProps {
   onCancel: () => void;
   spreadsheetHeaders: string[];
   inferredMapping: ColumnMapping | null;
+  /** 'add' (default): Add Part flow. 'replace': row-identity picker — seeds mpn/mfr,
+   *  skips search step if candidates supplied, and calls onReplace instead of onAdd. */
+  mode?: 'add' | 'replace';
+  initialMpn?: string;
+  initialManufacturer?: string;
+  /** Pre-populated candidates for replace mode — dialog opens directly on the results list. */
+  initialCandidates?: PartSummary[];
+  onReplace?: (picked: PartSummary) => void;
 }
 
 export default function AddPartDialog({
@@ -36,6 +45,11 @@ export default function AddPartDialog({
   onCancel,
   spreadsheetHeaders,
   inferredMapping,
+  mode = 'add',
+  initialMpn,
+  initialManufacturer,
+  initialCandidates,
+  onReplace,
 }: AddPartDialogProps) {
   const { t } = useTranslation();
   const [mpn, setMpn] = useState('');
@@ -45,17 +59,42 @@ export default function AddPartDialog({
   const [matches, setMatches] = useState<PartSummary[] | null>(null);
   const [noResults, setNoResults] = useState(false);
 
+  const isReplace = mode === 'replace';
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
-      setMpn('');
-      setManufacturer('');
+      setMpn(initialMpn ?? '');
+      setManufacturer(initialManufacturer ?? '');
       setExtraValues({});
       setSearching(false);
-      setMatches(null);
+      // Replace mode can pre-populate the results list from batch-validation candidates.
+      setMatches(initialCandidates && initialCandidates.length > 0 ? initialCandidates : null);
       setNoResults(false);
     }
-  }, [open]);
+  }, [open, initialMpn, initialManufacturer, initialCandidates]);
+
+  // Replace mode with an initial MPN but no candidates: auto-run search on open.
+  useEffect(() => {
+    if (!open || !isReplace) return;
+    const trimmedMpn = (initialMpn ?? '').trim();
+    const hasCandidates = !!(initialCandidates && initialCandidates.length > 0);
+    if (!trimmedMpn || hasCandidates) return;
+
+    let cancelled = false;
+    setSearching(true);
+    setMatches(null);
+    setNoResults(false);
+    searchPartQuick(trimmedMpn, (initialManufacturer ?? '').trim() || undefined)
+      .then(result => {
+        if (cancelled) return;
+        if (result.matches.length === 0) setNoResults(true);
+        else setMatches(result.matches);
+      })
+      .catch(() => { if (!cancelled) setNoResults(true); })
+      .finally(() => { if (!cancelled) setSearching(false); });
+    return () => { cancelled = true; };
+  }, [open, isReplace, initialMpn, initialManufacturer, initialCandidates]);
 
   // Determine which columns are "extra" (not MPN, MFR, or description)
   const mappedIndices = new Set<number>();
@@ -64,6 +103,7 @@ export default function AddPartDialog({
     if (inferredMapping.manufacturerColumn >= 0) mappedIndices.add(inferredMapping.manufacturerColumn);
     if (inferredMapping.descriptionColumn >= 0) mappedIndices.add(inferredMapping.descriptionColumn);
     if (inferredMapping.cpnColumn != null && inferredMapping.cpnColumn >= 0) mappedIndices.add(inferredMapping.cpnColumn);
+    if (inferredMapping.unitCostColumn != null && inferredMapping.unitCostColumn >= 0) mappedIndices.add(inferredMapping.unitCostColumn);
   } else {
     // Default empty-list layout: 0=MPN, 1=MFR
     mappedIndices.add(0);
@@ -101,10 +141,17 @@ export default function AddPartDialog({
   };
 
   const handleSelectMatch = (match: PartSummary) => {
+    if (isReplace && onReplace) {
+      onReplace(match);
+      return;
+    }
     onAdd(match.mpn, match.manufacturer ?? manufacturer, match, extras);
   };
 
   const handleAddAnyway = () => {
+    // In replace mode, we need a verified catalog identity — don't let the user
+    // force an unverified row. They can cancel (reverts) and retry.
+    if (isReplace) return;
     onAdd(mpn.trim(), manufacturer, undefined, extras);
   };
 
@@ -123,13 +170,15 @@ export default function AddPartDialog({
   return (
     <Dialog
       open={open}
-      onClose={searching ? undefined : onCancel}
+      onClose={onCancel}
       maxWidth="sm"
       fullWidth
       PaperProps={{ sx: { borderRadius: 3, bgcolor: 'background.paper' } }}
     >
       <DialogTitle sx={{ pb: 0, fontWeight: 600 }}>
-        {t('addPartDialog.title')}
+        {isReplace
+          ? (mpn.trim() ? `Select match for ${mpn.trim()}` : 'Select matching part')
+          : t('addPartDialog.title')}
       </DialogTitle>
 
       <DialogContent sx={{ pt: '16px !important', pb: 1 }}>
@@ -184,6 +233,40 @@ export default function AddPartDialog({
                 ))}
               </AccordionDetails>
             </Accordion>
+          )}
+
+          {/* Searching — skeleton list showing where matches will land. More
+              legible than the tiny button spinner, especially in replace mode
+              where the search kicks off automatically on open. */}
+          {searching && (
+            <Box sx={{ mt: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Searching for matches…
+              </Typography>
+              <Box
+                sx={{
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                }}
+              >
+                {[0, 1, 2].map(i => (
+                  <Box
+                    key={i}
+                    sx={{
+                      px: 1.5,
+                      py: 1,
+                      borderBottom: i < 2 ? 1 : 0,
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Skeleton variant="text" width="45%" height={16} sx={{ fontSize: '0.82rem' }} />
+                    <Skeleton variant="text" width="75%" height={14} />
+                  </Box>
+                ))}
+              </Box>
+            </Box>
           )}
 
           {/* No results warning */}
@@ -250,14 +333,16 @@ export default function AddPartDialog({
                   );
                 })}
               </Box>
-              <Link
-                component="button"
-                variant="caption"
-                onClick={handleAddAnyway}
-                sx={{ mt: 0.5, display: 'block' }}
-              >
-                {t('addPartDialog.addAnyway')}
-              </Link>
+              {!isReplace && (
+                <Link
+                  component="button"
+                  variant="caption"
+                  onClick={handleAddAnyway}
+                  sx={{ mt: 0.5, display: 'block' }}
+                >
+                  {t('addPartDialog.addAnyway')}
+                </Link>
+              )}
             </Box>
           )}
         </Box>
@@ -266,7 +351,6 @@ export default function AddPartDialog({
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button
           onClick={matches ? handleBackToSearch : onCancel}
-          disabled={searching}
           sx={{ borderRadius: 20, textTransform: 'none' }}
         >
           {matches ? t('common.back') : t('common.cancel')}
@@ -274,13 +358,13 @@ export default function AddPartDialog({
         {!matches && (
           <Button
             variant="contained"
-            onClick={noResults ? handleAddAnyway : handleSearch}
+            onClick={noResults && !isReplace ? handleAddAnyway : handleSearch}
             disabled={!mpn.trim() || searching}
             sx={{ borderRadius: 20, textTransform: 'none', minWidth: 100 }}
           >
             {searching
               ? <CircularProgress size={20} color="inherit" />
-              : noResults
+              : noResults && !isReplace
                 ? t('addPartDialog.addAnyway')
                 : t('addPartDialog.searchButton')
             }
