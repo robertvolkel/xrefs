@@ -224,22 +224,27 @@ export default function ComparisonView({
                 );
               })()}
             </Stack>
-            <Typography
-              variant="body2"
-              color="text.primary"
-              sx={{
-                fontSize: '0.78rem',
-                ...(onManufacturerClick && {
-                  cursor: 'pointer',
-                  '&:hover': { color: 'primary.main', textDecoration: 'underline' },
-                  transition: 'color 0.15s ease',
-                }),
-              }}
-              noWrap
-              onClick={onManufacturerClick ? () => onManufacturerClick(replPart.manufacturer) : undefined}
-            >
-              {replPart.manufacturer}
-            </Typography>
+            {(() => {
+              const mfrClickable = !!onManufacturerClick && replPart.mfrOrigin === 'atlas';
+              return (
+                <Typography
+                  variant="body2"
+                  color="text.primary"
+                  sx={{
+                    fontSize: '0.78rem',
+                    ...(mfrClickable && {
+                      cursor: 'pointer',
+                      '&:hover': { color: 'primary.main', textDecoration: 'underline' },
+                      transition: 'color 0.15s ease',
+                    }),
+                  }}
+                  noWrap
+                  onClick={mfrClickable ? () => onManufacturerClick!(replPart.manufacturer) : undefined}
+                >
+                  {replPart.manufacturer}
+                </Typography>
+              );
+            })()}
           </Box>
           <MatchPercentageBadge
             percentage={Math.round(recommendation.matchPercentage)}

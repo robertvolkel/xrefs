@@ -108,7 +108,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 )}
               </Stack>
               <Typography variant="body2" color="text.primary" noWrap component="div">
-                {onManufacturerClick ? (
+                {onManufacturerClick && mfrOrigin === 'atlas' ? (
                   <Box
                     component="span"
                     onClick={(e: React.MouseEvent) => {

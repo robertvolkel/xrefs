@@ -93,7 +93,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
               ))}
             </Stack>
             <Typography variant="body2" color="text.primary" sx={{ fontSize: '0.78rem', mt: 0.5 }} noWrap component="div">
-              {onManufacturerClick && attributes.part.manufacturer ? (
+              {onManufacturerClick && attributes.part.manufacturer && attributes.part.mfrOrigin === 'atlas' ? (
                 <Box
                   component="span"
                   onClick={() => onManufacturerClick(attributes.part.manufacturer)}
