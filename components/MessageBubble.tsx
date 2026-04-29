@@ -1,4 +1,5 @@
 'use client';
+import React, { useMemo } from 'react';
 import { Box, Typography } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
@@ -28,6 +29,61 @@ interface MessageBubbleProps {
   onListActionCancel?: (messageId: string) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
+  /** MPNs (case-preserved) the assistant might mention in prose that should
+   *  render as clickable links. Typically built from the current search result
+   *  + recommendations + selected source part. Empty/unset = no linkification. */
+  knownMpns?: Set<string>;
+  onMpnClick?: (mpn: string) => void;
+}
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Walk markdown text-bearing children and replace any known-MPN substring
+ *  with a clickable span. Non-string children (nested elements) pass through
+ *  untouched, so markdown links / code / etc. survive. */
+function linkifyChildren(
+  children: React.ReactNode,
+  knownMpns: Set<string> | undefined,
+  onClick: ((mpn: string) => void) | undefined,
+  pattern: RegExp | null,
+): React.ReactNode {
+  if (!pattern || !knownMpns || knownMpns.size === 0 || !onClick) return children;
+  const transform = (child: React.ReactNode, idx: number): React.ReactNode => {
+    if (typeof child !== 'string') return child;
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(child)) !== null) {
+      const mpn = match[0];
+      // Confirm canonical case-preserved MPN is in the known set (the regex
+      // already enforces this, but a Set lookup is the source of truth).
+      const canonical = [...knownMpns].find(m => m.toLowerCase() === mpn.toLowerCase()) ?? mpn;
+      if (match.index > lastIdx) parts.push(child.slice(lastIdx, match.index));
+      parts.push(
+        <Box
+          component="span"
+          key={`${idx}-${match.index}-${canonical}`}
+          onClick={() => onClick(canonical)}
+          sx={{
+            color: 'primary.main',
+            cursor: 'pointer',
+            fontFamily: '"Roboto Mono", monospace',
+            '&:hover': { textDecoration: 'underline' },
+          }}
+        >
+          {mpn}
+        </Box>
+      );
+      lastIdx = match.index + mpn.length;
+    }
+    if (lastIdx === 0) return child;
+    if (lastIdx < child.length) parts.push(child.slice(lastIdx));
+    return <React.Fragment key={`f-${idx}`}>{parts}</React.Fragment>;
+  };
+  return Array.isArray(children)
+    ? children.map((c, i) => transform(c, i))
+    : transform(children, 0);
 }
 
 export default function MessageBubble({
@@ -44,9 +100,27 @@ export default function MessageBubble({
   onListActionCancel,
   sourceMpn,
   sourceManufacturer,
+  knownMpns,
+  onMpnClick,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
+
+  // Compile the regex once per known-MPN-set change. Sort longest first so
+  // a longer MPN that contains a shorter one wins. Word-boundary anchors keep
+  // matches conservative and avoid biting into surrounding tokens.
+  const mpnPattern = useMemo(() => {
+    if (!knownMpns || knownMpns.size === 0) return null;
+    const sorted = [...knownMpns].sort((a, b) => b.length - a.length);
+    return new RegExp(`\\b(?:${sorted.map(escapeRegex).join('|')})\\b`, 'gi');
+  }, [knownMpns]);
+
+  // Don't linkify the user's own messages — only the assistant might mention
+  // MPNs we want to surface as clickable. Avoids re-coloring an MPN the user
+  // just typed back into the input.
+  const shouldLinkify = !isUser;
+  const linkify = (children: React.ReactNode) =>
+    shouldLinkify ? linkifyChildren(children, knownMpns, onMpnClick, mpnPattern) : children;
 
   return (
     <Box sx={{ display: 'flex', gap: { xs: 1, sm: 1.5 }, mb: 2.5, alignItems: 'flex-start' }}>
@@ -130,7 +204,16 @@ export default function MessageBubble({
             '& hr': { border: 'none', borderTop: 1, borderColor: 'divider', my: 1.5 },
           }}
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => <p>{linkify(children)}</p>,
+              li: ({ children }) => <li>{linkify(children)}</li>,
+              strong: ({ children }) => <strong>{linkify(children)}</strong>,
+              em: ({ children }) => <em>{linkify(children)}</em>,
+              td: ({ children }) => <td>{linkify(children)}</td>,
+            }}
+          >{message.content}</ReactMarkdown>
         </Typography>
 
         {message.interactiveElement?.type === 'confirmation' && onConfirm && onReject && (

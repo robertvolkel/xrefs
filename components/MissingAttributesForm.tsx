@@ -42,8 +42,15 @@ function getPlaceholder(attr: MissingAttributeInfo, t: (key: string) => string):
   switch (attr.logicType) {
     case 'identity':
       return `e.g., ${attr.attributeName === 'Capacitance' ? '100nF' : attr.attributeName === 'Package / Case' ? '0603' : attr.attributeName === 'Resistance' ? '10kΩ' : '...'}`;
-    case 'identity_upgrade':
+    case 'identity_upgrade': {
+      // Prefer the rule's actual hierarchy when plumbed through — beats hardcoding
+      // by attribute name and works for any future categorical-upgrade rule.
+      if (attr.upgradeHierarchy && attr.upgradeHierarchy.length > 0) {
+        const sample = attr.upgradeHierarchy.slice(0, 3).join(', ');
+        return `e.g., ${sample}${attr.upgradeHierarchy.length > 3 ? ', …' : ''}`;
+      }
       return `e.g., ${attr.attributeName === 'Dielectric' ? 'X7R' : attr.attributeName === 'Resistor Type' ? 'Thick Film' : '...'}`;
+    }
     case 'identity_flag': {
       const hint = parseEnumHint(attr.attributeName);
       if (hint) return `e.g., ${hint}`;

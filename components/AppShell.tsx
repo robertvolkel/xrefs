@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useAppState } from '@/hooks/useAppState';
 import { useConversationPersistence } from '@/hooks/useConversationPersistence';
 import { usePanelVisibility } from '@/hooks/usePanelVisibility';
@@ -37,6 +37,18 @@ export default function AppShell() {
 
   const isMobile = useIsMobile();
 
+  // MPNs the assistant might mention in prose that should auto-link in chat.
+  // Source: current search-result cards + visible recommendations + selected
+  // source. Built as a Set for fast membership lookup; case-preserved so the
+  // regex anchors match the model's output spellings.
+  const knownMpns = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of appState.searchResult?.matches ?? []) set.add(p.mpn);
+    for (const r of appState.allRecommendations ?? []) set.add(r.part.mpn);
+    if (appState.sourcePart?.mpn) set.add(appState.sourcePart.mpn);
+    return set;
+  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart]);
+
   // Auto-collapse chat only when MFR profile + recs are both visible — that's
   // the 4-panel crowding scenario. With MFR + attrs only (3 panels) chat fits
   // comfortably and shouldn't auto-collapse.
@@ -72,6 +84,8 @@ export default function AppShell() {
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
         onCloseMfrProfile={mfr.handleExpandChat}
+        knownMpns={knownMpns}
+        onMpnClick={appState.handleMpnClick}
       />
     );
   }
@@ -117,6 +131,8 @@ export default function AppShell() {
         onSelectConversation={persistence.handleSelectConversation}
         onNewChat={persistence.handleNewChat}
         onDeleteConversation={persistence.handleDeleteConversation}
+        knownMpns={knownMpns}
+        onMpnClick={appState.handleMpnClick}
       />
       <NewListDialog
         open={newList.newListDialogOpen}

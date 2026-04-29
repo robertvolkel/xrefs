@@ -1085,5 +1085,6 @@ export function detectMissingAttributes(
       attributeName: rule.attributeName,
       logicType: rule.logicType,
       weight: rule.weight,
+      ...(rule.upgradeHierarchy ? { upgradeHierarchy: rule.upgradeHierarchy } : {}),
     }));
 }

@@ -4574,3 +4574,106 @@ Both lookups need the same per-MFR alias resolution. Doing them as one change av
 - Admin manufacturer detail page (`/admin/manufacturers/[slug]`) — uses its own admin route; unchanged.
 - Parts-list source attributes (`PartDetailModal.tsx`) — `app/api/parts-list/validate/route.ts` doesn't tag `mfrOrigin` yet. Flag won't render in the per-row modal until validate is updated. Logic-driven recs in lists are unaffected (those already get tagged via `getRecommendations`).
 
+
+---
+
+## Decision #162 — Image Attachments on App Feedback (Apr 2026)
+
+### Context
+
+The "Give Feedback" dialog ([components/AppFeedbackDialog.tsx](../components/AppFeedbackDialog.tsx)) was text-only. Users reporting visual bugs (broken layouts, wrong recommendations, misrendered panels) had no way to *show* the problem, and admins triaging in `AppFeedbackDetailView` often couldn't tell what the user actually saw. Screenshots are the natural medium for these reports.
+
+This is also the first introduction of Supabase Storage in this codebase.
+
+### What we built
+
+End-to-end image attachment support on `app_feedback`:
+
+1. **DB**: new `attachments JSONB NOT NULL DEFAULT '[]'` column on `app_feedback`. Shape: `Array<{ path, mimeType, sizeBytes }>`. JSONB rather than a separate table — never queried into, just round-tripped.
+2. **Storage**: new private bucket `app-feedback-attachments`. Path layout: `{user_id}/{feedback_id}/{nanoid}.{ext}`. Three RLS policies on `storage.objects`: users INSERT under own `user_id` prefix, users SELECT their own, admins SELECT all.
+3. **Upload path**: single round-trip via `multipart/form-data` to `POST /api/app-feedback`. Server reads form, uploads each file to Storage with the server client (RLS bypassed), then inserts the row with the resulting paths. Best-effort orphan cleanup on insert failure.
+4. **Read path**: admin GET routes generate 1-hour signed URLs via `createSignedUrl(path, 3600)` and return them on the list/detail item as `AppFeedbackAttachmentView.signedUrl`. Bucket stays private.
+5. **Submission UI**: `AppFeedbackDialog` adds a file picker (`<input type="file" accept="image/*" multiple>`), thumbnail strip with × remove, and a `paste` handler on the dialog content that catches `image/*` items from the clipboard. Client-side validation: max 5 files, 10 MB each, mime in `{png, jpeg, webp, gif}`.
+6. **Admin UI**: `AppFeedbackDetailView` renders attachment thumbnails between Comment and Technical info, each linking out to the full image in a new tab. `AppFeedbackTab` shows a small paperclip icon (with count if >1) at the start of the Comment cell for rows that have attachments.
+
+### Decisions and tradeoffs
+
+**Single round-trip vs two-phase upload.** Options were (a) client uploads directly to Storage with the browser SDK then POSTs metadata, or (b) multipart through the existing API route. Picked (b): no storage SDK wiring on the client, no orphan-object cleanup needed when the user closes the dialog, simpler RLS reasoning. Files are small (≤10 MB × 5 = 50 MB worst-case) so request size isn't an issue.
+
+**Image-only, explicit allow-list.** Rejected SVG even though it's `image/*` — SVG can carry inline scripts and we render attachments inline as `<img>` for admins. The allow-list (png/jpeg/webp/gif) is enforced both client-side and server-side; the server allow-list is the source of truth.
+
+**Private bucket + signed URLs vs public bucket.** Private. Feedback can include screenshots of customer BOMs, internal part numbers, or auth screens — none of that should be reachable by URL guessing. 1-hour signed URLs are regenerated each time admin loads the list.
+
+**`attachments` as JSONB, not a join table.** We never query "which feedback has > N attachments" or "which attachments are oldest" — we always read them with their parent row. JSONB keeps it one fewer table and one fewer query.
+
+**Limits.** 5 images × 10 MB. Five is enough for any normal bug report; more usually means the user should write a different issue. 10 MB easily covers a 4K screenshot at lossless PNG.
+
+### Files
+
+**New:**
+- [scripts/supabase-app-feedback-attachments.sql](../scripts/supabase-app-feedback-attachments.sql) — column + bucket + 3 RLS policies.
+
+**Modified:**
+- [lib/types.ts](../lib/types.ts) — `AppFeedbackAttachment`, `AppFeedbackAttachmentView`, `AppFeedbackSubmission.attachments?: File[]`, `AppFeedbackListItem.attachments: AppFeedbackAttachmentView[]`.
+- [lib/api.ts](../lib/api.ts) — `submitAppFeedback()` switched from JSON to FormData.
+- [app/api/app-feedback/route.ts](../app/api/app-feedback/route.ts) — multipart parsing, mime/size validation, Storage upload, orphan cleanup on insert failure.
+- [app/api/admin/app-feedback/route.ts](../app/api/admin/app-feedback/route.ts) — sign URLs for each attachment in list response.
+- [components/AppFeedbackDialog.tsx](../components/AppFeedbackDialog.tsx) — file picker, paste handler, thumbnail strip, validation.
+- [components/admin/AppFeedbackDetailView.tsx](../components/admin/AppFeedbackDetailView.tsx) — attachment thumbnail strip with click-to-open.
+- [components/admin/AppFeedbackTab.tsx](../components/admin/AppFeedbackTab.tsx) — paperclip-with-count indicator on rows that have attachments.
+
+### Migration
+
+Run [scripts/supabase-app-feedback-attachments.sql](../scripts/supabase-app-feedback-attachments.sql) once in the Supabase SQL editor. Existing rows get `attachments = '[]'::jsonb`. No backfill needed.
+
+---
+
+## Decision #163 — Three-Layer Search Latency Cuts: Alias L2, Recs Base-Cache Split, Deferred Parts.io Enrichment (Apr 2026)
+
+User reported single-part search felt slow during a live demo. Diagnosis identified three distinct sources of latency, each addressed by a separate fix that ships independently of the others.
+
+### Fix 1 — MFR alias resolver L2 cache
+
+[lib/services/manufacturerAliasResolver.ts](../lib/services/manufacturerAliasResolver.ts) only had a 5-min in-memory cache. Every cold server (deploy, Vercel cold start, demo restart) re-ran three Supabase scans (`atlas_manufacturers` + `manufacturer_companies` + `manufacturer_aliases`) plus a parent-chain walk before any search could complete. The resolver is called twice per search — on the attributes endpoint for source-part origin tagging and on the xref pipeline for every unique candidate MFR (Decision #161) — so the cold-start tax was ~400-600ms before the matching engine even started.
+
+Added a Supabase L2 cache layer using the existing `part_data_cache` table. Stores raw rows under a sentinel key (`service='search'`, `mpn='__mfr_alias_index__'`, `variant='v1'`) with 6-month TTL — the alias graph changes infrequently and admin alias edits invalidate explicitly. On cache hit, the in-memory index is rebuilt from the cached rows (microseconds) instead of re-fetching from Supabase. `invalidateManufacturerAliasCache()` now also fires-and-forgets a Supabase delete so the next cold start rebuilds from source.
+
+Bump `MFR_ALIAS_L2_VERSION` when row shapes change.
+
+### Fix 2 — Recommendations base-payload cache
+
+The full-result `recommendations` cache (Decision #128, RECS_CACHE_SCHEMA_VERSION) keys on `applicationContext`, `userPreferences`, `replacementPriorities`, and `preferredManufacturers` — so any context-only change between runs of the same MPN was a cache miss even though the heavy lifting (Digikey/Atlas/parts.io candidate fetch + parts.io gap-fill + MFR cross-ref expansion) is identical. Demo flows that adjust context answers between searches paid the full 3-8s pipeline rerun every time.
+
+Split the cache into two tiers:
+- **`rec-base:v1:<mpn>:<hash>`** — keys only on inputs that affect candidate fetching (`mpn + overrides + currency + opts`). Stores the pre-scoring artifacts: `sourceAttrs`, `allCandidates`, `certificationMap`, `mfrEquivalenceTypeMap`, `dataSourceMap`, `enrichedFromMap`, `resultDataSource`, `sourcePartDataSource`. Maps/Sets serialized as entry arrays for JSON safety. 30-day TTL (same as recs cache).
+- **Existing `rec:<v>:<mpn>:<hash>` (RECS_CACHE_SCHEMA_VERSION)** — unchanged, still keyed on the full input set, still serves identical-input repeats.
+
+`getRecommendations()` checks the recs cache first (full hit), then the base cache (skip the heavy fetch block, re-run scoring + filters + composite + sort against fresh `effectiveTable`), then falls through to the live pipeline. Re-derived: logic table from cached `sourceAttrs.subcategory`, admin overrides, user effects, context overlay. The base cache turns a context change from 3-8s into ~100-300ms (in-memory rescore).
+
+Implementation moved table-prep (`applyRuleOverrides`, `applyUserEffectsToLogicTable`, `applyContextToLogicTable`) out of the cached fetch block and into the post-base scoring section, since those depend on `userPreferences` / `applicationContext`. Bump `BASE_RECS_SCHEMA_VERSION` when payload shape changes.
+
+### Fix 3 — Deferred parts.io candidate enrichment
+
+The per-candidate parts.io gap-fill loop in [partDataService.ts](../lib/services/partDataService.ts) (`enrichWithPartsio()` over every Digikey candidate, ~20-30 round-trips per search, 500-1500ms total) blocks the response and runs even if the user never opens a single comparison. It was already deferred for batch validation (`skipPartsioEnrichment: true`); now it's deferred for single-part search too.
+
+Mirrors the existing FindChips deferred-enrichment pattern:
+1. Initial fast call: `useAppState` passes `skipPartsioEnrichment: true` to `/api/xref/[mpn]` POST. Server scores candidates on Digikey-only attributes and returns immediately.
+2. Background follow-up: `triggerPartsioEnrichment()` re-fires the same call without the flag. Server hits the base cache from Fix 2 (so candidates don't re-fetch), runs parts.io enrichment, re-scores, returns updated recs.
+3. State replacement: client replaces the recs array in place. Re-fires `triggerFCEnrichment()` afterwards — FC's L1 in-memory cache is warm so the supplier-data merge is effectively free.
+
+Failure modes are strictly no-worse-than-before: Digikey down → no Digikey candidates → enrichment is a no-op; parts.io down → background call errors silently → cards stay on Digikey-only scoring (matches today's parts.io-down behavior). Tradeoff: for ~500-1500ms after first paint, some attribute cells show "review" instead of `pass`/`fail` until enrichment lands, and match % may tick up slightly when it does.
+
+### Files
+
+**Fix 1:**
+- [lib/services/manufacturerAliasResolver.ts](../lib/services/manufacturerAliasResolver.ts) — `loadFromL2()`, `writeToL2()`, L2 read in `refreshCache()`, L2 purge in `invalidateManufacturerAliasCache()`.
+
+**Fix 2:**
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — `BasePayload` / `SerializableBasePayload` types, `buildBaseRecsVariant()`, `serializeBasePayload()` / `deserializeBasePayload()`, base-cache check + `if (!basePayload) { ... }` wrapper around the fetch block, post-base destructuring, table prep moved out of the cached block.
+
+**Fix 3:**
+- [app/api/xref/[mpn]/route.ts](../app/api/xref/[mpn]/route.ts) — POST accepts `skipPartsioEnrichment` in body.
+- [lib/api.ts](../lib/api.ts) — `getRecommendationsWithOverrides()` and `getRecommendationsWithContext()` accept trailing `skipPartsioEnrichment` parameter.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — call sites in `handleFindReplacements` pass `skipPartsioEnrichment: true`; new `triggerPartsioEnrichment()` callback; `showRecsAndDeferAssessment()` accepts `opts.deferredPartsio` and fires the trigger.
+
+Commit `1ff118a`.

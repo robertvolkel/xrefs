@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
+import { getProfileForManufacturer } from './manufacturerProfileService';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
@@ -29,6 +30,29 @@ function cachedTools(tools: Anthropic.Tool[]): Anthropic.Tool[] {
 // ==============================================================
 
 /** Build a compact summary of recommendations (used as context, not in system prompt). */
+/** Summarize the search-result cards currently on screen so the model can
+ *  reason about phrases like "these parts" / "any of these" without re-running
+ *  search_parts. The UI shows the cards visually but they don't otherwise reach
+ *  the LLM — only the assistant's text "I found N similar parts" makes it into
+ *  conversation history. Inject the actual MPN list + light disambiguation
+ *  parametrics here so follow-up questions are answerable. */
+function summarizeSearchResults(searchResult: SearchResult): string {
+  const matches = searchResult.matches ?? [];
+  if (matches.length === 0) return '';
+  const lines = matches.slice(0, 25).map((p) => {
+    const params = (p.keyParameters ?? []).slice(0, 3)
+      .map((kp) => `${kp.name}: ${kp.value}`).join('; ');
+    const status = p.status ? ` [${p.status}]` : '';
+    const quals = p.qualifications && p.qualifications.length > 0
+      ? ` [${p.qualifications.join(', ')}]` : '';
+    const dist = typeof p.distributorCount === 'number' ? ` [${p.distributorCount} distributors]` : '';
+    const paramStr = params ? ` — ${params}` : '';
+    return `  - ${p.mpn} (${p.manufacturer})${status}${quals}${dist}${paramStr}`;
+  });
+  const truncated = matches.length > 25 ? `\n  ... (${matches.length - 25} more)` : '';
+  return `\n\n[Search results currently on screen — ${matches.length} parts the user may be referring to with "these parts" / "any of these" / etc. Distributor counts (when shown) come from FindChips. For deeper parametric questions use get_batch_attributes; do NOT call any cross-reference tool.\n${lines.join('\n')}${truncated}]`;
+}
+
 function summarizeRecommendations(recs: XrefRecommendation[]): string {
   if (recs.length === 0) return '';
 
@@ -135,6 +159,25 @@ const filterRecommendationsTool: Anthropic.Tool = {
       },
     },
     required: [],
+  },
+};
+
+/** Tool the model uses to re-render a chosen subset of the current
+ *  search-result cards. Conditionally added to the chat tool list when a
+ *  search result is currently in context. */
+const presentPartOptionsTool: Anthropic.Tool = {
+  name: 'present_part_options',
+  description: 'Re-render a chosen subset of the cards from the current search-result list as new clickable cards in chat. Use this when the user wants to narrow / focus on / refine which of the original results to consider (e.g. "show me just the V-0 ones", "filter to AEC-Q200"). Inputs are MPNs that must come from the current search-result context. The UI auto-resets the right-side panels (source part, recommendations) when the new card list appears — that is the intended UX. Do NOT use this for new requirements that aren\'t in the current results — use search_parts to pivot instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      mpns: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Array of MPNs to re-render as cards. Must come from the current search-result list. Order is preserved.',
+      },
+    },
+    required: ['mpns'],
   },
 };
 
@@ -353,7 +396,7 @@ If a user asks about anything unrelated to electronic components, respond in 1-2
 
 Meta-questions about this system itself — what data sources you use, what families you support, how search or matching works, what APIs you're connected to, what you can do — ARE on-topic. Answer them factually and concisely using the "About This System" section below. Do NOT deflect with the "specialist" introduction for these questions.
 
-General electronics domain questions — theory (e.g. "X7R vs C0G"), design guidance (e.g. "how do I pick a MOSFET for a 12V→5V buck converter"), standards (e.g. "what does AEC-Q200 qualify"), concepts, or comparisons that aren't about a specific MPN — ARE on-topic. Answer thoroughly from domain knowledge. 2-3 paragraphs is fine when the question warrants it — the goal is to provide real value, not artificial brevity. Use bullet points for lists and comparisons. Always end with a PIVOT — a concrete offer tied to this tool's capabilities (search_parts, find_replacements, filter_recommendations). Example pivots:
+General electronics domain questions — theory (e.g. "X7R vs C0G"), design guidance (e.g. "how do I pick a MOSFET for a 12V→5V buck converter"), standards (e.g. "what does AEC-Q200 qualify"), concepts, or comparisons that aren't about a specific MPN — ARE on-topic. Answer thoroughly from domain knowledge. 2-3 paragraphs is fine when the question warrants it — the goal is to provide real value, not artificial brevity. Use bullet points for lists and comparisons. Always end with a PIVOT — a concrete offer tied to this tool's capabilities (search_parts, get_part_attributes, filter_recommendations). Example pivots:
 - "Want me to find C0G 0603 10nF candidates?"
 - "Give me your switching frequency and target current, I'll search for MOSFET candidates."
 - "I can filter any recommendations to AEC-Q200-qualified parts when you're ready."
@@ -385,8 +428,27 @@ About This System (use these facts when answering meta-questions):
 Workflow:
 1. When a user provides a part number or description, use the search_parts tool to find matches.
 2. If there's exactly one match, write a brief message and the UI will show a clickable part card. If multiple, present them briefly — the UI shows cards for all matches.
-3. When the user clicks a part card, the UI automatically loads attributes and shows them in a side panel. You do NOT need to call get_part_attributes — the frontend handles this.
-4. After the user chooses to find cross-references, the UI runs the matching engine and provides results. You will then be asked for an engineering assessment (see below).
+3. When the user clicks a part card, the UI automatically loads attributes and shows them in a side panel for the SELECTED part. You do NOT need to call get_part_attributes for the selected part — the frontend handles it. (See rule #4 below for using get_part_attributes on OTHER parts in the search-result list.)
+4. **Cross-references are USER-BUTTON-DRIVEN, not tool-driven.** After a part is loaded, the UI presents a "Find cross-references" button. The matching engine runs ONLY when the user clicks that button. You do NOT have a tool to start cross-reference matching, and you must NEVER attempt to. If the user types something like "find cross references for X", "find equivalents to X", "what can replace X", or similar, write a brief reply telling them to click the "Find cross-references" button — do NOT try to execute the search yourself.
+5. **Free-form follow-up questions about parts already shown are EXPECTED.** After search results or a selected part appear, route the conversation into one of these four modes — pick whichever fits, freely switching as the discussion evolves:
+
+   **(a) ASK** — parametric question about the current cards.
+   Single MPN: call get_part_attributes. Multi-MPN or compound query (e.g. "which of these are AEC-Q200 AND ≤ 30mm AND active?"): call get_batch_attributes (max 10 MPNs). Answer from the returned data, then end with a brief offer to refine ("Want me to show just those?") so the user can iterate.
+
+   **(b) REFINE** — narrow the current cards to a chosen subset.
+   When the user says "show me just those", "filter to V-0", "which of these...", call present_part_options with the matching MPNs from the search-result context. Cards re-render in chat. If you need to evaluate parameters not in the lightweight context, call get_batch_attributes first, then present_part_options on the qualifiers.
+
+   **(c) PIVOT** — change a requirement, conduct a NEW search.
+   When the user changes voltage, dielectric, package, family, or says "actually I need...", "forget that, show me...", "what about 50V versions?": call search_parts with a fresh query that incorporates the new requirements. Do NOT try to filter the existing list when the needed value isn't in it (e.g. user wants 50V but original search was 25V — only a fresh search can surface it). Pivots replace the card list and reset the right-side panels — that is the intended UX.
+
+   **(d) LINK** — nothing for you to do, but worth knowing: any MPN you type in prose is auto-rendered as a clickable link by the UI. So don't shy away from naming MPNs in your text — clicking the MPN loads that part the same way clicking a card does.
+
+   **Distributor count** is a normal parametric attribute the user can ask about ("which have ≥4 distributors?", "show only parts available at 5+ places"). It's surfaced two ways: (i) the search-result context already includes "[N distributors]" annotations on each card when known, so you can answer simple questions directly; (ii) for cards without an annotation, get_batch_attributes returns a distributorCount field per MPN. Distributor counts come from FindChips (~80 distributors aggregated). Don't say "I can't access that" — you can.
+
+   **Manufacturer profile questions** ("tell me about TDK", "where is ISC headquartered?", "is 3PEAK ISO9001 certified?", "what does this Chinese MFR make?") use get_manufacturer_profile. Coverage caveat: rich profile data is available for ~115 Chinese manufacturers (Atlas dataset) plus a few major Western majors as fallback. For most Western manufacturers (Texas Instruments, Analog Devices, ON Semiconductor, Vishay, Murata, etc.) the tool returns notFound — when that happens, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Be honest, offer the fallback.
+
+   **NEVER** answer follow-up questions by running cross-references. Cross-references are strictly button-driven (rule #4).
+6. After cross-references are run via the button click, you will be asked for an engineering assessment (see below).
 
 Search result presentation:
 - The UI renders interactive part cards below your message automatically based on search results. The user must click a card to see full details in the attributes panel.
@@ -396,7 +458,7 @@ Search result presentation:
 - Do NOT use present_choices for part selection — clickable part cards handle that. present_choices is ONLY for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search").
 - IMPORTANT: When using present_choices, you MUST still write a text message explaining the situation. The buttons appear below your text. Never call present_choices without also providing a text response — an empty message with only buttons is confusing.
 
-Engineering Assessment (REQUIRED after find_replacements):
+Engineering Assessment (REQUIRED after the cross-reference button has been clicked and recommendations are loaded into context):
 - State how many candidates were found and how many passed
 - Highlight top 1–2 by MPN, manufacturer, and match percentage
 - Note key differences or trade-offs
@@ -404,7 +466,7 @@ Engineering Assessment (REQUIRED after find_replacements):
 - 3–5 sentences max. Be direct and technical.
 
 Unsupported families:
-You do NOT know which component families are supported — only the tools know. NEVER preemptively tell a user that a part or category is unsupported. Always follow the normal workflow: search → confirm → call get_part_attributes and find_replacements. If find_replacements returns "unsupportedFamily": true, tell the user exactly this: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
+You do NOT know which component families are supported — the matching engine knows. NEVER preemptively tell a user that a part or category is unsupported. Follow the normal workflow: search → confirm. If the user clicks "Find cross-references" and the matching engine returns an unsupported-family flag, the UI will surface that to you in context; in that case tell the user exactly: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
 
 Formatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs.
@@ -417,7 +479,7 @@ Important rules:
 - NEVER describe a part's specifications in your text response. The UI displays attributes in a dedicated panel when the user clicks a part card. Writing specs in chat is redundant and a worse experience.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first. NEVER skip the search step. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
 - If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
-- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), extract those names and pass them as the preferred_manufacturers parameter when calling find_replacements. Parts from preferred manufacturers will be boosted in the ranking.
+- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), acknowledge the preference in your reply. The UI applies preferred-manufacturer ranking to cross-references when the user clicks "Find cross-references" — you do not pass it through any tool.
 - When the user asks for "details", "specs", or "info" about a part that was previously found in search results, use search_parts to present the part card again. The UI will handle loading attributes when the user clicks on it.
 
 When User Context is provided:
@@ -460,23 +522,38 @@ const tools: Anthropic.Tool[] = [
       required: ['mpn'],
     },
   },
+  // find_replacements removed: cross-reference matching is button-driven, not
+  // tool-driven. The UI's "Find cross-references" button calls the matching
+  // engine directly. Removing the tool prevents the model from kicking off a
+  // cross-ref run when the user is just asking parametric questions about
+  // parts already on screen.
   {
-    name: 'find_replacements',
-    description: 'Find cross-reference replacement candidates for a specific part. Uses the deterministic matching engine with logic table rules to evaluate candidates. Returns ranked recommendations with match percentages and detailed per-parameter comparison. If the user mentioned preferred manufacturers, pass them to boost those manufacturers in the ranking.',
+    name: 'get_batch_attributes',
+    description: 'Get parametric attributes for multiple MPNs at once. Use this when answering compound or multi-MPN questions about parts already shown in search results (e.g. "which of these are AEC-Q200 AND ≤30mm height?", "which have ≥4 distributors?"). Returns a compact map of MPN → {parameters, status, qualifications, distributorCount}. Limit 10 MPNs per call. Prefer this over multiple sequential get_part_attributes calls when you need to evaluate the same question across many parts.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        mpn: {
-          type: 'string',
-          description: 'The MPN of the source part to find replacements for',
-        },
-        preferred_manufacturers: {
+        mpns: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of preferred manufacturer names extracted from the user query (e.g. ["ON Semiconductor", "Vishay", "Nexperia"]). Parts from these manufacturers will be boosted in ranking.',
+          description: 'Array of MPNs to look up. Max 10 per call. MPNs should come from the current search-result context.',
         },
       },
-      required: ['mpn'],
+      required: ['mpns'],
+    },
+  },
+  {
+    name: 'get_manufacturer_profile',
+    description: 'Look up rich company-profile data for a manufacturer (description, headquarters, country, founded year, certifications, core products, contact info, website, logo). Coverage: ~115 Chinese component manufacturers from our Atlas dataset have full profiles; a handful of major Western manufacturers have partial mock profiles. For non-Chinese / non-Atlas manufacturers (e.g. Texas Instruments, Analog Devices, ON Semiconductor), this tool returns notFound — when that happens, tell the user we currently only have rich profile data for Chinese manufacturers in our Atlas dataset, and offer what we DO have via search/attributes (parts, descriptions, parametric data, distributor pricing).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Manufacturer name as the user typed it or as it appears on a part. Resolver handles aliases (e.g. "TDK Corporation" → "TDK", "无锡固电" → "ISC").',
+        },
+      },
+      required: ['name'],
     },
   },
   {
@@ -587,7 +664,8 @@ async function executeTool(
   data: ToolResultData,
   currentRecommendations?: XrefRecommendation[],
   userId?: string,
-  userPreferences?: UserPreferences,
+  _userPreferences?: UserPreferences,
+  currentSearchResult?: SearchResult,
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
@@ -602,46 +680,131 @@ async function executeTool(
       data.attributes[mpn] = attrs;
       return JSON.stringify(attrs);
     }
-    case 'find_replacements': {
-      const findInput = input as { mpn: string; preferred_manufacturers?: string[] };
-      const mpn = findInput.mpn;
-      const result = await getRecommendations(mpn, undefined, undefined, undefined, findInput.preferred_manufacturers, userPreferences, userId);
-      const recs = result.recommendations;
-      data.recommendations[mpn] = recs;
-
-      // QC log (awaited to ensure it completes within request lifecycle)
-      if (userId) {
-        await logRecommendation({
-          userId,
-          sourceMpn: mpn,
-          sourceManufacturer: result.sourceAttributes.part.manufacturer,
-          familyId: result.familyId,
-          familyName: result.familyName,
-          recommendationCount: recs.length,
-          requestSource: 'chat',
-          dataSource: result.dataSource,
-          snapshot: {
-            sourceAttributes: result.sourceAttributes,
-            recommendations: recs,
-            domainStats: result.domainStats,
+    case 'get_batch_attributes': {
+      const inp = input as { mpns: string[] };
+      const mpns = (inp.mpns ?? []).slice(0, 10);
+      if (mpns.length === 0) return JSON.stringify({ error: 'No MPNs supplied' });
+      // Concurrency 5 — getAttributes already runs Digikey/parts.io/FindChips in
+      // parallel per MPN, so 5× MPN concurrency is the right ceiling for sustained
+      // throughput without saturating downstream.
+      const CONCURRENCY = 5;
+      const results: Record<string, unknown> = {};
+      for (let i = 0; i < mpns.length; i += CONCURRENCY) {
+        const chunk = mpns.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (mpn) => {
+          const attrs = await getAttributes(mpn, undefined, userId);
+          if (!attrs) {
+            results[mpn] = { notFound: true };
+            return;
+          }
+          data.attributes[mpn] = attrs;
+          // Compact projection — full PartAttributes would balloon the LLM context
+          // with raw API payloads. Pull only what's useful for parametric questions.
+          results[mpn] = {
+            manufacturer: attrs.part.manufacturer,
+            description: attrs.part.description,
+            category: attrs.part.category,
+            subcategory: attrs.part.subcategory,
+            status: attrs.part.status,
+            qualifications: attrs.part.qualifications ?? [],
+            // Distributor count derived from FindChips supplier quotes — one
+            // quote per distributor that lists this part. Lets the model
+            // answer "≥4 distributors" style questions without a separate tool.
+            distributorCount: attrs.part.supplierQuotes?.length ?? 0,
+            parameters: attrs.parameters.map(p => ({ name: p.parameterName, value: p.value })),
+          };
+        }));
+      }
+      return JSON.stringify({ results });
+    }
+    case 'get_manufacturer_profile': {
+      const inp = input as { name: string };
+      const name = (inp.name ?? '').trim();
+      if (!name) return JSON.stringify({ error: 'Manufacturer name required' });
+      try {
+        const result = await getProfileForManufacturer(name);
+        if (!result) {
+          // No profile in Atlas (Chinese MFRs) or mock (a few Western majors).
+          // The system prompt tells the model how to phrase this for the user.
+          return JSON.stringify({
+            notFound: true,
+            queriedName: name,
+            note: 'No rich profile data for this manufacturer. We currently maintain detailed company profiles only for ~115 Chinese manufacturers in our Atlas dataset, plus a handful of major Western manufacturers in fallback data. For others, parts/specs/pricing are still available via search.',
+          });
+        }
+        const { profile, source } = result;
+        return JSON.stringify({
+          source,
+          profile: {
+            name: profile.name,
+            country: profile.country,
+            headquarters: profile.headquarters,
+            foundedYear: profile.foundedYear,
+            summary: profile.summary,
+            logoUrl: profile.logoUrl,
+            isSecondSource: profile.isSecondSource,
+            productCategories: profile.productCategories ?? [],
+            certifications: profile.certifications ?? [],
+            manufacturingLocations: profile.manufacturingLocations ?? [],
+            authorizedDistributors: profile.authorizedDistributors ?? [],
+            complianceFlags: profile.complianceFlags ?? [],
+            distributorCount: profile.distributorCount,
+            catalogSize: profile.catalogSize,
+            familyCount: profile.familyCount,
           },
         });
+      } catch (err) {
+        console.warn('[orchestrator] get_manufacturer_profile failed:', err);
+        return JSON.stringify({ error: 'Failed to fetch profile' });
       }
-
+    }
+    case 'present_part_options': {
+      const inp = input as { mpns: string[] };
+      const requested = inp.mpns ?? [];
+      const pool = currentSearchResult?.matches ?? [];
+      if (requested.length === 0) {
+        return JSON.stringify({ error: 'No MPNs supplied' });
+      }
+      if (pool.length === 0) {
+        return JSON.stringify({ error: 'No current search-result list to refine. Use search_parts to start a new search.' });
+      }
+      // Match preserves the model's requested order. Case-insensitive exact match
+      // first; falls back to substring contains for forgiving matching against
+      // packaging-suffix variants the model might trim.
+      const byLower = new Map<string, typeof pool[0]>();
+      for (const p of pool) byLower.set(p.mpn.toLowerCase(), p);
+      const seen = new Set<string>();
+      const matches: typeof pool = [];
+      for (const m of requested) {
+        const exact = byLower.get(m.toLowerCase());
+        if (exact && !seen.has(exact.mpn.toLowerCase())) {
+          matches.push(exact);
+          seen.add(exact.mpn.toLowerCase());
+          continue;
+        }
+        const contains = pool.find(p => p.mpn.toLowerCase().includes(m.toLowerCase()));
+        if (contains && !seen.has(contains.mpn.toLowerCase())) {
+          matches.push(contains);
+          seen.add(contains.mpn.toLowerCase());
+        }
+      }
+      if (matches.length === 0) {
+        // Don't emit a fresh searchResult — that would collapse the right panels
+        // for a zero-result tool call. Let the model fall back to prose.
+        return JSON.stringify({ matched: 0, requested: requested.length, note: 'None of the requested MPNs are in the current search-result list. Did you mean to pivot to a new search?' });
+      }
+      data.searchResult = {
+        type: matches.length === 1 ? 'single' : 'multiple',
+        matches,
+        sourcesContributed: currentSearchResult?.sourcesContributed,
+      };
       return JSON.stringify({
-        ...(result.unsupportedFamily ? { unsupportedFamily: true } : {}),
-        results: recs.slice(0, 20).map(r => ({
-          mpn: r.part.mpn,
-          manufacturer: r.part.manufacturer,
-          matchPercentage: r.matchPercentage,
-          passed: r.matchPercentage > 0,
-          keyDifferences: r.matchDetails
-            .filter(d => d.matchStatus !== 'exact')
-            .slice(0, 5)
-            .map(d => `${d.parameterName}: ${d.sourceValue} → ${d.replacementValue} (${d.matchStatus})`),
-        })),
+        matched: matches.length,
+        requested: requested.length,
+        results: matches.map(m => ({ mpn: m.mpn, manufacturer: m.manufacturer })),
       });
     }
+    // find_replacements case removed — cross-references are button-driven now.
     case 'filter_recommendations': {
       const filterInput = input as FilterInput;
       const sourceRecs = currentRecommendations ?? [];
@@ -841,6 +1004,7 @@ export async function chat(
   locale?: string,
   userPreferences?: UserPreferences,
   userName?: string,
+  currentSearchResult?: SearchResult,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -860,14 +1024,24 @@ export async function chat(
     + buildUserContextSection(userPreferences ?? {}, userName)
     + buildLocaleInstruction(locale);
   const activeTools = [...tools, ...historyTools];
+  // Build context blocks to inject into the last user message. Keeps the
+  // system prompt cacheable while giving the model awareness of what's on
+  // screen. Search-result block goes first so the rec block (when present)
+  // sits closer to the user's actual text.
+  const contextBlocks: string[] = [];
+  if (currentSearchResult && (currentSearchResult.matches?.length ?? 0) > 0) {
+    contextBlocks.push(summarizeSearchResults(currentSearchResult));
+    activeTools.push(presentPartOptionsTool);
+  }
   if (currentRecommendations && currentRecommendations.length > 0) {
-    // Inject rec summary as context in the last user message (keeps system prompt cacheable)
-    const recContext = summarizeRecommendations(currentRecommendations);
+    contextBlocks.push(summarizeRecommendations(currentRecommendations));
+    activeTools.push(filterRecommendationsTool);
+  }
+  if (contextBlocks.length > 0) {
     const lastMsg = anthropicMessages[anthropicMessages.length - 1];
     if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
-      lastMsg.content = recContext + '\n\n' + lastMsg.content;
+      lastMsg.content = contextBlocks.join('\n') + '\n\n' + lastMsg.content;
     }
-    activeTools.push(filterRecommendationsTool);
   }
 
   // Tool-use loop: keep going until Claude gives a final text response
@@ -914,6 +1088,7 @@ export async function chat(
           currentRecommendations,
           userId,
           userPreferences,
+          currentSearchResult,
         );
         console.timeEnd(`[perf] tool:${toolUse.name}`);
         return {

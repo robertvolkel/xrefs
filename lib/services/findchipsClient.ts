@@ -13,6 +13,11 @@
  */
 
 import { logApiCall } from './apiUsageLogger';
+import {
+  getCachedResponseBatch,
+  setCachedResponse,
+  TTL_LIFECYCLE_MS,
+} from './partDataCache';
 
 const BASE_URL = 'https://api.findchips.com/v1/fcl-search';
 
@@ -261,6 +266,19 @@ export async function getFindchipsResults(
 
     if (hasResults) {
       setCache(mpnLower, results);
+      // Persist distributor count to L2 (lifecycle tier — distributor identity
+      // is stable on weeks/months timescale, unlike pricing/stock). Lets the
+      // search picker display "N distributors" badges without firing live FC
+      // calls. Fire-and-forget; never blocks the caller.
+      const count = results.filter(r => r.parts && r.parts.length > 0).length;
+      setCachedResponse(
+        'findchips',
+        mpnLower,
+        'fc-distributors',
+        'lifecycle',
+        { count },
+        TTL_LIFECYCLE_MS,
+      );
       return results;
     }
     return null;
@@ -268,6 +286,38 @@ export async function getFindchipsResults(
     console.error('[findchips] API error:', err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+// ============================================================
+// PUBLIC API — Cached distributor counts (no live API calls)
+// ============================================================
+
+/**
+ * Read cached distributor counts for a list of MPNs. Returns a Map of
+ * lowercase MPN → count. MPNs without a cached entry are simply omitted.
+ *
+ * Used by the search picker to surface "N distributors" badges with zero
+ * FindChips API quota cost. Distributor identity is stable on a weeks/months
+ * timescale, so the 6-month lifecycle TTL is safe.
+ */
+export async function getCachedDistributorCounts(
+  mpns: string[],
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (mpns.length === 0) return result;
+
+  const rows = await getCachedResponseBatch<{ count: number }>(
+    'findchips',
+    mpns,
+    'fc-distributors',
+  );
+
+  for (const [mpnLower, payload] of rows.entries()) {
+    if (typeof payload?.count === 'number') {
+      result.set(mpnLower, payload.count);
+    }
+  }
+  return result;
 }
 
 // ============================================================

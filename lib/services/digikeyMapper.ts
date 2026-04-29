@@ -1658,7 +1658,34 @@ export function mapDigikeyProductToSummary(product: DigikeyProduct): PartSummary
     status: mapStatus(product.ProductStatus?.Status ?? 'Active'),
     qualifications: extractQualifications(product.Parameters ?? []),
     dataSource: 'digikey',
+    keyParameters: extractKeyParameters(product.Parameters ?? []),
   };
+}
+
+/** Pull a small set of likely-distinguishing parameters off a Digikey product.
+ *  These are already in the keyword-search payload so this adds no API cost.
+ *  Skips noisy/structural fields (categorical packaging, base part number, etc.)
+ *  and very long values that would blow out a card. */
+const KEY_PARAM_SKIP = new Set<string>([
+  'Base Part Number', 'Series', 'Manufacturer', 'Description',
+  'Package / Case', 'Packaging', 'Part Status', 'RoHS Status',
+  'Lead Free', 'Moisture Sensitivity Level (MSL)', 'Mounting Type',
+  'AEC-Q200', 'AEC-Q100', 'AEC-Q101',
+]);
+
+function extractKeyParameters(params: DigikeyParameter[]): Array<{ name: string; value: string }> {
+  const out: Array<{ name: string; value: string }> = [];
+  for (const p of params) {
+    const name = p.ParameterText;
+    const value = p.ValueText;
+    if (!name || !value) continue;
+    if (KEY_PARAM_SKIP.has(name)) continue;
+    if (value === '-' || value === '*') continue;
+    if (value.length > 60) continue;
+    out.push({ name, value });
+    if (out.length >= 12) break;
+  }
+  return out;
 }
 
 /** Map a DigikeyKeywordResponse to our SearchResult */

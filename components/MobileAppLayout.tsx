@@ -81,6 +81,8 @@ interface MobileAppLayoutProps {
   onBackToRecommendations: () => void;
   onManufacturerClick: (manufacturer: string) => void;
   onCloseMfrProfile: () => void;
+  knownMpns?: Set<string>;
+  onMpnClick?: (mpn: string) => void;
 }
 
 export default function MobileAppLayout({
@@ -111,6 +113,8 @@ export default function MobileAppLayout({
   onBackToRecommendations,
   onManufacturerClick,
   onCloseMfrProfile,
+  knownMpns,
+  onMpnClick,
 }: MobileAppLayoutProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [badges, setBadges] = useState<Record<number, boolean>>({});
@@ -242,6 +246,8 @@ export default function MobileAppLayout({
             onChoiceSelect={onChoiceSelect}
             sourceMpn={sourceAttributes?.part.mpn}
             sourceManufacturer={sourceAttributes?.part.manufacturer}
+            knownMpns={knownMpns}
+            onMpnClick={onMpnClick}
           />
         </Box>
 

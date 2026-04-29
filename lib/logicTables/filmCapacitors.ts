@@ -153,9 +153,10 @@ export const filmCapacitorsLogicTable: LogicTable = {
     {
       attributeId: 'flammability',
       attributeName: 'Flammability Rating (UL94)',
-      logicType: 'identity_flag',
+      logicType: 'identity_upgrade',
+      upgradeHierarchy: ['V-0', 'V-1', 'V-2', 'HB'],
       weight: 7,
-      engineeringReason: 'If original requires UL94 V-0 rating, replacement must also have it. Required for safety compliance in many end products.',
+      engineeringReason: 'UL94 is categorical (V-0 / V-1 / V-2 / HB) ordered best→worst. If original requires UL94 V-0, replacement must be V-0 or better; never downgrade to V-2 or HB on safety-critical end products.',
       sortOrder: 17,
     },
     {

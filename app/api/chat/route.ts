@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { OrchestratorMessage, XrefRecommendation } from '@/lib/types';
+import { OrchestratorMessage, SearchResult, XrefRecommendation } from '@/lib/types';
 import { chat } from '@/lib/services/llmOrchestrator';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { runWithServiceTracking, reportServiceFailure, getServiceWarnings } from '@/lib/services/serviceStatusTracker';
@@ -8,6 +8,7 @@ import { fetchUserPreferences } from '@/lib/services/userPreferencesService';
 interface ChatRequestBody {
   messages: OrchestratorMessage[];
   recommendations?: XrefRecommendation[];
+  searchResult?: SearchResult;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const locale = (user?.user_metadata?.language as string) ?? 'en';
       const prefs = await fetchUserPreferences(user!.id);
       const userName = (user?.user_metadata?.full_name as string) ?? undefined;
-      const response = await chat(body.messages, apiKey, body.recommendations, user?.id, locale, prefs, userName);
+      const response = await chat(body.messages, apiKey, body.recommendations, user?.id, locale, prefs, userName, body.searchResult);
 
       const warnings = getServiceWarnings();
       return NextResponse.json({

@@ -73,6 +73,9 @@ export function useAppState() {
   const recsRef = useRef<XrefRecommendation[]>([]);
   // Track full unfiltered recommendations — filters always operate on this set
   const allRecsRef = useRef<XrefRecommendation[]>([]);
+  // Mirrors state.searchResult so async callbacks can pass the current cards
+  // on screen to the LLM orchestrator without needing a render-time read.
+  const searchResultRef = useRef<SearchResult | null>(null);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track whether context questions have been asked (ref avoids stale closure)
@@ -100,6 +103,9 @@ export function useAppState() {
   useEffect(() => {
     allRecsRef.current = state.allRecommendations;
   }, [state.allRecommendations]);
+  useEffect(() => {
+    searchResultRef.current = state.searchResult;
+  }, [state.searchResult]);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -204,6 +210,51 @@ export function useAppState() {
       });
     },
     []
+  );
+
+  /** Background distributor-count enrichment for chat-search picker cards.
+   *  Cards render immediately from `searchParts()` with `distributorCount` populated only
+   *  for MPNs warm in the L2 cache. This helper closes the gap: fires FC for the
+   *  remaining MPNs in parallel (5× concurrency, server-side rate-limited) and merges the
+   *  count into the matching message. Fire-and-forget; never blocks search rendering. */
+  const triggerSearchDistributorEnrichment = useCallback(
+    (messageId: string, parts: PartSummary[]) => {
+      const gapMpns = parts
+        .filter((p) => typeof p.distributorCount !== 'number')
+        .map((p) => p.mpn);
+      if (gapMpns.length === 0) return;
+
+      enrichWithFCBatch(gapMpns)
+        .then((fcData) => {
+          if (Object.keys(fcData).length === 0) return;
+          const mergeCount = (p: PartSummary): PartSummary => {
+            if (typeof p.distributorCount === 'number') return p;
+            const data = fcData[p.mpn.toLowerCase()];
+            const count = data?.quotes?.length ?? 0;
+            if (count <= 0) return p;
+            return { ...p, distributorCount: count };
+          };
+          setState((prev) => {
+            // Merge counts into the message that holds the cards (so the chip
+            // chip fades in) AND into prev.searchResult.matches (so the LLM
+            // sees fresh counts on its next call). Both must stay in sync —
+            // searchResultRef mirrors prev.searchResult, and that's what gets
+            // passed to the orchestrator on each message.
+            const messages = prev.messages.map((msg) => {
+              if (msg.id !== messageId) return msg;
+              const el = msg.interactiveElement;
+              if (!el || el.type !== 'options' || !el.parts) return msg;
+              return { ...msg, interactiveElement: { ...el, parts: el.parts.map(mergeCount) } };
+            });
+            const searchResult = prev.searchResult
+              ? { ...prev.searchResult, matches: prev.searchResult.matches.map(mergeCount) }
+              : prev.searchResult;
+            return { ...prev, messages, searchResult };
+          });
+        })
+        .catch(() => { /* FC down → cards stay un-badged */ });
+    },
+    [],
   );
 
   /** Background parts.io enrichment (Option 2). The fast initial recommendation call runs
@@ -476,6 +527,7 @@ export function useAppState() {
           conversationRef.current,
           allRecsRef.current.length > 0 ? allRecsRef.current : undefined,
           signal,
+          searchResultRef.current ?? undefined,
         );
 
         if (signal.aborted) return; // conversation switched mid-flight
@@ -511,10 +563,12 @@ export function useAppState() {
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult: searchResult ?? null }));
         } else if (searchResult && searchResult.type === 'single') {
           // Single match — show as a clickable part card (same as multi-match)
-          addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          const msg = addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          triggerSearchDistributorEnrichment(msg.id, searchResult.matches);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'multiple') {
-          addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          const msg = addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          triggerSearchDistributorEnrichment(msg.id, searchResult.matches);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'none') {
           addMessage('assistant', response.message);
@@ -547,7 +601,7 @@ export function useAppState() {
         await handleSearchDeterministic(query, true);
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, triggerSearchDistributorEnrichment]
   );
 
   const handleConfirmWithLLM = useCallback(
@@ -635,11 +689,12 @@ export function useAppState() {
           );
           setState((prev) => ({ ...prev, phase: 'resolving', searchResult: result }));
         } else {
-          addMessage(
+          const msg = addMessage(
             'assistant',
             `I found ${result.matches.length} possible matches. Which part are you looking for?`,
             { type: 'options', parts: result.matches }
           );
+          triggerSearchDistributorEnrichment(msg.id, result.matches);
           setState((prev) => ({ ...prev, phase: 'resolving', searchResult: result }));
         }
       } catch {
@@ -648,7 +703,7 @@ export function useAppState() {
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus]
+    [addMessage, setStatus, triggerSearchDistributorEnrichment]
   );
 
   /** Load attributes + recommendations via direct API calls */
@@ -1063,6 +1118,37 @@ export function useAppState() {
     });
   }, []);
 
+  /** Resolve an MPN typed inline by the assistant (or referenced anywhere
+   *  the chat surfaces them) back to a PartSummary, then run the same
+   *  flow as a card click. Looks first in current search results, then
+   *  recommendations, then the selected source. Returns silently if no
+   *  match is found — the caller (MessageBubble link) is best-effort. */
+  const handleMpnClick = useCallback(async (mpn: string) => {
+    const lower = mpn.toLowerCase();
+    const fromSearch = searchResultRef.current?.matches.find(p => p.mpn.toLowerCase() === lower);
+    if (fromSearch) {
+      await handleConfirmPart(fromSearch);
+      return;
+    }
+    const fromRecs = recsRef.current.find(r => r.part.mpn.toLowerCase() === lower)
+      ?? allRecsRef.current.find(r => r.part.mpn.toLowerCase() === lower);
+    if (fromRecs) {
+      const part: PartSummary = {
+        mpn: fromRecs.part.mpn,
+        manufacturer: fromRecs.part.manufacturer,
+        description: fromRecs.part.description ?? '',
+        category: fromRecs.part.category,
+        status: fromRecs.part.status,
+        qualifications: fromRecs.part.qualifications,
+      };
+      await handleConfirmPart(part);
+      return;
+    }
+    if (state.sourcePart && state.sourcePart.mpn.toLowerCase() === lower) {
+      await handleConfirmPart(state.sourcePart);
+    }
+  }, [handleConfirmPart, state.sourcePart]);
+
   return {
     ...state,
     handleSearch,
@@ -1076,6 +1162,7 @@ export function useAppState() {
     handleSkipAttributes,
     handleContextResponse,
     handleSkipContext,
+    handleMpnClick,
     getOrchestratorMessages,
     setConversationId,
     hydrateState,
