@@ -294,6 +294,90 @@ function buildRecommendationsVariant(
   return `rec:${RECS_CACHE_SCHEMA_VERSION}:${mpn.toLowerCase()}:${hash}`;
 }
 
+// ============================================================
+// BASE PRE-SCORING CACHE (Fix 2)
+// ============================================================
+// The full-result `recommendations` cache (above) keys on context, user prefs,
+// and replacement priorities — so a user changing context answers between
+// runs of the same MPN is always a miss. The expensive parts of the pipeline
+// (Digikey/Atlas/parts.io candidate fetch, parts.io gap-fill, MFR cross-ref
+// expansion) are *not* context-dependent. The base cache stores the
+// pre-scoring artifacts under a context-free key so a context change becomes
+// a pure in-memory rescore (~100ms) instead of a 3-8s pipeline rerun.
+//
+// Bump BASE_RECS_SCHEMA_VERSION when the payload shape changes.
+const BASE_RECS_SCHEMA_VERSION = 'v1';
+
+interface SerializableBasePayload {
+  v: typeof BASE_RECS_SCHEMA_VERSION;
+  sourceAttrs: PartAttributes;
+  allCandidates: PartAttributes[];
+  certificationEntries: Array<[string, CertificationSource[]]>;
+  mfrEquivalenceTypeEntries: Array<[string, 'pin_to_pin' | 'functional']>;
+  dataSourceEntries: Array<[string, 'digikey' | 'atlas' | 'partsio']>;
+  enrichedFromEntries: Array<[string, 'partsio']>;
+  resultDataSource: 'digikey' | 'partsio' | 'atlas' | 'mock';
+  sourcePartDataSource: 'digikey' | 'partsio' | 'atlas' | 'mock';
+}
+
+function buildBaseRecsVariant(
+  mpn: string,
+  attributeOverrides: Record<string, string> | undefined,
+  currency: string | undefined,
+  options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
+): string {
+  const payload = {
+    overrides: attributeOverrides ?? null,
+    ccy: currency ?? 'USD',
+    opts: {
+      skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
+      filterForBatch: !!options?.filterForBatch,
+      skipFindchips: !!options?.skipFindchips,
+    },
+  };
+  const hash = createHash('sha1').update(stableStringify(payload)).digest('hex').slice(0, 16);
+  return `rec-base:${BASE_RECS_SCHEMA_VERSION}:${mpn.toLowerCase()}:${hash}`;
+}
+
+interface BasePayload {
+  sourceAttrs: PartAttributes;
+  allCandidates: PartAttributes[];
+  certificationMap: Map<string, Set<CertificationSource>>;
+  mfrEquivalenceTypeMap: Map<string, 'pin_to_pin' | 'functional'>;
+  dataSourceMap: Map<string, 'digikey' | 'atlas' | 'partsio'>;
+  enrichedFromMap: Map<string, 'partsio'>;
+  resultDataSource: 'digikey' | 'partsio' | 'atlas' | 'mock';
+  sourcePartDataSource: 'digikey' | 'partsio' | 'atlas' | 'mock';
+}
+
+function serializeBasePayload(p: BasePayload): SerializableBasePayload {
+  return {
+    v: BASE_RECS_SCHEMA_VERSION,
+    sourceAttrs: p.sourceAttrs,
+    allCandidates: p.allCandidates,
+    certificationEntries: Array.from(p.certificationMap.entries()).map(([k, v]) => [k, Array.from(v)]),
+    mfrEquivalenceTypeEntries: Array.from(p.mfrEquivalenceTypeMap.entries()),
+    dataSourceEntries: Array.from(p.dataSourceMap.entries()),
+    enrichedFromEntries: Array.from(p.enrichedFromMap.entries()),
+    resultDataSource: p.resultDataSource,
+    sourcePartDataSource: p.sourcePartDataSource,
+  };
+}
+
+function deserializeBasePayload(s: SerializableBasePayload): BasePayload | null {
+  if (s.v !== BASE_RECS_SCHEMA_VERSION) return null;
+  return {
+    sourceAttrs: s.sourceAttrs,
+    allCandidates: s.allCandidates,
+    certificationMap: new Map(s.certificationEntries.map(([k, v]) => [k, new Set(v)])),
+    mfrEquivalenceTypeMap: new Map(s.mfrEquivalenceTypeEntries),
+    dataSourceMap: new Map(s.dataSourceEntries),
+    enrichedFromMap: new Map(s.enrichedFromEntries),
+    resultDataSource: s.resultDataSource,
+    sourcePartDataSource: s.sourcePartDataSource,
+  };
+}
+
 export async function searchParts(
   query: string,
   currency?: string,
@@ -727,6 +811,22 @@ export async function getRecommendations(
     console.log(`[perf] getRecommendations forceRefresh — skipping cache read for ${mpn}`);
   }
 
+  // ── Base pre-scoring cache (Fix 2): keyed only on inputs that affect candidate
+  // fetching (mpn + overrides + currency + opts). A context-only change becomes
+  // an in-memory rescore instead of a 3-8s pipeline rerun.
+  const baseRecsKey = buildBaseRecsVariant(mpn, attributeOverrides, currency, options);
+  let basePayload: BasePayload | null = null;
+  if (!options?.forceRefresh) {
+    const baseCached = await getCachedResponse<SerializableBasePayload>('search', mpn, baseRecsKey);
+    if (baseCached) {
+      basePayload = deserializeBasePayload(baseCached.data);
+      if (basePayload) {
+        console.log(`[perf] getRecommendations BASE cache HIT (${baseRecsKey}) in ${(performance.now() - recsStart).toFixed(0)}ms`);
+      }
+    }
+  }
+
+  if (!basePayload) {
   // Step 1: Get source part attributes (skip if pre-fetched from attributes panel)
   console.time('[perf] getAttributes');
   const sourceAttrs = prefetchedAttributes ?? await getAttributes(mpn, currency, userId, { skipFindchips: options?.skipFindchips });
@@ -849,29 +949,6 @@ export async function getRecommendations(
   }
 
   const familyId = logicTable.familyId;
-  const familyName = logicTable.familyName;
-
-  // Step 2b: Apply admin rule overrides on top of TS base
-  const tableWithOverrides = await applyRuleOverrides(logicTable);
-
-  // Step 2c: Apply user-level global effects (compliance defaults, industry escalations)
-  let tableWithUserEffects = tableWithOverrides;
-  if (userPreferences && Object.keys(userPreferences).length > 0) {
-    const userEffects = resolveUserEffects(userPreferences, tableWithOverrides);
-    if (userEffects.length > 0) {
-      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithOverrides, userEffects);
-    }
-  }
-
-  // Step 2d: Apply application context to modify logic table weights/rules (overrides user-level)
-  let effectiveTable = tableWithUserEffects;
-  if (applicationContext) {
-    let familyConfig = getContextQuestionsForFamily(logicTable.familyId);
-    if (familyConfig) {
-      familyConfig = await applyContextOverrides(familyConfig);
-      effectiveTable = applyContextToLogicTable(tableWithUserEffects, applicationContext, familyConfig);
-    }
-  }
 
   // Step 3: Fetch candidates from Digikey + Atlas + parts.io equivalents + Mouser suggestions in parallel
   console.time('[perf] fetchCandidates');
@@ -1037,6 +1114,64 @@ export async function getRecommendations(
     allCandidates.push(...filtered);
     if (preFilterCount !== allCandidates.length) {
       console.log(`[perf] pre-filter: removed ${preFilterCount - allCandidates.length} obsolete/discontinued candidates`);
+    }
+  }
+
+  // Determine primary dataSource for the result set (matches the post-scoring
+  // computation at the original line 1236 — kept identical).
+  const resultDataSourceFresh = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
+
+  basePayload = {
+    sourceAttrs,
+    allCandidates,
+    certificationMap,
+    mfrEquivalenceTypeMap,
+    dataSourceMap,
+    enrichedFromMap,
+    resultDataSource: resultDataSourceFresh,
+    sourcePartDataSource: dataSource,
+  };
+  setCachedResponse('search', mpn, baseRecsKey, 'recommendations', serializeBasePayload(basePayload), TTL_RECOMMENDATIONS_MS);
+  } // end if (!basePayload)
+
+  // Hydrate post-base locals — these are used by the scoring section below
+  // regardless of whether we hit the base cache or built it fresh.
+  const sourceAttrs = basePayload.sourceAttrs;
+  const allCandidates = basePayload.allCandidates;
+  const certificationMap = basePayload.certificationMap;
+  const mfrEquivalenceTypeMap = basePayload.mfrEquivalenceTypeMap;
+  const dataSourceMap = basePayload.dataSourceMap;
+  const enrichedFromMap = basePayload.enrichedFromMap;
+  const dataSource = basePayload.sourcePartDataSource;
+  const resultDataSource = basePayload.resultDataSource;
+
+  // Re-derive the logic table from cached/fresh sourceAttrs. Cheap, in-memory.
+  const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
+  if (!logicTable) {
+    return { recommendations: [], sourceAttributes: sourceAttrs, dataSource, unsupportedFamily: true };
+  }
+  const familyId = logicTable.familyId;
+  const familyName = logicTable.familyName;
+
+  // Step 2b: Apply admin rule overrides on top of TS base
+  const tableWithOverrides = await applyRuleOverrides(logicTable);
+
+  // Step 2c: Apply user-level global effects (compliance defaults, industry escalations)
+  let tableWithUserEffects = tableWithOverrides;
+  if (userPreferences && Object.keys(userPreferences).length > 0) {
+    const userEffects = resolveUserEffects(userPreferences, tableWithOverrides);
+    if (userEffects.length > 0) {
+      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithOverrides, userEffects);
+    }
+  }
+
+  // Step 2d: Apply application context to modify logic table weights/rules (overrides user-level)
+  let effectiveTable = tableWithUserEffects;
+  if (applicationContext) {
+    let familyConfig = getContextQuestionsForFamily(logicTable.familyId);
+    if (familyConfig) {
+      familyConfig = await applyContextOverrides(familyConfig);
+      effectiveTable = applyContextToLogicTable(tableWithUserEffects, applicationContext, familyConfig);
     }
   }
 
@@ -1232,8 +1367,7 @@ export async function getRecommendations(
     // FindChips candidate enrichment is deferred — the UI fetches it after recs render
     // via /api/fc/enrich to avoid blocking the critical path
 
-    // Determine primary dataSource for the result set
-    const resultDataSource = digikeyCandidates.length > 0 ? 'digikey' : (atlasCandidates.length > 0 ? 'atlas' : (partsioEquivalents.length > 0 ? 'partsio' : dataSource));
+    // resultDataSource comes from basePayload (computed once at fetch time, cached).
 
     // Compute the per-list composite "better than source" score (Decision #145).
     // Runs once per rec with source + candidate + priorities in scope. Score is

@@ -195,6 +195,40 @@ export default function AppFeedbackDetailView({ item, onBack, onUpdated }: Props
             </Box>
           </Box>
 
+          {/* Attachments */}
+          {item.attachments && item.attachments.length > 0 && (
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Attachments ({item.attachments.length})
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1} sx={{ mt: 0.75 }}>
+                {item.attachments.map((att) => (
+                  <a
+                    key={att.path}
+                    href={att.signedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'inline-block', lineHeight: 0 }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={att.signedUrl}
+                      alt="feedback attachment"
+                      style={{
+                        maxHeight: 160,
+                        maxWidth: 240,
+                        borderRadius: 4,
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        objectFit: 'cover',
+                        cursor: 'zoom-in',
+                      }}
+                    />
+                  </a>
+                ))}
+              </Stack>
+            </Box>
+          )}
+
           {/* Technical info */}
           {(item.userAgent || item.viewport) && (
             <Box>

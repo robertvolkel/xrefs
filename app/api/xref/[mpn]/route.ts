@@ -57,14 +57,16 @@ export async function POST(
     const { mpn } = await params;
     const decodedMpn = decodeURIComponent(mpn);
     const prefs = await fetchUserPreferences(user!.id);
-    const { overrides, applicationContext, sourceAttributes, replacementPriorities } = await request.json() as {
+    const { overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment } = await request.json() as {
       overrides?: Record<string, string>;
       applicationContext?: ApplicationContext;
       sourceAttributes?: PartAttributes;
       replacementPriorities?: ReplacementPriorities;
+      skipPartsioEnrichment?: boolean;
     };
 
-    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id, sourceAttributes, undefined, replacementPriorities);
+    const options = skipPartsioEnrichment ? { skipPartsioEnrichment: true } : undefined;
+    const result = await getRecommendations(decodedMpn, overrides, applicationContext, undefined, undefined, prefs, user!.id, sourceAttributes, options, replacementPriorities);
 
     // QC log (fire-and-forget — don't block the response)
     logRecommendation({

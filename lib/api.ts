@@ -151,11 +151,12 @@ export async function getRecommendationsWithOverrides(
   signal?: AbortSignal,
   sourceAttributes?: PartAttributes,
   replacementPriorities?: ReplacementPriorities,
+  skipPartsioEnrichment?: boolean,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment }),
     signal,
   });
 }
@@ -165,11 +166,12 @@ export async function getRecommendationsWithContext(
   applicationContext: ApplicationContext,
   signal?: AbortSignal,
   replacementPriorities?: ReplacementPriorities,
+  skipPartsioEnrichment?: boolean,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applicationContext, replacementPriorities }),
+    body: JSON.stringify({ applicationContext, replacementPriorities, skipPartsioEnrichment }),
     signal,
   });
 }
@@ -383,12 +385,19 @@ export async function updateFeedback(feedbackId: string, update: QcFeedbackUpdat
 
 // ── App Feedback API ─────────────────────────────────────
 
-/** Submit general app feedback (idea/issue/other) */
+/** Submit general app feedback (idea/issue/other), optionally with image attachments. */
 export async function submitAppFeedback(submission: AppFeedbackSubmission): Promise<{ id: string }> {
+  const form = new FormData();
+  form.append('category', submission.category);
+  form.append('userComment', submission.userComment);
+  if (submission.userAgent) form.append('userAgent', submission.userAgent);
+  if (submission.viewport) form.append('viewport', submission.viewport);
+  for (const file of submission.attachments ?? []) {
+    form.append('attachments', file, file.name);
+  }
   return fetchApi<{ id: string }>(`${BASE}/app-feedback`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(submission),
+    body: form,
   });
 }
 

@@ -206,6 +206,36 @@ export function useAppState() {
     []
   );
 
+  /** Background parts.io enrichment (Option 2). The fast initial recommendation call runs
+   *  with `skipPartsioEnrichment: true` so candidates score on Digikey-only attributes; here
+   *  we re-fire the same call without the flag, server enriches every Digikey candidate from
+   *  parts.io (~500-1500ms), and we replace recs in place. After replacement we re-fire FC
+   *  enrichment — its L1 cache is warm so the merge is effectively free. */
+  const triggerPartsioEnrichment = useCallback(
+    (
+      args: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes },
+      signal: AbortSignal,
+    ) => {
+      getRecommendationsWithOverrides(
+        args.mpn,
+        args.overrides,
+        args.applicationContext,
+        signal,
+        args.sourceAttributes,
+        undefined,
+        false /* run parts.io enrichment */,
+      )
+        .then((enrichedRecs) => {
+          if (signal.aborted || enrichedRecs.length === 0) return;
+          setState((prev) => ({ ...prev, recommendations: enrichedRecs, allRecommendations: enrichedRecs }));
+          // Re-merge FC commercial data into the replaced recs (cache hit → instant).
+          triggerFCEnrichment(enrichedRecs, signal);
+        })
+        .catch(() => { /* parts.io down → keep Digikey-only recs */ });
+    },
+    [triggerFCEnrichment],
+  );
+
   /**
    * Show recommendations immediately, then fire the LLM assessment in the background.
    * This avoids blocking the recommendations panel by 3-8s while the orchestrator responds.
@@ -216,6 +246,9 @@ export function useAppState() {
       mpn: string,
       conversationContext: string,
       signal: AbortSignal,
+      opts?: {
+        deferredPartsio?: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes };
+      },
     ) => {
       // Show recs immediately — panels appear without waiting for LLM. The
       // success summary ("Loaded N · Found M") is omitted from chat: the LLM
@@ -251,11 +284,16 @@ export function useAppState() {
 
         // Background: FindChips candidate enrichment (pricing / lifecycle / risk).
         triggerFCEnrichment(recs, signal);
+
+        // Background: parts.io candidate enrichment (parametric gap-fill + rescore).
+        if (opts?.deferredPartsio) {
+          triggerPartsioEnrichment(opts.deferredPartsio, signal);
+        }
       } else {
         setStatus('');
       }
     },
-    [addMessage, setStatus, triggerFCEnrichment]
+    [addMessage, setStatus, triggerFCEnrichment, triggerPartsioEnrichment]
   );
 
   // ============================================================
@@ -362,9 +400,11 @@ export function useAppState() {
             try {
               const overrides = pendingOverridesRef.current;
               const hasOverrides = Object.keys(overrides).length > 0;
-              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs);
+              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs, undefined, true /* skipPartsioEnrichment — deferred */);
               if (signal.aborted) return;
-              showRecsAndDeferAssessment(recs, mpn, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal);
+              showRecsAndDeferAssessment(recs, mpn, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal, {
+                deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: autoContext, sourceAttributes: sourceAttrs },
+              });
             } catch {
               setStatus('');
               addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');
@@ -391,13 +431,17 @@ export function useAppState() {
           effectiveContext ?? undefined,
           signal,
           sourceAttrs,
+          undefined,
+          true /* skipPartsioEnrichment — deferred */,
         );
         if (signal.aborted) return;
 
         const contextMsg = effectiveContext
           ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
           : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
-        showRecsAndDeferAssessment(recs, mpn, contextMsg, signal);
+        showRecsAndDeferAssessment(recs, mpn, contextMsg, signal, {
+          deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: effectiveContext ?? undefined, sourceAttributes: sourceAttrs },
+        });
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while finding replacements. Please try again.');

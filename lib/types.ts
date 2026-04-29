@@ -1311,18 +1311,35 @@ export interface QcFeedbackUpdate {
 export type AppFeedbackCategory = 'idea' | 'issue' | 'other';
 export type AppFeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
 
+/** Image attachment stored alongside feedback in JSONB. */
+export interface AppFeedbackAttachment {
+  path: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+/** Attachment with a short-lived signed URL — admin views only. */
+export interface AppFeedbackAttachmentView extends AppFeedbackAttachment {
+  signedUrl: string;
+}
+
 /** Payload for submitting new app feedback (client sends this) */
 export interface AppFeedbackSubmission {
   category: AppFeedbackCategory;
   userComment: string;
   userAgent?: string;
   viewport?: string;
+  attachments?: File[];
 }
 
 /** Full app feedback record from the database (admin reads this) */
-export interface AppFeedbackRecord extends AppFeedbackSubmission {
+export interface AppFeedbackRecord {
   id: string;
   userId: string;
+  category: AppFeedbackCategory;
+  userComment: string;
+  userAgent?: string;
+  viewport?: string;
   status: AppFeedbackStatus;
   adminNotes?: string;
   resolvedBy?: string;
@@ -1336,6 +1353,7 @@ export interface AppFeedbackListItem extends AppFeedbackRecord {
   userEmail?: string;
   userName?: string;
   resolvedByName?: string;
+  attachments: AppFeedbackAttachmentView[];
 }
 
 /** Status count summary for app feedback filter badges */

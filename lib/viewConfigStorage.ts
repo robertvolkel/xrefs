@@ -5,7 +5,6 @@
  * Global (not per-list) — the same views apply to all parts lists.
  */
 
-import { DEFAULT_VIEW_COLUMNS } from './columnDefinitions';
 import type { CalculatedFieldDef } from './calculatedFields';
 import type { ColumnMapping } from './types';
 
@@ -85,11 +84,45 @@ export const LEGACY_BUILTIN_VIEW_IDS = ['default', 'raw'] as const;
 /** Builtin view IDs — only 'raw' (Original) is code-generated. 'Basic' is now a master view. */
 export const BUILTIN_VIEW_IDS = ['raw'] as const;
 
-/** The default "Basic" view — used to seed master views for new users */
+export interface SeedMasterView {
+  name: string;
+  columns: string[];
+  description?: string;
+  isDefault: boolean;
+}
+
+/** Master views auto-provisioned for every brand-new user (in addition to the dynamic Original view). */
+export const SEED_MASTER_VIEWS: SeedMasterView[] = [
+  {
+    name: 'Basic View',
+    columns: [
+      'sys:row_number', 'sys:partType', 'sys:status',
+      'mapped:mpn', 'mapped:manufacturer', 'mapped:description',
+      'dk:productStatus', 'dk:mpn', 'dk:manufacturer',
+      'dk:yteol', 'dk:countryOfOrigin',
+    ],
+    isDefault: true,
+  },
+  {
+    name: 'Replacements',
+    description:
+      'The purpose of this view is to take a list of components from a user ' +
+      'and suggest cost-saving, risk-lowering replacements, including Chinese replacements.',
+    columns: [
+      'sys:status', 'mapped:mpn', 'mapped:manufacturer', 'mapped:unitCost',
+      'sys:hits', 'sys:top_suggestion', 'sys:top_suggestion_mfr',
+      'sys:top_suggestion_price', 'sys:top_suggestion_stock',
+      'sys:priceDelta', 'sys:cheapest_viable_price', 'sys:maxPriceDelta',
+    ],
+    isDefault: false,
+  },
+];
+
+/** The default "Basic" view — used by the legacy localStorage migration path. Aligned with SEED_MASTER_VIEWS[0]. */
 export const DEFAULT_VIEW: SavedView = {
   id: 'default',
-  name: 'Basic',
-  columns: DEFAULT_VIEW_COLUMNS,
+  name: SEED_MASTER_VIEWS[0].name,
+  columns: SEED_MASTER_VIEWS[0].columns,
 };
 
 /** The Original view columns are built dynamically from spreadsheet headers */

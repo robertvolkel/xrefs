@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { MasterView } from '@/lib/viewConfigStorage';
 import {
   VIEW_STORAGE_KEY,
-  DEFAULT_VIEW,
+  SEED_MASTER_VIEWS,
   isLegacyBuiltinView,
   sanitizeTemplateColumns,
   sanitizeTemplateCalcFields,
@@ -52,14 +52,19 @@ export function useMasterViews() {
         // Fetch from Supabase
         let views = await fetchMasterViews();
 
-        // If no master views exist (fresh user, or migration produced none), seed "Basic"
+        // If no master views exist (fresh user, or migration produced none), seed defaults
         if (views.length === 0) {
-          const basic = await createMasterViewSupabase({
-            name: DEFAULT_VIEW.name,
-            columns: sanitizeTemplateColumns(DEFAULT_VIEW.columns),
-            isDefault: true,
-          });
-          if (basic) views = [basic];
+          const created: MasterView[] = [];
+          for (const seed of SEED_MASTER_VIEWS) {
+            const v = await createMasterViewSupabase({
+              name: seed.name,
+              columns: sanitizeTemplateColumns(seed.columns),
+              description: seed.description,
+              isDefault: seed.isDefault,
+            });
+            if (v) created.push(v);
+          }
+          views = created;
         }
 
         setMasterViews(views);
