@@ -30,7 +30,7 @@ import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, s
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
-import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget } from './findchipsClient';
+import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
@@ -237,6 +237,11 @@ export function looksLikeMpn(query: string): boolean {
 function shouldBypassSearchCache(cached: SearchResult): boolean {
   const contributed = cached.sourcesContributed;
   if (!contributed || contributed.length === 0) return true;
+  // Legacy entries cached before keyParameters existed: bypass so we re-fetch
+  // with the new field populated.
+  const hasDigikeyMatch = cached.matches.some(m => m.dataSource === 'digikey');
+  const anyKeyParams = cached.matches.some(m => m.keyParameters !== undefined);
+  if (hasDigikeyMatch && !anyKeyParams) return true;
   return false;
 }
 
@@ -420,7 +425,7 @@ export async function searchParts(
       promise: (async (): Promise<SearchResult> => {
         if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
         try {
-          const response = await keywordSearch(trimmed, { limit: 10 }, currency, userId);
+          const response = await keywordSearch(trimmed, { limit: 20 }, currency, userId);
           return mapKeywordResponseToSearchResult(response);
         } catch (error) {
           console.warn('Digikey search failed:', error);
@@ -471,6 +476,20 @@ export async function searchParts(
   }
 
   if (mergedMatches.length > 0) {
+    // Populate distributor counts from L2 cache (no live FC calls). Cache is
+    // filled as a side effect of any prior getAttributes()/getRecommendations()
+    // FC enrichment, so coverage grows naturally over time. MPNs without a
+    // cached entry simply get no badge in the UI.
+    try {
+      const counts = await getCachedDistributorCounts(mergedMatches.map(m => m.mpn));
+      for (const m of mergedMatches) {
+        const c = counts.get(m.mpn.toLowerCase());
+        if (typeof c === 'number') m.distributorCount = c;
+      }
+    } catch {
+      // Distributor count is purely cosmetic — never fail the search on it.
+    }
+
     const result: SearchResult = {
       type: mergedMatches.length === 1 ? 'single' : 'multiple',
       matches: mergedMatches,

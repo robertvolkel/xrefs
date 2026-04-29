@@ -140,6 +140,10 @@ export interface DesktopLayoutProps {
   onSelectConversation: (id: string) => Promise<void>;
   onNewChat: () => void;
   onDeleteConversation: (id: string) => Promise<void>;
+
+  // Inline MPN linkification for assistant messages.
+  knownMpns?: Set<string>;
+  onMpnClick?: (mpn: string) => void;
 }
 
 export default function DesktopLayout(props: DesktopLayoutProps) {
@@ -155,6 +159,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onManufacturerClick, onExpandChat,
     onToggleHistory, onCloseHistory,
     onSelectConversation, onNewChat, onDeleteConversation,
+    knownMpns, onMpnClick,
   } = props;
 
   // Synced tab state for AttributesPanel + ComparisonView — both panels show same dimension
@@ -255,6 +260,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onChoiceSelect={onChoiceSelect}
               sourceMpn={sourceAttributes?.part.mpn}
               sourceManufacturer={sourceAttributes?.part.manufacturer}
+              knownMpns={knownMpns}
+              onMpnClick={onMpnClick}
             />
           </Box>
         </Box>

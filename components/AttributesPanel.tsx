@@ -35,6 +35,76 @@ interface AttributesPanelProps {
   onManufacturerClick?: (manufacturer: string) => void;
 }
 
+function SkeletonSectionHeader() {
+  return (
+    <Box sx={{ bgcolor: 'background.paper', borderTop: 1, borderBottom: 1, borderColor: 'divider', px: 2, py: 0.75 }}>
+      <Skeleton width={90} height={14} />
+    </Box>
+  );
+}
+
+function SkeletonFieldRow({ labelWidth, valueWidth }: { labelWidth: number; valueWidth: number }) {
+  return (
+    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 0.75, px: 2, minHeight: 32 }}>
+      <Skeleton width={labelWidth} height={14} />
+      <Skeleton width={valueWidth} height={14} />
+    </Stack>
+  );
+}
+
+function OverviewSkeleton() {
+  return (
+    <Box sx={{ flex: 1, overflowY: 'auto' }}>
+      {/* Hero */}
+      <Box sx={{ display: 'flex', gap: 1.5, px: 2, py: 1.5 }}>
+        <Skeleton variant="rectangular" width={80} height={80} sx={{ borderRadius: 1, flexShrink: 0 }} />
+        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 0.5 }}>
+          <Skeleton width="50%" height={12} />
+          <Skeleton width="70%" height={18} />
+          <Skeleton width="40%" height={14} />
+        </Box>
+      </Box>
+      <SkeletonSectionHeader />
+      <SkeletonFieldRow labelWidth={80} valueWidth={220} />
+      <SkeletonFieldRow labelWidth={70} valueWidth={70} />
+      <SkeletonFieldRow labelWidth={110} valueWidth={60} />
+      <SkeletonFieldRow labelWidth={90} valueWidth={80} />
+      <SkeletonFieldRow labelWidth={120} valueWidth={50} />
+      <SkeletonSectionHeader />
+      <SkeletonFieldRow labelWidth={80} valueWidth={40} />
+      <SkeletonFieldRow labelWidth={90} valueWidth={70} />
+      <SkeletonFieldRow labelWidth={100} valueWidth={120} />
+      <SkeletonFieldRow labelWidth={90} valueWidth={70} />
+      <SkeletonSectionHeader />
+      <Box sx={{ px: 2, py: 0.75 }}>
+        <Stack direction="row" spacing={0.75}>
+          <Skeleton variant="rounded" width={70} height={20} />
+          <Skeleton variant="rounded" width={60} height={20} />
+          <Skeleton variant="rounded" width={80} height={20} />
+        </Stack>
+      </Box>
+    </Box>
+  );
+}
+
+function CommercialSkeleton() {
+  return (
+    <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 1.5 }}>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Box key={i} sx={{ mb: 2, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+            <Skeleton width={120} height={18} />
+            <Skeleton width={60} height={18} />
+          </Stack>
+          <Skeleton width="40%" height={14} sx={{ mb: 0.5 }} />
+          <Skeleton width="60%" height={14} sx={{ mb: 0.5 }} />
+          <Skeleton width="50%" height={14} />
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
@@ -244,17 +314,25 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
         </Box>
       )}
 
-      {activeTab === 'overview' && attributes && (
-        <OverviewContent
-          part={attributes.part}
-          t={t}
-          allRecommendations={allRecommendations}
-          dataSource={attributes.dataSource as 'digikey' | 'atlas' | 'partsio'}
-        />
+      {activeTab === 'overview' && (
+        loading ? (
+          <OverviewSkeleton />
+        ) : attributes ? (
+          <OverviewContent
+            part={attributes.part}
+            t={t}
+            allRecommendations={allRecommendations}
+            dataSource={attributes.dataSource as 'digikey' | 'atlas' | 'partsio'}
+          />
+        ) : null
       )}
 
-      {activeTab === 'commercial' && attributes && (
-        <CommercialContent part={attributes.part} t={t} />
+      {activeTab === 'commercial' && (
+        loading ? (
+          <CommercialSkeleton />
+        ) : attributes ? (
+          <CommercialContent part={attributes.part} t={t} />
+        ) : null
       )}
     </Box>
   );

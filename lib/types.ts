@@ -303,6 +303,13 @@ export interface PartSummary {
   status?: PartStatus;
   qualifications?: string[];
   dataSource?: 'digikey' | 'atlas' | 'partsio' | 'mouser';
+  /** Lightweight parametrics already present in the search response (no extra
+   *  API call). Used to disambiguate when sibling results share descriptions. */
+  keyParameters?: Array<{ name: string; value: string }>;
+  /** Number of distributors carrying this part, populated from cached FindChips
+   *  data only (no live API calls during search). Undefined when not cached —
+   *  badge is suppressed in that case rather than triggering a fetch. */
+  distributorCount?: number;
 }
 
 export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';
@@ -416,6 +423,10 @@ export interface MissingAttributeInfo {
   attributeName: string;
   logicType: LogicType;
   weight: number;
+  /** For identity_upgrade rules: ordered best→worst categorical values. Used by
+   *  the missing-attributes form to render a meaningful placeholder/hint instead
+   *  of falling back to "Yes or No" or hardcoding attribute names. */
+  upgradeHierarchy?: string[];
 }
 
 /** Interface that both mock and real data providers must implement */

@@ -21,6 +21,10 @@ interface ChatInterfaceProps {
   onChoiceSelect?: (choice: ChoiceOption) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
+  /** MPNs the assistant might mention in prose that should render as clickable
+   *  links (search-result cards + recommendations + selected source). */
+  knownMpns?: Set<string>;
+  onMpnClick?: (mpn: string) => void;
 }
 
 export default function ChatInterface({
@@ -38,6 +42,8 @@ export default function ChatInterface({
   onChoiceSelect,
   sourceMpn,
   sourceManufacturer,
+  knownMpns,
+  onMpnClick,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
@@ -131,6 +137,8 @@ export default function ChatInterface({
               onSkipContext={onSkipContext}
               sourceMpn={sourceMpn}
               sourceManufacturer={sourceManufacturer}
+              knownMpns={knownMpns}
+              onMpnClick={onMpnClick}
             />
           ))}
           {showSpinner && (

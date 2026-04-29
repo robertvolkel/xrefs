@@ -24,6 +24,7 @@ import ClearIcon from '@mui/icons-material/Clear';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
 import {
   AppFeedbackListItem,
   AppFeedbackStatus,
@@ -300,7 +301,25 @@ export default function AppFeedbackTab() {
                     />
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.78rem', verticalAlign: 'top', maxWidth: 480 }}>
-                    {truncate(item.userComment, 140)}
+                    <Stack direction="row" spacing={0.75} alignItems="flex-start">
+                      {item.attachments && item.attachments.length > 0 && (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.25}
+                          sx={{ color: 'text.secondary', flexShrink: 0, mt: '1px' }}
+                          title={`${item.attachments.length} attachment${item.attachments.length === 1 ? '' : 's'}`}
+                        >
+                          <AttachFileIcon sx={{ fontSize: '0.85rem' }} />
+                          {item.attachments.length > 1 && (
+                            <Typography component="span" sx={{ fontSize: '0.7rem', lineHeight: 1 }}>
+                              {item.attachments.length}
+                            </Typography>
+                          )}
+                        </Stack>
+                      )}
+                      <Box component="span">{truncate(item.userComment, 140)}</Box>
+                    </Stack>
                   </TableCell>
                   <TableCell sx={{ verticalAlign: 'top' }}>
                     <Chip
