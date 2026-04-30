@@ -14,6 +14,7 @@ import ChoiceButtons from './ChoiceButtons';
 import MissingAttributesForm from './MissingAttributesForm';
 import ApplicationContextForm from './ApplicationContextForm';
 import ListActionConfirmation from './parts-list/ListActionConfirmation';
+import QuantityPrompt from './QuantityPrompt';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -27,6 +28,7 @@ interface MessageBubbleProps {
   onSkipContext?: () => void;
   onListActionConfirm?: (messageId: string) => void;
   onListActionCancel?: (messageId: string) => void;
+  onQuantitySubmit?: (messageId: string, quantity: number) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
   /** MPNs (case-preserved) the assistant might mention in prose that should
@@ -98,6 +100,7 @@ export default function MessageBubble({
   onSkipContext,
   onListActionConfirm,
   onListActionCancel,
+  onQuantitySubmit,
   sourceMpn,
   sourceManufacturer,
   knownMpns,
@@ -234,6 +237,7 @@ export default function MessageBubble({
         {message.interactiveElement?.type === 'choices' && onChoiceSelect && (
           <ChoiceButtons
             choices={message.interactiveElement.choices}
+            clickedChoiceId={message.interactiveElement.clickedChoiceId}
             onSelect={onChoiceSelect}
           />
         )}
@@ -264,6 +268,15 @@ export default function MessageBubble({
             status={message.interactiveElement.status}
             onConfirm={() => onListActionConfirm(message.id)}
             onCancel={() => onListActionCancel(message.id)}
+          />
+        )}
+
+        {message.interactiveElement?.type === 'quantity-prompt' && onQuantitySubmit && (
+          <QuantityPrompt
+            presets={message.interactiveElement.presets}
+            status={message.interactiveElement.status}
+            submittedQty={message.interactiveElement.submittedQty}
+            onSelect={(qty) => onQuantitySubmit(message.id, qty)}
           />
         )}
       </Box>

@@ -19,6 +19,7 @@ interface ChatInterfaceProps {
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
   onChoiceSelect?: (choice: ChoiceOption) => void;
+  onQuantitySubmit?: (messageId: string, quantity: number) => void;
   sourceMpn?: string;
   sourceManufacturer?: string;
   /** MPNs the assistant might mention in prose that should render as clickable
@@ -40,6 +41,7 @@ export default function ChatInterface({
   onContextResponse,
   onSkipContext,
   onChoiceSelect,
+  onQuantitySubmit,
   sourceMpn,
   sourceManufacturer,
   knownMpns,
@@ -131,6 +133,7 @@ export default function ChatInterface({
               onReject={onReject}
               onSelectPart={onConfirm}
               onChoiceSelect={onChoiceSelect}
+              onQuantitySubmit={onQuantitySubmit}
               onAttributeResponse={onAttributeResponse}
               onSkipAttributes={onSkipAttributes}
               onContextResponse={onContextResponse}

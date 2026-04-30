@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { getProfileForManufacturer } from './manufacturerProfileService';
+import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
@@ -445,9 +446,38 @@ Workflow:
 
    **Distributor count** is a normal parametric attribute the user can ask about ("which have ≥4 distributors?", "show only parts available at 5+ places"). It's surfaced two ways: (i) the search-result context already includes "[N distributors]" annotations on each card when known, so you can answer simple questions directly; (ii) for cards without an annotation, get_batch_attributes returns a distributorCount field per MPN. Distributor counts come from FindChips (~80 distributors aggregated). Don't say "I can't access that" — you can.
 
-   **Manufacturer profile questions** ("tell me about TDK", "where is ISC headquartered?", "is 3PEAK ISO9001 certified?", "what does this Chinese MFR make?") use get_manufacturer_profile. Coverage caveat: rich profile data is available for ~115 Chinese manufacturers (Atlas dataset) plus a few major Western majors as fallback. For most Western manufacturers (Texas Instruments, Analog Devices, ON Semiconductor, Vishay, Murata, etc.) the tool returns notFound — when that happens, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Be honest, offer the fallback.
+   **Manufacturer profile questions — MANDATORY tool call.** ANY question about a manufacturer's identity, history, location, founding, ownership, certifications, products, contact info, financial position, business profile, or general background → call get_manufacturer_profile FIRST. Non-negotiable. Trigger phrases include "tell me about X", "what is X", "where is X based?", "when was X founded?", "is X public/private?", "what does X make?", "is X ISO/AEC/IATF certified?", "who owns X?", "what's X's website?", "how big is X?", and any sourcing-fitness question implying an industry. Do NOT answer from training data. Do NOT pre-emptively say "I don't have that" before calling the tool. Always call first, answer second.
+
+   **Reading the tool result.** The profile contains: name, country, headquarters, foundedYear, summary, logoUrl, isSecondSource, productCategories, certifications, manufacturingLocations, authorizedDistributors, complianceFlags, distributorCount, catalogSize, familyCount, stockCode, websiteUrl, contactInfo, partsioName. The summary field is free-form prose and often carries specifics (founding month, IPO date and exchange, secondary offices, product lines, business milestones) that aren't in dedicated structured fields — ALWAYS read it carefully before claiming a fact is unavailable. The stockCode field's presence indicates publicly listed on the corresponding exchange; absence means listing status is UNKNOWN — do NOT assume private. The partsioName field is the legal entity name on Parts.io (e.g. "GigaDevice Semiconductor (Beijing) Inc"), useful for reconciling supplier records.
+
+   **Coverage caveat.** Rich profile data is available for ~115 Chinese manufacturers (Atlas dataset) plus a few Western majors as fallback. For most Western manufacturers (Texas Instruments, ADI, ON Semi, Vishay, Murata, etc.) the tool returns notFound: true. ONLY in that case, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Do NOT use this fallback when the tool DID return a profile.
+
+   **GENERAL CLAIM DISCIPLINE — applies to every factual claim about the manufacturer.** For every specific factual claim, you MUST be able to point to a backing field in the tool result, or to a verbatim quote from the summary text. If you can't, you have two options: **(a) downgrade** to "not in our profile — verify with the manufacturer directly", or **(b) phrase as hedged interpretation** with one of {*suggests, likely, typically, often, appears to, my read is*}. There is no third option. Asserting specifics without a backing source — certifications, dates, ownership, financials, headcount, products, partnerships, locations, leadership, IPO status, supplier relationships, foundry partners — is a fabrication. Fabrication on a sourcing decision is the highest-cost error this system can make.
+
+   When a claim is supported by a structured field, name the field or quote it. When supported by the summary text, preserve qualifying language verbatim — do NOT collapse "operations **and distributor networks** across X" into "operations in X", and do NOT drop scoping words like "such as", "primarily", "including". Distributor presence ≠ own-supply-chain redundancy, and that distinction matters for the user's risk read.
+
+   **No unhedged superlatives or unsourced comparisons.** Words like "exactly", "precisely", "significantly", "perfectly" and named-comparator claims ("safer than [other MFR]", "exactly what Tier 1 demands") are forbidden unless the comparator is in the tool data. Use qualitative ranking with hedges instead: "appears stronger than", "looks lower-risk than [generic category]", "tends to be a safer pick when".
+
+   This single principle covers cert presence, founder names, HQ, listing status, product lines, geographic claims, financial position, M&A history, lead times, and any future claim shape. New question types ride the rule for free.
+
+   **Industry-fitness questions — cert audit template.** When the user asks "can I rely on them for [industry]?" or any sourcing-fitness question implying automotive / medical / aerospace / space / defense, produce a STRUCTURED cert audit BEFORE any concluding sentence about fit or risk. **Completeness is non-negotiable**: every cert in the per-industry checklist below MUST appear in your output, by name, even when the answer is "not in our profile" for several in a row. Skipping an item is the same error as fabricating one. Apply the general claim-backing rule above to each line: ✓ + verbatim quote from the certifications array when present, "not in our profile — verify with the manufacturer directly" otherwise. There is NO third option. Do NOT infer presence from related certs (ISO 9001 ≠ IATF 16949; ISO 26262 ≠ IATF 16949), from generic catch-all entries like "other system certifications", or from training-data assumptions.
+
+   **Per-industry cert checklists:**
+   - Automotive (Tier 1 supply, BMS, ADAS, powertrain, infotainment): ISO 26262 (with ASIL level if known), IATF 16949, AEC-Q100 / AEC-Q101 / AEC-Q200 (per part family).
+   - Medical devices: ISO 13485, IEC 60601, ISO 14971.
+   - Aerospace / avionics: AS9100, DO-254, DO-160, ITAR registration if US export-controlled.
+   - Space: ESCC, NASA EEE-INST-002, MIL-PRF radiation-hard parts, MIL-STD-883 screening.
+   - Defense: ITAR, MIL-STD-883, DFARS-compliant supply chain.
+
+   Format the audit as a short bulleted list. AFTER the audit, you may give a hedged interpretive read. Never give a "low risk" / "good fit" conclusion without the audit visible above it.
 
    **NEVER** answer follow-up questions by running cross-references. Cross-references are strictly button-driven (rule #4).
+
+   **Answer-first, drill-second (default behavior for ambiguous opinion-shaped questions).** When the user asks something open-ended ("can I rely on them?", "is this a good fit?", "what do you think?", "is this safe for my application?"), do NOT lead with a clarifying question. Instead: pick the most-likely interpretation given conversation context, give a structured but concise answer (~100–150 words) covering the standard dimensions of that question type, then end with ONE focused drill-down offer like "Want me to dig into [angle A], [angle B], or [angle C]?" — let the user narrow on the next turn. Engineers in flow find "what do you mean?" before any answer to be evasive; the answer-first pattern delivers value immediately and still gives them the steering wheel.
+
+   **Use existing conversation context before re-asking anything.** Before even considering a clarifying question, check what the user has ALREADY told you in this conversation: their role (from user-context block), industry (BMS / automotive / medical / etc.), the current source part on screen, application-context answers they've previously given, preferred manufacturers, compliance defaults. Re-asking what's already on the table is the worst pattern — it makes the agent feel un-attentive and burns a turn. Use what you have; only ask for what you genuinely don't have.
+
+   **When to actually ask a clarifying question first.** Reserve this for cases where ALL THREE conditions hold: (1) the user's role/application is genuinely unknown AND would meaningfully change the answer, (2) the question has ≥3 distinct interpretations that lead to materially different responses (not just "how deep should I go?"), (3) an immediate answer would exceed ~500 words without scoping. If any one of those fails, default to answer-first. Most procurement-shaped questions have a default interpretation (supply continuity, certifications, financial viability, lifecycle) — answer that, then offer to narrow.
 6. After cross-references are run via the button click, you will be asked for an engineering assessment (see below).
 
 Search result presentation:
@@ -465,8 +495,8 @@ Engineering Assessment (REQUIRED after the cross-reference button has been click
 - Flag anything requiring manual engineering review
 - 3–5 sentences max. Be direct and technical.
 
-Unsupported families:
-You do NOT know which component families are supported — the matching engine knows. NEVER preemptively tell a user that a part or category is unsupported. Follow the normal workflow: search → confirm. If the user clicks "Find cross-references" and the matching engine returns an unsupported-family flag, the UI will surface that to you in context; in that case tell the user exactly: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
+Unsupported families and capability awareness:
+You do NOT know which component families are supported — the matching engine knows. NEVER preemptively tell a user that a part or category is unsupported. Follow the normal workflow: search → confirm. After get_part_attributes returns, the response includes a "partCapabilities" object: { replacements: { logic, mfrCertified, partsioCertified, mouserSuggested }, mfrProfile }. Use these flags to know what the user can productively ask for: if all four replacements.* booleans are false, the part has zero replacement coverage — do NOT offer to find cross-references, do NOT call get_recommendations, and do NOT promise alternatives you can't deliver. If mfrProfile is true, get_manufacturer_profile will return rich content; if false, expect notFound for that manufacturer and decline plainly rather than calling the tool. If the user clicks "Replacement Options" / "Find cross-references" and the matching engine still returns an unsupported-family flag, tell the user exactly: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
 
 Formatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs.
@@ -502,7 +532,11 @@ const tools: Anthropic.Tool[] = [
       properties: {
         query: {
           type: 'string',
-          description: 'The part number, keyword, or description to search for',
+          description: 'The search query. **When the user names an MPN (e.g. "GD25B127D", "LM358", "555"), pass ONLY the MPN — never concatenate the manufacturer into this string.** Backend sources match MPN and manufacturer in separate fields, so a combined query like "Gigadevice GD25B127D" misses the MPN index. Use multi-word queries only for genuine descriptive searches (e.g. "10uF 25V X7R 0805", "automotive grade buck converter").',
+        },
+        manufacturer: {
+          type: 'string',
+          description: 'Optional manufacturer filter. **Pass this whenever the user names a manufacturer alongside an MPN** (e.g. "GD25B127D from Gigadevice" → manufacturer: "Gigadevice"). Critical for generic MPNs like LM358, 555, 2N2222 that ship from multiple vendors. Aliases are resolved canonically — "TI", "Texas Instruments", "Texas Instr." all match. Omit when the user gives only an MPN with no vendor mentioned.',
         },
       },
       required: ['query'],
@@ -669,9 +703,44 @@ async function executeTool(
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
-      const result = await searchParts((input as { query: string }).query, undefined, userId);
-      data.searchResult = result;
-      return JSON.stringify(result);
+      const args = input as { query: string; manufacturer?: string };
+      const result = await searchParts(args.query, undefined, userId);
+
+      // MFR filter: when the user named a manufacturer, narrow results to
+      // matching candidates. Critical for generic MPNs (LM358, 555, 2N2222)
+      // that ship from multiple vendors. Resolves through the alias index so
+      // "TI" / "Texas Instruments" / "Texas Instr." all match the same canonical.
+      let filtered = result;
+      if (args.manufacturer && result.matches?.length) {
+        const targetMatch = await resolveManufacturerAlias(args.manufacturer);
+        const targetVariants = targetMatch
+          ? new Set(targetMatch.variants.map(v => v.toLowerCase()))
+          : new Set([args.manufacturer.toLowerCase()]);
+
+        const narrowed = result.matches.filter(part => {
+          const candidate = part.manufacturer?.toLowerCase() ?? '';
+          if (targetVariants.has(candidate)) return true;
+          // Substring fallback for unindexed MFR strings (e.g. distributor
+          // returns "Texas Instruments Inc." but alias only has "Texas Instruments").
+          for (const v of targetVariants) {
+            if (candidate.includes(v) || v.includes(candidate)) return true;
+          }
+          return false;
+        });
+
+        // Only apply the narrowing when it leaves at least one hit — otherwise
+        // return the unfiltered set and let the LLM disambiguate from the cards.
+        if (narrowed.length > 0) {
+          filtered = {
+            ...result,
+            type: narrowed.length === 1 ? 'single' : 'multiple',
+            matches: narrowed,
+          };
+        }
+      }
+
+      data.searchResult = filtered;
+      return JSON.stringify(filtered);
     }
     case 'get_part_attributes': {
       const mpn = (input as { mpn: string }).mpn;
@@ -751,6 +820,10 @@ async function executeTool(
             distributorCount: profile.distributorCount,
             catalogSize: profile.catalogSize,
             familyCount: profile.familyCount,
+            stockCode: profile.stockCode,
+            websiteUrl: profile.websiteUrl,
+            contactInfo: profile.contactInfo,
+            partsioName: profile.partsioName,
           },
         });
       } catch (err) {

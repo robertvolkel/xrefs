@@ -79,6 +79,22 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Lift claim-discipline rule into a global system-prompt block (Decision #166 follow-up)
+
+The general claim-discipline rule ("every factual claim must have a backing source in tool data; otherwise downgrade to 'not in our profile' or hedge as interpretation") was codified inside the manufacturer-profile section. The same rule applies across all chat domains — recommendations, search-result interpretation, parametric Q&A, list agent. Currently each domain has its own discipline language (or none), which means future drift is likely. Lift the rule to a top-level "global rules" block at the start of `SYSTEM_PROMPT`, then have domain sections reference it instead of restating discipline. Watch other domains for the same per-shape patching anti-pattern that hit the MFR section. ~30 min, prompt-only.
+
+### Audit other domains for per-shape patching drift (Decision #166)
+
+Recommendations domain (`filter_recommendations` + `summarizeRecommendations`) and search-result interpretation (`present_part_options` + `summarizeSearchResults`) haven't yet accumulated per-question-type patches the way MFR did, but they're vulnerable. If users start asking "explain why this rec is on top" / "compare these two recs side by side" / "which countries have current trade tariffs?" the temptation will be to add per-question rules. Better: extend the global claim-discipline rule (above) and resist domain-specific patches unless a question shape clears the bar (a) implicit completeness requirement + (b) domain-knowledge-derived checklist. Periodic prompt audits (~quarterly) to catch drift early.
+
+### Surface remaining Atlas profile fields through `mapAtlasToManufacturerProfile()` (Decision #166)
+
+The mapper currently surfaces a subset of Atlas DB columns. After Decision #166 we added stockCode / websiteUrl / contactInfo / partsioName, but other fields are still dropped: `gaia_id`, `partsio_id`, `enabled`, `api_synced_at`, `core_products` (only used internally for productCategories fallback). Some of these may be useful for the LLM (api_synced_at as a freshness signal; partsio_id for cross-system linking) or for future UI panels. Low priority — surface on demand. Tradeoff: adding fields makes the projection bigger; keep optional and skip serialization when absent.
+
+### Mechanical "claims you can make" tool-side output (Decision #166, deferred)
+
+Architectural alternative to prompt-based claim discipline: `get_manufacturer_profile` could return a `verifiedFacts: Array<{ claim, sourceField, verbatim }>` shape that makes the agent literally unable to fabricate without obviously stepping outside structured output. Heavier engineering — requires per-field claim taxonomy and a code-side fact extractor. Worth considering if prompt-side discipline starts drifting again on smaller models or longer responses. Currently the prompt-side rule is sufficient with Sonnet/Opus. Deferred until evidence justifies the lift.
+
 ### Value-alias system follow-ups (Decision #160)
 
 Phases 1, 2, and 3 (Inline "Propose alias" button) all shipped same session. 6 alias rules now active (polarization seed, MLCC C0G/NP0, D2 speed_class, 52 composition, C7 protocol, C9 architecture). Remaining work, in priority order:

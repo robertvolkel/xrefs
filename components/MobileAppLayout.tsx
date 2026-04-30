@@ -77,6 +77,7 @@ interface MobileAppLayoutProps {
   onContextResponse?: (answers: Record<string, string>) => void;
   onSkipContext?: () => void;
   onChoiceSelect?: (choice: ChoiceOption) => void;
+  onQuantitySubmit?: (messageId: string, quantity: number) => void;
   onSelectRecommendation: (rec: XrefRecommendation) => void;
   onBackToRecommendations: () => void;
   onManufacturerClick: (manufacturer: string) => void;
@@ -109,6 +110,7 @@ export default function MobileAppLayout({
   onContextResponse,
   onSkipContext,
   onChoiceSelect,
+  onQuantitySubmit,
   onSelectRecommendation,
   onBackToRecommendations,
   onManufacturerClick,
@@ -244,6 +246,7 @@ export default function MobileAppLayout({
             onContextResponse={onContextResponse}
             onSkipContext={onSkipContext}
             onChoiceSelect={onChoiceSelect}
+            onQuantitySubmit={onQuantitySubmit}
             sourceMpn={sourceAttributes?.part.mpn}
             sourceManufacturer={sourceAttributes?.part.manufacturer}
             knownMpns={knownMpns}

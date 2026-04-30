@@ -111,6 +111,10 @@ export function mapAtlasToManufacturerProfile(row: AtlasManufacturer): Manufactu
     authorizedDistributors: row.authorizedDistributors ?? [],
     complianceFlags: row.complianceFlags ?? [],
     summary: row.summary ?? '',
+    stockCode: row.stockCode ?? undefined,
+    websiteUrl: row.websiteUrl ?? undefined,
+    contactInfo: (row.contactInfo as string | Record<string, string> | null) ?? undefined,
+    partsioName: row.partsioName ?? undefined,
   };
 }
 

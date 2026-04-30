@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   AppPhase,
   ApplicationContext,
+  AttributesTab,
   ChatMessage,
   ChoiceOption,
   ConversationSnapshot,
@@ -11,7 +12,10 @@ import {
   XrefRecommendation,
   SearchResult,
   OrchestratorMessage,
+  hasAnyReplacements,
 } from '@/lib/types';
+import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
+import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
 import {
   searchParts,
   getPartAttributes,
@@ -41,6 +45,18 @@ interface AppState {
   comparisonAttributes: PartAttributes | null;
   llmAvailable: boolean | null; // null = not yet checked
   isEnrichingFC: boolean; // true while FindChips batch enrichment is in flight
+  /** Active tab on the source-part attributes panel — lifted up from
+   *  DesktopLayout so chat-message handlers (e.g., Best Spot Price) can
+   *  programmatically switch tabs after computing a result. */
+  activeAttributesTab: AttributesTab;
+  /** When the user's search query telegraphs intent (e.g., "lowest price for
+   *  X"), we carry it through the part-confirmation step and auto-fire the
+   *  matching action after attributes load — instead of presenting the
+   *  generic action menu. Cleared on consumption. */
+  pendingIntent: PendingIntent | null;
+  /** Effect-based signal that AppShell consumes to open the MFR side panel
+   *  programmatically (used by the show_mfr_profile auto-fire path). */
+  autoOpenMfr: string | null;
 }
 
 const initialState: AppState = {
@@ -58,6 +74,9 @@ const initialState: AppState = {
   comparisonAttributes: null,
   llmAvailable: null,
   isEnrichingFC: false,
+  activeAttributesTab: 'overview',
+  pendingIntent: null,
+  autoOpenMfr: null,
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -149,6 +168,22 @@ export function useAppState() {
   const setStatus = useCallback((text: string) => {
     setState((prev) => ({ ...prev, statusText: text }));
   }, []);
+
+  const setActiveAttributesTab = useCallback((tab: AttributesTab) => {
+    setState((prev) => ({ ...prev, activeAttributesTab: tab }));
+  }, []);
+
+  /** AppShell calls this once it has consumed the autoOpenMfr signal —
+   *  clears the field so the effect doesn't refire on subsequent renders. */
+  const consumeAutoOpenMfr = useCallback(() => {
+    setState((prev) => (prev.autoOpenMfr === null ? prev : { ...prev, autoOpenMfr: null }));
+  }, []);
+
+  // Reset to overview whenever the source MPN changes — preserves the prior
+  // DesktopLayout-local behavior now that tab state lives here.
+  useEffect(() => {
+    setState((prev) => (prev.activeAttributesTab === 'overview' ? prev : { ...prev, activeAttributesTab: 'overview' }));
+  }, [state.sourcePart?.mpn]);
 
   /** Rotate through status messages on a timer. Returns cleanup function. */
   const startStatusRotation = useCallback((messages: { text: string; delayMs: number }[]) => {
@@ -354,14 +389,44 @@ export function useAppState() {
   /** After attributes are loaded, pause and offer the user action choices instead of auto-finding recs. */
   const presentNextStepChoices = useCallback(
     (mpn: string, sourceAttrs: PartAttributes, context?: ApplicationContext | null) => {
-      const choices: ChoiceOption[] = [
-        { id: 'find_xrefs', label: 'Find cross-references', action: 'find_replacements' },
-      ];
-      addMessage('assistant', `Loaded details for **${mpn}**. Is there anything specific you'd like to know about this part?`, { type: 'choices', choices });
-      conversationRef.current.push({
-        role: 'assistant',
-        content: `Loaded details for ${mpn}. Is there anything specific you'd like to know about this part? Waiting for user to choose next action.`,
-      });
+      // Build contextual action buttons from the server-side capability preflight.
+      // Each button only appears when its capability has actual data behind it;
+      // user clicks dead-end into "no info" otherwise. The user-facing message
+      // stays neutral so we don't lead with any specific capability — the
+      // buttons are the affordance. The LLM gets the partCapabilities flags via
+      // the get_part_attributes tool result and the history note below, so it
+      // can decline gracefully if asked for something the buttons didn't offer.
+      const caps = sourceAttrs.partCapabilities;
+      const choices: ChoiceOption[] = [];
+      if (caps?.bestPrice) {
+        choices.push({
+          id: 'show_best_price',
+          label: 'Best Spot Price',
+          action: 'show_best_price',
+        });
+      }
+      if (caps?.mfrProfile) {
+        choices.push({
+          id: 'show_mfr_profile',
+          label: `${sourceAttrs.part.manufacturer}'s Profile`,
+          action: 'show_mfr_profile',
+        });
+      }
+      if (hasAnyReplacements(sourceAttrs)) {
+        choices.push({
+          id: 'find_xrefs',
+          label: 'Replacement Options',
+          action: 'find_replacements',
+        });
+      }
+      const interactive = choices.length > 0
+        ? { type: 'choices' as const, choices }
+        : undefined;
+      const message = `Got it — loaded the basics for **${mpn}**. What would you like to explore?`;
+      const offered = choices.map(c => c.label).join(', ') || 'none';
+      const historyContent = `Loaded details for ${mpn}. Offered buttons: [${offered}]. Open-ended turn — user may also ask about specs, lifecycle, manufacturer, or supply. partCapabilities=${JSON.stringify(caps ?? {})}.`;
+      addMessage('assistant', message, interactive);
+      conversationRef.current.push({ role: 'assistant', content: historyContent });
       setState((prev) => ({
         ...prev,
         phase: 'awaiting-action' as AppPhase,
@@ -387,6 +452,17 @@ export function useAppState() {
       const sourceAttrs = state.sourceAttributes;
       if (!mpn || !sourceAttrs) return;
       const effectiveContext = contextOverride ?? state.applicationContext ?? undefined;
+
+      // Family-support gate — only surfaces once the user actually asks for
+      // replacements, per orchestrator system prompt.
+      if (!isFamilySupported(sourceAttrs.part.subcategory)) {
+        setStatus('');
+        const unsupportedMsg = buildUnsupportedMessage(mpn, sourceAttrs.part.subcategory);
+        addMessage('assistant', unsupportedMsg, undefined, 'warning');
+        conversationRef.current.push({ role: 'assistant', content: unsupportedMsg });
+        setState((prev) => ({ ...prev, phase: 'unsupported' }));
+        return;
+      }
 
       // Step 1: Check for missing critical attributes
       const logicTable = getLogicTableForSubcategory(sourceAttrs.part.subcategory, sourceAttrs);
@@ -503,6 +579,89 @@ export function useAppState() {
       }
     },
     [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes, state.applicationContext]
+  );
+
+  /** Consume `pendingIntent` after part attributes load. Returns true when the
+   *  intent was served (caller should skip the generic action menu). When the
+   *  requested capability isn't available on this part, the intent is cleared
+   *  and a one-line note is queued; the caller falls through to the menu. */
+  const tryAutoFireIntent = useCallback(
+    async (mpn: string, sourceAttrs: PartAttributes): Promise<boolean> => {
+      const intent = state.pendingIntent;
+      if (!intent) return false;
+      // Always clear the pending intent — single-shot per search query.
+      setState((prev) => ({ ...prev, pendingIntent: null }));
+      const caps = sourceAttrs.partCapabilities;
+
+      if (intent === 'best_price') {
+        if (!caps?.bestPrice) {
+          addMessage(
+            'assistant',
+            `Couldn't find supplier pricing for **${mpn}** — here's what's available instead.`,
+          );
+          return false;
+        }
+        // Stash sourceAttributes so the quantity submit can read supplierQuotes.
+        setState((prev) => ({
+          ...prev,
+          phase: 'awaiting-action' as AppPhase,
+          sourceAttributes: sourceAttrs,
+        }));
+        addMessage(
+          'assistant',
+          `Got it — **${mpn}** loaded. What quantity? Pick a common tier or type a custom number.`,
+          { type: 'quantity-prompt', presets: [1, 10, 100, 1_000, 10_000, 100_000], status: 'pending' },
+        );
+        setStatus('');
+        return true;
+      }
+
+      if (intent === 'find_replacements') {
+        if (!hasAnyReplacements(sourceAttrs)) {
+          addMessage(
+            'assistant',
+            `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available. Here's what is available instead.`,
+          );
+          return false;
+        }
+        // Same setup presentNextStepChoices does so handleFindReplacements
+        // sees the part as the active source.
+        setState((prev) => ({
+          ...prev,
+          phase: 'awaiting-action' as AppPhase,
+          sourceAttributes: sourceAttrs,
+        }));
+        await handleFindReplacements();
+        return true;
+      }
+
+      if (intent === 'show_mfr_profile') {
+        if (!caps?.mfrProfile) {
+          addMessage(
+            'assistant',
+            `No detailed profile available for **${sourceAttrs.part.manufacturer}** — here's what is available for this part.`,
+          );
+          return false;
+        }
+        // Park the part as active + signal AppShell to open the MFR panel.
+        // AppShell's effect picks up autoOpenMfr and clears it after firing.
+        setState((prev) => ({
+          ...prev,
+          phase: 'awaiting-action' as AppPhase,
+          sourceAttributes: sourceAttrs,
+          autoOpenMfr: sourceAttrs.part.manufacturer,
+        }));
+        addMessage(
+          'assistant',
+          `Got it — **${mpn}** loaded. Opening **${sourceAttrs.part.manufacturer}**'s profile.`,
+        );
+        setStatus('');
+        return true;
+      }
+
+      return false;
+    },
+    [state.pendingIntent, addMessage, setStatus, handleFindReplacements],
   );
 
   // ============================================================
@@ -627,23 +786,13 @@ export function useAppState() {
       if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
-        // Check if this part family is supported
-        if (!isFamilySupported(sourceAttrs.part.subcategory)) {
-          setStatus('');
-          const unsupportedMsg = buildUnsupportedMessage(part.mpn, sourceAttrs.part.subcategory);
-          addMessage('assistant', unsupportedMsg, undefined, 'warning');
-          conversationRef.current.push({ role: 'assistant', content: unsupportedMsg });
-          setState((prev) => ({
-            ...prev,
-            phase: 'unsupported',
-            sourceAttributes: sourceAttrs,
-          }));
-          return;
-        }
-
-        // Show attributes and offer next action — context questions + missing attrs
-        // are deferred until the user clicks "Find cross-references"
-        presentNextStepChoices(part.mpn, sourceAttrs);
+        // If the user's original query telegraphed an intent (e.g., "lowest
+        // price for X"), skip the generic action menu and fire that action
+        // directly. tryAutoFireIntent returns false when the intent can't be
+        // served (capability missing) and falls through to the regular menu
+        // with a one-line note in chat.
+        const handled = await tryAutoFireIntent(part.mpn, sourceAttrs);
+        if (!handled) presentNextStepChoices(part.mpn, sourceAttrs);
         return;
       }
 
@@ -652,7 +801,7 @@ export function useAppState() {
         await loadAttributesAndRecommendations(part);
       }
     },
-    [addMessage, setStatus, presentNextStepChoices]
+    [addMessage, setStatus, presentNextStepChoices, tryAutoFireIntent]
   );
 
   // ============================================================
@@ -720,28 +869,17 @@ export function useAppState() {
         const attributes = await getPartAttributes(part.mpn);
         stopRotation();
 
-        // Check if this part family is supported
-        if (!isFamilySupported(attributes.part.subcategory)) {
-          setStatus('');
-          addMessage('assistant', buildUnsupportedMessage(part.mpn, attributes.part.subcategory), undefined, 'warning');
-          setState((prev) => ({
-            ...prev,
-            phase: 'unsupported',
-            sourceAttributes: attributes,
-          }));
-          return;
-        }
-
-        // Show attributes and offer next action — context questions + missing attrs
-        // are deferred until the user clicks "Find cross-references"
-        presentNextStepChoices(part.mpn, attributes);
+        // Mirror the LLM-flow shortcut — if pendingIntent is set, skip the
+        // generic action menu and fire what the user asked for.
+        const handled = await tryAutoFireIntent(part.mpn, attributes);
+        if (!handled) presentNextStepChoices(part.mpn, attributes);
       } catch {
         setStatus('');
         addMessage('assistant', 'Something went wrong while fetching part details. Please try again.');
         setState((prev) => ({ ...prev, phase: 'idle' }));
       }
     },
-    [addMessage, setStatus, presentNextStepChoices]
+    [addMessage, setStatus, presentNextStepChoices, tryAutoFireIntent]
   );
 
   const handleConfirmDeterministic = useCallback(
@@ -760,6 +898,11 @@ export function useAppState() {
     async (query: string) => {
       queryRef.current = query;
       loggedRef.current = false;
+      // Pattern-detect user intent so the post-confirmation flow can skip the
+      // generic action menu and go straight to what the user asked for. Cleared
+      // either when consumed in handleConfirmPart or on the next reset.
+      const intent = detectQueryIntent(query);
+      setState((prev) => ({ ...prev, pendingIntent: intent }));
       if (state.llmAvailable === false) {
         await handleSearchDeterministic(query);
       } else {
@@ -796,6 +939,143 @@ export function useAppState() {
     setState((prev) => ({ ...prev, phase: 'idle', searchResult: null }));
   }, [addMessage, setStatus, state.llmAvailable]);
 
+  /** Mark a quantity-prompt message as submitted with the chosen qty. The
+   *  prompt collapses to a single "Qty: N" pill in place of the chips/input,
+   *  so chat history stays clean without echoing the choice as a user message. */
+  const lockQuantityPrompt = useCallback((messageId: string | undefined, submittedQty: number) => {
+    setState((prev) => ({
+      ...prev,
+      messages: prev.messages.map((m) => {
+        if (messageId && m.id !== messageId) return m;
+        const el = m.interactiveElement;
+        if (!el || el.type !== 'quantity-prompt' || el.status === 'submitted') return m;
+        return { ...m, interactiveElement: { ...el, status: 'submitted' as const, submittedQty } };
+      }),
+    }));
+  }, []);
+
+  /** Mark the choices-interactive element on the most recent assistant message
+   *  whose choices contain the given choice id. Replaces the user-echo pattern
+   *  with a visual "selected button" mark on the original prompt. */
+  const markChoiceSelected = useCallback((choiceId: string) => {
+    setState((prev) => {
+      // Walk newest-first; lock only the most recent unlocked match.
+      const idx = [...prev.messages].reverse().findIndex(
+        (m) =>
+          m.interactiveElement?.type === 'choices' &&
+          !m.interactiveElement.clickedChoiceId &&
+          m.interactiveElement.choices.some((c) => c.id === choiceId),
+      );
+      if (idx === -1) return prev;
+      const realIdx = prev.messages.length - 1 - idx;
+      return {
+        ...prev,
+        messages: prev.messages.map((m, i) => {
+          if (i !== realIdx) return m;
+          const el = m.interactiveElement;
+          if (!el || el.type !== 'choices') return m;
+          return { ...m, interactiveElement: { ...el, clickedChoiceId: choiceId } };
+        }),
+      };
+    });
+  }, []);
+
+  /** Render a best-price computation as a chat message + open the Commercial
+   *  tab. Used by both the quantity-prompt submission path and the "price at
+   *  minimum" fallback Yes-button. Pure UI side-effect, no LLM round-trip. */
+  const renderBestPriceResult = useCallback((result: BestPriceResult) => {
+    if (result.kind === 'none') {
+      addMessage(
+        'assistant',
+        result.reason === 'no-quotes'
+          ? `No supplier quotes are available for this part right now.`
+          : `Couldn't compute a price at qty ${result.requestedQty}.`,
+      );
+      return;
+    }
+
+    if (result.kind === 'fallback') {
+      const opt = result.minOption;
+      const price = formatPrice(opt.unitPrice, opt.currency);
+      addMessage(
+        'assistant',
+        `Lowest available is qty **${opt.minOrderQty}** from **${opt.supplier}** at **${price}** each. Want me to price that instead?`,
+        {
+          type: 'choices',
+          choices: [
+            {
+              id: `price_at_${opt.minOrderQty}`,
+              label: `Yes — price at qty ${opt.minOrderQty}`,
+              action: 'best_price_at_qty',
+              quantity: opt.minOrderQty,
+            },
+          ],
+        },
+      );
+      // Switch to Commercial so the user sees the full quote table.
+      setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
+      return;
+    }
+
+    // Match — numbered list with the top option in bold + per-option totals.
+    // Single-option case skips the list and uses a one-line headline since
+    // numbering "1." against zero alternatives reads oddly.
+    const ranked = [result.top, ...result.others];
+    const qtyLabel = result.requestedQty.toLocaleString();
+    const lines: string[] = [];
+
+    if (ranked.length === 1) {
+      const opt = ranked[0];
+      const unit = formatPrice(opt.unitPrice, opt.currency);
+      const total = formatPrice(opt.totalPrice, opt.currency);
+      lines.push(`At qty **${qtyLabel}**, best spot price is **${opt.supplier}: ${unit}/each** (total ${total}).`);
+    } else {
+      lines.push(`At qty **${qtyLabel}**, best spot prices:`, '');
+      ranked.forEach((opt, i) => {
+        const unit = formatPrice(opt.unitPrice, opt.currency);
+        const total = formatPrice(opt.totalPrice, opt.currency);
+        const body = `${opt.supplier}: ${unit}/each (total ${total})`;
+        lines.push(i === 0 ? `${i + 1}. **${body}**` : `${i + 1}. ${body}`);
+      });
+    }
+
+    // Higher-MOQ alternates — distributors that stock the part but require a
+    // bigger order than the user asked for. Surfacing them lets the user
+    // decide whether bumping quantity unlocks a meaningfully better deal.
+    if (result.overMinimum.length > 0) {
+      lines.push('');
+      lines.push(`Also available at higher MOQ:`);
+      for (const opt of result.overMinimum) {
+        const unit = formatPrice(opt.unitPrice, opt.currency);
+        lines.push(`- ${opt.supplier}: ${unit}/each at qty ${opt.minOrderQty.toLocaleString()}+`);
+      }
+    }
+
+    // Tab pointer only when we've truly truncated — i.e., the panel has
+    // suppliers we didn't enumerate in either the ranked list or the MOQ
+    // footnote. Avoids a redundant pointer when chat already covered everything.
+    const surfacedCount = ranked.length + result.overMinimum.length;
+    if (result.totalSuppliers > surfacedCount) {
+      lines.push('');
+      lines.push(`See the **Commercial** tab for the full quote list.`);
+    }
+    addMessage('assistant', lines.join('\n'));
+    setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
+  }, [addMessage]);
+
+  const handleQuantitySubmit = useCallback((messageId: string, quantity: number) => {
+    // No user-message echo — the prompt collapses to a "Qty: N" pill instead.
+    // LLM context still records the chosen qty via conversationRef.
+    lockQuantityPrompt(messageId, quantity);
+    conversationRef.current.push({
+      role: 'user',
+      content: `Quantity for best spot price: ${quantity}.`,
+    });
+    const quotes = state.sourceAttributes?.part.supplierQuotes;
+    const result = computeBestPrice(quotes, quantity);
+    renderBestPriceResult(result);
+  }, [lockQuantityPrompt, renderBestPriceResult, state.sourceAttributes]);
+
   const handleChoiceSelect = useCallback(
     async (choice: ChoiceOption) => {
       if (choice.action === 'confirm_part' && choice.mpn) {
@@ -809,11 +1089,50 @@ export function useAppState() {
         }
       }
 
+      // Contextual action buttons (Replacement Options / MFR Profile / Best
+      // Spot Price / fallback "price at qty N"): mark the clicked button as
+      // selected on its prompt instead of echoing the choice as a user message.
+      // LLM context still gets the action via conversationRef.
+
       if (choice.action === 'find_replacements') {
-        // Trigger replacement search for the current source part
-        addMessage('user', choice.label);
+        markChoiceSelected(choice.id);
         conversationRef.current.push({ role: 'user', content: 'Find cross-references for this part.' });
         await handleFindReplacements();
+        return;
+      }
+
+      if (choice.action === 'show_mfr_profile') {
+        // Panel open is wired in AppShell (it owns useManufacturerProfile).
+        markChoiceSelected(choice.id);
+        conversationRef.current.push({
+          role: 'user',
+          content: `Show manufacturer profile for ${state.sourcePart?.manufacturer ?? 'this part'}.`,
+        });
+        return;
+      }
+
+      if (choice.action === 'show_best_price') {
+        markChoiceSelected(choice.id);
+        conversationRef.current.push({
+          role: 'user',
+          content: `Find best spot price for ${state.sourcePart?.mpn ?? 'this part'}.`,
+        });
+        addMessage(
+          'assistant',
+          `What quantity? Pick a common tier or type a custom number.`,
+          { type: 'quantity-prompt', presets: [1, 10, 100, 1_000, 10_000, 100_000], status: 'pending' },
+        );
+        return;
+      }
+
+      if (choice.action === 'best_price_at_qty' && typeof choice.quantity === 'number') {
+        // Fallback "Yes — price at qty N" button. Re-runs the compute at the
+        // distributor's minimum order qty, since the user's original request
+        // was below every supplier's MOQ.
+        markChoiceSelected(choice.id);
+        conversationRef.current.push({ role: 'user', content: `Price at qty ${choice.quantity}.` });
+        const quotes = state.sourceAttributes?.part.supplierQuotes;
+        renderBestPriceResult(computeBestPrice(quotes, choice.quantity));
         return;
       }
 
@@ -823,7 +1142,7 @@ export function useAppState() {
       conversationRef.current.push({ role: 'user', content: choice.label });
       await handleSearchWithLLM(choice.label);
     },
-    [addMessage, state.searchResult, handleConfirmPart, handleFindReplacements, handleSearchWithLLM]
+    [addMessage, markChoiceSelected, state.searchResult, state.sourcePart, state.sourceAttributes, handleConfirmPart, handleFindReplacements, handleSearchWithLLM, renderBestPriceResult]
   );
 
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {
@@ -1115,6 +1434,9 @@ export function useAppState() {
       comparisonAttributes: snapshot.comparisonAttributes,
       llmAvailable: llmWasUsed ? true : null,
       isEnrichingFC: false,
+      activeAttributesTab: 'overview',
+      pendingIntent: null,
+      autoOpenMfr: null,
     });
   }, []);
 
@@ -1155,6 +1477,7 @@ export function useAppState() {
     handleConfirmPart,
     handleRejectPart,
     handleChoiceSelect,
+    handleQuantitySubmit,
     handleSelectRecommendation,
     handleBackToRecommendations,
     handleReset,
@@ -1163,6 +1486,8 @@ export function useAppState() {
     handleContextResponse,
     handleSkipContext,
     handleMpnClick,
+    setActiveAttributesTab,
+    consumeAutoOpenMfr,
     getOrchestratorMessages,
     setConversationId,
     hydrateState,
