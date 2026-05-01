@@ -96,6 +96,11 @@ export interface DesktopLayoutProps {
   statusText: string;
   sourceAttributes: PartAttributes | null;
   comparisonAttributes: PartAttributes | null;
+  /** True while a clicked replacement's full attributes are being fetched —
+   *  drives skeleton placeholders in the comparison panel. */
+  isLoadingComparison?: boolean;
+  /** True when the replacement-attributes fetch failed. */
+  comparisonError?: boolean;
   recommendations: XrefRecommendation[];
   selectedRecommendation: XrefRecommendation | null;
   conversationId: string | null;
@@ -153,6 +158,7 @@ export interface DesktopLayoutProps {
 export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
+    isLoadingComparison = false, comparisonError = false,
     recommendations, selectedRecommendation, conversationId,
     showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
     chatCollapsed, mfrOpen, mfrProfile, mfrSource, mfrLoading,
@@ -331,6 +337,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onManufacturerClick={onManufacturerClick}
               activeTab={attributesTab}
               onTabChange={setAttributesTab}
+              isLoadingReplacement={isLoadingComparison}
+              replacementError={comparisonError}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel

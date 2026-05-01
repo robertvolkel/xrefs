@@ -112,6 +112,116 @@ Compound queries are supported — e.g. "parts ≥10V, auto-qualified, Accuris c
 Use category_filter to narrow by certification (Accuris → "third_party_certified", MFR → "manufacturer_certified", rule-engine-only → "logic_driven").]`;
 }
 
+/**
+ * Strip a trailing "click X button" / "next, do Y" pitch from an LLM response.
+ * The system prompt tells the model not to do this, but the "be helpful = suggest
+ * next steps" prior is strong enough that prompt rules alone don't always hold.
+ *
+ * Conservative rule: drop the FINAL paragraph if it (a) contains an action verb
+ * ("click", "press", "ready to") and (b) references a known UI button label or
+ * is structured as a forward-looking pitch. If the result would be empty, leave
+ * the original text alone. False-positive risk is acceptable here because the
+ * patterns we strip are exactly the ones the user has flagged as unwanted noise.
+ */
+export function stripTrailingButtonPitch(message: string): string {
+  if (!message) return message;
+  const paragraphs = message.split(/\n{2,}/);
+  if (paragraphs.length === 0) return message;
+
+  const last = paragraphs[paragraphs.length - 1].trim();
+  if (!last) return message;
+
+  // Triggers — any one is sufficient when paired with an action verb.
+  const buttonLabels = /\b(find\s+cross[\s-]?references?|replacement\s+options|best\s+spot\s+price)\b/i;
+  const actionVerb = /\b(click|press|tap|hit)\b/i;
+  const forwardPitch = /^(now,?|next,?|ready\s+to|when\s+you'?re\s+ready|to\s+find|let\s+me\s+know\s+if|want\s+me\s+to)\b/i;
+
+  const mentionsButton = buttonLabels.test(last);
+  const usesActionVerb = actionVerb.test(last);
+  const isForwardPitch = forwardPitch.test(last);
+
+  // Strip when EITHER (a) the paragraph names a button AND uses an action verb,
+  // OR (b) it's a short forward-looking pitch that names a button.
+  const shouldStrip =
+    (mentionsButton && usesActionVerb) ||
+    (isForwardPitch && mentionsButton) ||
+    (isForwardPitch && usesActionVerb && /\bbutton\b/i.test(last));
+
+  if (!shouldStrip) return message;
+
+  const remaining = paragraphs.slice(0, -1).join('\n\n').trimEnd();
+  // Don't return an empty message — fall back to the original if the strip
+  // would leave nothing (rare, but possible if the LLM's whole reply was a pitch).
+  return remaining.length > 0 ? remaining : message;
+}
+
+/** Summarize the resolved source part into a compact factual block injected
+ *  into the LLM context on every turn. Without this, on follow-up turns the
+ *  LLM has zero visibility into supplier quotes / lifecycle / compliance and
+ *  fabricates plausible-sounding-but-wrong answers ("3 distributors including
+ *  Digikey..." when the actual quote set has only RS Components + element14).
+ *
+ *  The "EXHAUSTIVE — DO NOT INVENT BEYOND THIS DATA" framing is load-bearing.
+ *  Combined with the system-prompt discipline below, this ground-truth block
+ *  is the canonical source for any distributor / supplier / pricing /
+ *  lifecycle / compliance / qualification question. */
+function summarizeSourcePart(attrs: PartAttributes): string {
+  const part = attrs.part;
+  const fmtNum = (n: number) => (n >= 1 ? n.toFixed(2) : n.toFixed(4));
+  const supplierLines = (part.supplierQuotes ?? []).map((q) => {
+    const breaks = (q.priceBreaks ?? []).slice().sort((a, b) => a.quantity - b.quantity);
+    const min = breaks[0];
+    const max = breaks[breaks.length - 1];
+    const priceRange = !min ? 'no pricing'
+      : breaks.length === 1
+        ? `${min.currency} ${fmtNum(min.unitPrice)} at qty ${min.quantity}+`
+        : `${min.currency} ${fmtNum(max.unitPrice)}–${fmtNum(min.unitPrice)} (qty ${min.quantity}–${max.quantity}+)`;
+    const stock = typeof q.quantityAvailable === 'number' ? `, ${q.quantityAvailable} in stock` : '';
+    const auth = q.authorized ? ', authorized' : '';
+    const moq = typeof q.minimumQuantity === 'number' ? `, MOQ ${q.minimumQuantity}` : '';
+    return `  - ${q.supplier}: ${priceRange}${stock}${auth}${moq}`;
+  });
+
+  const lifecycle = (part.lifecycleInfo ?? []).map((l) => {
+    const bits: string[] = [];
+    if (l.status) bits.push(l.status);
+    if (l.isDiscontinued) bits.push('discontinued');
+    if (l.suggestedReplacement) bits.push(`suggested replacement: ${l.suggestedReplacement}`);
+    if (typeof l.riskRank === 'number') bits.push(`risk ${l.riskRank}`);
+    return bits.length > 0 ? `${l.source}: ${bits.join(', ')}` : null;
+  }).filter((s): s is string => !!s);
+
+  const compliance = (part.complianceData ?? []).map((c) => {
+    const bits: string[] = [];
+    if (c.rohsStatus) bits.push(`RoHS=${c.rohsStatus}`);
+    if (c.eccnCode) bits.push(`ECCN=${c.eccnCode}`);
+    return bits.length > 0 ? `${c.source}: ${bits.join(', ')}` : null;
+  }).filter((s): s is string => !!s);
+
+  const quals = part.qualifications && part.qualifications.length > 0
+    ? part.qualifications.join(', ') : '(none on file)';
+
+  const caps = attrs.partCapabilities;
+  const capStr = caps
+    ? `replacements=${Object.values(caps.replacements).some(Boolean)}, mfrProfile=${caps.mfrProfile}, bestPrice=${caps.bestPrice}`
+    : 'unknown';
+
+  const supplierBlock = supplierLines.length > 0
+    ? `Distributors (${supplierLines.length} — exhaustive):\n${supplierLines.join('\n')}`
+    : `Distributors: none on file (no supplier quotes returned).`;
+
+  return `\n\n[Source Part on screen — EXHAUSTIVE, DO NOT INVENT BEYOND THIS DATA]
+MPN: ${part.mpn} (${part.manufacturer})
+Description: ${part.description || '(none)'}
+Status: ${part.status ?? 'Unknown'} | Category: ${part.category ?? '?'} / ${part.subcategory ?? '?'}
+Qualifications: ${quals}
+${supplierBlock}
+${lifecycle.length > 0 ? `Lifecycle: ${lifecycle.join(' | ')}` : 'Lifecycle: not reported'}
+${compliance.length > 0 ? `Compliance: ${compliance.join(' | ')}` : 'Compliance: not reported'}
+Capabilities: ${capStr}
+Note: this list is the ENTIRE set of distributors known for this part. If the user asks about distributors / suppliers / pricing / availability / lifecycle / RoHS / AEC qualifications, answer ONLY from the data above. Never invent additional distributors (e.g., do not name Digikey/Mouser/Arrow unless they appear above). Never convert currencies. If a fact isn't listed, say "not on file" rather than guessing.]`;
+}
+
 const filterRecommendationsTool: Anthropic.Tool = {
   name: 'filter_recommendations',
   description: 'Filter and sort the current replacement recommendations. Use this when the user asks to narrow down by manufacturer, match quality, qualification, attribute values, or other criteria. Returns the filtered list and updates the UI.',
@@ -182,118 +292,12 @@ const presentPartOptionsTool: Anthropic.Tool = {
   },
 };
 
-/** Extract a numeric value from a string, handling SI prefixes (e.g. "1 kOhms" → 1000, "10k" → 10000, "100µF" → 0.0001) */
-function parseNumericFromString(s: string): number | null {
-  const siPrefixes: Record<string, number> = {
-    'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'µ': 1e-6,
-    'm': 1e-3, 'k': 1e3, 'K': 1e3, 'M': 1e6, 'G': 1e9,
-  };
-  // Match number optionally followed by SI prefix (e.g. "10k", "1.5 µF", "100 kOhms")
-  const match = s.match(/([-+]?\d*\.?\d+)\s*([pnuµmkKMG])?/);
-  if (!match) return null;
-  const num = parseFloat(match[1]);
-  if (isNaN(num)) return null;
-  const prefix = match[2];
-  // 'm' is ambiguous (milli vs mm/meters) — treat as milli only when not followed by 'm' (i.e. not "mm")
-  if (prefix && siPrefixes[prefix]) {
-    if (prefix === 'm') {
-      const afterPrefix = s.slice((match.index ?? 0) + match[0].length);
-      if (afterPrefix.startsWith('m')) return num; // "mm" — don't scale
-    }
-    return num * siPrefixes[prefix];
-  }
-  return num;
-}
+import { applyRecommendationFilter, type FilterInput } from './recommendationFilter';
 
-interface AttributeFilter {
-  parameter: string;
-  operator: 'equals' | 'contains' | 'gte' | 'lte';
-  value: string;
-}
-
-interface FilterInput {
-  manufacturer_filter?: string;
-  min_match_percentage?: number;
-  exclude_obsolete?: boolean;
-  exclude_failing_parameters?: string[];
-  attribute_filters?: AttributeFilter[];
-  sort_by?: string;
-  /** Narrow to recommendations belonging to a specific trust category:
-   *  'third_party_certified' (Accuris/Mouser), 'manufacturer_certified' (MFR cross-ref),
-   *  'logic_driven' (rule-engine match). Maps to UI category chips. */
-  category_filter?: RecommendationCategory;
-}
-
-/** Apply filter_recommendations tool input to a recommendations array */
-function applyRecommendationFilter(
-  recs: XrefRecommendation[],
-  input: FilterInput,
-): XrefRecommendation[] {
-  let filtered = [...recs];
-
-  if (input.manufacturer_filter) {
-    const query = input.manufacturer_filter.toLowerCase();
-    filtered = filtered.filter(r => r.part.manufacturer.toLowerCase().includes(query));
-  }
-  if (input.min_match_percentage != null) {
-    filtered = filtered.filter(r => r.matchPercentage >= input.min_match_percentage!);
-  }
-  if (input.exclude_obsolete) {
-    filtered = filtered.filter(r => r.part.status !== 'Obsolete');
-  }
-  if (input.category_filter) {
-    const target = input.category_filter;
-    filtered = filtered.filter(r => deriveRecommendationCategories(r).includes(target));
-  }
-  if (input.exclude_failing_parameters && input.exclude_failing_parameters.length > 0) {
-    const excludeNames = input.exclude_failing_parameters.map(n => n.toLowerCase());
-    filtered = filtered.filter(r => {
-      const failingNames = r.matchDetails
-        .filter(d => d.ruleResult === 'fail')
-        .map(d => d.parameterName.toLowerCase());
-      return !excludeNames.some(name => failingNames.includes(name));
-    });
-  }
-  if (input.attribute_filters && input.attribute_filters.length > 0) {
-    for (const af of input.attribute_filters) {
-      const paramLower = af.parameter.toLowerCase();
-      filtered = filtered.filter(r => {
-        const detail = r.matchDetails.find(d => d.parameterName.toLowerCase() === paramLower);
-        if (!detail) return false; // no data for this parameter → exclude
-        const repValue = detail.replacementValue;
-        switch (af.operator) {
-          case 'equals':
-            return repValue.toLowerCase() === af.value.toLowerCase();
-          case 'contains':
-            return repValue.toLowerCase().includes(af.value.toLowerCase());
-          case 'gte': {
-            const repNum = parseNumericFromString(repValue);
-            const targetNum = parseNumericFromString(af.value);
-            if (repNum == null || targetNum == null) return false;
-            return repNum >= targetNum;
-          }
-          case 'lte': {
-            const repNum = parseNumericFromString(repValue);
-            const targetNum = parseNumericFromString(af.value);
-            if (repNum == null || targetNum == null) return false;
-            return repNum <= targetNum;
-          }
-          default:
-            return true;
-        }
-      });
-    }
-  }
-  if (input.sort_by === 'manufacturer') {
-    filtered.sort((a, b) => a.part.manufacturer.localeCompare(b.part.manufacturer));
-  } else if (input.sort_by === 'price') {
-    filtered.sort((a, b) => (a.part.unitPrice ?? Infinity) - (b.part.unitPrice ?? Infinity));
-  } else {
-    filtered.sort((a, b) => b.matchPercentage - a.matchPercentage);
-  }
-
-  return filtered;
-}
+// applyRecommendationFilter + types moved to lib/services/recommendationFilter.ts
+// so the client-side filter-intent interception path can apply the same filter
+// pipeline without importing this server-only module (the @anthropic-ai/sdk
+// import would balloon the client bundle).
 
 // ==============================================================
 // Locale → language name mapping for system prompt
@@ -385,22 +389,31 @@ function buildUserContextSection(prefs: UserPreferences, userName?: string): str
 // Main chat
 // ==============================================================
 
-const SYSTEM_PROMPT = `You are Agent, an expert electronic component cross-reference assistant. You help engineers find equivalent or superior replacement parts from any manufacturer.
+const SYSTEM_PROMPT = `You are Agent, a component intelligence assistant for the electronics industry. You help engineers, buyers, and supply chain professionals make better component decisions by combining several capabilities — they are equal peers, not a hierarchy:
+
+- **Technical specs & datasheets** — parametric data, package, ratings, qualifications
+- **Commercial intelligence** — multi-distributor pricing, stock, lead times, authorization
+- **Lifecycle & compliance** — active / EOL / suggested-replacement status, RoHS, REACH, AEC qualifications
+- **Manufacturer profiles** — company background, certifications, product lines (Atlas-resolved for ~115 Chinese MFRs and a handful of Western majors)
+- **Cross-reference replacements** — equivalent parts from any manufacturer, scored by a deterministic rule engine (43 component families)
+
+Cross-references are ONE of these capabilities, not the headline activity. Many user sessions never run a cross-reference at all — they look up a part, check pricing, ask about a manufacturer, and leave. Treat each user query as the question it actually is. Do NOT funnel every interaction toward cross-references.
 
 Your role:
-- Help users identify specific parts from their queries
-- Look up part attributes and find cross-reference replacements
-- Provide engineering assessments of replacement candidates
-- Be concise and technical — your users are electronics engineers
+- Identify parts from MPNs, manufacturer + MPN combinations, or descriptive queries
+- Surface whichever of the capabilities above the user is actually asking about
+- Provide engineering assessments when replacement candidates have been loaded into context
+- Be concise and technical — your users are working professionals
 
 If a user asks about anything unrelated to electronic components, respond in 1-2 sentences max. State you can't help with that topic, then describe yourself as: "I'm an electronic component specialist — I help hardware engineers and procurement teams navigate design decisions, pricing, supply risk, and market shifts." Do NOT list bullet points of your capabilities.
 
 Meta-questions about this system itself — what data sources you use, what families you support, how search or matching works, what APIs you're connected to, what you can do — ARE on-topic. Answer them factually and concisely using the "About This System" section below. Do NOT deflect with the "specialist" introduction for these questions.
 
-General electronics domain questions — theory (e.g. "X7R vs C0G"), design guidance (e.g. "how do I pick a MOSFET for a 12V→5V buck converter"), standards (e.g. "what does AEC-Q200 qualify"), concepts, or comparisons that aren't about a specific MPN — ARE on-topic. Answer thoroughly from domain knowledge. 2-3 paragraphs is fine when the question warrants it — the goal is to provide real value, not artificial brevity. Use bullet points for lists and comparisons. Always end with a PIVOT — a concrete offer tied to this tool's capabilities (search_parts, get_part_attributes, filter_recommendations). Example pivots:
-- "Want me to find C0G 0603 10nF candidates?"
-- "Give me your switching frequency and target current, I'll search for MOSFET candidates."
-- "I can filter any recommendations to AEC-Q200-qualified parts when you're ready."
+General electronics domain questions — theory (e.g. "X7R vs C0G"), design guidance (e.g. "how do I pick a MOSFET for a 12V→5V buck converter"), standards (e.g. "what does AEC-Q200 qualify"), concepts, or comparisons that aren't about a specific MPN — ARE on-topic. Answer thoroughly from domain knowledge. 2-3 paragraphs is fine when the question warrants it — the goal is to provide real value, not artificial brevity. Use bullet points for lists and comparisons. End with a PIVOT — a concrete offer tied to whichever capability fits the user's apparent goal. Pivots should reflect the full capability set, not default to cross-references. Example pivots:
+- "Got an MPN you're working with? I can pull its specs and current pricing."
+- "Want me to find C0G 0603 10nF candidates and rank them?"
+- "I can pull supply / pricing for a specific MPN if you have one."
+- "If you've got a manufacturer in mind, I can pull their profile."
 Do NOT answer part-specific questions (a named MPN's specs, pricing, availability, lifecycle, attributes) from general knowledge — those always go through search_parts. The general-knowledge allowance applies ONLY to theory, standards, design concepts, and comparisons that don't reference a specific part number.
 
 About This System (use these facts when answering meta-questions):
@@ -430,7 +443,7 @@ Workflow:
 1. When a user provides a part number or description, use the search_parts tool to find matches.
 2. If there's exactly one match, write a brief message and the UI will show a clickable part card. If multiple, present them briefly — the UI shows cards for all matches.
 3. When the user clicks a part card, the UI automatically loads attributes and shows them in a side panel for the SELECTED part. You do NOT need to call get_part_attributes for the selected part — the frontend handles it. (See rule #4 below for using get_part_attributes on OTHER parts in the search-result list.)
-4. **Cross-references are USER-BUTTON-DRIVEN, not tool-driven.** After a part is loaded, the UI presents a "Find cross-references" button. The matching engine runs ONLY when the user clicks that button. You do NOT have a tool to start cross-reference matching, and you must NEVER attempt to. If the user types something like "find cross references for X", "find equivalents to X", "what can replace X", or similar, write a brief reply telling them to click the "Find cross-references" button — do NOT try to execute the search yourself.
+4. **Heavy actions (cross-references, best-price compute, manufacturer-profile lookups) are triggered by the UI layer, not by tool calls from you.** You do NOT have a tool to start cross-reference matching, fetch a quantity-priced quote, or open the manufacturer profile panel. The client-side intent layer pattern-matches user messages like "show me replacements", "best price for this", "tell me about the manufacturer" and dispatches the corresponding action directly — those messages typically don't reach you at all. If one DOES reach you (the pattern matcher missed, the capability isn't available, or the user phrased it ambiguously): do NOT instruct the user to click any button — buttons may not be on screen, and naming a button label is fragile. Instead respond briefly to the actual question, or — if the requested capability is genuinely unavailable for this part — say so plainly ("there's no replacement coverage for this part" / "we don't have a profile for this manufacturer") and stop.
 5. **Free-form follow-up questions about parts already shown are EXPECTED.** After search results or a selected part appear, route the conversation into one of these four modes — pick whichever fits, freely switching as the discussion evolves:
 
    **(a) ASK** — parametric question about the current cards.
@@ -443,6 +456,20 @@ Workflow:
    When the user changes voltage, dielectric, package, family, or says "actually I need...", "forget that, show me...", "what about 50V versions?": call search_parts with a fresh query that incorporates the new requirements. Do NOT try to filter the existing list when the needed value isn't in it (e.g. user wants 50V but original search was 25V — only a fresh search can surface it). Pivots replace the card list and reset the right-side panels — that is the intended UX.
 
    **(d) LINK** — nothing for you to do, but worth knowing: any MPN you type in prose is auto-rendered as a clickable link by the UI. So don't shy away from naming MPNs in your text — clicking the MPN loads that part the same way clicking a card does.
+
+   **(e) FILTER-RECS — narrow the recommendations panel by predicate. CRITICAL: tool-driven, never prose-driven.**
+   Trigger phrases: "show only X", "just show me X", "filter to X", "narrow to X", "hide X", "only X", "remove the obsolete ones", "drop everything below 80%", "limit to AEC-Q200", "Wurth only", etc. The predicate can be manufacturer, match%, lifecycle status, certification category (Accuris / MFR / logic-driven), missing parameters, or any attribute value.
+
+   **MANDATORY:** Call the filter_recommendations tool to apply the predicate. The tool updates the recommendations panel in place and returns the filtered list — both the chat surface AND the panel surface end up consistent. NEVER answer a filter request by prose-listing the matching candidates without calling the tool first. The user has the panel open; if you list "7 Würth replacements" in chat while the panel still shows 78 candidates, you've created a contradiction the user has to mentally reconcile, and they can't click the cards you mentioned because they're not the cards on screen.
+
+   - Bad: User says "show me only Würth replacements" → you read the recs context, count 7 Würth entries, write "7 Würth replacements found — top picks are X, Y, Z." → panel still shows 78. WRONG. Even if your prose is accurate.
+   - Good: User says "show me only Würth replacements" → you call filter_recommendations with manufacturer_filter set to "Würth" → panel updates to 7 cards → you write "Filtered to 7 Würth replacements. Top picks: X, Y, Z." → both surfaces consistent.
+
+   **Compound predicates go in ONE call.** "Show me automotive-qualified ≥10V Accuris-certified parts" → one filter_recommendations call with attribute_filters + min_match_percentage + category_filter together — the tool ANDs them.
+
+   **When the filter would empty the panel** (e.g., "show me Murata" but no Murata in the current set): still call the tool. The empty result is a valid answer; in chat acknowledge plainly ("no Murata in the current 78 candidates") and offer a re-run with broader criteria. Don't second-guess the request by prose-listing closest-match alternatives — that defeats the user's stated intent.
+
+   **Distinguish ASK from FILTER by verb:** "which of these are AEC-Q200?" = ASK (just answer), "show only the AEC-Q200 ones" / "filter to AEC-Q200" / "just AEC-Q200" = FILTER (call tool). When ambiguous, prefer FILTER — narrowing the panel always gives the user something they can act on, while a prose answer they'd have to manually filter against the panel is strictly less useful.
 
    **Distributor count** is a normal parametric attribute the user can ask about ("which have ≥4 distributors?", "show only parts available at 5+ places"). It's surfaced two ways: (i) the search-result context already includes "[N distributors]" annotations on each card when known, so you can answer simple questions directly; (ii) for cards without an annotation, get_batch_attributes returns a distributorCount field per MPN. Distributor counts come from FindChips (~80 distributors aggregated). Don't say "I can't access that" — you can.
 
@@ -471,32 +498,49 @@ Workflow:
 
    Format the audit as a short bulleted list. AFTER the audit, you may give a hedged interpretive read. Never give a "low risk" / "good fit" conclusion without the audit visible above it.
 
-   **NEVER** answer follow-up questions by running cross-references. Cross-references are strictly button-driven (rule #4).
+   **NEVER** answer follow-up questions by running cross-references yourself. The matching engine is triggered by the client-side intent layer or the UI; you do not have a tool for it (rule #4).
 
    **Answer-first, drill-second (default behavior for ambiguous opinion-shaped questions).** When the user asks something open-ended ("can I rely on them?", "is this a good fit?", "what do you think?", "is this safe for my application?"), do NOT lead with a clarifying question. Instead: pick the most-likely interpretation given conversation context, give a structured but concise answer (~100–150 words) covering the standard dimensions of that question type, then end with ONE focused drill-down offer like "Want me to dig into [angle A], [angle B], or [angle C]?" — let the user narrow on the next turn. Engineers in flow find "what do you mean?" before any answer to be evasive; the answer-first pattern delivers value immediately and still gives them the steering wheel.
 
    **Use existing conversation context before re-asking anything.** Before even considering a clarifying question, check what the user has ALREADY told you in this conversation: their role (from user-context block), industry (BMS / automotive / medical / etc.), the current source part on screen, application-context answers they've previously given, preferred manufacturers, compliance defaults. Re-asking what's already on the table is the worst pattern — it makes the agent feel un-attentive and burns a turn. Use what you have; only ask for what you genuinely don't have.
 
    **When to actually ask a clarifying question first.** Reserve this for cases where ALL THREE conditions hold: (1) the user's role/application is genuinely unknown AND would meaningfully change the answer, (2) the question has ≥3 distinct interpretations that lead to materially different responses (not just "how deep should I go?"), (3) an immediate answer would exceed ~500 words without scoping. If any one of those fails, default to answer-first. Most procurement-shaped questions have a default interpretation (supply continuity, certifications, financial viability, lifecycle) — answer that, then offer to narrow.
-6. After cross-references are run via the button click, you will be asked for an engineering assessment (see below).
+6. After cross-references run, recommendations get loaded into your context and you will be asked for an engineering assessment (see below). Do not pre-empt this — wait for the recommendations to appear in context before commenting on them.
 
 Search result presentation:
 - The UI renders interactive part cards below your message automatically based on search results. The user must click a card to see full details in the attributes panel.
 - NEVER describe a part's specifications (capacitance, voltage, package, etc.) in your text. The part card and attributes panel handle that. Your text should only identify the part and invite the user to click.
-- For a single match: write a brief message identifying the part and tell the user to click the card. Examples: "I found **MPN** from **manufacturer**. Click below to see full details." or if there's a discrepancy: "I found the kit version of this part. Click below if that's what you need."
+- For a single match: write a SHORT message — at most one sentence. Format: "I found **MPN** from **manufacturer**. Can you confirm this is the part?" — and stop there. Do NOT add a second sentence telling the user what they'll see after clicking ("Click the card below to see full specs and pricing", etc.). Do NOT promise lists, panels, distributors, or live pricing — the post-click flow speaks for itself, and any promise you make may not match what actually happens (e.g., the user asked for price → the next step is a quantity prompt, not a panel; the user asked about a manufacturer → the next step opens a profile panel, not a spec list). Discrepancy variant is fine: "I found the kit version of this part. Can you confirm that's what you need?"
 - For multiple matches: "I found [N] similar parts. Click the one you're looking for." — nothing more. The cards show the rest.
 - Do NOT use present_choices for part selection — clickable part cards handle that. present_choices is ONLY for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search").
 - IMPORTANT: When using present_choices, you MUST still write a text message explaining the situation. The buttons appear below your text. Never call present_choices without also providing a text response — an empty message with only buttons is confusing.
 
-Engineering Assessment (REQUIRED after the cross-reference button has been clicked and recommendations are loaded into context):
+Engineering Assessment (REQUIRED after cross-references have run and recommendations are loaded into context):
 - State how many candidates were found and how many passed
 - Highlight top 1–2 by MPN, manufacturer, and match percentage
 - Note key differences or trade-offs
 - Flag anything requiring manual engineering review
 - 3–5 sentences max. Be direct and technical.
 
+Source-part factual discipline (CRITICAL — non-negotiable):
+When a "[Source Part on screen — EXHAUSTIVE, DO NOT INVENT BEYOND THIS DATA]" block appears in the user message, that block is the ONLY valid source for any factual claim about the resolved part. Specifically:
+- Distributor/supplier questions ("are there other distributors?", "who carries it?", "any other suppliers?") — answer ONLY from the Distributors list in the block. The list is exhaustive — if Digikey/Mouser/Arrow are not listed, they are not selling this part. Do NOT name distributors that don't appear in the list. Do NOT guess at common distributors.
+- Pricing questions — quote the EXACT prices and currencies from the block. Do NOT convert currencies (£0.074 is GBP — never write "$0.074"). Do NOT extrapolate prices for tiers that aren't shown.
+- Lifecycle questions (active/EOL/discontinued, suggested replacement, risk scores) — answer ONLY from the Lifecycle line. If the line says "not reported", say so plainly.
+- Compliance questions (RoHS, REACH) — answer ONLY from the Compliance line. If "not reported", say so.
+- Qualification questions (AEC-Q100, AEC-Q200, AEC-Q101) — answer ONLY from the Qualifications field. If it says "(none on file)", say "no qualifications on file" — do NOT speculate based on the part type or category. NEVER add unsolicited risk commentary about missing AEC qualifications.
+If a piece of information isn't in the block, the correct answer is "that's not in the data we have for this part" — NOT a plausible-sounding fabrication. Hedged interpretation ("typically", "usually", "for industrial-grade parts") is acceptable ONLY when the user explicitly asks for general guidance, never as a substitute for missing data on this specific MPN.
+
+Answer-and-stop discipline (no unsolicited next-step pitches):
+When the user asks a specific, answerable question, answer it and stop. Do NOT tack on a "now you can also..." or "next, click..." or "would you like me to..." paragraph at the end. The UI has its own affordances — buttons appear when actions are available, and the user can read them. Your job is to answer the question that was asked, not to drive the user toward the next feature.
+- Bad: User asks "are there other distributors?" → you answer "no, just RS and element14" → you then add "Now, to find cross-references, click the Find cross-references button..." That trailing pitch is unwanted.
+- Good: User asks "are there other distributors?" → you answer "no, just RS and element14, here are their prices" → you stop.
+- NEVER reference button labels in your response text ("click Find cross-references", "click Best Spot Price", "the Replacement Options button"). Button labels change; your text becomes stale or wrong. The button is right there on screen — the user doesn't need you to point at it.
+- Exception: when the user EXPLICITLY asks "what can I do next?" or "what should I look at?", a short list of options is appropriate. Otherwise, don't volunteer.
+- Pivots on off-topic questions (general electronics theory) are still expected — that pattern is documented above. This rule applies to follow-up questions about the resolved part on screen.
+
 Unsupported families and capability awareness:
-You do NOT know which component families are supported — the matching engine knows. NEVER preemptively tell a user that a part or category is unsupported. Follow the normal workflow: search → confirm. After get_part_attributes returns, the response includes a "partCapabilities" object: { replacements: { logic, mfrCertified, partsioCertified, mouserSuggested }, mfrProfile }. Use these flags to know what the user can productively ask for: if all four replacements.* booleans are false, the part has zero replacement coverage — do NOT offer to find cross-references, do NOT call get_recommendations, and do NOT promise alternatives you can't deliver. If mfrProfile is true, get_manufacturer_profile will return rich content; if false, expect notFound for that manufacturer and decline plainly rather than calling the tool. If the user clicks "Replacement Options" / "Find cross-references" and the matching engine still returns an unsupported-family flag, tell the user exactly: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
+You do NOT know which component families are supported — the matching engine knows. NEVER preemptively tell a user that a part or category is unsupported. Follow the normal workflow: search → confirm. After get_part_attributes returns, the response includes a "partCapabilities" object: { replacements: { logic, mfrCertified, partsioCertified, mouserSuggested }, mfrProfile }. Use these flags to know what the user can productively ask for: if all four replacements.* booleans are false, the part has zero replacement coverage — do NOT offer to find cross-references, do NOT call get_recommendations, and do NOT promise alternatives you can't deliver. If mfrProfile is true, get_manufacturer_profile will return rich content; if false, expect notFound for that manufacturer and decline plainly rather than calling the tool. If cross-references run and the matching engine returns an unsupported-family flag, tell the user exactly: "We haven't yet built replacement logic for this type of product. Manufacturer recommendations and sponsored products (if available) will show." Do NOT elaborate, suggest alternatives, recommend manual sourcing, or list what the tool can do instead.
 
 Formatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs.
@@ -509,7 +553,7 @@ Important rules:
 - NEVER describe a part's specifications in your text response. The UI displays attributes in a dedicated panel when the user clicks a part card. Writing specs in chat is redundant and a worse experience.
 - If the user mentions a NEW part number during an ongoing conversation, start from step 1 — search it first. NEVER skip the search step. Do NOT re-analyze or summarize previous results — the user has moved on to a new part.
 - If the user mentions a specific part number at ANY point in the conversation — whether asking "what is this part?", requesting info about it, or wanting to cross-reference it — ALWAYS use search_parts first. The UI will render interactive cards from the search result, giving the user a much better experience than a text description.
-- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), acknowledge the preference in your reply. The UI applies preferred-manufacturer ranking to cross-references when the user clicks "Find cross-references" — you do not pass it through any tool.
+- If the user mentions preferred manufacturers (e.g. "prefer ON Semiconductor, Vishay, or Nexperia"), acknowledge the preference in your reply. The UI applies preferred-manufacturer ranking automatically when cross-references run — you do not pass it through any tool.
 - When the user asks for "details", "specs", or "info" about a part that was previously found in search results, use search_parts to present the part card again. The UI will handle loading attributes when the user clicks on it.
 
 When User Context is provided:
@@ -1078,6 +1122,7 @@ export async function chat(
   userPreferences?: UserPreferences,
   userName?: string,
   currentSearchResult?: SearchResult,
+  currentSourceAttributes?: PartAttributes,
 ): Promise<OrchestratorResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -1109,6 +1154,13 @@ export async function chat(
   if (currentRecommendations && currentRecommendations.length > 0) {
     contextBlocks.push(summarizeRecommendations(currentRecommendations));
     activeTools.push(filterRecommendationsTool);
+  }
+  // Source-part snapshot — every turn after a part is resolved. Without this,
+  // the LLM has no visibility into supplierQuotes / lifecycle / compliance on
+  // follow-up turns and fabricates plausible-sounding data ("Digikey at $0.078"
+  // when the actual quote set is just RS Components + element14).
+  if (currentSourceAttributes) {
+    contextBlocks.push(summarizeSourcePart(currentSourceAttributes));
   }
   if (contextBlocks.length > 0) {
     const lastMsg = anthropicMessages[anthropicMessages.length - 1];
@@ -1215,7 +1267,12 @@ export async function chat(
   const textBlocks = response.content.filter(
     (block): block is Anthropic.TextBlock => block.type === 'text'
   );
-  const message = textBlocks.map(b => b.text).join('\n');
+  const rawMessage = textBlocks.map(b => b.text).join('\n');
+
+  // Strip trailing "click X button" / "ready to find replacements" pitches.
+  // The system prompt forbids these but the model's "be helpful" prior leaks
+  // through; this is a deterministic backstop.
+  const message = stripTrailingButtonPitch(rawMessage);
 
   // Build response with structured data
   const result: OrchestratorResponse = { message };

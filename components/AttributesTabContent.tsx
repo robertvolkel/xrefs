@@ -427,12 +427,11 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
 }
 
 /* ── Supplier display name map ── */
-export const SUPPLIER_DISPLAY: Record<string, string> = {
-  digikey: 'Digikey', mouser: 'Mouser', arrow: 'Arrow', lcsc: 'LCSC',
-  element14: 'element14', farnell: 'Farnell', newark: 'Newark', rs: 'RS Components',
-  tme: 'TME', avnet: 'Avnet', future: 'Future Electronics', rochester: 'Rochester',
-  rutronik: 'Rutronik', verical: 'Verical', chip1stop: 'Chip One Stop',
-};
+// Single source of truth lives in lib/constants/suppliers.ts so chat answers,
+// parts-list columns, and the right-panel SupplierCard all render the same
+// canonical names ("RS Components", not "rs"; "element14" preserves brand casing).
+export { SUPPLIER_DISPLAY, formatSupplierName } from '@/lib/constants/suppliers';
+import { SUPPLIER_DISPLAY as _SUPPLIER_DISPLAY } from '@/lib/constants/suppliers';
 
 /** Format price with currency symbol */
 export function formatPrice(price: number, currency?: string): string {
@@ -446,7 +445,7 @@ export function formatPrice(price: number, currency?: string): string {
 
 /* ── Supplier quote card ── */
 export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
-  const supplierLabel = SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
+  const supplierLabel = _SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
 
   return (

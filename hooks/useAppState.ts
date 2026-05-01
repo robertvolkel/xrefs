@@ -16,6 +16,9 @@ import {
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
+import { detectFilterIntent, detectClearFilterIntent } from '@/lib/services/filterIntentDetector';
+import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
+import { formatSupplierName } from '@/lib/constants/suppliers';
 import {
   searchParts,
   getPartAttributes,
@@ -57,6 +60,18 @@ interface AppState {
   /** Effect-based signal that AppShell consumes to open the MFR side panel
    *  programmatically (used by the show_mfr_profile auto-fire path). */
   autoOpenMfr: string | null;
+  /** True while a clicked recommendation's full attributes are being fetched.
+   *  Drives skeleton placeholders in ComparisonView's Overview/Commercial tabs
+   *  so the panel feels responsive at click time instead of frozen for 3-4s. */
+  isLoadingComparison: boolean;
+  /** Set when the replacement-attributes fetch failed (vs still loading). */
+  comparisonError: boolean;
+  /** Active filter on the recommendations panel (set by dispatchFilterIntent
+   *  or the LLM's filter_recommendations tool). Persists across background
+   *  enrichment passes so a filtered panel doesn't snap back to the full set
+   *  when parts.io / FC enrichment completes and replaces allRecommendations. */
+  currentFilter: import('@/lib/services/recommendationFilter').FilterInput | null;
+  currentFilterLabel: string | null;
 }
 
 const initialState: AppState = {
@@ -77,6 +92,10 @@ const initialState: AppState = {
   activeAttributesTab: 'overview',
   pendingIntent: null,
   autoOpenMfr: null,
+  isLoadingComparison: false,
+  comparisonError: false,
+  currentFilter: null,
+  currentFilterLabel: null,
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -95,6 +114,17 @@ export function useAppState() {
   // Mirrors state.searchResult so async callbacks can pass the current cards
   // on screen to the LLM orchestrator without needing a render-time read.
   const searchResultRef = useRef<SearchResult | null>(null);
+  // Mirrors state.sourceAttributes so the orchestrator gets the canonical
+  // supplier/lifecycle/compliance snapshot on every turn (drives
+  // summarizeSourcePart()). Without this the LLM fabricates supplier names
+  // and prices on follow-up turns.
+  const sourceAttributesRef = useRef<PartAttributes | null>(null);
+  // When the user's find-replacements query also contains a filter predicate
+  // ("show me replacements from Wurth"), stash the original query here so the
+  // filter can be auto-applied AFTER recs land — even if the flow detoured
+  // through context-question or missing-attribute prompts in between. Cleared
+  // on consumption inside showRecsAndDeferAssessment.
+  const pendingPostRecsFilterRef = useRef<string | null>(null);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track whether context questions have been asked (ref avoids stale closure)
@@ -125,6 +155,9 @@ export function useAppState() {
   useEffect(() => {
     searchResultRef.current = state.searchResult;
   }, [state.searchResult]);
+  useEffect(() => {
+    sourceAttributesRef.current = state.sourceAttributes;
+  }, [state.sourceAttributes]);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -185,6 +218,31 @@ export function useAppState() {
     setState((prev) => (prev.activeAttributesTab === 'overview' ? prev : { ...prev, activeAttributesTab: 'overview' }));
   }, [state.sourcePart?.mpn]);
 
+  // Reset to Overview when the user enters a form / replacement / comparison
+  // workflow. The Commercial tab can be lingering from a prior best-price flow
+  // (we auto-switch to it when posting a price answer); during the next flow's
+  // form-fill or recommendations review, Overview/Specs is the more useful
+  // lens. Fires only on entry — transitions BETWEEN flow phases (e.g.,
+  // awaiting-context → finding-matches) don't re-reset, so user-driven
+  // tab changes mid-flow stick.
+  const flowPhases: AppPhase[] = [
+    'awaiting-attributes',
+    'awaiting-context',
+    'finding-matches',
+    'viewing',
+    'comparing',
+  ];
+  const prevPhaseRef = useRef<AppPhase | null>(null);
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    const next = state.phase;
+    prevPhaseRef.current = next;
+    const enteringFlow = flowPhases.includes(next) && !flowPhases.includes(prev as AppPhase);
+    if (enteringFlow) {
+      setState((s) => (s.activeAttributesTab === 'overview' ? s : { ...s, activeAttributesTab: 'overview' }));
+    }
+  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Rotate through status messages on a timer. Returns cleanup function. */
   const startStatusRotation = useCallback((messages: { text: string; delayMs: number }[]) => {
     const timers: NodeJS.Timeout[] = [];
@@ -220,7 +278,10 @@ export function useAppState() {
         enrichWithFCBatch(chunk, signal).then((fcData) => {
           if (signal.aborted || Object.keys(fcData).length === 0) return;
           setState((prev) => {
-            const enriched = prev.recommendations.map(rec => {
+            // Enrich against the FULL source (allRecommendations), NOT the
+            // currently-displayed subset — otherwise filtered-out recs would
+            // be permanently dropped from the source set on every chunk.
+            const enrichedFull = prev.allRecommendations.map(rec => {
               const data = fcData[rec.part.mpn.toLowerCase()];
               if (!data) return rec;
               return {
@@ -233,7 +294,14 @@ export function useAppState() {
                 },
               };
             });
-            return { ...prev, recommendations: enriched, allRecommendations: enriched };
+            // Re-derive the visible subset from the active filter so a
+            // narrowed panel survives the chunk update.
+            const visible = prev.currentFilter
+              ? applyRecommendationFilter(enrichedFull, prev.currentFilter)
+              : enrichedFull;
+            recsRef.current = visible;
+            allRecsRef.current = enrichedFull;
+            return { ...prev, recommendations: visible, allRecommendations: enrichedFull };
           });
         }).catch(() => { /* individual chunk failures don't abort the batch */ })
       );
@@ -313,7 +381,16 @@ export function useAppState() {
       )
         .then((enrichedRecs) => {
           if (signal.aborted || enrichedRecs.length === 0) return;
-          setState((prev) => ({ ...prev, recommendations: enrichedRecs, allRecommendations: enrichedRecs }));
+          // allRecsRef always tracks the full source; recsRef tracks the
+          // displayed subset (filter-aware).
+          allRecsRef.current = enrichedRecs;
+          setState((prev) => {
+            const visible = prev.currentFilter
+              ? applyRecommendationFilter(enrichedRecs, prev.currentFilter)
+              : enrichedRecs;
+            recsRef.current = visible;
+            return { ...prev, recommendations: visible, allRecommendations: enrichedRecs };
+          });
           // Re-merge FC commercial data into the replaced recs (cache hit → instant).
           triggerFCEnrichment(enrichedRecs, signal);
         })
@@ -343,19 +420,51 @@ export function useAppState() {
       if (recs.length === 0) {
         addMessage('assistant', `No cross-references found for ${mpn}.`);
       }
-      setState((prev) => ({ ...prev, phase: 'viewing', recommendations: recs, allRecommendations: recs }));
+      // Sync-update the refs alongside setState. The useEffect-based mirroring
+      // lags by one render, so any code that reads recsRef/allRecsRef
+      // immediately after `await` on this path (notably the chained filter in
+      // handleSearch) would otherwise see stale empty arrays. Also clear any
+      // active filter — a fresh recs load is a clean slate.
+      recsRef.current = recs;
+      allRecsRef.current = recs;
+      setState((prev) => ({
+        ...prev,
+        phase: 'viewing',
+        recommendations: recs,
+        allRecommendations: recs,
+        currentFilter: null,
+        currentFilterLabel: null,
+      }));
 
       // Push the trigger to conversation history. The summaryMsg is a UI-only
       // status line — the orchestrator injects rec context onto the last user
       // message (llmOrchestrator.ts), so the trigger must remain last.
       conversationRef.current.push({ role: 'user', content: conversationContext });
 
+      // Deferred filter consumption: when the user's original find-replacements
+      // query also bundled a filter predicate ("show me replacements from Wurth"),
+      // apply it now that recs are actually loaded. This survives the context-
+      // question gate, the missing-attributes gate, and any other interactive
+      // detour that handleFindReplacements might take before recs land — those
+      // detours would otherwise leave the inline-chain logic in handleSearch
+      // running against an empty allRecsRef. Cleared here regardless of whether
+      // a filter actually matched, so a stale stash from a prior turn doesn't
+      // bleed into a fresh recs load.
+      const stashedFilterQuery = pendingPostRecsFilterRef.current;
+      pendingPostRecsFilterRef.current = null;
+      if (stashedFilterQuery && recs.length > 0) {
+        const filterIntent = detectFilterIntent(stashedFilterQuery, recs);
+        if (filterIntent) {
+          dispatchFilterIntent(filterIntent.filterInput, filterIntent.label, stashedFilterQuery, { echoUserMessage: false });
+        }
+      }
+
       // Fire LLM assessment and Mouser enrichment in background (non-blocking)
       if (recs.length > 0) {
         setStatus('Generating engineering assessment...');
 
         // Background: LLM assessment
-        chatWithOrchestrator(conversationRef.current, recs, signal)
+        chatWithOrchestrator(conversationRef.current, recs, signal, undefined, sourceAttributesRef.current ?? undefined)
           .then((response) => {
             if (signal.aborted) return;
             setStatus('');
@@ -581,27 +690,32 @@ export function useAppState() {
     [addMessage, setStatus, showRecsAndDeferAssessment, state.sourcePart, state.sourceAttributes, state.applicationContext]
   );
 
-  /** Consume `pendingIntent` after part attributes load. Returns true when the
-   *  intent was served (caller should skip the generic action menu). When the
-   *  requested capability isn't available on this part, the intent is cleared
-   *  and a one-line note is queued; the caller falls through to the menu. */
-  const tryAutoFireIntent = useCallback(
-    async (mpn: string, sourceAttrs: PartAttributes): Promise<boolean> => {
-      const intent = state.pendingIntent;
-      if (!intent) return false;
-      // Always clear the pending intent — single-shot per search query.
-      setState((prev) => ({ ...prev, pendingIntent: null }));
+  /** Core dispatch for a known intent against a loaded source part. Used by
+   *  both confirmation-time (initial-search shortcut) and follow-up-time (chat
+   *  message after part is already loaded) entry points. Returns true when the
+   *  intent was served; false if the requested capability isn't available
+   *  (caller decides whether to fall through to the generic menu or hand off
+   *  to the LLM). The two callers differ only in framing — confirmation-time
+   *  uses "Got it — MPN loaded. What quantity?", follow-up time uses just
+   *  "What quantity?" (the part is already on screen). */
+  const dispatchIntent = useCallback(
+    async (
+      intent: PendingIntent,
+      mpn: string,
+      sourceAttrs: PartAttributes,
+      mode: 'fresh' | 'followup' = 'fresh',
+    ): Promise<boolean> => {
       const caps = sourceAttrs.partCapabilities;
+      const partLabel = mode === 'fresh' ? `Got it — **${mpn}** loaded. ` : '';
 
       if (intent === 'best_price') {
         if (!caps?.bestPrice) {
           addMessage(
             'assistant',
-            `Couldn't find supplier pricing for **${mpn}** — here's what's available instead.`,
+            `Couldn't find supplier pricing for **${mpn}**.`,
           );
           return false;
         }
-        // Stash sourceAttributes so the quantity submit can read supplierQuotes.
         setState((prev) => ({
           ...prev,
           phase: 'awaiting-action' as AppPhase,
@@ -609,7 +723,7 @@ export function useAppState() {
         }));
         addMessage(
           'assistant',
-          `Got it — **${mpn}** loaded. What quantity? Pick a common tier or type a custom number.`,
+          `${partLabel}What quantity? Pick a common tier or type a custom number.`,
           { type: 'quantity-prompt', presets: [1, 10, 100, 1_000, 10_000, 100_000], status: 'pending' },
         );
         setStatus('');
@@ -620,12 +734,10 @@ export function useAppState() {
         if (!hasAnyReplacements(sourceAttrs)) {
           addMessage(
             'assistant',
-            `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available. Here's what is available instead.`,
+            `No replacement coverage for **${mpn}** — no rules table for this category and no certified crosses available.`,
           );
           return false;
         }
-        // Same setup presentNextStepChoices does so handleFindReplacements
-        // sees the part as the active source.
         setState((prev) => ({
           ...prev,
           phase: 'awaiting-action' as AppPhase,
@@ -639,12 +751,10 @@ export function useAppState() {
         if (!caps?.mfrProfile) {
           addMessage(
             'assistant',
-            `No detailed profile available for **${sourceAttrs.part.manufacturer}** — here's what is available for this part.`,
+            `No detailed profile available for **${sourceAttrs.part.manufacturer}**.`,
           );
           return false;
         }
-        // Park the part as active + signal AppShell to open the MFR panel.
-        // AppShell's effect picks up autoOpenMfr and clears it after firing.
         setState((prev) => ({
           ...prev,
           phase: 'awaiting-action' as AppPhase,
@@ -653,7 +763,7 @@ export function useAppState() {
         }));
         addMessage(
           'assistant',
-          `Got it — **${mpn}** loaded. Opening **${sourceAttrs.part.manufacturer}**'s profile.`,
+          `${partLabel}Opening **${sourceAttrs.part.manufacturer}**'s profile.`,
         );
         setStatus('');
         return true;
@@ -661,8 +771,117 @@ export function useAppState() {
 
       return false;
     },
-    [state.pendingIntent, addMessage, setStatus, handleFindReplacements],
+    [addMessage, setStatus, handleFindReplacements],
   );
+
+  /** Consume `pendingIntent` after part attributes load (initial-search path). */
+  const tryAutoFireIntent = useCallback(
+    async (mpn: string, sourceAttrs: PartAttributes): Promise<boolean> => {
+      const intent = state.pendingIntent;
+      if (!intent) return false;
+      setState((prev) => ({ ...prev, pendingIntent: null }));
+      return dispatchIntent(intent, mpn, sourceAttrs, 'fresh');
+    },
+    [state.pendingIntent, dispatchIntent],
+  );
+
+  /** Apply a filter intent to the current recommendations panel + chat. Used
+   *  by the follow-up interception path so "show only Würth" / "only AEC-Q200"
+   *  / "hide obsolete" / etc. update the panel deterministically instead of
+   *  going through the LLM (which keeps prose-listing without calling the
+   *  filter_recommendations tool). Mirrors the chat output the LLM SHOULD have
+   *  produced — "Filtered to N {label}. Top picks: ..." — so the follow-up
+   *  feels conversational, not robotic. */
+  const dispatchFilterIntent = useCallback(
+    (
+      filterInput: import('@/lib/services/recommendationFilter').FilterInput,
+      label: string,
+      query: string,
+      opts?: { echoUserMessage?: boolean },
+    ) => {
+      // When chained after another action (e.g., find_replacements that
+      // already pushed the user's query), skip the echo so the chat doesn't
+      // show the same user message twice.
+      const echoUserMessage = opts?.echoUserMessage !== false;
+      if (echoUserMessage) {
+        addMessage('user', query);
+        conversationRef.current.push({ role: 'user', content: query });
+      }
+
+      const sourceRecs = allRecsRef.current;
+      const filtered = applyRecommendationFilter(sourceRecs, filterInput);
+
+      if (filtered.length === 0) {
+        addMessage(
+          'assistant',
+          `No matches in the current ${sourceRecs.length} recommendations for **${label}**. Want me to broaden the search?`,
+        );
+        return;
+      }
+
+      // Update the panel — both visible recs and conversation-history note for
+      // the LLM (so future turns see the filtered count, not the original).
+      // Sync-update recsRef alongside (allRecsRef stays at the full source so
+      // subsequent filter requests narrow from the original 78, not the
+      // already-filtered subset). Also persist the active filter to state so
+      // background enrichment paths (parts.io re-enrichment, FC chunks) can
+      // re-apply it when they replace the full recs set — without this, the
+      // user sees the panel snap back to all-78 a second after filtering.
+      recsRef.current = filtered;
+      setState((prev) => ({ ...prev, recommendations: filtered, currentFilter: filterInput, currentFilterLabel: label }));
+
+      const top3 = filtered.slice(0, 3);
+      const headline = `Filtered to **${filtered.length}** ${label} replacement${filtered.length === 1 ? '' : 's'}.`;
+      const lines: string[] = [headline];
+      if (top3.length > 0) {
+        lines.push('', 'Top picks:');
+        for (const r of top3) {
+          const status = r.part.status ? ` — ${r.part.status}` : '';
+          lines.push(`- **${r.part.mpn}** (${r.matchPercentage.toFixed(0)}%)${status}`);
+        }
+      }
+      const message = lines.join('\n');
+      addMessage('assistant', message);
+      conversationRef.current.push({
+        role: 'assistant',
+        content: `Filtered the recommendations panel to ${filtered.length} ${label} (from ${sourceRecs.length}). The user can see the narrowed cards now.`,
+      });
+    },
+    [addMessage],
+  );
+
+  /** Clear the active filter on the recommendations panel — restores the
+   *  full set. No-op (with a friendly chat note) when no filter is active. */
+  const dispatchClearFilter = useCallback((query: string) => {
+    addMessage('user', query);
+    conversationRef.current.push({ role: 'user', content: query });
+
+    const fullRecs = allRecsRef.current;
+    setState((prev) => {
+      if (!prev.currentFilter) {
+        addMessage(
+          'assistant',
+          `No filter is currently applied — showing all ${prev.allRecommendations.length} recommendations.`,
+        );
+        return prev;
+      }
+      recsRef.current = fullRecs;
+      addMessage(
+        'assistant',
+        `Filter cleared — showing all **${fullRecs.length}** recommendations.`,
+      );
+      conversationRef.current.push({
+        role: 'assistant',
+        content: `Cleared the recommendations filter; panel now shows all ${fullRecs.length} cards.`,
+      });
+      return {
+        ...prev,
+        recommendations: fullRecs,
+        currentFilter: null,
+        currentFilterLabel: null,
+      };
+    });
+  }, [addMessage]);
 
   // ============================================================
   // LLM-POWERED SEARCH FLOW
@@ -687,6 +906,7 @@ export function useAppState() {
           allRecsRef.current.length > 0 ? allRecsRef.current : undefined,
           signal,
           searchResultRef.current ?? undefined,
+          sourceAttributesRef.current ?? undefined,
         );
 
         if (signal.aborted) return; // conversation switched mid-flight
@@ -898,10 +1118,61 @@ export function useAppState() {
     async (query: string) => {
       queryRef.current = query;
       loggedRef.current = false;
+      const intent = detectQueryIntent(query);
+      const sourceAttrs = sourceAttributesRef.current;
+      const sourcePart = state.sourcePart;
+      const currentRecs = allRecsRef.current;
+
+      // Filter-intent shortcut takes PRIORITY when recs are already loaded.
+      // Without this, "show only Würth replacements" matches both find_replacements
+      // (because of "replacements") AND the manufacturer filter — and the older
+      // ordering let find_replacements win, re-running the matching engine and
+      // silently dropping the manufacturer filter. If recs exist on screen, the
+      // user can't be asking for a fresh xref run; they want to narrow what's
+      // already there.
+      if (currentRecs.length > 0) {
+        // Clear-filter intent FIRST — phrasings like "remove the wurth filter"
+        // or "show me all the MFRs again" mention a manufacturer name + the
+        // word "filter", which would otherwise misfire as a fresh apply-filter
+        // request and re-narrow to the same MFR (the bug we just hit).
+        if (detectClearFilterIntent(query)) {
+          dispatchClearFilter(query);
+          return;
+        }
+        const filterIntent = detectFilterIntent(query, currentRecs);
+        if (filterIntent) {
+          dispatchFilterIntent(filterIntent.filterInput, filterIntent.label, query);
+          return;
+        }
+      }
+
+      // Follow-up intent shortcut: when a part is already loaded and the user
+      // types a message that pattern-matches a known capability ("show me
+      // replacements", "best price", "tell me about the manufacturer"),
+      // dispatch the action client-side and skip the LLM round-trip entirely.
+      if (intent && sourceAttrs && sourcePart) {
+        // Stash the query for deferred filter application BEFORE dispatching.
+        // For find_replacements, the dispatched flow may detour through context
+        // questions / missing-attribute prompts before recs actually load —
+        // showRecsAndDeferAssessment consumes this stash when recs land, so
+        // bundled predicates ("from Wurth") survive the detour.
+        if (intent === 'find_replacements') {
+          pendingPostRecsFilterRef.current = query;
+        }
+        addMessage('user', query);
+        conversationRef.current.push({ role: 'user', content: query });
+        const dispatched = await dispatchIntent(intent, sourcePart.mpn, sourceAttrs, 'followup');
+        if (dispatched) return;
+        // Capability missing — dispatchIntent has already shown a one-line note.
+        // Clear the stash so a stale predicate doesn't re-fire on the next recs load.
+        pendingPostRecsFilterRef.current = null;
+        // Fall through to LLM so it can engage with the user's question (e.g.,
+        // explain why coverage is missing, suggest related actions).
+      }
+
       // Pattern-detect user intent so the post-confirmation flow can skip the
       // generic action menu and go straight to what the user asked for. Cleared
       // either when consumed in handleConfirmPart or on the next reset.
-      const intent = detectQueryIntent(query);
       setState((prev) => ({ ...prev, pendingIntent: intent }));
       if (state.llmAvailable === false) {
         await handleSearchDeterministic(query);
@@ -909,7 +1180,7 @@ export function useAppState() {
         await handleSearchWithLLM(query);
       }
     },
-    [state.llmAvailable, handleSearchWithLLM, handleSearchDeterministic]
+    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, handleSearchWithLLM, handleSearchDeterministic]
   );
 
   const handleConfirmPart = useCallback(
@@ -999,7 +1270,7 @@ export function useAppState() {
       const price = formatPrice(opt.unitPrice, opt.currency);
       addMessage(
         'assistant',
-        `Lowest available is qty **${opt.minOrderQty}** from **${opt.supplier}** at **${price}** each. Want me to price that instead?`,
+        `Lowest available is qty **${opt.minOrderQty}** from **${formatSupplierName(opt.supplier)}** at **${price}** each. Want me to price that instead?`,
         {
           type: 'choices',
           choices: [
@@ -1028,13 +1299,13 @@ export function useAppState() {
       const opt = ranked[0];
       const unit = formatPrice(opt.unitPrice, opt.currency);
       const total = formatPrice(opt.totalPrice, opt.currency);
-      lines.push(`At qty **${qtyLabel}**, best spot price is **${opt.supplier}: ${unit}/each** (total ${total}).`);
+      lines.push(`At qty **${qtyLabel}**, best spot price is **${formatSupplierName(opt.supplier)}: ${unit}/each** (total ${total}).`);
     } else {
       lines.push(`At qty **${qtyLabel}**, best spot prices:`, '');
       ranked.forEach((opt, i) => {
         const unit = formatPrice(opt.unitPrice, opt.currency);
         const total = formatPrice(opt.totalPrice, opt.currency);
-        const body = `${opt.supplier}: ${unit}/each (total ${total})`;
+        const body = `${formatSupplierName(opt.supplier)}: ${unit}/each (total ${total})`;
         lines.push(i === 0 ? `${i + 1}. **${body}**` : `${i + 1}. ${body}`);
       });
     }
@@ -1047,7 +1318,7 @@ export function useAppState() {
       lines.push(`Also available at higher MOQ:`);
       for (const opt of result.overMinimum) {
         const unit = formatPrice(opt.unitPrice, opt.currency);
-        lines.push(`- ${opt.supplier}: ${unit}/each at qty ${opt.minOrderQty.toLocaleString()}+`);
+        lines.push(`- ${formatSupplierName(opt.supplier)}: ${unit}/each at qty ${opt.minOrderQty.toLocaleString()}+`);
       }
     }
 
@@ -1146,25 +1417,48 @@ export function useAppState() {
   );
 
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {
+    // Optimistic open: flip to the comparison view IMMEDIATELY with whatever
+    // basic data we have (the recommendation's stored part + matchDetails).
+    // Without this, the UI freezes for 3-4 seconds while getPartAttributes runs
+    // — the click registers but nothing visibly changes, which feels broken.
+    // ComparisonView already falls back to (replacementAttributes ?? recommendation).part
+    // for the header, so the panel is meaningfully populated at open time;
+    // Overview/Commercial tabs render skeletons while attributes load.
+    setState((prev) => ({
+      ...prev,
+      phase: 'comparing',
+      selectedRecommendation: rec,
+      comparisonAttributes: null,
+      isLoadingComparison: true,
+      comparisonError: false,
+    }));
     setStatus('Fetching replacement specs from Digikey...');
     try {
       const attributes = await getPartAttributes(rec.part.mpn);
       setStatus('');
-      setState((prev) => ({
-        ...prev,
-        phase: 'comparing',
-        selectedRecommendation: rec,
-        comparisonAttributes: attributes,
-      }));
+      setState((prev) => {
+        // Guard against race: if the user already navigated away from this rec
+        // (clicked Back, picked a different one), don't clobber newer state.
+        if (prev.selectedRecommendation?.part.mpn !== rec.part.mpn) return prev;
+        return {
+          ...prev,
+          comparisonAttributes: attributes,
+          isLoadingComparison: false,
+          comparisonError: false,
+        };
+      });
     } catch (err) {
       console.error('[handleSelectRecommendation] Failed to fetch attributes for', rec.part.mpn, err);
       setStatus('');
-      setState((prev) => ({
-        ...prev,
-        phase: 'comparing',
-        selectedRecommendation: rec,
-        comparisonAttributes: null,
-      }));
+      setState((prev) => {
+        if (prev.selectedRecommendation?.part.mpn !== rec.part.mpn) return prev;
+        return {
+          ...prev,
+          comparisonAttributes: null,
+          isLoadingComparison: false,
+          comparisonError: true,
+        };
+      });
     }
   }, [setStatus]);
 
@@ -1183,6 +1477,10 @@ export function useAppState() {
     conversationRef.current = [];
     contextAskedRef.current = false;
     attributesAskedRef.current = false;
+    pendingPostRecsFilterRef.current = null;
+    recsRef.current = [];
+    allRecsRef.current = [];
+    sourceAttributesRef.current = null;
     setStatus('');
     setState(initialState);
   }, [setStatus]);
@@ -1437,6 +1735,10 @@ export function useAppState() {
       activeAttributesTab: 'overview',
       pendingIntent: null,
       autoOpenMfr: null,
+      isLoadingComparison: false,
+      comparisonError: false,
+      currentFilter: null,
+      currentFilterLabel: null,
     });
   }, []);
 

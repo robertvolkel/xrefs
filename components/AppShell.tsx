@@ -126,6 +126,8 @@ export default function AppShell() {
         statusText={appState.statusText}
         sourceAttributes={appState.sourceAttributes}
         comparisonAttributes={appState.comparisonAttributes}
+        isLoadingComparison={appState.isLoadingComparison}
+        comparisonError={appState.comparisonError}
         recommendations={appState.recommendations}
         selectedRecommendation={appState.selectedRecommendation}
         conversationId={appState.conversationId}

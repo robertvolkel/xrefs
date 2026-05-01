@@ -52,7 +52,7 @@ function SkeletonFieldRow({ labelWidth, valueWidth }: { labelWidth: number; valu
   );
 }
 
-function OverviewSkeleton() {
+export function OverviewSkeleton() {
   return (
     <Box sx={{ flex: 1, overflowY: 'auto' }}>
       {/* Hero */}
@@ -87,7 +87,7 @@ function OverviewSkeleton() {
   );
 }
 
-function CommercialSkeleton() {
+export function CommercialSkeleton() {
   return (
     <Box sx={{ flex: 1, overflowY: 'auto', px: 2, py: 1.5 }}>
       {Array.from({ length: 4 }).map((_, i) => (
