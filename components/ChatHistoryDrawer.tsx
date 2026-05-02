@@ -26,6 +26,7 @@ interface ChatHistoryDrawerProps {
   onSelectConversation: (id: string) => void;
   onNewChat: () => void;
   onDeleteConversation: (id: string) => void;
+  onClearAllConversations: () => void;
 }
 
 const DRAWER_WIDTH = 260;
@@ -39,6 +40,7 @@ export default function ChatHistoryDrawer({
   onSelectConversation,
   onNewChat,
   onDeleteConversation,
+  onClearAllConversations,
 }: ChatHistoryDrawerProps) {
   const { t } = useTranslation();
 
@@ -84,6 +86,26 @@ export default function ChatHistoryDrawer({
         >
           {t('history.newChat')}
         </Button>
+        {/* Clear all hidden by user request — wiring kept for future re-enable.
+        {conversations.length > 0 && (
+          <Button
+            size="small"
+            onClick={() => {
+              if (window.confirm(t('history.clearAllConfirm'))) {
+                onClearAllConversations();
+              }
+            }}
+            sx={{
+              textTransform: 'none',
+              mt: 0.5,
+              fontSize: '0.75rem',
+              color: 'text.secondary',
+            }}
+          >
+            {t('history.clearAll')}
+          </Button>
+        )}
+        */}
       </Box>
 
       {/* Conversation list */}

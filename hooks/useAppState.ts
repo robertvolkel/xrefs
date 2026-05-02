@@ -125,6 +125,14 @@ export function useAppState() {
   // through context-question or missing-attribute prompts in between. Cleared
   // on consumption inside showRecsAndDeferAssessment.
   const pendingPostRecsFilterRef = useRef<string | null>(null);
+  // Mirror of `pendingIntent` that captures the user's original query string at
+  // search time, so when `tryAutoFireIntent` later fires `find_replacements`
+  // after part confirmation, any filter qualifier bundled into the original
+  // query (e.g. "Chinese replacements for X") gets stashed into
+  // `pendingPostRecsFilterRef` and applied once recs land. Without this, the
+  // qualifier is lost between search-time intent detection and post-confirm
+  // intent dispatch.
+  const pendingIntentQueryRef = useRef<string | null>(null);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
   // Track whether context questions have been asked (ref avoids stale closure)
@@ -452,10 +460,18 @@ export function useAppState() {
       // bleed into a fresh recs load.
       const stashedFilterQuery = pendingPostRecsFilterRef.current;
       pendingPostRecsFilterRef.current = null;
+      // assessmentRecs is what the LLM sees in summarizeRecommendations(). When
+      // a bundled filter is active (e.g. "Chinese replacements"), we MUST hand
+      // the LLM the same filtered slice the user sees in the panel — otherwise
+      // the unfiltered Top 5 leaks Western MFRs into the assessment prose,
+      // contradicting the panel and inviting "Rubycon (Japan-based but…)"
+      // hallucinations downstream.
+      let assessmentRecs = recs;
       if (stashedFilterQuery && recs.length > 0) {
         const filterIntent = detectFilterIntent(stashedFilterQuery, recs);
         if (filterIntent) {
           dispatchFilterIntent(filterIntent.filterInput, filterIntent.label, stashedFilterQuery, { echoUserMessage: false });
+          assessmentRecs = applyRecommendationFilter(recs, filterIntent.filterInput);
         }
       }
 
@@ -464,7 +480,7 @@ export function useAppState() {
         setStatus('Generating engineering assessment...');
 
         // Background: LLM assessment
-        chatWithOrchestrator(conversationRef.current, recs, signal, undefined, sourceAttributesRef.current ?? undefined)
+        chatWithOrchestrator(conversationRef.current, assessmentRecs, signal, undefined, sourceAttributesRef.current ?? undefined)
           .then((response) => {
             if (signal.aborted) return;
             setStatus('');
@@ -555,10 +571,21 @@ export function useAppState() {
     // cannot rely on state.applicationContext being updated yet (Decision
     // #155 regression — without it, the domain filter sees null context and
     // never runs on the main search flow).
-    async (contextOverride?: ApplicationContext | null) => {
+    //
+    // `partOverride` solves the same trap for sourcePart / sourceAttributes
+    // on the auto-fire path: handleConfirmWithLLM does setState({sourcePart})
+    // then awaits getPartAttributes then synchronously calls dispatchIntent
+    // → handleFindReplacements. The captured closure still sees the pre-confirm
+    // state where both are null, so without this override the function bails
+    // at the guard below and the user's chat freezes mid-flight (no context
+    // questions, no recs, no error message).
+    async (
+      contextOverride?: ApplicationContext | null,
+      partOverride?: { mpn: string; sourceAttributes: PartAttributes },
+    ) => {
       const signal = freshAbort();
-      const mpn = state.sourcePart?.mpn;
-      const sourceAttrs = state.sourceAttributes;
+      const mpn = partOverride?.mpn ?? state.sourcePart?.mpn;
+      const sourceAttrs = partOverride?.sourceAttributes ?? state.sourceAttributes;
       if (!mpn || !sourceAttrs) return;
       const effectiveContext = contextOverride ?? state.applicationContext ?? undefined;
 
@@ -738,12 +765,20 @@ export function useAppState() {
           );
           return false;
         }
+        // Sync-prime sourceAttributesRef before handleFindReplacements runs:
+        // showRecsAndDeferAssessment + the LLM-assessment background path read
+        // it for source-part context on the chat call. The useEffect mirror at
+        // line 167 lags by one render, so on the auto-fire path the ref would
+        // otherwise still be null when those downstream paths fire.
+        sourceAttributesRef.current = sourceAttrs;
         setState((prev) => ({
           ...prev,
           phase: 'awaiting-action' as AppPhase,
           sourceAttributes: sourceAttrs,
         }));
-        await handleFindReplacements();
+        // Pass mpn + sourceAttrs through partOverride to bypass the
+        // stale-closure trap on state.sourcePart / state.sourceAttributes.
+        await handleFindReplacements(undefined, { mpn, sourceAttributes: sourceAttrs });
         return true;
       }
 
@@ -779,7 +814,16 @@ export function useAppState() {
     async (mpn: string, sourceAttrs: PartAttributes): Promise<boolean> => {
       const intent = state.pendingIntent;
       if (!intent) return false;
+      const stashedQuery = pendingIntentQueryRef.current;
+      pendingIntentQueryRef.current = null;
       setState((prev) => ({ ...prev, pendingIntent: null }));
+      // Carry bundled filter qualifier ("Chinese", "≥80%", etc.) through to
+      // showRecsAndDeferAssessment, which runs detectFilterIntent on the
+      // stashed query once recs land. Only meaningful for find_replacements
+      // (the only intent that produces a recs panel to filter).
+      if (intent === 'find_replacements' && stashedQuery) {
+        pendingPostRecsFilterRef.current = stashedQuery;
+      }
       return dispatchIntent(intent, mpn, sourceAttrs, 'fresh');
     },
     [state.pendingIntent, dispatchIntent],
@@ -1172,7 +1216,10 @@ export function useAppState() {
 
       // Pattern-detect user intent so the post-confirmation flow can skip the
       // generic action menu and go straight to what the user asked for. Cleared
-      // either when consumed in handleConfirmPart or on the next reset.
+      // either when consumed in handleConfirmPart or on the next reset. Stash
+      // the raw query alongside so any bundled filter qualifier ("Chinese", "≥80%")
+      // survives to the post-recs filter step in showRecsAndDeferAssessment.
+      pendingIntentQueryRef.current = intent ? query : null;
       setState((prev) => ({ ...prev, pendingIntent: intent }));
       if (state.llmAvailable === false) {
         await handleSearchDeterministic(query);
@@ -1478,6 +1525,7 @@ export function useAppState() {
     contextAskedRef.current = false;
     attributesAskedRef.current = false;
     pendingPostRecsFilterRef.current = null;
+    pendingIntentQueryRef.current = null;
     recsRef.current = [];
     allRecsRef.current = [];
     sourceAttributesRef.current = null;

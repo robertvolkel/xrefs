@@ -115,6 +115,30 @@ function detectCategoryIntent(query: string): FilterIntent | null {
   return null;
 }
 
+/** Detect an origin/region filter — "Chinese", "Asian", "Western", etc. In
+ *  this codebase Chinese MFRs == Atlas-sourced (Decision #161); the resolver
+ *  populates `XrefRecommendation.part.mfrOrigin` for every rec regardless of
+ *  whether attributes came from Digikey, Atlas, parts.io, or Mouser.
+ *
+ *  Does NOT require a filter verb — origin words are inherently narrowing in
+ *  this product context (you don't ask "is this part Chinese?" to a recs
+ *  panel; you say it because you want to see only those). False positives
+ *  here are cheap; the user can clear the filter with "show all". */
+function detectOriginIntent(query: string): FilterIntent | null {
+  // Western FIRST so "non-chinese" / "non chinese" doesn't get swallowed by
+  // the bare \bchinese\b atlas pattern below.
+  if (/\b(western|american|european)\b/i.test(query)
+      || /\bnon[\s-]?chinese\b/i.test(query)) {
+    return { filterInput: { mfr_origin_filter: 'western' }, label: 'Western MFRs' };
+  }
+  // Atlas / Chinese MFRs
+  if (/\b(chinese|china|prc|mainland|asian|asia)\b/i.test(query)
+      || /\b(made|from|sourced)\s+in\s+china\b/i.test(query)) {
+    return { filterInput: { mfr_origin_filter: 'atlas' }, label: 'Chinese MFRs' };
+  }
+  return null;
+}
+
 /** Detect a manufacturer filter — needs both a verb and a manufacturer name
  *  recognizable in the current recs set. */
 function detectManufacturerIntent(query: string, recs: XrefRecommendation[]): FilterIntent | null {
@@ -214,6 +238,7 @@ export function detectFilterIntent(
     ?? detectMatchPctIntent(trimmed)
     ?? detectQualificationIntent(trimmed)
     ?? detectCategoryIntent(trimmed)
+    ?? detectOriginIntent(trimmed)
     ?? detectManufacturerIntent(trimmed, recs)
   );
 }

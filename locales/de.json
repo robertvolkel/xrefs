@@ -19,7 +19,9 @@
   },
   "history": {
     "newChat": "Neuer Chat",
-    "empty": "Noch keine Gespräche. Suchen Sie nach einem Bauteil, um zu beginnen."
+    "empty": "Noch keine Gespräche. Suchen Sie nach einem Bauteil, um zu beginnen.",
+    "clearAll": "Alle löschen",
+    "clearAllConfirm": "Alle Gespräche löschen? Dies kann nicht rückgängig gemacht werden."
   },
   "accountSettings": {
     "title": "Meine Kontoeinstellungen",

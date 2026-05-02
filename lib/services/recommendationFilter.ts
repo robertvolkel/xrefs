@@ -23,6 +23,11 @@ export interface FilterInput {
    *  'third_party_certified' (Accuris/Mouser), 'manufacturer_certified' (MFR cross-ref),
    *  'logic_driven' (rule-engine match). Maps to UI category chips. */
   category_filter?: RecommendationCategory;
+  /** Narrow to recommendations from a specific manufacturer-origin region.
+   *  'atlas' = Chinese MFRs (Atlas-sourced). 'western' = US/EU/JP/etc.
+   *  Maps to XrefRecommendation.part.mfrOrigin, which is populated for every
+   *  rec via the manufacturer alias resolver regardless of dataSource. */
+  mfr_origin_filter?: 'atlas' | 'western';
 }
 
 /** Extract a numeric value from a string, handling SI prefixes (e.g. "1 kOhms" → 1000,
@@ -70,6 +75,10 @@ export function applyRecommendationFilter(
   if (input.category_filter) {
     const target = input.category_filter;
     filtered = filtered.filter(r => deriveRecommendationCategories(r).includes(target));
+  }
+  if (input.mfr_origin_filter) {
+    const target = input.mfr_origin_filter;
+    filtered = filtered.filter(r => r.part.mfrOrigin === target);
   }
   if (input.exclude_failing_parameters && input.exclude_failing_parameters.length > 0) {
     const excludeNames = input.exclude_failing_parameters.map(n => n.toLowerCase());

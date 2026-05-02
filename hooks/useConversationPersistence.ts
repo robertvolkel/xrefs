@@ -29,6 +29,7 @@ interface ConversationPersistenceResult {
   handleSelectConversation: (id: string) => Promise<void>;
   handleNewChat: () => void;
   handleDeleteConversation: (id: string) => Promise<void>;
+  handleClearAllConversations: () => Promise<void>;
   /** Called on hydration to set recsRevealed externally */
   onHydrateRecsRevealed: (revealed: boolean) => void;
 }
@@ -41,7 +42,7 @@ export function useConversationPersistence(
   const {
     conversations, loading: convoLoading,
     create: createConvo, save: saveConvo, load: loadConvo,
-    remove: removeConvo, refresh: refreshConvos,
+    remove: removeConvo, removeAll: removeAllConvos, refresh: refreshConvos,
   } = useConversations();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -132,6 +133,13 @@ export function useConversationPersistence(
     }
   }, [removeConvo, appState.conversationId, appState.handleReset]);
 
+  const handleClearAllConversations = useCallback(async () => {
+    await removeAllConvos();
+    if (appState.conversationId) {
+      appState.handleReset();
+    }
+  }, [removeAllConvos, appState.conversationId, appState.handleReset]);
+
   return {
     conversations,
     convoLoading,
@@ -140,6 +148,7 @@ export function useConversationPersistence(
     handleSelectConversation,
     handleNewChat,
     handleDeleteConversation,
+    handleClearAllConversations,
     onHydrateRecsRevealed: setRecsRevealed,
   };
 }

@@ -149,6 +149,7 @@ export interface DesktopLayoutProps {
   onSelectConversation: (id: string) => Promise<void>;
   onNewChat: () => void;
   onDeleteConversation: (id: string) => Promise<void>;
+  onClearAllConversations: () => Promise<void>;
 
   // Inline MPN linkification for assistant messages.
   knownMpns?: Set<string>;
@@ -169,7 +170,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onSelectRecommendation, onBackToRecommendations,
     onManufacturerClick, onExpandChat,
     onToggleHistory, onCloseHistory,
-    onSelectConversation, onNewChat, onDeleteConversation,
+    onSelectConversation, onNewChat, onDeleteConversation, onClearAllConversations,
     knownMpns, onMpnClick,
     activeAttributesTab, onAttributesTabChange,
   } = props;
@@ -198,6 +199,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         onSelectConversation={onSelectConversation}
         onNewChat={onNewChat}
         onDeleteConversation={onDeleteConversation}
+        onClearAllConversations={onClearAllConversations}
       />
       <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
         <ParticleWaveBackground visible={!showAttributesPanel} />

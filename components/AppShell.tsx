@@ -164,6 +164,7 @@ export default function AppShell() {
         onSelectConversation={persistence.handleSelectConversation}
         onNewChat={persistence.handleNewChat}
         onDeleteConversation={persistence.handleDeleteConversation}
+        onClearAllConversations={persistence.handleClearAllConversations}
         knownMpns={knownMpns}
         onMpnClick={appState.handleMpnClick}
       />

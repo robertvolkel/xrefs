@@ -143,6 +143,72 @@ describe('detectFilterIntent — match percentage', () => {
   });
 });
 
+describe('detectFilterIntent — origin (Chinese / Western)', () => {
+  // Origin filter relies on Part.mfrOrigin — populated for every rec by the
+  // manufacturer alias resolver in production. We don't need recs in the set
+  // that match the origin for the detector itself to fire; the dispatcher
+  // handles the empty-result case.
+  const recsWithOrigin: XrefRecommendation[] = [
+    {
+      part: {
+        mpn: 'CL10A106KP8NNNC', manufacturer: 'Samsung Electro-Mechanics',
+        description: 'MLCC', detailedDescription: 'MLCC', category: 'Capacitors',
+        subcategory: 'Aluminum Electrolytic', status: 'Active', mfrOrigin: 'western',
+      },
+      matchPercentage: 84, matchDetails: [],
+    },
+    {
+      part: {
+        mpn: 'CC0805KKX5R7BB106', manufacturer: '3PEAK',
+        description: 'MLCC', detailedDescription: 'MLCC', category: 'Capacitors',
+        subcategory: 'Aluminum Electrolytic', status: 'Active', mfrOrigin: 'atlas',
+      },
+      matchPercentage: 80, matchDetails: [],
+    },
+  ];
+
+  it.each([
+    'show only Chinese',
+    'Chinese alternatives',
+    'find me Chinese replacements',
+    'Asian alternatives',
+    'made in China',
+    'from China',
+    'sourced in China',
+    'PRC manufacturers only',
+    'mainland China parts',
+  ])('matches "%s" → atlas', (q) => {
+    expect(detectFilterIntent(q, recsWithOrigin)?.filterInput.mfr_origin_filter).toBe('atlas');
+  });
+
+  it.each([
+    'show only Western',
+    'Western alternatives',
+    'American replacements',
+    'European MFRs',
+    'non-Chinese',
+    'non chinese only',
+  ])('matches "%s" → western', (q) => {
+    expect(detectFilterIntent(q, recsWithOrigin)?.filterInput.mfr_origin_filter).toBe('western');
+  });
+
+  it('label is human-readable', () => {
+    expect(detectFilterIntent('Chinese only', recsWithOrigin)?.label).toBe('Chinese MFRs');
+    expect(detectFilterIntent('Western only', recsWithOrigin)?.label).toBe('Western MFRs');
+  });
+
+  it('does NOT match when origin word is absent', () => {
+    expect(detectFilterIntent('show only Murata', recsWithOrigin)?.filterInput.mfr_origin_filter).toBeUndefined();
+  });
+
+  it('takes priority over manufacturer detector when both could match', () => {
+    // "Chinese Murata" — origin is the more specific signal here
+    const r = detectFilterIntent('show only Chinese Murata', recsWithOrigin);
+    expect(r?.filterInput.mfr_origin_filter).toBe('atlas');
+    expect(r?.filterInput.manufacturer_filter).toBeUndefined();
+  });
+});
+
 describe('detectFilterIntent — category', () => {
   it('matches "only Accuris certified"', () => {
     const result = detectFilterIntent('show only Accuris certified', sampleRecs);

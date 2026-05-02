@@ -19,7 +19,9 @@
   },
   "history": {
     "newChat": "新对话",
-    "empty": "暂无对话。请搜索一个元器件以开始。"
+    "empty": "暂无对话。请搜索一个元器件以开始。",
+    "clearAll": "全部清除",
+    "clearAllConfirm": "删除所有对话吗？此操作无法撤销。"
   },
   "accountSettings": {
     "title": "我的账户设置",

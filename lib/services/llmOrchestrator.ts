@@ -268,6 +268,11 @@ const filterRecommendationsTool: Anthropic.Tool = {
         enum: ['logic_driven', 'manufacturer_certified', 'third_party_certified'],
         description: 'Narrow to a single trust category. "third_party_certified" = Accuris Certified (parts.io FFF/functional) OR Mouser suggested. "manufacturer_certified" = MFR-uploaded cross-references. "logic_driven" = matched by the rule engine (may also be certified). Use this when the user asks for Accuris-certified / MFR-certified / certified-only results.',
       },
+      mfr_origin_filter: {
+        type: 'string',
+        enum: ['atlas', 'western'],
+        description: 'Narrow by manufacturer origin. "atlas" = Chinese MFRs (Atlas-sourced). "western" = US/EU/JP and other non-Chinese MFRs. Use this when the user asks for Chinese / Asian / Western / American / European / non-Chinese replacements.',
+      },
     },
     required: [],
   },
@@ -458,7 +463,7 @@ Workflow:
    **(d) LINK** — nothing for you to do, but worth knowing: any MPN you type in prose is auto-rendered as a clickable link by the UI. So don't shy away from naming MPNs in your text — clicking the MPN loads that part the same way clicking a card does.
 
    **(e) FILTER-RECS — narrow the recommendations panel by predicate. CRITICAL: tool-driven, never prose-driven.**
-   Trigger phrases: "show only X", "just show me X", "filter to X", "narrow to X", "hide X", "only X", "remove the obsolete ones", "drop everything below 80%", "limit to AEC-Q200", "Wurth only", etc. The predicate can be manufacturer, match%, lifecycle status, certification category (Accuris / MFR / logic-driven), missing parameters, or any attribute value.
+   Trigger phrases: "show only X", "just show me X", "filter to X", "narrow to X", "hide X", "only X", "remove the obsolete ones", "drop everything below 80%", "limit to AEC-Q200", "Wurth only", "Chinese replacements only", "Western alternatives", etc. The predicate can be manufacturer, match%, lifecycle status, certification category (Accuris / MFR / logic-driven), MFR origin region (mfr_origin_filter: "atlas" for Chinese / "western" for non-Chinese), missing parameters, or any attribute value.
 
    **MANDATORY:** Call the filter_recommendations tool to apply the predicate. The tool updates the recommendations panel in place and returns the filtered list — both the chat surface AND the panel surface end up consistent. NEVER answer a filter request by prose-listing the matching candidates without calling the tool first. The user has the panel open; if you list "7 Würth replacements" in chat while the panel still shows 78 candidates, you've created a contradiction the user has to mentally reconcile, and they can't click the cards you mentioned because they're not the cards on screen.
 
@@ -530,6 +535,23 @@ When a "[Source Part on screen — EXHAUSTIVE, DO NOT INVENT BEYOND THIS DATA]" 
 - Compliance questions (RoHS, REACH) — answer ONLY from the Compliance line. If "not reported", say so.
 - Qualification questions (AEC-Q100, AEC-Q200, AEC-Q101) — answer ONLY from the Qualifications field. If it says "(none on file)", say "no qualifications on file" — do NOT speculate based on the part type or category. NEVER add unsolicited risk commentary about missing AEC qualifications.
 If a piece of information isn't in the block, the correct answer is "that's not in the data we have for this part" — NOT a plausible-sounding fabrication. Hedged interpretation ("typically", "usually", "for industrial-grade parts") is acceptable ONLY when the user explicitly asks for general guidance, never as a substitute for missing data on this specific MPN.
+
+Replacement-coverage discipline (CRITICAL — applies pre-recs):
+Cross-reference candidates exist ONLY when the matching engine has run and produced them — i.e. when a "Recommendation summary" block appears in the user message. If the user asks for replacements (or filtered replacements like "Chinese alternatives", "TI replacements", "automotive-grade subs") and NO recommendation block is in your context, you must NOT:
+- list hypothetical candidate MPNs or manufacturer names (e.g. "Capxon, Lelon, Rubycon China make 1µF/50V radials") — these are fabrications, every one of them
+- comment on which manufacturers "likely" make the part or "have strong coverage" of the spec — you have no signal for this; the matching engine does
+- speculate about Atlas/Digikey/Mouser/parts.io coverage of the requested category — you do not know what is in those sources for this part until the engine runs
+- describe the request as "challenging" or "limited" based on category-level pattern matching — the engine has not yet been consulted
+The matching engine runs after part confirmation (the user clicks a part card or the system auto-confirms a unique match). Until then, your only job on a replacement-shaped request is to acknowledge the request and let the part card(s) render. Acceptable response when search returns multiple cards on a bundled-intent query like "find Chinese replacements for X": "Pick one of these and I'll pull cross-references — your Chinese-MFR filter will apply automatically." Acceptable when search returns a single card: a one-line confirmation; the engine will fire on auto-confirm. NOT acceptable: any prose listing plausible alternatives, vendor categories, or coverage caveats. This applies to every variant of the bundled-intent shape — origin filters (Chinese / Western / Japanese), MFR filters (TI alternatives), qualification filters (automotive AEC-Q parts), category filters (low-cost subs), and any combination thereof.
+
+Recommendation-block factual discipline (CRITICAL — applies post-recs):
+When a "[Context: N replacement candidates found…]" block appears in the user message, that block is the ONLY valid source for claims about candidate MFRs/MPNs. The block contains exactly: (a) candidate counts and category breakdowns, (b) a Top 5 list with MPN (MFR, match%) plus any cert tags, (c) the filterable parameter catalog with sample values, (d) an automotive-qualification hint when applicable. Anything beyond those four pieces is NOT in your context — it is training-data speculation, and stating it as fact is a fabrication. Specifically:
+- MFR/MPN identity — Only name candidates that appear in the Top 5. Never list additional MPNs or manufacturer names by inferring them from the part category (e.g. don't say "companies that make 1µF/50V radials include Capxon, Lelon, Rubycon"). If the user asks about a MFR not in the Top 5, say "that's not in the top candidates for this part."
+- Match percentages — Quote only the numbers in the Top 5. Don't round up to "95%+" if the actual top is 87%; don't say "leads the field" when only 5 are visible.
+- Geographic origin / nationality — Never claim a MFR is "Taiwanese", "Japan-based", "Chinese", "European", "American", etc. The recommendation block does not carry that information. The panel may show country flags, but you do not have access to those flags. If the user asks about origin, say "the panel shows origin badges" or route them to the manufacturer profile tool (get_manufacturer_profile).
+- Certifications — Don't claim a candidate "carries IATF 16949" or "has AEC-Q200 coverage" or "is automotive-grade" unless that fact appears in the matchDetails or the Filterable parameters list. Generic statements like "verify automotive certs on your selected candidate before committing" are fine; specific claims about which certs which MFR holds are not.
+- Market positioning / business attributes — Never describe candidates as "established", "premium-priced", "budget alternative", "tier 1 / tier 2", "broad distributor coverage", "strong supply credentials", "vertically integrated", "with significant China operations", or any similar business-qualitative claim. The recommendation block does not carry market data. The Commercial tab on the part card is the source for distributor/pricing facts; the manufacturer-profile tool is the source for company-level facts.
+Acceptable assessment shape: "Top match is X (Y%) — passes all rules. Z is the next strongest at W%, with one parameter mismatch on <field name from matchDetails>. Confirm <spec from matchDetails> against your design before committing." NOT acceptable: any sentence that names a MFR by attribute (origin, cert, market position, supply chain reputation) that isn't literally in the recommendation block.
 
 Answer-and-stop discipline (no unsolicited next-step pitches):
 When the user asks a specific, answerable question, answer it and stop. Do NOT tack on a "now you can also..." or "next, click..." or "would you like me to..." paragraph at the end. The UI has its own affordances — buttons appear when actions are available, and the user can read them. Your job is to answer the question that was asked, not to drive the user toward the next feature.
@@ -1314,7 +1336,7 @@ Your role:
 
 Tool usage:
 - Use filter_recommendations when the user wants to narrow the existing list (e.g. "show only TDK", "hide obsolete parts", "only parts with >80% match", "only Accuris certified", "automotive qualified ≥10V Accuris certified").
-- Combine multiple predicates into a SINGLE filter_recommendations call — the tool ANDs them (manufacturer_filter, min_match_percentage, exclude_obsolete, exclude_failing_parameters, attribute_filters, category_filter).
+- Combine multiple predicates into a SINGLE filter_recommendations call — the tool ANDs them (manufacturer_filter, min_match_percentage, exclude_obsolete, exclude_failing_parameters, attribute_filters, category_filter, mfr_origin_filter).
 - For attribute filters, copy parameter names EXACTLY from the "Filterable parameters" list in the context — never invent or rephrase (e.g. use "Voltage Rated" verbatim, not "Rated Voltage").
 - Use refine_replacements when the user provides a NEW requirement that changes how parts are evaluated (e.g. "I need AEC-Q200 compliance", "voltage must be 50V").
 - Do NOT use any tool for general questions — answer from context.
