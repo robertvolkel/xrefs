@@ -18,6 +18,7 @@ import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/b
 import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
 import { detectFilterIntent, detectClearFilterIntent } from '@/lib/services/filterIntentDetector';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
+import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import {
   searchParts,
@@ -444,10 +445,13 @@ export function useAppState() {
         currentFilterLabel: null,
       }));
 
-      // Push the trigger to conversation history. The summaryMsg is a UI-only
-      // status line — the orchestrator injects rec context onto the last user
-      // message (llmOrchestrator.ts), so the trigger must remain last.
-      conversationRef.current.push({ role: 'user', content: conversationContext });
+      // (Conversation-history trigger push removed — it was bait for the
+      // post-recs LLM assessment that lived here previously. Future LLM
+      // follow-ups via handleSearchWithLLM still see rec context on each
+      // call via summarizeRecommendations(), so dropping the trigger does
+      // not lose visibility. `conversationContext` is unused now but kept on
+      // the signature to avoid touching every call site.)
+      void conversationContext;
 
       // Deferred filter consumption: when the user's original find-replacements
       // query also bundled a filter predicate ("show me replacements from Wurth"),
@@ -475,23 +479,24 @@ export function useAppState() {
         }
       }
 
-      // Fire LLM assessment and Mouser enrichment in background (non-blocking)
       if (recs.length > 0) {
-        setStatus('Generating engineering assessment...');
-
-        // Background: LLM assessment
-        chatWithOrchestrator(conversationRef.current, assessmentRecs, signal, undefined, sourceAttributesRef.current ?? undefined)
-          .then((response) => {
-            if (signal.aborted) return;
-            setStatus('');
-            if (response?.message) {
-              conversationRef.current.push({ role: 'assistant', content: response.message });
-              addMessage('assistant', response.message);
-            }
-          })
-          .catch(() => {
-            if (!signal.aborted) setStatus('');
-          });
+        // Post a deterministic 1-2 line summary in chat. The previous LLM
+        // assessment that ran here proved unreliable — three rounds of
+        // system-prompt tightening could not stop Sonnet from fabricating
+        // MFR origin / cert / supply-chain claims that were never in the
+        // recommendation block. Every value in the deterministic summary
+        // traces back to a card the user can see, so by construction it
+        // cannot fabricate. When a bundled filter matched, dispatchFilterIntent
+        // already posted "Filtered to N <label> replacements + Top picks"
+        // which serves the same role — skip the deterministic summary then
+        // to avoid double-posting.
+        const filterApplied = assessmentRecs !== recs;
+        if (!filterApplied) {
+          const summary = buildRecsSummary(assessmentRecs, mpn);
+          addMessage('assistant', summary);
+          conversationRef.current.push({ role: 'assistant', content: summary });
+        }
+        setStatus('');
 
         // Background: FindChips candidate enrichment (pricing / lifecycle / risk).
         triggerFCEnrichment(recs, signal);

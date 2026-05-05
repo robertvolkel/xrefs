@@ -81,8 +81,12 @@ const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
 // ─── Marker for description-extracted params ──────────────
+// Legacy: _source: 'desc_extract' (pre-provenance migration)
+// Current: source: 'extraction' (post-provenance migration)
+// Both forms are recognized; new writes use the current form.
 
-const DESC_EXTRACT_MARKER = 'desc_extract';
+const DESC_EXTRACT_MARKER_LEGACY = 'desc_extract';
+const EXTRACTION_SOURCE = 'extraction';
 
 // ─── Fetch products ───────────────────────────────────────
 
@@ -91,7 +95,14 @@ interface AtlasProduct {
   mpn: string;
   family_id: string | null;
   description: string;
-  parameters: Record<string, { value?: string; numericValue?: number; unit?: string; _source?: string }>;
+  parameters: Record<string, {
+    value?: string;
+    numericValue?: number;
+    unit?: string;
+    source?: 'atlas' | 'extraction' | 'manual';
+    ingested_at?: string;
+    _source?: string; // legacy marker, still recognized for backwards-compat
+  }>;
 }
 
 async function fetchProducts(): Promise<AtlasProduct[]> {
@@ -143,10 +154,11 @@ function getExistingAttrIds(parameters: Record<string, unknown>): Set<string> {
 // ─── Check if product was already processed ───────────────
 
 function wasAlreadyProcessed(parameters: Record<string, unknown>): boolean {
-  // Check if any parameter key starts with the marker prefix
+  // Recognize both new (source: 'extraction') and legacy (_source: 'desc_extract') markers.
   return Object.keys(parameters || {}).some(key => {
     const val = parameters[key] as Record<string, unknown> | undefined;
-    return val && typeof val === 'object' && val._source === DESC_EXTRACT_MARKER;
+    if (!val || typeof val !== 'object') return false;
+    return val.source === EXTRACTION_SOURCE || val._source === DESC_EXTRACT_MARKER_LEGACY;
   });
 }
 
@@ -221,10 +233,12 @@ async function processProduct(product: AtlasProduct): Promise<ProcessResult> {
     // Write to Supabase
     if (!dryRun && newAttrs.length > 0) {
       const updatedParams = { ...parameters };
+      const nowIso = new Date().toISOString();
       for (const attr of newAttrs) {
         updatedParams[attr.attributeId] = {
           value: attr.value,
-          _source: DESC_EXTRACT_MARKER,
+          source: EXTRACTION_SOURCE,
+          ingested_at: nowIso,
         };
       }
 

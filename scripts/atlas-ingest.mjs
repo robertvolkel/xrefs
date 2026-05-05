@@ -19,8 +19,9 @@
  * Uses service role key to bypass RLS for admin writes.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
+import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
 // ─── Load Gaia dictionaries from shared JSON ────────────
@@ -627,6 +628,81 @@ const FAMILY_PARAMS = {
     'polarity': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 10 },
     'vds (v)': { attributeId: 'vrrm', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 2 },
     'cj (pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
+    // YANGJIE-specific param names (verbose "Electrical Parameters X" schema)
+    'electrical parameters vrrm': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'electrical parameters vr': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'electrical parameters if': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'electrical parameters vf@if': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'electrical parameters ifsm(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'electrical parameters trr@rg-1': { attributeId: 'trr', attributeName: 'Reverse Recovery Time (trr)', unit: 'ns', sortOrder: 7 },
+    'electrical parameters ir': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', sortOrder: 8 },
+    // YANGJIE — VF / VR / IO variants (Forward/Reverse voltage and current)
+    'vf_max(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'vf@if(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'vfm@if(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'vfm@if tj=25℃(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'vf@iftj=125℃(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf @ 125°C)', unit: 'V', sortOrder: 5 },
+    'forward voltage(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'forward  voltage vf(v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'io_max(a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'rated lo(a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'if (a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'if(av) d=0.5tc=110℃ (a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'if(av)d=0.5tc=125℃(a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'if(av)@tc(a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'iftj=125℃(a)': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'vr(v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'vr (v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'vrm(v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'vrm (v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'vrm_max(v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'vrm_max (v)': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    // YANGJIE — IFSM variants (surge current)
+    'ifsm_max(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'ifsm 10ms(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'ifsm10ms(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'ifsmt=10mstj=45℃(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'ifsmt=8.3mstj=45℃(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'itsm10ms(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'forward surge current ifsm(a)': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    // YANGJIE — IR (reverse leakage) variants
+    'ir@25℃ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 25°C)', unit: 'µA', sortOrder: 8 },
+    'ir@25℃ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 25°C)', unit: 'mA', sortOrder: 8 },
+    'ir@100℃ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 100°C)', unit: 'µA', sortOrder: 8 },
+    'ir@100℃ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 100°C)', unit: 'mA', sortOrder: 8 },
+    'ir@125℃ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 125°C)', unit: 'µA', sortOrder: 8 },
+    'ir@125℃ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir @ 125°C)', unit: 'mA', sortOrder: 8 },
+    'ir@vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir@vr(μa)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir(μa)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir (ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'irm(μa)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir Max)', unit: 'µA', sortOrder: 8 },
+    'reverse leakage current ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    // YANGJIE — Trr / Cj / thermal
+    'trr_max(ns)': { attributeId: 'trr', attributeName: 'Reverse Recovery Time (trr)', unit: 'ns', sortOrder: 7 },
+    'trr @rg_1(ns)': { attributeId: 'trr', attributeName: 'Reverse Recovery Time (trr)', unit: 'ns', sortOrder: 7 },
+    'cj(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
+    'cj _typ(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
+    // Canonical attributeIds (no _ prefix) so the matching engine sees them.
+    // The pre-existing _rth_jc / _pd entries in this dict were silently dropped
+    // by the script's "skip _*" rule.
+    'rθja(℃/w)': { attributeId: 'rth_ja', attributeName: 'Thermal Resistance (Rth j-a)', unit: '°C/W', sortOrder: 91 },
+    'rth(j-c)(℃/w)': { attributeId: 'rth_jc', attributeName: 'Thermal Resistance (Rth j-c)', unit: '°C/W', sortOrder: 90 },
+    'rth(j-c) (℃/w)': { attributeId: 'rth_jc', attributeName: 'Thermal Resistance (Rth j-c)', unit: '°C/W', sortOrder: 90 },
+    'thermal resistance rthj-c(°c/w)': { attributeId: 'rth_jc', attributeName: 'Thermal Resistance (Rth j-c)', unit: '°C/W', sortOrder: 90 },
+    // YANGJIE — power dissipation variants
+    'pd(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 91 },
+    'pd (w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 91 },
+    'pcm(mw)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 91 },
+    'total power dissipation ptot (w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 91 },
+    'total power dissipation ptot(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 91 },
+    // YANGJIE — junction temp variants (operational, but worth surfacing under canonical id)
+    'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
+    'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
+    'tj (ºc)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
+    'tj_max (°c)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
+    'tjm(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
+    'maximum junction temperature (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
   },
 
   // ─── B3 Zener Diodes ───────────────────────────────────
@@ -660,6 +736,23 @@ const FAMILY_PARAMS = {
     'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
     'pd(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
+    // YANGJIE — Zener voltage / test current / impedance (canonical IDs)
+    'vz@izt(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
+    'vz@izt_min(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Min)', unit: 'V', sortOrder: 1 },
+    'vz@izt_nom(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Nominal)', unit: 'V', sortOrder: 1 },
+    'vz@izt_max(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Max)', unit: 'V', sortOrder: 1 },
+    'vz_min@izt(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Min)', unit: 'V', sortOrder: 1 },
+    'vz_typ@izt(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Typical)', unit: 'V', sortOrder: 1 },
+    'vz_max@izt(v)': { attributeId: 'vz', attributeName: 'Zener Voltage (Max)', unit: 'V', sortOrder: 1 },
+    'izt(ma)': { attributeId: 'izt', attributeName: 'Test Current (Izt)', unit: 'mA', sortOrder: 5 },
+    'izk(ma)': { attributeId: 'izk', attributeName: 'Knee Current (Izk)', unit: 'mA', sortOrder: 5 },
+    'izm(ma)': { attributeId: 'izm', attributeName: 'Reverse Current (Izm)', unit: 'mA', sortOrder: 5 },
+    'zzt@izt(ω)': { attributeId: 'zzt', attributeName: 'Zener Impedance (Zzt)', unit: 'Ω', sortOrder: 4 },
+    'zzk@izk(ω)': { attributeId: 'zzk', attributeName: 'Knee Impedance (Zzk)', unit: 'Ω', sortOrder: 4 },
+    'pd(mw)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 3 },
+    'pd (w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
+    'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 9 },
+    'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 9 },
   },
 
   // ─── B4 TVS Diodes ─────────────────────────────────────
@@ -704,6 +797,39 @@ const FAMILY_PARAMS = {
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
+    // YANGJIE — TVS-specific param names (canonical attributeIds)
+    // Note: B4 logic table only has `vbr` (no separate min/max), so min and max
+    // both map to vbr. The matching engine sees the value at hand; with multiple
+    // values per part (min vs max), only the first one wins at JSONB merge time
+    // (later values overwrite earlier — last-write-wins per key).
+    'vbr_min(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 },
+    'vbr_max(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Max)', unit: 'V', sortOrder: 3 },
+    'vbr _min(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 }, // typo variant w/ space
+    'vbr _max(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Max)', unit: 'V', sortOrder: 3 },
+    'vbr(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr(v@1ma)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr @ 1mA)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage max': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Max)', unit: 'V', sortOrder: 3 },
+    'vc@ipp(v)': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc @ Ipp)', unit: 'V', sortOrder: 4 },
+    'vcc(v@ippmax)': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc @ Ipp)', unit: 'V', sortOrder: 4 },
+    'max clamp voltage vc@ipp': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc @ Ipp)', unit: 'V', sortOrder: 4 },
+    'pppm(w)': { attributeId: 'ppk', attributeName: 'Peak Pulse Power (Pppm)', unit: 'W', sortOrder: 5 },
+    'ppk(w)': { attributeId: 'ppk', attributeName: 'Peak Pulse Power (Ppk)', unit: 'W', sortOrder: 5 },
+    'peak pulse current ipp': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp)', unit: 'A', sortOrder: 6 },
+    'ipp 10/1000us min(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp 10/1000us)', unit: 'A', sortOrder: 6 },
+    'ipp 10/160us min(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp 10/160us)', unit: 'A', sortOrder: 6 },
+    'ipp 10/560us min(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp 10/560us)', unit: 'A', sortOrder: 6 },
+    'ipp 8/20us min(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp 8/20us)', unit: 'A', sortOrder: 6 },
+    'ipp 2/10us min(a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current (Ipp 2/10us)', unit: 'A', sortOrder: 6 },
+    // it / test current — TVS-specific test current; not a canonical attributeId,
+    // so use ir_leakage to keep the value visible (it represents leakage measurement context).
+    'it(ma)': { attributeId: 'ir_leakage', attributeName: 'Test Current (It)', unit: 'mA', sortOrder: 8 },
+    'test current it': { attributeId: 'ir_leakage', attributeName: 'Test Current (It)', sortOrder: 8 },
+    'ir@vrwm(μa)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage @ Vrwm (Ir)', unit: 'µA', sortOrder: 8 },
+    'unidirectional/bidirectional': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
+    'cj(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance (Cj)', unit: 'pF', sortOrder: 7 },
+    'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
+    'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
   },
 
   // ─── B5 MOSFETs ────────────────────────────────────────
@@ -781,6 +907,30 @@ const FAMILY_PARAMS = {
     'rds(on)@vgs=10v(ω)': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'Ω', sortOrder: 11 },
     'rds(on) (mω) 4.5v typ': { attributeId: '_rds_on_4v5_typ', attributeName: 'Rds(on) @4.5V Typ', unit: 'mOhm', sortOrder: 95 },
     'rd(mω) typ': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'mΩ', sortOrder: 11 },
+    // YANGJIE — MOSFET schema with trailing space variants
+    'vdss (v)': { attributeId: 'vds_max', attributeName: 'Vds Max', unit: 'V', sortOrder: 6 },
+    'vgs (v)': { attributeId: 'vgs_max', attributeName: 'Vgs Max', unit: 'V', sortOrder: 7 },
+    'vgs,op (v)': { attributeId: 'vgs_max', attributeName: 'Vgs Max (Op)', unit: 'V', sortOrder: 7 },
+    'vth_typ (v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
+    'ciss_typ (pf)': { attributeId: 'ciss', attributeName: 'Input Capacitance (Ciss)', unit: 'pF', sortOrder: 14 },
+    'coss_typ (pf)': { attributeId: 'coss', attributeName: 'Output Capacitance (Coss)', unit: 'pF', sortOrder: 15 },
+    'crss_typ (pf)': { attributeId: 'crss', attributeName: 'Reverse Transfer Capacitance (Crss)', unit: 'pF', sortOrder: 16 },
+    'qg_typ (nc)': { attributeId: 'qg', attributeName: 'Gate Charge (Qg)', unit: 'nC', sortOrder: 13 },
+    'gate charge total qg(nc)': { attributeId: 'qg', attributeName: 'Gate Charge (Qg)', unit: 'nC', sortOrder: 13 },
+    'output capacitance coss(pf)': { attributeId: 'coss', attributeName: 'Output Capacitance (Coss)', unit: 'pF', sortOrder: 15 },
+    'rdson(mω)@25℃': { attributeId: 'rds_on', attributeName: 'Rds(on)', unit: 'mΩ', sortOrder: 11 },
+    'rdson@ vgs10v_max (mω)': { attributeId: 'rds_on', attributeName: 'Rds(on) @10V Max', unit: 'mΩ', sortOrder: 11 },
+    'rdson@ vgs10v_typ (mω)': { attributeId: '_rds_on_typ', attributeName: 'Rds(on) @10V Typ', unit: 'mΩ', sortOrder: 93 },
+    'rdson@ vgs4.5v_max (mω)': { attributeId: '_rds_on_4v5', attributeName: 'Rds(on) @4.5V Max', unit: 'mΩ', sortOrder: 94 },
+    'rdson@ vgs4.5v_typ (mω)': { attributeId: '_rds_on_4v5_typ', attributeName: 'Rds(on) @4.5V Typ', unit: 'mΩ', sortOrder: 95 },
+    'rdson@ vgs2.5v_max (mω)': { attributeId: '_rds_on_2v5', attributeName: 'Rds(on) @2.5V Max', unit: 'mΩ', sortOrder: 96 },
+    'rdson@ vgs2.5v_typ (mω)': { attributeId: '_rds_on_2v5_typ', attributeName: 'Rds(on) @2.5V Typ', unit: 'mΩ', sortOrder: 97 },
+    'rdson@ vgs1.8v_max (mω)': { attributeId: '_rds_on_1v8', attributeName: 'Rds(on) @1.8V Max', unit: 'mΩ', sortOrder: 98 },
+    'rdson@ vgs1.8v_typ (mω)': { attributeId: '_rds_on_1v8_typ', attributeName: 'Rds(on) @1.8V Typ', unit: 'mΩ', sortOrder: 99 },
+    'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 17 },
+    'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 17 },
+    'tj (ºc)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 17 },
+    'tj_max (°c)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 17 },
   },
 
   // ─── B6 BJTs ───────────────────────────────────────────
@@ -1453,6 +1603,10 @@ function cleanManufacturerName(raw) {
 
 function mapModel(model, manufacturerName, sourceFile) {
   const warnings = [];
+  // Tracks param names that fell through dictionary lookups and were stored under an
+  // auto-generated rawId. Surfaced in the diff report so admins can promote them to
+  // canonical attributeIds via dictionary overrides.
+  const unmappedParams = [];
 
   const classification = classifyAtlasCategory(
     model.category.c1.name,
@@ -1516,6 +1670,7 @@ function mapModel(model, manufacturerName, sourceFile) {
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
         }
+        unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
         continue;
       }
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) continue;
@@ -1546,6 +1701,7 @@ function mapModel(model, manufacturerName, sourceFile) {
           ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
         };
       }
+      unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
       continue;
     }
 
@@ -1587,195 +1743,1172 @@ function mapModel(model, manufacturerName, sourceFile) {
     }
   }
 
-  return { part, parameters, packageValue, classification, warnings };
+  return { part, parameters, packageValue, classification, warnings, unmappedParams };
 }
 
-// ─── CLI ──────────────────────────────────────────────────
+// ─── Provenance-preserving merge ──────────────────────────
+// Mirrors mergeAtlasParameters() in lib/services/atlasMapper.ts.
+// Kept inline because the script can't import TypeScript.
+//
+// Behavior:
+//   - 'extraction' and 'manual' entries from existing survive untouched
+//   - 'atlas' entries (including legacy untagged) are replaced wholesale by newAtlas
+//   - Atlas keys present in existing but missing from newAtlas are dropped
+function mergeAtlasParameters(existing, newAtlas) {
+  const merged = {};
+  if (existing) {
+    for (const [key, entry] of Object.entries(existing)) {
+      if (!entry || typeof entry !== 'object') continue;
+      // New marker
+      if (entry.source === 'extraction' || entry.source === 'manual') {
+        merged[key] = entry;
+        continue;
+      }
+      // Legacy marker (pre-migration). Backfill SHOULD have converted these,
+      // but treat defensively in case a row escaped the migration.
+      if (entry._source === 'desc_extract') {
+        merged[key] = { ...entry };
+        delete merged[key]._source;
+        merged[key].source = 'extraction';
+        if (!merged[key].ingested_at) merged[key].ingested_at = new Date().toISOString();
+        continue;
+      }
+      // Otherwise: source: 'atlas' (or legacy untagged) → drop, will be replaced by newAtlas
+    }
+  }
+  for (const [key, entry] of Object.entries(newAtlas)) {
+    merged[key] = entry;
+  }
+  return merged;
+}
 
+function tagAtlasParameters(parameters) {
+  const nowIso = new Date().toISOString();
+  const out = {};
+  for (const [key, entry] of Object.entries(parameters)) {
+    out[key] = { ...entry, source: 'atlas', ingested_at: nowIso };
+  }
+  return out;
+}
+
+// Returns true iff every entry in `parameters` is source: 'atlas' (or legacy untagged).
+// Used to decide hard vs soft delete when an MPN disappears from the source file.
+function hasOnlyAtlasParams(parameters) {
+  if (!parameters) return true;
+  for (const entry of Object.values(parameters)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const src = entry.source ?? (entry._source === 'desc_extract' ? 'extraction' : 'atlas');
+    if (src === 'extraction' || src === 'manual') return false;
+  }
+  return true;
+}
+
+// ─── File hashing ─────────────────────────────────────────
+function sha256File(filePath) {
+  const buf = readFileSync(resolve(filePath));
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+// ─── Diff computation ─────────────────────────────────────
+//
+// Given mapped new products + existing DB rows, produce a structured per-MFR diff.
+// Inputs and outputs are plain JSON-serializable objects.
+
+function computeDiff(newProducts, existingByMpn) {
+  const perProduct = [];
+  let totalNewAttrs = 0;
+  let totalChangedValues = 0;
+  let totalRemovedAttrs = 0;
+
+  const newMpns = new Set(newProducts.map(p => p.mpn));
+  const seenMpns = new Set();
+  let willInsert = 0, willUpdate = 0;
+  const classificationChanges = [];
+  const attrCountBefore = []; // for avg-attr-count delta
+  const attrCountAfter = [];
+
+  for (const np of newProducts) {
+    seenMpns.add(np.mpn);
+    const existing = existingByMpn.get(np.mpn);
+    const nextAtlasKeys = new Set(Object.keys(np.parameters));
+
+    if (!existing) {
+      willInsert++;
+      attrCountAfter.push(nextAtlasKeys.size);
+      // Don't count insert attrs in totalNewAttrs; that metric is for *updates*.
+      perProduct.push({
+        mpn: np.mpn,
+        kind: 'insert',
+        added: [...nextAtlasKeys],
+        changed: [],
+        removed: [],
+      });
+      continue;
+    }
+
+    // Update — compute attr diff. Only inspect atlas-sourced existing entries:
+    // extraction/manual entries are never overwritten so they don't appear in the diff.
+    const existingAtlasParams = {};
+    for (const [k, v] of Object.entries(existing.parameters || {})) {
+      const src = v?.source ?? (v?._source === 'desc_extract' ? 'extraction' : 'atlas');
+      if (src === 'atlas') existingAtlasParams[k] = v;
+    }
+    const prevAtlasKeys = new Set(Object.keys(existingAtlasParams));
+
+    attrCountBefore.push(prevAtlasKeys.size);
+    attrCountAfter.push(nextAtlasKeys.size);
+
+    const added = [];
+    const removed = [];
+    const changed = [];
+
+    for (const k of nextAtlasKeys) {
+      if (!prevAtlasKeys.has(k)) {
+        added.push(k);
+      } else {
+        const oldVal = existingAtlasParams[k]?.value;
+        const newVal = np.parameters[k]?.value;
+        if (oldVal !== newVal) {
+          changed.push({ key: k, oldValue: oldVal, newValue: newVal });
+        }
+      }
+    }
+    for (const k of prevAtlasKeys) {
+      if (!nextAtlasKeys.has(k)) removed.push(k);
+    }
+
+    if (added.length || changed.length || removed.length || classificationDiffers(existing, np)) {
+      willUpdate++;
+      totalNewAttrs += added.length;
+      totalChangedValues += changed.length;
+      totalRemovedAttrs += removed.length;
+
+      const cdiffs = classificationDiff(existing, np);
+      for (const cd of cdiffs) {
+        classificationChanges.push({ mpn: np.mpn, ...cd });
+      }
+
+      perProduct.push({ mpn: np.mpn, kind: 'update', added, changed, removed, classification: cdiffs });
+    }
+  }
+
+  // Deletes — MPNs in DB but missing from new file
+  const deletes = [];
+  for (const [mpn, existing] of existingByMpn.entries()) {
+    if (seenMpns.has(mpn)) continue;
+    const onlyAtlas = hasOnlyAtlasParams(existing.parameters);
+    deletes.push({
+      mpn,
+      kind: onlyAtlas ? 'hard_delete' : 'soft_delete',
+      reason: onlyAtlas
+        ? 'no extraction/manual entries to preserve'
+        : 'preserves extraction/manual entries via status=discontinued',
+    });
+  }
+
+  return {
+    productCounts: {
+      inNewFile: newProducts.length,
+      inDb: existingByMpn.size,
+      willInsert,
+      willUpdate,
+      willDelete: deletes.length,
+    },
+    attrChanges: {
+      totalNewAttrs,
+      totalChangedValues,
+      totalRemovedAttrs,
+      perProduct,
+    },
+    classificationChanges,
+    deletes,
+    attrCountStats: {
+      avgBefore: avg(attrCountBefore),
+      avgAfter: avg(attrCountAfter),
+    },
+  };
+}
+
+function classificationDiffers(existing, np) {
+  return classificationDiff(existing, np).length > 0;
+}
+
+function classificationDiff(existing, np) {
+  const out = [];
+  if ((existing.category ?? '') !== (np.part.category ?? '')) {
+    out.push({ field: 'category', oldValue: existing.category, newValue: np.part.category });
+  }
+  if ((existing.subcategory ?? '') !== (np.part.subcategory ?? '')) {
+    out.push({ field: 'subcategory', oldValue: existing.subcategory, newValue: np.part.subcategory });
+  }
+  if ((existing.family_id ?? null) !== (np.classification.familyId ?? null)) {
+    out.push({ field: 'family_id', oldValue: existing.family_id, newValue: np.classification.familyId });
+  }
+  return out;
+}
+
+function avg(arr) {
+  if (!arr.length) return 0;
+  return arr.reduce((s, n) => s + n, 0) / arr.length;
+}
+
+// ─── Risk classification ──────────────────────────────────
+function classifyRisk(diff, unmappedParamsCount) {
+  if (unmappedParamsCount > 0 || diff.attrChanges.totalChangedValues > 0) return 'attention';
+  if (diff.productCounts.willDelete > 0 || diff.classificationChanges.length > 0) return 'review';
+  return 'clean';
+}
+
+// ─── Aggregate unmapped params across all products in a file ─────
+function aggregateUnmappedParams(perProductUnmapped) {
+  const map = new Map(); // paramName → { paramName, sampleValues:[], productCount, attributeId, kind }
+  for (const { mpn, list } of perProductUnmapped) {
+    for (const u of list) {
+      const key = u.paramName;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { paramName: key, sampleValues: [], productCount: 0, attributeId: u.attributeId, kind: u.kind };
+        map.set(key, entry);
+      }
+      entry.productCount++;
+      if (entry.sampleValues.length < 5 && !entry.sampleValues.includes(u.sampleValue)) {
+        entry.sampleValues.push(u.sampleValue);
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => b.productCount - a.productCount);
+}
+
+// ─── CLI argument parsing ─────────────────────────────────
 const args = process.argv.slice(2);
+let mode = null;
+let modeArg = null;
 const files = [];
 let dryRun = false;
 let familyFilter = null;
 let verbose = false;
 let showWarnings = false;
+let summaryFlag = false;
+let concurrency = 10;
+let outDir = '/tmp';
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--dry-run') { dryRun = true; continue; }
-  if (args[i] === '--family') { familyFilter = args[++i]; continue; }
-  if (args[i] === '--verbose') { verbose = true; continue; }
-  if (args[i] === '--warnings') { showWarnings = true; continue; }
-  files.push(args[i]);
+  const a = args[i];
+  if (a === '--report')               { mode = 'report'; continue; }
+  if (a === '--proceed')              { mode = 'proceed'; modeArg = args[++i]; continue; }
+  if (a === '--proceed-all-clean')    { mode = 'proceed-all-clean'; continue; }
+  if (a === '--revert')               { mode = 'revert'; modeArg = args[++i]; continue; }
+  if (a === '--discard')              { mode = 'discard'; modeArg = args[++i]; continue; }
+  if (a === '--list-pending')         { mode = 'list-pending'; continue; }
+  if (a === '--regenerate-affected-by') { mode = 'regenerate-affected-by'; modeArg = args[++i]; continue; }
+  if (a === '--summary')              { summaryFlag = true; continue; }
+  if (a === '--dry-run')              { dryRun = true; continue; }
+  if (a === '--family')               { familyFilter = args[++i]; continue; }
+  if (a === '--verbose')              { verbose = true; continue; }
+  if (a === '--warnings')             { showWarnings = true; continue; }
+  if (a === '--concurrency')          { concurrency = Number(args[++i]) || 10; continue; }
+  if (a === '--out-dir')              { outDir = args[++i]; continue; }
+  if (a.startsWith('--')) {
+    console.error(`Unknown flag: ${a}`);
+    process.exit(1);
+  }
+  files.push(a);
 }
 
-if (files.length === 0) {
-  console.error('Usage: node scripts/atlas-ingest.mjs <json-files...> [--dry-run] [--family C6] [--verbose] [--warnings]');
+// Default mode: when files passed without explicit mode flag, generate reports.
+if (mode === null && files.length > 0) mode = 'report';
+
+if (mode === null) {
+  printUsage();
   process.exit(1);
 }
 
-if (!dryRun && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
+function printUsage() {
+  console.error(`Atlas Ingest — review-and-approve workflow
+
+Generate a diff report (creates pending batches; no DB writes to atlas_products):
+  node scripts/atlas-ingest.mjs <json-files...> [--report] [--family C6] [--warnings] [--verbose]
+                                                [--out-dir /tmp] [--dry-run]
+
+List pending batches:
+  node scripts/atlas-ingest.mjs --list-pending [--summary]
+
+Apply a specific batch (snapshots + provenance-preserving merge):
+  node scripts/atlas-ingest.mjs --proceed <batchId>
+
+Apply all pending batches with risk='clean':
+  node scripts/atlas-ingest.mjs --proceed-all-clean [--concurrency 5]
+
+Revert an applied batch (within 30-day retention window):
+  node scripts/atlas-ingest.mjs --revert <batchId>
+
+Discard a pending batch without applying:
+  node scripts/atlas-ingest.mjs --discard <batchId>
+
+Regenerate every pending batch that surfaced a particular unmapped param
+(useful after adding a dictionary mapping for that param):
+  node scripts/atlas-ingest.mjs --regenerate-affected-by "<paramName>"
+`);
+}
+
+// Need Supabase for everything except --dry-run report.
+const needsSupabase = !(mode === 'report' && dryRun);
+if (needsSupabase && (!SUPABASE_URL || !SUPABASE_SERVICE_KEY)) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local');
-  console.error('Use --dry-run to test mapping without database connection.');
   process.exit(1);
 }
+const supabase = needsSupabase ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
 
-// Create Supabase client (service role bypasses RLS)
-const supabase = !dryRun ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
+// ─── Dictionary override merge (admin-curated entries from atlas_dictionary_overrides) ──────
+//
+// Mutates FAMILY_PARAMS / L2_PARAMS in place so the rest of the script can keep
+// using the existing dictionary lookup paths unchanged. Mirrors the merge order
+// used by lib/services/atlasMapper.ts → applyDictOverrides (remove → modify → add).
+//
+// Keys are stored lowercased to match the lookup at line 1652
+// (`p.name.toLowerCase().trim()`).
+async function loadAndApplyDictOverrides() {
+  if (!supabase) return { count: 0 };
+  let rows;
+  try {
+    const { data, error } = await supabase
+      .from('atlas_dictionary_overrides')
+      .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+      .eq('is_active', true);
+    if (error) {
+      // Table missing or unauthorised — ingest still works, just without overrides.
+      console.warn(`  (dict overrides skipped: ${error.message})`);
+      return { count: 0 };
+    }
+    rows = data ?? [];
+  } catch (err) {
+    console.warn(`  (dict overrides skipped: ${err.message})`);
+    return { count: 0 };
+  }
 
-async function processFile(filePath) {
+  if (rows.length === 0) return { count: 0 };
+
+  // Pick the right dict object for a family_id key. Convention used in the
+  // override drawer + admin UI: L3 family ids (B1, C6, ...) target FAMILY_PARAMS;
+  // anything else (Capacitors, Sensors, ...) targets L2_PARAMS.
+  const dictFor = (familyId) => {
+    if (FAMILY_PARAMS[familyId]) return FAMILY_PARAMS[familyId];
+    if (L2_PARAMS[familyId]) return L2_PARAMS[familyId];
+    // Bootstrap a new bucket so freshly-added L3/L2 entries land somewhere.
+    // Heuristic: short alpha-numeric ids → FAMILY_PARAMS; otherwise L2_PARAMS.
+    const isL3Id = /^[A-Z]?\d{1,3}$/.test(familyId);
+    const target = isL3Id ? FAMILY_PARAMS : L2_PARAMS;
+    target[familyId] = {};
+    return target[familyId];
+  };
+
+  let removed = 0, modified = 0, added = 0;
+
+  // 1. REMOVE
+  for (const r of rows) {
+    if (r.action !== 'remove') continue;
+    const dict = dictFor(r.family_id);
+    const key = String(r.param_name).toLowerCase().trim();
+    if (dict[key]) {
+      delete dict[key];
+      removed++;
+    }
+  }
+  // 2. MODIFY
+  for (const r of rows) {
+    if (r.action !== 'modify') continue;
+    const dict = dictFor(r.family_id);
+    const key = String(r.param_name).toLowerCase().trim();
+    const base = dict[key];
+    if (!base) continue;
+    dict[key] = {
+      attributeId: r.attribute_id ?? base.attributeId,
+      attributeName: r.attribute_name ?? base.attributeName,
+      sortOrder: r.sort_order ?? base.sortOrder ?? 50,
+      ...(r.unit !== null && r.unit !== undefined ? { unit: r.unit } : base.unit ? { unit: base.unit } : {}),
+    };
+    modified++;
+  }
+  // 3. ADD
+  for (const r of rows) {
+    if (r.action !== 'add') continue;
+    if (!r.attribute_id || !r.attribute_name) continue;
+    const dict = dictFor(r.family_id);
+    const key = String(r.param_name).toLowerCase().trim();
+    dict[key] = {
+      attributeId: r.attribute_id,
+      attributeName: r.attribute_name,
+      sortOrder: r.sort_order ?? 50,
+      ...(r.unit ? { unit: r.unit } : {}),
+    };
+    added++;
+  }
+
+  console.log(`Loaded ${rows.length} dictionary overrides (add: ${added}, modify: ${modified}, remove: ${removed})`);
+  return { count: rows.length, added, modified, removed };
+}
+
+// ─── Mapping helper (used by report and proceed) ──────────
+function mapManufacturerProducts(filePath) {
   const fileName = basename(filePath);
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log(`Processing: ${fileName}`);
-  console.log(`${'═'.repeat(60)}`);
-
   const raw = readFileSync(resolve(filePath), 'utf-8');
   const data = JSON.parse(raw);
-  const mfrName = data.manufacturer.name;
+  const mfrNameRaw = data.manufacturer.name;
+  const mfrName = cleanManufacturerName(mfrNameRaw);
 
+  const mappedProducts = [];
+  const perProductUnmapped = [];
   let total = 0, mapped = 0, skipped = 0, errors = 0;
   const familyCounts = {};
-  const allWarnings = [];
-  const batch = [];
 
   for (const model of data.models) {
     total++;
-
     try {
-      const result = mapModel(model, mfrName, fileName);
-
-      // Apply family filter
+      const result = mapModel(model, mfrNameRaw, fileName);
       if (familyFilter && result.classification.familyId !== familyFilter) {
         skipped++;
         continue;
       }
-
       mapped++;
       const fam = result.classification.familyId || '(uncovered)';
       familyCounts[fam] = (familyCounts[fam] || 0) + 1;
-
-      if (verbose) {
-        const paramCount = Object.keys(result.parameters).length;
-        console.log(`  ${result.part.mpn} → ${fam} (${paramCount} params)`);
-      }
-
-      if (showWarnings && result.warnings.length > 0) {
-        for (const w of result.warnings) {
-          console.log(`    ⚠ ${w}`);
-          allWarnings.push(`${result.part.mpn}: ${w}`);
-        }
-      }
-
-      if (!dryRun) {
-        batch.push({
-          mpn: result.part.mpn,
-          manufacturer: result.part.manufacturer,
-          description: result.part.description || null,
-          category: result.part.category,
-          subcategory: result.part.subcategory,
-          family_id: result.classification.familyId,
-          status: result.part.status,
-          datasheet_url: result.part.datasheetUrl,
-          package: result.packageValue,
-          parameters: result.parameters,
-          atlas_source_file: fileName,
-          atlas_raw: model,
-          manufacturer_country: 'CN',
-        });
+      mappedProducts.push({
+        mpn: result.part.mpn,
+        manufacturer: result.part.manufacturer,
+        part: result.part,
+        classification: result.classification,
+        parameters: result.parameters,
+        packageValue: result.packageValue,
+        rawModel: model,
+      });
+      if (result.unmappedParams.length > 0) {
+        perProductUnmapped.push({ mpn: result.part.mpn, list: result.unmappedParams });
       }
     } catch (err) {
       errors++;
-      console.error(`  ERROR: ${model.componentName}: ${err.message}`);
+      console.error(`  ERROR mapping ${model.componentName} in ${fileName}: ${err.message}`);
     }
   }
 
-  // Upsert batch to Supabase
-  if (!dryRun && batch.length > 0) {
-    console.log(`\n  Upserting ${batch.length} products to Supabase...`);
+  return { fileName, mfrName, mappedProducts, perProductUnmapped, total, mapped, skipped, errors, familyCounts };
+}
 
-    // Batch in chunks of 500
-    const CHUNK_SIZE = 500;
-    let upserted = 0;
-    for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
-      const chunk = batch.slice(i, i + CHUNK_SIZE);
+async function fetchExistingProducts(mfrName) {
+  // Paginate: SELECT mpn, parameters, category, subcategory, family_id FROM atlas_products WHERE manufacturer = mfrName
+  const map = new Map();
+  let from = 0;
+  const PAGE = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('atlas_products')
+      .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, atlas_source_file, atlas_raw, manufacturer_country')
+      .eq('manufacturer', mfrName)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`fetchExistingProducts: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const row of data) {
+      map.set(row.mpn, row);
+    }
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return map;
+}
+
+// ─── Markdown report writer ───────────────────────────────
+function writeMarkdownReport(report, batchId, mfrName, sourceFile, risk) {
+  const safeName = mfrName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+  const path = `${outDir}/atlas-report-${safeName}-${batchId.slice(0, 8)}.md`;
+  const lines = [];
+  lines.push(`# Atlas Ingest Report — ${mfrName}`);
+  lines.push('');
+  lines.push(`- **Batch ID**: \`${batchId}\``);
+  lines.push(`- **Source file**: \`${sourceFile}\``);
+  lines.push(`- **Risk**: \`${risk}\``);
+  lines.push(`- **Generated**: ${new Date().toISOString()}`);
+  lines.push('');
+  lines.push('## Product counts');
+  const pc = report.productCounts;
+  lines.push(`- In new file: ${pc.inNewFile}`);
+  lines.push(`- In DB (existing): ${pc.inDb}`);
+  lines.push(`- Will insert: ${pc.willInsert}`);
+  lines.push(`- Will update: ${pc.willUpdate}`);
+  lines.push(`- Will delete: ${pc.willDelete}`);
+  lines.push('');
+  lines.push('## Attribute changes (across updates)');
+  lines.push(`- New attrs added: ${report.attrChanges.totalNewAttrs}`);
+  lines.push(`- Existing values changed: ${report.attrChanges.totalChangedValues}`);
+  lines.push(`- Atlas-sourced attrs removed: ${report.attrChanges.totalRemovedAttrs}`);
+  lines.push(`- Avg atlas-sourced attr count: ${report.attrCountStats.avgBefore.toFixed(1)} → ${report.attrCountStats.avgAfter.toFixed(1)}`);
+  lines.push('');
+
+  if (report.unmappedParams && report.unmappedParams.length > 0) {
+    lines.push('## Unmapped parameters');
+    lines.push('');
+    lines.push('| Param name | Sample values | Products | Auto-id (fallback) |');
+    lines.push('|---|---|---|---|');
+    for (const u of report.unmappedParams) {
+      lines.push(`| \`${u.paramName}\` | ${u.sampleValues.slice(0, 3).map(v => `\`${v}\``).join(', ')} | ${u.productCount} | \`${u.attributeId}\` |`);
+    }
+    lines.push('');
+  }
+
+  if (report.classificationChanges.length > 0) {
+    lines.push('## Classification changes');
+    lines.push('');
+    lines.push('| MPN | Field | Old | New |');
+    lines.push('|---|---|---|---|');
+    for (const c of report.classificationChanges.slice(0, 50)) {
+      lines.push(`| ${c.mpn} | ${c.field} | ${c.oldValue ?? ''} | ${c.newValue ?? ''} |`);
+    }
+    if (report.classificationChanges.length > 50) {
+      lines.push(`| … | … (${report.classificationChanges.length - 50} more) | | |`);
+    }
+    lines.push('');
+  }
+
+  if (report.deletes && report.deletes.length > 0) {
+    lines.push('## Removed products');
+    lines.push('');
+    lines.push('| MPN | Action | Reason |');
+    lines.push('|---|---|---|');
+    for (const d of report.deletes.slice(0, 50)) {
+      lines.push(`| ${d.mpn} | ${d.kind} | ${d.reason} |`);
+    }
+    if (report.deletes.length > 50) {
+      lines.push(`| … | … (${report.deletes.length - 50} more) | |`);
+    }
+    lines.push('');
+  }
+
+  // Sample diffs (first 10 updates with changes)
+  const sampleUpdates = report.attrChanges.perProduct
+    .filter(p => p.kind === 'update' && (p.added.length || p.changed.length || p.removed.length))
+    .slice(0, 10);
+  if (sampleUpdates.length > 0) {
+    lines.push('## Sample updates (first 10)');
+    lines.push('');
+    for (const u of sampleUpdates) {
+      lines.push(`### ${u.mpn}`);
+      if (u.added.length) lines.push(`- **Added**: ${u.added.map(k => `\`${k}\``).join(', ')}`);
+      if (u.changed.length) {
+        lines.push(`- **Changed**:`);
+        for (const c of u.changed.slice(0, 8)) {
+          lines.push(`  - \`${c.key}\`: \`${c.oldValue}\` → \`${c.newValue}\``);
+        }
+      }
+      if (u.removed.length) lines.push(`- **Removed**: ${u.removed.map(k => `\`${k}\``).join(', ')}`);
+      lines.push('');
+    }
+  }
+
+  lines.push('## Next steps');
+  lines.push('');
+  lines.push(`- To apply: \`node scripts/atlas-ingest.mjs --proceed ${batchId}\``);
+  lines.push(`- To discard: \`node scripts/atlas-ingest.mjs --discard ${batchId}\``);
+
+  writeFileSync(path, lines.join('\n'));
+  return path;
+}
+
+// ─── runReport ────────────────────────────────────────────
+async function runReport() {
+  console.log(`Atlas Ingest — Report mode (${dryRun ? 'DRY RUN' : 'live'})`);
+  console.log(`Files: ${files.length}, concurrency: ${concurrency}`);
+  if (familyFilter) console.log(`Family filter: ${familyFilter}`);
+  console.log('');
+
+  const summaryRows = [];
+
+  // Concurrency-limited file processing
+  let idx = 0;
+  async function worker() {
+    while (idx < files.length) {
+      const myIdx = idx++;
+      const filePath = files[myIdx];
+      try {
+        const row = await reportOneFile(filePath);
+        summaryRows.push(row);
+      } catch (err) {
+        console.error(`  ✗ ${basename(filePath)}: ${err.message}`);
+        summaryRows.push({ file: basename(filePath), error: err.message });
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, files.length) }, () => worker());
+  await Promise.all(workers);
+
+  // Aggregate summary
+  console.log('');
+  console.log('═'.repeat(60));
+  console.log('SUMMARY');
+  console.log('═'.repeat(60));
+  let totalClean = 0, totalReview = 0, totalAttention = 0, totalErrors = 0;
+  let agInsert = 0, agUpdate = 0, agDelete = 0, agAttrAdd = 0, agAttrChange = 0;
+  const globalUnmapped = new Map();
+  for (const r of summaryRows) {
+    if (r.error) { totalErrors++; continue; }
+    if (r.risk === 'clean') totalClean++;
+    if (r.risk === 'review') totalReview++;
+    if (r.risk === 'attention') totalAttention++;
+    agInsert += r.diff.productCounts.willInsert;
+    agUpdate += r.diff.productCounts.willUpdate;
+    agDelete += r.diff.productCounts.willDelete;
+    agAttrAdd += r.diff.attrChanges.totalNewAttrs;
+    agAttrChange += r.diff.attrChanges.totalChangedValues;
+    for (const u of r.unmappedParams) {
+      const e = globalUnmapped.get(u.paramName) ?? { paramName: u.paramName, mfrCount: 0, productCount: 0, sampleValues: [] };
+      e.mfrCount++;
+      e.productCount += u.productCount;
+      for (const sv of u.sampleValues) {
+        if (e.sampleValues.length < 5 && !e.sampleValues.includes(sv)) e.sampleValues.push(sv);
+      }
+      globalUnmapped.set(u.paramName, e);
+    }
+  }
+  console.log(`Batches: ${summaryRows.length - totalErrors} generated  (${totalClean} clean | ${totalReview} review | ${totalAttention} attention)`);
+  if (totalErrors > 0) console.log(`Errors: ${totalErrors}`);
+  console.log(`Aggregate: +${agInsert} inserts, ${agUpdate} updates, ${agDelete} deletes, ${agAttrAdd} attrs added, ${agAttrChange} value changes`);
+  if (globalUnmapped.size > 0) {
+    console.log('');
+    console.log(`Unmapped params (top 20 of ${globalUnmapped.size}):`);
+    const sorted = [...globalUnmapped.values()].sort((a, b) => b.productCount - a.productCount).slice(0, 20);
+    for (const u of sorted) {
+      console.log(`  • "${u.paramName}" — ${u.mfrCount} MFRs, ${u.productCount} products, samples: ${u.sampleValues.slice(0, 3).map(s => `"${s}"`).join(', ')}`);
+    }
+  }
+  console.log('');
+  console.log(`Next step: review markdown reports in ${outDir}/atlas-report-*.md, then:`);
+  console.log(`  node scripts/atlas-ingest.mjs --proceed-all-clean`);
+  console.log(`  node scripts/atlas-ingest.mjs --proceed <batchId>     # individual`);
+}
+
+async function reportOneFile(filePath) {
+  const fileName = basename(filePath);
+  const fileSha = sha256File(filePath);
+
+  const mapResult = mapManufacturerProducts(filePath);
+  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts } = mapResult;
+
+  // Tag new atlas params
+  for (const p of mappedProducts) {
+    p.parameters = tagAtlasParameters(p.parameters);
+  }
+
+  let existingByMpn = new Map();
+  if (!dryRun) {
+    existingByMpn = await fetchExistingProducts(mfrName);
+  }
+
+  const diff = computeDiff(mappedProducts, existingByMpn);
+  const unmappedParams = aggregateUnmappedParams(perProductUnmapped);
+  const risk = classifyRisk(diff, unmappedParams.length);
+
+  const report = {
+    manufacturer: mfrName,
+    sourceFile: fileName,
+    sourceFileSha256: fileSha,
+    productCounts: diff.productCounts,
+    attrChanges: diff.attrChanges,
+    classificationChanges: diff.classificationChanges,
+    deletes: diff.deletes,
+    attrCountStats: diff.attrCountStats,
+    unmappedParams,
+    familyCounts,
+    mappingStats: { total, mapped, errors },
+  };
+
+  let batchId = null;
+  if (!dryRun) {
+    // Replace any existing pending batch with same source_file+sha256 (idempotent re-run).
+    await supabase
+      .from('atlas_ingest_batches')
+      .delete()
+      .eq('manufacturer', mfrName)
+      .eq('source_file', fileName)
+      .eq('status', 'pending');
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from('atlas_ingest_batches')
+      .insert({
+        manufacturer: mfrName,
+        source_file: fileName,
+        source_file_sha256: fileSha,
+        report,
+        status: 'pending',
+        risk,
+      })
+      .select('batch_id')
+      .single();
+    if (insertErr) throw new Error(`Insert batch failed: ${insertErr.message}`);
+    batchId = inserted.batch_id;
+  } else {
+    batchId = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  let mdPath = null;
+  try {
+    mdPath = writeMarkdownReport(report, batchId, mfrName, fileName, risk);
+  } catch (err) {
+    console.error(`  ⚠ Could not write markdown for ${fileName}: ${err.message}`);
+  }
+
+  console.log(
+    `  [${risk.padEnd(9)}] ${mfrName.padEnd(30)} +${diff.productCounts.willInsert} ins, ${diff.productCounts.willUpdate} upd, ${diff.productCounts.willDelete} del, ${unmappedParams.length} unmapped${mdPath ? ` → ${mdPath}` : ''}`
+  );
+
+  return { file: fileName, mfrName, batchId, risk, diff, unmappedParams, mdPath };
+}
+
+// ─── runProceed ───────────────────────────────────────────
+async function runProceed(batchId) {
+  if (!batchId) {
+    console.error('--proceed requires a batch ID. Use --list-pending to see pending batches.');
+    process.exit(1);
+  }
+
+  // Load batch
+  const { data: batch, error: bErr } = await supabase
+    .from('atlas_ingest_batches')
+    .select('*')
+    .eq('batch_id', batchId)
+    .single();
+  if (bErr || !batch) throw new Error(`Batch not found: ${batchId}`);
+  if (batch.status !== 'pending') {
+    console.error(`Batch ${batchId} status is '${batch.status}', not 'pending' — refusing to apply.`);
+    process.exit(1);
+  }
+
+  console.log(`Applying batch ${batchId}`);
+  console.log(`  MFR: ${batch.manufacturer}`);
+  console.log(`  File: ${batch.source_file}`);
+  console.log(`  Risk: ${batch.risk}`);
+
+  // Re-read & re-map source file (we don't trust report content for the DB write; we re-derive)
+  const filePath = `data/atlas/${batch.source_file}`;
+  if (!existsSync(filePath)) {
+    console.error(`Source file ${filePath} not found on disk. Re-stage it before applying.`);
+    process.exit(1);
+  }
+  const currentSha = sha256File(filePath);
+  if (currentSha !== batch.source_file_sha256) {
+    console.error(`SHA256 mismatch — source file ${filePath} has changed since report was generated.`);
+    console.error(`  Expected: ${batch.source_file_sha256}`);
+    console.error(`  Actual:   ${currentSha}`);
+    console.error(`Regenerate the report first: node scripts/atlas-ingest.mjs ${filePath} --report`);
+    process.exit(1);
+  }
+
+  const { mfrName, mappedProducts } = mapManufacturerProducts(filePath);
+  for (const p of mappedProducts) {
+    p.parameters = tagAtlasParameters(p.parameters);
+  }
+  const existingByMpn = await fetchExistingProducts(mfrName);
+
+  // Pre-flight: snapshot every affected row
+  const snapshotRows = [];
+  const upsertRows = [];
+  const softDeletes = [];
+  const hardDeletes = [];
+  const seen = new Set();
+  for (const np of mappedProducts) {
+    seen.add(np.mpn);
+    const existing = existingByMpn.get(np.mpn);
+    const merged = mergeAtlasParameters(existing?.parameters, np.parameters);
+
+    const newRow = {
+      mpn: np.mpn,
+      manufacturer: mfrName,
+      description: np.part.description || null,
+      category: np.part.category,
+      subcategory: np.part.subcategory,
+      family_id: np.classification.familyId,
+      status: np.part.status,
+      datasheet_url: np.part.datasheetUrl,
+      package: np.packageValue,
+      parameters: merged,
+      atlas_source_file: batch.source_file,
+      atlas_raw: np.rawModel,
+      manufacturer_country: 'CN',
+    };
+
+    upsertRows.push(newRow);
+    snapshotRows.push({
+      batch_id: batchId,
+      mpn: np.mpn,
+      manufacturer: mfrName,
+      prev_row: existing ?? null,
+      new_row: newRow,
+      change_kind: existing ? 'update' : 'insert',
+    });
+  }
+
+  // Removed products
+  for (const [mpn, existing] of existingByMpn.entries()) {
+    if (seen.has(mpn)) continue;
+    const onlyAtlas = hasOnlyAtlasParams(existing.parameters);
+    if (onlyAtlas) {
+      hardDeletes.push({ mpn, manufacturer: mfrName, existing });
+      snapshotRows.push({
+        batch_id: batchId,
+        mpn,
+        manufacturer: mfrName,
+        prev_row: existing,
+        new_row: { mpn, manufacturer: mfrName, _deleted: true },
+        change_kind: 'hard_delete',
+      });
+    } else {
+      const softed = { ...existing, status: 'discontinued' };
+      softDeletes.push(softed);
+      snapshotRows.push({
+        batch_id: batchId,
+        mpn,
+        manufacturer: mfrName,
+        prev_row: existing,
+        new_row: softed,
+        change_kind: 'soft_delete',
+      });
+    }
+  }
+
+  console.log(`  Plan: ${upsertRows.length} upserts, ${softDeletes.length} soft-deletes, ${hardDeletes.length} hard-deletes`);
+
+  // 1. Insert snapshots first (so revert is possible if subsequent steps fail)
+  console.log(`  Writing ${snapshotRows.length} snapshots...`);
+  const SNAP_CHUNK = 200;
+  for (let i = 0; i < snapshotRows.length; i += SNAP_CHUNK) {
+    const chunk = snapshotRows.slice(i, i + SNAP_CHUNK);
+    const { error } = await supabase.from('atlas_products_snapshots').insert(chunk);
+    if (error) throw new Error(`Snapshot insert failed: ${error.message}`);
+  }
+
+  // 2. Upserts
+  if (upsertRows.length > 0) {
+    console.log(`  Upserting ${upsertRows.length} products...`);
+    const CHUNK = 500;
+    for (let i = 0; i < upsertRows.length; i += CHUNK) {
+      const chunk = upsertRows.slice(i, i + CHUNK);
       const { error } = await supabase
         .from('atlas_products')
         .upsert(chunk, { onConflict: 'mpn,manufacturer', ignoreDuplicates: false });
-
-      if (error) {
-        console.error(`  Supabase error (chunk ${Math.floor(i / CHUNK_SIZE) + 1}): ${error.message}`);
-      } else {
-        upserted += chunk.length;
-      }
+      if (error) throw new Error(`Upsert failed: ${error.message}`);
     }
-    console.log(`  Upserted: ${upserted} products`);
   }
 
-  // Summary
-  console.log(`\n  Summary for ${cleanManufacturerName(mfrName)}:`);
-  console.log(`    Total models: ${total}`);
-  console.log(`    Mapped: ${mapped}${familyFilter ? ` (filtered to ${familyFilter})` : ''}`);
-  console.log(`    Skipped: ${skipped}`);
-  console.log(`    Errors: ${errors}`);
-  console.log(`    By family:`);
-  for (const [fam, count] of Object.entries(familyCounts).sort((a, b) => b[1] - a[1])) {
-    console.log(`      ${fam}: ${count}`);
+  // 3. Soft-deletes (UPDATE status='discontinued') — bulk per chunk
+  if (softDeletes.length > 0) {
+    console.log(`  Soft-deleting ${softDeletes.length} products...`);
+    const SOFT_CHUNK = 200;
+    for (let i = 0; i < softDeletes.length; i += SOFT_CHUNK) {
+      const chunkMpns = softDeletes.slice(i, i + SOFT_CHUNK).map(sd => sd.mpn);
+      const { error } = await supabase
+        .from('atlas_products')
+        .update({ status: 'discontinued' })
+        .eq('manufacturer', mfrName)
+        .in('mpn', chunkMpns);
+      if (error) throw new Error(`Soft-delete chunk failed: ${error.message}`);
+    }
   }
 
-  if (allWarnings.length > 0) {
-    console.log(`    Unmapped param warnings: ${allWarnings.length}`);
+  // 4. Hard-deletes — bulk per chunk
+  if (hardDeletes.length > 0) {
+    console.log(`  Hard-deleting ${hardDeletes.length} products...`);
+    const HARD_CHUNK = 200;
+    for (let i = 0; i < hardDeletes.length; i += HARD_CHUNK) {
+      const chunkMpns = hardDeletes.slice(i, i + HARD_CHUNK).map(hd => hd.mpn);
+      const { error } = await supabase
+        .from('atlas_products')
+        .delete()
+        .eq('manufacturer', mfrName)
+        .in('mpn', chunkMpns);
+      if (error) throw new Error(`Hard-delete chunk failed: ${error.message}`);
+    }
   }
 
-  return { total, mapped, skipped, errors };
+  // 5. Mark batch applied
+  const { error: updErr } = await supabase
+    .from('atlas_ingest_batches')
+    .update({ status: 'applied', applied_at: new Date().toISOString() })
+    .eq('batch_id', batchId);
+  if (updErr) throw new Error(`Failed to mark batch applied: ${updErr.message}`);
+
+  // 6. Invalidate admin stats caches (Atlas Coverage + Manufacturers list)
+  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+
+  console.log(`✓ Applied. Revert window: 30 days. Use --revert ${batchId} to undo.`);
 }
 
-// Run
+// ─── runProceedAllClean ───────────────────────────────────
+async function runProceedAllClean() {
+  const { data: batches, error } = await supabase
+    .from('atlas_ingest_batches')
+    .select('batch_id, manufacturer, source_file')
+    .eq('status', 'pending')
+    .eq('risk', 'clean')
+    .order('manufacturer', { ascending: true });
+  if (error) throw new Error(`List failed: ${error.message}`);
+  if (!batches || batches.length === 0) {
+    console.log('No clean pending batches.');
+    return;
+  }
+  console.log(`Applying ${batches.length} clean batches with concurrency ${concurrency}`);
+  const results = { ok: 0, failed: [] };
+  let idx = 0;
+  async function worker() {
+    while (idx < batches.length) {
+      const b = batches[idx++];
+      try {
+        await runProceed(b.batch_id);
+        results.ok++;
+      } catch (err) {
+        results.failed.push({ batchId: b.batch_id, mfr: b.manufacturer, error: err.message });
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, batches.length) }, () => worker());
+  await Promise.all(workers);
+  console.log('');
+  console.log(`Done: ${results.ok} applied, ${results.failed.length} failed`);
+  if (results.failed.length > 0) {
+    console.log('Failures:');
+    for (const f of results.failed) {
+      console.log(`  ${f.mfr} (${f.batchId}): ${f.error}`);
+    }
+  }
+}
+
+// ─── runRevert ────────────────────────────────────────────
+async function runRevert(batchId) {
+  if (!batchId) {
+    console.error('--revert requires a batch ID');
+    process.exit(1);
+  }
+  const { data: batch, error: bErr } = await supabase
+    .from('atlas_ingest_batches')
+    .select('*')
+    .eq('batch_id', batchId)
+    .single();
+  if (bErr || !batch) throw new Error(`Batch not found: ${batchId}`);
+  if (batch.status !== 'applied') {
+    console.error(`Batch ${batchId} status is '${batch.status}', not 'applied' — nothing to revert.`);
+    process.exit(1);
+  }
+
+  console.log(`Reverting batch ${batchId} (${batch.manufacturer})`);
+
+  // Load all snapshots in pages
+  const snapshots = [];
+  let from = 0;
+  const PAGE = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('atlas_products_snapshots')
+      .select('*')
+      .eq('batch_id', batchId)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Snapshot fetch failed: ${error.message}`);
+    if (!data || data.length === 0) break;
+    snapshots.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+
+  if (snapshots.length === 0) {
+    console.error('No snapshots found for this batch (possibly past retention window).');
+    process.exit(1);
+  }
+
+  console.log(`  ${snapshots.length} snapshot rows to restore`);
+
+  // Bucket snapshots by change_kind so each bucket can be processed in
+  // chunked bulk operations rather than one row at a time. The original
+  // sequential implementation took ~10 minutes for a 12,932-row batch
+  // (50ms × N round-trips); chunked upserts/deletes reduce that to ~10 seconds.
+  const toDelete = [];     // change_kind=insert → delete by (mpn, mfr)
+  const toUpsertRows = []; // change_kind=update | soft_delete | hard_delete → upsert prev_row
+  for (const snap of snapshots) {
+    if (snap.change_kind === 'insert') {
+      toDelete.push({ mpn: snap.mpn, manufacturer: snap.manufacturer });
+    } else if (snap.change_kind === 'update' ||
+               snap.change_kind === 'soft_delete' ||
+               snap.change_kind === 'hard_delete') {
+      const { id, created_at, updated_at, ...prev } = snap.prev_row;
+      toUpsertRows.push(prev);
+    }
+  }
+
+  let inserts = 0, updates = 0, deletes = 0;
+  const UPSERT_CHUNK = 500;
+  const DELETE_CHUNK = 200;
+
+  // Bulk upserts (restores updates + soft/hard deletes in one round-trip per chunk)
+  for (let i = 0; i < toUpsertRows.length; i += UPSERT_CHUNK) {
+    const chunk = toUpsertRows.slice(i, i + UPSERT_CHUNK);
+    const { error } = await supabase
+      .from('atlas_products')
+      .upsert(chunk, { onConflict: 'mpn,manufacturer', ignoreDuplicates: false });
+    if (error) throw new Error(`Upsert chunk failed: ${error.message}`);
+    // We can't distinguish update vs re-insert post-bucketing, so collapse counts.
+    updates += chunk.length;
+    if (i % (UPSERT_CHUNK * 4) === 0 && i > 0) {
+      console.log(`    upserted ${i + chunk.length}/${toUpsertRows.length}`);
+    }
+  }
+
+  // Bulk deletes — supabase-js doesn't support multi-key deletes natively, so
+  // we group by manufacturer (single value for one batch) and delete by mpn list.
+  if (toDelete.length > 0) {
+    const mfr = toDelete[0].manufacturer;
+    for (let i = 0; i < toDelete.length; i += DELETE_CHUNK) {
+      const chunkMpns = toDelete.slice(i, i + DELETE_CHUNK).map(d => d.mpn);
+      const { error } = await supabase
+        .from('atlas_products')
+        .delete()
+        .eq('manufacturer', mfr)
+        .in('mpn', chunkMpns);
+      if (error) throw new Error(`Delete chunk failed: ${error.message}`);
+      deletes += chunkMpns.length;
+    }
+  }
+
+  await supabase
+    .from('atlas_ingest_batches')
+    .update({ status: 'reverted', reverted_at: new Date().toISOString() })
+    .eq('batch_id', batchId);
+
+  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+
+  console.log(`✓ Reverted: ${inserts} re-inserted, ${updates} restored, ${deletes} undone`);
+}
+
+// ─── runDiscard ───────────────────────────────────────────
+async function runDiscard(batchId) {
+  if (!batchId) { console.error('--discard requires a batch ID'); process.exit(1); }
+  const { data: batch, error } = await supabase
+    .from('atlas_ingest_batches')
+    .select('status, manufacturer')
+    .eq('batch_id', batchId).single();
+  if (error || !batch) throw new Error(`Batch not found: ${batchId}`);
+  if (batch.status !== 'pending') {
+    console.error(`Batch ${batchId} status is '${batch.status}' — can only discard pending batches.`);
+    process.exit(1);
+  }
+  await supabase.from('atlas_ingest_batches').delete().eq('batch_id', batchId);
+  console.log(`✓ Discarded pending batch ${batchId} (${batch.manufacturer})`);
+}
+
+// ─── runListPending ───────────────────────────────────────
+async function runListPending(summary) {
+  const { data: batches, error } = await supabase
+    .from('atlas_ingest_batches')
+    .select('batch_id, manufacturer, source_file, risk, report, created_at')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`List failed: ${error.message}`);
+  if (!batches || batches.length === 0) {
+    console.log('No pending batches.');
+    return;
+  }
+
+  if (summary) {
+    let clean = 0, review = 0, attention = 0;
+    let agInsert = 0, agUpdate = 0, agDelete = 0, agAttrAdd = 0, agAttrChange = 0;
+    const globalUnmapped = new Map();
+    for (const b of batches) {
+      if (b.risk === 'clean') clean++;
+      else if (b.risk === 'review') review++;
+      else attention++;
+      const r = b.report;
+      if (r?.productCounts) {
+        agInsert += r.productCounts.willInsert ?? 0;
+        agUpdate += r.productCounts.willUpdate ?? 0;
+        agDelete += r.productCounts.willDelete ?? 0;
+      }
+      if (r?.attrChanges) {
+        agAttrAdd += r.attrChanges.totalNewAttrs ?? 0;
+        agAttrChange += r.attrChanges.totalChangedValues ?? 0;
+      }
+      for (const u of r?.unmappedParams ?? []) {
+        const e = globalUnmapped.get(u.paramName) ?? { paramName: u.paramName, mfrCount: 0, productCount: 0, sampleValues: [] };
+        e.mfrCount++;
+        e.productCount += u.productCount;
+        for (const sv of u.sampleValues) {
+          if (e.sampleValues.length < 5 && !e.sampleValues.includes(sv)) e.sampleValues.push(sv);
+        }
+        globalUnmapped.set(u.paramName, e);
+      }
+    }
+    console.log(`Pending batches: ${batches.length}  (${clean} clean | ${review} review | ${attention} attention)`);
+    console.log(`Aggregate: +${agInsert} inserts, ${agUpdate} updates, ${agDelete} deletes, ${agAttrAdd} attrs added, ${agAttrChange} value changes`);
+    if (globalUnmapped.size > 0) {
+      console.log('');
+      console.log(`Unmapped params (top 30 of ${globalUnmapped.size}):`);
+      const sorted = [...globalUnmapped.values()].sort((a, b) => b.productCount - a.productCount).slice(0, 30);
+      for (const u of sorted) {
+        console.log(`  • "${u.paramName}" — ${u.mfrCount} MFRs, ${u.productCount} products, samples: ${u.sampleValues.slice(0, 3).map(s => `"${s}"`).join(', ')}`);
+      }
+    }
+    return;
+  }
+
+  // Detail list
+  for (const b of batches) {
+    const r = b.report;
+    const counts = r?.productCounts ?? {};
+    const unmapped = r?.unmappedParams?.length ?? 0;
+    console.log(`${b.batch_id}  [${b.risk.padEnd(9)}] ${b.manufacturer.padEnd(30)} +${counts.willInsert ?? 0}/${counts.willUpdate ?? 0}/${counts.willDelete ?? 0} ins/upd/del, ${unmapped} unmapped  (${b.source_file})`);
+  }
+}
+
+// ─── runRegenerateAffectedBy ──────────────────────────────
+async function runRegenerateAffectedBy(paramName) {
+  if (!paramName) { console.error('--regenerate-affected-by requires a param name'); process.exit(1); }
+  const { data: batches, error } = await supabase
+    .from('atlas_ingest_batches')
+    .select('batch_id, manufacturer, source_file, report')
+    .eq('status', 'pending');
+  if (error) throw new Error(`List failed: ${error.message}`);
+  const affected = (batches ?? []).filter(b =>
+    (b.report?.unmappedParams ?? []).some(u => u.paramName === paramName)
+  );
+  if (affected.length === 0) {
+    console.log(`No pending batches reference unmapped param "${paramName}".`);
+    return;
+  }
+  console.log(`Regenerating ${affected.length} batches affected by "${paramName}"`);
+  // Set files to the affected source files and re-run report
+  const filePaths = affected.map(b => `data/atlas/${b.source_file}`).filter(p => existsSync(p));
+  if (filePaths.length === 0) {
+    console.error('No source files found on disk for affected batches.');
+    process.exit(1);
+  }
+  files.length = 0;
+  files.push(...filePaths);
+  await runReport();
+}
+
+// ─── Dispatcher ───────────────────────────────────────────
 (async () => {
-  console.log(`Atlas Ingestion${dryRun ? ' (DRY RUN)' : ''}`);
-  console.log(`Files: ${files.length}`);
-  if (familyFilter) console.log(`Family filter: ${familyFilter}`);
+  try {
+    // Merge admin-curated dictionary overrides into FAMILY_PARAMS / L2_PARAMS
+    // before any mapping runs. Safe no-op when supabase is null (--dry-run).
+    await loadAndApplyDictOverrides();
 
-  let grandTotal = 0, grandMapped = 0, grandSkipped = 0, grandErrors = 0;
-
-  for (const file of files) {
-    const result = await processFile(file);
-    grandTotal += result.total;
-    grandMapped += result.mapped;
-    grandSkipped += result.skipped;
-    grandErrors += result.errors;
-  }
-
-  console.log(`\n${'═'.repeat(60)}`);
-  console.log(`GRAND TOTAL: ${grandTotal} models, ${grandMapped} mapped, ${grandSkipped} skipped, ${grandErrors} errors`);
-  console.log(`${'═'.repeat(60)}`);
-
-  // Run description extraction on newly ingested products
-  if (!dryRun && grandMapped > 0 && process.env.ANTHROPIC_API_KEY) {
-    console.log(`\nRunning description extraction on ingested products...`);
-    const { execSync } = await import('child_process');
-    try {
-      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
-      execSync(`npx tsx scripts/atlas-extract-descriptions.ts ${familyArg} --concurrency 10`, {
-        stdio: 'inherit',
-        cwd: process.cwd(),
-      });
-    } catch (err) {
-      console.error('Description extraction failed (non-fatal):', err.message);
+    switch (mode) {
+      case 'report':                 await runReport(); break;
+      case 'proceed':                await runProceed(modeArg); break;
+      case 'proceed-all-clean':      await runProceedAllClean(); break;
+      case 'revert':                 await runRevert(modeArg); break;
+      case 'discard':                await runDiscard(modeArg); break;
+      case 'list-pending':           await runListPending(summaryFlag); break;
+      case 'regenerate-affected-by': await runRegenerateAffectedBy(modeArg); break;
+      default:
+        printUsage();
+        process.exit(1);
     }
-
-    console.log(`\nRunning description cleanup on ingested products...`);
-    try {
-      const familyArg = familyFilter ? `--family ${familyFilter}` : '';
-      execSync(`npx tsx scripts/atlas-clean-descriptions.ts ${familyArg} --concurrency 10`, {
-        stdio: 'inherit',
-        cwd: process.cwd(),
-      });
-    } catch (err) {
-      console.error('Description cleanup failed (non-fatal):', err.message);
-    }
-  }
-
-  // Invalidate Atlas Coverage cache so admin pages recompute on next visit
-  if (!dryRun && grandMapped > 0 && supabase) {
-    await supabase.from('admin_stats_cache').delete().eq('key', 'atlas-coverage');
-    console.log('\nAtlas Coverage cache invalidated.');
+  } catch (err) {
+    console.error(`\nFatal: ${err.message}`);
+    if (verbose && err.stack) console.error(err.stack);
+    process.exit(1);
   }
 })();

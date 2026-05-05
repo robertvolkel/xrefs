@@ -46,6 +46,15 @@ function getSchemaAttributes(familyId: string): SchemaAttr[] {
   return [];
 }
 
+// In-memory module-scope cache keyed by (paramName + familyId). Survives multiple
+// requests within a server process lifetime — typically dev server until restart,
+// or until the Next.js production process recycles. Sample values vary per call but
+// don't materially affect Haiku's translation, so we key only on paramName+familyId.
+// 24h TTL is generous; admin overrides change rarely.
+type CacheEntry = { value: unknown; expiresAt: number };
+const SUGGEST_CACHE = new Map<string, CacheEntry>();
+const SUGGEST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 /** POST /api/admin/atlas/dictionaries/suggest */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -67,6 +76,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const schemaAttrs = getSchemaAttributes(familyId);
+    const schemaIds = schemaAttrs.map((a) => a.attributeId);
+
+    // Cache check — returns stored suggestion if still fresh
+    const cacheKey = `${familyId ?? ''}::${paramName}`;
+    const cached = SUGGEST_CACHE.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json({ success: true, suggestion: cached.value, schemaIds, cached: true });
+    }
+
     const schemaList = schemaAttrs.length > 0
       ? schemaAttrs.map((a) => `- ${a.attributeId}: ${a.attributeName}${a.unit ? ` (${a.unit})` : ''}`).join('\n')
       : '(no schema attributes available)';
@@ -99,19 +117,31 @@ Respond in JSON only, no markdown:
       .map((b) => b.text)
       .join('');
 
-    const parsed = JSON.parse(text);
+    // Haiku occasionally wraps the JSON response in markdown fences (```json ... ```)
+    // even when instructed not to. Strip them before parsing to avoid SyntaxError.
+    const cleaned = text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
 
-    return NextResponse.json({
-      success: true,
-      suggestion: {
-        translation: parsed.translation ?? null,
-        suggestedAttributeId: parsed.suggestedAttributeId ?? null,
-        suggestedAttributeName: parsed.suggestedAttributeName ?? null,
-        suggestedUnit: parsed.suggestedUnit ?? null,
-        confidence: parsed.confidence ?? 'low',
-        reasoning: parsed.reasoning ?? null,
-      },
+    const parsed = JSON.parse(cleaned);
+
+    const suggestion = {
+      translation: parsed.translation ?? null,
+      suggestedAttributeId: parsed.suggestedAttributeId ?? null,
+      suggestedAttributeName: parsed.suggestedAttributeName ?? null,
+      suggestedUnit: parsed.suggestedUnit ?? null,
+      confidence: parsed.confidence ?? 'low',
+      reasoning: parsed.reasoning ?? null,
+    };
+
+    SUGGEST_CACHE.set(cacheKey, {
+      value: suggestion,
+      expiresAt: Date.now() + SUGGEST_CACHE_TTL_MS,
     });
+
+    return NextResponse.json({ success: true, suggestion, schemaIds });
   } catch (error) {
     console.error('Dictionary suggest error:', error);
     return NextResponse.json({ success: false, error: 'Suggestion failed' }, { status: 500 });

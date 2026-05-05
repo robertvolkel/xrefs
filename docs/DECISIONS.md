@@ -4872,3 +4872,156 @@ Yes-button uses a new action discriminator `'best_price_at_qty'` with `quantity`
 - **Qty below all MOQs** (rare in practice — most distributors carry qty 1) → fallback Yes-button appears, click it → re-priced at min qty.
 - **Part with no FC quotes** → button hidden via `bestPrice: false`.
 - **Tab switch** — verify Commercial tab activates (especially when previously on Specs or Overview).
+
+---
+
+## Decision #171 — Origin Filter (`mfr_origin_filter`) for Recommendations Panel (May 2026)
+
+User asked the chat for "Chinese replacements" and the panel kept showing Western MFRs. The recommendation pipeline already populated `XrefRecommendation.part.mfrOrigin` (`'atlas' | 'western' | 'unknown'`) for every rec via the manufacturer alias resolver (Decision #161), but the filter pipeline had no origin field and the pattern detector had no Chinese-aware patterns. Same shape as the existing manufacturer / status / match-% / qualification / category filters — pure extension.
+
+**Filter input.** `FilterInput.mfr_origin_filter?: 'atlas' | 'western'` added to [recommendationFilter.ts](../lib/services/recommendationFilter.ts). Predicate is a one-liner: `r.part.mfrOrigin === target`. Pure addition, no callers touched.
+
+**Detector.** New `detectOriginIntent()` in [filterIntentDetector.ts](../lib/services/filterIntentDetector.ts), wired into the priority chain BEFORE `detectManufacturerIntent` (origin is a more specific signal than fuzzy MFR-name token matching). Patterns:
+- Atlas: `\b(chinese|china|prc|mainland|asian|asia)\b` plus `\b(made|from|sourced)\s+in\s+china\b`
+- Western: `\b(western|american|european)\b` plus `\bnon[\s-]?chinese\b`
+- Western checked FIRST so "non-chinese" / "non chinese" doesn't get swallowed by the bare `\bchinese\b` atlas pattern.
+
+**No filter-verb requirement.** Origin words ("Chinese", "Asian", "Western") are inherently narrowing in this product context — no one asks "is this part Chinese?" of a recommendations panel; they say it because they want to see only those. Cheaper false positives than missed matches.
+
+**LLM tool parity.** `filter_recommendations` JSON schema in [llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) extended with `mfr_origin_filter` enum so LLM-routed filter calls (e.g., "now narrow to American") have schema parity with the deterministic intercept.
+
+**Out of scope.** Country-level granularity ("Japanese only", "German only") needs data-layer work on `manufacturerAliasResolver` to surface country per alias row; `mfrOrigin` is binary atlas/western today.
+
+**Verification:**
+- "show only Chinese" / "Asian alternatives" / "made in China" / "from China" → `mfr_origin_filter: 'atlas'`
+- "Western only" / "non-Chinese" / "American replacements" → `mfr_origin_filter: 'western'`
+- 24 new tests in [filterIntentDetector.test.ts](../__tests__/services/filterIntentDetector.test.ts).
+
+**Files touched:**
+- [lib/services/recommendationFilter.ts](../lib/services/recommendationFilter.ts) — `FilterInput` field + predicate.
+- [lib/services/filterIntentDetector.ts](../lib/services/filterIntentDetector.ts) — `detectOriginIntent` helper + chain wire.
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — tool schema + system-prompt mention.
+- [__tests__/services/filterIntentDetector.test.ts](../__tests__/services/filterIntentDetector.test.ts) — origin describe block.
+
+---
+
+## Decision #172 — Bundled-Search-Intent Routing: Carry Filter Through Auto-Fire + Fix Stale-Closure on `handleFindReplacements` (May 2026)
+
+User typed "I want to find me Chinese replacements for this part from Wurth: 860020672005" as a fresh search. Three bugs in one query:
+
+1. **LLM speculated about MFR coverage before recs existed.** Sonnet read the bundled query, the search results, and wrote prose listing fictional candidates ("Capxon, Lelon, Rubycon all make 1µF/50V radials") without ever running the matching engine.
+2. **Origin qualifier was lost between search-time intent detection and post-confirm intent dispatch.** `detectQueryIntent` correctly returned `'find_replacements'` and stashed it into `pendingIntent` for auto-fire. But on the auto-fire path (`tryAutoFireIntent` → `dispatchIntent('find_replacements', ..., 'fresh')`), the original query string was never stashed into `pendingPostRecsFilterRef` — only the followup-query path did that. So even when the user clicked the right card and recs loaded, the "Chinese" qualifier silently dropped.
+3. **`handleFindReplacements` froze silently on the auto-fire path.** Same shape as the Decision #155 stale-closure trap. `handleConfirmWithLLM` did `setState({sourcePart: part})` then awaited attribute fetch then synchronously called `dispatchIntent → handleFindReplacements`, which read `state.sourcePart` / `state.sourceAttributes` from its captured closure — both `null` at click time, before the setState flushed. Function bailed at the `if (!mpn || !sourceAttrs) return;` guard with no message, no error, no recs — chat appeared frozen at "Fetching technical attributes…".
+
+**Three fixes:**
+
+**1. Replacement-coverage discipline rule (LLM prompt).** Added one general anti-speculation rule to the system prompt parallel to the source-part discipline rule: never list hypothetical candidate MPNs/MFRs, never speculate about Atlas/Digikey/Mouser coverage, never characterize the request as "challenging" before the matching engine has run. Calls out the bug-exact fabrications (Capxon/Lelon/Rubycon naming) as not-acceptable examples. General enough to cover all bundled-intent variants (origin, MFR, qualification, category).
+
+**2. `pendingIntentQueryRef`.** Mirror of `pendingIntent` that captures the user's original query string at search time. When `tryAutoFireIntent` fires `find_replacements`, it stashes the captured query into `pendingPostRecsFilterRef` so the existing `showRecsAndDeferAssessment` filter consumer applies any bundled qualifier ("Chinese", "≥80%", etc.) once recs land. Cleared in reset paths alongside `pendingPostRecsFilterRef`.
+
+**3. `partOverride` parameter on `handleFindReplacements`.** Mirrors the existing `contextOverride` workaround from Decision #155 but for `sourcePart` / `sourceAttributes`. `dispatchIntent` passes `{ mpn, sourceAttributes }` explicitly; the function falls back to state reads only when no override is supplied. Also pre-primes `sourceAttributesRef.current` synchronously before `handleFindReplacements` runs (the `useEffect` mirror lags by one render and is read by downstream paths).
+
+**Lesson — same shape, same trap.** Any callback that does `setState` then synchronously calls another callback that reads from the same state hits this. Decision #155 fixed it for `applicationContext`; this fix extends the pattern to `sourcePart` / `sourceAttributes`. Future callsites with the same shape should accept explicit overrides instead of relying on state propagation.
+
+**Files touched:**
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — `pendingIntentQueryRef` declaration + intent-stash + auto-fire consume + reset cleanup; `handleFindReplacements` `partOverride` parameter; `dispatchIntent` sync-prime + override pass.
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — Replacement-coverage discipline section in `buildSystemPrompt`.
+
+---
+
+## Decision #173 — Kill the Post-Recs LLM Assessment, Replace with Deterministic Summary (May 2026)
+
+After Decisions #171 and #172 shipped, recs filtered correctly to Atlas-MFR cards. But the LLM-driven engineering assessment that fired immediately after recs landed kept fabricating MFR origin / cert / supply-chain prose:
+
+> *"CapXon (multiple SKUs in the 80–95% range)… Lelon (85–92%)… Rubycon (Japanese-origin but deep China manufacturing footprint; 80%+ matches available)… All candidates pass AEC-Q200… Lead time and stock depth favor CapXon and Lelon given broader distributor reach in your region."*
+
+Actual top 3: SPZ1HM470E08000RAXXX (68%), ERH2GM100G16OT (66%), ENB1JM331W20OT (66%). Match percentages, MFR identities, geographic claims, cert claims, supply-chain claims — all fabricated.
+
+**Three rounds of escalating prompt rules failed to hold:**
+1. Decision #166's general claim-discipline rule.
+2. Pre-recs Replacement-coverage discipline (Decision #172) — scoped to "no recs in context"; LLM (correctly) read that as "post-recs is fair game".
+3. Post-recs Recommendation-block factual discipline + handing the LLM the filtered slice — failed within minutes; Sonnet's prior on "Chinese capacitor MFRs" overrode the rule.
+
+**Decision: pull the LLM out of this code path entirely.** The cards already display every fact the assessment legitimately conveys — MPN, MFR, match %, lifecycle, distributors, AEC badges, FindChips supplier data. Every time the LLM tried to add value beyond that (supply chain, cert coverage, origin, market positioning), it made things up.
+
+**Implementation.** New pure helper `buildRecsSummary(recs, sourceMpn)` in [lib/services/recommendationSummary.ts](../lib/services/recommendationSummary.ts). Reads only `part.{mpn, manufacturer}`, `matchPercentage`, and `countRealMismatches()`. By construction it cannot fabricate anything that isn't on a card the user can see. Output shape:
+
+> *Found **7** replacement candidates for **860020672005**. Top match: **SPZ1HM470E08000RAXXX** — CapXon, 68% match. 3 pass all rules; 4 flagged for parameter mismatches — review per-card spec match before committing.*
+
+`showRecsAndDeferAssessment` in [useAppState.ts](../hooks/useAppState.ts) now calls `addMessage('assistant', buildRecsSummary(...))` instead of `chatWithOrchestrator(...)`. Also dropped the user-role conversation-history trigger (it was bait for the now-removed LLM call). Skipped when a bundled filter matched (`dispatchFilterIntent` already posts an equivalent "Filtered to N <label> replacements + Top picks" message).
+
+**LLM still owns user-driven follow-ups.** The other `chatWithOrchestrator` call site in `useAppState` (handleSearchWithLLM, line ~948) remains — it handles filter intents, parametric questions, MFR-profile lookups, and any other follow-up Q&A. The system-prompt discipline rules from prior passes still apply there.
+
+**Lesson.** When (a) an LLM has strong domain priors on the topic, AND (b) the underlying facts already live on UI elements the user can see, prompt-tightening is the wrong tool. Deterministic templates win — they cannot fabricate by construction, they're testable in isolation, and the chat-stream loses no real signal because the cards were always the source of truth. Reach for LLM prose only when (a) the data isn't already rendered, or (b) the response truly requires natural-language synthesis the user couldn't get from the data alone. The post-recs assessment satisfied neither.
+
+**Files touched:**
+- [lib/services/recommendationSummary.ts](../lib/services/recommendationSummary.ts) — new pure helper.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — `showRecsAndDeferAssessment`: drop LLM call + trigger push, add deterministic summary.
+- [__tests__/services/recommendationSummary.test.ts](../__tests__/services/recommendationSummary.test.ts) — 7 tests (empty, single, all-pass, mixed pass/fail, N/A handling, rounding, pluralization).
+
+**Verification:**
+- Unfiltered flow → chat shows the deterministic summary, no MFR/cert/origin/supply-chain prose.
+- Bundled-filter flow → only `dispatchFilterIntent` "Filtered to N <label>" message appears.
+- Follow-up Q&A still routes through LLM with system-prompt discipline (unchanged).
+- 1511 tests pass (+7 new).
+
+## Decision #174 — Atlas Re-Ingest Pipeline: Provenance + Batch Review + AI Dictionary Triage (May 2026)
+
+**Problem.** Each fresh `mfr_*_params.json` from the data team had three sharp edges that made repeated refreshes risky: (1) the upsert overwrote `parameters` JSONB wholesale, wiping previously LLM-extracted attrs; (2) there was no pre-ingest preview — only `--dry-run --warnings` stderr; (3) there was no surgical rollback. With 100s of MFRs in flight, this couldn't scale.
+
+**Decision.** Built a three-phase pipeline that makes Atlas re-ingest a routine operation with per-MFR diff reports, batch-level approve/revert, and AI-assisted dictionary mapping for unmapped Chinese params.
+
+### Phase 1 — Safety foundation (CLI)
+
+- **Provenance-tagged JSONB**: every `parameters` value now carries `{ value, numericValue?, unit?, source: 'atlas' | 'extraction' | 'manual', ingested_at }`. Re-ingest only touches `source: 'atlas'` entries — LLM-extracted and (future) manual edits survive. `mergeAtlasParameters()` enforces the rule.
+- **`atlas_ingest_batches` table**: per-MFR pending batch with full structured `IngestDiffReport` JSONB (product counts, attr changes, unmapped params, classification flips, family counts). Generated `risk` column drives triage: `clean | review | attention`.
+- **`atlas_products_snapshots` table**: pre-apply row snapshots with 30-day TTL. Per-batch `--revert` restores from these.
+- **CLI modes** in `scripts/atlas-ingest.mjs`: `--report` (no DB write, just batch row), `--proceed <batchId>`, `--proceed-all-clean`, `--revert <batchId>`, `--discard <batchId>`, `--list-pending [--summary]`, `--regenerate-affected-by <paramName>`.
+- **Provenance-preserving merge upsert**: existing extraction/manual-tagged attrs preserved; atlas attrs replaced wholesale. Removed-from-new-file products soft-delete (`status='discontinued'`) when extraction attrs exist, hard-delete when only atlas attrs.
+- **Multi-key MFR lookup** (`lib/services/atlasIngestService.ts → loadManufacturerLookup`): handles ID-space mismatch between the data team's filename `mfr_id` and the master `atlas_manufacturers` master list — falls through name_display → atlas_id → name_en → slug.
+- **Bulk DB ops**: snapshots/upserts chunked to 500/op, deletes via `.in('mpn', [...])` chunked to 200, took the YANGJIE revert from 10+ minutes to ~30 seconds.
+
+### Phase 2 — Admin UI
+
+- **`/admin/atlas/ingest`** (`AtlasIngestPanel.tsx` + `components/admin/atlasIngest/*`): drag-drop folder upload, aggregate dashboard with risk chips, "Proceed All Clean" bulk-apply, per-batch cards (collapsed for clean/review, expanded for attention), Applied tab with revert action.
+- **API routes** under `/api/admin/atlas/ingest/`: `upload`, `report`, `batches`, `batches/[batchId]` (GET/DELETE for discard), `batches/[batchId]/proceed`, `batches/[batchId]/revert`, `batches/[batchId]/regenerate`, `proceed-all-clean`. All admin-guarded. Each wraps `runIngestScript()` to spawn the CLI under the hood.
+- **New-MFR auto-registration**: filename parser (`parseAtlasFilename`) extracts `atlas_id`, `name_en`, `name_zh`, `name_display`, `slug`. UI surfaces a "New manufacturers detected" panel before report generation; user reviews/edits/confirms, then files join the regular batch flow.
+- **`next.config.ts`**: `experimental.proxyClientMaxBodySize: '256mb'` (Next.js 16 — replaces deprecated `middlewareClientMaxBodySize`) for folder-upload sizes.
+
+### Phase 3-A — AI dictionary triage
+
+When the unmapped-params list crosses ~50 entries, hand-mapping doesn't scale. Built an AI-assisted triage step inside the global unmapped-params table:
+
+- **`/api/admin/atlas/dictionaries/suggest`** (Claude Haiku): given a Chinese param name + sample values + family schema, returns `{ translation, suggestedAttributeId, suggestedAttributeName, suggestedUnit, confidence, reasoning }`. Critical fix: Haiku occasionally wraps JSON in markdown fences — strip before parsing. In-memory cache keyed `${familyId}::${paramName}` with 24h TTL.
+- **`/api/admin/atlas/family-schema`**: lightweight endpoint returning canonical attributeId list per family (no Anthropic call) — used as fallback so the canonical-vs-invented indicator works on already-cached suggestions.
+- **`GlobalUnmappedParamsTable.tsx`**: three caching layers (client localStorage 7d, server in-memory 24h, Anthropic API), concurrency-limited fan-out (4 suggestion fetches + 4 accept fetches). Suggestions hydrate from localStorage first, then fetch missing.
+- **Canonical-vs-invented indicators (Option A)**: Each suggested attributeId is checked against the family's canonical schemaIds. Canonical → green `VerifiedOutlinedIcon`; invented → amber `HelpOutlineOutlinedIcon` + amber TextField border. `isBulkEligible` excludes invented IDs from the bulk-accept button.
+- **Embed-in-batch-card mode**: when only one pending batch exists, `GlobalUnmappedParamsTable` renders inside that batch's `BatchCard` body (via `embeddedTriagePanel` prop) instead of standalone — keeps the unmapped section visually attached to the MFR it belongs to.
+- **Hydration error fix**: MUI `AccordionSummary` renders as `<button>`; the bulk-accept Button got nested inside it. Moved into `AccordionDetails` to fix.
+
+### Option 2 — Ingest + read consult `atlas_dictionary_overrides`
+
+The architectural gap discovered after Phase 3-A landed: accepting an AI-suggested mapping wrote a row to `atlas_dictionary_overrides`, but neither the ingest script nor the read path consulted that table. Overrides were inert until manually copied into `FAMILY_PARAMS` source code.
+
+- **Ingest path** (`scripts/atlas-ingest.mjs`): new `loadAndApplyDictOverrides()` runs once at the dispatcher entry point. Fetches `where is_active=true`, mutates `FAMILY_PARAMS` and `L2_PARAMS` in memory using the same remove → modify → add order as `applyDictOverrides()` in atlasMapper.ts. Logs `Loaded N overrides (add: X, modify: Y, remove: Z)`. Safe no-op when supabase is null (`--dry-run`).
+- **Read path** (`lib/services/atlasMapper.ts`, `atlasClient.ts`, `atlasDictOverrides.ts`): new `fetchAllDictOverrides()` (60s in-memory cache, cleared by existing `invalidateDictOverrideCache()` hooks). `fromParametersJsonb` accepts an optional `overrides: DictOverrideRow[]` and seeds the `nameLookup` map first so admin-curated names win over logic-table defaults. `getAtlasAttributes` and `fetchAtlasCandidates` prefetch overrides once and pass through `rowToPartAttributes`.
+- **Most useful when**: AI-suggested attributeId isn't in any logic table or shared dict. Without override consult, `fromParametersJsonb` falls back to `humanizeStem('funky_id')` and `recognized: false`. With it: nice display name + `recognized: true`.
+
+### Cache invalidation fix
+
+The new ingest API routes (`proceed`, `proceed-all-clean`, `revert`) initially didn't call `invalidateAtlasCache()` or `invalidateManufacturersListCache()`, so the admin Atlas MFRs panel kept serving stale `admin_stats_cache` rows after every UI-driven apply. The CLI script also only cleared `atlas-coverage`, not `manufacturers-list`. Both now clear both keys on every successful proceed/revert. Hand-off: any other write path that mutates `atlas_products` should mirror this (e.g. `atlas-extract-descriptions.ts`, `atlas-clean-descriptions.ts` already do).
+
+**Files touched:**
+- New SQL: `scripts/supabase-atlas-ingest-pipeline-schema.sql`.
+- Updated CLI: `scripts/atlas-ingest.mjs` (provenance merge, batch report, snapshot+revert, `loadAndApplyDictOverrides`, dual cache key invalidation).
+- New service: `lib/services/atlasIngestService.ts` (filename parser, MFR lookup, script-runner wrapper).
+- Updated mapper: `lib/services/atlasMapper.ts` (provenance shape, `mergeAtlasParameters`, `applyDictOverrides`, `fromParametersJsonb` overrides param).
+- Updated client: `lib/services/atlasClient.ts` (prefetch overrides for read path).
+- Updated overrides service: `lib/services/atlasDictOverrides.ts` (added `fetchAllDictOverrides` + all-cache invalidation).
+- New API routes: `app/api/admin/atlas/ingest/upload`, `report`, `batches`, `batches/[batchId]`, `batches/[batchId]/proceed`, `batches/[batchId]/revert`, `batches/[batchId]/regenerate`, `proceed-all-clean`, `app/api/admin/atlas/family-schema`, `app/api/admin/atlas/dictionaries/suggest`.
+- New UI: `app/admin/atlas/ingest/page.tsx`, `components/admin/atlasIngest/*` (AtlasIngestPanel, BatchCard, IngestUploader, IngestDashboard, GlobalUnmappedParamsTable, ProductDiffTable, BatchProgressDialog, types.ts).
+- `next.config.ts` body-size cap.
+
+**Deferred:** SCR/Modules classifier fix — 316 YANGJIE thyristor modules currently uncovered due to `!lower.includes('module')` exclusion at line 124 of `atlas-ingest.mjs`. Listed in BACKLOG.md.
+
+**Verification.** End-to-end: YANGJIE 12,932 products applied via UI; provenance preserved across re-ingest of older MFRs; AI dict triage cuts unmapped params from 286 → 196 in one pass; tests stay green at 1521.

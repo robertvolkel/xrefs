@@ -421,6 +421,26 @@ Status text in `PartsListTable` (e.g., "Validated", "Error", "Searching") and lo
 
 ## P2 — Low Priority
 
+### Atlas stats RPC scales poorly past ~70K products (Decision #174 follow-up)
+**Files:** `scripts/supabase-mfr-stats-rpc.sql`, `scripts/atlas-ingest.mjs`.
+
+`get_manufacturer_product_stats()` unnests every JSONB key across all scorable `atlas_products` rows (~500K key-rows after YANGJIE), then `ARRAY_AGG(DISTINCT k)`s per (manufacturer, family_id). This blew past Supabase's default 8s `statement_timeout` once YANGJIE's 12,932 rows landed. Workaround applied: function-scoped `SET statement_timeout = '60s'`.
+
+Long-term fix: precompute `param_keys` on ingest. Either (a) maintain a `manufacturer_family_param_keys` aggregate table updated by the proceed flow, or (b) materialize a view refreshed nightly. The route's `mfrCoverage` math only needs the union of keys per (mfr, family_id) — that aggregate is small (~5K rows for our taxonomy) and stable per ingest.
+
+Trigger: revisit when atlas_products crosses ~150K rows or when the 60s timeout starts hitting on cold cache.
+
+---
+
+### Atlas SCR/Modules classifier excludes thyristor module families (Decision #174 follow-up)
+**File:** `scripts/atlas-ingest.mjs` (line 124, `classifyAtlasCategory`).
+
+The SCR matcher uses `if (/\bscr\b/i.test(lower) && !lower.includes('module'))` — the explicit "module" exclusion was originally added to avoid mis-routing module-style products to the bare-die thyristor logic table. As a side effect, 316 YANGJIE thyristor modules ("SCR Modules", "TRIAC Modules") fall through to the uncovered bucket and get no family_id, so they're search-only and never appear as recommendation candidates.
+
+Fix needs: either (a) decide modules ARE B8 candidates with a module-aware MPN enrichment / housing rule, or (b) introduce a `B8m` variant family for module-packaged thyristors. Both options need spec-doc work before code.
+
+---
+
 ### C2 Switching Regulators — datasheet-only fields have no Digikey parametric data
 **Files:** `lib/services/digikeyParamMap.ts`, `lib/logicTables/switchingRegulator.ts`
 

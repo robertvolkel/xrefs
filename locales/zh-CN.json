@@ -410,6 +410,7 @@
     "cat.Integrated Circuits": "集成电路",
     "atlasProducts": "Atlas 产品",
     "atlasDictionaries": "Atlas 字典",
+    "atlasIngest": "Atlas 数据导入",
     "atlasDictDesc": "将 Atlas 参数名称映射到内部属性的翻译字典。",
     "atlasParamName": "Atlas 参数",
     "lang": "语言",
