@@ -9,6 +9,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
 import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
+import { invalidateAtlasGrowthCache } from '@/app/api/admin/atlas/growth/route';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
 
 export const maxDuration = 600;
@@ -43,6 +44,7 @@ export async function POST(
     }
 
     invalidateAtlasCache();
+    invalidateAtlasGrowthCache();
     invalidateManufacturersListCache();
 
     return NextResponse.json({

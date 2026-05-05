@@ -14,6 +14,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
 import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
+import { invalidateAtlasGrowthCache } from '@/app/api/admin/atlas/growth/route';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
 
 export const maxDuration = 600; // 10 minutes hard cap; should rarely approach
@@ -52,6 +53,7 @@ export async function POST(
     // the manufacturer-list page reflect the new product counts on next load.
     // Mirrors what scripts/atlas-ingest.mjs does for direct CLI applies.
     invalidateAtlasCache();
+    invalidateAtlasGrowthCache();
     invalidateManufacturersListCache();
 
     return NextResponse.json({

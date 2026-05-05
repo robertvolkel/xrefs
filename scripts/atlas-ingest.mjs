@@ -2633,7 +2633,7 @@ async function runProceed(batchId) {
   if (updErr) throw new Error(`Failed to mark batch applied: ${updErr.message}`);
 
   // 6. Invalidate admin stats caches (Atlas Coverage + Manufacturers list)
-  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list', 'atlas-growth']);
 
   console.log(`✓ Applied. Revert window: 30 days. Use --revert ${batchId} to undo.`);
 }
@@ -2776,7 +2776,7 @@ async function runRevert(batchId) {
     .update({ status: 'reverted', reverted_at: new Date().toISOString() })
     .eq('batch_id', batchId);
 
-  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list', 'atlas-growth']);
 
   console.log(`✓ Reverted: ${inserts} re-inserted, ${updates} restored, ${deletes} undone`);
 }

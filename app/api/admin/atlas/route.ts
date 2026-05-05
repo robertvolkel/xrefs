@@ -35,12 +35,15 @@ let backgroundRecomputeInFlight = false;
 export function invalidateAtlasCache() {
   memCache = null;
   memCacheTimestamp = 0;
-  // Fire-and-forget: clear persistent row AND kick off a background
-  // recompute so the next admin page load is instant.
+  // Fire-and-forget background recompute. We DON'T delete the persistent row
+  // first — `computeAndPersist` upserts on top of the existing row when it
+  // finishes, so users keep seeing the previous (slightly stale) payload for
+  // the ~20s the recompute takes, instead of falling into the synchronous
+  // compute path with a blank cache. Net effect: zero blocking page loads
+  // after the very first compute. SWR's 6h threshold catches the rare case
+  // where this background recompute fails silently.
   void (async () => {
     try {
-      const svc = createServiceClient();
-      await svc.from('admin_stats_cache').delete().eq('key', CACHE_KEY);
       await computeAndPersist();
     } catch (err) {
       console.error('invalidateAtlasCache background error:', err);
