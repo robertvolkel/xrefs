@@ -2117,36 +2117,116 @@ export function toPartAttributes(mapped: MappedAtlasProduct): PartAttributes {
 }
 
 /**
- * Converts a MappedAtlasProduct to the JSONB format stored in atlas_products.parameters.
- * Format: { [attributeId]: { value, numericValue?, unit? } }
+ * Provenance-tagged stored shape for a single parameter entry in atlas_products.parameters.
+ *
+ * - source: where this attribute came from
+ *     'atlas'      — mapped from the source JSON file (replaceable on re-ingest)
+ *     'extraction' — derived by atlas-extract-descriptions LLM (preserved across re-ingest)
+ *     'manual'     — admin-edited (preserved across re-ingest)
+ * - ingested_at: ISO timestamp the entry was last written
+ *
+ * Legacy rows (pre-migration) lack `source` and `ingested_at` — readers must treat them as 'atlas'.
  */
-export function toParametersJsonb(parameters: ParametricAttribute[]): Record<string, { value: string; numericValue?: number; unit?: string }> {
-  const result: Record<string, { value: string; numericValue?: number; unit?: string }> = {};
+export type AtlasParamEntry = {
+  value: string;
+  numericValue?: number;
+  unit?: string;
+  source?: 'atlas' | 'extraction' | 'manual';
+  ingested_at?: string;
+};
+
+/**
+ * Converts a MappedAtlasProduct to the JSONB format stored in atlas_products.parameters,
+ * tagging every entry as source: 'atlas' with the current timestamp.
+ *
+ * For ingest paths that need to merge with existing extraction/manual entries, see
+ * mergeAtlasParameters() — this helper produces the atlas-only contribution.
+ */
+export function toParametersJsonb(parameters: ParametricAttribute[]): Record<string, AtlasParamEntry> {
+  const result: Record<string, AtlasParamEntry> = {};
+  const nowIso = new Date().toISOString();
   for (const p of parameters) {
     result[p.parameterId] = {
       value: p.value,
       ...(p.numericValue !== undefined && { numericValue: p.numericValue }),
       ...(p.unit && { unit: p.unit }),
+      source: 'atlas',
+      ingested_at: nowIso,
     };
   }
   return result;
 }
 
 /**
+ * Provenance-preserving merge for re-ingest.
+ *
+ * Behavior:
+ *   - All 'extraction' and 'manual' entries from `existing` survive untouched.
+ *   - All 'atlas' entries are replaced by `newAtlas`. Atlas keys not present in
+ *     newAtlas are dropped (the source-of-truth says they no longer apply).
+ *   - Legacy entries with no `source` field are treated as 'atlas' and dropped if
+ *     not present in newAtlas.
+ *
+ * This is the function the ingest --proceed path should use to compute the merged
+ * parameters JSONB before upserting.
+ */
+export function mergeAtlasParameters(
+  existing: Record<string, AtlasParamEntry> | null | undefined,
+  newAtlas: Record<string, AtlasParamEntry>,
+): Record<string, AtlasParamEntry> {
+  const merged: Record<string, AtlasParamEntry> = {};
+
+  if (existing) {
+    for (const [key, entry] of Object.entries(existing)) {
+      const src = entry.source ?? 'atlas';
+      if (src === 'extraction' || src === 'manual') {
+        merged[key] = entry;
+      }
+    }
+  }
+
+  for (const [key, entry] of Object.entries(newAtlas)) {
+    merged[key] = entry;
+  }
+
+  return merged;
+}
+
+/**
  * Converts JSONB parameters back to ParametricAttribute[] (for query results).
+ * Accepts both the new provenance-tagged shape and the legacy untagged shape.
+ *
  * Resolves human-readable attributeNames via fallback chain:
  * L3 family dict → L2 category dict → shared dict → logic table rules → L2 param map → humanizeStem()
  */
 export function fromParametersJsonb(
-  jsonb: Record<string, { value: string; numericValue?: number; unit?: string }>,
+  jsonb: Record<string, AtlasParamEntry>,
   familyId?: string | null,
   category?: string | null,
+  overrides?: DictOverrideRow[],
 ): ParametricAttribute[] {
   const result: ParametricAttribute[] = [];
   let sortCounter = 0;
 
   // Build a lookup map: attributeId → { name, sortOrder } from all available sources
   const nameLookup = new Map<string, { name: string; sortOrder: number }>();
+
+  // 0. Admin dictionary overrides (highest priority — admin-curated names win
+  //    over logic-table defaults, and 'add' actions seed entirely new attributeIds
+  //    that aren't in any base dict). Filter to overrides relevant to this row's
+  //    family/category to avoid cross-family name collisions.
+  if (overrides && overrides.length > 0) {
+    for (const ov of overrides) {
+      if (ov.action === 'remove') continue;
+      if (!ov.attribute_id || !ov.attribute_name) continue;
+      const matchesScope = ov.family_id === familyId || ov.family_id === category;
+      if (!matchesScope) continue;
+      nameLookup.set(ov.attribute_id, {
+        name: ov.attribute_name,
+        sortOrder: ov.sort_order ?? 50,
+      });
+    }
+  }
 
   // 1. L3 family dictionary (reverse lookup: find entries that map TO each attributeId)
   if (familyId) {

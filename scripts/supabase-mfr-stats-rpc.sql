@@ -14,7 +14,13 @@ RETURNS TABLE (
   product_count BIGINT,
   param_keys TEXT[],
   max_updated_at TIMESTAMPTZ
-) LANGUAGE sql STABLE AS $$
+) LANGUAGE sql STABLE
+-- Override Supabase's default 8s statement_timeout. The param_union CTE
+-- below unnests every JSONB key across all scorable atlas_products
+-- (~500K key-rows after YANGJIE — Decision #174 bulk apply pushed past 8s).
+-- 60s is generous; if we ever exceed it, precompute param_keys on ingest.
+SET statement_timeout = '60s'
+AS $$
   -- Step 1: Get all (manufacturer, family_id) groups with counts + last-modified timestamp
   -- Step 2: For scorable groups, collect distinct param keys
   WITH groups AS (

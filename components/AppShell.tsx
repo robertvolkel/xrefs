@@ -9,6 +9,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import MobileAppLayout from './MobileAppLayout';
 import DesktopLayout from './DesktopLayout';
 import NewListDialog from './lists/NewListDialog';
+import type { ChoiceOption } from '@/lib/types';
 
 export default function AppShell() {
   const appState = useAppState();
@@ -21,6 +22,16 @@ export default function AppShell() {
   useEffect(() => {
     if (!panels.showRightPanel) mfr.clearManualCollapse();
   }, [panels.showRightPanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Intent auto-fire signal: when useAppState detects a "show profile" intent
+  // and the part has a profile available, it sets autoOpenMfr. AppShell owns
+  // useManufacturerProfile, so it consumes the signal here and clears it.
+  useEffect(() => {
+    if (appState.autoOpenMfr) {
+      mfr.handleManufacturerClick(appState.autoOpenMfr);
+      appState.consumeAutoOpenMfr();
+    }
+  }, [appState.autoOpenMfr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resetPanelState = useCallback(() => {
     mfr.reset();
@@ -54,6 +65,22 @@ export default function AppShell() {
   // comfortably and shouldn't auto-collapse.
   const effectiveChatCollapsed = mfr.chatCollapsed || (mfr.mfrOpen && panels.showRightPanel);
 
+  // Wraps handleChoiceSelect so the "{Manufacturer}'s Profile" button also
+  // triggers the side-panel open. useAppState owns chat-message state but
+  // doesn't (and shouldn't) know about useManufacturerProfile — the panel
+  // hook is composed at this layer, same as the recommendation-card MFR
+  // click path that wires through onManufacturerClick.
+  const handleChoiceSelectWithMfr = useCallback(
+    async (choice: ChoiceOption) => {
+      if (choice.action === 'show_mfr_profile') {
+        const sourceMfr = appState.sourcePart?.manufacturer;
+        if (sourceMfr) mfr.handleManufacturerClick(sourceMfr);
+      }
+      await appState.handleChoiceSelect(choice);
+    },
+    [appState.handleChoiceSelect, appState.sourcePart, mfr.handleManufacturerClick] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   if (isMobile) {
     return (
       <MobileAppLayout
@@ -79,7 +106,8 @@ export default function AppShell() {
         onSkipAttributes={appState.handleSkipAttributes}
         onContextResponse={appState.handleContextResponse}
         onSkipContext={appState.handleSkipContext}
-        onChoiceSelect={appState.handleChoiceSelect}
+        onChoiceSelect={handleChoiceSelectWithMfr}
+        onQuantitySubmit={appState.handleQuantitySubmit}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
@@ -98,6 +126,8 @@ export default function AppShell() {
         statusText={appState.statusText}
         sourceAttributes={appState.sourceAttributes}
         comparisonAttributes={appState.comparisonAttributes}
+        isLoadingComparison={appState.isLoadingComparison}
+        comparisonError={appState.comparisonError}
         recommendations={appState.recommendations}
         selectedRecommendation={appState.selectedRecommendation}
         conversationId={appState.conversationId}
@@ -121,7 +151,10 @@ export default function AppShell() {
         onSkipAttributes={appState.handleSkipAttributes}
         onContextResponse={appState.handleContextResponse}
         onSkipContext={appState.handleSkipContext}
-        onChoiceSelect={appState.handleChoiceSelect}
+        onChoiceSelect={handleChoiceSelectWithMfr}
+        onQuantitySubmit={appState.handleQuantitySubmit}
+        activeAttributesTab={appState.activeAttributesTab}
+        onAttributesTabChange={appState.setActiveAttributesTab}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
@@ -131,6 +164,7 @@ export default function AppShell() {
         onSelectConversation={persistence.handleSelectConversation}
         onNewChat={persistence.handleNewChat}
         onDeleteConversation={persistence.handleDeleteConversation}
+        onClearAllConversations={persistence.handleClearAllConversations}
         knownMpns={knownMpns}
         onMpnClick={appState.handleMpnClick}
       />

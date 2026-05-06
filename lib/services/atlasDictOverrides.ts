@@ -30,12 +30,40 @@ interface DictCacheEntry {
 const CACHE_TTL_MS = 60_000; // 1 minute
 const cache = new Map<string, DictCacheEntry>();
 
+// Separate cache for the all-families fetch (read-time path on atlas_products rows).
+let allCache: { data: DictOverrideRow[]; fetchedAt: number } | null = null;
+
 /** Invalidate dictionary override cache after admin writes. */
 export function invalidateDictOverrideCache(familyId?: string): void {
   if (familyId) {
     cache.delete(familyId);
   } else {
     cache.clear();
+  }
+  allCache = null;
+}
+
+/**
+ * Fetch every active dictionary override across all families/categories
+ * (cached, server-only). Used by the read path on atlas_products rows so
+ * `fromParametersJsonb` can resolve admin-added attributeIds that aren't in
+ * any logic table or shared dict.
+ */
+export async function fetchAllDictOverrides(): Promise<DictOverrideRow[]> {
+  if (allCache && Date.now() - allCache.fetchedAt < CACHE_TTL_MS) return allCache.data;
+
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from('atlas_dictionary_overrides')
+      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+      .eq('is_active', true);
+
+    const rows = (data ?? []) as DictOverrideRow[];
+    allCache = { data: rows, fetchedAt: Date.now() };
+    return rows;
+  } catch {
+    return [];
   }
 }
 

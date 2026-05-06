@@ -25,6 +25,7 @@ import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
+import { OverviewSkeleton, CommercialSkeleton } from './AttributesPanel';
 import DomainChip from './DomainChip';
 import MatchPercentageBadge from './MatchPercentageBadge';
 import ProposeAliasButton from './admin/ProposeAliasButton';
@@ -38,6 +39,12 @@ interface ComparisonViewProps {
   onManufacturerClick?: (manufacturer: string) => void;
   activeTab: AttributesTab;
   onTabChange: (tab: AttributesTab) => void;
+  /** True while replacement attributes are being fetched (panel is open
+   *  optimistically; show skeletons in tabs that need attribute data). */
+  isLoadingReplacement?: boolean;
+  /** True when the replacement-attributes fetch failed — distinguishes from
+   *  "still loading" so we can show an error message instead of an indefinite skeleton. */
+  replacementError?: boolean;
 }
 
 const DOT_GREEN = '#69F0AE';
@@ -115,6 +122,8 @@ export default function ComparisonView({
   onManufacturerClick,
   activeTab,
   onTabChange,
+  isLoadingReplacement = false,
+  replacementError = false,
 }: ComparisonViewProps) {
   const { t } = useTranslation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -435,14 +444,36 @@ export default function ComparisonView({
         </>
       )}
 
-      {/* Overview tab — replacement part summary (no cross-refs on replacement side) */}
+      {/* Overview tab — replacement part summary (no cross-refs on replacement side).
+          Skeleton appears while attributes load so the panel feels responsive at click time
+          instead of frozen — falls back to the error path only when the fetch actually fails. */}
       {activeTab === 'overview' && (
-        <OverviewContent part={replPart} t={t} dataSource={replacementAttributes?.dataSource as 'digikey' | 'atlas' | 'partsio' | undefined} />
+        isLoadingReplacement && !replacementAttributes ? (
+          <OverviewSkeleton />
+        ) : replacementError && !replacementAttributes ? (
+          <Box sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Couldn't load specs for this replacement. The recommendation summary above is still accurate; try clicking the part again to retry.
+            </Typography>
+          </Box>
+        ) : (
+          <OverviewContent part={replPart} t={t} dataSource={replacementAttributes?.dataSource as 'digikey' | 'atlas' | 'partsio' | undefined} />
+        )
       )}
 
       {/* Commercial tab — replacement part pricing/stock */}
       {activeTab === 'commercial' && (
-        <CommercialContent part={replPart} t={t} />
+        isLoadingReplacement && !replacementAttributes ? (
+          <CommercialSkeleton />
+        ) : replacementError && !replacementAttributes ? (
+          <Box sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Couldn't load distributor pricing. Try clicking the part again to retry.
+            </Typography>
+          </Box>
+        ) : (
+          <CommercialContent part={replPart} t={t} />
+        )
       )}
 
       <ComparisonFeedbackDialog

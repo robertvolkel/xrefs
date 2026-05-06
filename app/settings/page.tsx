@@ -12,7 +12,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const {
     conversations, loading: convoLoading,
-    remove: removeConvo, refresh: refreshConvos,
+    remove: removeConvo, removeAll: removeAllConvos, refresh: refreshConvos,
   } = useConversations();
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -39,6 +39,7 @@ export default function SettingsPage() {
         onSelectConversation={(id) => router.push(`/?c=${id}`)}
         onNewChat={() => router.push('/')}
         onDeleteConversation={(id) => removeConvo(id)}
+        onClearAllConversations={() => removeAllConvos()}
       />
       <Box sx={{ flex: 1, overflow: 'hidden' }}>
         <SettingsShell />

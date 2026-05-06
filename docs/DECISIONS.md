@@ -4677,3 +4677,351 @@ Failure modes are strictly no-worse-than-before: Digikey down → no Digikey can
 - [hooks/useAppState.ts](../hooks/useAppState.ts) — call sites in `handleFindReplacements` pass `skipPartsioEnrichment: true`; new `triggerPartsioEnrichment()` callback; `showRecsAndDeferAssessment()` accepts `opts.deferredPartsio` and fires the trigger.
 
 Commit `1ff118a`.
+
+---
+
+## Decision #164 — Distributor Count on Search-Result Cards (Apr 2026)
+
+User wanted to see "available at N distributors" on search-result picker cards so they could pick more confidently. Two coordinated changes:
+
+**L2 distributor-count cache.** In `getFindchipsResults()` ([lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts)) — fire-and-forget L2 write of `{ count }` under `service='findchips', variant='fc-distributors', tier='lifecycle'` (6-month TTL). Distributor *identity* is stable on weeks/months timescale unlike pricing/stock; safe to cache. Respects Decision #158 — only the count integer is persisted, not pricing/stock. New batch reader `getCachedDistributorCounts(mpns)` in the same file. `searchParts()` populates `PartSummary.distributorCount` from L2 after merge, single Supabase round-trip per search. New PartSummary field is optional.
+
+**Post-search progressive enrichment.** Initial design was cache-only (badges only show when warm). User flagged the cold-start problem: people only open parts that show signals like distributor count, so the cache never fills. Reframed to mirror the existing `triggerFCEnrichment` pattern: cards render immediately, then `triggerSearchDistributorEnrichment(messageId, parts)` in [hooks/useAppState.ts](../hooks/useAppState.ts) fires `enrichWithFCBatch` for any MPNs missing `distributorCount`, merges counts into the matching message's `interactiveElement.parts` AND into `state.searchResult.matches` (so the next chat turn carries fresh counts to the LLM). User confirmed FC is uncapped for our scale, so latency is the only concern; FC runs after the search response renders, so search itself is unchanged.
+
+UI in [components/PartOptionsSelector.tsx](../components/PartOptionsSelector.tsx) — small "N distributor(s)" chip rendered when count > 0. Concurrent UI cleanup: removed redundant category chip, repositioned chips so distributor sits between qualifications and dataSource.
+
+Also bumped Digikey keyword search limit 10 → 20 in [lib/services/partDataService.ts:428](../lib/services/partDataService.ts#L428) — typical chat picker now surfaces ~20 results instead of ~10–15.
+
+---
+
+## Decision #165 — Conversational Chat Over Search Results: Refine, Pivot, Ask, Link (Apr 2026)
+
+User wanted to keep talking after picking a part — refining, pivoting to new requirements, asking parametric questions, and clicking MPNs in prose — without the right-side panels staying pinned to the previously-selected source. Single delivery covering four conversational moves.
+
+**Removed `find_replacements` from chat tools.** Cross-reference matching is button-driven (`handleFindReplacements` in `useAppState`); the LLM tool was a footgun that fired cross-refs when users were just asking parametric questions about loaded parts. System prompt now explicitly: "if the user types 'find cross references for X', tell them to click the button — do NOT try to execute the search yourself." See [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts).
+
+**New tools:**
+- `present_part_options(mpns)` — re-renders a chosen subset of the current search-result cards. Resolves MPNs against `currentSearchResult.matches` (case-insensitive exact then substring). Populates `data.searchResult` with the filtered list. The existing reset path in [hooks/useAppState.ts:498–506](../hooks/useAppState.ts#L498) clears sourcePart / sourceAttributes / recommendations whenever a fresh `searchResult` arrives — so refining auto-collapses the right panels for free.
+- `get_batch_attributes(mpns)` — up to 10 MPNs, concurrency 5, returns compact `{ name, value }` parameter projection per part plus status / qualifications / distributorCount. For compound parametric questions ("which are AEC-Q200 AND ≤30mm?").
+
+**Search-result context injected into LLM.** New `summarizeSearchResults()` helper mirrors `summarizeRecommendations()` — injects MPN list + lightweight params into the last user message when `currentSearchResult.matches.length > 0`. Lets the model reason about "these parts" / "any of these" without re-running search. Threaded through `chatWithOrchestrator` → `/api/chat` → `chat()` → new `searchResultRef` in `useAppState`.
+
+**Inline MPN auto-linking.** [components/MessageBubble.tsx](../components/MessageBubble.tsx) accepts `knownMpns: Set<string>` + `onMpnClick(mpn)`. ReactMarkdown components override (`p`, `li`, `strong`, `em`, `td`) walks string children and replaces known-MPN matches with monospace clickable spans. Only MPNs in the current state's searchResult/recommendations/sourcePart are clickable — no regex over arbitrary text → zero false positives. `knownMpns` computed in [components/AppShell.tsx](../components/AppShell.tsx); `handleMpnClick` in `useAppState` resolves MPN → PartSummary and delegates to existing `handleConfirmPart`. Click is indistinguishable from clicking a card.
+
+**System prompt routing rules** documented as four explicit modes — Refine, Pivot, Ask, Link — with guidance for when each applies. Pivot is mostly prompt work (`search_parts` already exists; the model just needed clear permission to re-search when requirements change rather than trying to filter).
+
+---
+
+## Decision #166 — Manufacturer Profile Tool + General Claim Discipline (Apr 2026)
+
+When users ask about manufacturers ("tell me about ISC", "where is 3PEAK headquartered?", "is GigaDevice public?"), the chat now has a dedicated tool wrapping existing `getProfileForManufacturer()`. Coverage: ~115 Chinese MFRs in Atlas with rich profiles, plus a few Western majors via mock fallback. For everything else (TI, ADI, ON Semi, Vishay, Murata, etc.) the tool returns `{ notFound: true }` and the model is instructed to tell the user plainly that we only carry detailed profiles for Chinese MFRs, then offer the parts/specs/pricing fallback via search.
+
+**Surfaced four additional fields through `mapAtlasToManufacturerProfile()` and the tool projection:** `stockCode`, `websiteUrl`, `contactInfo`, `partsioName`. The Atlas DB row already had them but the canonical `ManufacturerProfile` type dropped them — meaning the LLM literally couldn't see whether GigaDevice was public, and once guessed "Private company" when the row had `stock_code: "603986"`. All four fields added as optional to [lib/types.ts](../lib/types.ts) `ManufacturerProfile`. `contactInfo` typed as permissive union (`string | Record<string, string>`) since Atlas stores as JSONB with varying shapes.
+
+**General claim-discipline rule** (the architecturally important piece). Initial implementation accumulated five+ overlapping rule blocks for one question shape (industry-fitness cert audits): "literal match for ✓", "quote the source", "checklist completeness", "preserve geographic qualifiers", "preserve summary qualifiers", "no unhedged superlatives". User correctly identified the scaling problem — a manufacturer can be asked about in 10–15 distinct shapes (financial, M&A, EOL, leadership, ESG, cyber, etc.) and per-shape patches are a treadmill.
+
+Refactored to one general principle:
+
+> For every specific factual claim about a manufacturer, you MUST be able to point to a backing field in the tool result, or to a verbatim quote from the summary text. If you can't, downgrade to "not in our profile — verify with the manufacturer directly", or phrase as hedged interpretation with one of {*suggests, likely, typically, often, appears to, my read is*}. There is no third option.
+
+This single rule covers cert presence, founder names, HQ, listing status, product lines, geographic claims, financial position, M&A history — and any future claim shape. New question types ride for free.
+
+**One per-shape template kept: industry-fitness cert audit.** Has genuine structural specificity (per-industry checklist of expected certs the user needs comprehensively addressed; gaps are as informative as presence; the list is domain knowledge the model can't derive from data). Per-industry checklists for automotive (ISO 26262, IATF 16949, AEC-Q100/Q101/Q200), medical (ISO 13485, IEC 60601, ISO 14971), aerospace (AS9100, DO-254, DO-160, ITAR), space (ESCC, NASA EEE-INST-002, MIL-PRF, MIL-STD-883), defense (ITAR, MIL-STD-883, DFARS). Bar for adding future templates: question must have (a) implicit completeness requirement and (b) domain-knowledge-derived checklist not derivable from tool data.
+
+**Mandatory tool call rule.** Any MFR-identity question must call `get_manufacturer_profile` first — not allowed to bail out with "I don't have that" before checking. This was the bug that produced the GigaDevice "I don't have founding-year info" failure even though the Atlas row had `founded_year: 2005`.
+
+**Conversation behavior rules** also added: answer-first / drill-second (no leading clarifying questions for opinion-shaped questions), use existing context before re-asking, three-condition test for when to actually clarify first.
+
+Net: ~30% token reduction in MFR profile section vs. peak-patch state, with stronger generalization. Pattern documented for future application to other domains (recommendations, search-result interpretation, list agent).
+
+---
+
+## Decision #167 — UL94 Flammability Logic-Type Fix + Generalized Missing-Attributes Placeholder (Apr 2026)
+
+User reported the missing-attributes prompt was asking for "Flammability Rating (UL94)" with placeholder "Yes or No". UL94 is categorical (V-0 / V-1 / V-2 / HB), not boolean. Two-part fix:
+
+**Root cause: rule mistype in [lib/logicTables/filmCapacitors.ts](../lib/logicTables/filmCapacitors.ts).** The flammability rule was `logicType: 'identity_flag'` (boolean). The form's "Yes or No" placeholder was the system honestly reporting "this rule looks boolean to me." Changed to `identity_upgrade` with `upgradeHierarchy: ['V-0', 'V-1', 'V-2', 'HB']` — V-0 best (least flammable), HB worst. Original-requires-V-0 will now correctly reject HB candidates.
+
+**Generalized the form via plumbing.** [components/MissingAttributesForm.tsx](../components/MissingAttributesForm.tsx) `getPlaceholder()` previously hardcoded attribute names ("Dielectric" → "X7R", "Resistor Type" → "Thick Film"). Now reads the rule's actual `upgradeHierarchy` from `MissingAttributeInfo` and renders `e.g., V-0, V-1, V-2`. Works for any future categorical-upgrade rule without touching the form.
+
+Plumbed `upgradeHierarchy` through:
+- [lib/types.ts](../lib/types.ts) — added optional `upgradeHierarchy?: string[]` to `MissingAttributeInfo`.
+- [lib/services/matchingEngine.ts](../lib/services/matchingEngine.ts) `detectMissingAttributes()` — surfaces the rule's hierarchy in the returned info object.
+
+User noted this was the third time the bug had been "fixed" — prior attempts only added more hardcoded `attributeName ===` checks in the form. Real root cause (mistyped rule) was never touched. The form now lives off data, not strings.
+
+---
+
+## Decision #168 — Cross-Reference Availability Preflight Gates the "Find cross-references" Button (Apr 2026)
+
+User flow: search for **GD25B127D** (GigaDevice serial flash, Atlas-only, no logic table). The "Find cross-references" button rendered, the user clicked it, and was met with a warning that the matching engine doesn't support Flash Memory. Offering a button that dead-ends at a warning is broken UX — the button must only appear when the recommendation pipeline can actually return something.
+
+**Gate logic.** Show the button iff at least one of:
+1. **Logic** — `isFamilySupported(subcategory)` is true (one of the 43 encoded families)
+2. **MFR-certified** — admin-uploaded cross-references exist for this MPN
+3. **Parts.io-certified** — `extractEquivalentMpns(listing, mpn, 1)` returns ≥1 FFF or Functional Equivalent
+4. **Mouser-suggested** — Mouser's `SuggestedReplacement` field is populated (typically on EOL parts)
+
+If all four are false, the button is hidden and the chat message becomes: *"Loaded details for **MPN**. We don't have replacement coverage for this part — no rules table for this category and no certified crosses available."*
+
+**Implementation: server-side preflight rides the existing attribute round-trip.** New `xrefAvailability: { logic, mfrCertified, partsioCertified, mouserSuggested }` field on `PartAttributes`. Computed inside `getAttributes()` after enrichment via the new `attachXrefAvailability()` helper. The two external lookups (`fetchManufacturerCrossRefs`, `getPartsioProductDetails` + `extractEquivalentMpns`) run in parallel via `Promise.all`. Logic and Mouser checks are pure-function / data-already-loaded, so no extra calls. The parts.io listing is L1-cached by the enrichment that just ran, so its check costs ~0ms in the warm case. Cold-cache regression: ~50–200ms (one Supabase query for MFR crosses).
+
+`getAttributes()` was refactored to call `getAttributesRaw()` + `attachXrefAvailability()`, since the function had four successful return paths (Digikey product details, Digikey keyword fallback, parts.io direct, Atlas) — wrapping was cleaner than duplicating the preflight at every return.
+
+**Failure mode is fail-closed per axis.** Each lookup `.catch(() => false)` on its own promise; one source erroring doesn't suppress the others. Net: degrade to "no button" if everything errors, which is no worse than the broken UX we're fixing. A `hasAnyXrefAvailability()` helper in [lib/types.ts](../lib/types.ts) fail-opens for legacy payloads missing the field (so older cached attribute responses keep showing the button rather than going silent on deploy).
+
+**Client wiring** — `presentNextStepChoices()` in [hooks/useAppState.ts](../hooks/useAppState.ts) reads `sourceAttrs.xrefAvailability` via `hasAnyXrefAvailability()` and conditionally constructs the choices array + the chat message text + the conversation-history line.
+
+**LLM orchestrator** — system prompt's "Unsupported families" paragraph in [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) now describes the `xrefAvailability` field and instructs the model to NOT offer cross-references / NOT call get_recommendations when all four flags are false. `get_part_attributes` tool returns the field unchanged (whole `PartAttributes` shape), so MCP server consumers get the signal for free.
+
+**Defensive fallback retained.** The `isFamilySupported()` gate inside `handleFindReplacements` (added the prior turn) stays — if the preflight ever drifts out of sync with the matching engine, the inner gate still catches it before the user sees a recommendation pipeline that can't deliver.
+
+**Verification scenarios:**
+- GD25B127D (Flash) → all four flags false → button hidden, explanatory note shown.
+- GRM188R71C104KA01D (Murata MLCC) → `logic: true` → button rendered.
+- LM358 (TI op-amp) → `logic: true` → button rendered.
+- An MPN with only an admin-uploaded MFR cross-ref → `mfrCertified: true` → button rendered.
+
+---
+
+## Decision #169 — Multi-Button Contextual Actions After Part Resolution (Apr 2026)
+
+Decision #168 hid the "Find cross-references" button when no replacement data existed, which fixed the broken click-to-warning UX. The user then pointed out the deeper framing issue: cross-references is one capability among many (specs, supply, manufacturer profile, lifecycle, comparisons) and the post-resolution turn shouldn't lead with it. Pass 1 of the broader rework turns the single button into a small set of contextual action buttons, each gated on whether that capability has actual data behind it.
+
+**Shape change.** `PartAttributes.xrefAvailability` (introduced #168) renamed to `PartAttributes.partCapabilities`. The four xref booleans are now nested under `partCapabilities.replacements`, and `partCapabilities.mfrProfile: boolean` joins as a sibling. Future capabilities (best-price tier coverage, lifecycle data presence, comparison eligibility) ride the same object without breaking shape. `hasAnyXrefAvailability()` removed; replaced by `hasAnyReplacements()` which ORs the four `replacements.*` flags. Same fail-open behavior on legacy/missing payloads.
+
+**Buttons in this pass:**
+- **Replacement Options** (renamed from "Find cross-references") — gated on `hasAnyReplacements()`. Action discriminator stays `'find_replacements'` so the existing dispatch wires through unchanged.
+- **{Manufacturer}'s Profile** — gated on `partCapabilities.mfrProfile`. Dynamic label ("GigaDevice's Profile", "Murata's Profile"). New action discriminator `'show_mfr_profile'`.
+
+**MFR profile preflight.** Inside `getAttributes()`, the existing `attachXrefAvailability()` helper (renamed `attachPartCapabilities()`) gained a third parallel branch: `getProfileForManufacturer(part.manufacturer)` checked for non-null. The function has a 5-min module-scope cache and routes through `resolveManufacturerAlias()` — Atlas MFRs return rich profiles, Western MFRs without an Atlas record OR mock fallback return null. The non-null gate is exactly the user's "Atlas part with profile filled out" requirement; mock fallbacks (a few Western majors with hand-curated entries) also pass, which is the right behavior.
+
+**Cold-cache regression: ~50–150ms** (one Supabase query). Warm: ~0ms. Total preflight cost vs. baseline: still well under the 200ms budget set in #168.
+
+**Multi-button rendering.** Already worked — `components/ChoiceButtons.tsx` uses `Stack direction="row"` with `flexWrap: 'wrap'`. Two or three buttons render as a horizontal row with no UI changes. Verified by inspection.
+
+**Click dispatch lives in two places.** `useAppState` doesn't (and shouldn't) know about `useManufacturerProfile`; the panel hook is composed at `AppShell`. Click flow:
+1. `ChoiceButtons.onSelect` → `AppShell.handleChoiceSelectWithMfr` (new wrapper).
+2. Wrapper checks `choice.action === 'show_mfr_profile'`; if so, calls `mfr.handleManufacturerClick(state.sourcePart.manufacturer)` to open the side panel.
+3. Wrapper then delegates to `appState.handleChoiceSelect` regardless, so the chat-message side (user message + history note) happens in `useAppState` as it does for every other action.
+4. `useAppState.handleChoiceSelect` has a no-op-ish branch for `'show_mfr_profile'` that adds the chat message and returns — no LLM round-trip needed since the panel itself is the answer.
+
+**Message wording** updated to match the user's mockup: *"Got it — loaded the basics for **MPN**. What would you like to explore?"* Same in both have-buttons and no-buttons branches; button presence is the only signal.
+
+**LLM orchestrator** — system prompt's "Unsupported families" section reframed as "Unsupported families and capability awareness". References `partCapabilities` instead of `xrefAvailability`, and adds: when `mfrProfile` is false, decline plainly rather than calling `get_manufacturer_profile` (avoids notFound round-trips for Western MFRs).
+
+**Out of scope (Pass 2):** Best Spot Price button — needs a quantity-prompt sub-flow (chip selector + free-text), best-price compute across `supplierQuotes`, Commercial-tab activation, and inline price answer rendering. If the user doesn't supply a quantity (asks something else instead), the next message is treated as a fresh prompt rather than locking them into the price flow.
+
+**Files touched:**
+- [lib/types.ts](../lib/types.ts) — rename + restructure + new helper + extend `ChoiceOption.action` union.
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — rename helper + add MFR profile branch.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — rebuild `presentNextStepChoices()` + add `'show_mfr_profile'` branch in `handleChoiceSelect`.
+- [components/AppShell.tsx](../components/AppShell.tsx) — wrap `handleChoiceSelect` to also trigger the MFR panel for `'show_mfr_profile'`.
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — system prompt reframe.
+- [docs/API_INTEGRATION_GUIDE.md](API_INTEGRATION_GUIDE.md) — field rename + table extension.
+
+---
+
+## Decision #170 — Best Spot Price as a First-Class Chat Action (Apr 2026)
+
+Pass 2 of the contextual-actions rework. The third button — "Best Spot Price" — joins MFR Profile and Replacement Options after part resolution, gated on `partCapabilities.bestPrice` (true when any supplier quote has price-break data). Unlike the other two buttons, this one drives a multi-step sub-flow because pricing is quantity-dependent.
+
+**Flow:**
+1. User clicks **Best Spot Price**. Agent posts a chat message: *"What quantity? Pick a common tier or type a custom number."* with a new `quantity-prompt` interactive element rendering chips [1, 10, 100, 1K, 10K, 100K] + a numeric text input + Submit.
+2. User picks a chip OR types a number and submits. The prompt locks (chips + input become non-interactive, opacity-dimmed) so it can't be re-fired.
+3. `computeBestPrice(supplierQuotes, qty)` runs in-process — no network call. For each supplier, it picks the highest price-break tier whose `quantity` floor is ≤ requested qty (standard distributor pricing semantics), then ranks suppliers by resulting unit price.
+4. Agent posts the answer:
+   > *At qty **100**, best spot price is **$0.42/each from LCSC** (total $42.00).*
+   > *Other options: Mouser $0.48 · Digikey $0.52 · Arrow $0.55*
+   > *See the **Commercial** tab for the full quote list.*
+5. The right panel auto-switches to the Commercial tab so the user sees the full quote table without an extra click.
+
+**Fallback path: requested qty < every supplier's MOQ.** Surfaces the cheapest over-minimum option with a Yes-button:
+> *Lowest available is qty **10** from **LCSC** at **$0.50** each. Want me to price that instead?*
+> [ Yes — price at qty 10 ]
+
+Yes-button uses a new action discriminator `'best_price_at_qty'` with `quantity` embedded in the `ChoiceOption`. Re-runs `computeBestPrice` at the bumped qty.
+
+**If user types in the main chat input instead of using the prompt** — falls through to normal search/LLM flow. The stale prompt remains in chat history but is harmless. No phase-machine intercept needed; the prompt is purely opt-in.
+
+**Tab state lifted to `useAppState`.** Was local `useState` in `DesktopLayout` — chat handlers couldn't touch it. New `activeAttributesTab` field on `AppState` + `setActiveAttributesTab` setter exposed from the hook. `DesktopLayout` accepts it as optional props with a local-state fallback that preserves the prior MPN-change reset behavior. `AttributesTab` type moved from `DesktopLayout.tsx` to `lib/types.ts`.
+
+**Compute helper in [lib/services/bestPriceCalculator.ts](../lib/services/bestPriceCalculator.ts).** Pure function, fully tested (10 cases — match path, fallback path, tier selection, top-3 cap, empty quotes, non-positive qty, currency formatting). Returns a discriminated union `BestPriceResult` with `kind: 'match' | 'fallback' | 'none'` so the renderer pattern-matches without optional-field guesswork. Currency comes from each `PriceBreak.currency` (already correct since FC fetches honor the requested currency parameter). `formatPrice()` uses `Intl.NumberFormat` with 4 decimals for sub-$1, 2 decimals otherwise; falls back to bare `toFixed` on bad currency codes.
+
+**New types:**
+- `partCapabilities.bestPrice: boolean`
+- `ChoiceOption.action`: + `'show_best_price' | 'best_price_at_qty'`
+- `ChoiceOption.quantity?: number` (carries the fallback qty for `'best_price_at_qty'`)
+- `InteractiveElement`: + `{ type: 'quantity-prompt'; presets: number[]; status: 'pending' | 'submitted' }`
+
+**New component: [components/QuantityPrompt.tsx](../components/QuantityPrompt.tsx).** Chips + numeric `TextField` + Submit button. Numeric-only via inputMode and a regex strip on input change. Disables on `status === 'submitted'`.
+
+**Files touched:**
+- [lib/types.ts](../lib/types.ts), [lib/services/partDataService.ts](../lib/services/partDataService.ts) — preflight + types.
+- [lib/services/bestPriceCalculator.ts](../lib/services/bestPriceCalculator.ts) — new.
+- [components/QuantityPrompt.tsx](../components/QuantityPrompt.tsx) — new.
+- [components/MessageBubble.tsx](../components/MessageBubble.tsx) — render new interactive type.
+- [components/ChatInterface.tsx](../components/ChatInterface.tsx), [components/DesktopLayout.tsx](../components/DesktopLayout.tsx), [components/MobileAppLayout.tsx](../components/MobileAppLayout.tsx), [components/AppShell.tsx](../components/AppShell.tsx) — prop plumbing.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — tab state + dispatch + render helpers.
+- [docs/API_INTEGRATION_GUIDE.md](API_INTEGRATION_GUIDE.md) — `bestPrice` field row.
+- [__tests__/services/bestPriceCalculator.test.ts](../__tests__/services/bestPriceCalculator.test.ts) — 10 unit tests.
+
+**Verification scenarios:**
+- **Murata MLCC (rich FC coverage)** → all three buttons. Click Best Spot Price → prompt → pick 1000 → agent posts headline with cheapest distributor + top 3 + tab pointer. Commercial tab opens.
+- **Custom qty input (e.g., 5000)** → submit triggers same flow.
+- **Qty below all MOQs** (rare in practice — most distributors carry qty 1) → fallback Yes-button appears, click it → re-priced at min qty.
+- **Part with no FC quotes** → button hidden via `bestPrice: false`.
+- **Tab switch** — verify Commercial tab activates (especially when previously on Specs or Overview).
+
+---
+
+## Decision #171 — Origin Filter (`mfr_origin_filter`) for Recommendations Panel (May 2026)
+
+User asked the chat for "Chinese replacements" and the panel kept showing Western MFRs. The recommendation pipeline already populated `XrefRecommendation.part.mfrOrigin` (`'atlas' | 'western' | 'unknown'`) for every rec via the manufacturer alias resolver (Decision #161), but the filter pipeline had no origin field and the pattern detector had no Chinese-aware patterns. Same shape as the existing manufacturer / status / match-% / qualification / category filters — pure extension.
+
+**Filter input.** `FilterInput.mfr_origin_filter?: 'atlas' | 'western'` added to [recommendationFilter.ts](../lib/services/recommendationFilter.ts). Predicate is a one-liner: `r.part.mfrOrigin === target`. Pure addition, no callers touched.
+
+**Detector.** New `detectOriginIntent()` in [filterIntentDetector.ts](../lib/services/filterIntentDetector.ts), wired into the priority chain BEFORE `detectManufacturerIntent` (origin is a more specific signal than fuzzy MFR-name token matching). Patterns:
+- Atlas: `\b(chinese|china|prc|mainland|asian|asia)\b` plus `\b(made|from|sourced)\s+in\s+china\b`
+- Western: `\b(western|american|european)\b` plus `\bnon[\s-]?chinese\b`
+- Western checked FIRST so "non-chinese" / "non chinese" doesn't get swallowed by the bare `\bchinese\b` atlas pattern.
+
+**No filter-verb requirement.** Origin words ("Chinese", "Asian", "Western") are inherently narrowing in this product context — no one asks "is this part Chinese?" of a recommendations panel; they say it because they want to see only those. Cheaper false positives than missed matches.
+
+**LLM tool parity.** `filter_recommendations` JSON schema in [llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) extended with `mfr_origin_filter` enum so LLM-routed filter calls (e.g., "now narrow to American") have schema parity with the deterministic intercept.
+
+**Out of scope.** Country-level granularity ("Japanese only", "German only") needs data-layer work on `manufacturerAliasResolver` to surface country per alias row; `mfrOrigin` is binary atlas/western today.
+
+**Verification:**
+- "show only Chinese" / "Asian alternatives" / "made in China" / "from China" → `mfr_origin_filter: 'atlas'`
+- "Western only" / "non-Chinese" / "American replacements" → `mfr_origin_filter: 'western'`
+- 24 new tests in [filterIntentDetector.test.ts](../__tests__/services/filterIntentDetector.test.ts).
+
+**Files touched:**
+- [lib/services/recommendationFilter.ts](../lib/services/recommendationFilter.ts) — `FilterInput` field + predicate.
+- [lib/services/filterIntentDetector.ts](../lib/services/filterIntentDetector.ts) — `detectOriginIntent` helper + chain wire.
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — tool schema + system-prompt mention.
+- [__tests__/services/filterIntentDetector.test.ts](../__tests__/services/filterIntentDetector.test.ts) — origin describe block.
+
+---
+
+## Decision #172 — Bundled-Search-Intent Routing: Carry Filter Through Auto-Fire + Fix Stale-Closure on `handleFindReplacements` (May 2026)
+
+User typed "I want to find me Chinese replacements for this part from Wurth: 860020672005" as a fresh search. Three bugs in one query:
+
+1. **LLM speculated about MFR coverage before recs existed.** Sonnet read the bundled query, the search results, and wrote prose listing fictional candidates ("Capxon, Lelon, Rubycon all make 1µF/50V radials") without ever running the matching engine.
+2. **Origin qualifier was lost between search-time intent detection and post-confirm intent dispatch.** `detectQueryIntent` correctly returned `'find_replacements'` and stashed it into `pendingIntent` for auto-fire. But on the auto-fire path (`tryAutoFireIntent` → `dispatchIntent('find_replacements', ..., 'fresh')`), the original query string was never stashed into `pendingPostRecsFilterRef` — only the followup-query path did that. So even when the user clicked the right card and recs loaded, the "Chinese" qualifier silently dropped.
+3. **`handleFindReplacements` froze silently on the auto-fire path.** Same shape as the Decision #155 stale-closure trap. `handleConfirmWithLLM` did `setState({sourcePart: part})` then awaited attribute fetch then synchronously called `dispatchIntent → handleFindReplacements`, which read `state.sourcePart` / `state.sourceAttributes` from its captured closure — both `null` at click time, before the setState flushed. Function bailed at the `if (!mpn || !sourceAttrs) return;` guard with no message, no error, no recs — chat appeared frozen at "Fetching technical attributes…".
+
+**Three fixes:**
+
+**1. Replacement-coverage discipline rule (LLM prompt).** Added one general anti-speculation rule to the system prompt parallel to the source-part discipline rule: never list hypothetical candidate MPNs/MFRs, never speculate about Atlas/Digikey/Mouser coverage, never characterize the request as "challenging" before the matching engine has run. Calls out the bug-exact fabrications (Capxon/Lelon/Rubycon naming) as not-acceptable examples. General enough to cover all bundled-intent variants (origin, MFR, qualification, category).
+
+**2. `pendingIntentQueryRef`.** Mirror of `pendingIntent` that captures the user's original query string at search time. When `tryAutoFireIntent` fires `find_replacements`, it stashes the captured query into `pendingPostRecsFilterRef` so the existing `showRecsAndDeferAssessment` filter consumer applies any bundled qualifier ("Chinese", "≥80%", etc.) once recs land. Cleared in reset paths alongside `pendingPostRecsFilterRef`.
+
+**3. `partOverride` parameter on `handleFindReplacements`.** Mirrors the existing `contextOverride` workaround from Decision #155 but for `sourcePart` / `sourceAttributes`. `dispatchIntent` passes `{ mpn, sourceAttributes }` explicitly; the function falls back to state reads only when no override is supplied. Also pre-primes `sourceAttributesRef.current` synchronously before `handleFindReplacements` runs (the `useEffect` mirror lags by one render and is read by downstream paths).
+
+**Lesson — same shape, same trap.** Any callback that does `setState` then synchronously calls another callback that reads from the same state hits this. Decision #155 fixed it for `applicationContext`; this fix extends the pattern to `sourcePart` / `sourceAttributes`. Future callsites with the same shape should accept explicit overrides instead of relying on state propagation.
+
+**Files touched:**
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — `pendingIntentQueryRef` declaration + intent-stash + auto-fire consume + reset cleanup; `handleFindReplacements` `partOverride` parameter; `dispatchIntent` sync-prime + override pass.
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — Replacement-coverage discipline section in `buildSystemPrompt`.
+
+---
+
+## Decision #173 — Kill the Post-Recs LLM Assessment, Replace with Deterministic Summary (May 2026)
+
+After Decisions #171 and #172 shipped, recs filtered correctly to Atlas-MFR cards. But the LLM-driven engineering assessment that fired immediately after recs landed kept fabricating MFR origin / cert / supply-chain prose:
+
+> *"CapXon (multiple SKUs in the 80–95% range)… Lelon (85–92%)… Rubycon (Japanese-origin but deep China manufacturing footprint; 80%+ matches available)… All candidates pass AEC-Q200… Lead time and stock depth favor CapXon and Lelon given broader distributor reach in your region."*
+
+Actual top 3: SPZ1HM470E08000RAXXX (68%), ERH2GM100G16OT (66%), ENB1JM331W20OT (66%). Match percentages, MFR identities, geographic claims, cert claims, supply-chain claims — all fabricated.
+
+**Three rounds of escalating prompt rules failed to hold:**
+1. Decision #166's general claim-discipline rule.
+2. Pre-recs Replacement-coverage discipline (Decision #172) — scoped to "no recs in context"; LLM (correctly) read that as "post-recs is fair game".
+3. Post-recs Recommendation-block factual discipline + handing the LLM the filtered slice — failed within minutes; Sonnet's prior on "Chinese capacitor MFRs" overrode the rule.
+
+**Decision: pull the LLM out of this code path entirely.** The cards already display every fact the assessment legitimately conveys — MPN, MFR, match %, lifecycle, distributors, AEC badges, FindChips supplier data. Every time the LLM tried to add value beyond that (supply chain, cert coverage, origin, market positioning), it made things up.
+
+**Implementation.** New pure helper `buildRecsSummary(recs, sourceMpn)` in [lib/services/recommendationSummary.ts](../lib/services/recommendationSummary.ts). Reads only `part.{mpn, manufacturer}`, `matchPercentage`, and `countRealMismatches()`. By construction it cannot fabricate anything that isn't on a card the user can see. Output shape:
+
+> *Found **7** replacement candidates for **860020672005**. Top match: **SPZ1HM470E08000RAXXX** — CapXon, 68% match. 3 pass all rules; 4 flagged for parameter mismatches — review per-card spec match before committing.*
+
+`showRecsAndDeferAssessment` in [useAppState.ts](../hooks/useAppState.ts) now calls `addMessage('assistant', buildRecsSummary(...))` instead of `chatWithOrchestrator(...)`. Also dropped the user-role conversation-history trigger (it was bait for the now-removed LLM call). Skipped when a bundled filter matched (`dispatchFilterIntent` already posts an equivalent "Filtered to N <label> replacements + Top picks" message).
+
+**LLM still owns user-driven follow-ups.** The other `chatWithOrchestrator` call site in `useAppState` (handleSearchWithLLM, line ~948) remains — it handles filter intents, parametric questions, MFR-profile lookups, and any other follow-up Q&A. The system-prompt discipline rules from prior passes still apply there.
+
+**Lesson.** When (a) an LLM has strong domain priors on the topic, AND (b) the underlying facts already live on UI elements the user can see, prompt-tightening is the wrong tool. Deterministic templates win — they cannot fabricate by construction, they're testable in isolation, and the chat-stream loses no real signal because the cards were always the source of truth. Reach for LLM prose only when (a) the data isn't already rendered, or (b) the response truly requires natural-language synthesis the user couldn't get from the data alone. The post-recs assessment satisfied neither.
+
+**Files touched:**
+- [lib/services/recommendationSummary.ts](../lib/services/recommendationSummary.ts) — new pure helper.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — `showRecsAndDeferAssessment`: drop LLM call + trigger push, add deterministic summary.
+- [__tests__/services/recommendationSummary.test.ts](../__tests__/services/recommendationSummary.test.ts) — 7 tests (empty, single, all-pass, mixed pass/fail, N/A handling, rounding, pluralization).
+
+**Verification:**
+- Unfiltered flow → chat shows the deterministic summary, no MFR/cert/origin/supply-chain prose.
+- Bundled-filter flow → only `dispatchFilterIntent` "Filtered to N <label>" message appears.
+- Follow-up Q&A still routes through LLM with system-prompt discipline (unchanged).
+- 1511 tests pass (+7 new).
+
+## Decision #174 — Atlas Re-Ingest Pipeline: Provenance + Batch Review + AI Dictionary Triage (May 2026)
+
+**Problem.** Each fresh `mfr_*_params.json` from the data team had three sharp edges that made repeated refreshes risky: (1) the upsert overwrote `parameters` JSONB wholesale, wiping previously LLM-extracted attrs; (2) there was no pre-ingest preview — only `--dry-run --warnings` stderr; (3) there was no surgical rollback. With 100s of MFRs in flight, this couldn't scale.
+
+**Decision.** Built a three-phase pipeline that makes Atlas re-ingest a routine operation with per-MFR diff reports, batch-level approve/revert, and AI-assisted dictionary mapping for unmapped Chinese params.
+
+### Phase 1 — Safety foundation (CLI)
+
+- **Provenance-tagged JSONB**: every `parameters` value now carries `{ value, numericValue?, unit?, source: 'atlas' | 'extraction' | 'manual', ingested_at }`. Re-ingest only touches `source: 'atlas'` entries — LLM-extracted and (future) manual edits survive. `mergeAtlasParameters()` enforces the rule.
+- **`atlas_ingest_batches` table**: per-MFR pending batch with full structured `IngestDiffReport` JSONB (product counts, attr changes, unmapped params, classification flips, family counts). Generated `risk` column drives triage: `clean | review | attention`.
+- **`atlas_products_snapshots` table**: pre-apply row snapshots with 30-day TTL. Per-batch `--revert` restores from these.
+- **CLI modes** in `scripts/atlas-ingest.mjs`: `--report` (no DB write, just batch row), `--proceed <batchId>`, `--proceed-all-clean`, `--revert <batchId>`, `--discard <batchId>`, `--list-pending [--summary]`, `--regenerate-affected-by <paramName>`.
+- **Provenance-preserving merge upsert**: existing extraction/manual-tagged attrs preserved; atlas attrs replaced wholesale. Removed-from-new-file products soft-delete (`status='discontinued'`) when extraction attrs exist, hard-delete when only atlas attrs.
+- **Multi-key MFR lookup** (`lib/services/atlasIngestService.ts → loadManufacturerLookup`): handles ID-space mismatch between the data team's filename `mfr_id` and the master `atlas_manufacturers` master list — falls through name_display → atlas_id → name_en → slug.
+- **Bulk DB ops**: snapshots/upserts chunked to 500/op, deletes via `.in('mpn', [...])` chunked to 200, took the YANGJIE revert from 10+ minutes to ~30 seconds.
+
+### Phase 2 — Admin UI
+
+- **`/admin/atlas/ingest`** (`AtlasIngestPanel.tsx` + `components/admin/atlasIngest/*`): drag-drop folder upload, aggregate dashboard with risk chips, "Proceed All Clean" bulk-apply, per-batch cards (collapsed for clean/review, expanded for attention), Applied tab with revert action.
+- **API routes** under `/api/admin/atlas/ingest/`: `upload`, `report`, `batches`, `batches/[batchId]` (GET/DELETE for discard), `batches/[batchId]/proceed`, `batches/[batchId]/revert`, `batches/[batchId]/regenerate`, `proceed-all-clean`. All admin-guarded. Each wraps `runIngestScript()` to spawn the CLI under the hood.
+- **New-MFR auto-registration**: filename parser (`parseAtlasFilename`) extracts `atlas_id`, `name_en`, `name_zh`, `name_display`, `slug`. UI surfaces a "New manufacturers detected" panel before report generation; user reviews/edits/confirms, then files join the regular batch flow.
+- **`next.config.ts`**: `experimental.proxyClientMaxBodySize: '256mb'` (Next.js 16 — replaces deprecated `middlewareClientMaxBodySize`) for folder-upload sizes.
+
+### Phase 3-A — AI dictionary triage
+
+When the unmapped-params list crosses ~50 entries, hand-mapping doesn't scale. Built an AI-assisted triage step inside the global unmapped-params table:
+
+- **`/api/admin/atlas/dictionaries/suggest`** (Claude Haiku): given a Chinese param name + sample values + family schema, returns `{ translation, suggestedAttributeId, suggestedAttributeName, suggestedUnit, confidence, reasoning }`. Critical fix: Haiku occasionally wraps JSON in markdown fences — strip before parsing. In-memory cache keyed `${familyId}::${paramName}` with 24h TTL.
+- **`/api/admin/atlas/family-schema`**: lightweight endpoint returning canonical attributeId list per family (no Anthropic call) — used as fallback so the canonical-vs-invented indicator works on already-cached suggestions.
+- **`GlobalUnmappedParamsTable.tsx`**: three caching layers (client localStorage 7d, server in-memory 24h, Anthropic API), concurrency-limited fan-out (4 suggestion fetches + 4 accept fetches). Suggestions hydrate from localStorage first, then fetch missing.
+- **Canonical-vs-invented indicators (Option A)**: Each suggested attributeId is checked against the family's canonical schemaIds. Canonical → green `VerifiedOutlinedIcon`; invented → amber `HelpOutlineOutlinedIcon` + amber TextField border. `isBulkEligible` excludes invented IDs from the bulk-accept button.
+- **Embed-in-batch-card mode**: when only one pending batch exists, `GlobalUnmappedParamsTable` renders inside that batch's `BatchCard` body (via `embeddedTriagePanel` prop) instead of standalone — keeps the unmapped section visually attached to the MFR it belongs to.
+- **Hydration error fix**: MUI `AccordionSummary` renders as `<button>`; the bulk-accept Button got nested inside it. Moved into `AccordionDetails` to fix.
+
+### Option 2 — Ingest + read consult `atlas_dictionary_overrides`
+
+The architectural gap discovered after Phase 3-A landed: accepting an AI-suggested mapping wrote a row to `atlas_dictionary_overrides`, but neither the ingest script nor the read path consulted that table. Overrides were inert until manually copied into `FAMILY_PARAMS` source code.
+
+- **Ingest path** (`scripts/atlas-ingest.mjs`): new `loadAndApplyDictOverrides()` runs once at the dispatcher entry point. Fetches `where is_active=true`, mutates `FAMILY_PARAMS` and `L2_PARAMS` in memory using the same remove → modify → add order as `applyDictOverrides()` in atlasMapper.ts. Logs `Loaded N overrides (add: X, modify: Y, remove: Z)`. Safe no-op when supabase is null (`--dry-run`).
+- **Read path** (`lib/services/atlasMapper.ts`, `atlasClient.ts`, `atlasDictOverrides.ts`): new `fetchAllDictOverrides()` (60s in-memory cache, cleared by existing `invalidateDictOverrideCache()` hooks). `fromParametersJsonb` accepts an optional `overrides: DictOverrideRow[]` and seeds the `nameLookup` map first so admin-curated names win over logic-table defaults. `getAtlasAttributes` and `fetchAtlasCandidates` prefetch overrides once and pass through `rowToPartAttributes`.
+- **Most useful when**: AI-suggested attributeId isn't in any logic table or shared dict. Without override consult, `fromParametersJsonb` falls back to `humanizeStem('funky_id')` and `recognized: false`. With it: nice display name + `recognized: true`.
+
+### Cache invalidation fix
+
+The new ingest API routes (`proceed`, `proceed-all-clean`, `revert`) initially didn't call `invalidateAtlasCache()` or `invalidateManufacturersListCache()`, so the admin Atlas MFRs panel kept serving stale `admin_stats_cache` rows after every UI-driven apply. The CLI script also only cleared `atlas-coverage`, not `manufacturers-list`. Both now clear both keys on every successful proceed/revert. Hand-off: any other write path that mutates `atlas_products` should mirror this (e.g. `atlas-extract-descriptions.ts`, `atlas-clean-descriptions.ts` already do).
+
+**Files touched:**
+- New SQL: `scripts/supabase-atlas-ingest-pipeline-schema.sql`.
+- Updated CLI: `scripts/atlas-ingest.mjs` (provenance merge, batch report, snapshot+revert, `loadAndApplyDictOverrides`, dual cache key invalidation).
+- New service: `lib/services/atlasIngestService.ts` (filename parser, MFR lookup, script-runner wrapper).
+- Updated mapper: `lib/services/atlasMapper.ts` (provenance shape, `mergeAtlasParameters`, `applyDictOverrides`, `fromParametersJsonb` overrides param).
+- Updated client: `lib/services/atlasClient.ts` (prefetch overrides for read path).
+- Updated overrides service: `lib/services/atlasDictOverrides.ts` (added `fetchAllDictOverrides` + all-cache invalidation).
+- New API routes: `app/api/admin/atlas/ingest/upload`, `report`, `batches`, `batches/[batchId]`, `batches/[batchId]/proceed`, `batches/[batchId]/revert`, `batches/[batchId]/regenerate`, `proceed-all-clean`, `app/api/admin/atlas/family-schema`, `app/api/admin/atlas/dictionaries/suggest`.
+- New UI: `app/admin/atlas/ingest/page.tsx`, `components/admin/atlasIngest/*` (AtlasIngestPanel, BatchCard, IngestUploader, IngestDashboard, GlobalUnmappedParamsTable, ProductDiffTable, BatchProgressDialog, types.ts).
+- `next.config.ts` body-size cap.
+
+**Deferred:** SCR/Modules classifier fix — 316 YANGJIE thyristor modules currently uncovered due to `!lower.includes('module')` exclusion at line 124 of `atlas-ingest.mjs`. Listed in BACKLOG.md.
+
+**Verification.** End-to-end: YANGJIE 12,932 products applied via UI; provenance preserved across re-ingest of older MFRs; AI dict triage cuts unmapped params from 286 → 196 in one pass; tests stay green at 1521.

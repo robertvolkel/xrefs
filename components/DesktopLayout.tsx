@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
-import { AppPhase, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
+import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
 
-export type AttributesTab = 'overview' | 'specs' | 'commercial';
+export type { AttributesTab };
 import ChatInterface from './ChatInterface';
 import CollapsedChatNav from './CollapsedChatNav';
 import ChatHistoryDrawer from './ChatHistoryDrawer';
@@ -96,6 +96,11 @@ export interface DesktopLayoutProps {
   statusText: string;
   sourceAttributes: PartAttributes | null;
   comparisonAttributes: PartAttributes | null;
+  /** True while a clicked replacement's full attributes are being fetched —
+   *  drives skeleton placeholders in the comparison panel. */
+  isLoadingComparison?: boolean;
+  /** True when the replacement-attributes fetch failed. */
+  comparisonError?: boolean;
   recommendations: XrefRecommendation[];
   selectedRecommendation: XrefRecommendation | null;
   conversationId: string | null;
@@ -127,8 +132,12 @@ export interface DesktopLayoutProps {
   onContextResponse: (answers: Record<string, string>) => void;
   onSkipContext: () => void;
   onChoiceSelect: (choice: import('@/lib/types').ChoiceOption) => void;
+  onQuantitySubmit?: (messageId: string, quantity: number) => void;
   onSelectRecommendation: (rec: XrefRecommendation) => void;
   onBackToRecommendations: () => void;
+  /** Lifted from DesktopLayout's local state so chat handlers can switch tabs. */
+  activeAttributesTab?: AttributesTab;
+  onAttributesTabChange?: (tab: AttributesTab) => void;
 
   // Handlers — panels
   onManufacturerClick: (manufacturer: string) => void;
@@ -140,6 +149,7 @@ export interface DesktopLayoutProps {
   onSelectConversation: (id: string) => Promise<void>;
   onNewChat: () => void;
   onDeleteConversation: (id: string) => Promise<void>;
+  onClearAllConversations: () => Promise<void>;
 
   // Inline MPN linkification for assistant messages.
   knownMpns?: Set<string>;
@@ -149,22 +159,29 @@ export interface DesktopLayoutProps {
 export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
+    isLoadingComparison = false, comparisonError = false,
     recommendations, selectedRecommendation, conversationId,
     showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
     chatCollapsed, mfrOpen, mfrProfile, mfrSource, mfrLoading,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
     onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext, onChoiceSelect,
+    onQuantitySubmit,
     onSelectRecommendation, onBackToRecommendations,
     onManufacturerClick, onExpandChat,
     onToggleHistory, onCloseHistory,
-    onSelectConversation, onNewChat, onDeleteConversation,
+    onSelectConversation, onNewChat, onDeleteConversation, onClearAllConversations,
     knownMpns, onMpnClick,
+    activeAttributesTab, onAttributesTabChange,
   } = props;
 
-  // Synced tab state for AttributesPanel + ComparisonView — both panels show same dimension
-  const [attributesTab, setAttributesTab] = useState<AttributesTab>('overview');
-  useEffect(() => { setAttributesTab('overview'); }, [sourceAttributes?.part.mpn]);
+  // Tab state was lifted to useAppState (so chat handlers like Best Spot Price
+  // can switch tabs). Falls back to local state for any consumer that hasn't
+  // wired the props yet — preserves the prior MPN-change reset effect there.
+  const [localTab, setLocalTab] = useState<AttributesTab>('overview');
+  useEffect(() => { setLocalTab('overview'); }, [sourceAttributes?.part.mpn]);
+  const attributesTab = activeAttributesTab ?? localTab;
+  const setAttributesTab = onAttributesTabChange ?? setLocalTab;
 
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
@@ -182,6 +199,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         onSelectConversation={onSelectConversation}
         onNewChat={onNewChat}
         onDeleteConversation={onDeleteConversation}
+        onClearAllConversations={onClearAllConversations}
       />
       <Box sx={{ flex: 1, position: 'relative', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
         <ParticleWaveBackground visible={!showAttributesPanel} />
@@ -258,6 +276,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onContextResponse={onContextResponse}
               onSkipContext={onSkipContext}
               onChoiceSelect={onChoiceSelect}
+              onQuantitySubmit={onQuantitySubmit}
               sourceMpn={sourceAttributes?.part.mpn}
               sourceManufacturer={sourceAttributes?.part.manufacturer}
               knownMpns={knownMpns}
@@ -320,6 +339,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onManufacturerClick={onManufacturerClick}
               activeTab={attributesTab}
               onTabChange={setAttributesTab}
+              isLoadingReplacement={isLoadingComparison}
+              replacementError={comparisonError}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel

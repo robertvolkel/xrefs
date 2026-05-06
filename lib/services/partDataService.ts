@@ -17,7 +17,7 @@ import {
 } from './digikeyMapper';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
-import { getLogicTableForSubcategory, enrichRectifierAttributes } from '../logicTables';
+import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupported } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { sortRecommendationsForDisplay } from './recommendationSort';
@@ -35,6 +35,7 @@ import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMappe
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
+import { getProfileForManufacturer } from './manufacturerProfileService';
 import {
   classifyQualificationDomain,
   upgradeFromAttributes,
@@ -679,6 +680,15 @@ export async function getAttributes(
   mpn: string, currency?: string, userId?: string,
   options?: { skipFindchips?: boolean },
 ): Promise<PartAttributes | null> {
+  const raw = await getAttributesRaw(mpn, currency, userId, options);
+  if (!raw) return null;
+  return await attachPartCapabilities(raw, mpn, userId);
+}
+
+async function getAttributesRaw(
+  mpn: string, currency?: string, userId?: string,
+  options?: { skipFindchips?: boolean },
+): Promise<PartAttributes | null> {
   if (isDigikeyConfigured()) {
     try {
       const response = await getProductDetails(mpn, currency, userId);
@@ -756,6 +766,52 @@ export async function getAttributes(
   }
 
   return null;
+}
+
+/**
+ * Capability preflight — drives which contextual action buttons render in chat
+ * after part resolution. Runs three external lookups in parallel: manufacturer
+ * cross-refs, parts.io equivalents, and manufacturer profile. Each is per-axis
+ * fail-closed (one source erroring doesn't suppress the others). The parts.io
+ * listing and MFR profile are both module-cached upstream, so this preflight
+ * adds ~50–200ms cold and ~0ms warm; the MFR-xref Supabase query dominates
+ * cold-cache latency.
+ */
+async function attachPartCapabilities(
+  attrs: PartAttributes,
+  mpn: string,
+  userId?: string,
+): Promise<PartAttributes> {
+  const [mfrCertified, partsioCertified, mfrProfile] = await Promise.all([
+    fetchManufacturerCrossRefs(mpn).then(rows => rows.length > 0).catch(() => false),
+    (async () => {
+      if (!isPartsioConfigured()) return false;
+      const listing = await getPartsioProductDetails(mpn, userId).catch(() => null);
+      if (!listing) return false;
+      return extractEquivalentMpns(listing, mpn, 1).length > 0;
+    })(),
+    // Module-scope 5-min cache lives inside getProfileForManufacturer; non-null
+    // means an Atlas-resolved profile or a Western mock fallback exists.
+    getProfileForManufacturer(attrs.part.manufacturer).then(r => !!r).catch(() => false),
+  ]);
+
+  const logic = isFamilySupported(attrs.part.subcategory);
+  const mouserSuggested = (attrs.part.lifecycleInfo ?? []).some(
+    l => l.source === 'mouser' && !!l.suggestedReplacement,
+  );
+
+  // Best-price button gate: any supplier quote with a price break = we have
+  // something to compute against. FC enrichment ran inside enrichSourceInParallel
+  // (unless skipFindchips was set), so by this point quotes are populated or
+  // the part genuinely has no commercial coverage.
+  const bestPrice = (attrs.part.supplierQuotes ?? []).some(q => (q.priceBreaks?.length ?? 0) > 0);
+
+  attrs.partCapabilities = {
+    replacements: { logic, mfrCertified, partsioCertified, mouserSuggested },
+    mfrProfile,
+    bestPrice,
+  };
+  return attrs;
 }
 
 // ============================================================

@@ -145,6 +145,31 @@ export interface PartAttributes {
   enrichedFrom?: 'partsio';
   /** Set when candidate comes from parts.io FFF/Functional Equivalent fields */
   equivalenceType?: 'fff' | 'functional';
+  /** Capability preflight — drives which contextual action buttons appear
+   *  in chat after part resolution. Each axis is independent. `replacements`
+   *  ORs to the "Replacement Options" button gate (any-true means the rec
+   *  pipeline can return SOMETHING — logic candidates, MFR-uploaded crosses,
+   *  parts.io FFF/Functional, or Mouser SuggestedReplacement). `mfrProfile`
+   *  gates the "{Manufacturer}'s Profile" button — true means a non-null
+   *  profile is on file (Atlas-resolved or mock fallback). */
+  partCapabilities?: {
+    replacements: {
+      logic: boolean;
+      mfrCertified: boolean;
+      partsioCertified: boolean;
+      mouserSuggested: boolean;
+    };
+    mfrProfile: boolean;
+    /** True when supplier quotes exist — gates the "Best Spot Price" button. */
+    bestPrice: boolean;
+  };
+}
+
+/** True iff at least one cross-reference axis is available for a part. */
+export function hasAnyReplacements(attrs: PartAttributes): boolean {
+  const r = attrs.partCapabilities?.replacements;
+  if (!r) return true; // legacy/missing payload — fail open so older cached responses keep working
+  return r.logic || r.mfrCertified || r.partsioCertified || r.mouserSuggested;
 }
 
 /** Source that certified/suggested a cross-reference */
@@ -372,18 +397,24 @@ export interface ChatMessage {
 export interface ChoiceOption {
   id: string;
   label: string;
-  action?: 'confirm_part' | 'find_replacements' | 'search' | 'other';
+  action?: 'confirm_part' | 'find_replacements' | 'show_mfr_profile' | 'show_best_price' | 'best_price_at_qty' | 'search' | 'other';
   mpn?: string;
   manufacturer?: string;
+  /** For 'best_price_at_qty' — the quantity to price at (e.g., the minOrderQty fallback). */
+  quantity?: number;
 }
+
+/** Tabs on the source-part attributes panel (right side, desktop layout). */
+export type AttributesTab = 'overview' | 'specs' | 'commercial';
 
 export type InteractiveElement =
   | { type: 'confirmation'; part: PartSummary }
   | { type: 'options'; parts: PartSummary[] }
-  | { type: 'choices'; choices: ChoiceOption[] }
+  | { type: 'choices'; choices: ChoiceOption[]; clickedChoiceId?: string }
   | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
   | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> }
-  | { type: 'list-action'; action: PendingListAction; status: 'pending' | 'confirmed' | 'cancelled' };
+  | { type: 'list-action'; action: PendingListAction; status: 'pending' | 'confirmed' | 'cancelled' }
+  | { type: 'quantity-prompt'; presets: number[]; status: 'pending' | 'submitted'; submittedQty?: number };
 
 // ── List Agent Types ─────────────────────────────────────────
 
@@ -769,6 +800,19 @@ export interface ManufacturerProfile {
   authorizedDistributors: AuthorizedDistributor[];
   complianceFlags: string[];
   summary: string;
+  /** Stock ticker / listing code on the manufacturer's local exchange (e.g.
+   *  "603986" for GigaDevice on SSE STAR Market). Presence indicates publicly
+   *  listed; absence does NOT imply private — listing status may be unknown. */
+  stockCode?: string;
+  websiteUrl?: string;
+  /** Atlas stores as JSONB. Some rows are bare email strings, others may carry
+   *  structured contact objects. Kept as a permissive union so the LLM/UI can
+   *  format whatever shape the row has. */
+  contactInfo?: string | Record<string, string>;
+  /** Legal name on Parts.io if it differs from `name` (e.g. "GigaDevice
+   *  Semiconductor (Beijing) Inc" vs "GIGADEVICE"). Useful for cross-system
+   *  identification when reconciling Parts.io listings. */
+  partsioName?: string;
 }
 
 export interface AuthorizedDistributor {

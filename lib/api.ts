@@ -208,11 +208,12 @@ export async function chatWithOrchestrator(
   recommendations?: XrefRecommendation[],
   signal?: AbortSignal,
   searchResult?: SearchResult,
+  sourceAttributes?: PartAttributes,
 ): Promise<OrchestratorResponse> {
   return fetchApi<OrchestratorResponse>(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, recommendations, searchResult }),
+    body: JSON.stringify({ messages, recommendations, searchResult, sourceAttributes }),
     signal,
   });
 }

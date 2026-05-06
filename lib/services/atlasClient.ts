@@ -8,6 +8,7 @@
 import { createClient } from '../supabase/server';
 import type { PartAttributes, SearchResult, Part, PartSummary, ParametricAttribute } from '../types';
 import { fromParametersJsonb } from './atlasMapper';
+import { fetchAllDictOverrides, type DictOverrideRow } from './atlasDictOverrides';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 
 // ─── Disabled Manufacturer Cache ─────────────────────────
@@ -84,7 +85,7 @@ interface AtlasProductRow {
 
 // ─── Helpers ──────────────────────────────────────────────
 
-function rowToPartAttributes(row: AtlasProductRow): PartAttributes {
+function rowToPartAttributes(row: AtlasProductRow, overrides?: DictOverrideRow[]): PartAttributes {
   // Extract AEC qualifications from parameters JSONB
   const qualifications: string[] = [];
   const params = row.parameters || {};
@@ -105,7 +106,7 @@ function rowToPartAttributes(row: AtlasProductRow): PartAttributes {
     ...(qualifications.length > 0 && { qualifications }),
   };
 
-  const parameters: ParametricAttribute[] = fromParametersJsonb(row.parameters, row.family_id, row.category);
+  const parameters: ParametricAttribute[] = fromParametersJsonb(row.parameters, row.family_id, row.category, overrides);
 
   return {
     part,
@@ -218,7 +219,8 @@ export async function getAtlasAttributes(mpn: string): Promise<PartAttributes | 
     const disabled = await getDisabledManufacturers();
     if (disabled.has((data as AtlasProductRow).manufacturer)) return null;
 
-    return rowToPartAttributes(data as AtlasProductRow);
+    const overrides = await fetchAllDictOverrides();
+    return rowToPartAttributes(data as AtlasProductRow, overrides);
   } catch {
     return null;
   }
@@ -254,7 +256,8 @@ export async function fetchAtlasCandidates(familyId: string): Promise<PartAttrib
 
     if (!data || data.length === 0) return [];
 
-    return data.map((row: AtlasProductRow) => rowToPartAttributes(row));
+    const overrides = await fetchAllDictOverrides();
+    return data.map((row: AtlasProductRow) => rowToPartAttributes(row, overrides));
   } catch (error) {
     console.warn('Atlas candidate fetch failed:', error);
     return [];

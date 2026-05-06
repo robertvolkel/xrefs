@@ -119,12 +119,35 @@ The MPN must be URL-encoded (e.g., `BC847CW%2C115` for `BC847CW,115`).
         "source": "digikey"
       }
     ],
-    "dataSource": "digikey"
+    "dataSource": "digikey",
+    "partCapabilities": {
+      "replacements": {
+        "logic": true,
+        "mfrCertified": false,
+        "partsioCertified": true,
+        "mouserSuggested": false
+      },
+      "mfrProfile": true,
+      "bestPrice": true
+    }
   }
 }
 ```
 
 Returns HTTP 404 with `{ "success": false, "error": "Part not found" }` if the MPN is unknown.
+
+The `partCapabilities` object signals which downstream actions will productively return data for this part. Use it to gate UI affordances and avoid dead-end calls. Each flag is independent:
+
+| Field | Meaning |
+|-------|---------|
+| `replacements.logic` | A logic table exists for the part's family (one of the 43 encoded families) |
+| `replacements.mfrCertified` | Admin-uploaded manufacturer cross-references exist for this MPN |
+| `replacements.partsioCertified` | Parts.io has FFF or Functional Equivalent MPNs for this part |
+| `replacements.mouserSuggested` | Mouser SuggestedReplacement is populated (typically EOL parts) |
+| `mfrProfile` | A manufacturer profile is on file (Atlas-resolved or mock fallback) — `get_manufacturer_profile` / `/api/manufacturer-profile` will return content |
+| `bestPrice` | At least one supplier has price-break data — clients can offer a best-price-at-quantity affordance |
+
+If all four `replacements.*` are `false`, calling `GET/POST /api/xref/{mpn}` will return zero or near-zero results. Clients should suppress any "find replacements" affordance in that case. Likewise, suppress any "show profile" affordance when `mfrProfile` is `false`, and any "best price" affordance when `bestPrice` is `false`.
 
 ---
 

@@ -9,6 +9,7 @@ import {
   updateConversation,
   loadConversation,
   deleteConversation,
+  deleteAllConversations,
 } from '@/lib/supabaseConversationStorage';
 
 export function useConversations() {
@@ -52,6 +53,11 @@ export function useConversations() {
     await refresh();
   }, [refresh]);
 
+  const removeAll = useCallback(async () => {
+    await deleteAllConversations();
+    await refresh();
+  }, [refresh]);
+
   return {
     conversations,
     loading: authLoading || loading,
@@ -60,5 +66,6 @@ export function useConversations() {
     save,
     load,
     remove,
+    removeAll,
   };
 }

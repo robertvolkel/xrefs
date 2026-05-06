@@ -158,3 +158,13 @@ export async function deleteConversation(id: string): Promise<void> {
     .delete()
     .eq('id', id);
 }
+
+export async function deleteAllConversations(): Promise<void> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  await supabase
+    .from('conversations')
+    .delete()
+    .eq('user_id', user.id);
+}

@@ -14,9 +14,10 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import ListAltOutlinedIcon from '@mui/icons-material/ListAltOutlined';
 import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
+import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import { useTranslation } from 'react-i18next';
 
-export type AdminSection = 'manufacturers' | 'atlas-coverage' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'search-logic' | 'list-logic' | 'app-feedback' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
+export type AdminSection = 'manufacturers' | 'atlas-coverage' | 'param-mappings' | 'logic' | 'context' | 'taxonomy' | 'atlas' | 'atlas-dictionaries' | 'atlas-ingest' | 'search-logic' | 'list-logic' | 'app-feedback' | 'qc-feedback' | 'qc-logs' | 'distributor-clicks';
 
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
@@ -24,6 +25,7 @@ const manufacturersSections: SectionItem[] = [
   { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
   { id: 'atlas-coverage', icon: InsightsOutlinedIcon, labelKey: 'admin.atlasCoverageNav' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
+  { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
 ];
 
 const dataLogicSections: SectionItem[] = [
