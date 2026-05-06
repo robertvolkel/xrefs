@@ -49,6 +49,7 @@ import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import type { GlobalUnmappedParam, DictSuggestion } from './types';
 import { getLogicTable } from '@/lib/logicTables';
+import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 
 /** Resolve a familyId (e.g. "B1") to a short human-readable category name
  *  (e.g. "Rectifier Diodes"). The full familyName from the logic table often
@@ -170,6 +171,40 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Used to flag whether the row's (possibly edited) attributeId actually
   // exists in the family's logic table. Empty set ⇒ family had no schema info.
   const [schemaByFamily, setSchemaByFamily] = useState<Record<string, Set<string>>>({});
+
+  // Team notes per paramName — engineers attach research/reasoning to rows
+  // they're not ready to accept. Single fetch on mount; map keyed by paramName.
+  const [notesByParam, setNotesByParam] = useState<Record<string, NoteRecord>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/atlas/unmapped-param-notes');
+        const json = await res.json();
+        if (cancelled || !json?.success || !Array.isArray(json.items)) return;
+        const next: Record<string, NoteRecord> = {};
+        for (const item of json.items as NoteRecord[]) {
+          next[item.paramName] = item;
+        }
+        setNotesByParam(next);
+      } catch {
+        // Notes are non-essential — fall through with empty map.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const onNoteChange = useCallback((paramName: string, next: NoteRecord | null) => {
+    setNotesByParam((prev) => {
+      if (next === null) {
+        const copy = { ...prev };
+        delete copy[paramName];
+        return copy;
+      }
+      return { ...prev, [paramName]: next };
+    });
+  }, []);
 
   const total = rows.length;
   // sum of per-param product counts — this counts a product N times if it has N
@@ -536,6 +571,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           <Table size="small" sx={{ tableLayout: 'fixed' }}>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ fontWeight: 600, width: 40, padding: '6px 4px' }} aria-label="Note" />
                 <TableCell sx={{ fontWeight: 600, width: 140 }}>Raw Attribute Name</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 70 }}>Family</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 160 }}>Category</TableCell>
@@ -556,6 +592,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const cConf = confidence ? CONFIDENCE_COLOR[confidence] : null;
                 return (
                   <TableRow key={r.paramName} sx={{ opacity: state?.accepted ? 0.5 : 1 }}>
+                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
+                      <UnmappedParamNoteCell
+                        paramName={r.paramName}
+                        note={notesByParam[r.paramName]}
+                        onChange={onNoteChange}
+                      />
+                    </TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', width: 140, wordBreak: 'break-word' }}>
                       {r.paramName}
                     </TableCell>

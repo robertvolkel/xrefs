@@ -158,6 +158,16 @@ function AdminShellInner() {
 
   const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
 
+  // Keep activeSection in sync with URL changes that originate outside the
+  // section nav (e.g. "Review in Dictionary Triage →" deep-links from a batch
+  // card on the Atlas Ingest page). Without this, router.push only updates the
+  // URL — the component stays mounted and the rendered section never changes.
+  useEffect(() => {
+    if (initialSection !== activeSection) {
+      setActiveSection(initialSection);
+    }
+  }, [initialSection, activeSection]);
+
   // Handle off-page redirects (moved sections → /monitoring) on mount and on URL change
   useEffect(() => {
     if (!sectionParam) return;
