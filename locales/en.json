@@ -508,6 +508,7 @@
     "digikeyCategories": "Digikey categories",
     "extraPartsioFields": "Additional Parts.io fields (not in schema)",
     "atlasDictionaries": "Atlas Dictionaries",
+    "atlasDictTriage": "Dictionary Triage",
     "atlasIngest": "Atlas Ingest",
     "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
     "atlasParamName": "Atlas Parameter",

@@ -35,8 +35,8 @@ import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import IngestUploader from './IngestUploader';
 import NewManufacturerPanel from './NewManufacturerPanel';
 import IngestDashboard from './IngestDashboard';
-import GlobalUnmappedParamsTable from './GlobalUnmappedParamsTable';
 import BatchCard from './BatchCard';
+import { useRouter } from 'next/navigation';
 import type { BatchListResponse, IngestBatch, StagedFile } from './types';
 
 type TabValue = 'pending' | 'applied';
@@ -47,6 +47,7 @@ interface PendingState {
 }
 
 export default function AtlasIngestPanel() {
+  const router = useRouter();
   const [tab, setTab] = useState<TabValue>('pending');
 
   const [batchData, setBatchData] = useState<BatchListResponse | null>(null);
@@ -208,7 +209,14 @@ export default function AtlasIngestPanel() {
       setSnack({ msg: 'No clean batches to apply', severity: 'info' });
       return;
     }
-    if (!confirm(`Apply ${cleanCount} clean batch(es) in parallel? Each is reversible for 30 days.`)) return;
+    // Surface unresolved-params status — operators may not realize their
+    // upload introduced new param names that need engineer review (Decision-
+    // driven Model 3). Light friction; they can still proceed.
+    const unresolvedCount = batchData.unmappedParamsGlobal.length;
+    const unresolvedNote = unresolvedCount > 0
+      ? `\n\nNote: ${unresolvedCount} unmapped parameter${unresolvedCount === 1 ? '' : 's'} across pending batches haven't been reviewed by an engineer. Applying will store those values under raw IDs; clean up later via Dictionary Triage.`
+      : '';
+    if (!confirm(`Apply ${cleanCount} clean batch(es) in parallel? Each is reversible for 30 days.${unresolvedNote}`)) return;
     setBulkRunning(true);
     try {
       const res = await fetch('/api/admin/atlas/ingest/proceed-all-clean', {
@@ -295,49 +303,40 @@ export default function AtlasIngestPanel() {
                 bulkRunning={bulkRunning}
               />
 
-              {/* Cross-batch dictionary triage panel.
-                  When >1 pending batch: render at top level so a single mapping
-                    can resolve unmapped params across many batches at once.
-                  When ==1 pending batch: there's no "cross-batch" benefit, so
-                    embed it inside the single batch card to keep the UI cohesive
-                    (the user sees one container per batch they'll act on). */}
-              {batchData.unmappedParamsGlobal.length > 0 && batchData.batches.length > 1 && (
-                <GlobalUnmappedParamsTable
-                  rows={batchData.unmappedParamsGlobal}
-                  pendingBatchCount={batchData.aggregate.counts.total}
-                  onRegenerateAffected={async (batchIds) => {
-                    for (const id of batchIds) {
-                      await regenerateBatch(id);
-                    }
-                  }}
-                />
+              {/* Read-only triage summary — Decision-driven (Model 3): operators
+                  see a count + link to the dedicated Dictionary Triage workspace,
+                  but don't get edit power over mappings here. The full editor
+                  lives at ?section=atlas-dict-triage so engineers own that
+                  workflow independently of the upload/apply flow. */}
+              {batchData.unmappedParamsGlobal.length > 0 && (
+                <Alert
+                  severity="warning"
+                  sx={{ my: 2 }}
+                  action={(
+                    <Button
+                      size="small"
+                      color="inherit"
+                      onClick={() => router.push('/admin?section=atlas-dict-triage')}
+                    >
+                      Open Dictionary Triage →
+                    </Button>
+                  )}
+                >
+                  <strong>{batchData.unmappedParamsGlobal.length}</strong> unmapped parameter{batchData.unmappedParamsGlobal.length === 1 ? '' : 's'} across pending batches need engineer review before high-fidelity matching.
+                </Alert>
               )}
 
               <Stack spacing={2}>
-                {batchData.batches.map((b) => {
-                  const embedTriage = batchData.batches.length === 1 && batchData.unmappedParamsGlobal.length > 0;
-                  return (
-                    <BatchCard
-                      key={b.batch_id}
-                      batch={b}
-                      onProceed={() => proceedBatch(b.batch_id)}
-                      onDiscard={() => discardBatch(b.batch_id)}
-                      onRegenerate={() => regenerateBatch(b.batch_id)}
-                      actionInFlight={actionInFlight?.batchId === b.batch_id ? actionInFlight.kind : null}
-                      embeddedTriagePanel={embedTriage ? (
-                        <GlobalUnmappedParamsTable
-                          rows={batchData.unmappedParamsGlobal}
-                          pendingBatchCount={batchData.aggregate.counts.total}
-                          onRegenerateAffected={async (batchIds) => {
-                            for (const id of batchIds) {
-                              await regenerateBatch(id);
-                            }
-                          }}
-                        />
-                      ) : null}
-                    />
-                  );
-                })}
+                {batchData.batches.map((b) => (
+                  <BatchCard
+                    key={b.batch_id}
+                    batch={b}
+                    onProceed={() => proceedBatch(b.batch_id)}
+                    onDiscard={() => discardBatch(b.batch_id)}
+                    onRegenerate={() => regenerateBatch(b.batch_id)}
+                    actionInFlight={actionInFlight?.batchId === b.batch_id ? actionInFlight.kind : null}
+                  />
+                ))}
               </Stack>
             </>
           )}

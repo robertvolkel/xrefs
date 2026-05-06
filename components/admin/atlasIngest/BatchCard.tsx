@@ -35,7 +35,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import UndoIcon from '@mui/icons-material/Undo';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ProductDiffTable from './ProductDiffTable';
+import { useRouter } from 'next/navigation';
 import type { IngestBatch, IngestRisk } from './types';
 
 const RISK_COLOR: Record<IngestRisk, { bg: string; fg: string }> = {
@@ -52,16 +54,12 @@ interface Props {
   onDiscard?: () => void;
   onRegenerate?: () => void;
   actionInFlight: 'proceed' | 'revert' | 'discard' | 'regenerate' | null;
-  // When the parent decides this batch should host the AI triage panel
-  // (typically when it's the only pending batch), this slot replaces the
-  // simple per-batch unmapped list with the full GlobalUnmappedParamsTable.
-  embeddedTriagePanel?: React.ReactNode;
 }
 
 export default function BatchCard({
   batch, variant = 'pending', onProceed, onRevert, onDiscard, onRegenerate, actionInFlight,
-  embeddedTriagePanel,
 }: Props) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(batch.risk === 'attention');
   const r = batch.report;
   const counts = r?.productCounts ?? { willInsert: 0, willUpdate: 0, willDelete: 0, inDb: 0, inNewFile: 0 };
@@ -115,7 +113,20 @@ export default function BatchCard({
                 variant="contained"
                 color="success"
                 startIcon={actionInFlight === 'proceed' ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
-                onClick={onProceed}
+                onClick={() => {
+                  // Surface unmapped-params status so operator knows engineer
+                  // review hasn't happened yet (Decision-driven Model 3).
+                  // Light friction only — operator can still proceed.
+                  if (unmappedCount > 0) {
+                    const ok = confirm(
+                      `This batch has ${unmappedCount} unmapped parameter${unmappedCount === 1 ? '' : 's'} that haven't been reviewed by an engineer. ` +
+                      `Proceeding will apply the batch as-is; the unmapped values will store under raw IDs and can be cleaned up later via Dictionary Triage.\n\n` +
+                      `Apply anyway?`
+                    );
+                    if (!ok) return;
+                  }
+                  onProceed?.();
+                }}
                 disabled={inFlight}
               >
                 Proceed
@@ -216,38 +227,34 @@ export default function BatchCard({
             <ProductDiffTable rows={attrs.perProduct} />
           )}
 
-          {/* Two paths for unmapped param rendering:
-              (a) embeddedTriagePanel — interactive AI triage UI from the parent;
-                  used when this is the only pending batch so the user has one
-                  place to act, not two. The parent's GlobalUnmappedParamsTable
-                  (which already filters to this batch's params) is dropped in
-                  here verbatim.
-              (b) simple read-only list — used when there are multiple pending
-                  batches and triage lives at the cross-batch level above. */}
-          {embeddedTriagePanel ? (
+          {/* Read-only unmapped-params summary (Decision-driven Model 3):
+              the operator sees the count + a deep-link to the dedicated
+              Dictionary Triage workspace, but doesn't get edit power here.
+              Engineers own the editing surface at ?section=atlas-dict-triage. */}
+          {r?.unmappedParams && r.unmappedParams.length > 0 && (
             <Box sx={{ mt: 2 }}>
-              {embeddedTriagePanel}
-            </Box>
-          ) : r?.unmappedParams && r.unmappedParams.length > 0 ? (
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                Unmapped parameters in this batch ({r.unmappedParams.length}):
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'warning.main' }}>
+                  {r.unmappedParams.length} unmapped parameter{r.unmappedParams.length === 1 ? '' : 's'} in this batch
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  endIcon={<OpenInNewIcon sx={{ fontSize: 14 }} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/admin?section=atlas-dict-triage&batch=${encodeURIComponent(batch.batch_id)}`);
+                  }}
+                  sx={{ fontSize: '0.7rem' }}
+                >
+                  Review in Dictionary Triage
+                </Button>
+              </Stack>
+              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mt: 0.5, fontSize: '0.7rem' }}>
+                Sample names: {r.unmappedParams.slice(0, 5).map((u) => u.paramName).join(', ')}{r.unmappedParams.length > 5 ? `, +${r.unmappedParams.length - 5} more` : ''}
               </Typography>
-              <Box sx={{ pl: 2, fontSize: '0.75rem', color: 'text.secondary' }}>
-                {r.unmappedParams.slice(0, 20).map((u) => (
-                  <Box key={u.paramName} sx={{ display: 'block', my: 0.25 }}>
-                    <code>{u.paramName}</code>
-                    {' '}({u.productCount} products) — samples: {u.sampleValues.slice(0, 3).map((sv) => (
-                      <Box key={sv} component="code" sx={{ bgcolor: 'action.hover', px: 0.5, mx: 0.25, borderRadius: 0.5 }}>{sv}</Box>
-                    ))}
-                  </Box>
-                ))}
-                {r.unmappedParams.length > 20 && (
-                  <Typography variant="caption">… and {r.unmappedParams.length - 20} more</Typography>
-                )}
-              </Box>
             </Box>
-          ) : null}
+          )}
         </Box>
       </Collapse>
     </Paper>

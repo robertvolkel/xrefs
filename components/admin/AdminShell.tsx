@@ -23,6 +23,7 @@ import ManufacturersPanel from './ManufacturersPanel';
 import AtlasCoveragePanel from './AtlasCoveragePanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import AtlasIngestPanel from './atlasIngest/AtlasIngestPanel';
+import AtlasDictTriagePanel from './AtlasDictTriagePanel';
 import QcFeedbackTab from './QcFeedbackTab';
 import QcLogsTab from './QcLogsTab';
 import DistributorClicksTab from './DistributorClicksTab';
@@ -111,7 +112,7 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
 function isValidSection(s: string | null): s is AdminSection {
-  return s === 'manufacturers' || s === 'atlas-coverage' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'atlas-ingest' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
+  return s === 'manufacturers' || s === 'atlas-coverage' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'atlas-dict-triage' || s === 'atlas-ingest' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
 }
 
 const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs', 'distributor-clicks'];
@@ -332,6 +333,10 @@ function AdminShellInner() {
         ) : activeSection === 'atlas-ingest' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <AtlasIngestPanel />
+          </Box>
+        ) : activeSection === 'atlas-dict-triage' ? (
+          <Box sx={{ flex: 1, overflowY: 'auto' }}>
+            <AtlasDictTriagePanel />
           </Box>
         ) : (
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>

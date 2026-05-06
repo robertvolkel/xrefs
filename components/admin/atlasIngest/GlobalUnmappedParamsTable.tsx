@@ -48,6 +48,22 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import type { GlobalUnmappedParam, DictSuggestion } from './types';
+import { getLogicTable } from '@/lib/logicTables';
+
+/** Resolve a familyId (e.g. "B1") to a short human-readable category name
+ *  (e.g. "Rectifier Diodes"). The full familyName from the logic table often
+ *  carries a descriptive suffix after an em dash or parens that's noisy in a
+ *  narrow column — strip it for display, surface the full name on hover. */
+function getFamilyDisplayName(familyId: string | null): { short: string; full: string } | null {
+  if (!familyId) return null;
+  const t = getLogicTable(familyId);
+  if (!t) return null;
+  const full = t.familyName;
+  // Cut at the first em dash / en dash / parenthesis — whichever appears first.
+  const cut = full.search(/[—–(]/);
+  const short = (cut > 0 ? full.slice(0, cut) : full).trim();
+  return { short, full };
+}
 
 interface Props {
   rows: GlobalUnmappedParam[];
@@ -441,7 +457,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     : `across ${pendingBatchCount} pending batches`;
 
   return (
-    <Accordion expanded={expanded} onChange={(_, x) => setExpanded(x)} sx={{ mb: 2 }}>
+    <Accordion
+      expanded={expanded}
+      onChange={(_, x) => setExpanded(x)}
+      sx={{ mb: 2 }}
+      // unmountOnExit drops the (potentially 200-row) table body from the DOM
+      // while collapsed. Without this, MUI keeps it mounted hidden — fine for
+      // small lists, but for large unmapped-params queues on the Triage page
+      // the row tree alone (Tooltips, Chips, TextFields per row) takes seconds
+      // to render even hidden, freezing the page on initial load.
+      slotProps={{ transition: { unmountOnExit: true } }}
+    >
       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
         {/* Header is rendered as MUI's internal <button>; cannot contain a <Button>
             child or React will throw a nested-button hydration error. The bulk
@@ -503,19 +529,24 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         )}
 
         <TableContainer>
-          <Table size="small">
+          {/* table-layout: fixed forces the browser to honor explicit column widths
+              instead of auto-sizing to content. Without this, the longest cell text
+              in each column wins regardless of the `width` props below — which is
+              why earlier widths on body cells alone weren't taking effect. */}
+          <Table size="small" sx={{ tableLayout: 'fixed' }}>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Param name</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 80 }}>Family</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Sample values</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 140 }}>Raw Attribute Name</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 70 }}>Family</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 160 }}>Category</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 180 }}>Sample values</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 60 }}>Prods</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>AI translation</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>attributeId</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>attributeName</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 70 }}>Unit</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 180 }}>AI translation</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 90 }}>Unit</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 80 }}>Conf.</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 110 }}>Action</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 100 }}>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -525,7 +556,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const cConf = confidence ? CONFIDENCE_COLOR[confidence] : null;
                 return (
                   <TableRow key={r.paramName} sx={{ opacity: state?.accepted ? 0.5 : 1 }}>
-                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', maxWidth: 220 }}>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', width: 140, wordBreak: 'break-word' }}>
                       {r.paramName}
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.7rem' }}>
@@ -537,12 +568,56 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         </Tooltip>
                       )}
                     </TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                      {(() => {
+                        const fam = getFamilyDisplayName(r.dominantFamily);
+                        if (!fam) return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
+                        return (
+                          <Tooltip title={fam.full}>
+                            <span>{fam.short}</span>
+                          </Tooltip>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary', maxWidth: 180 }}>
                       {r.sampleValues.slice(0, 3).map((v) => (
                         <Box key={v} component="code" sx={{ bgcolor: 'action.hover', px: 0.5, mr: 0.5, borderRadius: 0.5, display: 'inline-block', mb: 0.25 }}>{v}</Box>
                       ))}
                     </TableCell>
-                    <TableCell sx={{ fontSize: '0.7rem' }}>{r.productCount}</TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem' }}>
+                      {r.affectedManufacturers && r.affectedManufacturers.length > 0 ? (
+                        <Tooltip
+                          title={
+                            <Box>
+                              <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                                {r.productCount} products across {r.affectedManufacturers.length} MFR{r.affectedManufacturers.length === 1 ? '' : 's'}:
+                              </Typography>
+                              {r.affectedManufacturers.slice(0, 12).map((m) => (
+                                <Typography key={m.slug} variant="caption" sx={{ display: 'block' }}>
+                                  • {m.name} ({m.productCount})
+                                </Typography>
+                              ))}
+                              {r.affectedManufacturers.length > 12 && (
+                                <Typography variant="caption" sx={{ display: 'block', fontStyle: 'italic' }}>
+                                  +{r.affectedManufacturers.length - 12} more
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                        >
+                          <Box sx={{ cursor: 'help' }}>
+                            <Box>{r.productCount}</Box>
+                            <Box sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
+                              {r.affectedManufacturers.length === 1
+                                ? r.affectedManufacturers[0].name
+                                : `${r.affectedManufacturers.length} MFRs`}
+                            </Box>
+                          </Box>
+                        </Tooltip>
+                      ) : (
+                        r.productCount
+                      )}
+                    </TableCell>
 
                     <TableCell sx={{ fontSize: '0.7rem', maxWidth: 200 }}>
                       {state?.loadingSuggestion ? (
@@ -555,7 +630,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         </Tooltip>
                       ) : <span style={{ color: 'rgba(255,255,255,0.4)' }}>—</span>}
                     </TableCell>
-                    <TableCell sx={{ width: 200 }}>
+                    <TableCell sx={{ width: 300 }}>
                       {(() => {
                         const editedId = state?.editedAttributeId?.trim() ?? '';
                         const familySchema = r.dominantFamily ? schemaByFamily[r.dominantFamily] : undefined;
@@ -570,9 +645,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                             ? 'success.main'
                             : schemaKnown ? 'warning.main' : undefined;
                         return (
-                          <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: '100%' }}>
                             <TextField
                               size="small"
+                              fullWidth
                               value={state?.editedAttributeId ?? ''}
                               onChange={(e) => setStates((prev) => ({
                                 ...prev,
@@ -600,9 +676,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         );
                       })()}
                     </TableCell>
-                    <TableCell sx={{ width: 200 }}>
+                    <TableCell sx={{ width: 240 }}>
                       <TextField
                         size="small"
+                        fullWidth
                         value={state?.editedAttributeName ?? ''}
                         onChange={(e) => setStates((prev) => ({
                           ...prev,
@@ -613,9 +690,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
                       />
                     </TableCell>
-                    <TableCell sx={{ width: 60 }}>
+                    <TableCell sx={{ width: 90 }}>
                       <TextField
                         size="small"
+                        fullWidth
                         value={state?.editedUnit ?? ''}
                         onChange={(e) => setStates((prev) => ({
                           ...prev,

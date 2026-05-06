@@ -193,6 +193,30 @@ function classifyAtlasCategory(c1, c2, c3) {
   return { category: 'ICs', subcategory: c3, familyId: null };
 }
 
+// Post-classification correction: inspects extracted parameters for signals
+// that contradict the c3-based family choice, and re-routes the product.
+// Mirrored from atlasMapper.ts → reclassifyByParameterSignals — keep these
+// in sync. See that function for rationale.
+function reclassifyByParameterSignals(initial, parameters) {
+  if (initial.familyId !== 'B1') return initial;
+  let typeVal = '';
+  for (const p of parameters) {
+    const lname = (p.name || '').toLowerCase().trim();
+    if (lname === 'type' || lname === '类型') {
+      typeVal = (p.value || '').toLowerCase().trim();
+      break;
+    }
+  }
+  if (!typeVal) return initial;
+  if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
+    return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
+  }
+  if (/^(regulator|voltage regulator)$/.test(typeVal)) {
+    return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
+  }
+  return initial;
+}
+
 // ─── Parameter Translation Dictionaries ───────────────────
 
 // Shared across families
@@ -245,6 +269,10 @@ const FAMILY_PARAMS = {
     '10 to 10khz voltage noise(μvrms)': { attributeId: 'output_noise', attributeName: '10-10kHz Noise', unit: 'µVrms', sortOrder: 10 },
     'line regulation(max)(ppm/v)': { attributeId: '_line_reg', attributeName: 'Line Regulation', unit: 'ppm/V', sortOrder: 97 },
     'load regulation(max)(ppm/ma)': { attributeId: '_load_reg', attributeName: 'Load Regulation', unit: 'ppm/mA', sortOrder: 98 },
+    // "Type" on C6 Voltage References carries values like "Standard" / "High Precision"
+    // — informational variant marker, not a key matching attribute.
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
   C1: {
     '最小输入电压 (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 6 },
@@ -299,6 +327,10 @@ const FAMILY_PARAMS = {
     'accuracy(max)': { attributeId: 'vout_accuracy', attributeName: 'Output Voltage Accuracy', unit: '%', sortOrder: 10 },
     'temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
     'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
+    // "Type" on C1 LDOs carries values like "LDO" / "Regulator" — informational
+    // (the family already implies linear-regulator behavior).
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
   C2: {
     '最小输入电压 (v)': { attributeId: 'vin_min', attributeName: 'Min Input Voltage', unit: 'V', sortOrder: 5 },
@@ -338,6 +370,10 @@ const FAMILY_PARAMS = {
     'channels': { attributeId: '_channels', attributeName: 'Number of Channels', sortOrder: 95 },
     'uvlo on/off (v)': { attributeId: '_uvlo', attributeName: 'UVLO On/Off', unit: 'V', sortOrder: 96 },
     'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
+    // "Type" on C2 Switching Regulators carries topology variants like
+    // "Buck" / "Iso. Buck" — informational; topology has its own attribute.
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
   C9: {
     'resolution (bits)': { attributeId: 'resolution_bits', attributeName: 'Resolution', unit: 'bits', sortOrder: 2 },
@@ -703,6 +739,13 @@ const FAMILY_PARAMS = {
     'tj_max (°c)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
     'tjm(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
     'maximum junction temperature (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 12 },
+    // "Type" on B1 rectifiers carries values like "Standard"/"Fast"/"Ultrafast"
+    // (recovery class) or other rectifier sub-types — treat as informational
+    // via _type. Don't map to recovery_category directly because Type values
+    // also include misclassification escapees (LDO) that the matching engine
+    // shouldn't see under recovery_category.
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── B3 Zener Diodes ───────────────────────────────────
@@ -753,6 +796,10 @@ const FAMILY_PARAMS = {
     'pd (w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
     'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 9 },
     'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 9 },
+    // "Type": "Regulator" on a Zener is informational (the family already
+    // implies regulator behavior) — _type, deprioritized.
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── B4 TVS Diodes ─────────────────────────────────────
@@ -830,6 +877,10 @@ const FAMILY_PARAMS = {
     'cj(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance (Cj)', unit: 'pF', sortOrder: 7 },
     'tj(℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
     'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 12 },
+    // "Type" on B4 carries Bi/Uni/Bidirectional/Unidirectional — these ARE
+    // polarity values, route to the polarity attribute so they feed matching.
+    'type': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
+    '类型': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
   },
 
   // ─── B5 MOSFETs ────────────────────────────────────────
@@ -931,6 +982,9 @@ const FAMILY_PARAMS = {
     'tj (℃)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 17 },
     'tj (ºc)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature (Tj)', unit: '°C', sortOrder: 17 },
     'tj_max (°c)': { attributeId: 'operating_temp', attributeName: 'Junction Temperature Max (Tj)', unit: '°C', sortOrder: 17 },
+    // "Type" on B5 MOSFETs carries channel type (N / P / N+P).
+    'type': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
+    '类型': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
   },
 
   // ─── B6 BJTs ───────────────────────────────────────────
@@ -962,6 +1016,9 @@ const FAMILY_PARAMS = {
     'vceo(v)': { attributeId: 'vceo_max', attributeName: 'Vceo', unit: 'V', sortOrder: 3 },
     'vebo(v)': { attributeId: '_vebo', attributeName: 'Vebo', unit: 'V', sortOrder: 92 },
     'ic(ma)': { attributeId: '_ic', attributeName: 'Collector Current (Ic)', unit: 'mA', sortOrder: 5 },
+    // "Type" on B6 BJTs carries polarity (NPN / PNP / NPN+PNP).
+    'type': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
+    '类型': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
   },
 
   // ─── B7 IGBTs ──────────────────────────────────────────
@@ -1608,11 +1665,12 @@ function mapModel(model, manufacturerName, sourceFile) {
   // canonical attributeIds via dictionary overrides.
   const unmappedParams = [];
 
-  const classification = classifyAtlasCategory(
+  const initialClassification = classifyAtlasCategory(
     model.category.c1.name,
     model.category.c2.name,
     model.category.c3.name,
   );
+  const classification = reclassifyByParameterSignals(initialClassification, model.parameters);
 
   // Resolve status
   let status = 'Active';

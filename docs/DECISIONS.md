@@ -5025,3 +5025,89 @@ The new ingest API routes (`proceed`, `proceed-all-clean`, `revert`) initially d
 **Deferred:** SCR/Modules classifier fix — 316 YANGJIE thyristor modules currently uncovered due to `!lower.includes('module')` exclusion at line 124 of `atlas-ingest.mjs`. Listed in BACKLOG.md.
 
 **Verification.** End-to-end: YANGJIE 12,932 products applied via UI; provenance preserved across re-ingest of older MFRs; AI dict triage cuts unmapped params from 286 → 196 in one pass; tests stay green at 1521.
+
+---
+
+## Decision #175 — Atlas: Parameter-Aware Family Reclassification for Misfiled Diodes (May 2026)
+
+While reviewing the unmapped-params admin panel, user found 5,381 products listed as **B1 Rectifier Diodes** carrying a `Type` parameter with values `Bi` / `Uni` / `Regulator` — clear signatures of B4 TVS Diodes (polarity) and B3 Zener Diodes (voltage regulator), respectively. Root cause: `classifyAtlasCategory(c1, c2, c3)` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) decides family at ingestion using only the c3 string (check order `tvs → zener → bridge → generic-rectifier`). Anything whose c3 contains "rectifier" but lacks the keywords "tvs"/"zener"/"bridge" falls into B1 by default — a TVS product whose c3 says "Rectifier Diode" lands in B1 silently. The B4 polarity dictionary entry exists but is consulted *after* classification, never feeding back into family selection.
+
+**Fix — parameter-aware post-classification step.** New helper `reclassifyByParameterSignals(initial, parameters)` in [atlasMapper.ts](../lib/services/atlasMapper.ts) runs after `classifyAtlasCategory` and re-routes B1 products with telltale `Type` values:
+
+- `Bi` / `Uni` / `Bidirectional` / `Unidirectional` → B4 TVS Diodes
+- `Regulator` / `Voltage Regulator` → B3 Zener Diodes
+
+Conservative by design: only fires from B1, only on those exact patterns, ignores all other Type values (Standard / Fast / Ultrafast / blank — legitimate B1 rectifiers untouched). Mirrored verbatim into the standalone ingest script [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) since it carries its own classifier copy. Wired into both `mapAtlasModel()` (the runtime path) and the script's `mapModel()` (offline path).
+
+**Dictionary backstop.** Added minimal English `'type'` + Chinese `'类型'` entries to both B3 (→ `_type` deprioritized — value is informational on a Zener, the family already implies regulator behavior) and B4 (→ `polarity` — primary attribute, feeds the matching engine) dictionaries. Without these, reclassified products would land in the right family but their Type parameter would still be unmapped at read time.
+
+**Retroactive script.** New [scripts/atlas-reclassify-by-type-param.mjs](../scripts/atlas-reclassify-by-type-param.mjs) — dry-run by default, `--apply` commits, idempotent (second pass is a no-op). Pages through `atlas_products WHERE family_id='B1'` in chunks of 1000, applies the same helper to JSONB parameters, batch-updates `family_id` / `category` / `subcategory` in chunks of 500.
+
+**Surprise from the dry run.** Scanned 10,475 B1 products in `atlas_products`, found **zero** matches — none of the live products have `Type` values in our reclassification set. The 5,381 misclassified products visible in the admin panel are sitting in **pending ingest batches** ("Unmapped parameters: 211 unique across 2 pending batches" — the panel reads from batch snapshots, not the merged table). When those batches get applied via the admin UI, the new ingest-time correction will route them to B3/B4 automatically. The retroactive script stays in the codebase as a safety net for any future drift between batch processing and the live table.
+
+**Lesson.** Family classification with no feedback loop from extracted parameters is brittle. The c3 string is a noisy signal — Atlas source data uses inconsistent naming ("Rectifier Diode" can be a TVS, a Zener, or an actual rectifier). Adding a narrow post-classification correction step is cheap, conservative, and grows naturally as we discover new signal/family mismatches. When the rule list grows past ~5 entries, lift to a structured rule table; until then the if-tree is more readable than the abstraction.
+
+**Out of scope.** Other suspected misclassifications (Op-Amps vs Logic ICs, voltage regulator type confusion, scattered TVS products under different c3 strings) — each needs its own audit query + classification rule. Defer until the framework proves out on this case.
+
+**Files touched:**
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — `reclassifyByParameterSignals` helper, call site in `mapAtlasModel()`, B3 + B4 dictionary `type`/`类型` entries.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirrored helper + call site.
+- [scripts/atlas-reclassify-by-type-param.mjs](../scripts/atlas-reclassify-by-type-param.mjs) — new retroactive DB fixer.
+- [__tests__/services/atlasMapper.test.ts](../__tests__/services/atlasMapper.test.ts) — 9 unit tests (empty, blank, Bi/Uni/Bidirectional/Unidirectional → B4, Regulator/voltage regulator → B3, Chinese key parity, case insensitivity, B1-only gating, first-match semantics).
+
+**Verification.** Tests green at 1530 (+9 new). Dry run on prod confirms zero existing-DB matches (validating the "fix is forward-looking" interpretation). Pending-batch behavior verifies on the next ingest run via the admin UI — the panel's `Type → Bi/Uni/Regulator` rows under B1 should disappear (or move to B3/B4 with the new dictionary mappings).
+
+**Adjacent UI polish (not arch-worthy on their own, recorded for completeness).** Same session, [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) gained: `tableLayout: 'fixed'` with explicit widths on every header AND body cell (column widths weren't being honored because the table was running on auto-layout); `fullWidth` on the attributeId / attributeName / Unit TextFields (so they fill their cells); a new "Category" column showing the human-readable family name via a new `getFamilyDisplayName(familyId)` helper (truncated at em dash / parens, full name on tooltip hover). Backlog entry added for a per-row "Search the web" research helper.
+
+---
+
+## Decision #176 — Persistent Dictionary Triage Queue with MFR Provenance + Operator/Engineer Role Split (May 2026)
+
+After Decision #174 shipped the Atlas re-ingest pipeline, the unmapped-params triage UI was an `<Accordion>` embedded inside the Atlas Ingest page that aggregated only PENDING batches. Two structural problems for an admin who wants to delegate dictionary mapping to a hardware engineer: (a) once the operator clicked Proceed, that batch's unmapped params disappeared from the list — no persistent queue across batch lifecycle — and (b) the editor was always next to the upload UI, no separation between operator (uploads + applies) and engineer (reviews + maps) roles. Plus the row data tracked `affectedBatchIds` but never surfaced manufacturer names to the engineer doing research.
+
+**Decision: lift the triage into its own admin section with persistent queue semantics, MFR provenance per row, and remove edit power from the Ingest page (Model 3).**
+
+**Persistent queue.** [/api/admin/atlas/ingest/batches](../app/api/admin/atlas/ingest/batches/route.ts) was rewritten so the unmapped-params aggregation is **independent** of the batch-list status filter. The batch list still defaults to `status='pending'` (operator-facing dashboard counters), but the queue source query pulls `IN (pending, applied)` and filters out anything covered by an active dictionary override (`atlas_dictionary_overrides WHERE is_active=true`, keyed `${family_id}:${param_name}`). Net effect: rows survive batch apply and only leave the queue when an override resolves them. The `report.unmappedParams` JSONB was already persistent on every batch row — only the API filter was hiding it after apply. **No new table** required.
+
+**MFR provenance.** `GlobalUnmappedParam` extended with `affectedManufacturers: Array<{slug, name, productCount}>`, populated by joining batch.manufacturer against `atlas_manufacturers.name_display → slug` (with a `slugifyName()` fallback for unregistered MFRs). Surfaced in the Prods column as a count + MFR list with hover-tooltip breakdown. Engineer doing research now knows whether "Type / 5,381 prods" came from one MFR or twelve.
+
+**Dedicated workspace.** New admin section `'atlas-dict-triage'` rendered by [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx). Same `GlobalUnmappedParamsTable` component lifted from inside the Ingest page, fed by the same batches endpoint with optional `?batch=<id>` query param to scope to one batch. Sidebar nav entry "Dictionary Triage" with `AssignmentLateOutlinedIcon` placed under the Atlas section. Engineer bookmarks this URL.
+
+**Operator/engineer role split (Model 3).** [AtlasIngestPanel.tsx](../components/admin/atlasIngest/AtlasIngestPanel.tsx) and [BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) **no longer mount the editor**. They now render read-only summaries:
+- Top-of-page amber alert: "N unmapped parameters across pending batches need engineer review. [Open Dictionary Triage →]"
+- Per-batch card: "N unmapped parameters in this batch · sample names: a, b, c · [Review in Dictionary Triage]" — link routes to `?section=atlas-dict-triage&batch=<id>` so the engineer lands pre-filtered to that batch's rows.
+- Light Proceed-confirm friction: per-batch Proceed and bulk "Proceed All Clean" warn when unmapped params exist (operator can still proceed; the message tells them what'll happen).
+
+The badge / count widget I started building was later removed at the user's request — they preferred the queue counter visible only on the Triage page itself, not duplicated in the sidebar.
+
+**Five bugs surfaced + fixed during the build:**
+
+1. **PGRST205 fail-open on missing overrides table.** The `atlas_dictionary_overrides` table from Decision #68 was never applied to this Supabase instance. Both anon and service-role keys get `Could not find the table 'public.atlas_dictionary_overrides' in the schema cache`. The route initially tried an inline query that crashed the whole endpoint. Refactored to wrap in try/catch returning empty override set — fail-open: queue stays unfiltered if overrides aren't readable, no override-based filtering happens. Mirrors the pattern in `lib/services/atlasDictOverrides.ts`.
+
+2. **`tableLayout: 'fixed'` for column widths.** Body cell `width` props on a default-auto MUI `<Table>` are silently ignored — the browser layouts based on content. Aligned header + body widths and added `tableLayout: 'fixed'`. Companion fix: `fullWidth` on TextFields so they fill their cells (without it, MUI defaults to a fixed ~200px field regardless of cell width).
+
+3. **Case-insensitive override match.** The Accept flow lowercases `paramName` before insert (`paramName: row.paramName.toLowerCase()`), but the queue's filter compared the override key against the raw `entry.paramName` (preserving source casing — "Type" with capital T). Result: override saved correctly but row never disappeared. Fix: lowercase both sides of the comparison in the filter (`${entry.dominantFamily}:${entry.paramName.toLowerCase()}`).
+
+4. **RLS / cookie-vs-service auth in admin endpoints.** This was the subtlest bug. The route uses `createServiceClient()` (bypasses RLS) for the heavy queries (batches, manufacturer lookups), but I initially routed the override read through `fetchAllDictOverrides()` from `lib/services/atlasDictOverrides.ts` — which uses `createClient()` from `@/lib/supabase/server` (cookie-bound user client). The RLS policy on `atlas_dictionary_overrides` requires admin auth via `auth.uid()` lookup against `profiles.role`. In some request contexts the user's cookie session wasn't propagating to that helper's Supabase call → RLS denied → 0 rows returned → the queue saw "no overrides" and never filtered the row out. Fix: drop the helper, do an inline service-role query in the route. **Lesson: in admin endpoints where `requireAdmin()` already gates entry, prefer service-role for downstream queries — RLS becomes redundant defense-in-depth that costs you when cookie propagation breaks.** The service role is the correct authority for an admin-only server endpoint; routing through cookie auth there is paying for safety you already have.
+
+5. **mjs/TS dict mirroring tax.** `scripts/atlas-ingest.mjs` carries its own copy of `classifyAtlasCategory()` AND every family parameter dictionary because the script runs standalone (can't import `.ts`). I added new dict entries (`'type'` → `polarity` / `_type`) to `atlasMapper.ts` but forgot to mirror to the mjs script — re-ingests using the mjs version then didn't pick up the mappings. The user regenerated three times before I caught it. **Lesson: every time you touch atlasMapper dictionaries OR the classifier, grep `scripts/atlas-ingest.mjs` for the same shape. The duplication is technical debt; consolidating it is its own refactor.** For now, treat the mjs file as a parallel surface that always needs co-edits. Eight family dicts (B1, B3, B4, B5, B6, C1, C2, C6) gained `'type'` / `'类型'` entries this pass — see Decision #175 + this entry's commit for the full set.
+
+**Cheap perf wins applied:**
+- Server-side projection: `select('batch_id, manufacturer, status, unmappedParams:report->unmappedParams, familyCounts:report->familyCounts')` instead of `select('*')` — cut payload ~80% (reports include the per-product diff which can be multi-MB).
+- Skeleton loading state replaces bare `CircularProgress` on the Triage page.
+- `slotProps={{ transition: { unmountOnExit: true } }}` on the Accordion — drops the (potentially 200-row) table from the DOM when collapsed instead of MUI's default "keep mounted, hide via CSS" which still pays the render cost.
+
+**Phase 2 deferred** (see [BACKLOG.md](BACKLOG.md) — "Dictionary Triage Phase 2"): explicit per-param status tracking (open / accepted / rejected / deferred / researching) via a new `atlas_unmapped_param_queue` table. Today's implicit "no override = shows in queue" semantics cover the single-engineer case; the explicit table earns its keep when engineers want to *park* a param without resolving it, or when notifications + assignment become real needs (multi-engineer rotation). Triggers documented in the backlog entry.
+
+**Files touched:**
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — independent unmapped-params aggregation, MFR provenance, override cross-reference, `?batch=` filter, JSONB projection.
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — `affectedManufacturers` field.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — MFR chips per row, table-layout fix, `fullWidth` inputs, Category column with `getFamilyDisplayName()`, unmount-on-collapse.
+- [components/admin/atlasIngest/AtlasIngestPanel.tsx](../components/admin/atlasIngest/AtlasIngestPanel.tsx) — embedded editor removed, summary alert + deep link, bulk-Proceed warning.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — `embeddedTriagePanel` prop dropped, per-batch summary + deep link, per-batch Proceed warning.
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — **new**, dedicated workspace.
+- [components/admin/AdminShell.tsx](../components/admin/AdminShell.tsx), [components/admin/AdminSectionNav.tsx](../components/admin/AdminSectionNav.tsx) — `'atlas-dict-triage'` section + nav entry.
+- [locales/en.json](../locales/en.json), [locales/zh-CN.json](../locales/zh-CN.json) — `atlasDictTriage` label.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) + [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — `'type'` / `'类型'` entries on B1, B3, B4, B5, B6, C1, C2, C6 dicts.
+
+**Verification.** Manual: upload a batch with unmapped params, leave some unaccepted, click Proceed → unaccepted ones still appear in Triage labeled with the MFR. Cross-MFR: same paramName from 2 MFRs → one row with both chips, productCount summed. Self-cleanup: accept an override → row disappears (override-cross-reference filter matches). Operator workflow: Ingest page renders count summary + links; no editing surface. Tests stayed green at 1530 across the change.

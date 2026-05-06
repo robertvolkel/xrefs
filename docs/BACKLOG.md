@@ -79,6 +79,39 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Dictionary Triage Phase 2 — explicit per-param status tracking
+
+Phase 1 (just shipped) treats the unmapped-params queue as the inverse of the dictionary-overrides table: a row shows up if no active override resolves it. That's enough when the engineer's only states are "haven't looked yet" and "accepted." It breaks down when they want to *park* a param without resolving it ("I researched PPAP, need to talk to procurement first, hide it from my queue for 2 weeks") or explicitly reject one ("not worth mapping, stop showing it").
+
+**What this would add:**
+1. New table `atlas_unmapped_param_queue` keyed on `(param_name, manufacturer_slug, family_id)` with status enum (`open` / `accepted` / `rejected` / `deferred` / `researching`), optional `status_note`, `status_updated_at`, `status_updated_by`. Upsert logic from the ingest pipeline (or computed lazily on the API path).
+2. Status filter chips on the Triage page (default: open + researching). "Show all" toggle to see history.
+3. Per-row status dropdown alongside the existing Accept button.
+4. **"Mark as wontfix"** / explicit reject — one of the new statuses; today there's no way to tell the system "I've decided this isn't worth mapping."
+5. Optional notifications when new unmapped params appear (Slack / email / in-app toast). Pure addition, doesn't change data model. Useful with multiple engineers on rotation; less so for solo ownership.
+
+**Triggers that flip this from defer to ship:**
+- Queue grows past ~50 unresolved entries (engineer can't visually scan it anymore)
+- Engineers tell you they want a "deferred" / "researching" status to park items
+- You onboard a second engineer who needs assignment / comments / "who's working on what"
+- Operator wants Slack notifications when uploads introduce new param names
+
+Today's pattern (no override → shows in queue, override exists → gone) is documented in [batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — the override-cross-reference filter is the part that goes away when this lands. Half day of work for the table + filter chips; another day for the optional notifications.
+
+### Per-row research helper on the Atlas Unmapped Parameters table
+
+Non-technical admins reviewing the unmapped-params panel often need to research what a parameter actually means before accepting (or overriding) the AI-suggested mapping — e.g. "PPAP" = Production Part Approval Process, "IFSM(A)" = Maximum Surge Forward Current, "ESD" = Electrostatic Discharge rating. Today they have to manually copy the param name into Google.
+
+**Two options when implementing:**
+
+1. **Web-search button** (small): per-row icon button → opens Google in a new tab with a context-rich query like `"<paramName>" "<familyShortName>" parameter datasheet meaning`. Family scoping is critical — bare "Type" / "ESD" Google searches return chaos. ~15 min, no backend, no AI cost. Reuses `getFamilyDisplayName()` helper already in [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx).
+
+2. **AI-explanation popover** (larger): per-row button → calls Claude Haiku with the param + family schema + sample values → returns 2-3 sentences explaining what the param likely means and whether the AI's suggested mapping is correct. Higher value for a non-technical user (does the synthesis for them) but requires a new endpoint, caching layer, popover UI, prompt engineering. Possibly extends the existing `/api/admin/atlas/dictionaries/suggest` endpoint with an optional `explain: true` mode.
+
+Recommended path: ship (1) first — cheap and likely sufficient. If admins still struggle to interpret search results, follow up with (2). Plan was drafted but not implemented (deferred per user request).
+
+**Files involved:** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) for both options. (2) also touches [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts).
+
 ### Lift claim-discipline rule into a global system-prompt block (Decision #166 follow-up)
 
 The general claim-discipline rule ("every factual claim must have a backing source in tool data; otherwise downgrade to 'not in our profile' or hedge as interpretation") was codified inside the manufacturer-profile section. The same rule applies across all chat domains — recommendations, search-result interpretation, parametric Q&A, list agent. Currently each domain has its own discipline language (or none), which means future drift is likely. Lift the rule to a top-level "global rules" block at the start of `SYSTEM_PROMPT`, then have domain sections reference it instead of restating discipline. Watch other domains for the same per-shape patching anti-pattern that hit the MFR section. ~30 min, prompt-only.

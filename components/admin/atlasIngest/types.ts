@@ -81,6 +81,9 @@ export type GlobalUnmappedParam = {
   mfrCount: number;
   productCount: number;
   affectedBatchIds: string[];
+  /** Per-MFR provenance, deduped by slug across batches. Sorted by productCount
+   *  desc so the dominant manufacturer appears first in the UI chip list. */
+  affectedManufacturers: Array<{ slug: string; name: string; productCount: number }>;
   dominantFamily: string | null;
   familyCounts: Record<string, number>;
 };
