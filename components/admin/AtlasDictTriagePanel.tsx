@@ -82,7 +82,6 @@ export default function AtlasDictTriagePanel() {
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>Dictionary Triage</Typography>
         {batchFilter && (
           <Stack direction="row" spacing={1} alignItems="center">
             <Chip

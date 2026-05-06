@@ -81,7 +81,7 @@ function L2View({ data, t }: { data: L2ParamMapData; t: ReturnType<typeof useTra
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-        <Typography variant="h6">{data.name}</Typography>
+        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>{data.name}</Typography>
         <Chip
           label={t('admin.displayOnly', 'Display')}
           size="small"
@@ -190,7 +190,7 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
   if (categories.length === 0 && pioReverse.size === 0) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 500, mb: 0.5 }}>
           {t(`logicTable.${table.familyId}.name`, table.familyName)}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
@@ -215,7 +215,7 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 500, mb: 0.5 }}>
         {t(`logicTable.${table.familyId}.name`, table.familyName)}
       </Typography>
 

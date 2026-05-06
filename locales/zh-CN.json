@@ -450,7 +450,7 @@
     "cat.Integrated Circuits": "集成电路",
     "atlasProducts": "Atlas 产品",
     "atlasDictionaries": "Atlas 字典",
-    "atlasDictTriage": "字典审核",
+    "atlasDictTriage": "Atlas 字典审核",
     "atlasIngest": "Atlas 数据导入",
     "atlasDictDesc": "将 Atlas 参数名称映射到内部属性的翻译字典。",
     "atlasParamName": "Atlas 参数",
@@ -650,6 +650,13 @@
     "submitSuccess": "谢谢！您的反馈已提交审核。",
     "submitError": "提交反馈失败，请重试。",
     "provideFeedback": "提供反馈"
+  },
+  "monitoring": {
+    "title": "监控",
+    "activityLogs": "活动日志",
+    "distributorClicks": "分销商点击",
+    "appFeedback": "应用反馈",
+    "logicFeedback": "逻辑反馈"
   },
   "adminQc": {
     "nav": "质量控制日志",

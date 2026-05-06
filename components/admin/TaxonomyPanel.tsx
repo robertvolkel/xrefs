@@ -237,9 +237,6 @@ export default function TaxonomyPanel() {
   if (error) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {t('admin.taxonomy')}
-        </Typography>
         <Typography variant="body2" color="error">
           {t('admin.fetchError')}: {error}
         </Typography>
@@ -250,9 +247,6 @@ export default function TaxonomyPanel() {
   if (!data) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>
-          {t('admin.taxonomy')}
-        </Typography>
         <Typography variant="body2" color="text.secondary">
           {t('common.loading')}
         </Typography>
@@ -264,9 +258,6 @@ export default function TaxonomyPanel() {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
-        {t('admin.taxonomy')}
-      </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {t('admin.taxonomyDescription')}
       </Typography>

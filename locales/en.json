@@ -441,8 +441,6 @@
     "notApplicable": "Not Applicable",
     "addReviewFlag": "Add Review Flag",
     "taxonomyNav": "Digikey Taxonomy",
-    "searchLogicNav": "Search Logic",
-    "listLogicNav": "List Logic",
     "distributorClicks": "Distributor Clicks",
     "appFeedback": "App Feedback",
     "taxonomy": "Digikey Taxonomy",
@@ -508,7 +506,7 @@
     "digikeyCategories": "Digikey categories",
     "extraPartsioFields": "Additional Parts.io fields (not in schema)",
     "atlasDictionaries": "Atlas Dictionaries",
-    "atlasDictTriage": "Dictionary Triage",
+    "atlasDictTriage": "Atlas Dictionaries Triage",
     "atlasIngest": "Atlas Ingest",
     "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
     "atlasParamName": "Atlas Parameter",
@@ -734,6 +732,13 @@
     "submitSuccess": "Thank you! Your feedback has been submitted for review.",
     "submitError": "Failed to submit feedback. Please try again.",
     "provideFeedback": "Provide Feedback"
+  },
+  "monitoring": {
+    "title": "Monitoring",
+    "activityLogs": "Activity Logs",
+    "distributorClicks": "Distributor Clicks",
+    "appFeedback": "App Feedback",
+    "logicFeedback": "Logic Feedback"
   },
   "adminQc": {
     "nav": "QC Log",

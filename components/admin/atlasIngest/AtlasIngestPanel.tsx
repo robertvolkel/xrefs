@@ -31,7 +31,6 @@ import {
   Typography,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import IngestUploader from './IngestUploader';
 import NewManufacturerPanel from './NewManufacturerPanel';
 import IngestDashboard from './IngestDashboard';
@@ -240,13 +239,10 @@ export default function AtlasIngestPanel() {
   return (
     <Box sx={{ p: 3, pt: 2 }}>
       {/* Header */}
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2, height: PAGE_HEADER_HEIGHT, pb: 1 }}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 600 }}>Atlas Ingest</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Upload Atlas manufacturer JSON files, review per-MFR diff reports, then apply with full revert support.
-          </Typography>
-        </Box>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          Upload Atlas manufacturer JSON files, review per-MFR diff reports, then apply with full revert support.
+        </Typography>
         <Button
           startIcon={<RefreshIcon />}
           onClick={refreshBatches}

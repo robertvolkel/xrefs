@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Box, Typography, Switch, Stack, Chip } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { getQcSettings, updateQcSettings, getAdminAppFeedbackList } from '@/lib/api';
 import { getAllLogicTables } from '@/lib/logicTables';
 import { PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import {
@@ -13,7 +12,7 @@ import {
   getL2FamiliesForCategory,
   getFullParamMap,
 } from '@/lib/services/digikeyParamMap';
-import AdminSectionNav, { AdminSection } from './AdminSectionNav';
+import AdminSectionNav, { AdminSection, ADMIN_SECTION_ITEMS } from './AdminSectionNav';
 import FamilyPicker, { CategoryEntry, PickerItem } from './FamilyPicker';
 import ParamMappingsPanel, { L2ParamMapData } from './ParamMappingsPanel';
 import LogicPanel from './LogicPanel';
@@ -24,12 +23,6 @@ import AtlasCoveragePanel from './AtlasCoveragePanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import AtlasIngestPanel from './atlasIngest/AtlasIngestPanel';
 import AtlasDictTriagePanel from './AtlasDictTriagePanel';
-import QcFeedbackTab from './QcFeedbackTab';
-import QcLogsTab from './QcLogsTab';
-import DistributorClicksTab from './DistributorClicksTab';
-import AppFeedbackTab from './AppFeedbackTab';
-import SearchLogicPanel from './SearchLogicPanel';
-import ListLogicPanel from './ListLogicPanel';
 import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
 // --- Static data (computed once at module level) ---
@@ -111,11 +104,34 @@ const l3OnlyCategoryEntries: CategoryEntry[] = l3CategoryEntries;
 
 const SECTIONS_WITH_PICKER: AdminSection[] = ['param-mappings', 'logic', 'context', 'atlas-dictionaries'];
 
-function isValidSection(s: string | null): s is AdminSection {
-  return s === 'manufacturers' || s === 'atlas-coverage' || s === 'param-mappings' || s === 'logic' || s === 'context' || s === 'taxonomy' || s === 'atlas' || s === 'atlas-dictionaries' || s === 'atlas-dict-triage' || s === 'atlas-ingest' || s === 'search-logic' || s === 'list-logic' || s === 'app-feedback' || s === 'qc-feedback' || s === 'qc-logs' || s === 'distributor-clicks';
-}
+const VALID_SECTIONS = new Set<AdminSection>(ADMIN_SECTION_ITEMS.map((s) => s.id));
 
-const QC_SECTIONS: AdminSection[] = ['qc-feedback', 'qc-logs', 'distributor-clicks'];
+/** Map legacy / moved section IDs to their new home (within /admin) or null = redirect off-page. */
+const ADMIN_LEGACY_REDIRECTS: Record<string, AdminSection | null> = {
+  // Renamed Atlas section
+  atlas: 'manufacturers',
+  // Sections that moved out to /monitoring
+  'app-feedback': null,
+  'qc-feedback': null,
+  'qc-logs': null,
+  'distributor-clicks': null,
+  // Deleted Logic Docs sections
+  'search-logic': null,
+  'list-logic': null,
+};
+
+const MONITORING_REDIRECT_MAP: Record<string, string> = {
+  'app-feedback': 'app-feedback',
+  'qc-feedback': 'logic-feedback',
+  'qc-logs': 'activity-logs',
+  'distributor-clicks': 'distributor-clicks',
+};
+
+const DEFAULT_SECTION: AdminSection = 'atlas-coverage';
+
+function isValidSection(s: string | null): s is AdminSection {
+  return s !== null && VALID_SECTIONS.has(s as AdminSection);
+}
 
 /** Check if a category name is an L2 category */
 function isL2Category(cat: string): boolean {
@@ -128,52 +144,36 @@ function AdminShellInner() {
   const { t } = useTranslation();
 
   const sectionParam = searchParams.get('section');
-  // Redirect legacy 'atlas' section to 'manufacturers'
-  const resolvedSection = sectionParam === 'atlas' ? 'manufacturers' : sectionParam;
-  const [activeSection, setActiveSection] = useState<AdminSection>(
-    isValidSection(resolvedSection) ? resolvedSection : 'manufacturers',
-  );
+
+  // Initial section resolved with legacy-id remapping
+  const initialSection: AdminSection = useMemo(() => {
+    if (sectionParam && sectionParam in ADMIN_LEGACY_REDIRECTS) {
+      const target = ADMIN_LEGACY_REDIRECTS[sectionParam];
+      if (target) return target;
+      // Off-page redirect handled in useEffect below
+      return DEFAULT_SECTION;
+    }
+    return isValidSection(sectionParam) ? sectionParam : DEFAULT_SECTION;
+  }, [sectionParam]);
+
+  const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
+
+  // Handle off-page redirects (moved sections → /monitoring) on mount and on URL change
+  useEffect(() => {
+    if (!sectionParam) return;
+    if (sectionParam in ADMIN_LEGACY_REDIRECTS) {
+      const target = ADMIN_LEGACY_REDIRECTS[sectionParam];
+      if (target === null) {
+        const monitoringId = MONITORING_REDIRECT_MAP[sectionParam];
+        router.replace(`/monitoring${monitoringId ? `?section=${monitoringId}` : ''}`);
+      } else {
+        router.replace(`/admin?section=${target}`, { scroll: false });
+      }
+    }
+  }, [sectionParam, router]);
 
   const [selectedCategory, setSelectedCategory] = useState(l3Categories[0] ?? '');
   const [selectedFamilyId, setSelectedFamilyId] = useState(allTables[0]?.familyId ?? '');
-
-  // QC logging toggle state
-  const [loggingEnabled, setLoggingEnabled] = useState(false);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
-
-  // App feedback open count for badge
-  const [appFeedbackOpenCount, setAppFeedbackOpenCount] = useState(0);
-
-  const refreshAppFeedbackCount = useCallback(() => {
-    getAdminAppFeedbackList({ status: 'open', limit: 1 })
-      .then((r) => setAppFeedbackOpenCount(r.statusCounts.open))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    getQcSettings()
-      .then((s) => setLoggingEnabled(s.qcLoggingEnabled))
-      .catch(() => {})
-      .finally(() => setSettingsLoaded(true));
-
-    refreshAppFeedbackCount();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refresh badge when leaving app-feedback section (may have resolved items)
-  useEffect(() => {
-    if (activeSection !== 'app-feedback') refreshAppFeedbackCount();
-  }, [activeSection, refreshAppFeedbackCount]);
-
-  const handleToggleLogging = async (enabled: boolean) => {
-    setLoggingEnabled(enabled);
-    try {
-      await updateQcSettings({ qcLoggingEnabled: enabled });
-    } catch {
-      setLoggingEnabled(!enabled);
-    }
-  };
-
-  const isQcSection = QC_SECTIONS.includes(activeSection);
 
   // Determine which categories to show based on active section
   const categoryEntries = (activeSection === 'param-mappings' || activeSection === 'atlas-dictionaries')
@@ -218,13 +218,11 @@ function AdminShellInner() {
     (category: string) => {
       setSelectedCategory(category);
       if (isL2Category(category)) {
-        // Select first L2 item
         const l2Cat = l2AdminCategoryMap.get(category);
         if (l2Cat && l2Cat.items.length > 0) {
           setSelectedFamilyId(l2Cat.items[0].id);
         }
       } else {
-        // Select first L3 family in category
         const firstInCategory = allTables.find((tb) => tb.category === category);
         if (firstInCategory) setSelectedFamilyId(firstInCategory.familyId);
       }
@@ -234,14 +232,13 @@ function AdminShellInner() {
 
   const showPicker = SECTIONS_WITH_PICKER.includes(activeSection);
 
-  // Effective selected ID for the picker
   const effectiveSelectedId = inL2Mode
     ? selectedFamilyId
     : (selectedTable?.familyId ?? '');
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', bgcolor: 'background.default' }}>
-      {/* Header */}
+      {/* Header — shows the top-level section name (the active subsection is highlighted in the left nav) */}
       <Box
         id="admin-page-header"
         sx={{
@@ -258,26 +255,6 @@ function AdminShellInner() {
         <Typography variant="h6" fontWeight={400} color="text.secondary" sx={{ lineHeight: 1 }}>
           {t('admin.title')}
         </Typography>
-
-        {isQcSection && settingsLoaded && (
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
-              {t('adminQc.toggleLabel')}
-            </Typography>
-            <Switch
-              checked={loggingEnabled}
-              onChange={(e) => handleToggleLogging(e.target.checked)}
-              size="small"
-            />
-            <Chip
-              label={loggingEnabled ? t('adminQc.collecting') : t('adminQc.paused')}
-              size="small"
-              color={loggingEnabled ? 'success' : 'default'}
-              variant="outlined"
-              sx={{ height: 22, fontSize: '0.7rem' }}
-            />
-          </Stack>
-        )}
       </Box>
 
       {/* Body */}
@@ -293,7 +270,7 @@ function AdminShellInner() {
             overflow: 'hidden',
           }}
         >
-          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} appFeedbackOpenCount={appFeedbackOpenCount} />
+          <AdminSectionNav activeSection={activeSection} onSectionChange={handleSectionChange} />
         </Box>
 
         {/* Family Picker (conditional) */}
@@ -311,22 +288,7 @@ function AdminShellInner() {
         )}
 
         {/* Content */}
-        {isQcSection ? (
-          <Box sx={{ flex: 1, overflow: 'hidden' }}>
-            {activeSection === 'qc-feedback' && <QcFeedbackTab />}
-            {activeSection === 'qc-logs' && <QcLogsTab />}
-            {activeSection === 'distributor-clicks' && <DistributorClicksTab />}
-          </Box>
-        ) : activeSection === 'app-feedback' ? (
-          <Box sx={{ flex: 1, overflow: 'hidden' }}>
-            <AppFeedbackTab />
-          </Box>
-        ) : activeSection === 'search-logic' || activeSection === 'list-logic' ? (
-          <Box sx={{ flex: 1, overflow: 'hidden' }}>
-            {activeSection === 'search-logic' && <SearchLogicPanel />}
-            {activeSection === 'list-logic' && <ListLogicPanel />}
-          </Box>
-        ) : activeSection === 'atlas-coverage' ? (
+        {activeSection === 'atlas-coverage' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <AtlasCoveragePanel />
           </Box>
