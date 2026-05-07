@@ -23,6 +23,7 @@ import {
 } from './atlasGaiaDictionaries';
 import { getLogicTable } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
+import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -71,30 +72,56 @@ export function reclassifyByParameterSignals(
   initial: FamilyClassification,
   parameters: Array<{ name: string; value: string }>,
 ): FamilyClassification {
-  if (initial.familyId !== 'B1') return initial;
-
-  // Pull the "Type" parameter value (English or Chinese key, case-insensitive
-  // on the name).
-  let typeVal = '';
-  for (const p of parameters) {
-    const lname = p.name.toLowerCase().trim();
-    if (lname === 'type' || lname === '类型') {
-      typeVal = (p.value ?? '').toLowerCase().trim();
-      break;
+  // ─── Phase 1: B1 Type-value signals (Decision #175) ───
+  // Narrow rules from the original Decision #175 pass — only fire from B1,
+  // only on specific Type values, conservative by design.
+  if (initial.familyId === 'B1') {
+    let typeVal = '';
+    for (const p of parameters) {
+      const lname = p.name.toLowerCase().trim();
+      if (lname === 'type' || lname === '类型') {
+        typeVal = (p.value ?? '').toLowerCase().trim();
+        break;
+      }
+    }
+    if (typeVal) {
+      // B4 TVS — Bi/Uni or Bidirectional/Unidirectional are unambiguous TVS
+      // polarity values; no legitimate B1 rectifier carries these.
+      if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
+      }
+      // B3 Zener — "Regulator" / "Voltage Regulator" on a diode signals a
+      // Zener (zeners are voltage regulators by design); B1 rectifiers don't
+      // regulate.
+      if (/^(regulator|voltage regulator)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
+      }
     }
   }
-  if (!typeVal) return initial;
 
-  // B4 TVS — Bi/Uni or Bidirectional/Unidirectional are unambiguous TVS
-  // polarity values; no legitimate B1 rectifier carries these.
-  if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
-    return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
-  }
-
-  // B3 Zener — "Regulator" / "Voltage Regulator" on a diode signals a Zener
-  // (zeners are voltage regulators by design); B1 rectifiers don't regulate.
-  if (/^(regulator|voltage regulator)$/.test(typeVal)) {
-    return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
+  // ─── Phase 2: Foreign-family param-name signatures ───
+  // Driven by the FAMILY_PARAM_SIGNATURES registry — a parameter name that
+  // belongs unambiguously to another family signals upstream misclassification
+  // (e.g. BVCBO/BVCEO/BVEBO under B1 = transistor data leaking into the
+  // rectifier diode bucket). Re-route to the correct family on the spot so
+  // the affected products land in the right place at next ingest.
+  //
+  // Conservatism: signatures are anchored to start-of-paramName and use word
+  // boundaries / parentheses to avoid loose substring matches. Engineers can
+  // override per-paramName via atlas_unmapped_param_notes (status=
+  // 'confirmed_in_family') if a false positive emerges; that override only
+  // affects the triage UI, not this ingest-time hook — to suppress a registry
+  // entry from ingest, edit FAMILY_PARAM_SIGNATURES directly.
+  for (const sig of FAMILY_PARAM_SIGNATURES) {
+    if (sig.target.familyId === initial.familyId) continue;
+    const hit = parameters.some((p) => sig.pattern.test((p.name ?? '').trim()));
+    if (hit) {
+      return {
+        category: sig.target.category,
+        subcategory: sig.target.subcategory,
+        familyId: sig.target.familyId,
+      };
+    }
   }
 
   return initial;

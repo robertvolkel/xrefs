@@ -197,23 +197,63 @@ function classifyAtlasCategory(c1, c2, c3) {
 // that contradict the c3-based family choice, and re-routes the product.
 // Mirrored from atlasMapper.ts → reclassifyByParameterSignals — keep these
 // in sync. See that function for rationale.
+//
+// Phase 2 (foreign-family param-name signatures) is mirrored from
+// lib/services/atlasFamilyParamSignatures.ts → FAMILY_PARAM_SIGNATURES.
+// When you add an entry to that registry, also add the equivalent here.
+const FAMILY_PARAM_SIGNATURES = [
+  // ─── B6 BJTs ───
+  { pattern: /^(bvcbo|bvceo|bvebo)\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^@?ic\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^hfe\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  // ─── B5 MOSFETs ───
+  { pattern: /^rds[\s_(]*on/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
+  { pattern: /^vgs[\s_(]*(th|threshold)/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
+  { pattern: /^q(g|gs|gd)\b/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
+  // ─── B7 IGBTs ───
+  { pattern: /^vce[\s_(]*sat/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' } },
+  { pattern: /^(eon|eoff|ets)\b/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' } },
+  // ─── B9 JFETs ───
+  { pattern: /^idss\b/i, target: { category: 'Transistors', subcategory: 'JFET', familyId: 'B9' } },
+  // ─── E1 Optocouplers ───
+  { pattern: /^ctr\b/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
+  { pattern: /^viso\b/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
+];
+
 function reclassifyByParameterSignals(initial, parameters) {
-  if (initial.familyId !== 'B1') return initial;
-  let typeVal = '';
-  for (const p of parameters) {
-    const lname = (p.name || '').toLowerCase().trim();
-    if (lname === 'type' || lname === '类型') {
-      typeVal = (p.value || '').toLowerCase().trim();
-      break;
+  // Phase 1: B1 Type-value signals (Decision #175).
+  if (initial.familyId === 'B1') {
+    let typeVal = '';
+    for (const p of parameters) {
+      const lname = (p.name || '').toLowerCase().trim();
+      if (lname === 'type' || lname === '类型') {
+        typeVal = (p.value || '').toLowerCase().trim();
+        break;
+      }
+    }
+    if (typeVal) {
+      if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
+      }
+      if (/^(regulator|voltage regulator)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
+      }
     }
   }
-  if (!typeVal) return initial;
-  if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
-    return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
+
+  // Phase 2: Foreign-family param-name signatures.
+  for (const sig of FAMILY_PARAM_SIGNATURES) {
+    if (sig.target.familyId === initial.familyId) continue;
+    const hit = parameters.some((p) => sig.pattern.test((p.name || '').trim()));
+    if (hit) {
+      return {
+        category: sig.target.category,
+        subcategory: sig.target.subcategory,
+        familyId: sig.target.familyId,
+      };
+    }
   }
-  if (/^(regulator|voltage regulator)$/.test(typeVal)) {
-    return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
-  }
+
   return initial;
 }
 
@@ -2019,16 +2059,36 @@ function classifyRisk(diff, unmappedParamsCount) {
 
 // ─── Aggregate unmapped params across all products in a file ─────
 function aggregateUnmappedParams(perProductUnmapped) {
-  const map = new Map(); // paramName → { paramName, sampleValues:[], productCount, attributeId, kind }
-  for (const { mpn, list } of perProductUnmapped) {
+  // paramName → { paramName, sampleValues, productCount, attributeId, kind,
+  //   familyCounts: { [familyId]: count }, categoryCounts: { [cat]: count } }
+  const map = new Map();
+  for (const { familyId, category, list } of perProductUnmapped) {
     for (const u of list) {
       const key = u.paramName;
       let entry = map.get(key);
       if (!entry) {
-        entry = { paramName: key, sampleValues: [], productCount: 0, attributeId: u.attributeId, kind: u.kind };
+        entry = {
+          paramName: key,
+          sampleValues: [],
+          productCount: 0,
+          attributeId: u.attributeId,
+          kind: u.kind,
+          familyCounts: {},
+          categoryCounts: {},
+        };
         map.set(key, entry);
       }
       entry.productCount++;
+      // Per-param family/category breakdown: counts the products carrying
+      // this specific param, not the batch as a whole. The route uses these
+      // to set dominantFamily/Category accurately on mixed-product-type
+      // batches (e.g. Delta has 2002 inductors + 401 converters; converter
+      // params correctly attribute to C2 instead of bleeding into 71).
+      const famKey = familyId || '(uncovered)';
+      entry.familyCounts[famKey] = (entry.familyCounts[famKey] || 0) + 1;
+      if (category) {
+        entry.categoryCounts[category] = (entry.categoryCounts[category] || 0) + 1;
+      }
       if (entry.sampleValues.length < 5 && !entry.sampleValues.includes(u.sampleValue)) {
         entry.sampleValues.push(u.sampleValue);
       }
@@ -2218,6 +2278,12 @@ function mapManufacturerProducts(filePath) {
   const perProductUnmapped = [];
   let total = 0, mapped = 0, skipped = 0, errors = 0;
   const familyCounts = {};
+  // Parallel category roll-up. Used by the Triage queue to derive a
+  // `dominantCategory` for unmapped params from L2-only products (e.g.
+  // Microcontrollers) — those rows have familyId=null in the family map but
+  // a real category value here, so the inline Accept can route to L2-scoped
+  // dictionary overrides.
+  const categoryCounts = {};
 
   for (const model of data.models) {
     total++;
@@ -2230,6 +2296,8 @@ function mapManufacturerProducts(filePath) {
       mapped++;
       const fam = result.classification.familyId || '(uncovered)';
       familyCounts[fam] = (familyCounts[fam] || 0) + 1;
+      const cat = result.classification.category || '(uncovered)';
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
       mappedProducts.push({
         mpn: result.part.mpn,
         manufacturer: result.part.manufacturer,
@@ -2240,7 +2308,18 @@ function mapManufacturerProducts(filePath) {
         rawModel: model,
       });
       if (result.unmappedParams.length > 0) {
-        perProductUnmapped.push({ mpn: result.part.mpn, list: result.unmappedParams });
+        // Carry the product's classified family + category so the aggregator
+        // can compute per-param familyCounts directly instead of forcing the
+        // route to approximate from batch-level totals (which mis-attributes
+        // converter-specific params to Fixed Inductors when the batch is
+        // dominated by inductors but the unmapped param only appears on
+        // converter products — Delta's case).
+        perProductUnmapped.push({
+          mpn: result.part.mpn,
+          familyId: result.classification.familyId || null,
+          category: result.classification.category || null,
+          list: result.unmappedParams,
+        });
       }
     } catch (err) {
       errors++;
@@ -2248,7 +2327,7 @@ function mapManufacturerProducts(filePath) {
     }
   }
 
-  return { fileName, mfrName, mappedProducts, perProductUnmapped, total, mapped, skipped, errors, familyCounts };
+  return { fileName, mfrName, mappedProducts, perProductUnmapped, total, mapped, skipped, errors, familyCounts, categoryCounts };
 }
 
 async function fetchExistingProducts(mfrName) {
@@ -2446,7 +2525,7 @@ async function reportOneFile(filePath) {
   const fileSha = sha256File(filePath);
 
   const mapResult = mapManufacturerProducts(filePath);
-  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts } = mapResult;
+  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts } = mapResult;
 
   // Tag new atlas params
   for (const p of mappedProducts) {
@@ -2473,6 +2552,7 @@ async function reportOneFile(filePath) {
     attrCountStats: diff.attrCountStats,
     unmappedParams,
     familyCounts,
+    categoryCounts,
     mappingStats: { total, mapped, errors },
   };
 

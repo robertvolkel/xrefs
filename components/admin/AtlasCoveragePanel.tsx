@@ -24,7 +24,18 @@ export default function AtlasCoveragePanel() {
   const fetchCoverage = useCallback(async (forceRefresh: boolean): Promise<AtlasResponse | null> => {
     const url = `/api/admin/atlas${forceRefresh ? '?refresh=1' : ''}`;
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Atlas HTTP ${res.status}`);
+    if (!res.ok) {
+      // Surface the server-side detail in the error chip so the page can
+      // diagnose without requiring DevTools / terminal access.
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = body?.detail ?? body?.error ?? '';
+      } catch {
+        try { detail = await res.text(); } catch { /* ignore */ }
+      }
+      throw new Error(`Atlas HTTP ${res.status}${detail ? ` — ${detail}` : ''}`);
+    }
     return (await res.json()) as AtlasResponse;
   }, []);
 

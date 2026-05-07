@@ -23,8 +23,9 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSearchParams, useRouter } from 'next/navigation';
 import GlobalUnmappedParamsTable from './atlasIngest/GlobalUnmappedParamsTable';
 import RecentDictAcceptsPanel from './atlasIngest/RecentDictAcceptsPanel';
-import TriageFilterBar, { EMPTY_FILTERS, type TriageFilters } from './atlasIngest/TriageFilterBar';
-import type { BatchListResponse } from './atlasIngest/types';
+import TriageFilterBar, { EMPTY_FILTERS, type TriageFilters, type TriageMode } from './atlasIngest/TriageFilterBar';
+import type { NoteRecord } from './atlasIngest/UnmappedParamNoteCell';
+import type { BatchListResponse, StatusFilter } from './atlasIngest/types';
 
 // Parallel worker count for the deferred batch-regen flush. Each regen spawns
 // a Node child process running scripts/atlas-ingest.mjs (~5–15s wall-clock per
@@ -42,9 +43,60 @@ export default function AtlasDictTriagePanel() {
   // Bumps after every queue refresh so the Recently Accepted panel re-fetches
   // (Accept → regen → queue refresh → recent list refresh, in one chain).
   const [recentRefreshSignal, setRecentRefreshSignal] = useState(0);
-  // Page-level filter state (search/MFR/family/min-prods). Pure client-side
-  // slicing of the in-memory queue — no extra fetches.
+  // Page-level filter state (search/MFR/family/min-prods/has-note). Pure
+  // client-side slicing of the in-memory queue — no extra fetches.
   const [filters, setFilters] = useState<TriageFilters>(EMPTY_FILTERS);
+  // Notes per paramName — owned at the panel level so the filter bar can
+  // scope rows by has-note (the rows-needing-followup workflow). Single
+  // fetch on mount; subsequent edits reconcile via onNoteChange.
+  const [notesByParam, setNotesByParam] = useState<Record<string, NoteRecord>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/atlas/unmapped-param-notes');
+        const json = await res.json();
+        if (cancelled || !json?.success || !Array.isArray(json.items)) return;
+        const next: Record<string, NoteRecord> = {};
+        for (const item of json.items as NoteRecord[]) {
+          next[item.paramName] = item;
+        }
+        setNotesByParam(next);
+      } catch {
+        // Notes are non-essential — fall through with empty map.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const onNoteChange = useCallback((paramName: string, next: NoteRecord | null) => {
+    setNotesByParam((prev) => {
+      if (next === null) {
+        const copy = { ...prev };
+        delete copy[paramName];
+        return copy;
+      }
+      return { ...prev, [paramName]: next };
+    });
+  }, []);
+  // View mode — server-side. Changing the mode triggers a refetch since the
+  // queue's classification (synonym vs auto-flagged) is computed in the route.
+  const [mode, setMode] = useState<TriageMode>('synonyms');
+  // Status filter — server-side. 'open' (default) shows un-accepted rows;
+  // 'accepted' / 'undone' surface the audit trail of past Accepts; 'all'
+  // shows the union (useful when an engineer wants the full picture).
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+
+  // Mode switches reset filters explicitly. Without this, filters set in one
+  // mode (e.g. MFR=Delta in Open Synonyms) silently strip every row in the
+  // next mode and the user sees "Showing 0 of N" with no obvious cause.
+  // Filter state still persists for actions WITHIN a mode (search, scroll,
+  // accept) — only the mode-chip click triggers the reset.
+  const handleModeChange = useCallback((next: TriageMode) => {
+    setMode(next);
+    setFilters(EMPTY_FILTERS);
+  }, []);
   // Batches affected by recent Accepts that haven't been regenerated yet.
   // Accept no longer auto-regens (each regen spawns a child process and runs
   // 5–15s; sequential per-affected-batch regens made each Accept feel like a
@@ -58,9 +110,11 @@ export default function AtlasDictTriagePanel() {
     setLoading(true);
     setError(null);
     try {
-      const url = batchFilter
-        ? `/api/admin/atlas/ingest/batches?batch=${encodeURIComponent(batchFilter)}`
-        : `/api/admin/atlas/ingest/batches`;
+      const params = new URLSearchParams();
+      if (batchFilter) params.set('batch', batchFilter);
+      params.set('include', mode);
+      params.set('status_filter', statusFilter);
+      const url = `/api/admin/atlas/ingest/batches?${params.toString()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const json = (await res.json()) as BatchListResponse;
@@ -71,7 +125,7 @@ export default function AtlasDictTriagePanel() {
     } finally {
       setLoading(false);
     }
-  }, [batchFilter]);
+  }, [batchFilter, mode, statusFilter]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -164,9 +218,10 @@ export default function AtlasDictTriagePanel() {
       if (famSet.size > 0) {
         if (!row.dominantFamily || !famSet.has(row.dominantFamily)) return false;
       }
+      if (filters.hasNote && !notesByParam[row.paramName]) return false;
       return true;
     });
-  }, [allRows, filters]);
+  }, [allRows, filters, notesByParam]);
 
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
@@ -189,7 +244,12 @@ export default function AtlasDictTriagePanel() {
         )}
         {!batchFilter && data && (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            {data.unmappedParamsGlobal.length} unresolved param{data.unmappedParamsGlobal.length === 1 ? '' : 's'} across all manufacturers
+            {(data.triageCounts?.total ?? data.unmappedParamsGlobal.length).toLocaleString()} unresolved param{(data.triageCounts?.total ?? data.unmappedParamsGlobal.length) === 1 ? '' : 's'} across all manufacturers
+            {data.triageCounts && data.triageCounts.autoFlagged > 0 && (
+              <Box component="span" sx={{ ml: 1, color: 'error.light', fontWeight: 600 }}>
+                · {data.triageCounts.autoFlagged} auto-flagged misclassification{data.triageCounts.autoFlagged === 1 ? '' : 's'}
+              </Box>
+            )}
           </Typography>
         )}
 
@@ -242,7 +302,9 @@ export default function AtlasDictTriagePanel() {
         />
       )}
 
-      {!loading && data && data.unmappedParamsGlobal.length === 0 && (
+      {/* Globally empty: 0 rows in EVERY mode. Hide the filter bar entirely
+          and surface a green success state. */}
+      {!loading && data && (data.triageCounts?.total ?? 0) === 0 && data.unmappedParamsGlobal.length === 0 && (
         <Alert severity="success" sx={{ my: 3 }}>
           {batchFilter
             ? 'No unresolved parameters for this batch — nothing to review.'
@@ -250,7 +312,9 @@ export default function AtlasDictTriagePanel() {
         </Alert>
       )}
 
-      {!loading && data && data.unmappedParamsGlobal.length > 0 && (
+      {/* Otherwise: keep the filter bar (mode chips + filters) mounted so the
+          engineer can switch modes even when the current mode is empty. */}
+      {!loading && data && ((data.triageCounts?.total ?? 0) > 0 || data.unmappedParamsGlobal.length > 0) && (
         <>
           <TriageFilterBar
             rows={allRows}
@@ -258,8 +322,23 @@ export default function AtlasDictTriagePanel() {
             onChange={setFilters}
             filteredCount={filteredRows.length}
             totalCount={allRows.length}
+            mode={mode}
+            onModeChange={handleModeChange}
+            triageCounts={data.triageCounts}
+            status={statusFilter}
+            onStatusChange={setStatusFilter}
+            statusCounts={data.statusCounts}
+            noteCount={Object.keys(notesByParam).length}
           />
-          {filteredRows.length === 0 ? (
+          {data.unmappedParamsGlobal.length === 0 ? (
+            <Alert severity="info" sx={{ my: 2 }}>
+              {mode === 'auto_flagged'
+                ? 'No auto-flagged misclassifications. Switch to Open synonyms to continue mapping.'
+                : mode === 'synonyms'
+                  ? 'No open synonym rows in the queue.'
+                  : 'No rows match the current view.'}
+            </Alert>
+          ) : filteredRows.length === 0 ? (
             <Alert severity="info" sx={{ my: 2 }}>
               No params match the current filters. Adjust or{' '}
               <Box
@@ -276,6 +355,8 @@ export default function AtlasDictTriagePanel() {
               rows={filteredRows}
               pendingBatchCount={data.aggregate.counts.total}
               onRegenerateAffected={onRegenerateAffected}
+              notesByParam={notesByParam}
+              onNoteChange={onNoteChange}
             />
           )}
         </>

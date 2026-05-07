@@ -264,41 +264,6 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, cachedAt, on
           </Button>
         </Box>
 
-        {/* Hero: identified dataset */}
-        <Box
-          className="atlas-coverage-section"
-          sx={{
-            p: 3,
-            mb: 3,
-            border: 1,
-            borderColor: 'divider',
-            borderRadius: 2,
-            bgcolor: 'background.paper',
-          }}
-        >
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}
-          >
-            {t('admin.atlasCoverageReport.heroEyebrow')}
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, mt: 1, flexWrap: 'wrap' }}>
-            <Typography variant="h2" fontWeight={700} sx={{ lineHeight: 1 }}>
-              {s.targetManufacturers.toLocaleString()}
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
-              {t('admin.atlasCoverageReport.heroHeadlineSuffix')}
-            </Typography>
-          </Box>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5, maxWidth: 720, lineHeight: 1.6 }}>
-            {t('admin.atlasCoverageReport.heroBody', {
-              live: s.enabledManufacturers.toLocaleString(),
-              products: s.enabledProducts.toLocaleString(),
-            })}
-          </Typography>
-        </Box>
-
         {/* KPI tiles */}
         <Box
           className="atlas-coverage-section"

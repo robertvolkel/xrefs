@@ -98,8 +98,8 @@ export default function IngestUploader({ onUploadComplete, disabled }: Props) {
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
       sx={{
-        p: 4,
-        textAlign: 'center',
+        px: 2.5,
+        py: 1.75,
         borderStyle: 'dashed',
         borderWidth: 2,
         borderColor: dragOver ? 'primary.main' : 'divider',
@@ -110,33 +110,42 @@ export default function IngestUploader({ onUploadComplete, disabled }: Props) {
         mb: 2,
       }}
     >
-      <CloudUploadOutlinedIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
-      <Typography variant="h6" sx={{ mb: 0.5 }}>
-        Drop Atlas JSON files here
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Filename pattern: <code>mfr_&#123;ID&#125;_&#123;ENGLISH&#125;_&#123;CHINESE&#125;_params.json</code>
-      </Typography>
+      {/* Compact horizontal layout: icon + title + buttons on one row,
+          filename hint inline below — saves ~40% vertical vs the previous
+          centered stack while still being a clear drop target. */}
+      <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ flexWrap: 'wrap' }}>
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
+          <CloudUploadOutlinedIcon sx={{ fontSize: 28, color: 'text.secondary', flexShrink: 0 }} />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
+              Drop Atlas JSON files here
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              Filename pattern: <code>mfr_&#123;ID&#125;_&#123;ENGLISH&#125;_&#123;CHINESE&#125;_params.json</code>
+            </Typography>
+          </Box>
+        </Stack>
 
-      <Stack direction="row" spacing={1} justifyContent="center">
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<CloudUploadOutlinedIcon />}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || uploading}
-        >
-          Select files
-        </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<FolderOpenOutlinedIcon />}
-          onClick={() => folderInputRef.current?.click()}
-          disabled={disabled || uploading}
-        >
-          Select folder
-        </Button>
+        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<CloudUploadOutlinedIcon />}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            Select files
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<FolderOpenOutlinedIcon />}
+            onClick={() => folderInputRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            Select folder
+          </Button>
+        </Stack>
       </Stack>
 
       <input
@@ -159,7 +168,7 @@ export default function IngestUploader({ onUploadComplete, disabled }: Props) {
       />
 
       {uploading && (
-        <Box sx={{ mt: 2 }}>
+        <Box sx={{ mt: 1.5 }}>
           <LinearProgress />
           <Typography variant="caption" color="text.secondary">{uploadProgress}</Typography>
         </Box>

@@ -10,6 +10,13 @@ import NoteAltIcon from '@mui/icons-material/NoteAlt';
 export type NoteRecord = {
   paramName: string;
   note: string;
+  /** Triage status for the row — null is the default (open synonym mapping
+   *  case or free-form note). 'wrong_family' = engineer Confirmed a registry
+   *  auto-flag (or manually flagged). 'confirmed_in_family' = engineer
+   *  rejected an auto-flag, suppressing the registry hit for this paramName. */
+  status?: 'wrong_family' | 'confirmed_in_family' | null;
+  flaggedBy?: 'auto' | 'engineer' | null;
+  autoDiagnosis?: Record<string, unknown> | null;
   updatedBy: string;
   updatedByName: string;
   updatedAt: string;

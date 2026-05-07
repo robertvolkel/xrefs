@@ -33,7 +33,6 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import IngestUploader from './IngestUploader';
 import NewManufacturerPanel from './NewManufacturerPanel';
-import IngestDashboard from './IngestDashboard';
 import BatchCard from './BatchCard';
 import { useRouter } from 'next/navigation';
 import type { BatchListResponse, IngestBatch, StagedFile } from './types';
@@ -56,7 +55,6 @@ export default function AtlasIngestPanel() {
 
   const [reportRunning, setReportRunning] = useState(false);
   const [actionInFlight, setActionInFlight] = useState<{ batchId: string; kind: 'proceed' | 'revert' | 'discard' | 'regenerate' } | null>(null);
-  const [bulkRunning, setBulkRunning] = useState(false);
 
   const [pendingState, setPendingState] = useState<PendingState>({
     pendingMfrRegistrations: [],
@@ -201,39 +199,6 @@ export default function AtlasIngestPanel() {
     }
   }, [refreshBatches]);
 
-  const proceedAllClean = useCallback(async () => {
-    if (!batchData) return;
-    const cleanCount = batchData.aggregate.counts.clean;
-    if (cleanCount === 0) {
-      setSnack({ msg: 'No clean batches to apply', severity: 'info' });
-      return;
-    }
-    // Surface unresolved-params status — operators may not realize their
-    // upload introduced new param names that need engineer review (Decision-
-    // driven Model 3). Light friction; they can still proceed.
-    const unresolvedCount = batchData.unmappedParamsGlobal.length;
-    const unresolvedNote = unresolvedCount > 0
-      ? `\n\nNote: ${unresolvedCount} unmapped parameter${unresolvedCount === 1 ? '' : 's'} across pending batches haven't been reviewed by an engineer. Applying will store those values under raw IDs; clean up later via Dictionary Triage.`
-      : '';
-    if (!confirm(`Apply ${cleanCount} clean batch(es) in parallel? Each is reversible for 30 days.${unresolvedNote}`)) return;
-    setBulkRunning(true);
-    try {
-      const res = await fetch('/api/admin/atlas/ingest/proceed-all-clean', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ concurrency: 5 }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error || `Bulk apply failed`);
-      setSnack({ msg: `Bulk apply complete`, severity: 'success' });
-      await refreshBatches();
-    } catch (err) {
-      setSnack({ msg: err instanceof Error ? err.message : 'Bulk apply failed', severity: 'error' });
-    } finally {
-      setBulkRunning(false);
-    }
-  }, [batchData, refreshBatches]);
-
   const renderingBlocked = pendingState.pendingMfrRegistrations.length > 0;
 
   return (
@@ -293,12 +258,6 @@ export default function AtlasIngestPanel() {
 
           {!loadingBatches && batchData && batchData.batches.length > 0 && (
             <>
-              <IngestDashboard
-                aggregate={batchData.aggregate}
-                onProceedAllClean={proceedAllClean}
-                bulkRunning={bulkRunning}
-              />
-
               {/* Read-only triage summary — Decision-driven (Model 3): operators
                   see a count + link to the dedicated Dictionary Triage workspace,
                   but don't get edit power over mappings here. The full editor

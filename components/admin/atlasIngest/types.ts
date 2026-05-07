@@ -39,6 +39,9 @@ export type IngestDiffReport = {
     kind: 'gaia' | 'standard';
   }>;
   familyCounts: Record<string, number>;
+  /** Optional — populated from atlas-ingest.mjs runs after the L2-category
+   *  triage feature shipped. Older batches lack this field. */
+  categoryCounts?: Record<string, number>;
   mappingStats: { total: number; mapped: number; errors: number };
 };
 
@@ -75,6 +78,21 @@ export type StagedFile = {
   existingManufacturer: { atlas_id: number; name_display: string; slug: string } | null;
 };
 
+/** Foreign-family auto-flag — registry hit from atlasFamilyParamSignatures.
+ *  Present iff the param's name belongs unambiguously to a different family
+ *  than the row's dominantFamily, AND the engineer hasn't suppressed it via
+ *  status='confirmed_in_family' on atlas_unmapped_param_notes. */
+export type AutoFlag = {
+  /** familyId of the family this paramName actually belongs to, e.g. 'B6' */
+  suggestedFamily: string;
+  /** Human-readable rationale shown in the diagnosis card / tooltip. */
+  reasoning: string;
+  /** The matched paramName itself, snapshotted for the audit record. */
+  matchingParam: string;
+};
+
+export type NoteStatus = 'wrong_family' | 'confirmed_in_family' | null;
+
 export type GlobalUnmappedParam = {
   paramName: string;
   sampleValues: string[];
@@ -86,7 +104,48 @@ export type GlobalUnmappedParam = {
   affectedManufacturers: Array<{ slug: string; name: string; productCount: number }>;
   dominantFamily: string | null;
   familyCounts: Record<string, number>;
+  /** Dominant L2 category for products carrying this paramName (e.g.
+   *  'Microcontrollers'). Used as the override scope key when dominantFamily
+   *  is null — atlas_dictionary_overrides.family_id is overloaded to carry
+   *  either an L3 familyId or an L2 category name. */
+  dominantCategory: string | null;
+  categoryCounts: Record<string, number>;
+  /** Live foreign-family registry hit. Suppressed when noteStatus is
+   *  'confirmed_in_family'. Persisted Confirm action sets noteStatus to
+   *  'wrong_family' but autoFlag stays alongside as the registry diagnosis. */
+  autoFlag?: AutoFlag;
+  /** Persisted triage status from atlas_unmapped_param_notes. */
+  noteStatus?: NoteStatus;
+  /** Provenance of the persisted status — auto = registry hit + Confirm,
+   *  engineer = manual flag from a free-form note interaction. */
+  flaggedBy?: 'auto' | 'engineer' | null;
+  /** Inline accept audit. Present iff a row in atlas_dictionary_overrides
+   *  matches this paramName at either the dominantFamily or dominantCategory
+   *  scope. isActive=false signals the override was reverted; the row remains
+   *  visible under the 'Undone' / 'All' status filters so the audit trail
+   *  survives the revert. */
+  acceptedOverride?: {
+    id: string;
+    attributeId: string;
+    attributeName: string;
+    unit: string | null;
+    createdBy: string;
+    createdByName: string;
+    createdAt: string;
+    updatedAt: string;
+    isActive: boolean;
+    /** updated_at != created_at — signals the override was edited via PATCH
+     *  after initial Accept. UI surfaces this as "Edited by X" instead of
+     *  "Accepted by X". */
+    wasEdited: boolean;
+  };
+  /** True iff this row was synthesized from an override row alone (no matching
+   *  paramName in any current JSONB report). Means productCount=0 etc. — UI
+   *  renders a "no longer in any pending batch" indicator. */
+  orphaned?: boolean;
 };
+
+export type StatusFilter = 'open' | 'accepted' | 'undone' | 'all';
 
 // Reply shape from POST /api/admin/atlas/dictionaries/suggest
 export type DictSuggestion = {
@@ -117,4 +176,14 @@ export type BatchListResponse = {
     attrChanges: { totalNewAttrs: number; totalChangedValues: number; totalRemovedAttrs: number };
   };
   unmappedParamsGlobal: GlobalUnmappedParam[];
+  /** Bucket counts for the triage view-mode chip group. Computed against
+   *  the full overrideResolved set BEFORE the include filter, so engineers
+   *  always see how many rows live in each mode regardless of which view
+   *  they're currently in. */
+  triageCounts?: { synonyms: number; autoFlagged: number; total: number };
+  /** Counts for the status filter chip group (Open / Accepted / Undone).
+   *  Open = no override; Accepted = active override; Undone = inactive
+   *  (reverted) override. Computed across all classified rows regardless of
+   *  the include filter (mode). */
+  statusCounts?: { open: number; accepted: number; undone: number };
 };

@@ -44,12 +44,30 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
+import FlagIcon from '@mui/icons-material/Flag';
+import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
 import type { GlobalUnmappedParam, DictSuggestion } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
+
+/** Compact relative time format used in accept-audit chips/tooltips.
+ *  Mirrors the helper in RecentDictAcceptsPanel.tsx; if a third surface
+ *  needs it, lift to a shared util. */
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diffSec = Math.floor((now - then) / 1000);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
 /** Resolve a familyId (e.g. "B1") to a short human-readable category name
  *  (e.g. "Rectifier Diodes"). The full familyName from the logic table often
@@ -66,10 +84,25 @@ function getFamilyDisplayName(familyId: string | null): { short: string; full: s
   return { short, full };
 }
 
+/** Override scope for a row — either an L3 familyId ('B5') or an L2 category
+ *  name ('Microcontrollers'). atlas_dictionary_overrides.family_id is
+ *  overloaded to accept both, and the suggest/POST endpoints fall through L3
+ *  → L2 internally. Returns null when neither signal is present (rare —
+ *  pre-categoryCounts batches). */
+function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'; key: string } | null {
+  if (r.dominantFamily) return { kind: 'family', key: r.dominantFamily };
+  if (r.dominantCategory) return { kind: 'category', key: r.dominantCategory };
+  return null;
+}
+
 interface Props {
   rows: GlobalUnmappedParam[];
   onRegenerateAffected: (batchIds: string[]) => Promise<void>;
   pendingBatchCount: number;
+  /** Notes are owned by the parent panel (so the filter bar can filter on
+   *  them). Table just renders + edits via callback. */
+  notesByParam: Record<string, NoteRecord>;
+  onNoteChange: (paramName: string, next: NoteRecord | null) => void;
 }
 
 interface RowState {
@@ -85,7 +118,6 @@ interface RowState {
 }
 
 const SUGGESTION_CONCURRENCY = 4;
-const ACCEPT_CONCURRENCY = 4;
 // localStorage key prefix for cached AI suggestions. Keyed by paramName + familyId.
 // Suggestions survive page reloads + tab switches without re-hitting the server.
 // Server cache (24h) provides a second layer if storage is cleared.
@@ -159,12 +191,11 @@ const CONFIDENCE_COLOR: Record<DictSuggestion['confidence'], { bg: string; fg: s
   low:    { bg: 'error.dark',   fg: 'error.contrastText' },
 };
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
   const [states, setStates] = useState<Record<string, RowState>>({});
-  const [bulkRunning, setBulkRunning] = useState(false);
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
   const fetchedRef = useRef(false);
   // Per-family canonical attributeId set, populated from the suggest endpoint.
@@ -172,44 +203,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // exists in the family's logic table. Empty set ⇒ family had no schema info.
   const [schemaByFamily, setSchemaByFamily] = useState<Record<string, Set<string>>>({});
 
-  // Team notes per paramName — engineers attach research/reasoning to rows
-  // they're not ready to accept. Single fetch on mount; map keyed by paramName.
-  const [notesByParam, setNotesByParam] = useState<Record<string, NoteRecord>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/admin/atlas/unmapped-param-notes');
-        const json = await res.json();
-        if (cancelled || !json?.success || !Array.isArray(json.items)) return;
-        const next: Record<string, NoteRecord> = {};
-        for (const item of json.items as NoteRecord[]) {
-          next[item.paramName] = item;
-        }
-        setNotesByParam(next);
-      } catch {
-        // Notes are non-essential — fall through with empty map.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const onNoteChange = useCallback((paramName: string, next: NoteRecord | null) => {
-    setNotesByParam((prev) => {
-      if (next === null) {
-        const copy = { ...prev };
-        delete copy[paramName];
-        return copy;
-      }
-      return { ...prev, [paramName]: next };
-    });
-  }, []);
+  // Notes (notesByParam, onNoteChange) come from the parent panel via props
+  // so the filter bar can scope rows by has-note. See AtlasDictTriagePanel.
 
   const total = rows.length;
   // sum of per-param product counts — this counts a product N times if it has N
   // unmapped params, so we label it as "param-mentions" not "products"
   const totalParamMentions = rows.reduce((s, r) => s + r.productCount, 0);
+  // When the visible rows are entirely (or mostly) auto-flagged, the synonym
+  // workflow header text is misleading — flip the description.
+  const flaggedVisibleCount = rows.filter((r) => !!r.autoFlag || r.noteStatus === 'wrong_family').length;
+  const allFlagged = total > 0 && flaggedVisibleCount === total;
 
   // Show the suggestion-fetch progress in the header even when collapsed so users
   // see processing happening before they expand.
@@ -233,14 +237,36 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     const seenFamilies = new Set<string>();
     const queue: GlobalUnmappedParam[] = [];
     for (const row of rows) {
-      if (row.dominantFamily && !seenFamilies.has(row.dominantFamily)) {
-        seenFamilies.add(row.dominantFamily);
-        const cachedSchema = readFamilySchemaCache(row.dominantFamily);
+      // Scope key = L3 familyId OR L2 category. Both flow through the same
+      // schema/suggest endpoints. Cache and state are keyed on the scope so
+      // L2 rows (e.g. Microcontrollers) get their own canonical-attribute set.
+      const scope = getOverrideScope(row);
+      const scopeKey = scope?.key ?? null;
+      if (scopeKey && !seenFamilies.has(scopeKey)) {
+        seenFamilies.add(scopeKey);
+        const cachedSchema = readFamilySchemaCache(scopeKey);
         if (cachedSchema && cachedSchema.length > 0) {
-          initialSchemaByFamily[row.dominantFamily] = new Set(cachedSchema);
+          initialSchemaByFamily[scopeKey] = new Set(cachedSchema);
         }
       }
-      const cached = readSuggestionCache(row.paramName, row.dominantFamily);
+      // Auto-flagged rows are misclassifications, not synonym gaps. Asking
+      // Haiku to map them to a canonical attribute would be wrong (and would
+      // burn tokens). Seed an empty state so cells render placeholders, but
+      // don't add to the suggestion fetch queue.
+      if (row.autoFlag) {
+        initialStates[row.paramName] = {
+          suggestion: null,
+          loadingSuggestion: false,
+          editedAttributeId: '',
+          editedAttributeName: '',
+          editedUnit: '',
+          accepted: false,
+          acceptError: null,
+          accepting: false,
+        };
+        continue;
+      }
+      const cached = readSuggestionCache(row.paramName, scopeKey);
       if (cached) {
         initialStates[row.paramName] = {
           suggestion: cached,
@@ -271,13 +297,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       setSchemaByFamily((prev) => ({ ...prev, ...initialSchemaByFamily }));
     }
 
-    // Schema fallback: any family that has rows but didn't get a schema from
-    // localStorage AND won't get one from /suggest (because all its rows hit
-    // the cache path) needs an explicit fetch — otherwise the indicators stay
-    // dark forever. The endpoint is cheap (no LLM, no DB) so this is fine to
-    // do on every mount where the local cache lacks the schema.
+    // Schema fallback: any scope (L3 family OR L2 category) that has rows
+    // but didn't get a schema from localStorage AND won't get one from
+    // /suggest (because all its rows hit the cache path) needs an explicit
+    // fetch — otherwise the indicators stay dark forever. The endpoint is
+    // cheap (no LLM, no DB) so this is fine to do on every mount where the
+    // local cache lacks the schema.
     const familiesNeedingSchema: string[] = [];
-    const familiesInQueue = new Set(queue.map((r) => r.dominantFamily).filter((f): f is string => !!f));
+    const familiesInQueue = new Set(
+      queue.map((r) => getOverrideScope(r)?.key).filter((f): f is string => !!f),
+    );
     for (const fam of seenFamilies) {
       if (!initialSchemaByFamily[fam] && !familiesInQueue.has(fam)) {
         familiesNeedingSchema.push(fam);
@@ -313,6 +342,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         const row = queue[next++];
         if (!row) break;
         const key = row.paramName;
+        const rowScope = getOverrideScope(row);
+        const rowScopeKey = rowScope?.key ?? null;
         try {
           const res = await fetch('/api/admin/atlas/dictionaries/suggest', {
             method: 'POST',
@@ -320,21 +351,24 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             body: JSON.stringify({
               paramName: row.paramName,
               samples: row.sampleValues,
-              familyId: row.dominantFamily ?? '',
+              // family_id is overloaded: the suggest endpoint falls through
+              // L3 logic-table → L2 param-map internally, so an L2 category
+              // string (e.g. 'Microcontrollers') routes to the right schema.
+              familyId: rowScopeKey ?? '',
             }),
           });
           const json = await res.json();
           const suggestion: DictSuggestion | null = json?.success ? json.suggestion : null;
           if (suggestion) {
-            writeSuggestionCache(row.paramName, row.dominantFamily, suggestion);
+            writeSuggestionCache(row.paramName, rowScopeKey, suggestion);
           }
           // Capture the schema list returned alongside the suggestion. We only need
-          // it once per family so the conditional setSchemaByFamily check avoids
-          // rerendering rows whose family already has the set populated. Also
+          // it once per scope so the conditional setSchemaByFamily check avoids
+          // rerendering rows whose scope already has the set populated. Also
           // persist to localStorage so the next page load lights up indicators
           // synchronously (no API roundtrip needed).
-          if (Array.isArray(json?.schemaIds) && row.dominantFamily) {
-            const fam = row.dominantFamily;
+          if (Array.isArray(json?.schemaIds) && rowScopeKey) {
+            const fam = rowScopeKey;
             setSchemaByFamily((prev) => prev[fam] ? prev : { ...prev, [fam]: new Set(json.schemaIds) });
             writeFamilySchemaCache(fam, json.schemaIds);
           }
@@ -375,6 +409,75 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
   }, [expanded, rows.length, fetchAllSuggestions]);
 
+  // ─── Per-row flag actions (Confirm / Revert) ────────────
+  // Tracks in-flight + last-error per paramName so the buttons can show
+  // loading state and surface failures inline without alerts.
+  const [flagState, setFlagState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
+
+  const confirmFlag = useCallback(async (row: GlobalUnmappedParam) => {
+    if (!row.autoFlag) return;
+    setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
+    try {
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'wrong_family',
+          flaggedBy: 'auto',
+          // Snapshot the registry hit at flag time so the audit record
+          // survives later registry edits / removals.
+          autoDiagnosis: {
+            suggestedFamily: row.autoFlag.suggestedFamily,
+            reasoning: row.autoFlag.reasoning,
+            matchingParam: row.autoFlag.matchingParam,
+            sourceFamily: row.dominantFamily,
+            confirmedAt: new Date().toISOString(),
+          },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || `Confirm failed (${res.status})`);
+      // Refresh the queue so the row's persisted state is reflected (the
+      // route's classifier reads atlas_unmapped_param_notes on every fetch).
+      // No batches need regenerating — flagging doesn't change ingest output.
+      await onRegenerateAffected([]);
+      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: null } }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Confirm failed';
+      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
+    }
+  }, [onRegenerateAffected]);
+
+  const revertFlag = useCallback(async (row: GlobalUnmappedParam) => {
+    setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
+    try {
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // 'confirmed_in_family' suppresses the registry hit even when the
+          // pattern keeps matching on next render — this is the per-paramName
+          // override for the false-positive case.
+          status: 'confirmed_in_family',
+          flaggedBy: 'engineer',
+          autoDiagnosis: row.autoFlag
+            ? {
+              suppressedRegistryHit: row.autoFlag,
+              revertedAt: new Date().toISOString(),
+            }
+            : null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || `Revert failed (${res.status})`);
+      await onRegenerateAffected([]);
+      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: null } }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Revert failed';
+      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
+    }
+  }, [onRegenerateAffected]);
+
   // ─── Per-row Accept ────────────────────────────────────
   const acceptRow = useCallback(async (row: GlobalUnmappedParam): Promise<{ ok: boolean; error?: string }> => {
     const state = states[row.paramName];
@@ -382,8 +485,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     if (!state.editedAttributeId.trim() || !state.editedAttributeName.trim()) {
       return { ok: false, error: 'attributeId and attributeName required' };
     }
-    if (!row.dominantFamily) {
-      return { ok: false, error: 'No dominant family — pick a family manually via Atlas Dictionaries panel' };
+    // Override scope: L3 familyId wins; L2 category is the fallback for
+    // products that don't live in any logic-table family (Microcontrollers,
+    // Connectors, LEDs, etc.). atlas_dictionary_overrides.family_id stores
+    // either string — the column is overloaded by design.
+    const scope = getOverrideScope(row);
+    if (!scope) {
+      return { ok: false, error: 'No dominant family or category — pick one manually via Atlas Dictionaries panel' };
     }
 
     setStates((prev) => ({
@@ -397,13 +505,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          familyId: row.dominantFamily,
+          familyId: scope.key,
           paramName: row.paramName.toLowerCase(),
           action: 'add',
           attributeId: state.editedAttributeId.trim(),
           attributeName: state.editedAttributeName.trim(),
           unit: state.editedUnit.trim() || undefined,
-          changeReason: `AI-assisted ingest triage (confidence: ${state.suggestion?.confidence ?? 'manual'})`,
+          changeReason: `AI-assisted ingest triage (${scope.kind === 'category' ? `L2 category: ${scope.key}` : `L3 family: ${scope.key}`}, confidence: ${state.suggestion?.confidence ?? 'manual'})`,
         }),
       });
       const json = await res.json();
@@ -431,57 +539,39 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
   }, [acceptRow, onRegenerateAffected]);
 
-  // ─── Bulk accept all high-confidence ────────────────────
-  // Eligibility for bulk-accept:
-  //   confidence === 'high' AND we have a dominantFamily AND we have an editedAttributeId
-  //   AND (the family has no known schema  OR  the attributeId is canonical in that schema).
-  // Excluding the "high-confidence but invented attributeId for a known family" case
-  // protects against silently storing values under made-up IDs that no rule ever scores.
-  // Those rows still appear in the table for manual review with the amber indicator.
-  const isBulkEligible = useCallback((r: GlobalUnmappedParam): boolean => {
-    const s = states[r.paramName];
-    if (!s || s.accepted) return false;
-    if (s.suggestion?.confidence !== 'high') return false;
-    if (!r.dominantFamily) return false;
-    const editedId = s.editedAttributeId?.trim() ?? '';
-    if (!editedId) return false;
-    const schema = schemaByFamily[r.dominantFamily];
-    if (schema && schema.size > 0) {
-      return schema.has(editedId);
+  // Per-row Revert — soft-deletes the override (sets is_active=false).
+  // The DELETE endpoint preserves the audit row so the queue can show it
+  // under the "Undone" status filter. After revert, also queue affected
+  // batches for regen so their report metrics catch up to the change.
+  const [revertingIds, setRevertingIds] = useState<Set<string>>(new Set());
+  const revertOverride = useCallback(async (row: GlobalUnmappedParam) => {
+    const ov = row.acceptedOverride;
+    if (!ov || !ov.isActive) return;
+    if (!confirm(`Revert override for "${row.paramName}"? The row returns to the Open queue and the override is deactivated. Reversible via the Atlas Dictionaries admin panel.`)) return;
+    setRevertingIds((prev) => new Set(prev).add(ov.id));
+    try {
+      const res = await fetch(`/api/admin/atlas/dictionaries/${ov.id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Revert failed');
+      // Queue affected batches for the deferred regen flush so the batch
+      // report metrics catch up. Same flow as Accept.
+      await onRegenerateAffected(row.affectedBatchIds);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Revert failed';
+      // Surface via state so the row shows the error briefly. Reuses the
+      // acceptError slot (mutually exclusive UX states).
+      setStates((prev) => ({
+        ...prev,
+        [row.paramName]: { ...(prev[row.paramName] ?? {}), acceptError: msg } as RowState,
+      }));
+    } finally {
+      setRevertingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(ov.id);
+        return next;
+      });
     }
-    return true; // no schema known → bypass the canonical check
-  }, [states, schemaByFamily]);
-
-  const highConfidenceCount = useMemo(() => rows.filter(isBulkEligible).length, [rows, isBulkEligible]);
-
-  const acceptAllHighConfidence = useCallback(async () => {
-    if (!confirm(`Create ${highConfidenceCount} dictionary overrides from high-confidence AI suggestions (only canonical attributeIds), then regenerate every affected batch? Reversible per-override via the Atlas Dictionaries panel.`)) return;
-    setBulkRunning(true);
-    const targets = rows.filter(isBulkEligible);
-    const allBatchIds = new Set<string>();
-    let ok = 0, failed = 0;
-    let idx = 0;
-    async function worker() {
-      while (idx < targets.length) {
-        const r = targets[idx++];
-        const result = await acceptRow(r);
-        if (result.ok) {
-          ok++;
-          for (const id of r.affectedBatchIds) allBatchIds.add(id);
-        } else {
-          failed++;
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(ACCEPT_CONCURRENCY, targets.length) }, () => worker()));
-    if (allBatchIds.size > 0) {
-      await onRegenerateAffected([...allBatchIds]);
-    }
-    setBulkRunning(false);
-    if (failed > 0) {
-      alert(`${ok} accepted, ${failed} failed. Check individual rows for errors.`);
-    }
-  }, [rows, states, highConfidenceCount, acceptRow, onRegenerateAffected]);
+  }, [onRegenerateAffected]);
 
   // ─── Render ────────────────────────────────────────────
   // Title makes the cross-batch nature explicit. Singular vs plural depending on
@@ -520,38 +610,25 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </Typography>
             </Stack>
           )}
-          {expanded && highConfidenceCount > 0 && !bulkRunning && (
-            <Typography variant="caption" sx={{ ml: 'auto', mr: 2, color: 'success.light', fontWeight: 600 }}>
-              {highConfidenceCount} high-confidence ready
-            </Typography>
-          )}
-          {bulkRunning && (
-            <Box sx={{ ml: 'auto', mr: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-              <CircularProgress size={16} />
-              <Typography variant="caption">Bulk-accepting…</Typography>
-            </Box>
-          )}
         </Stack>
       </AccordionSummary>
       <AccordionDetails>
         <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Each row gets an AI-suggested mapping (Claude Haiku, schema-aware via dominant family).
-            Edit the attributeId/Name inline if needed, then <strong>Accept</strong> to create a dictionary override
-            and regenerate affected batches.
+            {allFlagged ? (
+              <>
+                These rows look like upstream <strong>misclassifications</strong> — the parameter name belongs to a different family.
+                Click <strong>Confirm</strong> on the obvious ones to record the diagnosis, or <strong>Revert</strong> if it&apos;s a false positive
+                (the registry will stop flagging that paramName).
+              </>
+            ) : (
+              <>
+                Each row gets an AI-suggested mapping (Claude Haiku, schema-aware via dominant family).
+                Edit the attributeId/Name inline if needed, then <strong>Accept</strong> to create a dictionary override
+                and regenerate affected batches.
+              </>
+            )}
           </Typography>
-          {highConfidenceCount > 0 && !bulkRunning && (
-            <Button
-              size="small"
-              variant="contained"
-              color="success"
-              startIcon={<AutoAwesomeIcon />}
-              onClick={acceptAllHighConfidence}
-              sx={{ flexShrink: 0 }}
-            >
-              Accept all {highConfidenceCount} high-confidence
-            </Button>
-          )}
         </Stack>
 
         {suggestionProgress && (
@@ -590,8 +667,35 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const state = states[r.paramName];
                 const confidence = state?.suggestion?.confidence;
                 const cConf = confidence ? CONFIDENCE_COLOR[confidence] : null;
+                // Effective flag state per-row. autoFlag = live registry hit;
+                // noteStatus='wrong_family' = persisted (auto-confirmed or
+                // manually flagged). Either makes the row a "flagged" row
+                // for UI purposes — Confirm / Revert actions take over the
+                // synonym workflow's Accept button.
+                const flagged = !!r.autoFlag || r.noteStatus === 'wrong_family';
+                const flagBusy = flagState[r.paramName]?.busy ?? false;
+                const flagError = flagState[r.paramName]?.error ?? null;
+                const suggestedFam = r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null;
+                const confirmedFlag = r.noteStatus === 'wrong_family';
                 return (
-                  <TableRow key={r.paramName} sx={{ opacity: state?.accepted ? 0.5 : 1 }}>
+                  <TableRow
+                    key={r.paramName}
+                    sx={{
+                      // Three "done" states drop opacity:
+                      //   - state.accepted (synonym mapping accepted)
+                      //   - confirmedFlag (auto-flag confirmed by engineer)
+                      // Both visually recede so unreviewed work is at eye level.
+                      opacity: state?.accepted ? 0.5 : (confirmedFlag ? 0.55 : 1),
+                      // Red left-border accent makes flagged rows scannable in
+                      // the All view. Confirmed flags soften the border to
+                      // grey so the eye still parses "flag", but the row no
+                      // longer reads as needing attention.
+                      borderLeft: flagged ? '3px solid' : undefined,
+                      borderLeftColor: flagged
+                        ? (confirmedFlag ? 'text.disabled' : 'error.main')
+                        : undefined,
+                    }}
+                  >
                     <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
                       <UnmappedParamNoteCell
                         paramName={r.paramName}
@@ -603,23 +707,71 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       {r.paramName}
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.7rem' }}>
-                      {r.dominantFamily ? (
+                      {flagged && r.autoFlag ? (
+                        // Show "B1 → B6" transition with the flag icon — at-a-glance
+                        // diagnosis without needing the tooltip.
+                        <Tooltip title={`${r.dominantFamily ?? '?'} → ${r.autoFlag.suggestedFamily} ${suggestedFam ? `(${suggestedFam.short})` : ''} — see diagnosis`}>
+                          <Stack direction="row" spacing={0.25} alignItems="center">
+                            <FlagIcon sx={{ fontSize: 14, color: 'error.main' }} />
+                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>{r.dominantFamily}</Box>
+                            <Box component="span" sx={{ fontSize: '0.65rem', color: 'error.main', fontWeight: 700 }}>→</Box>
+                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'error.main', fontWeight: 700 }}>{r.autoFlag.suggestedFamily}</Box>
+                          </Stack>
+                        </Tooltip>
+                      ) : flagged ? (
+                        <Tooltip title="Manually flagged as wrong family">
+                          <Chip size="small" icon={<FlagIcon sx={{ fontSize: 12 }} />} label={r.dominantFamily ?? '?'} sx={{ fontSize: '0.6rem', height: 18, bgcolor: 'error.dark', color: 'error.contrastText' }} />
+                        </Tooltip>
+                      ) : r.dominantFamily ? (
                         <Chip size="small" label={r.dominantFamily} variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                      ) : r.dominantCategory ? (
+                        // L2-only row (no logic-table family). Show "L2"
+                        // marker so engineers see at a glance that this is
+                        // category-scoped, not family-scoped — matters for
+                        // people who mix the two views.
+                        <Tooltip title={`L2 category: ${r.dominantCategory} (no logic-table family — override scoped to category)`}>
+                          <Chip size="small" label="L2" variant="outlined" color="info" sx={{ fontSize: '0.6rem', height: 18 }} />
+                        </Tooltip>
                       ) : (
-                        <Tooltip title="No dominant family — manual family selection required">
+                        <Tooltip title="No dominant family or category — manual selection required">
                           <Chip size="small" label="?" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
                         </Tooltip>
                       )}
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
                       {(() => {
-                        const fam = getFamilyDisplayName(r.dominantFamily);
-                        if (!fam) return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
-                        return (
-                          <Tooltip title={fam.full}>
-                            <span>{fam.short}</span>
-                          </Tooltip>
-                        );
+                        // For flagged rows, surface the suggested family's
+                        // human-readable name so the engineer sees "Rectifier
+                        // Diodes → BJTs" not just "B1 → B6".
+                        const fromFam = getFamilyDisplayName(r.dominantFamily);
+                        if (flagged && suggestedFam) {
+                          return (
+                            <Tooltip title={`${fromFam?.full ?? r.dominantFamily ?? '?'} → ${suggestedFam.full}`}>
+                              <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+                                <Box component="span" sx={{ textDecoration: 'line-through', color: 'text.disabled' }}>{fromFam?.short ?? '?'}</Box>
+                                <Box component="span" sx={{ color: 'error.light', fontWeight: 600 }}>→ {suggestedFam.short}</Box>
+                              </Stack>
+                            </Tooltip>
+                          );
+                        }
+                        if (fromFam) {
+                          return (
+                            <Tooltip title={fromFam.full}>
+                              <span>{fromFam.short}</span>
+                            </Tooltip>
+                          );
+                        }
+                        // No L3 family — fall through to L2 category if present.
+                        // The category string is already human-readable (e.g.
+                        // 'Microcontrollers'), so no helper resolution needed.
+                        if (r.dominantCategory) {
+                          return (
+                            <Tooltip title={`L2 category — override will scope to "${r.dominantCategory}"`}>
+                              <span>{r.dominantCategory}</span>
+                            </Tooltip>
+                          );
+                        }
+                        return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
                       })()}
                     </TableCell>
                     <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary', maxWidth: 180 }}>
@@ -663,7 +815,23 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     </TableCell>
 
                     <TableCell sx={{ fontSize: '0.7rem', maxWidth: 200 }}>
-                      {state?.loadingSuggestion ? (
+                      {flagged && r.autoFlag ? (
+                        // Diagnosis card content — full reasoning visible at
+                        // a glance, no expansion needed. Tooltip carries the
+                        // matched param + source family for the audit story.
+                        <Tooltip title={`Matched on "${r.autoFlag.matchingParam}" — see Confirm/Revert`}>
+                          <Typography
+                            variant="caption"
+                            sx={{ display: 'block', color: 'error.light', lineHeight: 1.3 }}
+                          >
+                            {r.autoFlag.reasoning}
+                          </Typography>
+                        </Tooltip>
+                      ) : flagged ? (
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                          Manually flagged as wrong family
+                        </Typography>
+                      ) : state?.loadingSuggestion ? (
                         <CircularProgress size={12} />
                       ) : state?.suggestion?.translation ? (
                         <Tooltip title={state.suggestion.reasoning ?? ''}>
@@ -674,9 +842,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       ) : <span style={{ color: 'rgba(255,255,255,0.4)' }}>—</span>}
                     </TableCell>
                     <TableCell sx={{ width: 300 }}>
-                      {(() => {
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled', fontStyle: 'italic' }}>
+                          Don&apos;t map — investigate upstream
+                        </Box>
+                      ) : (() => {
                         const editedId = state?.editedAttributeId?.trim() ?? '';
-                        const familySchema = r.dominantFamily ? schemaByFamily[r.dominantFamily] : undefined;
+                        const rowScope = getOverrideScope(r);
+                        const familySchema = rowScope ? schemaByFamily[rowScope.key] : undefined;
                         const schemaKnown = !!familySchema && familySchema.size > 0;
                         const isCanonical = schemaKnown && editedId.length > 0 && familySchema!.has(editedId);
                         // Three states: canonical (green check), invented (amber warn),
@@ -720,40 +893,172 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       })()}
                     </TableCell>
                     <TableCell sx={{ width: 240 }}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        value={state?.editedAttributeName ?? ''}
-                        onChange={(e) => setStates((prev) => ({
-                          ...prev,
-                          [r.paramName]: { ...prev[r.paramName], editedAttributeName: e.target.value },
-                        }))}
-                        disabled={state?.accepted || state?.accepting}
-                        placeholder="—"
-                        sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
-                      />
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
+                      ) : (
+                        <TextField
+                          size="small"
+                          fullWidth
+                          value={state?.editedAttributeName ?? ''}
+                          onChange={(e) => setStates((prev) => ({
+                            ...prev,
+                            [r.paramName]: { ...prev[r.paramName], editedAttributeName: e.target.value },
+                          }))}
+                          disabled={state?.accepted || state?.accepting}
+                          placeholder="—"
+                          sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
+                        />
+                      )}
                     </TableCell>
                     <TableCell sx={{ width: 90 }}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        value={state?.editedUnit ?? ''}
-                        onChange={(e) => setStates((prev) => ({
-                          ...prev,
-                          [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
-                        }))}
-                        disabled={state?.accepted || state?.accepting}
-                        placeholder="—"
-                        sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
-                      />
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
+                      ) : (
+                        <TextField
+                          size="small"
+                          fullWidth
+                          value={state?.editedUnit ?? ''}
+                          onChange={(e) => setStates((prev) => ({
+                            ...prev,
+                            [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
+                          }))}
+                          disabled={state?.accepted || state?.accepting}
+                          placeholder="—"
+                          sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
+                        />
+                      )}
                     </TableCell>
                     <TableCell>
-                      {confidence && cConf ? (
+                      {flagged ? (
+                        r.noteStatus === 'wrong_family' ? (
+                          <Chip
+                            size="small"
+                            icon={<CheckIcon sx={{ fontSize: 12 }} />}
+                            label="Confirmed"
+                            sx={{ bgcolor: 'error.dark', color: 'error.contrastText', fontSize: '0.6rem', height: 18, fontWeight: 700 }}
+                          />
+                        ) : (
+                          <Chip
+                            size="small"
+                            icon={<FlagIcon sx={{ fontSize: 12 }} />}
+                            label="Wrong family"
+                            sx={{ bgcolor: 'error.main', color: 'error.contrastText', fontSize: '0.6rem', height: 18 }}
+                          />
+                        )
+                      ) : confidence && cConf ? (
                         <Chip size="small" label={confidence} sx={{ bgcolor: cConf.bg, color: cConf.fg, fontSize: '0.6rem', height: 18 }} />
                       ) : <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>}
                     </TableCell>
                     <TableCell>
-                      {state?.accepted ? (
+                      {/* Inline accept audit + revert. When this row already
+                          has an active override, render Revert (instead of
+                          Accept) and a chip showing who accepted + when. When
+                          undone, show a "↺ Reverted" chip and re-enable
+                          Accept. Takes precedence over the flagged-row UI
+                          since accept supersedes flag (the engineer made a
+                          decision). */}
+                      {r.acceptedOverride && r.acceptedOverride.isActive ? (
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={`${r.acceptedOverride.wasEdited ? 'Edited' : 'Accepted'} by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)}${r.orphaned ? ' · No longer in any pending batch' : ''}`}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={<CheckIcon sx={{ fontSize: 12 }} />}
+                              label={r.orphaned ? 'Accepted (orphaned)' : 'Accepted'}
+                              sx={{
+                                bgcolor: r.orphaned ? 'warning.dark' : 'success.dark',
+                                color: r.orphaned ? 'warning.contrastText' : 'success.contrastText',
+                                fontSize: '0.6rem', height: 18,
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip title="Revert: deactivates the override; row returns to the Open queue.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                disabled={revertingIds.has(r.acceptedOverride.id)}
+                                onClick={() => revertOverride(r)}
+                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                {revertingIds.has(r.acceptedOverride.id) ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      ) : r.acceptedOverride && !r.acceptedOverride.isActive ? (
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={`Reverted (originally accepted by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)})`}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label="Undone"
+                              sx={{ bgcolor: 'action.disabledBackground', color: 'text.secondary', fontSize: '0.6rem', height: 18 }}
+                            />
+                          </Tooltip>
+                          {!r.orphaned && (
+                            <Tooltip title={state?.acceptError ?? 'Re-accept this row to restore a fresh override.'} disableHoverListener={!state?.acceptError}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color={state?.acceptError ? 'error' : 'primary'}
+                                  disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
+                                  onClick={() => acceptAndRegenerate(r)}
+                                  sx={{ fontSize: '0.65rem', minWidth: 80 }}
+                                >
+                                  {state?.accepting ? <CircularProgress size={12} /> : 'Re-accept'}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      ) : flagged ? (
+                        // Confirm + Revert. After Confirm the persisted status
+                        // is 'wrong_family' so the "Confirm" button hides; only
+                        // Revert remains so the engineer can undo if it turns
+                        // out to be a false positive.
+                        <Stack direction="row" spacing={0.5}>
+                          {r.noteStatus !== 'wrong_family' && r.autoFlag && (
+                            <Tooltip title={flagError ?? 'Confirm this row as a misclassification — products with this param need upstream investigation.'}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="error"
+                                  disabled={flagBusy}
+                                  onClick={() => confirmFlag(r)}
+                                  sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                                >
+                                  {flagBusy ? <CircularProgress size={10} color="inherit" /> : 'Confirm'}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                          <Tooltip title={r.noteStatus === 'wrong_family' ? 'Undo the wrong-family flag.' : 'False positive — suppress the auto-flag for this paramName.'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                disabled={flagBusy}
+                                onClick={() => revertFlag(r)}
+                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                {flagBusy && r.noteStatus === 'wrong_family' ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      ) : state?.accepted ? (
                         <Chip size="small" icon={<CheckIcon sx={{ fontSize: 14 }} />} label="Saved" color="success" sx={{ fontSize: '0.6rem', height: 18 }} />
                       ) : (
                         <Tooltip title={state?.acceptError ?? ''} disableHoverListener={!state?.acceptError}>
@@ -762,7 +1067,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                               size="small"
                               variant="outlined"
                               color={state?.acceptError ? 'error' : 'primary'}
-                              disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !r.dominantFamily}
+                              disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
                               onClick={() => acceptAndRegenerate(r)}
                               sx={{ fontSize: '0.65rem', minWidth: 80 }}
                             >

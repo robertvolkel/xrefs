@@ -56,6 +56,12 @@ export type IngestDiffReport = {
     kind: 'gaia' | 'standard';
   }>;
   familyCounts: Record<string, number>;
+  /** Optional — populated from atlas-ingest.mjs runs after the L2-category
+   *  triage feature shipped. Older batches lack this field; consumers must
+   *  treat it as nullable and fall back gracefully. Used by the Triage queue
+   *  to derive `dominantCategory` for unmapped params on L2-only products
+   *  (familyId=null but real category, e.g. Microcontrollers). */
+  categoryCounts?: Record<string, number>;
   mappingStats: { total: number; mapped: number; errors: number };
 };
 

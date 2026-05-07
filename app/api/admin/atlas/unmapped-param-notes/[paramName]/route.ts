@@ -1,6 +1,19 @@
 /**
- * PUT    /api/admin/atlas/unmapped-param-notes/[paramName]  — upsert note
- * DELETE /api/admin/atlas/unmapped-param-notes/[paramName]  — clear note
+ * PUT    /api/admin/atlas/unmapped-param-notes/[paramName]  — upsert note + status
+ * DELETE /api/admin/atlas/unmapped-param-notes/[paramName]  — clear note + status
+ *
+ * Body shape (PUT):
+ *   {
+ *     note?: string,                                  // free-form rationale
+ *     status?: 'wrong_family' | 'confirmed_in_family' | null,
+ *     flaggedBy?: 'auto' | 'engineer' | null,         // who set the status
+ *     autoDiagnosis?: { suggestedFamily, reasoning, matchingParam } | null
+ *   }
+ *
+ * Empty note + null/undefined status → row is deleted (the icon flips back
+ * to empty + the auto-flag re-fires from the registry next render).
+ * Non-empty note OR non-null status → row persists; the schema CHECK
+ * constraint requires at least one of the two be present.
  *
  * Service-role writes (per Decision #176 lesson — admin auth gated by
  * requireAdmin() upstream).
@@ -12,6 +25,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 
 const MAX_NOTE_LENGTH = 5000;
+const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family']);
+const VALID_FLAGGED_BY = new Set(['auto', 'engineer']);
 
 export async function PUT(
   request: NextRequest,
@@ -28,13 +43,40 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const note = typeof body?.note === 'string' ? body.note : '';
+    const noteRaw = typeof body?.note === 'string' ? body.note : '';
+    const noteTrimmed = noteRaw.trim();
+    const note = noteTrimmed.length > 0 ? noteRaw : null;
+
+    // status / flaggedBy / autoDiagnosis can be:
+    //   - omitted (undefined) → treated as null
+    //   - explicit null → cleared
+    //   - non-empty string → validated against allowlist
+    const statusRaw = body?.status;
+    const status = statusRaw == null ? null : (typeof statusRaw === 'string' ? statusRaw : null);
+    if (status !== null && !VALID_STATUS.has(status)) {
+      return NextResponse.json(
+        { success: false, error: `Invalid status: ${status}` },
+        { status: 400 },
+      );
+    }
+
+    const flaggedByRaw = body?.flaggedBy;
+    const flaggedBy = flaggedByRaw == null ? null : (typeof flaggedByRaw === 'string' ? flaggedByRaw : null);
+    if (flaggedBy !== null && !VALID_FLAGGED_BY.has(flaggedBy)) {
+      return NextResponse.json(
+        { success: false, error: `Invalid flaggedBy: ${flaggedBy}` },
+        { status: 400 },
+      );
+    }
+
+    const autoDiagnosis = body?.autoDiagnosis ?? null;
 
     const supabase = createServiceClient();
 
-    // Empty note → treat as delete so the icon flips back to its empty
-    // state and we don't leave dangling rows around.
-    if (!note.trim()) {
+    // Row needs at least one signal to persist (matches the schema CHECK).
+    // Empty note + null status → no reason to keep the row; delete it so
+    // the auto-flag registry can re-fire on the next render.
+    if (!note && status === null) {
       const { error: delErr } = await supabase
         .from('atlas_unmapped_param_notes')
         .delete()
@@ -45,7 +87,7 @@ export async function PUT(
       return NextResponse.json({ success: true, deleted: true });
     }
 
-    if (note.length > MAX_NOTE_LENGTH) {
+    if (note && note.length > MAX_NOTE_LENGTH) {
       return NextResponse.json(
         { success: false, error: `Note exceeds ${MAX_NOTE_LENGTH} character limit` },
         { status: 400 },
@@ -59,6 +101,9 @@ export async function PUT(
         {
           param_name: decodedParamName,
           note,
+          status,
+          flagged_by: flaggedBy,
+          auto_diagnosis: autoDiagnosis,
           updated_by: user!.id,
           updated_at: now,
         },
@@ -77,7 +122,10 @@ export async function PUT(
       success: true,
       item: {
         paramName: data.param_name as string,
-        note: data.note as string,
+        note: (data.note as string | null) ?? '',
+        status: (data.status as 'wrong_family' | 'confirmed_in_family' | null) ?? null,
+        flaggedBy: (data.flagged_by as 'auto' | 'engineer' | null) ?? null,
+        autoDiagnosis: (data.auto_diagnosis as Record<string, unknown> | null) ?? null,
         updatedBy: data.updated_by as string,
         updatedByName: nameMap.get(data.updated_by as string) ?? 'Unknown',
         updatedAt: data.updated_at as string,
