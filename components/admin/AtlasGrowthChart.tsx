@@ -91,7 +91,7 @@ export default function AtlasGrowthChart({ series }: AtlasGrowthChartProps) {
             yAxisId: 'mfrs',
             color: theme.palette.primary.main,
             curve: 'stepAfter',
-            showMark: false,
+            showMark: true,
           },
           {
             id: 'products',
@@ -100,7 +100,7 @@ export default function AtlasGrowthChart({ series }: AtlasGrowthChartProps) {
             yAxisId: 'products',
             color: theme.palette.success.main,
             curve: 'stepAfter',
-            showMark: false,
+            showMark: true,
           },
         ]}
         margin={{ left: 60, right: 60, top: 20, bottom: 30 }}

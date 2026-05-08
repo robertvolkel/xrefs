@@ -1392,6 +1392,9 @@ const skipParams = new Set([
   'mounting style', // mounting type (English)
   'package type',   // use package_case from family dict instead
   'esd diode',      // MOSFET body diode ESD info (not parametric)
+  'l1name',         // upstream taxonomy level-1 NAME (e.g. "Connectors") — not a product attribute
+  'l2name',         // upstream taxonomy level-2 NAME (e.g. "Wire-to-Board") — not a product attribute
+  'l3name',         // upstream taxonomy level-3 NAME — same shape as l1/l2; preempt
   'frd diode',      // MOSFET body diode FRD info (not parametric)
   'mos type',       // redundant with channel_type
   '安装方式',      // mounting style (Chinese)

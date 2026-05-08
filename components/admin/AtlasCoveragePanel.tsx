@@ -5,6 +5,7 @@ import { Box, Tabs, Tab, Skeleton, Alert } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import AtlasOverviewTab from './AtlasOverviewTab';
 import AtlasActivityTab from './AtlasActivityTab';
+import AtlasGrowthChart from './AtlasGrowthChart';
 import AtlasLatestUpdatesWidget from './AtlasLatestUpdatesWidget';
 import type { AtlasResponse } from './atlasCoverage/types';
 import type { AtlasGrowthResponse } from '@/app/api/admin/atlas/growth/route';
@@ -123,6 +124,7 @@ export default function AtlasCoveragePanel() {
             cachedAt={coverage.cachedAt ?? null}
             onRefresh={handleRefreshCoverage}
             refreshing={coverageRefreshing}
+            growthChartSlot={growth ? <AtlasGrowthChart series={growth.series} /> : null}
             latestUpdatesSlot={
               growth ? (
                 <AtlasLatestUpdatesWidget

@@ -187,6 +187,8 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
     list.sort((a, b) => a.applied_at.localeCompare(b.applied_at));
   }
 
+  const HOUR_MS = 60 * 60 * 1000;
+
   // Per-MFR product roll-ups.
   interface ProductRollup {
     productCount: number;
@@ -237,7 +239,6 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
       const isFirstBatchForMfr = mfrBatches[0]?.batch_id === b.batch_id;
       // first_added only if MFR has no prior products from a pre-pipeline ingest
       const rollup = productByMfr.get(b.manufacturer);
-      const HOUR_MS = 60 * 60 * 1000;
       const hasOlderProducts = rollup
         ? new Date(rollup.minCreatedAt).getTime() < new Date(b.applied_at).getTime() - HOUR_MS
         : false;
@@ -324,65 +325,45 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
   events.sort((a, b) => b.appliedAt.localeCompare(a.appliedAt));
 
   // ── Series (cumulative MFR + product counts over time) ───
-  // Walk per-MFR pre-pipeline tuples + per-batch tuples in ASC order.
-  interface SeriesTuple {
-    date: string;
-    mfrDelta: number;
-    productDelta: number;
-  }
-  const tuples: SeriesTuple[] = [];
+  // Source of truth = atlas_products itself: every row contributes +1 product
+  // at its created_at, every MFR contributes +1 at its earliest product's
+  // created_at. End-of-series cumulative therefore equals the live row count
+  // and the live MFR count, which is what the KPI tiles report.
+  //
+  // Earlier iterations of this route walked atlas_ingest_batches and summed
+  // willInsert − willDelete deltas. That undercounted whenever (a) products
+  // were imported via a direct DB load (no batch row), (b) MFR name spellings
+  // differed between atlas_products and atlas_ingest_batches, or (c) deletes
+  // were soft (rows still present, but willDelete subtracted them anyway).
+  // Bucketing products directly avoids all three traps.
+  const dayBuckets = new Map<string, { mfrDelta: number; productDelta: number }>();
+  const bumpDay = (iso: string, mfrDelta: number, productDelta: number) => {
+    const day = utcDay(iso);
+    let b = dayBuckets.get(day);
+    if (!b) {
+      b = { mfrDelta: 0, productDelta: 0 };
+      dayBuckets.set(day, b);
+    }
+    b.mfrDelta += mfrDelta;
+    b.productDelta += productDelta;
+  };
 
-  // Pre-pipeline: one tuple per MFR at MIN(created_at).
-  for (const m of prePipelineMfrs) {
-    const r = productByMfr.get(m)!;
-    tuples.push({
-      date: r.minCreatedAt,
-      mfrDelta: 1,
-      productDelta: r.productCount,
-    });
+  for (const r of productByMfr.values()) {
+    bumpDay(r.minCreatedAt, 1, 0);
   }
-  // Post-pipeline batches.
-  for (const b of batches) {
-    if (!b.applied_at || !b.report) continue;
-    const willInsert = b.report.productCounts?.willInsert ?? 0;
-    const willDelete = b.report.productCounts?.willDelete ?? 0;
-    const mfrBatches = batchesByMfr.get(b.manufacturer) ?? [];
-    const isFirstBatchForMfr = mfrBatches[0]?.batch_id === b.batch_id;
-    // Only count toward mfrDelta if this is the MFR's first batch AND the MFR
-    // wasn't already counted via the pre-pipeline tuple (rare crossover case
-    // when a pre-pipeline MFR gets ingested through the new pipeline later).
-    const rollup = productByMfr.get(b.manufacturer);
-    const HOUR_MS = 60 * 60 * 1000;
-    const hadPreProducts = rollup
-      ? new Date(rollup.minCreatedAt).getTime() < new Date(b.applied_at).getTime() - HOUR_MS
-      : false;
-    const mfrDelta = isFirstBatchForMfr && !hadPreProducts ? 1 : 0;
-
-    tuples.push({
-      date: b.applied_at,
-      mfrDelta,
-      productDelta: willInsert - willDelete,
-    });
+  for (const p of products) {
+    bumpDay(p.created_at, 0, 1);
   }
 
-  tuples.sort((a, b) => a.date.localeCompare(b.date));
-
-  // Bucket by UTC day, end-of-day cumulative.
+  const sortedDays = [...dayBuckets.keys()].sort();
   const series: AtlasGrowthSeriesPoint[] = [];
   let cumulativeMfrs = 0;
   let cumulativeProducts = 0;
-  let currentDay: string | null = null;
-  for (const t of tuples) {
-    const day = utcDay(t.date);
-    if (currentDay !== null && day !== currentDay) {
-      series.push({ date: currentDay, cumulativeMfrs, cumulativeProducts });
-    }
-    cumulativeMfrs += t.mfrDelta;
-    cumulativeProducts += t.productDelta;
-    currentDay = day;
-  }
-  if (currentDay !== null) {
-    series.push({ date: currentDay, cumulativeMfrs, cumulativeProducts });
+  for (const day of sortedDays) {
+    const b = dayBuckets.get(day)!;
+    cumulativeMfrs += b.mfrDelta;
+    cumulativeProducts += b.productDelta;
+    series.push({ date: day, cumulativeMfrs, cumulativeProducts });
   }
 
   // Final totals (independent of series so they reflect the live state).

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
 import {
   getL2ParamMapForCategory,
@@ -51,9 +52,65 @@ function getSchemaAttributes(familyId: string): SchemaAttr[] {
 // or until the Next.js production process recycles. Sample values vary per call but
 // don't materially affect Haiku's translation, so we key only on paramName+familyId.
 // 24h TTL is generous; admin overrides change rarely.
+//
+// CACHE INVALIDATION CAVEAT: when the engineer accepts a new override, that fact
+// becomes part of "previously-accepted attributeIds in this scope" but the cache
+// for OTHER paramNames in the same family doesn't auto-bust. In practice this is
+// fine: triage is sequential (engineer doesn't re-query the same paramName twice
+// within a session), so cache hits are rare during the active triage round, and
+// fresh suggestions always see the latest overrides. Worst case: a stale cached
+// suggestion shows up — engineer can override it inline, same as before.
 type CacheEntry = { value: unknown; expiresAt: number };
 const SUGGEST_CACHE = new Map<string, CacheEntry>();
 const SUGGEST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** One entry per accepted attributeId, with the example paramName that was first
+ *  accepted under it. Used in the suggester prompt so Haiku can see what concept
+ *  each existing canonical was originally minted for. */
+type AcceptedCanonical = {
+  attributeId: string;
+  attributeName: string;
+  unit: string | null;
+  exampleRawParam: string;
+};
+
+/** Fetch active dictionary overrides for the given family/category scope, group
+ *  by attributeId, and return one entry per unique ID with the OLDEST paramName
+ *  attached as the canonical example. The oldest paramName tends to be the one
+ *  the engineer originally minted the attributeId for, making it the strongest
+ *  signal of intended meaning for prompt context. Empty list if no overrides
+ *  exist (or if the table read fails — fail-open so suggestions still work). */
+async function fetchAcceptedCanonicals(familyId: string): Promise<AcceptedCanonical[]> {
+  if (!familyId) return [];
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from('atlas_dictionary_overrides')
+      .select('param_name, attribute_id, attribute_name, unit, created_at')
+      .eq('family_id', familyId)
+      .eq('is_active', true)
+      .not('attribute_id', 'is', null)
+      .order('created_at', { ascending: true });
+    if (error || !data) return [];
+
+    const byAttrId = new Map<string, AcceptedCanonical>();
+    for (const row of data) {
+      const attrId = row.attribute_id as string | null;
+      if (!attrId) continue;
+      // Already-seen attrId means we keep the OLDER row (created_at asc, so first wins).
+      if (byAttrId.has(attrId)) continue;
+      byAttrId.set(attrId, {
+        attributeId: attrId,
+        attributeName: (row.attribute_name as string) ?? attrId,
+        unit: (row.unit as string | null) ?? null,
+        exampleRawParam: row.param_name as string,
+      });
+    }
+    return [...byAttrId.values()];
+  } catch {
+    return [];
+  }
+}
 
 /** POST /api/admin/atlas/dictionaries/suggest */
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -89,6 +146,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ? schemaAttrs.map((a) => `- ${a.attributeId}: ${a.attributeName}${a.unit ? ` (${a.unit})` : ''}`).join('\n')
       : '(no schema attributes available)';
 
+    // Fetch previously-accepted canonicals for this scope. Goal: stop the
+    // suggester from inventing near-duplicates (positions_rows vs
+    // positions_and_rows; pins_per_row vs positions_per_row; wire_gauge for
+    // BOTH AWG and mm² values; etc). Each entry includes the example raw
+    // paramName the ID was first accepted under, so Haiku can see what
+    // concept that canonical actually represents — preventing it from
+    // shoehorning unrelated params into a generic-sounding ID like "style".
+    const acceptedCanonicals = await fetchAcceptedCanonicals(familyId);
+    const acceptedList = acceptedCanonicals.length > 0
+      ? acceptedCanonicals
+          .map((c) => `- ${c.attributeId}: ${c.attributeName}${c.unit ? ` (${c.unit})` : ''} — originally accepted for "${c.exampleRawParam}"`)
+          .join('\n')
+      : '(none yet)';
+
     const prompt = `You are an electronics component parameter translator. Given a Chinese parameter name from a component datasheet, provide:
 1. An English translation of the parameter name
 2. The best matching attribute from the schema below (if any)
@@ -99,8 +170,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 Schema attributes for this component family:
 ${schemaList}
 
+Previously-accepted attributeIds in this same family/category (the "originally accepted for" hint shows what concept each ID was minted for):
+${acceptedList}
+
+When suggesting an attributeId, follow this priority order:
+1. Schema attributes (above) — if a schema attribute is a clear conceptual match for the input paramName, ALWAYS prefer it.
+2. Previously-accepted attributeIds — if no schema match, check whether an existing canonical here represents the SAME CONCEPT as the input (e.g. "每排PIN数" and "每行端子数" both mean "pins per row" → reuse the existing canonical). Reuse only when the concept matches; do NOT shoehorn semantically different params into a generic-sounding ID like "style", "type", "size", or "kind" just because they exist.
+3. Invent a new attributeId only when neither list has anything semantically appropriate. Avoid generic catchall names; prefer specific ones (e.g. "pins_per_row" over "rows", "compatible_series" over "style", "wire_csa_mm2" over "wire_gauge" when units differ).
+
 Respond in JSON only, no markdown:
-{"translation":"...","suggestedAttributeId":"...","suggestedAttributeName":"...","suggestedUnit":"...or null","confidence":"high|medium|low","reasoning":"one sentence explaining the match"}`;
+{"translation":"...","suggestedAttributeId":"...","suggestedAttributeName":"...","suggestedUnit":"...or null","confidence":"high|medium|low","reasoning":"one sentence explaining the match (if reusing a previously-accepted ID, say so explicitly)"}`;
 
     const userMsg = `Chinese parameter: "${paramName}"${samples.length > 0 ? `\nSample values: ${samples.join(', ')}` : ''}`;
 

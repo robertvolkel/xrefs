@@ -1645,6 +1645,10 @@ const SKIP_PARAMS = new Set([
   '产品状态', '序号', 'category_name', '描述', 'class', '印字类型', '无卤',
   'product status', 'mounting style', 'package type', 'esd diode', 'frd diode', 'mos type',
   '安装方式', '包装高度', '包装长度', '包装宽度', 'rating',
+  // Upstream Atlas taxonomy level-NAME fields — not product attributes,
+  // they're the names of c1/c2/c3 hierarchy slots that leak into the
+  // params blob on some MFRs (e.g. Delta: l1name="Connectors", l2name="Wire-to-Board").
+  'l1name', 'l2name', 'l3name',
 ]);
 
 // Status mapping
