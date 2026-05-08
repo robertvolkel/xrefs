@@ -267,6 +267,37 @@ The RPC that backs the admin Atlas MFRs page aggregates ~55K `atlas_products` ro
 
 **Why it matters:** Without a durable fix, admins keep seeing the stale banner even though the data is a few minutes old. Every ingest cycle grows `atlas_products`, so the timeout risk compounds.
 
+### Precomputed coverage column on `atlas_products` (Decision #179 long-term)
+
+Decision #179 moved coverage compute into a SQL RPC (`get_atlas_coverage_aggregates`) which still scans 71K rows × ~10–20 attribute-presence checks per scorable row. As `atlas_products` grows, this approaches the 300s `statement_timeout` ceiling we've already had to set. The structural fix is to precompute `coverage_attrs_count INT` (and optionally `coverage_attrs_total INT`) per product at ingest time — written by [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) using the same family→ruleAttrs map the route already knows. Coverage aggregation then collapses to `SUM(coverage_attrs_count)` with no JSONB iteration.
+
+**Triggers:** RPC starts hitting the 300s limit, OR coverage compute becomes a hot path beyond just the admin page (e.g. a public-facing coverage badge).
+
+**Cost:** schema migration + ingest-script change + one-time backfill script. Logic-table edits become trickier (rule-attr changes invalidate the precomputed values; need a per-family backfill).
+
+### Pre-warm atlas-coverage cache after Proceed/Revert (Decision #179 follow-up)
+
+Today [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) deletes the `admin_stats_cache` row keyed `'atlas-coverage'` on every successful Proceed / Revert. The next admin who hits the page pays the recompute (~3s post-RPC, was ~50s pre-RPC). Acceptable now, but pre-warming makes it free.
+
+**Options:**
+- HTTP callback from the script to `/api/admin/atlas?refresh=1` post-delete (needs a base URL + admin auth — awkward in dev/prod boundary).
+- Duplicate the compute in a `.mjs` helper called inline (script blocks for 3s, but admins never wait).
+- Schedule a Supabase pg_cron job that recomputes any cache key that's been NULL for >10s.
+
+Deferred: the RPC already brought the bad case to acceptable. Revisit if admins start complaining about ingest-day Coverage page slowness.
+
+### Multi-category override fan-out in inline Accept (Decision #178 follow-up)
+
+When the same paramName appears under multiple L2 categories within a single MFR's batch (e.g. FMD's `工作电压(范围)` shows up in 52 Microcontroller products + 23 Memory products), the queue picks `dominantCategory = Microcontrollers` (highest count). An inline Accept scopes the override to Microcontrollers, leaving the Memory-classified products' params unmapped.
+
+**Workaround used today (FMD):** one-shot script that clones every active override under category A to category B for the same MFR.
+
+**Real fix:** when a row's product set spans >1 category with non-trivial counts (e.g. >5 products in each), surface this in the Accept UI — engineer chooses "scope to all observed categories" (creates N override rows) vs. "scope to dominant only" (current behavior). The route already has the per-category counts in `categoryCounts` (Decision #178); just need UI + multi-INSERT.
+
+**Alternative, lower-effort:** lift truly cross-category Chinese params to `SHARED_PARAMS` in [atlasMapper.ts](../lib/services/atlasMapper.ts) + the mjs mirror. `工作电压`, `工作温度`, `存取时间`, `湿气敏感性等级` — these are inherently category-agnostic. One add to `SHARED_PARAMS` covers every L2 category at once. Caveat: `SHARED_PARAMS` isn't currently editable via the dict-overrides admin layer (the `dictFor()` heuristic in `loadAndApplyDictOverrides` steers `add` actions to L3/L2 buckets, not shared) — would need a dedicated "scope: shared" Accept path.
+
+**Why both matter:** cross-category MFRs are common (MCU vendors ship MCUs + memory + companion analog). Without the fix, every multi-category MFR hits the FMD-style cleanup-script step.
+
 ### ~~L2 taxonomy: curated param maps for high-value non-xref categories~~ COMPLETED
 **Status:** Done — Wave 1 (Decision #86) + Wave 2 (Decision #87)
 

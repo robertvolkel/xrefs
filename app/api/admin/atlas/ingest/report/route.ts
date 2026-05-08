@@ -16,6 +16,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 const ATLAS_DIR = resolve(process.cwd(), 'data/atlas');
 
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }, { status: 500 });
     }
 
+    invalidateTriageQueueCache();
     return NextResponse.json({
       success: true,
       exitCode: result.exitCode,

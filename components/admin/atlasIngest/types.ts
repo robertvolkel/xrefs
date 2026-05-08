@@ -155,6 +155,17 @@ export type DictSuggestion = {
   suggestedUnit: string | null;
   confidence: 'high' | 'medium' | 'low';
   reasoning: string | null;
+  /** Sonnet 4.6's binary advisory verdict on whether the suggestedAttributeId
+   *  is safe to commit. Engineer always decides; the chip is informational.
+   *  'defer' means there's a concern (generic catchall, near-duplicate of an
+   *  existing canonical, unit mismatch, ambiguous concept) — explanation
+   *  carries the rationale for the team note. */
+  suggestion: 'accept' | 'defer';
+  /** Full-prose rationale shown in the chip tooltip + below the AI translation
+   *  cell, and (when suggestion='defer') used as the pre-fill draft for the
+   *  team note popover. ALWAYS populated for both verdicts so Accept doesn't
+   *  get a "trust me" chip while Defer gets a full essay. */
+  explanation: string | null;
 };
 
 // Full /suggest response payload — `schemaIds` is the canonical attributeId list

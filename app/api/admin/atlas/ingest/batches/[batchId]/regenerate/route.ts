@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
 
@@ -61,6 +62,7 @@ export async function POST(
       }, { status: 500 });
     }
 
+    invalidateTriageQueueCache();
     return NextResponse.json({ success: true, stdout: result.stdout });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

@@ -16,6 +16,7 @@ import { runIngestScript } from '@/lib/services/atlasIngestService';
 import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
 import { invalidateAtlasGrowthCache } from '@/app/api/admin/atlas/growth/route';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 export const maxDuration = 600; // 10 minutes hard cap; should rarely approach
 
@@ -55,6 +56,7 @@ export async function POST(
     invalidateAtlasCache();
     invalidateAtlasGrowthCache();
     invalidateManufacturersListCache();
+    invalidateTriageQueueCache();
 
     return NextResponse.json({
       success: true,

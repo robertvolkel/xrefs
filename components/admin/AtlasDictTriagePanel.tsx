@@ -140,13 +140,13 @@ export default function AtlasDictTriagePanel() {
     }
   }, []);
 
-  // Accept callback: queue the affected batch IDs for later flush, then
-  // refresh the queue immediately. The override is already in atlas_dictionary_overrides
-  // (created by the Accept POST), so the queue route's override-aware filter
-  // drops the row from the queue on the next fetch — no regen needed for the
-  // queue to self-clean. Regen only refreshes the per-batch report metrics
-  // (AVG ATTRS/PRODUCT, attrs added) shown on the Ingest page; deferring it
-  // to a single button-press at end of session avoids the Nx subprocess spawn.
+  // Accept callback: queue the affected batch IDs for later flush. We no
+  // longer call refresh() here — the row's optimistic in-place update (via
+  // onRowAccepted below) already shows the new "Accepted" state, and a
+  // refetch would invalidate the server-side cache (the Accept POST bumps
+  // it) and force a 30+s cold reload with a skeleton screen, which was the
+  // user's biggest pain point. The Recently Accepted panel re-fetches via
+  // recentRefreshSignal so it picks up the new override too.
   const onRegenerateAffected = useCallback(async (batchIds: string[]) => {
     if (batchIds.length > 0) {
       setPendingRegenIds((prev) => {
@@ -155,8 +155,61 @@ export default function AtlasDictTriagePanel() {
         return next;
       });
     }
-    await refresh();
-  }, [refresh]);
+    setRecentRefreshSignal((n) => n + 1);
+  }, []);
+
+  // Optimistic in-place mutation of a row's acceptedOverride after a
+  // successful Accept POST. Avoids the round-trip refetch entirely.
+  // Adjusts the global statusCounts so the FilterBar chips update too.
+  const onRowAccepted = useCallback((paramName: string, override: NonNullable<BatchListResponse['unmappedParamsGlobal'][number]['acceptedOverride']>) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const nextRows = prev.unmappedParamsGlobal.map((r) =>
+        r.paramName === paramName ? { ...r, acceptedOverride: override } : r,
+      );
+      const nextStatusCounts = prev.statusCounts
+        ? {
+          open: Math.max(0, prev.statusCounts.open - 1),
+          accepted: prev.statusCounts.accepted + 1,
+          undone: prev.statusCounts.undone,
+        }
+        : prev.statusCounts;
+      // triageCounts (synonyms / autoFlagged) is scoped to OPEN status —
+      // accepting a synonym row decrements that bucket too.
+      const nextTriageCounts = prev.triageCounts
+        ? {
+          synonyms: Math.max(0, prev.triageCounts.synonyms - 1),
+          autoFlagged: prev.triageCounts.autoFlagged,
+          total: Math.max(0, prev.triageCounts.total - 1),
+        }
+        : prev.triageCounts;
+      return { ...prev, unmappedParamsGlobal: nextRows, statusCounts: nextStatusCounts, triageCounts: nextTriageCounts };
+    });
+  }, []);
+
+  // Optimistic in-place mutation after a successful Revert DELETE.
+  // Flips acceptedOverride.isActive to false and bumps statusCounts
+  // (accepted-1, undone+1). Open-bucket count stays put because reverting
+  // doesn't bring the row back into the open queue; the row is still
+  // resolved (just by an inactive override) until a fresh refresh recomputes
+  // classification.
+  const onRowReverted = useCallback((paramName: string) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const nextRows = prev.unmappedParamsGlobal.map((r) => {
+        if (r.paramName !== paramName || !r.acceptedOverride) return r;
+        return { ...r, acceptedOverride: { ...r.acceptedOverride, isActive: false } };
+      });
+      const nextStatusCounts = prev.statusCounts
+        ? {
+          open: prev.statusCounts.open,
+          accepted: Math.max(0, prev.statusCounts.accepted - 1),
+          undone: prev.statusCounts.undone + 1,
+        }
+        : prev.statusCounts;
+      return { ...prev, unmappedParamsGlobal: nextRows, statusCounts: nextStatusCounts };
+    });
+  }, []);
 
   // Worker-pool flush — REGEN_CONCURRENCY subprocesses in flight at once.
   // Tracks progress so the button shows "Regenerating 3 of 8…" feedback.
@@ -355,6 +408,8 @@ export default function AtlasDictTriagePanel() {
               rows={filteredRows}
               pendingBatchCount={data.aggregate.counts.total}
               onRegenerateAffected={onRegenerateAffected}
+              onRowAccepted={onRowAccepted}
+              onRowReverted={onRowReverted}
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
             />

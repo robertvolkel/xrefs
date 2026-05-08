@@ -6,13 +6,15 @@
  *
  * Per row:
  *   1. Calls /api/admin/atlas/dictionaries/suggest with paramName + samples + dominantFamily
- *      to get a Claude Haiku-proposed translation + attributeId + confidence.
- *   2. Renders the suggestion as an editable Autocomplete pre-filled with the AI choice.
+ *      to get a Claude Sonnet 4.6-proposed translation + attributeId + confidence + a binary
+ *      'accept'|'defer' suggestion + a written explanation.
+ *   2. Renders the suggestion + explanation symmetrically (chip + visible italic line under
+ *      the translation) so Accept and Defer get the same depth of evidence.
  *   3. "Accept" creates an `add` override in atlas_dictionary_overrides (server-side),
  *      then triggers regeneration of every batch that surfaced this param.
- *
- * Bulk action: "Accept All High Confidence" iterates rows whose AI suggestion came
- * back as `confidence: 'high'` and creates/regenerates them in concurrency-limited parallel.
+ *   4. The note popover pre-fills its textarea with the AI explanation when the
+ *      suggestion is 'defer' and no existing note is present — engineer can edit + Save
+ *      instead of pasting from a separate Claude tab.
  *
  * Performance:
  *   - Suggestions are fetched lazily on first table-open per session (cached in component state).
@@ -26,6 +28,7 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Alert,
   Box,
   Button,
   Chip,
@@ -48,6 +51,8 @@ import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
+import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import type { GlobalUnmappedParam, DictSuggestion } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
@@ -103,6 +108,15 @@ interface Props {
    *  them). Table just renders + edits via callback. */
   notesByParam: Record<string, NoteRecord>;
   onNoteChange: (paramName: string, next: NoteRecord | null) => void;
+  /** Called after a successful Accept POST. Parent should update the row's
+   *  acceptedOverride in-place so the UI transforms (Accept button → Revert
+   *  button) without a full page refetch. Replaces the old "Accept → refresh
+   *  → 30s skeleton" UX. */
+  onRowAccepted?: (paramName: string, override: NonNullable<GlobalUnmappedParam['acceptedOverride']>) => void;
+  /** Called after a successful Revert DELETE. Parent should set
+   *  acceptedOverride.isActive=false in-place. Same optimistic-UI motivation
+   *  as onRowAccepted. */
+  onRowReverted?: (paramName: string) => void;
 }
 
 interface RowState {
@@ -121,7 +135,12 @@ const SUGGESTION_CONCURRENCY = 4;
 // localStorage key prefix for cached AI suggestions. Keyed by paramName + familyId.
 // Suggestions survive page reloads + tab switches without re-hitting the server.
 // Server cache (24h) provides a second layer if storage is cleared.
-const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest:';
+//
+// Bump the version suffix when DictSuggestion shape changes — old entries are
+// orphaned (deleted on next miss path) and fresh suggestions are fetched.
+// v2: added `suggestion` ('accept' | 'defer') + `explanation` fields when
+// upgrading the model from Haiku to Sonnet 4.6.
+const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest-v2:';
 const SUGGEST_LS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 type CachedSuggestion = { suggestion: DictSuggestion; cachedAt: number };
 
@@ -185,13 +204,7 @@ function writeFamilySchemaCache(familyId: string, schemaIds: string[]): void {
   }
 }
 
-const CONFIDENCE_COLOR: Record<DictSuggestion['confidence'], { bg: string; fg: string }> = {
-  high:   { bg: 'success.dark', fg: 'success.contrastText' },
-  medium: { bg: 'warning.dark', fg: 'warning.contrastText' },
-  low:    { bg: 'error.dark',   fg: 'error.contrastText' },
-};
-
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
@@ -219,27 +232,22 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // see processing happening before they expand.
   const fetchInFlight = !!suggestionProgress;
 
-  // ─── Lazy load suggestions on first expand ──────────────
-  // Two-layer cache before hitting Anthropic:
-  //   1. localStorage (per-browser, 7-day TTL) — persists across page reloads
-  //   2. Server in-memory cache (per-process, 24h TTL) — shared across browsers
-  // Cached rows populate state synchronously without changing the progress count.
-  const fetchAllSuggestions = useCallback(async () => {
+  // ─── Cache hydration on first expand (no API calls) ──────
+  // Sonnet 4.6 is ~10× Haiku cost; auto-firing on every page load was burning
+  // tokens. Now: hydrate cached rows synchronously from localStorage on
+  // expand, but DO NOT fetch fresh suggestions. The user explicitly triggers
+  // generation via the bulk "Generate suggestions" button at the top of the
+  // table or the per-row "Generate" mini-button. Cached rows survive across
+  // sessions for 7 days (localStorage) + 24h (server in-memory).
+  const hydrateFromCache = useCallback(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
 
-    // Pass 1 — synchronously hydrate from localStorage. Tracks how many rows
-    // still need the server roundtrip so the progress bar reflects real work.
-    // Also seed the family schema state from its own per-family cache so the
-    // canonical/invented indicators light up before any API roundtrip.
     const initialStates: Record<string, RowState> = {};
     const initialSchemaByFamily: Record<string, Set<string>> = {};
     const seenFamilies = new Set<string>();
-    const queue: GlobalUnmappedParam[] = [];
+    const familiesNeedingSchema = new Set<string>();
     for (const row of rows) {
-      // Scope key = L3 familyId OR L2 category. Both flow through the same
-      // schema/suggest endpoints. Cache and state are keyed on the scope so
-      // L2 rows (e.g. Microcontrollers) get their own canonical-attribute set.
       const scope = getOverrideScope(row);
       const scopeKey = scope?.key ?? null;
       if (scopeKey && !seenFamilies.has(scopeKey)) {
@@ -247,12 +255,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         const cachedSchema = readFamilySchemaCache(scopeKey);
         if (cachedSchema && cachedSchema.length > 0) {
           initialSchemaByFamily[scopeKey] = new Set(cachedSchema);
+        } else {
+          familiesNeedingSchema.add(scopeKey);
         }
       }
-      // Auto-flagged rows are misclassifications, not synonym gaps. Asking
-      // Haiku to map them to a canonical attribute would be wrong (and would
-      // burn tokens). Seed an empty state so cells render placeholders, but
-      // don't add to the suggestion fetch queue.
+      // Auto-flagged rows are misclassifications, not synonym gaps. Seed an
+      // empty state so cells render placeholders; they're never eligible for
+      // suggestion generation.
       if (row.autoFlag) {
         initialStates[row.paramName] = {
           suggestion: null,
@@ -279,9 +288,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           accepting: false,
         };
       } else {
+        // Uncached — render a "Generate" button instead of auto-fetching.
         initialStates[row.paramName] = {
           suggestion: null,
-          loadingSuggestion: true,
+          loadingSuggestion: false,
           editedAttributeId: '',
           editedAttributeName: '',
           editedUnit: '',
@@ -289,7 +299,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           acceptError: null,
           accepting: false,
         };
-        queue.push(row);
       }
     }
     setStates((prev) => ({ ...prev, ...initialStates }));
@@ -297,23 +306,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       setSchemaByFamily((prev) => ({ ...prev, ...initialSchemaByFamily }));
     }
 
-    // Schema fallback: any scope (L3 family OR L2 category) that has rows
-    // but didn't get a schema from localStorage AND won't get one from
-    // /suggest (because all its rows hit the cache path) needs an explicit
-    // fetch — otherwise the indicators stay dark forever. The endpoint is
-    // cheap (no LLM, no DB) so this is fine to do on every mount where the
-    // local cache lacks the schema.
-    const familiesNeedingSchema: string[] = [];
-    const familiesInQueue = new Set(
-      queue.map((r) => getOverrideScope(r)?.key).filter((f): f is string => !!f),
-    );
-    for (const fam of seenFamilies) {
-      if (!initialSchemaByFamily[fam] && !familiesInQueue.has(fam)) {
-        familiesNeedingSchema.push(fam);
-      }
-    }
-    if (familiesNeedingSchema.length > 0) {
-      Promise.all(familiesNeedingSchema.map(async (fam) => {
+    // Schema fallback runs even when no suggestions are generated — the
+    // canonical/invented indicators on the attributeId input depend on it.
+    // Endpoint is cheap (no LLM, no DB JSONB scan), safe to fire on hydrate.
+    if (familiesNeedingSchema.size > 0) {
+      Promise.all([...familiesNeedingSchema].map(async (fam) => {
         try {
           const res = await fetch(`/api/admin/atlas/family-schema?familyId=${encodeURIComponent(fam)}`);
           const json = await res.json();
@@ -326,12 +323,37 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         }
       }));
     }
+  }, [rows]);
 
-    if (queue.length === 0) {
-      setSuggestionProgress(null);
-      return;
-    }
+  // ─── Manual suggestion generation ───────────────────────
+  // Fires Sonnet 4.6 for the given rows. Used by both the bulk "Generate
+  // suggestions for N rows" button and the per-row "Generate" mini-button.
+  // Concurrency-limited to SUGGESTION_CONCURRENCY parallel calls so we don't
+  // slam Anthropic when the user generates a large batch at once.
+  const generateSuggestionsForRows = useCallback(async (targetRows: GlobalUnmappedParam[]) => {
+    const queue = targetRows.filter((r) => !r.autoFlag);
+    if (queue.length === 0) return;
 
+    // Mark each queued row as loading so the per-row UI flips from
+    // "Generate" button to a spinner while in flight.
+    setStates((prev) => {
+      const next = { ...prev };
+      for (const row of queue) {
+        next[row.paramName] = {
+          ...(prev[row.paramName] ?? {
+            suggestion: null,
+            editedAttributeId: '',
+            editedAttributeName: '',
+            editedUnit: '',
+            accepted: false,
+            acceptError: null,
+            accepting: false,
+          }),
+          loadingSuggestion: true,
+        } as RowState;
+      }
+      return next;
+    });
     setSuggestionProgress({ done: 0, total: queue.length });
 
     let done = 0;
@@ -401,13 +423,32 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     const workers = Array.from({ length: Math.min(SUGGESTION_CONCURRENCY, queue.length) }, () => worker());
     await Promise.all(workers);
     setSuggestionProgress(null);
-  }, [rows]);
+  }, []);
 
   useEffect(() => {
     if (expanded && !fetchedRef.current && rows.length > 0) {
-      fetchAllSuggestions();
+      hydrateFromCache();
     }
-  }, [expanded, rows.length, fetchAllSuggestions]);
+  }, [expanded, rows.length, hydrateFromCache]);
+
+  // ─── Pending-suggestion accounting ──────────────────────
+  // Rows that don't have a suggestion AND aren't auto-flagged AND aren't
+  // currently loading are eligible for the bulk Generate button. Computed
+  // each render against the current `states` snapshot — cheap (string lookup
+  // per row).
+  const pendingSuggestionRows = useMemo(
+    () => rows.filter((r) => !r.autoFlag && !states[r.paramName]?.suggestion && !states[r.paramName]?.loadingSuggestion),
+    [rows, states],
+  );
+
+  const generateAllPending = useCallback(() => {
+    if (pendingSuggestionRows.length === 0) return;
+    generateSuggestionsForRows(pendingSuggestionRows);
+  }, [pendingSuggestionRows, generateSuggestionsForRows]);
+
+  const generateOne = useCallback((row: GlobalUnmappedParam) => {
+    generateSuggestionsForRows([row]);
+  }, [generateSuggestionsForRows]);
 
   // ─── Per-row flag actions (Confirm / Revert) ────────────
   // Tracks in-flight + last-error per paramName so the buttons can show
@@ -521,6 +562,37 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         ...prev,
         [row.paramName]: { ...prev[row.paramName], accepted: true, accepting: false, acceptError: null },
       }));
+
+      // Optimistic UI: hand the new override metadata to the parent so the
+      // row can transform in-place to "Accepted + Revert" without waiting on
+      // a queue refetch (which would invalidate the server cache and force
+      // a 30s cold reload). Author display name defaults to "You" since the
+      // current user just clicked Accept; the next real refresh resolves it
+      // to their full name from atlas_manufacturers/profiles.
+      if (onRowAccepted && json.data) {
+        const d = json.data as {
+          id: string;
+          attributeId?: string;
+          attributeName?: string;
+          unit?: string;
+          createdBy: string;
+          createdAt: string;
+          updatedAt: string;
+          isActive: boolean;
+        };
+        onRowAccepted(row.paramName, {
+          id: d.id,
+          attributeId: d.attributeId ?? state.editedAttributeId.trim(),
+          attributeName: d.attributeName ?? state.editedAttributeName.trim(),
+          unit: d.unit ?? null,
+          createdBy: d.createdBy,
+          createdByName: 'You',
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt,
+          isActive: d.isActive,
+          wasEdited: false,
+        });
+      }
       return { ok: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Accept failed';
@@ -530,7 +602,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       }));
       return { ok: false, error: msg };
     }
-  }, [states]);
+  }, [states, onRowAccepted]);
 
   const acceptAndRegenerate = useCallback(async (row: GlobalUnmappedParam) => {
     const result = await acceptRow(row);
@@ -553,6 +625,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       const res = await fetch(`/api/admin/atlas/dictionaries/${ov.id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Revert failed');
+      // Optimistic UI: parent flips the row's acceptedOverride.isActive=false
+      // in-place so the chip changes from "Accepted" to "Undone" without a
+      // queue refetch. Same motivation as the Accept optimistic path.
+      onRowReverted?.(row.paramName);
       // Queue affected batches for the deferred regen flush so the batch
       // report metrics catch up. Same flow as Accept.
       await onRegenerateAffected(row.affectedBatchIds);
@@ -571,7 +647,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         return next;
       });
     }
-  }, [onRegenerateAffected]);
+  }, [onRegenerateAffected, onRowReverted]);
 
   // ─── Render ────────────────────────────────────────────
   // Title makes the cross-batch nature explicit. Singular vs plural depending on
@@ -623,13 +699,43 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </>
             ) : (
               <>
-                Each row gets an AI-suggested mapping (Claude Haiku, schema-aware via dominant family).
-                Edit the attributeId/Name inline if needed, then <strong>Accept</strong> to create a dictionary override
-                and regenerate affected batches.
+                Each row can be enriched with an AI-suggested mapping + <strong>Accept</strong>/<strong>Defer</strong> suggestion
+                (Claude Sonnet 4.6, schema-aware). Suggestions are <strong>not auto-generated on page load</strong> — click
+                the Generate button below (or the per-row Generate link) to spend tokens only when you want them.
+                Cached suggestions persist 7 days locally, 24h server-side. The suggestion is advisory — you decide.
               </>
             )}
           </Typography>
         </Stack>
+
+        {/* Bulk Generate alert — surfaces only when there are uncached rows
+            eligible for suggestion generation. Hidden during in-flight progress
+            and when nothing is pending. Per-row Generate buttons (in the AI
+            translation cell) are available alongside this for one-at-a-time
+            usage. */}
+        {!suggestionProgress && pendingSuggestionRows.length > 0 && !allFlagged && (
+          <Alert
+            severity="info"
+            icon={<AutoAwesomeIcon fontSize="small" />}
+            sx={{ my: 1, py: 0.5 }}
+            action={
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={generateAllPending}
+                startIcon={<AutoAwesomeIcon sx={{ fontSize: 14 }} />}
+              >
+                Generate {pendingSuggestionRows.length}
+              </Button>
+            }
+          >
+            <Typography variant="body2">
+              <strong>{pendingSuggestionRows.length}</strong> row{pendingSuggestionRows.length === 1 ? '' : 's'} need AI suggestions.
+              Each row costs ~$0.005 in API tokens (Sonnet 4.6) — generate only when you&apos;re ready to triage.
+            </Typography>
+          </Alert>
+        )}
 
         {suggestionProgress && (
           <Box sx={{ my: 1 }}>
@@ -658,15 +764,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 90 }}>Unit</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 80 }}>Conf.</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 90 }}>Suggestion</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 100 }}>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.map((r) => {
                 const state = states[r.paramName];
-                const confidence = state?.suggestion?.confidence;
-                const cConf = confidence ? CONFIDENCE_COLOR[confidence] : null;
                 // Effective flag state per-row. autoFlag = live registry hit;
                 // noteStatus='wrong_family' = persisted (auto-confirmed or
                 // manually flagged). Either makes the row a "flagged" row
@@ -701,6 +805,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         paramName={r.paramName}
                         note={notesByParam[r.paramName]}
                         onChange={onNoteChange}
+                        aiDraft={state?.suggestion?.suggestion === 'defer' ? state.suggestion.explanation : undefined}
+                        aiDraftHint={state?.suggestion?.suggestion === 'defer'}
                       />
                     </TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', width: 140, wordBreak: 'break-word' }}>
@@ -834,12 +940,55 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       ) : state?.loadingSuggestion ? (
                         <CircularProgress size={12} />
                       ) : state?.suggestion?.translation ? (
-                        <Tooltip title={state.suggestion.reasoning ?? ''}>
-                          <Typography variant="caption" sx={{ fontStyle: 'italic' }}>
-                            {state.suggestion.translation}
-                          </Typography>
+                        <Stack spacing={0.5}>
+                          <Tooltip title={state.suggestion.reasoning ?? ''}>
+                            <Typography variant="caption" sx={{ fontStyle: 'italic' }}>
+                              {state.suggestion.translation}
+                            </Typography>
+                          </Tooltip>
+                          {state.suggestion.explanation && (
+                            // Symmetric in-cell explanation — visible by default
+                            // for BOTH Accept and Defer rows so Claude doesn't
+                            // get an opaque "trust me" chip on Accepts. Color
+                            // hints which suggestion the explanation supports;
+                            // line-clamp at 3 keeps row height bounded, full
+                            // text on tooltip hover.
+                            <Tooltip title={<Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{state.suggestion.explanation}</Box>} placement="left" arrow>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: state.suggestion.suggestion === 'defer' ? 'warning.light' : 'success.light',
+                                  fontSize: '0.65rem',
+                                  lineHeight: 1.35,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  cursor: 'help',
+                                }}
+                              >
+                                {state.suggestion.explanation}
+                              </Typography>
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      ) : (
+                        // Uncached, non-loading row — offer per-row Generate as
+                        // an alternative to the bulk button at top of table.
+                        // Costs one Sonnet roundtrip; only fires on click.
+                        <Tooltip title="Generate AI suggestion for this row only (~$0.005)" placement="right">
+                          <Button
+                            size="small"
+                            variant="text"
+                            color="primary"
+                            startIcon={<AutoAwesomeIcon sx={{ fontSize: 12 }} />}
+                            onClick={() => generateOne(r)}
+                            sx={{ fontSize: '0.65rem', py: 0, px: 0.5, minWidth: 0, textTransform: 'none' }}
+                          >
+                            Generate
+                          </Button>
                         </Tooltip>
-                      ) : <span style={{ color: 'rgba(255,255,255,0.4)' }}>—</span>}
+                      )}
                     </TableCell>
                     <TableCell sx={{ width: 300 }}>
                       {flagged ? (
@@ -945,9 +1094,46 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                             sx={{ bgcolor: 'error.main', color: 'error.contrastText', fontSize: '0.6rem', height: 18 }}
                           />
                         )
-                      ) : confidence && cConf ? (
-                        <Chip size="small" label={confidence} sx={{ bgcolor: cConf.bg, color: cConf.fg, fontSize: '0.6rem', height: 18 }} />
-                      ) : <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>}
+                      ) : (() => {
+                        // Suggestion chip — advisory only. The user always
+                        // decides via the Accept button or note popover; this
+                        // chip just surfaces Sonnet 4.6's read on whether the
+                        // suggested attributeId is safe to commit. Tooltip
+                        // carries the full explanation alongside confidence.
+                        const sug = state?.suggestion;
+                        if (!sug?.suggestion) {
+                          return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
+                        }
+                        const isAccept = sug.suggestion === 'accept';
+                        const tooltipBody = (
+                          <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+                              Suggestion: {isAccept ? 'Accept' : 'Defer'} · Confidence: {sug.confidence}
+                            </Typography>
+                            {sug.explanation && (
+                              <Typography variant="caption" sx={{ display: 'block' }}>
+                                {sug.explanation}
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                        return (
+                          <Tooltip title={tooltipBody} placement="left" arrow>
+                            <Chip
+                              size="small"
+                              icon={isAccept ? <CheckIcon sx={{ fontSize: 12 }} /> : <NoteAltOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label={isAccept ? 'Accept' : 'Defer'}
+                              sx={{
+                                bgcolor: isAccept ? 'success.dark' : 'warning.dark',
+                                color: isAccept ? 'success.contrastText' : 'warning.contrastText',
+                                fontSize: '0.6rem',
+                                height: 18,
+                                fontWeight: 600,
+                              }}
+                            />
+                          </Tooltip>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       {/* Inline accept audit + revert. When this row already

@@ -27,6 +27,14 @@ interface Props {
   paramName: string;
   note: NoteRecord | undefined;
   onChange: (paramName: string, next: NoteRecord | null) => void;
+  /** Pre-fill text from the per-row AI suggestion's explanation (defer-only).
+   *  Seeded into the textarea ONLY when no existing note is present — the
+   *  user's saved note always wins. */
+  aiDraft?: string | null;
+  /** When true AND no existing note, color the icon button warning.main as a
+   *  visual cue that an AI draft is waiting. The only nudge in the row — Accept
+   *  button styling stays unchanged regardless of suggestion. */
+  aiDraftHint?: boolean;
 }
 
 function formatRelative(iso: string): string {
@@ -43,19 +51,36 @@ function formatRelative(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-export default function UnmappedParamNoteCell({ paramName, note, onChange }: Props) {
+export default function UnmappedParamNoteCell({ paramName, note, onChange, aiDraft, aiDraftHint }: Props) {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   const [draft, setDraft] = useState(note?.note ?? '');
+  // Tracks whether the current draft was seeded from aiDraft (vs typed by the
+  // user vs loaded from an existing note). Drives the "Pre-filled by AI"
+  // caption above the textarea.
+  const [draftSeededFromAI, setDraftSeededFromAI] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = Boolean(anchorEl);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Reset draft to current note whenever the popover opens or the note prop
-  // updates upstream (someone else edited it on the server).
+  // updates upstream (someone else edited it on the server). When no existing
+  // note AND aiDraft is non-empty, seed with aiDraft so the engineer can edit
+  // and Save instead of pasting from a separate browser tab.
   useEffect(() => {
-    if (open) setDraft(note?.note ?? '');
-  }, [open, note?.note]);
+    if (open) {
+      if (note?.note) {
+        setDraft(note.note);
+        setDraftSeededFromAI(false);
+      } else if (aiDraft && aiDraft.trim()) {
+        setDraft(aiDraft);
+        setDraftSeededFromAI(true);
+      } else {
+        setDraft('');
+        setDraftSeededFromAI(false);
+      }
+    }
+  }, [open, note?.note, aiDraft]);
 
   const close = () => {
     setAnchorEl(null);
@@ -110,9 +135,22 @@ export default function UnmappedParamNoteCell({ paramName, note, onChange }: Pro
   };
 
   const hasNote = !!note;
+  // Only show the AI draft hint color when an AI draft is actually waiting AND
+  // the user hasn't already written their own note. Once a note exists, the
+  // primary-color "saved note" state takes over.
+  const showAiHint = !!aiDraftHint && !hasNote && !!aiDraft && aiDraft.trim().length > 0;
   const tooltipBody = hasNote
     ? `${note!.note.length > 100 ? `${note!.note.slice(0, 100)}…` : note!.note}\n— by ${note!.updatedByName} · ${formatRelative(note!.updatedAt)}`
-    : 'Add a team note';
+    : showAiHint
+      ? 'AI draft ready — open to review and save'
+      : 'Add a team note';
+
+  // Three icon-color states (highest priority first):
+  //   hasNote      → primary.main  (saved note exists)
+  //   showAiHint   → warning.main  (AI draft waiting; user should review)
+  //   default      → text.disabled (no note, no draft)
+  const iconColor = hasNote ? 'primary.main' : showAiHint ? 'warning.main' : 'text.disabled';
+  const iconHoverColor = hasNote ? 'primary.light' : showAiHint ? 'warning.light' : 'text.secondary';
 
   return (
     <>
@@ -122,12 +160,12 @@ export default function UnmappedParamNoteCell({ paramName, note, onChange }: Pro
           size="small"
           onClick={(e) => setAnchorEl(e.currentTarget)}
           sx={{
-            color: hasNote ? 'primary.main' : 'text.disabled',
-            '&:hover': { color: hasNote ? 'primary.light' : 'text.secondary' },
+            color: iconColor,
+            '&:hover': { color: iconHoverColor },
           }}
-          aria-label={hasNote ? 'Edit team note' : 'Add team note'}
+          aria-label={hasNote ? 'Edit team note' : showAiHint ? 'Review AI-drafted note' : 'Add team note'}
         >
-          {hasNote ? <NoteAltIcon fontSize="small" /> : <NoteAltOutlinedIcon fontSize="small" />}
+          {hasNote || showAiHint ? <NoteAltIcon fontSize="small" /> : <NoteAltOutlinedIcon fontSize="small" />}
         </IconButton>
       </Tooltip>
 
@@ -143,6 +181,11 @@ export default function UnmappedParamNoteCell({ paramName, note, onChange }: Pro
           <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
             Team note · {paramName}
           </Typography>
+          {draftSeededFromAI && (
+            <Typography variant="caption" sx={{ color: 'warning.main', fontStyle: 'italic' }}>
+              Pre-filled by AI — edit before saving.
+            </Typography>
+          )}
           <TextField
             multiline
             minRows={8}
@@ -151,7 +194,12 @@ export default function UnmappedParamNoteCell({ paramName, note, onChange }: Pro
             fullWidth
             placeholder="Capture reasoning, research, or open questions for this parameter…"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              // First user keystroke clears the "from AI" marker — caption hides
+              // because it's now the engineer's text.
+              if (draftSeededFromAI) setDraftSeededFromAI(false);
+            }}
             disabled={saving}
             inputProps={{ maxLength: 5000 }}
           />

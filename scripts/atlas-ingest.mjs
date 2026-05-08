@@ -2774,8 +2774,16 @@ async function runProceed(batchId) {
     .eq('batch_id', batchId);
   if (updErr) throw new Error(`Failed to mark batch applied: ${updErr.message}`);
 
-  // 6. Invalidate admin stats caches (Atlas Coverage + Manufacturers list)
-  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list', 'atlas-growth']);
+  // 6. Cache invalidation:
+  //   - When run via API (the typical path): the calling route will fire its
+  //     own invalidate*Cache() functions after this script returns. Those
+  //     clear L1 + kick off a background recompute that upserts L2 in place,
+  //     so users keep seeing slightly-stale L2 data instantly while the
+  //     recompute (~10-60s for atlas-coverage) finishes.
+  //   - When run directly via CLI: the SWR threshold (6h) catches it on next
+  //     API request, OR an admin can hit Refresh in the UI.
+  // We deliberately do NOT delete L2 rows here — that forced a cold
+  // synchronous recompute on the next user request (30s+ skeleton).
 
   console.log(`✓ Applied. Revert window: 30 days. Use --revert ${batchId} to undo.`);
 }
@@ -2918,7 +2926,9 @@ async function runRevert(batchId) {
     .update({ status: 'reverted', reverted_at: new Date().toISOString() })
     .eq('batch_id', batchId);
 
-  await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list', 'atlas-growth']);
+  // Cache invalidation: handled by the calling API route (which fires
+  // invalidate*Cache after this script returns). See proceed-path comment
+  // above for why we don't delete L2 here.
 
   console.log(`✓ Reverted: ${inserts} re-inserted, ${updates} restored, ${deletes} undone`);
 }

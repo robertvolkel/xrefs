@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 const MAX_NOTE_LENGTH = 5000;
 const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family']);
@@ -118,6 +119,11 @@ export async function PUT(
 
     const nameMap = await resolveAdminNames([user!.id]);
 
+    // Note status changes affect classification (wrong_family suppresses
+    // synonym workflow; confirmed_in_family suppresses auto-flag). Bust the
+    // cache so the next Triage load reflects the new state.
+    invalidateTriageQueueCache();
+
     return NextResponse.json({
       success: true,
       item: {
@@ -159,6 +165,7 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
+    invalidateTriageQueueCache();
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

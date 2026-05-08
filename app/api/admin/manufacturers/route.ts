@@ -17,12 +17,14 @@ const CACHE_KEY = 'manufacturers-list';
 export function invalidateManufacturersListCache() {
   memCache = null;
   memCacheTimestamp = 0;
-  // Fire-and-forget: clear persistent row AND kick off a background
-  // recompute so the next admin page load is instant.
+  // Fire-and-forget background recompute. We DON'T delete the persistent row
+  // first — `computeAndPersist` upserts on top of the existing row when it
+  // finishes, so users keep seeing the previous (slightly stale) payload for
+  // the ~10-30s the recompute takes, instead of falling into the synchronous
+  // compute path with a blank cache. Mirrors the atlas-coverage / atlas-growth
+  // pattern (which already do it this way).
   void (async () => {
     try {
-      const svc = createServiceClient();
-      await svc.from('admin_stats_cache').delete().eq('key', CACHE_KEY);
       await computeAndPersist();
     } catch (err) {
       console.error('invalidateManufacturersListCache background error:', err);
