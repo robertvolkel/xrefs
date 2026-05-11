@@ -1,51 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
-import { createServiceClient } from '@/lib/supabase/service';
-import { getLogicTable } from '@/lib/logicTables';
 import {
-  getL2ParamMapForCategory,
-  type ParamMapEntry,
-  type ParamMapping,
-} from '@/lib/services/digikeyParamMap';
-
-interface SchemaAttr {
-  attributeId: string;
-  attributeName: string;
-  unit?: string;
-}
-
-/** Get schema attributes for a family (L3) or category (L2) */
-function getSchemaAttributes(familyId: string): SchemaAttr[] {
-  // Try L3 logic table first
-  const table = getLogicTable(familyId);
-  if (table) {
-    return table.rules.map((r) => ({
-      attributeId: r.attributeId,
-      attributeName: r.attributeName,
-      unit: undefined,
-    }));
-  }
-
-  // Try L2 param map (familyId might be an L2 category string)
-  const l2Map = getL2ParamMapForCategory(familyId);
-  if (l2Map) {
-    const seen = new Set<string>();
-    const attrs: SchemaAttr[] = [];
-    for (const entry of Object.values(l2Map)) {
-      const mappings: ParamMapping[] = Array.isArray(entry) ? entry : [entry];
-      for (const m of mappings) {
-        if (!seen.has(m.attributeId)) {
-          seen.add(m.attributeId);
-          attrs.push({ attributeId: m.attributeId, attributeName: m.attributeName, unit: m.unit });
-        }
-      }
-    }
-    return attrs;
-  }
-
-  return [];
-}
+  getSchemaAttributes,
+  fetchAcceptedCanonicals,
+} from '@/lib/services/atlasTriageContext';
 
 // In-memory module-scope cache keyed by (paramName + familyId). Survives multiple
 // requests within a server process lifetime — typically dev server until restart,
@@ -64,53 +23,6 @@ type CacheEntry = { value: unknown; expiresAt: number };
 const SUGGEST_CACHE = new Map<string, CacheEntry>();
 const SUGGEST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** One entry per accepted attributeId, with the example paramName that was first
- *  accepted under it. Used in the suggester prompt so Haiku can see what concept
- *  each existing canonical was originally minted for. */
-type AcceptedCanonical = {
-  attributeId: string;
-  attributeName: string;
-  unit: string | null;
-  exampleRawParam: string;
-};
-
-/** Fetch active dictionary overrides for the given family/category scope, group
- *  by attributeId, and return one entry per unique ID with the OLDEST paramName
- *  attached as the canonical example. The oldest paramName tends to be the one
- *  the engineer originally minted the attributeId for, making it the strongest
- *  signal of intended meaning for prompt context. Empty list if no overrides
- *  exist (or if the table read fails — fail-open so suggestions still work). */
-async function fetchAcceptedCanonicals(familyId: string): Promise<AcceptedCanonical[]> {
-  if (!familyId) return [];
-  try {
-    const supabase = createServiceClient();
-    const { data, error } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('param_name, attribute_id, attribute_name, unit, created_at')
-      .eq('family_id', familyId)
-      .eq('is_active', true)
-      .not('attribute_id', 'is', null)
-      .order('created_at', { ascending: true });
-    if (error || !data) return [];
-
-    const byAttrId = new Map<string, AcceptedCanonical>();
-    for (const row of data) {
-      const attrId = row.attribute_id as string | null;
-      if (!attrId) continue;
-      // Already-seen attrId means we keep the OLDER row (created_at asc, so first wins).
-      if (byAttrId.has(attrId)) continue;
-      byAttrId.set(attrId, {
-        attributeId: attrId,
-        attributeName: (row.attribute_name as string) ?? attrId,
-        unit: (row.unit as string | null) ?? null,
-        exampleRawParam: row.param_name as string,
-      });
-    }
-    return [...byAttrId.values()];
-  } catch {
-    return [];
-  }
-}
 
 /** POST /api/admin/atlas/dictionaries/suggest */
 export async function POST(request: NextRequest): Promise<NextResponse> {

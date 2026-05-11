@@ -71,7 +71,7 @@ type AutoFlag = {
   reasoning: string;              // human-readable rationale from registry
   matchingParam: string;          // the paramName that triggered the hit
 };
-type NoteStatus = 'wrong_family' | 'confirmed_in_family' | null;
+type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
 type GlobalUnmapped = {
   paramName: string;
   sampleValues: string[];
@@ -208,14 +208,14 @@ async function computeTriageAggregation(): Promise<{
 
   // Per-paramName triage status from atlas_unmapped_param_notes.
   const noteStatusByParam = new Map<string, {
-    status: 'wrong_family' | 'confirmed_in_family' | null;
+    status: NoteStatus;
     flaggedBy: 'auto' | 'engineer' | null;
     autoDiagnosis: Record<string, unknown> | null;
   }>();
   if (!notesRes.error) {
     for (const row of notesRes.data ?? []) {
       noteStatusByParam.set(row.param_name as string, {
-        status: row.status as 'wrong_family' | 'confirmed_in_family' | null,
+        status: row.status as NoteStatus,
         flaggedBy: (row.flagged_by as 'auto' | 'engineer' | null) ?? null,
         autoDiagnosis: (row.auto_diagnosis as Record<string, unknown> | null) ?? null,
       });
@@ -629,6 +629,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (include === 'auto_flagged') visible = workingClassified.filter((r) => r.effective === 'flagged');
     else if (include === 'all') visible = workingClassified;
     else visible = workingClassified.filter((r) => r.effective === 'synonym');
+
+    // Unmappable rows are hidden from synonyms + auto_flagged views (the
+    // engineer has explicitly decided they can't be mapped). They reappear
+    // under include=all so the audit trail stays accessible.
+    if (include !== 'all') {
+      visible = visible.filter((r) => r.noteStatus !== 'unmappable');
+    }
 
     if (statusFilter === 'open') visible = visible.filter(isOpen);
     else if (statusFilter === 'accepted') visible = visible.filter(isAccepted);

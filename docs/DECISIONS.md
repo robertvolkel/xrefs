@@ -5387,3 +5387,48 @@ Default `source: 'fc'` preserves prior behavior for any future call sites that d
 - [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) — derive `chineseMpns` at both batch FC enrichment call sites.
 
 **Verification.** All 1542 tests pass; type check clean; production build clean. Manual end-to-end TBD: search a known Atlas MPN (3PEAK, GigaDevice) and watch for two `api.findchips.com` calls (`site=fc` + `site=oems`); search a stocked Western part and confirm only one call (`site=fc`); search an obsolete Western part and confirm OEMS fires after FC lifecycle reports EOL.
+
+## Decision #185 — Deep Investigation for Non-Accept Triage Rows (May 2026)
+
+The per-row AI suggester ([/api/admin/atlas/dictionaries/suggest](../app/api/admin/atlas/dictionaries/suggest/route.ts), Decision #181) returns a binary `accept`/`defer` verdict. Accept rows work cleanly — one click commits the override. Defer rows and unscoped rows (rows where `getOverrideScope()` returns null, so the Accept button is grayed) leave the engineer with no concrete next action: the AI explanation typically ends with "recommend investigating the upstream MFR datasheet" or "recommend defining a specific canonical first," which punts the work back. As the queue grows from hundreds → thousands of rows (user is onboarding hundreds more MFRs), this tail becomes the bottleneck — not the volume of accepts but the volume of "now what?" decisions.
+
+**Decision: a second AI pass — [/api/admin/atlas/dictionaries/investigate](../app/api/admin/atlas/dictionaries/investigate/route.ts) — that produces a structured bucketed verdict for non-accept rows.** Returns one of six action buckets with a concrete next-step action button:
+
+| Bucket | Action |
+|---|---|
+| `new_canonical` | Mint a new attributeId via Accept-flow prefill |
+| `disambiguation` | Two side-by-side prefill options (primary + alternative) |
+| `wrong_family` | Confirm wrong-family + surface a recommended FAMILY_PARAM_SIGNATURES entry |
+| `unit_mismatch` | Mint a unit-specific variant canonical via Accept-flow prefill |
+| `unscoped_products` | Show per-product family proposals (Phase 1: diagnosis only, no inline commit) |
+| `unmappable` | Persist `status='unmappable'` on `atlas_unmapped_param_notes`; row drops from queue |
+
+**Richer context.** Beyond what /suggest sees, the investigate route pulls:
+1. **Top 5 affected products** — `mpn`, `description`, `manufacturer`, `category`, `subcategory`, `family_id`, and the JSONB value at `parameters->paramName` so the AI sees what the values look like in context (Schottky vs phototransistor? AWG vs mm²?).
+2. **Cross-scope override hits** — exact-paramName matches in `atlas_dictionary_overrides` under OTHER scopes. Reveals reuse candidates: "this same param was accepted as X under family Y."
+3. **Sample value typing** — cheap heuristic classification of numeric vs categorical sample values + trailing-unit extraction.
+
+Sonnet 4.6, `max_tokens: 1200` (vs 600 for /suggest) for the longer structured output. Same caching pattern: 24h server-side `Map<string,CacheEntry>` + 7d localStorage on the client (`atlas-ingest-ai-investigate-v1:` prefix). Opt-in fire — never eager.
+
+**Unmappable status.** Extended `atlas_unmapped_param_notes.status` CHECK constraint from `('wrong_family', 'confirmed_in_family')` → `('wrong_family', 'confirmed_in_family', 'unmappable')`. Default queue views (`include=synonyms` and `include=auto_flagged`) filter `unmappable` out; `include=all` keeps them visible for audit. Migration in [scripts/supabase-atlas-unmapped-param-notes-schema.sql](../scripts/supabase-atlas-unmapped-param-notes-schema.sql) — DROP-then-recreate the CHECK constraint so existing wrong_family / confirmed_in_family rows stay valid.
+
+**Shared context helpers.** Extracted `getSchemaAttributes()` and `fetchAcceptedCanonicals()` from the /suggest route into [lib/services/atlasTriageContext.ts](../lib/services/atlasTriageContext.ts) so both /suggest and /investigate use the same canonical fetch logic. No behavior change for /suggest; the move enables /investigate without code duplication.
+
+**UI integration.** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — added an "Investigate" button alongside the Accept button on rows where `!getOverrideScope(r) || state.suggestion?.suggestion === 'defer'`. The deep-analysis result renders as an expanded `<TableRow colSpan={12}>` subrow below the main row with: bucket badge + confidence chip, AI summary, prose, evidence chips (sample products, cross-scope hits), and bucket-specific action buttons. Action buttons reuse existing flows: `new_canonical`/`unit_mismatch`/`disambiguation` prefill `editedAttributeId`/`Name`/`Unit` so the engineer reviews and clicks the regular Accept button (no new endpoint); `wrong_family` calls existing `confirmFlag(r)`; `unmappable` PUTs to the notes endpoint with status='unmappable'.
+
+**Phase 1 scope. Out of scope deliberately:** (a) actual product reclassification for unscoped rows — diagnosis only; engineer addresses upstream by adding subcategory mappings or editing the family classifier. (b) Auto-generating FAMILY_PARAM_SIGNATURES code patches — the route surfaces the recommendation; engineer hand-edits [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts). (c) Clustering across the queue — different problem (volume reduction), user explicitly deferred it.
+
+**Files touched:**
+- New: [app/api/admin/atlas/dictionaries/investigate/route.ts](../app/api/admin/atlas/dictionaries/investigate/route.ts) — Sonnet 4.6 investigation endpoint.
+- New: [lib/services/atlasTriageContext.ts](../lib/services/atlasTriageContext.ts) — shared `getSchemaAttributes` + `fetchAcceptedCanonicals`.
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — added `DeepAnalysis`, `DeepAnalysisBucket`; extended `NoteStatus` with `'unmappable'`.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — Investigate button + DeepAnalysisRow subrow + action handlers.
+- [components/admin/atlasIngest/UnmappedParamNoteCell.tsx](../components/admin/atlasIngest/UnmappedParamNoteCell.tsx) — extended NoteRecord `status` union with `'unmappable'`.
+- [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts) — refactored to import helpers from `atlasTriageContext.ts`.
+- [app/api/admin/atlas/unmapped-param-notes/[paramName]/route.ts](../app/api/admin/atlas/unmapped-param-notes/[paramName]/route.ts) — `VALID_STATUS` set now includes `'unmappable'`.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — queue route filters `unmappable` from default views (visible only under `include=all`).
+- [scripts/supabase-atlas-unmapped-param-notes-schema.sql](../scripts/supabase-atlas-unmapped-param-notes-schema.sql) — extended CHECK constraint (DROP-then-recreate idempotent block).
+
+**Deploy.** Apply [scripts/supabase-atlas-unmapped-param-notes-schema.sql](../scripts/supabase-atlas-unmapped-param-notes-schema.sql) in Supabase SQL Editor (drops + recreates the status CHECK to include `'unmappable'`). Restart dev server. No data migration needed — existing notes rows stay valid.
+
+**Verification.** All 1542 tests pass; type check clean. End-to-end smoke test: on a defer row, click Investigate → expanded subrow renders with bucket verdict + evidence chips + action button. Click the action — primary action prefills the Accept flow (new_canonical / unit_mismatch / disambiguation) or fires the confirmFlag / markUnmappable handler (wrong_family / unmappable). On an unscoped row (Accept grayed), Investigate fires unconditionally and returns `unscoped_products` with per-product family proposals. Re-clicking Investigate returns the cached analysis without firing Sonnet again.

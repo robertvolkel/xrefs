@@ -279,9 +279,19 @@ export default function AtlasDictTriagePanel() {
     const mfrSet = new Set(filters.mfrSlugs);
     const famSet = new Set(filters.families);
     return allRows.filter((row) => {
+      // Live note status takes precedence over the row's server-fetched
+      // noteStatus — after the engineer marks unmappable (or confirms a
+      // flag), notesByParam updates immediately while row.noteStatus
+      // wouldn't refresh until the next queue refetch. Using the live
+      // value keeps the row visibility consistent with what just happened.
+      const liveNoteStatus = notesByParam[row.paramName]?.status ?? row.noteStatus ?? null;
+      // Unmappable rows drop from every default view. Only the "All" mode
+      // keeps them visible so the engineer can audit (and revert via the
+      // AI Investigation Log if needed).
+      if (mode !== 'all' && liveNoteStatus === 'unmappable') return false;
       // Mode filter (Open Synonyms vs Auto-flagged vs All) — derived from
       // autoFlag + noteStatus; same logic as the route's classifier.
-      const isFlagged = !!row.autoFlag || row.noteStatus === 'wrong_family';
+      const isFlagged = !!row.autoFlag || liveNoteStatus === 'wrong_family';
       if (mode === 'auto_flagged' && !isFlagged) return false;
       if (mode === 'synonyms' && isFlagged) return false;
       // Status filter (Open / Accepted / Undone / All).

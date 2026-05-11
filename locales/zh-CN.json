@@ -451,6 +451,7 @@
     "atlasProducts": "Atlas 产品",
     "atlasDictionaries": "Atlas 字典",
     "atlasDictTriage": "Atlas 字典审核",
+    "atlasAiLog": "AI 调查日志",
     "atlasIngest": "Atlas 数据导入",
     "atlasDictDesc": "将 Atlas 参数名称映射到内部属性的翻译字典。",
     "atlasParamName": "Atlas 参数",

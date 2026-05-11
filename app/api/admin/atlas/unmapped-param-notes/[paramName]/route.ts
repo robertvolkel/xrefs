@@ -26,7 +26,7 @@ import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 const MAX_NOTE_LENGTH = 5000;
-const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family']);
+const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family', 'unmappable']);
 const VALID_FLAGGED_BY = new Set(['auto', 'engineer']);
 
 export async function PUT(

@@ -23,7 +23,7 @@
  *   - Failed suggestion fetches degrade to a manual entry row with no auto-fill.
  */
 
-import { useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
+import { Fragment, useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -53,7 +53,10 @@ import FlagIcon from '@mui/icons-material/Flag';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
 import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import type { GlobalUnmappedParam, DictSuggestion } from './types';
+import SearchIcon from '@mui/icons-material/Search';
+import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 
@@ -129,6 +132,18 @@ interface RowState {
   accepted: boolean;
   acceptError: string | null;
   accepting: boolean;
+  // Deep-investigation pass for non-accept rows. Opt-in fire (manual click).
+  // When set, the row renders an expanded subrow showing the bucket verdict +
+  // evidence + action buttons. Persisted to localStorage with the same TTL
+  // as suggestions so investigations survive reloads.
+  deepAnalysis: DeepAnalysis | null;
+  loadingDeepAnalysis: boolean;
+  deepAnalysisError: string | null;
+  // Investigation row id returned by the /investigate route — used when
+  // recording the engineer's follow-up action (Accept/Confirm/Unmappable).
+  // Null if the audit insert failed or the analysis was loaded from a
+  // pre-audit-feature cache entry.
+  investigationId: string | null;
 }
 
 const SUGGESTION_CONCURRENCY = 4;
@@ -169,6 +184,52 @@ function writeSuggestionCache(paramName: string, familyId: string | null, sugges
     localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // localStorage full or disabled — silently degrade to no cache
+  }
+}
+
+// Same cache pattern for deep investigations. Separate prefix so a schema
+// change to DeepAnalysis doesn't bust suggestion cache entries.
+// v2: added investigationId so cached entries support follow-up action
+// recording without re-firing the AI. Old v1 entries are orphaned (read
+// returns null on shape mismatch) and a fresh investigation creates a v2.
+const INVESTIGATE_LS_PREFIX = 'atlas-ingest-ai-investigate-v2:';
+type CachedDeepAnalysis = {
+  analysis: DeepAnalysis;
+  investigationId: string | null;
+  cachedAt: number;
+};
+
+function readInvestigateCache(paramName: string, scopeKey: string | null): CachedDeepAnalysis | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const key = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + paramName;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedDeepAnalysis;
+    if (Date.now() - parsed.cachedAt > SUGGEST_LS_TTL_MS) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    if (!parsed.analysis) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeInvestigateCache(
+  paramName: string,
+  scopeKey: string | null,
+  analysis: DeepAnalysis,
+  investigationId: string | null,
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + paramName;
+    const payload: CachedDeepAnalysis = { analysis, investigationId, cachedAt: Date.now() };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // ignore
   }
 }
 
@@ -296,10 +357,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           accepted: false,
           acceptError: null,
           accepting: false,
+          deepAnalysis: null,
+          loadingDeepAnalysis: false,
+          deepAnalysisError: null,
+          investigationId: null,
         };
         continue;
       }
       const cached = readSuggestionCache(row.paramName, scopeKey);
+      const cachedDeep = readInvestigateCache(row.paramName, scopeKey);
       if (cached) {
         initialStates[row.paramName] = {
           suggestion: cached,
@@ -310,6 +376,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           accepted: false,
           acceptError: null,
           accepting: false,
+          deepAnalysis: cachedDeep?.analysis ?? null,
+          loadingDeepAnalysis: false,
+          deepAnalysisError: null,
+          investigationId: cachedDeep?.investigationId ?? null,
         };
       } else {
         // Uncached — render a "Generate" button instead of auto-fetching.
@@ -322,6 +392,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           accepted: false,
           acceptError: null,
           accepting: false,
+          deepAnalysis: cachedDeep?.analysis ?? null,
+          loadingDeepAnalysis: false,
+          deepAnalysisError: null,
+          investigationId: cachedDeep?.investigationId ?? null,
         };
       }
     }
@@ -372,6 +446,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             accepted: false,
             acceptError: null,
             accepting: false,
+            deepAnalysis: null,
+            loadingDeepAnalysis: false,
+            deepAnalysisError: null,
+            investigationId: null,
           }),
           loadingSuggestion: true,
         } as RowState;
@@ -479,6 +557,31 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // loading state and surface failures inline without alerts.
   const [flagState, setFlagState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
 
+  // Fire-and-forget audit-log update. PATCHes the investigation row so we
+  // know what the engineer DID after the AI's verdict. Failure is non-fatal —
+  // the engineer's primary action already succeeded; this just augments the
+  // history record. The PATCH endpoint is idempotent (first-action-wins), so
+  // race conditions between handlers can't corrupt the audit row.
+  const recordInvestigationAction = useCallback(async (
+    investigationId: string | null,
+    action: 'override_created' | 'flagged_wrong_family' | 'marked_unmappable' | 'dismissed',
+    resultingOverrideId?: string,
+  ) => {
+    if (!investigationId) return;
+    try {
+      await fetch(`/api/admin/atlas/triage-investigations/${investigationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_taken: action,
+          resulting_override_id: resultingOverrideId ?? null,
+        }),
+      });
+    } catch (err) {
+      console.error('recordInvestigationAction failed:', err);
+    }
+  }, []);
+
   const confirmFlag = useCallback(async (row: GlobalUnmappedParam) => {
     if (!row.autoFlag) return;
     setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
@@ -502,6 +605,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `Confirm failed (${res.status})`);
+      // Record on the audit log that this confirm was the outcome of an
+      // earlier AI investigation (if there was one). Fire-and-forget.
+      void recordInvestigationAction(states[row.paramName]?.investigationId ?? null, 'flagged_wrong_family');
       // Refresh the queue so the row's persisted state is reflected (the
       // route's classifier reads atlas_unmapped_param_notes on every fetch).
       // No batches need regenerating — flagging doesn't change ingest output.
@@ -511,7 +617,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       const msg = err instanceof Error ? err.message : 'Confirm failed';
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
     }
-  }, [onRegenerateAffected]);
+  }, [onRegenerateAffected, recordInvestigationAction, states]);
 
   const revertFlag = useCallback(async (row: GlobalUnmappedParam) => {
     setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
@@ -616,6 +722,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           isActive: d.isActive,
           wasEdited: false,
         });
+        // If this Accept was the outcome of a deep-AI investigation,
+        // close the audit loop: log the resulting override id on the
+        // investigation row. Fire-and-forget — Accept already succeeded.
+        void recordInvestigationAction(state.investigationId ?? null, 'override_created', d.id);
       }
       return { ok: true };
     } catch (err) {
@@ -626,7 +736,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       }));
       return { ok: false, error: msg };
     }
-  }, [states, onRowAccepted]);
+  }, [states, onRowAccepted, recordInvestigationAction]);
 
   const acceptAndRegenerate = useCallback(async (row: GlobalUnmappedParam) => {
     const result = await acceptRow(row);
@@ -634,6 +744,127 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       await onRegenerateAffected(row.affectedBatchIds);
     }
   }, [acceptRow, onRegenerateAffected]);
+
+  // Per-row deep investigation — fires only on explicit click. Returns one
+  // of six action buckets with evidence + a concrete next-step. The result
+  // is cached server-side (24h) AND client-side (localStorage, 7d) so
+  // re-clicking is free. See /api/admin/atlas/dictionaries/investigate.
+  const runInvestigate = useCallback(async (row: GlobalUnmappedParam) => {
+    const scope = getOverrideScope(row);
+    const scopeKey = scope?.key ?? null;
+    // If a deep analysis is already on the row, this is a Refresh — bypass
+    // the server's in-memory cache to pick up freshly-deployed code paths
+    // (e.g. richer evidence fetches). Also clear the localStorage cache
+    // here so the new result writes a fresh entry.
+    const isRefresh = !!states[row.paramName]?.deepAnalysis;
+    if (isRefresh && typeof window !== 'undefined') {
+      try {
+        const cacheKey = 'atlas-ingest-ai-investigate-v2:' + (scopeKey ?? '__none__') + '::' + row.paramName;
+        localStorage.removeItem(cacheKey);
+      } catch {
+        // ignore
+      }
+    }
+    setStates((prev) => ({
+      ...prev,
+      [row.paramName]: {
+        ...(prev[row.paramName] ?? {}),
+        loadingDeepAnalysis: true,
+        deepAnalysisError: null,
+      } as RowState,
+    }));
+    try {
+      const res = await fetch('/api/admin/atlas/dictionaries/investigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paramName: row.paramName,
+          samples: row.sampleValues,
+          familyId: scope?.kind === 'family' ? scope.key : null,
+          dominantCategory: scope?.kind === 'category' ? scope.key : null,
+          affectedManufacturerSlugs: row.affectedManufacturers.map((m) => m.slug),
+          forceRefresh: isRefresh,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || json.detail || 'Investigation failed');
+      }
+      const analysis: DeepAnalysis = json.analysis;
+      const investigationId: string | null = json.investigationId ?? null;
+      writeInvestigateCache(row.paramName, scopeKey, analysis, investigationId);
+      setStates((prev) => ({
+        ...prev,
+        [row.paramName]: {
+          ...(prev[row.paramName] ?? {}),
+          deepAnalysis: analysis,
+          loadingDeepAnalysis: false,
+          deepAnalysisError: null,
+          investigationId,
+        } as RowState,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Investigation failed';
+      setStates((prev) => ({
+        ...prev,
+        [row.paramName]: {
+          ...(prev[row.paramName] ?? {}),
+          loadingDeepAnalysis: false,
+          deepAnalysisError: msg,
+        } as RowState,
+      }));
+    }
+  }, [states]);
+
+  // Apply a primary or alternative action from the deep-analysis card.
+  // For new_canonical / unit_mismatch / disambiguation: prefills the row's
+  // edited attributeId/Name/Unit so the engineer just clicks the regular
+  // Accept button to commit. For wrong_family: delegates to confirmFlag.
+  // For unmappable: persists status='unmappable' on the notes row.
+  // For unscoped_products: no inline action (Phase 1 just surfaces the
+  // diagnosis for the engineer to address upstream).
+  const applyDeepAction = useCallback(async (
+    row: GlobalUnmappedParam,
+    payload: { attributeId?: string; attributeName?: string; unit?: string | null },
+  ) => {
+    setStates((prev) => ({
+      ...prev,
+      [row.paramName]: {
+        ...(prev[row.paramName] ?? {}),
+        editedAttributeId: payload.attributeId ?? prev[row.paramName]?.editedAttributeId ?? '',
+        editedAttributeName: payload.attributeName ?? prev[row.paramName]?.editedAttributeName ?? '',
+        editedUnit: payload.unit ?? prev[row.paramName]?.editedUnit ?? '',
+      } as RowState,
+    }));
+  }, []);
+
+  const markUnmappable = useCallback(async (row: GlobalUnmappedParam) => {
+    try {
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'unmappable', flaggedBy: 'engineer' }),
+      });
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !(json as { success?: boolean }).success) {
+        throw new Error((json as { error?: string }).error || 'Failed to mark unmappable');
+      }
+      // The server returns the canonical row; propagate it up so the parent's
+      // notesByParam stays in sync. Queue cache invalidate fires server-side.
+      onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
+      // Close the AI audit loop. Fire-and-forget.
+      void recordInvestigationAction(states[row.paramName]?.investigationId ?? null, 'marked_unmappable');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to mark unmappable';
+      setStates((prev) => ({
+        ...prev,
+        [row.paramName]: {
+          ...(prev[row.paramName] ?? {}),
+          deepAnalysisError: msg,
+        } as RowState,
+      }));
+    }
+  }, [onNoteChange, recordInvestigationAction, states]);
 
   // Per-row Revert — soft-deletes the override (sets is_active=false).
   // The DELETE endpoint preserves the audit row so the queue can show it
@@ -806,8 +1037,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const suggestedFam = r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null;
                 const confirmedFlag = r.noteStatus === 'wrong_family';
                 return (
+                  <Fragment key={r.paramName}>
                   <TableRow
-                    key={r.paramName}
                     sx={{
                       // Three "done" states drop opacity:
                       //   - state.accepted (synonym mapping accepted)
@@ -1119,12 +1350,58 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                           />
                         )
                       ) : (() => {
-                        // Suggestion chip — advisory only. The user always
-                        // decides via the Accept button or note popover; this
-                        // chip just surfaces Sonnet 4.6's read on whether the
-                        // suggested attributeId is safe to commit. Tooltip
-                        // carries the full explanation alongside confidence.
+                        // Suggestion chip — advisory only. When a deeper
+                        // /investigate verdict exists, it SUPERSEDES the cheap
+                        // /suggest chip — the investigator pulled richer
+                        // context and produced a concrete action, so showing
+                        // the original Defer alongside would look contradictory.
+                        // Buckets map to: green Accept (mint flow), red Flag,
+                        // grey Skip, amber Unscoped. No deep analysis → fall
+                        // back to the cheap /suggest verdict.
                         const sug = state?.suggestion;
+                        const deep = state?.deepAnalysis;
+
+                        if (deep) {
+                          const meta = (() => {
+                            switch (deep.bucket) {
+                              case 'new_canonical':
+                              case 'unit_mismatch':
+                              case 'disambiguation':
+                                return { label: 'Accept', bg: 'success.dark', fg: 'success.contrastText', icon: <CheckIcon sx={{ fontSize: 12 }} /> };
+                              case 'wrong_family':
+                                return { label: 'Flag', bg: 'error.dark', fg: 'error.contrastText', icon: <FlagIcon sx={{ fontSize: 12 }} /> };
+                              case 'unmappable':
+                                return { label: 'Skip', bg: 'action.disabledBackground', fg: 'text.secondary', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                              case 'unscoped_products':
+                                return { label: 'Unscoped', bg: 'warning.dark', fg: 'warning.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                              default:
+                                return { label: 'Review', bg: 'info.dark', fg: 'info.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                            }
+                          })();
+                          const tooltipBody = (
+                            <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+                                Resolved via deeper investigation · Confidence: {deep.confidence}
+                              </Typography>
+                              {deep.recommendation?.summary && (
+                                <Typography variant="caption" sx={{ display: 'block' }}>
+                                  {deep.recommendation.summary}
+                                </Typography>
+                              )}
+                            </Box>
+                          );
+                          return (
+                            <Tooltip title={tooltipBody} placement="left" arrow>
+                              <Chip
+                                size="small"
+                                icon={meta.icon}
+                                label={meta.label}
+                                sx={{ bgcolor: meta.bg, color: meta.fg, fontSize: '0.6rem', height: 18, fontWeight: 600 }}
+                              />
+                            </Tooltip>
+                          );
+                        }
+
                         if (!sug?.suggestion) {
                           return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
                         }
@@ -1271,23 +1548,58 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       ) : state?.accepted ? (
                         <Chip size="small" icon={<CheckIcon sx={{ fontSize: 14 }} />} label="Saved" color="success" sx={{ fontSize: '0.6rem', height: 18 }} />
                       ) : (
-                        <Tooltip title={state?.acceptError ?? ''} disableHoverListener={!state?.acceptError}>
-                          <span>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              color={state?.acceptError ? 'error' : 'primary'}
-                              disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
-                              onClick={() => acceptAndRegenerate(r)}
-                              sx={{ fontSize: '0.65rem', minWidth: 80 }}
-                            >
-                              {state?.accepting ? <CircularProgress size={12} /> : 'Accept'}
-                            </Button>
-                          </span>
-                        </Tooltip>
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip title={state?.acceptError ?? ''} disableHoverListener={!state?.acceptError}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color={state?.acceptError ? 'error' : 'primary'}
+                                disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
+                                onClick={() => acceptAndRegenerate(r)}
+                                sx={{ fontSize: '0.65rem', minWidth: 80 }}
+                              >
+                                {state?.accepting ? <CircularProgress size={12} /> : 'Accept'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          {/* Investigate button. Visible when the row is either
+                              unscoped (Accept grayed) or the AI verdict was
+                              defer (Accept would be unsafe). Fires the deeper
+                              /investigate pass which returns a bucketed action
+                              with evidence. Hidden on confident-accept rows
+                              where the engineer just needs to click Accept. */}
+                          {(!getOverrideScope(r) || state?.suggestion?.suggestion === 'defer') && (
+                            <Tooltip title={state?.deepAnalysisError ?? 'Investigate: AI runs a deeper analysis pulling affected products, cross-scope overrides, and proposes a concrete next action.'}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  color={state?.deepAnalysisError ? 'error' : 'secondary'}
+                                  disabled={state?.loadingDeepAnalysis}
+                                  onClick={() => runInvestigate(r)}
+                                  startIcon={state?.loadingDeepAnalysis ? <CircularProgress size={10} color="inherit" /> : <SearchIcon sx={{ fontSize: 14 }} />}
+                                  sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
+                                >
+                                  {state?.deepAnalysis ? 'Refresh' : 'Investigate'}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                        </Stack>
                       )}
                     </TableCell>
                   </TableRow>
+                  {state?.deepAnalysis && (
+                    <DeepAnalysisRow
+                      row={r}
+                      analysis={state.deepAnalysis}
+                      onApplyPrefill={(payload) => applyDeepAction(r, payload)}
+                      onConfirmWrongFamily={() => confirmFlag(r)}
+                      onMarkUnmappable={() => markUnmappable(r)}
+                    />
+                  )}
+                  </Fragment>
                 );
               })}
             </TableBody>
@@ -1320,5 +1632,335 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         )}
       </AccordionDetails>
     </Accordion>
+  );
+}
+
+// ─── Deep Analysis subrow ──────────────────────────────────────────
+// Renders below the main row when state.deepAnalysis is set. Surfaces
+// the AI's bucket verdict, evidence, and bucket-specific action buttons.
+// The buttons wire to the parent's handlers: prefill (Accept-flow),
+// confirmFlag (wrong_family), markUnmappable (unmappable).
+//
+// Unscoped / new_canonical / unit_mismatch / disambiguation actions all
+// flow through "prefill the row's editedAttributeId/Name/Unit then
+// engineer clicks the regular Accept button." Keeping the commit path
+// uniform avoids a second Accept code path that could drift from the
+// authoritative one.
+
+interface DeepAnalysisRowProps {
+  row: GlobalUnmappedParam;
+  analysis: DeepAnalysis;
+  onApplyPrefill: (payload: { attributeId?: string; attributeName?: string; unit?: string | null }) => void;
+  onConfirmWrongFamily: () => void;
+  onMarkUnmappable: () => void;
+}
+
+const BUCKET_LABELS: Record<DeepAnalysis['bucket'], { label: string; color: 'primary' | 'warning' | 'error' | 'info' | 'success' }> = {
+  new_canonical: { label: 'New canonical', color: 'primary' },
+  disambiguation: { label: 'Disambiguation', color: 'info' },
+  wrong_family: { label: 'Wrong family', color: 'error' },
+  unit_mismatch: { label: 'Unit mismatch', color: 'warning' },
+  unscoped_products: { label: 'Unscoped products', color: 'warning' },
+  unmappable: { label: 'Unmappable', color: 'error' },
+};
+
+function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, onMarkUnmappable }: DeepAnalysisRowProps) {
+  const bucketMeta = BUCKET_LABELS[analysis.bucket];
+  // Narrow the unknown payload to a discriminated shape per bucket up front
+  // so JSX renders don't trip TS's ReactNode constraint on `unknown` values.
+  const payloadRaw = (analysis.recommendation?.primaryActionPayload ?? {}) as Record<string, unknown>;
+  const altPayloadRaw = (analysis.recommendation?.alternativeActionPayload ?? {}) as Record<string, unknown>;
+  const perProductProposals: Array<{ mpn: string; proposedFamilyId: string; reasoning: string }> | null =
+    Array.isArray(payloadRaw.perProductProposals)
+      ? (payloadRaw.perProductProposals as Array<{ mpn: string; proposedFamilyId: string; reasoning: string }>)
+      : null;
+  const signatureRecommendation: { paramName?: string; familyId?: string; reasoning?: string } | null =
+    payloadRaw.signatureRecommendation && typeof payloadRaw.signatureRecommendation === 'object'
+      ? (payloadRaw.signatureRecommendation as { paramName?: string; familyId?: string; reasoning?: string })
+      : null;
+  const payload = payloadRaw;
+  const altPayload = altPayloadRaw;
+
+  // Extract the canonical name shown in the button LABEL — this is what the
+  // engineer is being shown they'll get. Sonnet occasionally writes a more
+  // specific ID into the label ("Mint canonical width_mm") than into the
+  // payload ("attributeId": "width"); the user's expectation is set by the
+  // visible label, so it takes precedence over the payload.
+  function attributeIdFromLabel(): string | undefined {
+    const label = analysis.recommendation?.primaryActionLabel ?? '';
+    const m = label.match(/canonical\s+`?([a-z][a-z0-9_]*)`?/i);
+    return m && m[1] ? m[1] : undefined;
+  }
+
+  // Permissive key extraction — Sonnet sometimes returns slightly different
+  // payload shapes (snake_case, nested under 'canonical', etc) despite the
+  // prompt asking for a specific shape. For new_canonical / unit_mismatch we
+  // PREFER the label parse over the payload because the label is the user's
+  // contract with the button; for disambiguation/etc the payload is canonical.
+  function pickAttributeId(p: Record<string, unknown>): string | undefined {
+    const fromLabel = (analysis.bucket === 'new_canonical' || analysis.bucket === 'unit_mismatch')
+      ? attributeIdFromLabel()
+      : undefined;
+    if (fromLabel) return fromLabel;
+    const direct = p.attributeId ?? p.newAttributeId ?? p.attribute_id ?? p.new_attribute_id;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    const nested = p.canonical as Record<string, unknown> | undefined;
+    if (nested && typeof nested === 'object') {
+      const nestedId = nested.attributeId ?? nested.attribute_id;
+      if (typeof nestedId === 'string' && nestedId.trim()) return nestedId.trim();
+    }
+    return undefined;
+  }
+  function pickAttributeName(p: Record<string, unknown>): string | undefined {
+    const v = p.attributeName ?? p.newAttributeName ?? p.attribute_name ?? p.new_attribute_name;
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    const nested = p.canonical as Record<string, unknown> | undefined;
+    if (nested && typeof nested === 'object') {
+      const nestedName = nested.attributeName ?? nested.attribute_name;
+      if (typeof nestedName === 'string' && nestedName.trim()) return nestedName.trim();
+    }
+    return undefined;
+  }
+  function pickUnit(p: Record<string, unknown>): string | null | undefined {
+    const v = p.unit ?? p.newUnit ?? p.new_unit;
+    if (v === null) return null;
+    if (typeof v === 'string') return v.trim() || null;
+    return undefined;
+  }
+
+  // Per-bucket action handler — translates the AI's payload shape to a
+  // concrete prefill / confirm / mark call.
+  const handlePrimary = () => {
+    switch (analysis.bucket) {
+      case 'new_canonical':
+      case 'unit_mismatch': {
+        onApplyPrefill({
+          attributeId: pickAttributeId(payload),
+          attributeName: pickAttributeName(payload),
+          unit: pickUnit(payload),
+        });
+        break;
+      }
+      case 'disambiguation': {
+        const primary = (payload.primary as Record<string, unknown> | undefined) ?? {};
+        onApplyPrefill({
+          attributeId: pickAttributeId(primary),
+          attributeName: pickAttributeName(primary),
+          unit: pickUnit(primary),
+        });
+        break;
+      }
+      case 'wrong_family':
+        onConfirmWrongFamily();
+        break;
+      case 'unmappable':
+        onMarkUnmappable();
+        break;
+      // unscoped_products: no inline commit. Engineer addresses upstream.
+    }
+  };
+
+  const handleAlternative = () => {
+    if (analysis.bucket !== 'disambiguation') return;
+    const altSource = (altPayload.alternative as Record<string, unknown> | undefined) ?? altPayload;
+    onApplyPrefill({
+      attributeId: pickAttributeId(altSource),
+      attributeName: pickAttributeName(altSource),
+      unit: pickUnit(altSource),
+    });
+  };
+
+  return (
+    <TableRow sx={{ bgcolor: 'action.hover' }}>
+      <TableCell colSpan={12} sx={{ py: 1.5, px: 2, borderBottom: '2px solid', borderBottomColor: 'divider' }}>
+        <Stack spacing={1.2}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Chip
+              size="small"
+              icon={<AutoAwesomeIcon sx={{ fontSize: 12 }} />}
+              label={`AI verdict: ${bucketMeta.label}`}
+              color={bucketMeta.color}
+              sx={{ fontSize: '0.65rem', height: 20, fontWeight: 700 }}
+            />
+            <Chip
+              size="small"
+              label={`Confidence: ${analysis.confidence}`}
+              variant="outlined"
+              sx={{ fontSize: '0.6rem', height: 20 }}
+            />
+          </Stack>
+
+          {analysis.recommendation?.summary && (
+            <Typography variant="body2" sx={{ fontSize: '0.8rem', fontWeight: 600 }}>
+              {analysis.recommendation.summary}
+            </Typography>
+          )}
+
+          {analysis.prose && (
+            <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary', fontStyle: 'italic' }}>
+              {analysis.prose}
+            </Typography>
+          )}
+
+          {/* Diagnostic line when affected-products lookup failed to find
+              anything. Common causes: MFR name didn't resolve, products
+              don't carry that paramName in JSONB, scope too narrow. The line
+              tells the engineer exactly what went wrong so we can fix the
+              pipeline instead of guessing. */}
+          {analysis.evidence?.sampleProducts && analysis.evidence.sampleProducts.length === 0 && analysis.evidence?.sampleProductsDiag && (
+            <Box sx={{ p: 1, bgcolor: 'warning.dark', color: 'warning.contrastText', borderRadius: 1 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+                No affected products found — diagnostic:
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                MFR slugs requested: {analysis.evidence.sampleProductsDiag.mfrSlugsRequested}
+                {' · '}
+                Name variants resolved: {analysis.evidence.sampleProductsDiag.nameVariantsResolved}
+                {analysis.evidence.sampleProductsDiag.nameVariantsList.length > 0 &&
+                  ` (${analysis.evidence.sampleProductsDiag.nameVariantsList.slice(0, 8).join(', ')}${analysis.evidence.sampleProductsDiag.nameVariantsList.length > 8 ? '…' : ''})`}
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                Products scanned: {analysis.evidence.sampleProductsDiag.productsScanned}
+                {' · '}
+                Products carrying this paramName: {analysis.evidence.sampleProductsDiag.productsCarryingParam}
+              </Typography>
+              {analysis.evidence.sampleProductsDiag.sampleKeysObserved && analysis.evidence.sampleProductsDiag.sampleKeysObserved.length > 0 && (
+                <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem', mt: 0.5 }}>
+                  Actual JSONB keys seen in scanned products: {analysis.evidence.sampleProductsDiag.sampleKeysObserved.slice(0, 15).join(' | ')}
+                  {analysis.evidence.sampleProductsDiag.sampleKeysObserved.length > 15 ? '…' : ''}
+                </Typography>
+              )}
+            </Box>
+          )}
+
+          {/* Evidence: sample products, cross-scope, sample value distribution.
+              Each product's MPN becomes a datasheet link when atlas_products
+              has a datasheet_url — the AI's prose often says "check the
+              datasheet" and the engineer should be able to do so in one click. */}
+          {analysis.evidence?.sampleProducts && analysis.evidence.sampleProducts.length > 0 && (
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Affected products ({analysis.evidence.sampleProducts.length}):
+              </Typography>
+              <Stack spacing={0.25}>
+                {analysis.evidence.sampleProducts.map((p, i) => (
+                  <Typography key={i} variant="caption" sx={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>
+                    {p.datasheetUrl ? (
+                      <Tooltip title="Open datasheet in new tab">
+                        <Box
+                          component="a"
+                          href={p.datasheetUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            fontWeight: 700,
+                            color: 'primary.light',
+                            textDecoration: 'none',
+                            '&:hover': { textDecoration: 'underline' },
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.25,
+                          }}
+                        >
+                          {p.manufacturer} {p.mpn}
+                          <OpenInNewIcon sx={{ fontSize: 10 }} />
+                        </Box>
+                      </Tooltip>
+                    ) : (
+                      <Box component="span" sx={{ fontWeight: 700 }}>{p.manufacturer} {p.mpn}</Box>
+                    )}
+                    {p.description ? ` — ${p.description}` : ''}
+                    {p.valueForParam ? ` (value: ${p.valueForParam})` : ''}
+                  </Typography>
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {analysis.evidence?.crossScopeOverrides && analysis.evidence.crossScopeOverrides.length > 0 && (
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Cross-scope override hits (same paramName accepted in other families):
+              </Typography>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                {analysis.evidence.crossScopeOverrides.map((c, i) => (
+                  <Chip
+                    key={i}
+                    size="small"
+                    label={`${c.familyId} → ${c.attributeId}`}
+                    variant="outlined"
+                    sx={{ fontSize: '0.65rem', height: 18, fontFamily: 'monospace' }}
+                  />
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {/* unscoped_products: render per-product proposals inline */}
+          {analysis.bucket === 'unscoped_products' && perProductProposals && (
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Per-product family proposals (engineer addresses upstream):
+              </Typography>
+              <Stack spacing={0.25}>
+                {perProductProposals.map((p, i) => (
+                  <Typography key={i} variant="caption" sx={{ fontSize: '0.7rem' }}>
+                    <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{p.mpn}</Box>
+                    {' → '}
+                    <Box component="span" sx={{ fontFamily: 'monospace', color: 'primary.main' }}>{p.proposedFamilyId}</Box>
+                    {p.reasoning ? ` (${p.reasoning})` : ''}
+                  </Typography>
+                ))}
+              </Stack>
+            </Box>
+          )}
+
+          {/* wrong_family: surface the signature recommendation */}
+          {analysis.bucket === 'wrong_family' && signatureRecommendation && (
+            <Box sx={{ p: 1, bgcolor: 'background.default', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                Suggested FAMILY_PARAM_SIGNATURES entry (engineer adds to atlasFamilyParamSignatures.ts):
+              </Typography>
+              <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
+                {JSON.stringify(signatureRecommendation)}
+              </Typography>
+            </Box>
+          )}
+
+          {/* Action buttons */}
+          <Stack direction="row" spacing={1}>
+            {analysis.recommendation?.primaryActionLabel && analysis.bucket !== 'unscoped_products' && (
+              <Button
+                size="small"
+                variant="contained"
+                color={analysis.bucket === 'unmappable' ? 'error' : analysis.bucket === 'wrong_family' ? 'error' : 'primary'}
+                startIcon={analysis.bucket === 'unmappable' ? <BlockOutlinedIcon sx={{ fontSize: 14 }} /> : <CheckIcon sx={{ fontSize: 14 }} />}
+                onClick={handlePrimary}
+                sx={{ fontSize: '0.7rem' }}
+              >
+                {analysis.recommendation.primaryActionLabel}
+              </Button>
+            )}
+            {analysis.bucket === 'disambiguation' && analysis.recommendation?.alternativeActionLabel && (
+              <Button
+                size="small"
+                variant="outlined"
+                color="primary"
+                startIcon={<CheckIcon sx={{ fontSize: 14 }} />}
+                onClick={handleAlternative}
+                sx={{ fontSize: '0.7rem' }}
+              >
+                {analysis.recommendation.alternativeActionLabel}
+              </Button>
+            )}
+            {/* Acknowledge param row.paramName so unused-prop lint stays quiet
+                and the row identity is queryable from devtools. */}
+            <Typography variant="caption" sx={{ color: 'text.disabled', alignSelf: 'center' }}>
+              paramName: {row.paramName}
+            </Typography>
+          </Stack>
+        </Stack>
+      </TableCell>
+    </TableRow>
   );
 }
