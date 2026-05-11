@@ -23,6 +23,7 @@ import {
 } from './atlasGaiaDictionaries';
 import { getLogicTable } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
+import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
 
@@ -49,6 +50,81 @@ interface FamilyClassification {
   category: ComponentCategory;
   subcategory: string;
   familyId: string | null; // null = uncovered family (stored for search, not scored)
+}
+
+/**
+ * Post-classification correction: inspects extracted parameters for signals
+ * that contradict the c3-based family choice, and re-routes the product to
+ * the correct family. Narrow and conservative — only fires on the specific
+ * cases we've seen in the data.
+ *
+ * Why: classifyAtlasCategory looks only at the c3 string. A TVS Diode whose
+ * c3 says "Rectifier Diode" lands in B1 silently — no feedback from the
+ * parameters dictionary back into family selection. This helper closes that
+ * gap for the cases we know about.
+ *
+ * Adding new rules: keep them narrow (specific param + specific value
+ * pattern) so we never reclassify a legitimate B1 rectifier just because
+ * it shares a parameter name with another family. When 5+ rules accumulate,
+ * lift to a rule table.
+ */
+export function reclassifyByParameterSignals(
+  initial: FamilyClassification,
+  parameters: Array<{ name: string; value: string }>,
+): FamilyClassification {
+  // ─── Phase 1: B1 Type-value signals (Decision #175) ───
+  // Narrow rules from the original Decision #175 pass — only fire from B1,
+  // only on specific Type values, conservative by design.
+  if (initial.familyId === 'B1') {
+    let typeVal = '';
+    for (const p of parameters) {
+      const lname = p.name.toLowerCase().trim();
+      if (lname === 'type' || lname === '类型') {
+        typeVal = (p.value ?? '').toLowerCase().trim();
+        break;
+      }
+    }
+    if (typeVal) {
+      // B4 TVS — Bi/Uni or Bidirectional/Unidirectional are unambiguous TVS
+      // polarity values; no legitimate B1 rectifier carries these.
+      if (/^(bi|uni|bidirectional|unidirectional)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'TVS Diode', familyId: 'B4' };
+      }
+      // B3 Zener — "Regulator" / "Voltage Regulator" on a diode signals a
+      // Zener (zeners are voltage regulators by design); B1 rectifiers don't
+      // regulate.
+      if (/^(regulator|voltage regulator)$/.test(typeVal)) {
+        return { category: 'Diodes', subcategory: 'Zener Diode', familyId: 'B3' };
+      }
+    }
+  }
+
+  // ─── Phase 2: Foreign-family param-name signatures ───
+  // Driven by the FAMILY_PARAM_SIGNATURES registry — a parameter name that
+  // belongs unambiguously to another family signals upstream misclassification
+  // (e.g. BVCBO/BVCEO/BVEBO under B1 = transistor data leaking into the
+  // rectifier diode bucket). Re-route to the correct family on the spot so
+  // the affected products land in the right place at next ingest.
+  //
+  // Conservatism: signatures are anchored to start-of-paramName and use word
+  // boundaries / parentheses to avoid loose substring matches. Engineers can
+  // override per-paramName via atlas_unmapped_param_notes (status=
+  // 'confirmed_in_family') if a false positive emerges; that override only
+  // affects the triage UI, not this ingest-time hook — to suppress a registry
+  // entry from ingest, edit FAMILY_PARAM_SIGNATURES directly.
+  for (const sig of FAMILY_PARAM_SIGNATURES) {
+    if (sig.target.familyId === initial.familyId) continue;
+    const hit = parameters.some((p) => sig.pattern.test((p.name ?? '').trim()));
+    if (hit) {
+      return {
+        category: sig.target.category,
+        subcategory: sig.target.subcategory,
+        familyId: sig.target.familyId,
+      };
+    }
+  }
+
+  return initial;
 }
 
 /**
@@ -236,6 +312,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '10 to 10khz voltage noise(μvrms)': { attributeId: 'output_noise', attributeName: '10-10kHz Noise', unit: 'µVrms', sortOrder: 10 },
     'line regulation(max)(ppm/v)': { attributeId: '_line_reg', attributeName: 'Line Regulation', unit: 'ppm/V', sortOrder: 97 },
     'load regulation(max)(ppm/ma)': { attributeId: '_load_reg', attributeName: 'Load Regulation', unit: 'ppm/mA', sortOrder: 98 },
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── C1 LDO Regulators ────────────────────────────────
@@ -292,6 +370,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'accuracy(max)': { attributeId: 'vout_accuracy', attributeName: 'Output Voltage Accuracy', unit: '%', sortOrder: 10 },
     'temperature range (°c)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
     'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── C2 Switching Regulators ──────────────────────────
@@ -333,6 +413,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'channels': { attributeId: '_channels', attributeName: 'Number of Channels', sortOrder: 95 },
     'uvlo on/off (v)': { attributeId: '_uvlo', attributeName: 'UVLO On/Off', unit: 'V', sortOrder: 96 },
     'temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 20 },
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── C9 ADCs ──────────────────────────────────────────
@@ -630,6 +712,10 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
+    // "Type" on B1 rectifiers — Standard/Fast/Ultrafast (recovery class) or
+    // misclassification escapees. Map to _type (informational, deprioritized).
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── B3 Zener Diodes ───────────────────────────────────
@@ -665,6 +751,11 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 9 },
+    // "Type" with values like "Regulator" is informational on a Zener (the
+    // family already implies regulator behavior); de-prioritize via _type so
+    // it lands under "More" extras rather than cluttering the primary schema.
+    'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
   },
 
   // ─── B4 TVS Diodes ─────────────────────────────────────
@@ -711,6 +802,12 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
+    // "Type" on TVS encodes polarity (Bi/Uni/Bidirectional/Unidirectional) —
+    // route to the polarity attribute so it feeds the matching engine. If
+    // future ingests show non-polarity Type values on B4, surface via admin
+    // override rather than broadening this mapping.
+    'type': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
+    '类型': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
   },
 
   // ─── B5 MOSFETs ────────────────────────────────────────
@@ -803,6 +900,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 17 },
+    'type': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
+    '类型': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
   },
 
   // ─── B6 BJTs ───────────────────────────────────────────
@@ -836,6 +935,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    'type': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
+    '类型': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
   },
 
   // ─── B7 IGBTs ──────────────────────────────────────────
@@ -1291,6 +1392,9 @@ const skipParams = new Set([
   'mounting style', // mounting type (English)
   'package type',   // use package_case from family dict instead
   'esd diode',      // MOSFET body diode ESD info (not parametric)
+  'l1name',         // upstream taxonomy level-1 NAME (e.g. "Connectors") — not a product attribute
+  'l2name',         // upstream taxonomy level-2 NAME (e.g. "Wire-to-Board") — not a product attribute
+  'l3name',         // upstream taxonomy level-3 NAME — same shape as l1/l2; preempt
   'frd diode',      // MOSFET body diode FRD info (not parametric)
   'mos type',       // redundant with channel_type
   '安装方式',      // mounting style (Chinese)
@@ -1865,12 +1969,14 @@ export function mapAtlasModel(
 ): MappedAtlasProduct {
   const warnings: string[] = [];
 
-  // 1. Classify family
-  const classification = classifyAtlasCategory(
+  // 1. Classify family — c3-string-based first pass, then post-correct using
+  // signals from extracted parameters that contradict the c3 verdict.
+  const initialClassification = classifyAtlasCategory(
     model.category.c1.name,
     model.category.c2.name,
     model.category.c3.name,
   );
+  const classification = reclassifyByParameterSignals(initialClassification, model.parameters);
 
   // 2. Resolve status from parameters
   let status: PartStatus = 'Active';

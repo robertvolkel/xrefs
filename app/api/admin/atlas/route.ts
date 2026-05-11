@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
-import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getLogicTable } from '@/lib/logicTables';
+import { getLogicTable, getAllLogicTables } from '@/lib/logicTables';
 
 // ── Cache layering (mirrors /api/admin/manufacturers) ───────
 //
@@ -51,47 +50,60 @@ export function invalidateAtlasCache() {
   })();
 }
 
-async function fetchAllPages<T>(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  table: string,
-  columns: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  filter?: (q: any) => any,
-): Promise<T[]> {
-  const PAGE_SIZE = 1000;
-  const results: T[] = [];
-  let offset = 0;
-  while (true) {
-    let query = supabase.from(table).select(columns).order('id').range(offset, offset + PAGE_SIZE - 1);
-    if (filter) query = filter(query);
-    const { data: page } = await query;
-    if (!page || page.length === 0) break;
-    results.push(...(page as T[]));
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+/** Build the family → rule-attributeIds map that the SQL RPC consumes.
+ *  Static across requests since logic tables ship with the codebase. The
+ *  full payload is ~10–20 KB; trivial to send. We pass every supported
+ *  family even if only some have products in the DB — the RPC ignores
+ *  unused entries via the `family_attrs ? family_id` guard. */
+let familyAttrsCache: Record<string, string[]> | null = null;
+function buildFamilyAttrsPayload(): Record<string, string[]> {
+  if (familyAttrsCache) return familyAttrsCache;
+  const out: Record<string, string[]> = {};
+  for (const table of getAllLogicTables()) {
+    out[table.familyId] = table.rules.map((r) => r.attributeId);
   }
-  return results;
+  familyAttrsCache = out;
+  return out;
 }
 
 async function computeAtlasCoverage(): Promise<object> {
-  const supabase = await createClient();
+  // Service-role client — admin auth is gated upstream by requireAdmin().
+  // Same pattern as the manufacturers route, and matches what `invalidate
+  // AtlasCache`'s background recompute uses.
+  const supabase = createServiceClient();
 
-  // Fetch all data in parallel: lightweight rows, scorable rows with JSONB, manufacturer records, legacy settings
-  const [rows, scorableRows, { data: mfrRecords, error: mfrRecordsErr }, { data: mfrSettings }] = await Promise.all([
-    fetchAllPages<{ manufacturer: string; family_id: string | null; category: string; subcategory: string; updated_at: string }>(
-      supabase,
-      'atlas_products',
-      'manufacturer, family_id, category, subcategory, updated_at',
-    ),
-    fetchAllPages<{ manufacturer: string; family_id: string; parameters: Record<string, unknown> | null }>(
-      supabase,
-      'atlas_products',
-      'manufacturer, family_id, parameters',
-      (q) => q.not('family_id', 'is', null),
-    ),
+  const familyAttrs = buildFamilyAttrsPayload();
+
+  // ── Single RPC call for the heavy aggregation (replaces two
+  //    fetchAllPages walks). The function returns one row per
+  //    (manufacturer, family_id, category, subcategory) tuple, with
+  //    coverage stats already summed in Postgres. ~5K rows, a few KB.
+  // ── Manufacturer identity rows: small (~115), no aggregation needed.
+  // ── Legacy settings table: tiny fallback when atlas_manufacturers is empty.
+  const [aggResult, mfrRecordsResult, mfrSettingsResult] = await Promise.all([
+    supabase.rpc('get_atlas_coverage_aggregates', { family_attrs: familyAttrs }),
     supabase.from('atlas_manufacturers').select('name_display, name_en, name_zh, slug, id, enabled'),
     supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
   ]);
+
+  if (aggResult.error) {
+    throw new Error(`get_atlas_coverage_aggregates RPC failed: ${aggResult.error.message}`);
+  }
+  const { data: mfrRecords, error: mfrRecordsErr } = mfrRecordsResult;
+  const { data: mfrSettings } = mfrSettingsResult;
+
+  // RPC rows. Numeric columns come back as bigints which serialize to
+  // strings in some drivers; coerce defensively at the consumer.
+  const aggRows = (aggResult.data ?? []) as Array<{
+    manufacturer: string;
+    family_id: string | null;
+    category: string;
+    subcategory: string;
+    product_count: number | string;
+    total_covered: number | string;
+    total_rules: number | string;
+    last_updated: string;
+  }>;
 
   // Build manufacturer identity lookup from atlas_manufacturers (new table).
   // atlas_products.manufacturer typically uses English-only names (e.g. "ISC") while
@@ -118,7 +130,7 @@ async function computeAtlasCoverage(): Promise<object> {
     }
   }
 
-  if (rows.length === 0) {
+  if (aggRows.length === 0) {
     return {
       summary: {
         totalProducts: 0,
@@ -138,7 +150,10 @@ async function computeAtlasCoverage(): Promise<object> {
     };
   }
 
-  // Aggregate per-manufacturer
+  // ── Roll up the SQL aggregates to per-MFR and global summary ─────
+  // The RPC already grouped by (manufacturer, family_id, category,
+  // subcategory) — we just need to fold these into the existing
+  // response shape (per-MFR rollup + per-(MFR × family) breakdown).
   const mfrMap = new Map<string, {
     productCount: number;
     scorableCount: number;
@@ -156,82 +171,75 @@ async function computeAtlasCoverage(): Promise<object> {
     scorableCount: number;
   }>();
 
-  const allFamilies = new Set<string>();
-  let globalLastUpdated: string | null = null;
-
-  for (const row of rows) {
-    // Per-manufacturer
-    let mfr = mfrMap.get(row.manufacturer);
-    if (!mfr) {
-      mfr = { productCount: 0, scorableCount: 0, families: new Set(), categories: new Set(), lastUpdated: row.updated_at };
-      mfrMap.set(row.manufacturer, mfr);
-    }
-    mfr.productCount++;
-    if (row.family_id) {
-      mfr.scorableCount++;
-      mfr.families.add(row.family_id);
-      allFamilies.add(row.family_id);
-    }
-    mfr.categories.add(row.category);
-    if (row.updated_at > mfr.lastUpdated) mfr.lastUpdated = row.updated_at;
-    if (!globalLastUpdated || row.updated_at > globalLastUpdated) globalLastUpdated = row.updated_at;
-
-    // Per-manufacturer-family breakdown (scorable + non-scorable)
-    if (row.family_id) {
-      const key = `${row.manufacturer}::${row.family_id}`;
-      let fb = familyBreakdownMap.get(key);
-      if (!fb) {
-        fb = { manufacturer: row.manufacturer, familyId: row.family_id, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
-        familyBreakdownMap.set(key, fb);
-      }
-      fb.count++;
-      fb.scorableCount++;
-    } else {
-      const key = `${row.manufacturer}::_::${row.category}::${row.subcategory}`;
-      let fb = familyBreakdownMap.get(key);
-      if (!fb) {
-        fb = { manufacturer: row.manufacturer, familyId: null, category: row.category, subcategory: row.subcategory, count: 0, scorableCount: 0 };
-        familyBreakdownMap.set(key, fb);
-      }
-      fb.count++;
-    }
-  }
-
-  // ── Coverage calculation ───────────────────────────────
-  const familyRuleAttrs = new Map<string, Set<string>>();
-  for (const fid of allFamilies) {
-    const table = getLogicTable(fid);
-    if (table) {
-      familyRuleAttrs.set(fid, new Set(table.rules.map(r => r.attributeId)));
-    }
-  }
-
   const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
   const fbCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
 
-  for (const row of scorableRows) {
-    if (!row.parameters) continue;
+  const allFamilies = new Set<string>();
+  let globalLastUpdated: string | null = null;
+  let totalProducts = 0;
+  let scorableProducts = 0;
 
-    const ruleAttrs = familyRuleAttrs.get(row.family_id);
-    if (!ruleAttrs || ruleAttrs.size === 0) continue;
-
-    const productAttrs = Object.keys(row.parameters);
-    let covered = 0;
-    for (const attr of productAttrs) {
-      if (ruleAttrs.has(attr)) covered++;
+  for (const r of aggRows) {
+    const productCount = Number(r.product_count);
+    const totalCovered = Number(r.total_covered);
+    const totalRules = Number(r.total_rules);
+    totalProducts += productCount;
+    if (r.family_id) {
+      scorableProducts += productCount;
+      allFamilies.add(r.family_id);
     }
-    const total = ruleAttrs.size;
 
-    let mc = mfrCoverage.get(row.manufacturer);
-    if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(row.manufacturer, mc); }
-    mc.totalCovered += covered;
-    mc.totalRules += total;
+    // Per-MFR rollup
+    let mfr = mfrMap.get(r.manufacturer);
+    if (!mfr) {
+      mfr = { productCount: 0, scorableCount: 0, families: new Set(), categories: new Set(), lastUpdated: r.last_updated };
+      mfrMap.set(r.manufacturer, mfr);
+    }
+    mfr.productCount += productCount;
+    if (r.family_id) {
+      mfr.scorableCount += productCount;
+      mfr.families.add(r.family_id);
+    }
+    mfr.categories.add(r.category);
+    if (r.last_updated > mfr.lastUpdated) mfr.lastUpdated = r.last_updated;
+    if (!globalLastUpdated || r.last_updated > globalLastUpdated) globalLastUpdated = r.last_updated;
 
-    const fbKey = `${row.manufacturer}::${row.family_id}`;
-    let fc = fbCoverage.get(fbKey);
-    if (!fc) { fc = { totalCovered: 0, totalRules: 0 }; fbCoverage.set(fbKey, fc); }
-    fc.totalCovered += covered;
-    fc.totalRules += total;
+    // Per-(MFR × family) breakdown — same key shape as before.
+    // Non-scorable rows (family_id=null) get a synthetic key with
+    // category+subcategory to keep the shape stable for the UI.
+    const fbKey = r.family_id
+      ? `${r.manufacturer}::${r.family_id}`
+      : `${r.manufacturer}::_::${r.category}::${r.subcategory}`;
+    let fb = familyBreakdownMap.get(fbKey);
+    if (!fb) {
+      fb = {
+        manufacturer: r.manufacturer,
+        familyId: r.family_id,
+        category: r.category,
+        subcategory: r.subcategory,
+        count: 0,
+        scorableCount: 0,
+      };
+      familyBreakdownMap.set(fbKey, fb);
+    }
+    fb.count += productCount;
+    if (r.family_id) fb.scorableCount += productCount;
+
+    // Coverage rollup — only for scorable rows. The RPC already aggregated
+    // total_covered + total_rules per (mfr, family_id) tuple at the
+    // (category, subcategory) granularity; sum back up.
+    if (r.family_id && totalRules > 0) {
+      let mc = mfrCoverage.get(r.manufacturer);
+      if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(r.manufacturer, mc); }
+      mc.totalCovered += totalCovered;
+      mc.totalRules += totalRules;
+
+      const coverageKey = `${r.manufacturer}::${r.family_id}`;
+      let fc = fbCoverage.get(coverageKey);
+      if (!fc) { fc = { totalCovered: 0, totalRules: 0 }; fbCoverage.set(coverageKey, fc); }
+      fc.totalCovered += totalCovered;
+      fc.totalRules += totalRules;
+    }
   }
 
   const manufacturers = [...mfrMap.entries()]
@@ -283,14 +291,14 @@ async function computeAtlasCoverage(): Promise<object> {
 
   return {
     summary: {
-      totalProducts: rows.length,
+      totalProducts,
       totalManufacturers: mfrMap.size,
       targetManufacturers,
       queuedManufacturers,
       enabledManufacturers: enabledMfrs.length,
       enabledProducts: enabledProductCount,
-      scorableProducts: scorableRows.length,
-      searchOnlyProducts: rows.length - scorableRows.length,
+      scorableProducts,
+      searchOnlyProducts: totalProducts - scorableProducts,
       familiesCovered: allFamilies.size,
       lastUpdated: globalLastUpdated,
     },

@@ -7,11 +7,13 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
-import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
+import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
+import { getAdminAppFeedbackList } from '@/lib/api';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
 import ServiceStatusIcon from '@/components/ServiceStatusIcon';
@@ -34,6 +36,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const isListsActive = pathname === '/lists';
   const isReleasesActive = pathname === '/releases';
   const isAdminActive = pathname === '/admin';
+  const isMonitoringActive = pathname === '/monitoring';
   const isOrgActive = pathname === '/organization';
 
   const isSettingsActive = pathname === '/settings';
@@ -41,6 +44,20 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const [hasNewReleases, setHasNewReleases] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState(false);
+  const [hasOpenAppFeedback, setHasOpenAppFeedback] = useState(false);
+
+  // Open app-feedback indicator (admin-only — drives the Monitoring icon dot badge)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    getAdminAppFeedbackList({ status: 'open', limit: 1 })
+      .then((r) => {
+        if (cancelled) return;
+        setHasOpenAppFeedback(r.statusCounts.open > 0);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   useEffect(() => {
     const handler = () => setFeedbackOpen(true);
@@ -153,6 +170,20 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
         >
           <DescriptionOutlinedIcon fontSize="small" />
         </IconButton>
+
+        <IconButton
+          onClick={() => setFeedbackOpen(true)}
+          size="small"
+          title="Give feedback"
+          sx={{
+            mt: 1.5,
+            color: 'text.secondary',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <EditNoteOutlinedIcon fontSize="small" />
+        </IconButton>
       </Box>
 
       {/* Bottom group: Admin + Settings + Logout */}
@@ -170,6 +201,23 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             }}
           >
             <BuildOutlinedIcon fontSize="small" sx={{ transform: 'rotate(90deg)' }} />
+          </IconButton>
+        )}
+        {isAdmin && (
+          <IconButton
+            onClick={() => router.push('/monitoring')}
+            size="small"
+            sx={{
+              mb: 1.5,
+              color: isMonitoringActive ? 'text.primary' : 'text.secondary',
+              bgcolor: isMonitoringActive ? 'action.selected' : 'transparent',
+              borderRadius: 1,
+              '&:hover': { color: 'text.primary' },
+            }}
+          >
+            <Badge variant="dot" color="error" invisible={!hasOpenAppFeedback}>
+              <MonitorHeartOutlinedIcon fontSize="small" />
+            </Badge>
           </IconButton>
         )}
         {isAdmin && (
@@ -201,19 +249,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <Badge variant="dot" color="error" invisible={!hasNewReleases}>
             <CampaignOutlinedIcon fontSize="small" />
           </Badge>
-        </IconButton>
-        <IconButton
-          onClick={() => setFeedbackOpen(true)}
-          size="small"
-          title="Give feedback"
-          sx={{
-            mb: 1.5,
-            color: 'text.secondary',
-            borderRadius: 1,
-            '&:hover': { color: 'text.primary' },
-          }}
-        >
-          <FeedbackOutlinedIcon fontSize="small" />
         </IconButton>
         <IconButton
           onClick={() => router.push('/settings')}

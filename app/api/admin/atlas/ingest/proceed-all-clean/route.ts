@@ -12,6 +12,7 @@ import { runIngestScript } from '@/lib/services/atlasIngestService';
 import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
 import { invalidateAtlasGrowthCache } from '@/app/api/admin/atlas/growth/route';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 export const maxDuration = 600;
 
@@ -37,6 +38,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     invalidateAtlasCache();
     invalidateAtlasGrowthCache();
     invalidateManufacturersListCache();
+    // Wait-then-restart — bulk apply changes many batches at once and the
+    // user typically goes to Triage right after to review what's left.
+    await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({
       success: true,

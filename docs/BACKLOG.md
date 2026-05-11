@@ -79,6 +79,39 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Dictionary Triage Phase 2 — explicit per-param status tracking
+
+Phase 1 (just shipped) treats the unmapped-params queue as the inverse of the dictionary-overrides table: a row shows up if no active override resolves it. That's enough when the engineer's only states are "haven't looked yet" and "accepted." It breaks down when they want to *park* a param without resolving it ("I researched PPAP, need to talk to procurement first, hide it from my queue for 2 weeks") or explicitly reject one ("not worth mapping, stop showing it").
+
+**What this would add:**
+1. New table `atlas_unmapped_param_queue` keyed on `(param_name, manufacturer_slug, family_id)` with status enum (`open` / `accepted` / `rejected` / `deferred` / `researching`), optional `status_note`, `status_updated_at`, `status_updated_by`. Upsert logic from the ingest pipeline (or computed lazily on the API path).
+2. Status filter chips on the Triage page (default: open + researching). "Show all" toggle to see history.
+3. Per-row status dropdown alongside the existing Accept button.
+4. **"Mark as wontfix"** / explicit reject — one of the new statuses; today there's no way to tell the system "I've decided this isn't worth mapping."
+5. Optional notifications when new unmapped params appear (Slack / email / in-app toast). Pure addition, doesn't change data model. Useful with multiple engineers on rotation; less so for solo ownership.
+
+**Triggers that flip this from defer to ship:**
+- Queue grows past ~50 unresolved entries (engineer can't visually scan it anymore)
+- Engineers tell you they want a "deferred" / "researching" status to park items
+- You onboard a second engineer who needs assignment / comments / "who's working on what"
+- Operator wants Slack notifications when uploads introduce new param names
+
+Today's pattern (no override → shows in queue, override exists → gone) is documented in [batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — the override-cross-reference filter is the part that goes away when this lands. Half day of work for the table + filter chips; another day for the optional notifications.
+
+### Per-row research helper on the Atlas Unmapped Parameters table
+
+Non-technical admins reviewing the unmapped-params panel often need to research what a parameter actually means before accepting (or overriding) the AI-suggested mapping — e.g. "PPAP" = Production Part Approval Process, "IFSM(A)" = Maximum Surge Forward Current, "ESD" = Electrostatic Discharge rating. Today they have to manually copy the param name into Google.
+
+**Two options when implementing:**
+
+1. **Web-search button** (small): per-row icon button → opens Google in a new tab with a context-rich query like `"<paramName>" "<familyShortName>" parameter datasheet meaning`. Family scoping is critical — bare "Type" / "ESD" Google searches return chaos. ~15 min, no backend, no AI cost. Reuses `getFamilyDisplayName()` helper already in [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx).
+
+2. **AI-explanation popover** (larger): per-row button → calls Claude Haiku with the param + family schema + sample values → returns 2-3 sentences explaining what the param likely means and whether the AI's suggested mapping is correct. Higher value for a non-technical user (does the synthesis for them) but requires a new endpoint, caching layer, popover UI, prompt engineering. Possibly extends the existing `/api/admin/atlas/dictionaries/suggest` endpoint with an optional `explain: true` mode.
+
+Recommended path: ship (1) first — cheap and likely sufficient. If admins still struggle to interpret search results, follow up with (2). Plan was drafted but not implemented (deferred per user request).
+
+**Files involved:** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) for both options. (2) also touches [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts).
+
 ### Lift claim-discipline rule into a global system-prompt block (Decision #166 follow-up)
 
 The general claim-discipline rule ("every factual claim must have a backing source in tool data; otherwise downgrade to 'not in our profile' or hedge as interpretation") was codified inside the manufacturer-profile section. The same rule applies across all chat domains — recommendations, search-result interpretation, parametric Q&A, list agent. Currently each domain has its own discipline language (or none), which means future drift is likely. Lift the rule to a top-level "global rules" block at the start of `SYSTEM_PROMPT`, then have domain sections reference it instead of restating discipline. Watch other domains for the same per-shape patching anti-pattern that hit the MFR section. ~30 min, prompt-only.
@@ -233,6 +266,37 @@ The RPC that backs the admin Atlas MFRs page aggregates ~55K `atlas_products` ro
 - Raise Supabase statement timeout for this RPC only (`ALTER FUNCTION ... SET statement_timeout = ...`).
 
 **Why it matters:** Without a durable fix, admins keep seeing the stale banner even though the data is a few minutes old. Every ingest cycle grows `atlas_products`, so the timeout risk compounds.
+
+### Precomputed coverage column on `atlas_products` (Decision #179 long-term)
+
+Decision #179 moved coverage compute into a SQL RPC (`get_atlas_coverage_aggregates`) which still scans 71K rows × ~10–20 attribute-presence checks per scorable row. As `atlas_products` grows, this approaches the 300s `statement_timeout` ceiling we've already had to set. The structural fix is to precompute `coverage_attrs_count INT` (and optionally `coverage_attrs_total INT`) per product at ingest time — written by [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) using the same family→ruleAttrs map the route already knows. Coverage aggregation then collapses to `SUM(coverage_attrs_count)` with no JSONB iteration.
+
+**Triggers:** RPC starts hitting the 300s limit, OR coverage compute becomes a hot path beyond just the admin page (e.g. a public-facing coverage badge).
+
+**Cost:** schema migration + ingest-script change + one-time backfill script. Logic-table edits become trickier (rule-attr changes invalidate the precomputed values; need a per-family backfill).
+
+### Pre-warm atlas-coverage cache after Proceed/Revert (Decision #179 follow-up)
+
+Today [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) deletes the `admin_stats_cache` row keyed `'atlas-coverage'` on every successful Proceed / Revert. The next admin who hits the page pays the recompute (~3s post-RPC, was ~50s pre-RPC). Acceptable now, but pre-warming makes it free.
+
+**Options:**
+- HTTP callback from the script to `/api/admin/atlas?refresh=1` post-delete (needs a base URL + admin auth — awkward in dev/prod boundary).
+- Duplicate the compute in a `.mjs` helper called inline (script blocks for 3s, but admins never wait).
+- Schedule a Supabase pg_cron job that recomputes any cache key that's been NULL for >10s.
+
+Deferred: the RPC already brought the bad case to acceptable. Revisit if admins start complaining about ingest-day Coverage page slowness.
+
+### Multi-category override fan-out in inline Accept (Decision #178 follow-up)
+
+When the same paramName appears under multiple L2 categories within a single MFR's batch (e.g. FMD's `工作电压(范围)` shows up in 52 Microcontroller products + 23 Memory products), the queue picks `dominantCategory = Microcontrollers` (highest count). An inline Accept scopes the override to Microcontrollers, leaving the Memory-classified products' params unmapped.
+
+**Workaround used today (FMD):** one-shot script that clones every active override under category A to category B for the same MFR.
+
+**Real fix:** when a row's product set spans >1 category with non-trivial counts (e.g. >5 products in each), surface this in the Accept UI — engineer chooses "scope to all observed categories" (creates N override rows) vs. "scope to dominant only" (current behavior). The route already has the per-category counts in `categoryCounts` (Decision #178); just need UI + multi-INSERT.
+
+**Alternative, lower-effort:** lift truly cross-category Chinese params to `SHARED_PARAMS` in [atlasMapper.ts](../lib/services/atlasMapper.ts) + the mjs mirror. `工作电压`, `工作温度`, `存取时间`, `湿气敏感性等级` — these are inherently category-agnostic. One add to `SHARED_PARAMS` covers every L2 category at once. Caveat: `SHARED_PARAMS` isn't currently editable via the dict-overrides admin layer (the `dictFor()` heuristic in `loadAndApplyDictOverrides` steers `add` actions to L3/L2 buckets, not shared) — would need a dedicated "scope: shared" Accept path.
+
+**Why both matter:** cross-category MFRs are common (MCU vendors ship MCUs + memory + companion analog). Without the fix, every multi-category MFR hits the FMD-style cleanup-script step.
 
 ### ~~L2 taxonomy: curated param maps for high-value non-xref categories~~ COMPLETED
 **Status:** Done — Wave 1 (Decision #86) + Wave 2 (Decision #87)
@@ -796,3 +860,42 @@ Shipped Apr 2026 (Decision #151). `isPreferredManufacturer()` now accepts an opt
 **File:** [lib/services/manufacturerCrossRefService.ts](../lib/services/manufacturerCrossRefService.ts)
 
 `fetchManufacturerCrossRefs()` today matches on MPN alone. If a customer ever uploads cross-refs with an `original_manufacturer` column + two different MFRs ship the same MPN string, we'd conflate them. Adding a `resolveManufacturerAlias()`-based filter would disambiguate. Not a current bug (xrefs aren't dense enough for collisions yet), just preemptive. Deferred from Decision #148.
+
+### Triage AI suggester: per-MFR batch call instead of per-row (Decision #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)
+
+Per-row Sonnet calls work but are expensive (~$0.005 × 100 rows = $0.50/MFR). One Sonnet call per MFR analyzing ALL unmapped params at once would be cheaper amortized AND would let Claude spot patterns across rows ("these 3 params form a series-spec cluster"). Higher risk of the model dropping rows in a long response — would need explicit row-count validation. Revisit if per-row cost becomes painful in regular use.
+
+### Triage AI suggester: cross-scope canonical lookup (Decision #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)
+
+`fetchAcceptedCanonicals(familyId)` only returns overrides scoped to the row's own family/category. Missed case: a generic Connectors L2 row needs `male/female` mapping; `gender` already exists as a canonical in modular-connectors L2 but the suggester can't see it. Should consider the full graph of accepted canonicals across related families/categories. Tricky because "related" needs definition — could start with shared-parent relationships or just include all overrides as context.
+
+### Triage AI suggester: sample-value-aware concept similarity (Decision #181)
+**Status:** Not started
+**Priority:** P3
+
+Currently the suggester sees paramName + sample values but doesn't reason about whether the sample VALUES are consistent with existing canonicals. E.g., if `wire_gauge` exists with samples `["18 AWG", "20 AWG"]` and the new row has samples `["1.5 mm²", "2.5 mm²"]`, the suggester should recognize the unit mismatch and propose `wire_csa_mm2` instead of suggesting reuse. Currently happens by accident in the prompt, not deterministically.
+
+### Atlas-derived series-compatibility cross-references (Decision #181)
+**Status:** Not started
+**Priority:** P2
+
+When the suggester proposes `compatible_series` for params like `参考系列` (series reference, e.g. "compatible with XYZ123 series"), the value text is a stable cross-reference signal. Could promote these to first-class cross-ref candidates in the recommendation engine — same shape as `manufacturer_cross_references` (Decision #122). Would need a parser to extract series names from the param value strings. Underused signal currently buried in dictionary overrides.
+
+### L2 category override: multi-category fan-out (Decisions #178, #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs)
+
+When a single MFR ships products in two L2 categories with overlapping Chinese param names (the FMD case — MCUs + Memory share several param names), the override is scoped to the dominant category only. Products in the secondary category surface as still-unmapped on next regen. Workarounds: clone overrides to the secondary category manually, or lift the param to `SHARED_PARAMS`. Long-term fix: when the secondary category's count is non-trivial (say >10% of dominant), automatically clone the override to that category too. Or surface a "this param applies to N categories — accept for all?" prompt at Accept time.
+
+### Triage compute: precomputed `unmapped_params_summary` table (Decision #180)
+**Status:** Not started
+**Priority:** P3
+
+The `get_triage_unmapped_aggregate` RPC walks every pending+applied batch's `report->'unmappedParams'` JSONB array on every cold cache miss. Currently fast enough (~2-3s) but scales linearly with batch count. Long-term, ingest writes a denormalized `unmapped_params_summary` table at apply time; the route reads from it directly (no JSONB iteration). Mirrors the `coverage_attrs_count` precomputed-column suggestion in Decision #179. Defer until cold-load times drift past ~10s as batches accumulate.

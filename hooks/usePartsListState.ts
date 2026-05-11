@@ -1577,6 +1577,12 @@ export function usePartsListState() {
     const mpnsToEnrich = new Set<string>();
     const rowsWithSourceNeed = new Set<number>();
     const rowsWithRecNeed = new Set<number>();
+    // Atlas (Chinese-MFR) MPNs fire FC + OEMS in parallel. Replacements carry
+    // `mfrOrigin` directly (Decision #161); source rows surface origin only via
+    // `resolvedPart.dataSource === 'atlas'` (narrower proxy, same tradeoff as
+    // search-flow enrichment in useAppState.ts — Digikey-discovered Chinese
+    // parts still get OEMS via the server-side fallback-on-empty/obsolete).
+    const chineseMpnSet = new Set<string>();
     for (const r of state.rows) {
       // Ambiguous rows still render with a top-match snapshot (MFR/Repl. Price /
       // Repl. Stock columns need FC enrichment to populate). Skip only rows that
@@ -1585,17 +1591,26 @@ export function usePartsListState() {
       if (r.enrichedData && r.resolvedPart?.mpn && !r.enrichedData.supplierQuotes?.length) {
         mpnsToEnrich.add(r.resolvedPart.mpn);
         rowsWithSourceNeed.add(r.rowIndex);
+        if (r.resolvedPart.dataSource === 'atlas') {
+          chineseMpnSet.add(r.resolvedPart.mpn.toLowerCase());
+        }
       }
       const recMpn = r.replacement?.part.mpn;
       if (recMpn && !r.replacement!.part.supplierQuotes?.length) {
         mpnsToEnrich.add(recMpn);
         rowsWithRecNeed.add(r.rowIndex);
+        if (r.replacement!.part.mfrOrigin === 'atlas') {
+          chineseMpnSet.add(recMpn.toLowerCase());
+        }
       }
       // Alternate replacements render the same Repl. Price / Repl. Stock columns
       for (const sub of r.replacementAlternates ?? []) {
         if (sub.part.mpn && !sub.part.supplierQuotes?.length) {
           mpnsToEnrich.add(sub.part.mpn);
           rowsWithRecNeed.add(r.rowIndex);
+          if (sub.part.mfrOrigin === 'atlas') {
+            chineseMpnSet.add(sub.part.mpn.toLowerCase());
+          }
         }
       }
     }
@@ -1603,13 +1618,14 @@ export function usePartsListState() {
     if (mpnsToEnrich.size === 0) return { requested: 0, enriched: 0 };
 
     const mpns = Array.from(mpnsToEnrich);
+    const chineseMpns = chineseMpnSet.size > 0 ? Array.from(chineseMpnSet) : undefined;
     // Chunk into 50-MPN batches (server cap) and fire in parallel
     const CHUNK_SIZE = 50;
     const chunks: string[][] = [];
     for (let i = 0; i < mpns.length; i += CHUNK_SIZE) {
       chunks.push(mpns.slice(i, i + CHUNK_SIZE));
     }
-    const chunkResults = await Promise.all(chunks.map(c => enrichWithFCBatch(c).catch(() => ({}))));
+    const chunkResults = await Promise.all(chunks.map(c => enrichWithFCBatch(c, undefined, chineseMpns).catch(() => ({}))));
     const results = Object.assign({}, ...chunkResults);
     const enrichedCount = Object.keys(results).length;
 
@@ -1875,9 +1891,13 @@ export function usePartsListState() {
           // getRecommendations returns candidates with empty supplierQuotes — FC
           // enrichment is deferred by design. Batch-enrich the top-N so totalStock()
           // can actually evaluate stock instead of always returning -1 (unknown).
-          const topMpns = recs.slice(0, SCAN_TOP_N).map(r => r.part.mpn);
+          const topRecs = recs.slice(0, SCAN_TOP_N);
+          const topMpns = topRecs.map(r => r.part.mpn);
+          const topChineseMpns = topRecs
+            .filter(r => r.part.mfrOrigin === 'atlas')
+            .map(r => r.part.mpn.toLowerCase());
           const fcResults = topMpns.length > 0
-            ? await enrichWithFCBatch(topMpns).catch(() => ({} as Record<string, { quotes: import('@/lib/types').SupplierQuote[]; lifecycle: import('@/lib/types').LifecycleInfo | null; compliance: import('@/lib/types').ComplianceData | null }>))
+            ? await enrichWithFCBatch(topMpns, undefined, topChineseMpns.length > 0 ? topChineseMpns : undefined).catch(() => ({} as Record<string, { quotes: import('@/lib/types').SupplierQuote[]; lifecycle: import('@/lib/types').LifecycleInfo | null; compliance: import('@/lib/types').ComplianceData | null }>))
             : {};
           const enriched = recs.slice(0, SCAN_TOP_N).map(rec => {
             const fc = fcResults[rec.part.mpn.toLowerCase()];

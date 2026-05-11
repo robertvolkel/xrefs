@@ -112,7 +112,7 @@ export default function ContextPanel({ table }: ContextPanelProps) {
     return (
       <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-          <Typography variant="h6">
+          <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
             {t(`logicTable.${table.familyId}.name`, table.familyName)}
           </Typography>
           <Button

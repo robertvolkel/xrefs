@@ -11,6 +11,7 @@ import {
   type AtlasParamMapping,
 } from '@/lib/services/atlasMapper';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 /** GET /api/admin/atlas/dictionaries?familyId=B5  OR  ?category=Microcontrollers */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -216,6 +217,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateDictOverrideCache(body.familyId);
+    invalidateTriageQueueCache();
 
     return NextResponse.json({ success: true, data: mapRowToRecord(data) }, { status: 201 });
   } catch (error) {

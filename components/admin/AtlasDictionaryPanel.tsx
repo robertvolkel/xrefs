@@ -169,7 +169,6 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
   if (loading && !data) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
         <Typography variant="body2" color="text.secondary">
           {t('common.loading')}
         </Typography>
@@ -180,7 +179,6 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
   if (!data || data.entries.length === 0) {
     return (
       <Box>
-        <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           {t('admin.noDictionary', 'No Atlas translation dictionary for this family.')}
         </Typography>
@@ -192,9 +190,8 @@ export default function AtlasDictionaryPanel({ table, l2Category }: AtlasDiction
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>{displayName}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-        {t('admin.atlasDictDesc', 'Translation dictionaries mapping Atlas parameter names to internal attributes.')}
+        {displayName} — {t('admin.atlasDictDesc', 'Translation dictionaries mapping Atlas parameter names to internal attributes.')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {stats.totalEntries} {t('admin.entries', 'entries')}

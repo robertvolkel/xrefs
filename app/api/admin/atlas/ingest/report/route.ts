@@ -16,6 +16,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 const ATLAS_DIR = resolve(process.cwd(), 'data/atlas');
 
@@ -59,6 +60,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }, { status: 500 });
     }
 
+    // Wait-then-restart variant: ensures the cache reflects this upload's
+    // new batch (the script just committed it). Plain invalidate would hand
+    // back any in-flight recompute promise, which may have read the DB
+    // BEFORE this upload landed → user navigates to Triage and sees the
+    // pre-upload state. The Sunlord bug.
+    await invalidateTriageQueueCacheAndAwaitFresh();
     return NextResponse.json({
       success: true,
       exitCode: result.exitCode,

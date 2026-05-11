@@ -35,7 +35,7 @@ import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMappe
 import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
-import { getProfileForManufacturer } from './manufacturerProfileService';
+import { getProfileForManufacturer, hasEnrichedProfileContent } from './manufacturerProfileService';
 import {
   classifyQualificationDomain,
   upgradeFromAttributes,
@@ -573,7 +573,38 @@ async function enrichWithFindchips(attrs: PartAttributes, userId?: string): Prom
   if (!isFindchipsConfigured() || !hasFindchipsBudget()) return attrs;
 
   try {
-    const results = await getFindchipsResults(attrs.part.mpn, userId);
+    // Atlas (Chinese-MFR) parts: fire FC + OEMS in parallel — independent
+    // distributors are where these tend to live. Western-MFR parts: FC first,
+    // then automatically fall back to OEMS if FC came back empty or marked the
+    // part obsolete/EOL.
+    //
+    // Atlas detection — three layered signals:
+    //   (1) mfrOrigin (canonical, Decision #161) — undefined here; resolved
+    //       later in getRecommendations(). Cheap when set.
+    //   (2) dataSource === 'atlas' — works when Atlas wins resolution, fails
+    //       when parts.io carries the same MPN (different product, same number)
+    //       and gets picked first.
+    //   (3) resolveManufacturerAlias: definitive — looks up the MFR string
+    //       against atlas_manufacturers + manufacturer_companies. L2-cached
+    //       (Decision #163), ~0ms warm / ~30ms cold. This is the same path
+    //       getRecommendations() uses to set mfrOrigin, so the behavior here
+    //       and on the recs side stay aligned. Without (3), the search-flow
+    //       distributor-count badge (which fires parallel-both off the
+    //       Atlas-source card) and the click-flow Commercial tab disagree
+    //       whenever parts.io shadows an Atlas-listed MPN.
+    let isAtlas = attrs.part.mfrOrigin === 'atlas' || attrs.dataSource === 'atlas';
+    if (!isAtlas && attrs.part.manufacturer) {
+      try {
+        const alias = await resolveManufacturerAlias(attrs.part.manufacturer);
+        if (alias?.source === 'atlas') isAtlas = true;
+      } catch {
+        // resolver failure → fall through to fc-with-oems-fallback (server-side
+        // fallback still kicks in for FC-empty/obsolete cases).
+      }
+    }
+    const source = isAtlas ? 'parallel-both' : 'fc-with-oems-fallback';
+
+    const results = await getFindchipsResults(attrs.part.mpn, userId, { source });
     if (!results || results.length === 0) return attrs;
 
     const quotes = mapFCToQuotes(results, attrs.part.mpn);
@@ -613,7 +644,15 @@ async function enrichCandidatesWithFindchips(recs: XrefRecommendation[], userId?
   let fcResults: Map<string, import('./findchipsClient').FCDistributorResult[]>;
   try {
     const mpns = recs.map(r => r.part.mpn);
-    fcResults = await getFindchipsResultsBatch(mpns, userId);
+    // Atlas (Chinese-MFR) candidates fire FC + OEMS in parallel; the rest get
+    // the default "FC + fallback on empty/obsolete" pass that the batch helper
+    // applies by default. Decision #161 keys this off `mfrOrigin`.
+    const chineseMpns = new Set(
+      recs
+        .filter(r => r.part.mfrOrigin === 'atlas')
+        .map(r => r.part.mpn.toLowerCase()),
+    );
+    fcResults = await getFindchipsResultsBatch(mpns, userId, { chineseMpns });
   } catch (error) {
     console.warn('[findchips] Candidate enrichment failed:', error);
     reportServiceFailure('findchips', 'degraded', 'Candidate enrichment failed');
@@ -722,20 +761,26 @@ async function getAttributesRaw(
     }
   }
 
-  // Fallback: try parts.io directly (600M parts, richer parametric data than Atlas)
+  // Fallback: try parts.io directly (600M parts, richer parametric data than Atlas).
+  // We hold the parts.io result and check Atlas before committing — if parts.io
+  // has a sparse listing (zero parametric fields, common for Chinese-MFR parts
+  // that parts.io knows by name only) and Atlas has richer data for the same
+  // MPN, prefer Atlas. Real example: 02BEEG3F-R has a 0-param connector listing
+  // in parts.io (Delta Electronics Inc) but a 3-param filter listing in Atlas
+  // (DELTA, mounting_type/voltage_rated/current_rating). Without this guard,
+  // parts.io would shadow Atlas and the Specs tab would render empty.
+  let partsioAttrs: PartAttributes | null = null;
   if (isPartsioConfigured()) {
     try {
       const listing = await getPartsioProductDetails(mpn, userId);
       if (listing) {
         const parameters = mapPartsioProductToAttributes(listing);
-        // Map parts.io Category/Class through Digikey's mapper for consistent subcategory naming
         const rawCategory = listing.Category || listing.Class || '';
         let subcategory = mapSubcategory(rawCategory);
-        // When Category was empty and we used the broad Class name, refine using parametric hints
         if (!listing.Category && listing.Class) {
           subcategory = disambiguatePartsioSubcategory(listing, subcategory);
         }
-        return {
+        partsioAttrs = {
           part: {
             mpn: listing['Manufacturer Part Number'] || mpn,
             manufacturer: listing.Manufacturer || 'Unknown',
@@ -757,12 +802,27 @@ async function getAttributesRaw(
     }
   }
 
-  // Fallback: try Atlas database (Chinese manufacturer coverage)
-  try {
-    const atlasAttrs = await getAtlasAttributes(mpn);
-    if (atlasAttrs) return atlasAttrs;
-  } catch {
-    console.warn('Atlas attribute lookup failed for', mpn);
+  // If parts.io's listing has zero params, check Atlas before committing.
+  // Atlas is checked unconditionally when parts.io has nothing.
+  const partsioIsSparse = !partsioAttrs || partsioAttrs.parameters.length === 0;
+  if (partsioIsSparse) {
+    try {
+      const atlasAttrs = await getAtlasAttributes(mpn);
+      if (atlasAttrs && atlasAttrs.parameters.length > 0) {
+        // Atlas wins when parts.io was empty AND Atlas has actual parametric data.
+        return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
+      }
+    } catch {
+      console.warn('Atlas attribute lookup failed for', mpn);
+    }
+  }
+
+  // Commit to parts.io if we have it (rich or sparse — better than nothing).
+  if (partsioAttrs) {
+    // FC enrichment so the Commercial tab populates for parts.io-resolved parts.
+    // `enrichSourceInParallel` re-fires partsio gap-fill harmlessly via its
+    // upstream cache, then runs the FC + OEMS dance per Decision #184.
+    return await enrichSourceInParallel(partsioAttrs, userId, options?.skipFindchips);
   }
 
   return null;
@@ -790,9 +850,14 @@ async function attachPartCapabilities(
       if (!listing) return false;
       return extractEquivalentMpns(listing, mpn, 1).length > 0;
     })(),
-    // Module-scope 5-min cache lives inside getProfileForManufacturer; non-null
-    // means an Atlas-resolved profile or a Western mock fallback exists.
-    getProfileForManufacturer(attrs.part.manufacturer).then(r => !!r).catch(() => false),
+    // Module-scope 5-min cache lives inside getProfileForManufacturer. Atlas-
+    // resolved rows always exist for known MFRs but most aren't actually
+    // enriched (Decision #139 — only ~297 of 1,011 MFRs have JSONB content);
+    // require real content via `hasEnrichedProfileContent` so the button never
+    // opens an empty panel. Mock profiles always carry content, so they pass.
+    getProfileForManufacturer(attrs.part.manufacturer)
+      .then(r => !!r && (r.source === 'mock' || hasEnrichedProfileContent(r.profile)))
+      .catch(() => false),
   ]);
 
   const logic = isFamilySupported(attrs.part.subcategory);

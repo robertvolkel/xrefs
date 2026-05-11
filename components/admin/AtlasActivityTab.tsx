@@ -2,7 +2,6 @@
 
 import { Box, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import AtlasGrowthChart from './AtlasGrowthChart';
 import AtlasEventLogTable from './AtlasEventLogTable';
 import CacheFreshnessBar from './atlasCoverage/CacheFreshnessBar';
 import type { AtlasGrowthResponse } from '@/app/api/admin/atlas/growth/route';
@@ -38,7 +37,6 @@ export default function AtlasActivityTab({ data, cachedAt, onRefresh, refreshing
         <CacheFreshnessBar cachedAt={cachedAt} onRefresh={onRefresh} refreshing={refreshing} />
       </Box>
 
-      <AtlasGrowthChart series={data.series} />
       <AtlasEventLogTable events={data.events} />
     </Box>
   );

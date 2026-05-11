@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const mpns: string[] = body.mpns;
+    const chineseMpnsRaw: unknown = body.chineseMpns;
 
     if (!Array.isArray(mpns) || mpns.length === 0) {
       return NextResponse.json({ success: false, error: 'mpns must be a non-empty array' }, { status: 400 });
@@ -43,7 +44,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Maximum 50 MPNs per request' }, { status: 400 });
     }
 
-    const fcResults = await getFindchipsResultsBatch(mpns, user?.id);
+    // Optional Atlas/Chinese-MFR hint from the caller — these fire FC + OEMS
+    // in parallel. Non-Chinese MPNs default to FC with auto-fallback to OEMS
+    // on empty/obsolete. Caller-side knowledge of `mfrOrigin === 'atlas'` lets
+    // us preempt the round-trip that empty-fallback would otherwise wait for.
+    const chineseMpns = Array.isArray(chineseMpnsRaw)
+      ? new Set<string>((chineseMpnsRaw as unknown[]).filter((x): x is string => typeof x === 'string').map(s => s.toLowerCase()))
+      : undefined;
+
+    const fcResults = await getFindchipsResultsBatch(mpns, user?.id, chineseMpns ? { chineseMpns } : undefined);
     const results: Record<string, FCEnrichResult> = {};
 
     for (const [mpnLower, distResults] of fcResults) {

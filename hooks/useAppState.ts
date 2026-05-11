@@ -275,6 +275,12 @@ export function useAppState() {
       const CHUNK_SIZE = 50;
       const sortedRecs = sortRecommendationsForDisplay(recs);
       const mpns = sortedRecs.map(r => r.part.mpn);
+      // Atlas (Chinese-MFR) recs fire FC + OEMS in parallel; others get the
+      // server-side default of FC + auto-fallback to OEMS on empty/obsolete.
+      // mfrOrigin is resolved per-rec during getRecommendations() (Decision #161).
+      const chineseMpns = sortedRecs
+        .filter(r => r.part.mfrOrigin === 'atlas')
+        .map(r => r.part.mpn.toLowerCase());
       const chunks: string[][] = [];
       if (mpns.length > 0) chunks.push(mpns.slice(0, PRIORITY_CHUNK));
       for (let i = PRIORITY_CHUNK; i < mpns.length; i += CHUNK_SIZE) {
@@ -284,7 +290,7 @@ export function useAppState() {
       setState((prev) => ({ ...prev, isEnrichingFC: true }));
 
       const chunkPromises = chunks.map(chunk =>
-        enrichWithFCBatch(chunk, signal).then((fcData) => {
+        enrichWithFCBatch(chunk, signal, chineseMpns).then((fcData) => {
           if (signal.aborted || Object.keys(fcData).length === 0) return;
           setState((prev) => {
             // Enrich against the FULL source (allRecommendations), NOT the
@@ -331,12 +337,21 @@ export function useAppState() {
    *  count into the matching message. Fire-and-forget; never blocks search rendering. */
   const triggerSearchDistributorEnrichment = useCallback(
     (messageId: string, parts: PartSummary[]) => {
-      const gapMpns = parts
-        .filter((p) => typeof p.distributorCount !== 'number')
-        .map((p) => p.mpn);
+      const gapParts = parts.filter((p) => typeof p.distributorCount !== 'number');
+      const gapMpns = gapParts.map((p) => p.mpn);
       if (gapMpns.length === 0) return;
 
-      enrichWithFCBatch(gapMpns)
+      // PartSummary doesn't carry mfrOrigin (resolved later in the recs
+      // pipeline). Use dataSource === 'atlas' as a narrower proxy: it flags
+      // Chinese MFRs that were *discovered* via the Atlas dataset. Western-MFR
+      // and Digikey-discovered Chinese parts still get OEMS via the server's
+      // default fallback-on-empty/obsolete path, so this only adds OEMS on top
+      // when FC has good franchised coverage but OEMS may add more brokers.
+      const chineseMpns = gapParts
+        .filter((p) => p.dataSource === 'atlas')
+        .map((p) => p.mpn.toLowerCase());
+
+      enrichWithFCBatch(gapMpns, undefined, chineseMpns)
         .then((fcData) => {
           if (Object.keys(fcData).length === 0) return;
           const mergeCount = (p: PartSummary): PartSummary => {

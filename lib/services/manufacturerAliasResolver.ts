@@ -49,6 +49,10 @@ interface AtlasRow {
   name_en: string;
   name_zh: string | null;
   aliases: string[] | null;
+  /** Parts.io's name format for this MFR, e.g. "Delta Electronics Inc" while
+   *  Atlas's name_en is just "DELTA". Lets parts.io-resolved parts hit the
+   *  Atlas registry without requiring every MFR to be aliased manually. */
+  partsio_name: string | null;
 }
 
 function buildAtlasMatch(row: AtlasRow): ManufacturerAliasMatch {
@@ -56,6 +60,7 @@ function buildAtlasMatch(row: AtlasRow): ManufacturerAliasMatch {
   variantSet.add(row.name_display);
   if (row.name_en) variantSet.add(row.name_en);
   if (row.name_zh) variantSet.add(row.name_zh);
+  if (row.partsio_name) variantSet.add(row.partsio_name);
 
   // Defensive: the aliases JSONB column has historically been written both as
   // arrays (correct) and as JSON-encoded strings (pre-fix bug). If we get a
@@ -283,7 +288,7 @@ const CACHE_TTL_MS = 5 * 60_000;
 const MFR_ALIAS_L2_SERVICE = 'search' as const;
 const MFR_ALIAS_L2_MPN = '__mfr_alias_index__';
 const MFR_ALIAS_L2_VARIANT = 'v1';
-const MFR_ALIAS_L2_VERSION = 1;
+const MFR_ALIAS_L2_VERSION = 2; // bumped when partsio_name was added to AtlasRow
 const MFR_ALIAS_L2_TTL_MS = TTL_LIFECYCLE_MS; // 6 months — alias graph changes infrequently; admin writes invalidate explicitly.
 
 interface CachedAliasRows {
@@ -306,7 +311,7 @@ async function fetchAtlas(): Promise<AtlasRow[] | null> {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from('atlas_manufacturers')
-      .select('slug, name_display, name_en, name_zh, aliases');
+      .select('slug, name_display, name_en, name_zh, aliases, partsio_name');
     if (error) {
       console.warn('manufacturerAliasResolver: Atlas error:', error.message);
       return [];

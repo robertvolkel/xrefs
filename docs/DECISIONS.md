@@ -5025,3 +5025,365 @@ The new ingest API routes (`proceed`, `proceed-all-clean`, `revert`) initially d
 **Deferred:** SCR/Modules classifier fix — 316 YANGJIE thyristor modules currently uncovered due to `!lower.includes('module')` exclusion at line 124 of `atlas-ingest.mjs`. Listed in BACKLOG.md.
 
 **Verification.** End-to-end: YANGJIE 12,932 products applied via UI; provenance preserved across re-ingest of older MFRs; AI dict triage cuts unmapped params from 286 → 196 in one pass; tests stay green at 1521.
+
+---
+
+## Decision #175 — Atlas: Parameter-Aware Family Reclassification for Misfiled Diodes (May 2026)
+
+While reviewing the unmapped-params admin panel, user found 5,381 products listed as **B1 Rectifier Diodes** carrying a `Type` parameter with values `Bi` / `Uni` / `Regulator` — clear signatures of B4 TVS Diodes (polarity) and B3 Zener Diodes (voltage regulator), respectively. Root cause: `classifyAtlasCategory(c1, c2, c3)` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) decides family at ingestion using only the c3 string (check order `tvs → zener → bridge → generic-rectifier`). Anything whose c3 contains "rectifier" but lacks the keywords "tvs"/"zener"/"bridge" falls into B1 by default — a TVS product whose c3 says "Rectifier Diode" lands in B1 silently. The B4 polarity dictionary entry exists but is consulted *after* classification, never feeding back into family selection.
+
+**Fix — parameter-aware post-classification step.** New helper `reclassifyByParameterSignals(initial, parameters)` in [atlasMapper.ts](../lib/services/atlasMapper.ts) runs after `classifyAtlasCategory` and re-routes B1 products with telltale `Type` values:
+
+- `Bi` / `Uni` / `Bidirectional` / `Unidirectional` → B4 TVS Diodes
+- `Regulator` / `Voltage Regulator` → B3 Zener Diodes
+
+Conservative by design: only fires from B1, only on those exact patterns, ignores all other Type values (Standard / Fast / Ultrafast / blank — legitimate B1 rectifiers untouched). Mirrored verbatim into the standalone ingest script [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) since it carries its own classifier copy. Wired into both `mapAtlasModel()` (the runtime path) and the script's `mapModel()` (offline path).
+
+**Dictionary backstop.** Added minimal English `'type'` + Chinese `'类型'` entries to both B3 (→ `_type` deprioritized — value is informational on a Zener, the family already implies regulator behavior) and B4 (→ `polarity` — primary attribute, feeds the matching engine) dictionaries. Without these, reclassified products would land in the right family but their Type parameter would still be unmapped at read time.
+
+**Retroactive script.** New [scripts/atlas-reclassify-by-type-param.mjs](../scripts/atlas-reclassify-by-type-param.mjs) — dry-run by default, `--apply` commits, idempotent (second pass is a no-op). Pages through `atlas_products WHERE family_id='B1'` in chunks of 1000, applies the same helper to JSONB parameters, batch-updates `family_id` / `category` / `subcategory` in chunks of 500.
+
+**Surprise from the dry run.** Scanned 10,475 B1 products in `atlas_products`, found **zero** matches — none of the live products have `Type` values in our reclassification set. The 5,381 misclassified products visible in the admin panel are sitting in **pending ingest batches** ("Unmapped parameters: 211 unique across 2 pending batches" — the panel reads from batch snapshots, not the merged table). When those batches get applied via the admin UI, the new ingest-time correction will route them to B3/B4 automatically. The retroactive script stays in the codebase as a safety net for any future drift between batch processing and the live table.
+
+**Lesson.** Family classification with no feedback loop from extracted parameters is brittle. The c3 string is a noisy signal — Atlas source data uses inconsistent naming ("Rectifier Diode" can be a TVS, a Zener, or an actual rectifier). Adding a narrow post-classification correction step is cheap, conservative, and grows naturally as we discover new signal/family mismatches. When the rule list grows past ~5 entries, lift to a structured rule table; until then the if-tree is more readable than the abstraction.
+
+**Out of scope.** Other suspected misclassifications (Op-Amps vs Logic ICs, voltage regulator type confusion, scattered TVS products under different c3 strings) — each needs its own audit query + classification rule. Defer until the framework proves out on this case.
+
+**Files touched:**
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — `reclassifyByParameterSignals` helper, call site in `mapAtlasModel()`, B3 + B4 dictionary `type`/`类型` entries.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirrored helper + call site.
+- [scripts/atlas-reclassify-by-type-param.mjs](../scripts/atlas-reclassify-by-type-param.mjs) — new retroactive DB fixer.
+- [__tests__/services/atlasMapper.test.ts](../__tests__/services/atlasMapper.test.ts) — 9 unit tests (empty, blank, Bi/Uni/Bidirectional/Unidirectional → B4, Regulator/voltage regulator → B3, Chinese key parity, case insensitivity, B1-only gating, first-match semantics).
+
+**Verification.** Tests green at 1530 (+9 new). Dry run on prod confirms zero existing-DB matches (validating the "fix is forward-looking" interpretation). Pending-batch behavior verifies on the next ingest run via the admin UI — the panel's `Type → Bi/Uni/Regulator` rows under B1 should disappear (or move to B3/B4 with the new dictionary mappings).
+
+**Adjacent UI polish (not arch-worthy on their own, recorded for completeness).** Same session, [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) gained: `tableLayout: 'fixed'` with explicit widths on every header AND body cell (column widths weren't being honored because the table was running on auto-layout); `fullWidth` on the attributeId / attributeName / Unit TextFields (so they fill their cells); a new "Category" column showing the human-readable family name via a new `getFamilyDisplayName(familyId)` helper (truncated at em dash / parens, full name on tooltip hover). Backlog entry added for a per-row "Search the web" research helper.
+
+---
+
+## Decision #176 — Persistent Dictionary Triage Queue with MFR Provenance + Operator/Engineer Role Split (May 2026)
+
+After Decision #174 shipped the Atlas re-ingest pipeline, the unmapped-params triage UI was an `<Accordion>` embedded inside the Atlas Ingest page that aggregated only PENDING batches. Two structural problems for an admin who wants to delegate dictionary mapping to a hardware engineer: (a) once the operator clicked Proceed, that batch's unmapped params disappeared from the list — no persistent queue across batch lifecycle — and (b) the editor was always next to the upload UI, no separation between operator (uploads + applies) and engineer (reviews + maps) roles. Plus the row data tracked `affectedBatchIds` but never surfaced manufacturer names to the engineer doing research.
+
+**Decision: lift the triage into its own admin section with persistent queue semantics, MFR provenance per row, and remove edit power from the Ingest page (Model 3).**
+
+**Persistent queue.** [/api/admin/atlas/ingest/batches](../app/api/admin/atlas/ingest/batches/route.ts) was rewritten so the unmapped-params aggregation is **independent** of the batch-list status filter. The batch list still defaults to `status='pending'` (operator-facing dashboard counters), but the queue source query pulls `IN (pending, applied)` and filters out anything covered by an active dictionary override (`atlas_dictionary_overrides WHERE is_active=true`, keyed `${family_id}:${param_name}`). Net effect: rows survive batch apply and only leave the queue when an override resolves them. The `report.unmappedParams` JSONB was already persistent on every batch row — only the API filter was hiding it after apply. **No new table** required.
+
+**MFR provenance.** `GlobalUnmappedParam` extended with `affectedManufacturers: Array<{slug, name, productCount}>`, populated by joining batch.manufacturer against `atlas_manufacturers.name_display → slug` (with a `slugifyName()` fallback for unregistered MFRs). Surfaced in the Prods column as a count + MFR list with hover-tooltip breakdown. Engineer doing research now knows whether "Type / 5,381 prods" came from one MFR or twelve.
+
+**Dedicated workspace.** New admin section `'atlas-dict-triage'` rendered by [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx). Same `GlobalUnmappedParamsTable` component lifted from inside the Ingest page, fed by the same batches endpoint with optional `?batch=<id>` query param to scope to one batch. Sidebar nav entry "Dictionary Triage" with `AssignmentLateOutlinedIcon` placed under the Atlas section. Engineer bookmarks this URL.
+
+**Operator/engineer role split (Model 3).** [AtlasIngestPanel.tsx](../components/admin/atlasIngest/AtlasIngestPanel.tsx) and [BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) **no longer mount the editor**. They now render read-only summaries:
+- Top-of-page amber alert: "N unmapped parameters across pending batches need engineer review. [Open Dictionary Triage →]"
+- Per-batch card: "N unmapped parameters in this batch · sample names: a, b, c · [Review in Dictionary Triage]" — link routes to `?section=atlas-dict-triage&batch=<id>` so the engineer lands pre-filtered to that batch's rows.
+- Light Proceed-confirm friction: per-batch Proceed and bulk "Proceed All Clean" warn when unmapped params exist (operator can still proceed; the message tells them what'll happen).
+
+The badge / count widget I started building was later removed at the user's request — they preferred the queue counter visible only on the Triage page itself, not duplicated in the sidebar.
+
+**Five bugs surfaced + fixed during the build:**
+
+1. **PGRST205 fail-open on missing overrides table.** The `atlas_dictionary_overrides` table from Decision #68 was never applied to this Supabase instance. Both anon and service-role keys get `Could not find the table 'public.atlas_dictionary_overrides' in the schema cache`. The route initially tried an inline query that crashed the whole endpoint. Refactored to wrap in try/catch returning empty override set — fail-open: queue stays unfiltered if overrides aren't readable, no override-based filtering happens. Mirrors the pattern in `lib/services/atlasDictOverrides.ts`.
+
+2. **`tableLayout: 'fixed'` for column widths.** Body cell `width` props on a default-auto MUI `<Table>` are silently ignored — the browser layouts based on content. Aligned header + body widths and added `tableLayout: 'fixed'`. Companion fix: `fullWidth` on TextFields so they fill their cells (without it, MUI defaults to a fixed ~200px field regardless of cell width).
+
+3. **Case-insensitive override match.** The Accept flow lowercases `paramName` before insert (`paramName: row.paramName.toLowerCase()`), but the queue's filter compared the override key against the raw `entry.paramName` (preserving source casing — "Type" with capital T). Result: override saved correctly but row never disappeared. Fix: lowercase both sides of the comparison in the filter (`${entry.dominantFamily}:${entry.paramName.toLowerCase()}`).
+
+4. **RLS / cookie-vs-service auth in admin endpoints.** This was the subtlest bug. The route uses `createServiceClient()` (bypasses RLS) for the heavy queries (batches, manufacturer lookups), but I initially routed the override read through `fetchAllDictOverrides()` from `lib/services/atlasDictOverrides.ts` — which uses `createClient()` from `@/lib/supabase/server` (cookie-bound user client). The RLS policy on `atlas_dictionary_overrides` requires admin auth via `auth.uid()` lookup against `profiles.role`. In some request contexts the user's cookie session wasn't propagating to that helper's Supabase call → RLS denied → 0 rows returned → the queue saw "no overrides" and never filtered the row out. Fix: drop the helper, do an inline service-role query in the route. **Lesson: in admin endpoints where `requireAdmin()` already gates entry, prefer service-role for downstream queries — RLS becomes redundant defense-in-depth that costs you when cookie propagation breaks.** The service role is the correct authority for an admin-only server endpoint; routing through cookie auth there is paying for safety you already have.
+
+5. **mjs/TS dict mirroring tax.** `scripts/atlas-ingest.mjs` carries its own copy of `classifyAtlasCategory()` AND every family parameter dictionary because the script runs standalone (can't import `.ts`). I added new dict entries (`'type'` → `polarity` / `_type`) to `atlasMapper.ts` but forgot to mirror to the mjs script — re-ingests using the mjs version then didn't pick up the mappings. The user regenerated three times before I caught it. **Lesson: every time you touch atlasMapper dictionaries OR the classifier, grep `scripts/atlas-ingest.mjs` for the same shape. The duplication is technical debt; consolidating it is its own refactor.** For now, treat the mjs file as a parallel surface that always needs co-edits. Eight family dicts (B1, B3, B4, B5, B6, C1, C2, C6) gained `'type'` / `'类型'` entries this pass — see Decision #175 + this entry's commit for the full set.
+
+**Cheap perf wins applied:**
+- Server-side projection: `select('batch_id, manufacturer, status, unmappedParams:report->unmappedParams, familyCounts:report->familyCounts')` instead of `select('*')` — cut payload ~80% (reports include the per-product diff which can be multi-MB).
+- Skeleton loading state replaces bare `CircularProgress` on the Triage page.
+- `slotProps={{ transition: { unmountOnExit: true } }}` on the Accordion — drops the (potentially 200-row) table from the DOM when collapsed instead of MUI's default "keep mounted, hide via CSS" which still pays the render cost.
+
+**Phase 2 deferred** (see [BACKLOG.md](BACKLOG.md) — "Dictionary Triage Phase 2"): explicit per-param status tracking (open / accepted / rejected / deferred / researching) via a new `atlas_unmapped_param_queue` table. Today's implicit "no override = shows in queue" semantics cover the single-engineer case; the explicit table earns its keep when engineers want to *park* a param without resolving it, or when notifications + assignment become real needs (multi-engineer rotation). Triggers documented in the backlog entry.
+
+**Files touched:**
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — independent unmapped-params aggregation, MFR provenance, override cross-reference, `?batch=` filter, JSONB projection.
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — `affectedManufacturers` field.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — MFR chips per row, table-layout fix, `fullWidth` inputs, Category column with `getFamilyDisplayName()`, unmount-on-collapse.
+- [components/admin/atlasIngest/AtlasIngestPanel.tsx](../components/admin/atlasIngest/AtlasIngestPanel.tsx) — embedded editor removed, summary alert + deep link, bulk-Proceed warning.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — `embeddedTriagePanel` prop dropped, per-batch summary + deep link, per-batch Proceed warning.
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — **new**, dedicated workspace.
+- [components/admin/AdminShell.tsx](../components/admin/AdminShell.tsx), [components/admin/AdminSectionNav.tsx](../components/admin/AdminSectionNav.tsx) — `'atlas-dict-triage'` section + nav entry.
+- [locales/en.json](../locales/en.json), [locales/zh-CN.json](../locales/zh-CN.json) — `atlasDictTriage` label.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) + [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — `'type'` / `'类型'` entries on B1, B3, B4, B5, B6, C1, C2, C6 dicts.
+
+**Verification.** Manual: upload a batch with unmapped params, leave some unaccepted, click Proceed → unaccepted ones still appear in Triage labeled with the MFR. Cross-MFR: same paramName from 2 MFRs → one row with both chips, productCount summed. Self-cleanup: accept an override → row disappears (override-cross-reference filter matches). Operator workflow: Ingest page renders count summary + links; no editing surface. Tests stayed green at 1530 across the change.
+
+---
+
+## Decision #177 — Foreign-Family Param Signature Registry: Auto-Detect & Auto-Flag Misclassifications (May 2026)
+
+Decision #175 added `reclassifyByParameterSignals` to fix one specific case (B1 with `Type=Bi/Uni/Regulator` → B4/B3). When triaging unmapped params, the engineer noticed a different and broader misclassification pattern: under family **B1 Rectifier Diodes**, four of six surfaced params (`BVCBO`, `BVCEO`, `BVEBO`, `@Ic`) are unambiguously BJT (transistor) parameters — diodes have no collector / base / emitter. Either Yangjie miscategorized those products upstream, or our c3-only classifier put BJTs into B1 on import. Mapping those param names to diode canonicals (`vrrm`, `vdc`, etc.) would have actively poisoned `atlas_products` with semantically wrong data. The synonym-mapping triage UI gave the engineer no first-class path for "this row reveals a misclassification, don't map it."
+
+**Decision: a foreign-family param signature registry as the single source of truth for both auto-detection in the triage UI and auto-fix at next ingest. Engineer's role drops to one-click Confirm / Revert.**
+
+**Single registry, three consumers.** [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) declares `FAMILY_PARAM_SIGNATURES: ParamSignature[]` — each entry is `{ pattern: RegExp, target: { category, subcategory, familyId }, reasoning: string }`. Seeded with 11 entries covering BJTs (`BVCBO|BVCEO|BVEBO`, `@?Ic`, `hFE`), MOSFETs (`Rds(on)`, `Vgs(th)`, `Qg|Qgs|Qgd`), IGBTs (`Vce(sat)`, `Eon|Eoff|Ets`), JFETs (`Idss`), Optocouplers (`CTR`, `Viso`). The `detectForeignFamily(paramName, currentFamily)` helper returns the matching signature when the target family differs from the row's current — that's the foreign-family signal.
+
+**Triage queue auto-flag at render time.** [/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) runs `detectForeignFamily()` per row, attaches an `autoFlag: { suggestedFamily, reasoning, matchingParam }` field when matched. Server also reads `atlas_unmapped_param_notes.status` and classifies each row into `synonym | flagged` based on (registry hit OR persisted status). New `?include=synonyms|auto_flagged|all` query param drives a server-side filter so the default queue only shows synonym work; auto-flagged rows live in their own view. Returns `triageCounts: { synonyms, autoFlagged, total }` for badge rendering. **Persisted status takes precedence over live registry hit** — Confirm writes `status='wrong_family'`, Revert writes `status='confirmed_in_family'` (suppresses future auto-flags for this paramName even if registry still matches).
+
+**Schema extension on `atlas_unmapped_param_notes`.** Three columns added: `status TEXT (CHECK in 'wrong_family'|'confirmed_in_family')`, `flagged_by TEXT (CHECK in 'auto'|'engineer')`, `auto_diagnosis JSONB`. The note column relaxed to nullable + a `has_signal` CHECK ensures a row exists for at least one of (note text, status). Migration is idempotent — `ALTER COLUMN ... DROP NOT NULL`, `ADD COLUMN IF NOT EXISTS`, `DO`-block constraint adds, `DROP POLICY IF EXISTS` + `CREATE POLICY` so re-runs are safe.
+
+**Ingest classifier extension.** `reclassifyByParameterSignals` in [atlasMapper.ts](../lib/services/atlasMapper.ts) gained a Phase 2 loop after the existing Decision-#175 Type-value rules: iterate the registry and re-route when `sig.target.familyId !== initial.familyId` and any param matches the pattern. Mirrored into [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) per the duplicated-by-design rule. Critically: Phase 1 (Type-value) takes precedence over Phase 2 (param-name) — a B1 with both `Type=Bi` AND `BVCBO` reclassifies to B4 TVS (the Type-value signal is more specific than the param-name signal).
+
+**UI shape.** [TriageFilterBar.tsx](../components/admin/atlasIngest/TriageFilterBar.tsx) gained a `mode: 'synonyms' | 'auto_flagged' | 'all'` ToggleButtonGroup at the top with live counts. [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) branches per row on `flagged = !!r.autoFlag || r.noteStatus === 'wrong_family'`:
+- Family chip: `B1 → B6` arrow with flag icon (instead of single-family chip)
+- Category cell: `Rectifier Diodes` (strikethrough) `→ BJTs` (errored)
+- AI translation cell: replaced by the registry's `reasoning` text in error.light
+- attributeId/Name/Unit cells: dimmed "Don't map — investigate upstream"
+- Conf cell: red "Wrong family" chip pre-confirm; green "Confirmed" post-confirm
+- Action cell: Confirm (red contained) + Revert (outlined, undo icon)
+- Row: red left-border accent (3px) for pending; muted grey + 0.55 opacity for confirmed
+
+**Sort: pending flags rise, confirmed flags sink.** Within the auto-flagged view, the route's final sort orders `noteStatus === 'wrong_family' ? 1 : 0` ascending, then `productCount` desc. New rows surface at the top; reviewed rows fall to the bottom of their own queue without going invisible.
+
+**Suggestion fetch is skipped for auto-flagged rows.** Asking Haiku to map a misclassified param's name to a canonical attribute would burn tokens producing semantically wrong suggestions. Auto-flagged rows seed their state with empty placeholders and never enter the fetch queue.
+
+**Foundational principle: auto-flag only, no auto-confirm.** A registry hit is high-confidence but not infallible — `Vp` matches JFET pinch-off but could (rarely) appear in another context where it means something else. Engineer Confirm before persisting `status='wrong_family'` is one click and catches that edge case. The friction is on confirmation, not discovery — exactly the inversion the engineer asked for ("I don't want to be the one finding the issue here with a specific row").
+
+**Files touched:**
+- [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) — **new**, the registry + `detectForeignFamily()` helper.
+- [scripts/supabase-atlas-unmapped-param-notes-schema.sql](../scripts/supabase-atlas-unmapped-param-notes-schema.sql) — `status`, `flagged_by`, `auto_diagnosis` columns + `has_signal` CHECK + idempotent re-run guards.
+- [app/api/admin/atlas/unmapped-param-notes/route.ts](../app/api/admin/atlas/unmapped-param-notes/route.ts) + [.../[paramName]/route.ts](../app/api/admin/atlas/unmapped-param-notes/[paramName]/route.ts) — surface + persist new fields.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — autoFlag computation, `?include=` filter, triageCounts.
+- [components/admin/atlasIngest/TriageFilterBar.tsx](../components/admin/atlasIngest/TriageFilterBar.tsx) — view-mode chip group.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — per-row branch on `flagged`, Confirm/Revert handlers.
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — `mode` state plumbed to API.
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — registry-driven Phase 2 reclassification.
+- [__tests__/services/atlasMapper.test.ts](../__tests__/services/atlasMapper.test.ts) — 12 new test cases per registry entry, no-op-when-target-equals-current, Phase 1 precedence, any-starting-family firing.
+
+**Verification.** Tests green at 1542 (+12). Manual: open the Triage page on a known-affected batch, see the red-badged "Auto-flagged misclassifications (N)" chip; switch view; the diagnosis card shows the `B1 → B6 BJTs` transition with reasoning. Confirm persists; row stays with Confirmed badge, drops in opacity, sinks to bottom. Revert restores it to the synonym view.
+
+---
+
+## Decision #178 — L2 Category Override Scope for Inline Accept (May 2026)
+
+Decision #176 shipped the inline Accept flow on the dictionary triage page. The Accept handler POSTed `{ familyId: row.dominantFamily }` to `/api/admin/atlas/dictionaries`. That endpoint's column is named `family_id` but is actually overloaded — its validation falls through `getAtlasParamDictionary(fid) ?? getAtlasL2ParamDictionary(fid)`, accepting either an L3 familyId (`'B5'`) or an L2 category name (`'Microcontrollers'`). The triage UI never used that overload — when a row had no L3 family (L2-only product like an MCU or memory chip), `dominantFamily` was null and Accept was disabled with a "pick a family manually via Atlas Dictionaries panel" tooltip. Engineer's path forward was to leave the triage page, navigate to the standalone Dict admin, pick the L2 category, type the same mapping again. For an MCU vendor with 15 unmapped Chinese params, that's 15 context switches.
+
+**Decision: surface `dominantCategory` alongside `dominantFamily` in the queue, and let the inline Accept POST whichever is present (family wins; category is the L2 fallback).**
+
+**Ingest pipeline emits `categoryCounts`.** [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) was already accumulating `familyCounts: Record<string, number>` per batch — added a parallel `categoryCounts` keyed on `result.classification.category` (with the same `'(uncovered)'` fallback). Threaded through `mapManufacturerProducts()`'s return tuple and into the report assembly site. Optional in the type (`categoryCounts?: Record<string, number>`) so older batches predating this change don't break the queue. Mirrored into the same field on `IngestDiffReport` in both [atlasIngestService.ts](../lib/services/atlasIngestService.ts) and [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts).
+
+**Queue route aggregates categoryCounts per param.** [/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) reads `report->categoryCounts` and scales the same way `familyCounts` is scaled (per-batch category distribution × per-param product share), producing `dominantCategory` per `GlobalUnmappedParam`. Override-resolved filter then keys on whichever scope is present (`scopeKey = entry.dominantFamily ?? entry.dominantCategory`) when checking against `activeOverrideKeys`.
+
+**Inline Accept routes via scope helper.** [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) gained `getOverrideScope(row): { kind, key } | null` — returns `{ kind: 'family', key: dominantFamily }` if present, else `{ kind: 'category', key: dominantCategory }`, else null. Every callsite that previously used `r.dominantFamily` for override scoping was swapped: the suggest endpoint POST, the Accept endpoint POST, the schema cache lookup, the disabled-button check, the `isBulkEligible` filter. The change_reason surfaced in audit history records the kind explicitly: `"AI-assisted ingest triage (L2 category: Microcontrollers, confidence: high)"`.
+
+**UI affordance.** Family chip shows `L2` (info color) instead of `?` (warning) when only category is present, with a tooltip "L2 category: Microcontrollers (no logic-table family — override scoped to category)". Category cell shows the category name verbatim (`Microcontrollers`) instead of dash. Accept button enables. Engineer one-clicks instead of detouring.
+
+**Discovered limit (multi-category MFRs).** When the same paramName appears across products in **two** L2 categories — e.g. FMD ships 52 MCUs + 23 memory chips with overlapping Chinese param names like `工作电压(范围)` and `存取时间` — the queue's `dominantCategory` rolls up to whichever has more products (Microcontrollers in FMD's case, 52 > 23). Accepting an override scoped to Microcontrollers leaves the 23 Memory products' params still unmapped on the next regen. The category-scoped override system is fundamentally per-category. **Workaround for this case:** clone the active overrides to the secondary category as separate `add` rows (one-shot script). Long-term fix tracked in BACKLOG: surface multi-category coverage in the triage UI so a single Accept fans out to all observed categories OR lift truly category-agnostic params (`工作电压`, `工作温度`, etc.) to `SHARED_PARAMS` (the dict layer that's already cross-category).
+
+**Backward compat.** Pre-existing pending batches don't have `categoryCounts` in their reports. The queue route falls through gracefully — `dominantCategory: null`, Accept stays disabled for those rows, behavior matches pre-change. Regen via the per-batch button repopulates the field; bulk Regen All Affected fires after every Accept anyway.
+
+**Files touched:**
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — `categoryCounts` build site, threading through report assembly.
+- [lib/services/atlasIngestService.ts](../lib/services/atlasIngestService.ts) + [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — optional `categoryCounts` field on `IngestDiffReport`, optional `dominantCategory` + `categoryCounts` on `GlobalUnmappedParam`.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — per-param category aggregation, override-resolved filter scope unification.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — `getOverrideScope()` helper, every callsite swapped to scope, L2 chip in Family cell, category-name fallback in Category cell.
+
+**Verification.** FMD batch: regen → 4 unmapped (down from 15); accept the L2 mappings → 0 unmapped on next regen. Multi-category MFR (FMD has both MCUs + Memory): accepting Microcontrollers-scoped overrides leaves 4 unmapped from Memory side; cloned to Memory category via a one-shot script → 0 unmapped, risk dropped from `attention` to `clean`.
+
+---
+
+## Decision #179 — Atlas Coverage Compute via SQL RPC, Not JSONB Pull (May 2026)
+
+The Atlas Coverage admin page was taking ~50 seconds to load on cold cache. Profiling [/api/admin/atlas/route.ts](../app/api/admin/atlas/route.ts) `computeAtlasCoverage()` revealed two `fetchAllPages` walks over `atlas_products`:
+
+1. **Lightweight pass** — 67,164 rows (`manufacturer, family_id, category, subcategory, updated_at`), 1000-row pages, ~70 round trips.
+2. **Scorable pass** — 49,129 rows with **full `parameters` JSONB** (~1 KB per row), 1000-row pages, ~50 round trips, **~47 MB on the wire**.
+
+Both fired in parallel, but the scorable+JSONB walk dominated. Plus the cache was empty (cleared by a prior Proceed in the session), so every cold-cache visitor paid the full cost. Aggregating in Node after pulling the JSONB was the wrong layer — Postgres can do it without ever shipping the body.
+
+**Decision: a single SQL RPC `get_atlas_coverage_aggregates(family_attrs JSONB)` does the entire aggregation in Postgres. The route ships only the rule-attr map down (~10–20 KB) and gets aggregate rows back (~5K rows, a few KB).**
+
+**RPC contract.** [scripts/supabase-atlas-coverage-rpc.sql](../scripts/supabase-atlas-coverage-rpc.sql). Returns one row per `(manufacturer, family_id, category, subcategory)` tuple with: `product_count BIGINT`, `total_covered BIGINT`, `total_rules BIGINT`, `last_updated TIMESTAMPTZ`. The coverage SUMs include a `CASE` guard `family_attrs ? p.family_id` so rows in families not present in the input map (or non-scorable rows with `family_id IS NULL`) contribute 0 — letting the route iterate ALL 43 logic tables once at module init without conditioning the RPC call on what families exist in the DB. The GIN index on `parameters` (existing `idx_atlas_products_params`) accelerates the `parameters ? rule_attr` operator inside the correlated subquery.
+
+**Per-function statement timeout bump (added during deployment).** Supabase's default `statement_timeout` is ~60s. The RPC scans 71K rows × ~10–20 attribute-presence checks per scorable row — at the current size this lands well under 60s, but headroom matters as `atlas_products` grows. The function declares `SET statement_timeout = '300s'` so the RPC has its own budget without changing the connection's broader timeout. **This is a stopgap.** The long-term fix is a precomputed `coverage_attrs_count INT` column on `atlas_products` (or a materialized view) maintained at write time — eliminates the per-row JSONB iteration entirely. Tracked in BACKLOG.
+
+**Route refactor.** `computeAtlasCoverage()` now: builds the family→ruleAttrs map once (`buildFamilyAttrsPayload()` cached at module scope; static across requests since logic tables ship with the codebase); fires three queries in parallel — the RPC, `atlas_manufacturers` (~115 rows), `atlas_manufacturer_settings` (~tiny); rolls up the RPC's per-(mfr, family_id, category, subcategory) rows to per-MFR + global summary in TS. Same response shape as before, UI sees no change. Service-role client throughout (admin auth gated upstream by `requireAdmin()`); no RLS round-trip needed.
+
+**Cache layering unchanged.** L1 (60s in-memory) and L2 (`admin_stats_cache` row keyed `'atlas-coverage'`) both still apply. SWR threshold at 6 hours kicks a background recompute when the persistent cache is stale. The `invalidateAtlasCache()` exported function still triggers a fire-and-forget recompute; with the RPC, that recompute now takes ~3s instead of ~50s, so the user-facing latency on cache-miss is acceptable enough that pre-warming after Proceed/Revert isn't worth the script-to-route call complexity.
+
+**Why not refactor the manufacturers route the same way?** It already does — `supabase.rpc('get_manufacturer_product_stats')` per Decision #123. The atlas-coverage compute was the outlier. This decision brings it into alignment.
+
+**Migration deployment.** Idempotent (`CREATE OR REPLACE FUNCTION`), so re-runnable. User applies in Supabase SQL editor. After apply, the route's first call gets the RPC; if the function doesn't exist, the route surfaces the RPC error verbatim via the existing error-fallback path that returns last-known-good cache (or a 503 if nothing's cached).
+
+**Files touched:**
+- [scripts/supabase-atlas-coverage-rpc.sql](../scripts/supabase-atlas-coverage-rpc.sql) — **new**, the RPC definition with embedded `SET statement_timeout = '300s'`.
+- [app/api/admin/atlas/route.ts](../app/api/admin/atlas/route.ts) — `buildFamilyAttrsPayload()` helper, `computeAtlasCoverage()` rewritten around RPC, dual `fetchAllPages` walks removed, switched from cookie-bound `createClient()` to `createServiceClient()` for consistency.
+
+**Verification.** Tests stayed green at 1542 across the change (no test coverage for the RPC path itself — would need a Supabase test container; verification is observational against prod). After SQL apply, cold-cache page load expected to drop from ~50s to ~3s.
+
+**Deferred.** (1) Pre-warming the cache from `atlas-ingest.mjs` after Proceed/Revert — would require either an HTTP callback to the dev/prod URL or duplicated compute in the script, neither pretty. RPC speedup alone makes the post-Proceed wait acceptable. (2) Precomputed coverage column on `atlas_products` — the durable fix; eliminates the per-row JSONB scan. Deferred until the RPC actually starts hitting timeout headroom (likely at 200K+ products).
+
+## Decision #180 — Triage Queue Compute via SQL RPC + L1+L2+SWR Cache (May 2026)
+
+The Atlas Dictionary Triage page was taking 23+ seconds to load on cold cache, sometimes triggering "Page Unresponsive" warnings in the browser. Two compounding issues:
+
+1. **Server compute**: [/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) `computeTriageAggregation()` was pulling every pending+applied batch's `report->'unmappedParams'` JSONB sub-path over the wire — MBs of data — then aggregating in Node (cross-batch dedup, MFR rollup, familyCounts/categoryCounts merge, sample-value dedup, override annotation, foreign-family classification). 5–25s depending on accumulated batch count.
+2. **Client render**: with ~400+ deduplicated rows, MUI was creating ~5000 React elements (Tooltip + Chip + TextField + Button per row × 12 cells). Initial mount took long enough to trigger browser unresponsiveness.
+
+**Decision: mirror the atlas-coverage pattern from #179. Move aggregation to a Postgres RPC. Add a dual-layer cache. Paginate the table client-side.**
+
+**RPC contract.** [scripts/supabase-triage-aggregate-rpc.sql](../scripts/supabase-triage-aggregate-rpc.sql). `get_triage_unmapped_aggregate()` walks `atlas_ingest_batches` (status IN pending/applied), expands each batch's `report->'unmappedParams'` JSONB array via `jsonb_array_elements`, aggregates by `paramName`. Returns one row per unique paramName with: total `product_count BIGINT`, dedup'd `affected_batch_ids TEXT[]`, MFR rollup `affected_mfrs JSONB` (array of `{name, productCount}` sorted by productCount desc), merged `family_counts JSONB`, merged `category_counts JSONB`, dedup'd `sample_values TEXT[]` (capped at 5). Uses CTEs to keep the SQL legible: `expanded` → `base` (per-paramName totals) → `mfr_agg` / `fam_agg` / `cat_agg` / `sv_agg` (each its own GROUP BY) → final LEFT JOIN. Wire payload drops to ~50 KB. `SET statement_timeout = '300s'` per-function override matches #179's pattern. Dropped legacy batch-level `familyCounts`/`categoryCounts` fallback — only the per-param breakdown emitted by the mjs aggregator since the dominantFamily-attribution fix is supported. Older batches without per-param data contribute productCount but no family attribution → `dominantFamily` falls back to null. Acceptable; the legacy batch-level approximation was buggy on mixed-product-type MFRs (the Delta case, Decision #176).
+
+**Cache layering** ([lib/services/triageQueueCache.ts](../lib/services/triageQueueCache.ts)). L1 in-memory (30 min TTL), L2 in `admin_stats_cache` row keyed `'triage-queue'` (persistent, no TTL — invalidated by mutations), SWR threshold at 6 hours. After the first cold compute, every subsequent load is sub-second (L1 hit) or ~500ms (L2 hit warming L1).
+
+**Two invalidate variants.** This is the heart of the Sunlord bug fix:
+- `invalidateTriageQueueCache()` — single-flight. Clears L1, kicks off recompute IF none in flight (otherwise reuses the existing one). Returns the in-flight Promise. Used by per-row mutations (Accept/Revert/note edit). Optimistic UI on the client keeps the acting user fresh; staleness for other readers is bounded by the next batch-state mutation.
+- `invalidateTriageQueueCacheAndAwaitFresh()` — wait-then-restart. (1) Drains any in-flight recompute (its RPC may have started reading the DB BEFORE this caller's commit landed). (2) Clears L1. (3) Starts a fresh recompute (DB read happens NOW, after the caller's commit, so it's guaranteed to see the changes). (4) Awaits the fresh recompute. Used by batch-state mutations (upload, proceed, revert, regenerate, batch delete, proceed-all-clean). Cost: up to 2 recomputes per call, but the user is already in a "waiting on a slow operation" mental state.
+
+**The Sunlord bug, in detail.** Initial fix added `await invalidateTriageQueueCache()` to the upload route, expecting it to refresh the cache before responding. But the single-flight pattern handed back any existing in-flight Promise — typically from a fire-and-forget per-row Accept earlier in the session. That recompute had already started its RPC against pre-Sunlord DB state, so awaiting it returned stale data. User uploaded Sunlord, navigated to Triage, saw "no unresolved parameters for this batch — nothing to review" because the cached classified set didn't include any Sunlord rows. The wait-then-restart variant guarantees the awaited recompute starts AFTER the caller's commit.
+
+**Stop deleting L2 from the .mjs script.** The original `scripts/atlas-ingest.mjs` was DELETING the `admin_stats_cache` rows for `atlas-coverage`, `manufacturers-list`, `atlas-growth`, and `triage-queue` on every Proceed/Revert. That meant: API route's invalidate hooks kicked off async background recomputes (L2 stays valid, users see slightly-stale data instantly) — but then the script DELETED L2 anyway, forcing the next user request into a synchronous cold compute path. Removed the deletes from the script. The API route's invalidate hooks own cache invalidation correctly.
+
+**Per-route framework caching defeated.** Added `export const dynamic = 'force-dynamic'` to the batches route + `cache: 'no-store'` to the client fetch in `AtlasDictTriagePanel.tsx`. Belt-and-suspenders against any browser-level or Next.js-level caching that might layer on top of our L1/L2.
+
+**Files touched:**
+- [scripts/supabase-triage-aggregate-rpc.sql](../scripts/supabase-triage-aggregate-rpc.sql) — **new**, the RPC.
+- [lib/services/triageQueueCache.ts](../lib/services/triageQueueCache.ts) — **new**, L1+L2+SWR cache module with two invalidate variants.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — `computeTriageAggregation()` rewritten around RPC; cache read/write wired in; `dynamic='force-dynamic'`.
+- 6 batch-state routes wired to use `invalidateTriageQueueCacheAndAwaitFresh()`: report, proceed, revert, regenerate, batch-DELETE, proceed-all-clean.
+- 5 per-row routes use single-flight `invalidateTriageQueueCache()`: dictionaries POST/PATCH/DELETE, notes PUT/DELETE.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — removed `admin_stats_cache` deletes from Proceed and Revert paths.
+
+**Verification.** 1542 tests pass. Cold-cache load expected to drop from 23s to ~2-3s. Post-upload navigate-to-Triage now shows the new MFR's unmapped params immediately without a Refresh click. Per-row Accept stays snappy (no refetch) via the optimistic-UI pattern (Decision #182).
+
+## Decision #181 — AI Triage Suggestion: On-Demand Sonnet 4.6 Verdict (May 2026)
+
+The user's prior triage workflow involved screenshotting the Triage table, pasting it into Claude (web/desktop, Extra-High mode) one paramName at a time, reading the analysis, then either clicking Accept in our UI or copy-pasting Claude's reasoning into the team-note popover. Each row took multiple manual round-trips. The existing per-row Haiku suggester was a translation, not a recommendation — it didn't say "accept this" or "defer with this rationale".
+
+**Decision: inline the Claude-web step. Per-row Sonnet 4.6 suggestion that returns a binary verdict (`accept` | `defer`) plus a written explanation. The user always decides; the suggestion is advisory.**
+
+**Suggestion shape** ([components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts)). Existing `DictSuggestion` extended with `suggestion: 'accept' | 'defer'` and `explanation: string | null`. Both verdicts get the same depth of evidence — explanation is full prose written in engineer-note voice (1-3 sentences), visible by default below the AI translation in the cell. No opaque "trust me" Accept chips. Symmetric UX so Claude doesn't get to be vague about an Accept rec while justifying a Defer.
+
+**Defer pre-fills the team note draft.** When `suggestion === 'defer'`, the `UnmappedParamNoteCell` component receives `aiDraft={explanation}` and `aiDraftHint={true}`. Opening the note popover seeds the textarea with Claude's reasoning + a small "Pre-filled by AI — edit before saving" caption. The note button itself turns warning-amber when there's a pending AI draft and no existing note. User can edit before saving (first keystroke clears the "from AI" caption). Reuses the existing `atlas_unmapped_param_notes` table — no parallel infrastructure.
+
+**Endpoint upgrade** ([app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)). Bumped from `claude-haiku-4-5-20251001` to `claude-sonnet-4-6`, `max_tokens` 256→600. Prompt rewritten to require the verdict + explanation as a 6th and 7th output field. Verdict logic: `accept` iff suggested attributeId is canonical (in family schema) AND concept matches AND samples are consistent, OR reuses a previously-accepted canonical that genuinely represents the same concept. `defer` iff: suggested ID is generic-catchall (style/type/size/kind/category/material) and would shoehorn unrelated concepts; OR near-duplicate of an existing canonical (e.g. proposed `positions_per_row` when `pins_per_row` exists); OR sample units don't match the suggested ID; OR concept is ambiguous and a more specific canonical should be defined first. Explanation styled as the engineer would write a team note.
+
+**Generation is on-demand, not eager.** Sonnet 4.6 at ~$0.005/row × 100 params = $0.50 per Triage page load if eager. Replaced eager-on-mount with manual triggers: a top-of-table info Alert "N rows need AI suggestions — generate only when you're ready to triage" with a single **Generate N** button, plus a per-row **Generate** mini-button in the AI translation cell for one-at-a-time use. Previously-generated suggestions persist in localStorage (7d) + server cache (24h), so cached rows render instantly on revisit without re-firing tokens.
+
+**Cache prefix bumped.** `SUGGEST_LS_PREFIX` from `atlas-ingest-ai-suggest:` → `atlas-ingest-ai-suggest-v2:`. Old cached entries lacked `suggestion`/`explanation`; bumping forces refetch against Sonnet on next view. Prevents legacy "verdict undefined" rendering.
+
+**Files touched:**
+- [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts) — Sonnet 4.6, prompt + response shape.
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — extend `DictSuggestion`.
+- [components/admin/atlasIngest/UnmappedParamNoteCell.tsx](../components/admin/atlasIngest/UnmappedParamNoteCell.tsx) — `aiDraft` + `aiDraftHint` props, seed textarea, "Pre-filled by AI" caption, amber button hint.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — split eager fetch into `hydrateFromCache()` (auto, no API) + `generateSuggestionsForRows()` (manual). Bulk Generate Alert + per-row Generate button. Repurposed Conf column → Suggestion. Symmetric explanation rendering. Cache prefix bump.
+
+**Why one model call instead of separate translate + verdict.** Sonnet does both well in a single round-trip; splitting into Haiku-translate + Sonnet-verdict adds complexity (two endpoints, two caches, dependent ordering) without meaningful cost savings. The combined call is cleaner.
+
+**Deferred.** (1) Per-MFR batch suggestion call (one Sonnet pass over all unmapped params for an MFR — could spot patterns across rows and consult cross-row context). Cheaper amortized; higher risk of model dropping rows. Revisit if per-row cost becomes painful. (2) Suggester consults cross-scope canonicals (currently sees only the row's own family/category schema). E.g. discovering `gender` in modular-connectors L2 should be visible to a generic Connectors L2 row that needs a male/female mapping. (3) Sample-value-aware concept similarity. (4) Auto-save the AI draft as a note without user confirmation — explicitly out of scope; user always decides.
+
+## Decision #182 — Triage UI: Optimistic Updates + Client-Side Filtering + Pagination (May 2026)
+
+Three compounding UX issues on the Triage page: (1) every Accept triggered a server refetch + 30s skeleton because the cache invalidation forced a cold reload. (2) Every mode/status filter chip click re-fetched server-side. (3) Rendering 400+ rows on initial paint froze the browser long enough to trigger "Page Unresponsive" warnings.
+
+**Decision: optimistic in-place row updates for Accept/Revert; client-side filtering for mode/status/search/MFR/family/has-note; pagination capped at 100 rows initial.**
+
+**Optimistic Accept/Revert.** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) takes new `onRowAccepted(paramName, override)` and `onRowReverted(paramName)` callbacks. `acceptRow()` POSTs to `/api/admin/atlas/dictionaries`, captures the response (which includes the new override metadata), and calls `onRowAccepted` with it. The parent `AtlasDictTriagePanel` mutates `data.unmappedParamsGlobal[i].acceptedOverride` in place and adjusts `statusCounts` (open-1, accepted+1) + `triageCounts.synonyms` (-1 if applicable). The row instantly transforms: Accept button → "Accepted" chip + Revert button. No skeleton, no refetch. `createdByName` defaults to `'You'` since the current user just did it; the next real refresh resolves to their actual display name.
+
+**Client-side filtering pipeline.** Mode (Open Synonyms / Auto-flagged / All), status (Open / Accepted / Undone / All), and the page-level filters (search, MFR, family, min-prods, has-note) all run in a single `filteredRows` `useMemo` against `data.unmappedParamsGlobal`. The route now defaults `include` and `status_filter` to `'all'` and returns the FULL classified set unconditionally (~50KB after Decision #180's RPC). Mode/status chip clicks are pure JS array filters — instant. The route's per-request `batchFilter` slice still runs server-side because it's a single deterministic filter and doesn't benefit from client-side reuse.
+
+**Single fetch on mount.** `refresh()`'s dep array no longer includes `mode` and `statusFilter`, so it doesn't re-run on chip clicks. New `refresh(forceFresh)` parameter wires `?refresh=1` for the explicit Refresh button.
+
+**Refresh button.** Top-right of the Triage page, always visible. Forces `?refresh=1` (cache bypass + sync compute). Used after major uploads when freshness matters more than speed (~10-30s wait), and as a manual escape hatch for any cache weirdness.
+
+**Pagination.** `INITIAL_VISIBLE_ROWS = 100` constant in `GlobalUnmappedParamsTable.tsx`. The table renders only `rows.slice(0, visibleCount)`. Footer shows "Showing 100 of N rows" with **Show 100 more** + **Show all** buttons. `visibleCount` resets to 100 whenever the filtered `rows` prop changes (new filter narrowed the set — don't carry over a previous "show all" state). Eliminated the browser-freeze that was triggering AbortError + Page Unresponsive warnings on 400+ row queues.
+
+**Why no virtualization library.** react-window/react-virtuoso are heavier deps for a Table component. The 100-row pagination pattern handles the practical case (engineer triages ~20-100 rows per session) without the integration complexity of windowing inside MUI's Table layout.
+
+**Files touched:**
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — `onRowAccepted` + `onRowReverted` callbacks; client-side mode/status filtering; single fetch per `batchFilter`; Refresh button.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — accept/revert pass new override metadata to parent; pagination footer with `visibleCount` state.
+
+**Verification.** 1542 tests pass. Triage page mount drops to ~500ms (100 rows). Mode/status chip clicks are sub-millisecond. Accept doesn't blank the page. Refresh button is the explicit cache-bypass for the rare case where the cache truly needs forcing.
+
+## Decision #183 — Atlas Growth Aggregates via SQL RPC (May 2026)
+
+The Atlas Coverage page's growth chart was capping at ~40K products on the right axis even though the KPI tile reported 101,938 — a ~60K-row undercount. Diagnosed: [/api/admin/atlas/growth](../app/api/admin/atlas/growth/route.ts) was walking `atlas_products` row-by-row via `fetchAllPages` (101 pages of 1000 once Atlas crossed 100K). The loop destructured only `data` and ignored `error`, so any later page that hit a Postgres `statement_timeout` or network blip returned `null` and the loop broke silently with a partial result. The chart line ended early, the y-axis auto-scaled to the truncated max, and the chart looked like ingest had only added ~40K parts.
+
+**Decision: third Atlas RPC — `get_atlas_growth_aggregates()` does the per-MFR rollup and per-day product bucketing in Postgres.**
+
+Mirrors the patterns from [Decision #179](#decision-179--atlas-coverage-aggregation-via-postgres-rpc-may-2026) (atlas-coverage) and [Decision #180](#decision-180--triage-queue-compute-via-sql-rpc--l1l2swr-cache-may-2026) (triage). One round-trip in, ~50KB JSONB out, no row-by-row pagination, no silent failure mode, `SET statement_timeout = '300s'` as growth headroom.
+
+**RPC return shape** ([scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql)):
+
+```json
+{
+  "mfrs": [{ "manufacturer": "Sunlord", "product_count": 16756, "min_created_at": "...", "categories": ["Capacitors", ...] }, ...],
+  "day_buckets": [{ "day": "2026-05-08", "product_delta": 16756 }, ...]
+}
+```
+
+The route still walks `atlas_ingest_batches` (small, ~thousands of rows) and `atlas_manufacturers` in TS — those drive event generation which has logic-table lookups that don't belong in SQL. The expensive 100K+ row scans are gone.
+
+**Dead code removed.** The old `ProductRollup.maxCreatedAt` field was set but never read. The old `family_id` column was selected from `atlas_products` but never used. Both dropped.
+
+**Cache lifecycle unchanged.** `invalidateAtlasGrowthCache()` already does fire-and-forget background recompute (Decision #180-style) — first page load after Proceed shows the previous cached payload, background recompute upserts the fresh row in ~1-2s now (was ~30-60s on cold compute via the row-by-row path). Mem cache 60s, persistent cache SWR 6h.
+
+**Files touched:**
+- [scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql) — new file, RPC definition + GRANT.
+- [app/api/admin/atlas/growth/route.ts](../app/api/admin/atlas/growth/route.ts) — call RPC, drop fetchAllPages over `atlas_products`, drop dead `maxCreatedAt`/`family_id`, drop `ProductRow` interface.
+
+**Deploy.** Apply [scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql) in Supabase SQL Editor. Then click the Atlas Coverage page's Refresh button (or hit `?refresh=1`) to force a fresh compute. Subsequent loads serve from cache.
+
+**Verification.** Cold compute drops from ~30-60s (row-by-row 100K+ rows) to ~1-2s (single RPC). Chart's right axis now matches the KPI tile's product count exactly. No more silent undercount on later pages.
+
+## Decision #184 — FindChips OEMS as Conditional Second Source for Commercial Data (May 2026)
+
+The FindChips API exposes two upstream sources via the same endpoint: `site=fc` (franchised distributors — Digikey, Mouser, Arrow, etc.) and `site=oems` (independent distributors — surfaces oemstrade.com inventory, where Chinese distributors and brokers tend to live). Until now we only hit `fc`, which left Atlas (Chinese-MFR) parts and obsolete Western parts with no commercial-data coverage when the franchised channel didn't carry them.
+
+The user's intent: OEMS is a *last-resort* source — many sellers are brokers, less-trusted pricing — so we don't want to pollute the Commercial tab with broker quotes when FC's franchised coverage is already good. The FC API has no per-call cost or hard rate limit; gating is a quality decision, not a budget one.
+
+**Decision: trigger OEMS conditionally based on three signals — Atlas/Chinese MFR, FC empty, FC reports obsolete/EOL.** Merge results with FC-wins dedup by normalized distributor name. No UI changes (per IT confirmation that OEMS can return identical results to FC, distinguishing them visually would be misleading).
+
+**Trigger conditions:**
+1. **Atlas/Chinese-MFR parts** — proactive parallel fetch (FC + OEMS in parallel from the start). Keys off `mfrOrigin === 'atlas'` (Decision #161) for the recs side; falls back to `dataSource === 'atlas'` for search/parts-list source-side rows where `mfrOrigin` isn't yet resolved.
+2. **FC returns zero distributors** — server-side fallback fetches OEMS, merges in.
+3. **FC reports the part as obsolete/EOL** — server-side fallback (lifecycle code = `'obsolete'` or `'not_recommended'`) fetches OEMS, merges in.
+
+**Client API shape** ([lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts)):
+
+```ts
+type FcFetchSource = 'fc' | 'oems' | 'parallel-both' | 'fc-with-oems-fallback';
+
+getFindchipsResults(mpn, userId, opts?: { source?: FcFetchSource })
+getFindchipsResultsBatch(mpns, userId, opts?: {
+  chineseMpns?: Set<string>;       // proactive parallel
+  fallbackOnEmpty?: boolean;       // default true
+  fallbackOnObsolete?: boolean;    // default true
+})
+```
+
+Default `source: 'fc'` preserves prior behavior for any future call sites that don't opt in. The batch helper's defaults make every existing call site strictly better than today (FC-only) without source coupling — `chineseMpns` is the optional upgrade.
+
+**Source-keyed L1 cache.** Cache key changed from `mpn.toLowerCase()` → `${mpn.toLowerCase()}::${site}` so FC and OEMS results cache independently. Caller composes merged results on read; we never re-fetch one site just because the other turned out to be needed. Null results are now cached too (5-min TTL) so a part with no FC coverage doesn't keep firing FC on every retry inside a 5-min window. L2 distributor-count cache (`fc-distributors` variant, 6-mo TTL) keeps its name and shape but now stores the *merged* count.
+
+**Two-phase batch.** `getFindchipsResultsBatch` runs phase 1 (FC for all + OEMS in parallel for `chineseMpns`), then phase 2 (OEMS top-up for any non-Chinese MPN whose FC came back empty or obsolete). Concurrency stays at 5 per site.
+
+**Dedup.** New `mergeFcAndOems(fc, oems)` helper builds a `Set<normalizedDistributorName>` from FC, then appends only OEMS distributors not already in the set. `normalizeDistributorName` moved from [lib/services/findchipsMapper.ts](../lib/services/findchipsMapper.ts) to [lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts) (single source of truth, avoids mapper → client → mapper circular import; mapper re-exports for back-compat).
+
+**Wiring trail:**
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) `enrichWithFindchips` reads `mfrOrigin`, picks `'parallel-both'` for Atlas else `'fc-with-oems-fallback'`.
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) `enrichCandidatesWithFindchips` derives `chineseMpns` from rec `.part.mfrOrigin === 'atlas'`.
+- [app/api/fc/enrich/route.ts](../app/api/fc/enrich/route.ts) accepts optional `chineseMpns` array in body, forwards to batch helper.
+- [lib/api.ts](../lib/api.ts) `enrichWithFCBatch(mpns, signal, chineseMpns?)` — third optional param.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) `triggerFCEnrichment` filters recs by `mfrOrigin === 'atlas'`; `triggerSearchDistributorEnrichment` falls back to `dataSource === 'atlas'` since `PartSummary` lacks `mfrOrigin` (resolved later in the recs pipeline).
+- [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) source-side uses `resolvedPart.dataSource === 'atlas'`, replacement-side uses `rec.part.mfrOrigin === 'atlas'`.
+
+**What does not change.** Mapper output (`SupplierQuote[]` / `LifecycleInfo` / `ComplianceData`) is source-agnostic — no provenance field, no UI tagging, no type changes, no DB migration. Commercial-tab `SupplierCard` and parts-list columns auto-include OEMS quotes through the unchanged `quotes` array.
+
+**Knowingly accepted.** L2 distributor-count entries cached pre-rollout reflect FC-only counts; they self-heal on next live fetch or expire at 6 months. Decorative badge, not load-bearing.
+
+**Files touched:**
+- [lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts) — site-keyed cache, strategy options, merge helper, two-phase batch.
+- [lib/services/findchipsMapper.ts](../lib/services/findchipsMapper.ts) — re-exports `normalizeDistributorName` from client (single source of truth).
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — strategy selection in `enrichWithFindchips` + `chineseMpns` in `enrichCandidatesWithFindchips`.
+- [app/api/fc/enrich/route.ts](../app/api/fc/enrich/route.ts) — accept `chineseMpns`.
+- [lib/api.ts](../lib/api.ts) — forward `chineseMpns`.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — derive `chineseMpns` for recs + search-result enrichment.
+- [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) — derive `chineseMpns` at both batch FC enrichment call sites.
+
+**Verification.** All 1542 tests pass; type check clean; production build clean. Manual end-to-end TBD: search a known Atlas MPN (3PEAK, GigaDevice) and watch for two `api.findchips.com` calls (`site=fc` + `site=oems`); search a stocked Western part and confirm only one call (`site=fc`); search an obsolete Western part and confirm OEMS fires after FC lifecycle reports EOL.

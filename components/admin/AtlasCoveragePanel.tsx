@@ -5,6 +5,7 @@ import { Box, Tabs, Tab, Skeleton, Alert } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import AtlasOverviewTab from './AtlasOverviewTab';
 import AtlasActivityTab from './AtlasActivityTab';
+import AtlasGrowthChart from './AtlasGrowthChart';
 import AtlasLatestUpdatesWidget from './AtlasLatestUpdatesWidget';
 import type { AtlasResponse } from './atlasCoverage/types';
 import type { AtlasGrowthResponse } from '@/app/api/admin/atlas/growth/route';
@@ -24,7 +25,18 @@ export default function AtlasCoveragePanel() {
   const fetchCoverage = useCallback(async (forceRefresh: boolean): Promise<AtlasResponse | null> => {
     const url = `/api/admin/atlas${forceRefresh ? '?refresh=1' : ''}`;
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Atlas HTTP ${res.status}`);
+    if (!res.ok) {
+      // Surface the server-side detail in the error chip so the page can
+      // diagnose without requiring DevTools / terminal access.
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = body?.detail ?? body?.error ?? '';
+      } catch {
+        try { detail = await res.text(); } catch { /* ignore */ }
+      }
+      throw new Error(`Atlas HTTP ${res.status}${detail ? ` — ${detail}` : ''}`);
+    }
     return (await res.json()) as AtlasResponse;
   }, []);
 
@@ -56,17 +68,24 @@ export default function AtlasCoveragePanel() {
     };
   }, [fetchCoverage, fetchGrowth]);
 
+  // Overview tab shows BOTH coverage KPIs and the growth chart, so its
+  // Refresh button needs to bypass cache for both endpoints. Without this,
+  // a user on Overview seeing a stale growth chart would click Refresh and
+  // only the KPIs (coverage data) would update — chart stays stale.
   const handleRefreshCoverage = useCallback(async () => {
     setCoverageRefreshing(true);
+    setGrowthRefreshing(true);
     try {
-      const cov = await fetchCoverage(true);
+      const [cov, g] = await Promise.all([fetchCoverage(true), fetchGrowth(true)]);
       if (cov) setCoverage(cov);
+      if (g) setGrowth(g);
     } catch (e) {
-      console.error('coverage refresh failed:', e);
+      console.error('overview refresh failed:', e);
     } finally {
       setCoverageRefreshing(false);
+      setGrowthRefreshing(false);
     }
-  }, [fetchCoverage]);
+  }, [fetchCoverage, fetchGrowth]);
 
   const handleRefreshGrowth = useCallback(async () => {
     setGrowthRefreshing(true);
@@ -112,6 +131,7 @@ export default function AtlasCoveragePanel() {
             cachedAt={coverage.cachedAt ?? null}
             onRefresh={handleRefreshCoverage}
             refreshing={coverageRefreshing}
+            growthChartSlot={growth ? <AtlasGrowthChart events={growth.events} /> : null}
             latestUpdatesSlot={
               growth ? (
                 <AtlasLatestUpdatesWidget

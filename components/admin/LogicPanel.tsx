@@ -149,7 +149,7 @@ export default function LogicPanel({ table }: LogicPanelProps) {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-        <Typography variant="h6">
+        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
           {t(`${fKey}.name`, table.familyName)}
         </Typography>
         <Button
