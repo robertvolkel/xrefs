@@ -5216,3 +5216,174 @@ Both fired in parallel, but the scorable+JSONB walk dominated. Plus the cache wa
 **Verification.** Tests stayed green at 1542 across the change (no test coverage for the RPC path itself — would need a Supabase test container; verification is observational against prod). After SQL apply, cold-cache page load expected to drop from ~50s to ~3s.
 
 **Deferred.** (1) Pre-warming the cache from `atlas-ingest.mjs` after Proceed/Revert — would require either an HTTP callback to the dev/prod URL or duplicated compute in the script, neither pretty. RPC speedup alone makes the post-Proceed wait acceptable. (2) Precomputed coverage column on `atlas_products` — the durable fix; eliminates the per-row JSONB scan. Deferred until the RPC actually starts hitting timeout headroom (likely at 200K+ products).
+
+## Decision #180 — Triage Queue Compute via SQL RPC + L1+L2+SWR Cache (May 2026)
+
+The Atlas Dictionary Triage page was taking 23+ seconds to load on cold cache, sometimes triggering "Page Unresponsive" warnings in the browser. Two compounding issues:
+
+1. **Server compute**: [/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) `computeTriageAggregation()` was pulling every pending+applied batch's `report->'unmappedParams'` JSONB sub-path over the wire — MBs of data — then aggregating in Node (cross-batch dedup, MFR rollup, familyCounts/categoryCounts merge, sample-value dedup, override annotation, foreign-family classification). 5–25s depending on accumulated batch count.
+2. **Client render**: with ~400+ deduplicated rows, MUI was creating ~5000 React elements (Tooltip + Chip + TextField + Button per row × 12 cells). Initial mount took long enough to trigger browser unresponsiveness.
+
+**Decision: mirror the atlas-coverage pattern from #179. Move aggregation to a Postgres RPC. Add a dual-layer cache. Paginate the table client-side.**
+
+**RPC contract.** [scripts/supabase-triage-aggregate-rpc.sql](../scripts/supabase-triage-aggregate-rpc.sql). `get_triage_unmapped_aggregate()` walks `atlas_ingest_batches` (status IN pending/applied), expands each batch's `report->'unmappedParams'` JSONB array via `jsonb_array_elements`, aggregates by `paramName`. Returns one row per unique paramName with: total `product_count BIGINT`, dedup'd `affected_batch_ids TEXT[]`, MFR rollup `affected_mfrs JSONB` (array of `{name, productCount}` sorted by productCount desc), merged `family_counts JSONB`, merged `category_counts JSONB`, dedup'd `sample_values TEXT[]` (capped at 5). Uses CTEs to keep the SQL legible: `expanded` → `base` (per-paramName totals) → `mfr_agg` / `fam_agg` / `cat_agg` / `sv_agg` (each its own GROUP BY) → final LEFT JOIN. Wire payload drops to ~50 KB. `SET statement_timeout = '300s'` per-function override matches #179's pattern. Dropped legacy batch-level `familyCounts`/`categoryCounts` fallback — only the per-param breakdown emitted by the mjs aggregator since the dominantFamily-attribution fix is supported. Older batches without per-param data contribute productCount but no family attribution → `dominantFamily` falls back to null. Acceptable; the legacy batch-level approximation was buggy on mixed-product-type MFRs (the Delta case, Decision #176).
+
+**Cache layering** ([lib/services/triageQueueCache.ts](../lib/services/triageQueueCache.ts)). L1 in-memory (30 min TTL), L2 in `admin_stats_cache` row keyed `'triage-queue'` (persistent, no TTL — invalidated by mutations), SWR threshold at 6 hours. After the first cold compute, every subsequent load is sub-second (L1 hit) or ~500ms (L2 hit warming L1).
+
+**Two invalidate variants.** This is the heart of the Sunlord bug fix:
+- `invalidateTriageQueueCache()` — single-flight. Clears L1, kicks off recompute IF none in flight (otherwise reuses the existing one). Returns the in-flight Promise. Used by per-row mutations (Accept/Revert/note edit). Optimistic UI on the client keeps the acting user fresh; staleness for other readers is bounded by the next batch-state mutation.
+- `invalidateTriageQueueCacheAndAwaitFresh()` — wait-then-restart. (1) Drains any in-flight recompute (its RPC may have started reading the DB BEFORE this caller's commit landed). (2) Clears L1. (3) Starts a fresh recompute (DB read happens NOW, after the caller's commit, so it's guaranteed to see the changes). (4) Awaits the fresh recompute. Used by batch-state mutations (upload, proceed, revert, regenerate, batch delete, proceed-all-clean). Cost: up to 2 recomputes per call, but the user is already in a "waiting on a slow operation" mental state.
+
+**The Sunlord bug, in detail.** Initial fix added `await invalidateTriageQueueCache()` to the upload route, expecting it to refresh the cache before responding. But the single-flight pattern handed back any existing in-flight Promise — typically from a fire-and-forget per-row Accept earlier in the session. That recompute had already started its RPC against pre-Sunlord DB state, so awaiting it returned stale data. User uploaded Sunlord, navigated to Triage, saw "no unresolved parameters for this batch — nothing to review" because the cached classified set didn't include any Sunlord rows. The wait-then-restart variant guarantees the awaited recompute starts AFTER the caller's commit.
+
+**Stop deleting L2 from the .mjs script.** The original `scripts/atlas-ingest.mjs` was DELETING the `admin_stats_cache` rows for `atlas-coverage`, `manufacturers-list`, `atlas-growth`, and `triage-queue` on every Proceed/Revert. That meant: API route's invalidate hooks kicked off async background recomputes (L2 stays valid, users see slightly-stale data instantly) — but then the script DELETED L2 anyway, forcing the next user request into a synchronous cold compute path. Removed the deletes from the script. The API route's invalidate hooks own cache invalidation correctly.
+
+**Per-route framework caching defeated.** Added `export const dynamic = 'force-dynamic'` to the batches route + `cache: 'no-store'` to the client fetch in `AtlasDictTriagePanel.tsx`. Belt-and-suspenders against any browser-level or Next.js-level caching that might layer on top of our L1/L2.
+
+**Files touched:**
+- [scripts/supabase-triage-aggregate-rpc.sql](../scripts/supabase-triage-aggregate-rpc.sql) — **new**, the RPC.
+- [lib/services/triageQueueCache.ts](../lib/services/triageQueueCache.ts) — **new**, L1+L2+SWR cache module with two invalidate variants.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — `computeTriageAggregation()` rewritten around RPC; cache read/write wired in; `dynamic='force-dynamic'`.
+- 6 batch-state routes wired to use `invalidateTriageQueueCacheAndAwaitFresh()`: report, proceed, revert, regenerate, batch-DELETE, proceed-all-clean.
+- 5 per-row routes use single-flight `invalidateTriageQueueCache()`: dictionaries POST/PATCH/DELETE, notes PUT/DELETE.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — removed `admin_stats_cache` deletes from Proceed and Revert paths.
+
+**Verification.** 1542 tests pass. Cold-cache load expected to drop from 23s to ~2-3s. Post-upload navigate-to-Triage now shows the new MFR's unmapped params immediately without a Refresh click. Per-row Accept stays snappy (no refetch) via the optimistic-UI pattern (Decision #182).
+
+## Decision #181 — AI Triage Suggestion: On-Demand Sonnet 4.6 Verdict (May 2026)
+
+The user's prior triage workflow involved screenshotting the Triage table, pasting it into Claude (web/desktop, Extra-High mode) one paramName at a time, reading the analysis, then either clicking Accept in our UI or copy-pasting Claude's reasoning into the team-note popover. Each row took multiple manual round-trips. The existing per-row Haiku suggester was a translation, not a recommendation — it didn't say "accept this" or "defer with this rationale".
+
+**Decision: inline the Claude-web step. Per-row Sonnet 4.6 suggestion that returns a binary verdict (`accept` | `defer`) plus a written explanation. The user always decides; the suggestion is advisory.**
+
+**Suggestion shape** ([components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts)). Existing `DictSuggestion` extended with `suggestion: 'accept' | 'defer'` and `explanation: string | null`. Both verdicts get the same depth of evidence — explanation is full prose written in engineer-note voice (1-3 sentences), visible by default below the AI translation in the cell. No opaque "trust me" Accept chips. Symmetric UX so Claude doesn't get to be vague about an Accept rec while justifying a Defer.
+
+**Defer pre-fills the team note draft.** When `suggestion === 'defer'`, the `UnmappedParamNoteCell` component receives `aiDraft={explanation}` and `aiDraftHint={true}`. Opening the note popover seeds the textarea with Claude's reasoning + a small "Pre-filled by AI — edit before saving" caption. The note button itself turns warning-amber when there's a pending AI draft and no existing note. User can edit before saving (first keystroke clears the "from AI" caption). Reuses the existing `atlas_unmapped_param_notes` table — no parallel infrastructure.
+
+**Endpoint upgrade** ([app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)). Bumped from `claude-haiku-4-5-20251001` to `claude-sonnet-4-6`, `max_tokens` 256→600. Prompt rewritten to require the verdict + explanation as a 6th and 7th output field. Verdict logic: `accept` iff suggested attributeId is canonical (in family schema) AND concept matches AND samples are consistent, OR reuses a previously-accepted canonical that genuinely represents the same concept. `defer` iff: suggested ID is generic-catchall (style/type/size/kind/category/material) and would shoehorn unrelated concepts; OR near-duplicate of an existing canonical (e.g. proposed `positions_per_row` when `pins_per_row` exists); OR sample units don't match the suggested ID; OR concept is ambiguous and a more specific canonical should be defined first. Explanation styled as the engineer would write a team note.
+
+**Generation is on-demand, not eager.** Sonnet 4.6 at ~$0.005/row × 100 params = $0.50 per Triage page load if eager. Replaced eager-on-mount with manual triggers: a top-of-table info Alert "N rows need AI suggestions — generate only when you're ready to triage" with a single **Generate N** button, plus a per-row **Generate** mini-button in the AI translation cell for one-at-a-time use. Previously-generated suggestions persist in localStorage (7d) + server cache (24h), so cached rows render instantly on revisit without re-firing tokens.
+
+**Cache prefix bumped.** `SUGGEST_LS_PREFIX` from `atlas-ingest-ai-suggest:` → `atlas-ingest-ai-suggest-v2:`. Old cached entries lacked `suggestion`/`explanation`; bumping forces refetch against Sonnet on next view. Prevents legacy "verdict undefined" rendering.
+
+**Files touched:**
+- [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts) — Sonnet 4.6, prompt + response shape.
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — extend `DictSuggestion`.
+- [components/admin/atlasIngest/UnmappedParamNoteCell.tsx](../components/admin/atlasIngest/UnmappedParamNoteCell.tsx) — `aiDraft` + `aiDraftHint` props, seed textarea, "Pre-filled by AI" caption, amber button hint.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — split eager fetch into `hydrateFromCache()` (auto, no API) + `generateSuggestionsForRows()` (manual). Bulk Generate Alert + per-row Generate button. Repurposed Conf column → Suggestion. Symmetric explanation rendering. Cache prefix bump.
+
+**Why one model call instead of separate translate + verdict.** Sonnet does both well in a single round-trip; splitting into Haiku-translate + Sonnet-verdict adds complexity (two endpoints, two caches, dependent ordering) without meaningful cost savings. The combined call is cleaner.
+
+**Deferred.** (1) Per-MFR batch suggestion call (one Sonnet pass over all unmapped params for an MFR — could spot patterns across rows and consult cross-row context). Cheaper amortized; higher risk of model dropping rows. Revisit if per-row cost becomes painful. (2) Suggester consults cross-scope canonicals (currently sees only the row's own family/category schema). E.g. discovering `gender` in modular-connectors L2 should be visible to a generic Connectors L2 row that needs a male/female mapping. (3) Sample-value-aware concept similarity. (4) Auto-save the AI draft as a note without user confirmation — explicitly out of scope; user always decides.
+
+## Decision #182 — Triage UI: Optimistic Updates + Client-Side Filtering + Pagination (May 2026)
+
+Three compounding UX issues on the Triage page: (1) every Accept triggered a server refetch + 30s skeleton because the cache invalidation forced a cold reload. (2) Every mode/status filter chip click re-fetched server-side. (3) Rendering 400+ rows on initial paint froze the browser long enough to trigger "Page Unresponsive" warnings.
+
+**Decision: optimistic in-place row updates for Accept/Revert; client-side filtering for mode/status/search/MFR/family/has-note; pagination capped at 100 rows initial.**
+
+**Optimistic Accept/Revert.** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) takes new `onRowAccepted(paramName, override)` and `onRowReverted(paramName)` callbacks. `acceptRow()` POSTs to `/api/admin/atlas/dictionaries`, captures the response (which includes the new override metadata), and calls `onRowAccepted` with it. The parent `AtlasDictTriagePanel` mutates `data.unmappedParamsGlobal[i].acceptedOverride` in place and adjusts `statusCounts` (open-1, accepted+1) + `triageCounts.synonyms` (-1 if applicable). The row instantly transforms: Accept button → "Accepted" chip + Revert button. No skeleton, no refetch. `createdByName` defaults to `'You'` since the current user just did it; the next real refresh resolves to their actual display name.
+
+**Client-side filtering pipeline.** Mode (Open Synonyms / Auto-flagged / All), status (Open / Accepted / Undone / All), and the page-level filters (search, MFR, family, min-prods, has-note) all run in a single `filteredRows` `useMemo` against `data.unmappedParamsGlobal`. The route now defaults `include` and `status_filter` to `'all'` and returns the FULL classified set unconditionally (~50KB after Decision #180's RPC). Mode/status chip clicks are pure JS array filters — instant. The route's per-request `batchFilter` slice still runs server-side because it's a single deterministic filter and doesn't benefit from client-side reuse.
+
+**Single fetch on mount.** `refresh()`'s dep array no longer includes `mode` and `statusFilter`, so it doesn't re-run on chip clicks. New `refresh(forceFresh)` parameter wires `?refresh=1` for the explicit Refresh button.
+
+**Refresh button.** Top-right of the Triage page, always visible. Forces `?refresh=1` (cache bypass + sync compute). Used after major uploads when freshness matters more than speed (~10-30s wait), and as a manual escape hatch for any cache weirdness.
+
+**Pagination.** `INITIAL_VISIBLE_ROWS = 100` constant in `GlobalUnmappedParamsTable.tsx`. The table renders only `rows.slice(0, visibleCount)`. Footer shows "Showing 100 of N rows" with **Show 100 more** + **Show all** buttons. `visibleCount` resets to 100 whenever the filtered `rows` prop changes (new filter narrowed the set — don't carry over a previous "show all" state). Eliminated the browser-freeze that was triggering AbortError + Page Unresponsive warnings on 400+ row queues.
+
+**Why no virtualization library.** react-window/react-virtuoso are heavier deps for a Table component. The 100-row pagination pattern handles the practical case (engineer triages ~20-100 rows per session) without the integration complexity of windowing inside MUI's Table layout.
+
+**Files touched:**
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — `onRowAccepted` + `onRowReverted` callbacks; client-side mode/status filtering; single fetch per `batchFilter`; Refresh button.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — accept/revert pass new override metadata to parent; pagination footer with `visibleCount` state.
+
+**Verification.** 1542 tests pass. Triage page mount drops to ~500ms (100 rows). Mode/status chip clicks are sub-millisecond. Accept doesn't blank the page. Refresh button is the explicit cache-bypass for the rare case where the cache truly needs forcing.
+
+## Decision #183 — Atlas Growth Aggregates via SQL RPC (May 2026)
+
+The Atlas Coverage page's growth chart was capping at ~40K products on the right axis even though the KPI tile reported 101,938 — a ~60K-row undercount. Diagnosed: [/api/admin/atlas/growth](../app/api/admin/atlas/growth/route.ts) was walking `atlas_products` row-by-row via `fetchAllPages` (101 pages of 1000 once Atlas crossed 100K). The loop destructured only `data` and ignored `error`, so any later page that hit a Postgres `statement_timeout` or network blip returned `null` and the loop broke silently with a partial result. The chart line ended early, the y-axis auto-scaled to the truncated max, and the chart looked like ingest had only added ~40K parts.
+
+**Decision: third Atlas RPC — `get_atlas_growth_aggregates()` does the per-MFR rollup and per-day product bucketing in Postgres.**
+
+Mirrors the patterns from [Decision #179](#decision-179--atlas-coverage-aggregation-via-postgres-rpc-may-2026) (atlas-coverage) and [Decision #180](#decision-180--triage-queue-compute-via-sql-rpc--l1l2swr-cache-may-2026) (triage). One round-trip in, ~50KB JSONB out, no row-by-row pagination, no silent failure mode, `SET statement_timeout = '300s'` as growth headroom.
+
+**RPC return shape** ([scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql)):
+
+```json
+{
+  "mfrs": [{ "manufacturer": "Sunlord", "product_count": 16756, "min_created_at": "...", "categories": ["Capacitors", ...] }, ...],
+  "day_buckets": [{ "day": "2026-05-08", "product_delta": 16756 }, ...]
+}
+```
+
+The route still walks `atlas_ingest_batches` (small, ~thousands of rows) and `atlas_manufacturers` in TS — those drive event generation which has logic-table lookups that don't belong in SQL. The expensive 100K+ row scans are gone.
+
+**Dead code removed.** The old `ProductRollup.maxCreatedAt` field was set but never read. The old `family_id` column was selected from `atlas_products` but never used. Both dropped.
+
+**Cache lifecycle unchanged.** `invalidateAtlasGrowthCache()` already does fire-and-forget background recompute (Decision #180-style) — first page load after Proceed shows the previous cached payload, background recompute upserts the fresh row in ~1-2s now (was ~30-60s on cold compute via the row-by-row path). Mem cache 60s, persistent cache SWR 6h.
+
+**Files touched:**
+- [scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql) — new file, RPC definition + GRANT.
+- [app/api/admin/atlas/growth/route.ts](../app/api/admin/atlas/growth/route.ts) — call RPC, drop fetchAllPages over `atlas_products`, drop dead `maxCreatedAt`/`family_id`, drop `ProductRow` interface.
+
+**Deploy.** Apply [scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql) in Supabase SQL Editor. Then click the Atlas Coverage page's Refresh button (or hit `?refresh=1`) to force a fresh compute. Subsequent loads serve from cache.
+
+**Verification.** Cold compute drops from ~30-60s (row-by-row 100K+ rows) to ~1-2s (single RPC). Chart's right axis now matches the KPI tile's product count exactly. No more silent undercount on later pages.
+
+## Decision #184 — FindChips OEMS as Conditional Second Source for Commercial Data (May 2026)
+
+The FindChips API exposes two upstream sources via the same endpoint: `site=fc` (franchised distributors — Digikey, Mouser, Arrow, etc.) and `site=oems` (independent distributors — surfaces oemstrade.com inventory, where Chinese distributors and brokers tend to live). Until now we only hit `fc`, which left Atlas (Chinese-MFR) parts and obsolete Western parts with no commercial-data coverage when the franchised channel didn't carry them.
+
+The user's intent: OEMS is a *last-resort* source — many sellers are brokers, less-trusted pricing — so we don't want to pollute the Commercial tab with broker quotes when FC's franchised coverage is already good. The FC API has no per-call cost or hard rate limit; gating is a quality decision, not a budget one.
+
+**Decision: trigger OEMS conditionally based on three signals — Atlas/Chinese MFR, FC empty, FC reports obsolete/EOL.** Merge results with FC-wins dedup by normalized distributor name. No UI changes (per IT confirmation that OEMS can return identical results to FC, distinguishing them visually would be misleading).
+
+**Trigger conditions:**
+1. **Atlas/Chinese-MFR parts** — proactive parallel fetch (FC + OEMS in parallel from the start). Keys off `mfrOrigin === 'atlas'` (Decision #161) for the recs side; falls back to `dataSource === 'atlas'` for search/parts-list source-side rows where `mfrOrigin` isn't yet resolved.
+2. **FC returns zero distributors** — server-side fallback fetches OEMS, merges in.
+3. **FC reports the part as obsolete/EOL** — server-side fallback (lifecycle code = `'obsolete'` or `'not_recommended'`) fetches OEMS, merges in.
+
+**Client API shape** ([lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts)):
+
+```ts
+type FcFetchSource = 'fc' | 'oems' | 'parallel-both' | 'fc-with-oems-fallback';
+
+getFindchipsResults(mpn, userId, opts?: { source?: FcFetchSource })
+getFindchipsResultsBatch(mpns, userId, opts?: {
+  chineseMpns?: Set<string>;       // proactive parallel
+  fallbackOnEmpty?: boolean;       // default true
+  fallbackOnObsolete?: boolean;    // default true
+})
+```
+
+Default `source: 'fc'` preserves prior behavior for any future call sites that don't opt in. The batch helper's defaults make every existing call site strictly better than today (FC-only) without source coupling — `chineseMpns` is the optional upgrade.
+
+**Source-keyed L1 cache.** Cache key changed from `mpn.toLowerCase()` → `${mpn.toLowerCase()}::${site}` so FC and OEMS results cache independently. Caller composes merged results on read; we never re-fetch one site just because the other turned out to be needed. Null results are now cached too (5-min TTL) so a part with no FC coverage doesn't keep firing FC on every retry inside a 5-min window. L2 distributor-count cache (`fc-distributors` variant, 6-mo TTL) keeps its name and shape but now stores the *merged* count.
+
+**Two-phase batch.** `getFindchipsResultsBatch` runs phase 1 (FC for all + OEMS in parallel for `chineseMpns`), then phase 2 (OEMS top-up for any non-Chinese MPN whose FC came back empty or obsolete). Concurrency stays at 5 per site.
+
+**Dedup.** New `mergeFcAndOems(fc, oems)` helper builds a `Set<normalizedDistributorName>` from FC, then appends only OEMS distributors not already in the set. `normalizeDistributorName` moved from [lib/services/findchipsMapper.ts](../lib/services/findchipsMapper.ts) to [lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts) (single source of truth, avoids mapper → client → mapper circular import; mapper re-exports for back-compat).
+
+**Wiring trail:**
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) `enrichWithFindchips` reads `mfrOrigin`, picks `'parallel-both'` for Atlas else `'fc-with-oems-fallback'`.
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) `enrichCandidatesWithFindchips` derives `chineseMpns` from rec `.part.mfrOrigin === 'atlas'`.
+- [app/api/fc/enrich/route.ts](../app/api/fc/enrich/route.ts) accepts optional `chineseMpns` array in body, forwards to batch helper.
+- [lib/api.ts](../lib/api.ts) `enrichWithFCBatch(mpns, signal, chineseMpns?)` — third optional param.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) `triggerFCEnrichment` filters recs by `mfrOrigin === 'atlas'`; `triggerSearchDistributorEnrichment` falls back to `dataSource === 'atlas'` since `PartSummary` lacks `mfrOrigin` (resolved later in the recs pipeline).
+- [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) source-side uses `resolvedPart.dataSource === 'atlas'`, replacement-side uses `rec.part.mfrOrigin === 'atlas'`.
+
+**What does not change.** Mapper output (`SupplierQuote[]` / `LifecycleInfo` / `ComplianceData`) is source-agnostic — no provenance field, no UI tagging, no type changes, no DB migration. Commercial-tab `SupplierCard` and parts-list columns auto-include OEMS quotes through the unchanged `quotes` array.
+
+**Knowingly accepted.** L2 distributor-count entries cached pre-rollout reflect FC-only counts; they self-heal on next live fetch or expire at 6 months. Decorative badge, not load-bearing.
+
+**Files touched:**
+- [lib/services/findchipsClient.ts](../lib/services/findchipsClient.ts) — site-keyed cache, strategy options, merge helper, two-phase batch.
+- [lib/services/findchipsMapper.ts](../lib/services/findchipsMapper.ts) — re-exports `normalizeDistributorName` from client (single source of truth).
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — strategy selection in `enrichWithFindchips` + `chineseMpns` in `enrichCandidatesWithFindchips`.
+- [app/api/fc/enrich/route.ts](../app/api/fc/enrich/route.ts) — accept `chineseMpns`.
+- [lib/api.ts](../lib/api.ts) — forward `chineseMpns`.
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — derive `chineseMpns` for recs + search-result enrichment.
+- [hooks/usePartsListState.ts](../hooks/usePartsListState.ts) — derive `chineseMpns` at both batch FC enrichment call sites.
+
+**Verification.** All 1542 tests pass; type check clean; production build clean. Manual end-to-end TBD: search a known Atlas MPN (3PEAK, GigaDevice) and watch for two `api.findchips.com` calls (`site=fc` + `site=oems`); search a stocked Western part and confirm only one call (`site=fc`); search an obsolete Western part and confirm OEMS fires after FC lifecycle reports EOL.

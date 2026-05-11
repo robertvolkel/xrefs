@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress } from '@mui/material';
+import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress, Tooltip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSearchParams, useRouter } from 'next/navigation';
 import GlobalUnmappedParamsTable from './atlasIngest/GlobalUnmappedParamsTable';
@@ -106,16 +106,24 @@ export default function AtlasDictTriagePanel() {
   const [regenFlushing, setRegenFlushing] = useState(false);
   const [regenProgress, setRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const refresh = useCallback(async () => {
+  // Single fetch on mount per (batchFilter); mode + statusFilter changes are
+  // pure client-side filtering against the cached classified set, so chip
+  // clicks are instant. The server returns the FULL set unconditionally.
+  // forceFresh=true skips the L1/L2 cache (used by the Refresh button so the
+  // user can demand a fresh compute when they need to see, e.g., a row they
+  // just added in another tab).
+  const refresh = useCallback(async (forceFresh = false) => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
       if (batchFilter) params.set('batch', batchFilter);
-      params.set('include', mode);
-      params.set('status_filter', statusFilter);
+      if (forceFresh) params.set('refresh', '1');
       const url = `/api/admin/atlas/ingest/batches?${params.toString()}`;
-      const res = await fetch(url);
+      // cache: 'no-store' so the browser doesn't reuse a previous response
+      // when the URL is the same (e.g. revisiting the page with the same
+      // batch filter). Server-side L1/L2 still apply.
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const json = (await res.json()) as BatchListResponse;
       setData(json);
@@ -125,7 +133,7 @@ export default function AtlasDictTriagePanel() {
     } finally {
       setLoading(false);
     }
-  }, [batchFilter, mode, statusFilter]);
+  }, [batchFilter]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -244,24 +252,43 @@ export default function AtlasDictTriagePanel() {
     router.push(`/admin?${params.toString()}`);
   }, [searchParams, router]);
 
-  // When batch-filtered, every row shares the same source MFR — surface its
-  // display name in the chip instead of the opaque truncated UUID.
+  // When batch-filtered, surface the actual batch's MFR in the chip.
+  // Previously this used the first row's first MFR — misleading when params
+  // are shared across batches (e.g. Yangjie + Vanguard both ship MOSFETs
+  // with the same param names; if Vanguard had more products with that
+  // param, the chip would show "Vanguard" even when filtered to Yangjie).
+  // Now we resolve from data.batches[0] which the route returns regardless
+  // of the batch's status (pending/applied/reverted).
   const batchMfrName = useMemo(() => {
     if (!batchFilter || !data) return null;
-    const rows = data.unmappedParamsGlobal;
-    if (rows.length === 0) return null;
-    const first = rows[0]?.affectedManufacturers?.[0]?.name;
-    return first ?? null;
+    const filteredBatch = data.batches.find((b) => b.batch_id === batchFilter);
+    return filteredBatch?.manufacturer ?? null;
   }, [batchFilter, data]);
 
   // Apply the page-level filter pipeline. Pure client-side; cheap on the
   // hundreds-of-rows queues we expect.
+  //
+  // mode + statusFilter are also applied here (instead of server-side) so
+  // chip-click switches are instant — no refetch + skeleton on every toggle.
+  // The server returns the full classified set unconditionally; the client
+  // slices it by all axes (mode, status, search, MFR, family, min-prods,
+  // has-note) in this single pass.
   const allRows = data?.unmappedParamsGlobal ?? [];
   const filteredRows = useMemo(() => {
     const search = filters.search.trim().toLowerCase();
     const mfrSet = new Set(filters.mfrSlugs);
     const famSet = new Set(filters.families);
     return allRows.filter((row) => {
+      // Mode filter (Open Synonyms vs Auto-flagged vs All) — derived from
+      // autoFlag + noteStatus; same logic as the route's classifier.
+      const isFlagged = !!row.autoFlag || row.noteStatus === 'wrong_family';
+      if (mode === 'auto_flagged' && !isFlagged) return false;
+      if (mode === 'synonyms' && isFlagged) return false;
+      // Status filter (Open / Accepted / Undone / All).
+      const ov = row.acceptedOverride;
+      if (statusFilter === 'open' && ov) return false;
+      if (statusFilter === 'accepted' && (!ov || !ov.isActive)) return false;
+      if (statusFilter === 'undone' && (!ov || ov.isActive)) return false;
       if (search && !row.paramName.toLowerCase().includes(search)) return false;
       if (filters.minProductCount > 0 && row.productCount < filters.minProductCount) return false;
       if (mfrSet.size > 0) {
@@ -274,7 +301,7 @@ export default function AtlasDictTriagePanel() {
       if (filters.hasNote && !notesByParam[row.paramName]) return false;
       return true;
     });
-  }, [allRows, filters, notesByParam]);
+  }, [allRows, filters, notesByParam, mode, statusFilter]);
 
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
@@ -311,7 +338,7 @@ export default function AtlasDictTriagePanel() {
             Accept (so the user understands their accepted overrides are
             already live; this only refreshes batch report metrics). */}
         {pendingRegenIds.size > 0 && (
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 'auto' }}>
+          <Stack direction="row" spacing={1} alignItems="center">
             <Chip
               size="small"
               color="warning"
@@ -334,6 +361,24 @@ export default function AtlasDictTriagePanel() {
             </Button>
           </Stack>
         )}
+
+        {/* Refresh button — forces a fresh server compute (bypasses L1+L2).
+            Use after a major upload to see new MFRs in the filter, or any
+            time you want to skip cache and recompute from source. Always
+            visible; pinned right with ml: 'auto'. */}
+        <Tooltip title="Force a fresh fetch from the database (bypasses cache, ~10–30s)">
+          <span style={{ marginLeft: 'auto' }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon fontSize="small" />}
+              onClick={() => refresh(true)}
+              disabled={loading}
+            >
+              Refresh
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
 
       {loading && (

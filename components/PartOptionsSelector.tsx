@@ -89,7 +89,9 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 )}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {part.manufacturer} &mdash; {part.description}
+                {part.description?.trim()
+                  ? <>{part.manufacturer} &mdash; {part.description}</>
+                  : part.manufacturer}
               </Typography>
               {distinguishing.get(part.mpn) && (
                 <Typography

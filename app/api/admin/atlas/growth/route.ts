@@ -124,11 +124,24 @@ interface BatchRow {
   report: IngestDiffReport;
 }
 
-interface ProductRow {
+// Per-MFR rollup row returned by get_atlas_growth_aggregates RPC.
+// Replaces row-by-row fetchAllPages over atlas_products (was undercounting
+// when later pages hit statement timeouts and silently broke the loop).
+interface AggregateMfrRow {
   manufacturer: string;
-  family_id: string | null;
-  category: string;
-  created_at: string;
+  product_count: number;
+  min_created_at: string;
+  categories: string[];
+}
+
+interface AggregateDayBucket {
+  day: string;
+  product_delta: number;
+}
+
+interface GrowthAggregates {
+  mfrs: AggregateMfrRow[];
+  day_buckets: AggregateDayBucket[];
 }
 
 interface MfrRow {
@@ -145,7 +158,7 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
   // when the request session isn't propagated.
   const supabase = createServiceClient();
 
-  const [batches, products, mfrRecords] = await Promise.all([
+  const [batches, productAggregates, mfrRecords] = await Promise.all([
     fetchAllPages<BatchRow>(
       supabase,
       'atlas_ingest_batches',
@@ -155,11 +168,12 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
       (q) => q.eq('status', 'applied').not('applied_at', 'is', null),
       'applied_at',
     ),
-    fetchAllPages<ProductRow>(
-      supabase,
-      'atlas_products',
-      'manufacturer, family_id, category, created_at',
-    ),
+    (async () => {
+      const { data, error } = await supabase.rpc('get_atlas_growth_aggregates');
+      if (error) throw new Error(`get_atlas_growth_aggregates RPC failed: ${error.message}`);
+      const agg = (data ?? { mfrs: [], day_buckets: [] }) as GrowthAggregates;
+      return agg;
+    })(),
     (async () => {
       const { data } = await supabase
         .from('atlas_manufacturers')
@@ -189,29 +203,19 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
 
   const HOUR_MS = 60 * 60 * 1000;
 
-  // Per-MFR product roll-ups.
+  // Per-MFR product roll-ups, pre-aggregated by the RPC.
   interface ProductRollup {
     productCount: number;
     minCreatedAt: string;
-    maxCreatedAt: string;
     categories: Set<string>;
   }
   const productByMfr = new Map<string, ProductRollup>();
-  for (const p of products) {
-    let r = productByMfr.get(p.manufacturer);
-    if (!r) {
-      r = {
-        productCount: 0,
-        minCreatedAt: p.created_at,
-        maxCreatedAt: p.created_at,
-        categories: new Set<string>(),
-      };
-      productByMfr.set(p.manufacturer, r);
-    }
-    r.productCount++;
-    if (p.created_at < r.minCreatedAt) r.minCreatedAt = p.created_at;
-    if (p.created_at > r.maxCreatedAt) r.maxCreatedAt = p.created_at;
-    if (p.category) r.categories.add(p.category);
+  for (const m of productAggregates.mfrs) {
+    productByMfr.set(m.manufacturer, {
+      productCount: Number(m.product_count),
+      minCreatedAt: m.min_created_at,
+      categories: new Set(m.categories ?? []),
+    });
   }
 
   // ── Build events ─────────────────────────────────────────
@@ -351,8 +355,8 @@ async function computeAtlasGrowth(): Promise<AtlasGrowthResponse> {
   for (const r of productByMfr.values()) {
     bumpDay(r.minCreatedAt, 1, 0);
   }
-  for (const p of products) {
-    bumpDay(p.created_at, 0, 1);
+  for (const d of productAggregates.day_buckets) {
+    bumpDay(d.day, 0, Number(d.product_delta));
   }
 
   const sortedDays = [...dayBuckets.keys()].sort();

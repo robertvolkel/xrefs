@@ -23,7 +23,7 @@
  *   - Failed suggestion fetches degrade to a manual entry row with no auto-fill.
  */
 
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -204,6 +204,15 @@ function writeFamilySchemaCache(familyId: string, schemaIds: string[]): void {
   }
 }
 
+// Initial visible row count — capped so the page doesn't render 400+ MUI
+// Table rows on first paint. Each row carries multiple Tooltips, Chips,
+// TextFields, and a Popover-backed note button — at ~15 React elements per
+// row, going from 100 → 200 rows in one synchronous render froze the
+// browser. ROW_BATCH_SIZE kept low so each "Show more" click stays under
+// the responsive threshold.
+const INITIAL_VISIBLE_ROWS = 50;
+const ROW_BATCH_SIZE = 50;
+
 export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
@@ -215,6 +224,21 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Used to flag whether the row's (possibly edited) attributeId actually
   // exists in the family's logic table. Empty set ⇒ family had no schema info.
   const [schemaByFamily, setSchemaByFamily] = useState<Record<string, Set<string>>>({});
+  // How many rows to actually render. Bumped by the "Show more" button.
+  // Resets when the rows prop changes (filters narrowed the set).
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_ROWS);
+  // Reset visible count whenever the rows prop changes — a filter change
+  // shouldn't carry over an expanded "show all" state from the previous view.
+  useEffect(() => {
+    setVisibleCount(INITIAL_VISIBLE_ROWS);
+  }, [rows]);
+  const visibleRows = rows.slice(0, visibleCount);
+  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
+  // useTransition lets React keep the UI responsive while it renders the
+  // additional rows. Without this, the synchronous setVisibleCount blocked
+  // the main thread for several seconds on large queues, triggering "Page
+  // Unresponsive" warnings.
+  const [pendingShowMore, startShowMore] = useTransition();
 
   // Notes (notesByParam, onNoteChange) come from the parent panel via props
   // so the filter bar can scope rows by has-note. See AtlasDictTriagePanel.
@@ -769,7 +793,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map((r) => {
+              {visibleRows.map((r) => {
                 const state = states[r.paramName];
                 // Effective flag state per-row. autoFlag = live registry hit;
                 // noteStatus='wrong_family' = persisted (auto-confirmed or
@@ -1269,6 +1293,31 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             </TableBody>
           </Table>
         </TableContainer>
+
+        {/* Pagination footer — shown when there are more rows than the
+            current visible window. Renders the first INITIAL_VISIBLE_ROWS
+            up front to avoid freezing the browser on 400+ row mount;
+            subsequent batches are opt-in. */}
+        {hiddenCount > 0 && (
+          <Stack direction="row" spacing={2} alignItems="center" justifyContent="center" sx={{ mt: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
+            <Typography variant="caption" color="text.secondary">
+              {pendingShowMore ? 'Loading more rows…' : `Showing ${visibleRows.length} of ${rows.length} rows`}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={pendingShowMore}
+              startIcon={pendingShowMore ? <CircularProgress size={12} color="inherit" /> : undefined}
+              onClick={() => startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE))}
+            >
+              Show {Math.min(ROW_BATCH_SIZE, hiddenCount)} more
+            </Button>
+            {/* "Show all" intentionally removed — for queues with hundreds
+                of rows it triggered browser unresponsiveness. Use the
+                page-level filters (search, MFR, family, min-prods) to
+                narrow the visible set instead. */}
+          </Stack>
+        )}
       </AccordionDetails>
     </Accordion>
   );

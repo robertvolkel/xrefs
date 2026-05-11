@@ -860,3 +860,42 @@ Shipped Apr 2026 (Decision #151). `isPreferredManufacturer()` now accepts an opt
 **File:** [lib/services/manufacturerCrossRefService.ts](../lib/services/manufacturerCrossRefService.ts)
 
 `fetchManufacturerCrossRefs()` today matches on MPN alone. If a customer ever uploads cross-refs with an `original_manufacturer` column + two different MFRs ship the same MPN string, we'd conflate them. Adding a `resolveManufacturerAlias()`-based filter would disambiguate. Not a current bug (xrefs aren't dense enough for collisions yet), just preemptive. Deferred from Decision #148.
+
+### Triage AI suggester: per-MFR batch call instead of per-row (Decision #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)
+
+Per-row Sonnet calls work but are expensive (~$0.005 × 100 rows = $0.50/MFR). One Sonnet call per MFR analyzing ALL unmapped params at once would be cheaper amortized AND would let Claude spot patterns across rows ("these 3 params form a series-spec cluster"). Higher risk of the model dropping rows in a long response — would need explicit row-count validation. Revisit if per-row cost becomes painful in regular use.
+
+### Triage AI suggester: cross-scope canonical lookup (Decision #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)
+
+`fetchAcceptedCanonicals(familyId)` only returns overrides scoped to the row's own family/category. Missed case: a generic Connectors L2 row needs `male/female` mapping; `gender` already exists as a canonical in modular-connectors L2 but the suggester can't see it. Should consider the full graph of accepted canonicals across related families/categories. Tricky because "related" needs definition — could start with shared-parent relationships or just include all overrides as context.
+
+### Triage AI suggester: sample-value-aware concept similarity (Decision #181)
+**Status:** Not started
+**Priority:** P3
+
+Currently the suggester sees paramName + sample values but doesn't reason about whether the sample VALUES are consistent with existing canonicals. E.g., if `wire_gauge` exists with samples `["18 AWG", "20 AWG"]` and the new row has samples `["1.5 mm²", "2.5 mm²"]`, the suggester should recognize the unit mismatch and propose `wire_csa_mm2` instead of suggesting reuse. Currently happens by accident in the prompt, not deterministically.
+
+### Atlas-derived series-compatibility cross-references (Decision #181)
+**Status:** Not started
+**Priority:** P2
+
+When the suggester proposes `compatible_series` for params like `参考系列` (series reference, e.g. "compatible with XYZ123 series"), the value text is a stable cross-reference signal. Could promote these to first-class cross-ref candidates in the recommendation engine — same shape as `manufacturer_cross_references` (Decision #122). Would need a parser to extract series names from the param value strings. Underused signal currently buried in dictionary overrides.
+
+### L2 category override: multi-category fan-out (Decisions #178, #181)
+**Status:** Not started
+**Priority:** P3
+**File:** [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs)
+
+When a single MFR ships products in two L2 categories with overlapping Chinese param names (the FMD case — MCUs + Memory share several param names), the override is scoped to the dominant category only. Products in the secondary category surface as still-unmapped on next regen. Workarounds: clone overrides to the secondary category manually, or lift the param to `SHARED_PARAMS`. Long-term fix: when the secondary category's count is non-trivial (say >10% of dominant), automatically clone the override to that category too. Or surface a "this param applies to N categories — accept for all?" prompt at Accept time.
+
+### Triage compute: precomputed `unmapped_params_summary` table (Decision #180)
+**Status:** Not started
+**Priority:** P3
+
+The `get_triage_unmapped_aggregate` RPC walks every pending+applied batch's `report->'unmappedParams'` JSONB array on every cold cache miss. Currently fast enough (~2-3s) but scales linearly with batch count. Long-term, ingest writes a denormalized `unmapped_params_summary` table at apply time; the route reads from it directly (no JSONB iteration). Mirrors the `coverage_attrs_count` precomputed-column suggestion in Decision #179. Defer until cold-load times drift past ~10s as batches accumulate.

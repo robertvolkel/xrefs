@@ -38,7 +38,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ProductDiffTable from './ProductDiffTable';
 import { useRouter } from 'next/navigation';
-import type { IngestBatch, IngestRisk } from './types';
+import type { IngestBatch, IngestRisk, IngestDiffReport } from './types';
 
 const RISK_COLOR: Record<IngestRisk, { bg: string; fg: string }> = {
   clean:     { bg: 'success.dark', fg: 'success.contrastText' },
@@ -61,7 +61,34 @@ export default function BatchCard({
 }: Props) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(batch.risk === 'attention');
-  const r = batch.report;
+  // Lazy-load full report ON CLICK, not on auto-expand. The list endpoint
+  // returns a summary report (no perProduct/classificationChanges/deletes —
+  // those bloat the response when batches are large, e.g. Sunlord's 16,756-
+  // product apply was 500-erroring the list fetch). Auto-expanding ATTENTION
+  // batches kept showing "Loading per-product diff…" spinners on every card
+  // because each one auto-fired the fetch. The diff is rarely needed for
+  // Applied batches anyway — make it opt-in via the button below.
+  const [fullReport, setFullReport] = useState<IngestDiffReport | null>(null);
+  const [loadingFull, setLoadingFull] = useState(false);
+  const loadFullReport = async () => {
+    if (fullReport || loadingFull) return;
+    setLoadingFull(true);
+    try {
+      const res = await fetch(`/api/admin/atlas/ingest/batches/${batch.batch_id}`, { cache: 'no-store' });
+      const json = await res.json();
+      if (json?.success && json.batch?.report) {
+        setFullReport(json.batch.report as IngestDiffReport);
+      }
+    } catch {
+      // Network failure — leave fullReport null. User can click again to retry.
+    } finally {
+      setLoadingFull(false);
+    }
+  };
+  // r merges full report (when loaded) over the summary report from props.
+  // Summary fields stay populated from the list response; lazy fields
+  // (perProduct, classificationChanges, deletes) populate after click.
+  const r = fullReport ?? batch.report;
   const counts = r?.productCounts ?? { willInsert: 0, willUpdate: 0, willDelete: 0, inDb: 0, inNewFile: 0 };
   const attrs = r?.attrChanges ?? { totalNewAttrs: 0, totalChangedValues: 0, totalRemovedAttrs: 0, perProduct: [] };
   const unmappedCount = r?.unmappedParams?.length ?? 0;
@@ -223,6 +250,29 @@ export default function BatchCard({
             </Box>
           )}
 
+          {/* Per-product diff is opt-in: click to fetch the full report. The
+              summary report (counts, attrChanges totals, unmappedParams) is
+              already loaded from the list query — only the heavy perProduct
+              array requires an extra round-trip. */}
+          {!fullReport && !loadingFull && (counts.willInsert + counts.willUpdate + counts.willDelete) > 0 && (
+            <Box sx={{ my: 2 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<KeyboardArrowDownIcon sx={{ fontSize: 16 }} />}
+                onClick={loadFullReport}
+                sx={{ fontSize: '0.75rem' }}
+              >
+                Load per-product diff ({(counts.willInsert + counts.willUpdate + counts.willDelete).toLocaleString()} rows)
+              </Button>
+            </Box>
+          )}
+          {loadingFull && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ my: 2, color: 'text.secondary' }}>
+              <CircularProgress size={14} />
+              <Typography variant="caption">Loading per-product diff…</Typography>
+            </Stack>
+          )}
           {attrs.perProduct.length > 0 && (
             <ProductDiffTable rows={attrs.perProduct} />
           )}

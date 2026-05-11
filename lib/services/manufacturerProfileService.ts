@@ -86,6 +86,32 @@ function rowToAtlasManufacturer(row: AtlasManufacturerRow): AtlasManufacturer {
   };
 }
 
+/**
+ * True iff a manufacturer profile carries enrichment beyond the bare-minimum
+ * identity fields (name + country + countryFlag, which every atlas_manufacturers
+ * row has). Drives the chat capability gate for the "MFR Profile" button so we
+ * don't surface a button that opens an empty panel — Decision #139 only
+ * enriched ~297 of 1,011 MFRs, so most rows have null JSONB columns.
+ *
+ * Single source of truth for "is this profile worth showing." Same predicate
+ * powers the panel's empty-state check (ManufacturerProfilePanel.tsx).
+ */
+export function hasEnrichedProfileContent(profile: ManufacturerProfile): boolean {
+  return (
+    !!profile.summary ||
+    profile.productCategories.length > 0 ||
+    profile.certifications.length > 0 ||
+    profile.manufacturingLocations.length > 0 ||
+    profile.authorizedDistributors.length > 0 ||
+    profile.complianceFlags.length > 0 ||
+    profile.designResources.length > 0 ||
+    !!profile.logoUrl ||
+    !!profile.foundedYear ||
+    !!profile.websiteUrl ||
+    !!profile.stockCode
+  );
+}
+
 export function mapAtlasToManufacturerProfile(row: AtlasManufacturer): ManufacturerProfile {
   let productCategories = row.productCategories ?? [];
   if (productCategories.length === 0 && row.coreProducts) {

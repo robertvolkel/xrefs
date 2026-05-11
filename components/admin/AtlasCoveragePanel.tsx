@@ -68,17 +68,24 @@ export default function AtlasCoveragePanel() {
     };
   }, [fetchCoverage, fetchGrowth]);
 
+  // Overview tab shows BOTH coverage KPIs and the growth chart, so its
+  // Refresh button needs to bypass cache for both endpoints. Without this,
+  // a user on Overview seeing a stale growth chart would click Refresh and
+  // only the KPIs (coverage data) would update — chart stays stale.
   const handleRefreshCoverage = useCallback(async () => {
     setCoverageRefreshing(true);
+    setGrowthRefreshing(true);
     try {
-      const cov = await fetchCoverage(true);
+      const [cov, g] = await Promise.all([fetchCoverage(true), fetchGrowth(true)]);
       if (cov) setCoverage(cov);
+      if (g) setGrowth(g);
     } catch (e) {
-      console.error('coverage refresh failed:', e);
+      console.error('overview refresh failed:', e);
     } finally {
       setCoverageRefreshing(false);
+      setGrowthRefreshing(false);
     }
-  }, [fetchCoverage]);
+  }, [fetchCoverage, fetchGrowth]);
 
   const handleRefreshGrowth = useCallback(async () => {
     setGrowthRefreshing(true);
@@ -124,7 +131,7 @@ export default function AtlasCoveragePanel() {
             cachedAt={coverage.cachedAt ?? null}
             onRefresh={handleRefreshCoverage}
             refreshing={coverageRefreshing}
-            growthChartSlot={growth ? <AtlasGrowthChart series={growth.series} /> : null}
+            growthChartSlot={growth ? <AtlasGrowthChart events={growth.events} /> : null}
             latestUpdatesSlot={
               growth ? (
                 <AtlasLatestUpdatesWidget

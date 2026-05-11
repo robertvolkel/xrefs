@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { runIngestScript } from '@/lib/services/atlasIngestService';
-import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
 
@@ -62,7 +62,9 @@ export async function POST(
       }, { status: 500 });
     }
 
-    invalidateTriageQueueCache();
+    // Wait-then-restart — regenerate explicitly refreshes a batch's report
+    // and the user navigates back to Triage expecting to see the new state.
+    await invalidateTriageQueueCacheAndAwaitFresh();
     return NextResponse.json({ success: true, stdout: result.stdout });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

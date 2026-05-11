@@ -52,7 +52,11 @@ let memCache: CachedTriageData | null = null;
 type ComputeFn = () => Promise<Omit<CachedTriageData, 'cachedAt'>>;
 let registeredCompute: ComputeFn | null = null;
 
-let backgroundRecomputeInFlight = false;
+// Tracked as a Promise so concurrent reads can await the same in-flight
+// recompute (single-flight + correctness after mutation). When non-null, an
+// invalidation triggered a recompute that hasn't finished yet — readers get
+// the fresh data instead of the stale L2 the recompute is about to overwrite.
+let backgroundRecomputePromise: Promise<CachedTriageData> | null = null;
 
 /** Register the heavy aggregation function so invalidate hooks can refresh
  *  L2 in the background. Called once at the top of the batches route module. */
@@ -63,8 +67,21 @@ export function registerTriageCompute(fn: ComputeFn): void {
 /** Read from L1, then L2. Returns null only when both are empty (cold cache,
  *  caller must compute synchronously). When data comes from L2 and is past
  *  the SWR threshold, source='l2-stale' signals the caller to kick off a
- *  background recompute via triggerBackgroundRecompute(). */
-export async function readCachedTriageData(): Promise<CacheReadResult | null> {
+ *  background recompute via triggerBackgroundRecompute().
+ *
+ *  Reads NEVER await in-flight recomputes — they always return immediately
+ *  with whatever is in L1/L2, even slightly stale. The optimistic-UI pattern
+ *  on the client (per-row mutations applied locally) keeps the acting user's
+ *  view fresh without round-tripping. Callers that need guaranteed-fresh
+ *  data should pass `?refresh=1` (explicit Refresh button) which the route
+ *  handles by triggering a synchronous compute. */
+export async function readCachedTriageData(forceFresh = false): Promise<CacheReadResult | null> {
+  if (forceFresh) {
+    // Bypass cache entirely; caller will sync-compute. We DON'T clear L1/L2
+    // here — the caller's compute writes fresh data on completion.
+    return null;
+  }
+
   // L1
   if (memCache && Date.now() - memCache.cachedAt < MEM_CACHE_TTL_MS) {
     return { data: memCache, source: 'l1' };
@@ -109,44 +126,93 @@ export async function writeCachedTriageData(data: Omit<CachedTriageData, 'cached
   }
 }
 
-/** Invalidate L1 + kick off background recompute. L2 is NOT deleted — users
- *  keep seeing the slightly-stale L2 data while the recompute runs (~10–30s)
- *  instead of falling through to a synchronous cold compute. The recompute
- *  upserts L2 when finished. */
-export function invalidateTriageQueueCache(): void {
-  memCache = null;
-  if (registeredCompute && !backgroundRecomputeInFlight) {
-    const fn = registeredCompute;
-    backgroundRecomputeInFlight = true;
-    void (async () => {
+function startRecompute(reason: 'invalidate' | 'swr'): void {
+  if (!registeredCompute || backgroundRecomputePromise) return;
+  const fn = registeredCompute;
+  backgroundRecomputePromise = (async () => {
+    try {
+      const fresh = await fn();
+      const computedAt = new Date().toISOString();
+      const full: CachedTriageData = { ...fresh, cachedAt: Date.now() };
+      memCache = full;
       try {
-        const fresh = await fn();
-        await writeCachedTriageData(fresh);
+        const supabase = createServiceClient();
+        await supabase
+          .from('admin_stats_cache')
+          .upsert({ key: L2_CACHE_KEY, payload: fresh, computed_at: computedAt }, { onConflict: 'key' });
       } catch (err) {
-        console.error('triage cache background recompute failed:', err);
-      } finally {
-        backgroundRecomputeInFlight = false;
+        console.error('triage cache L2 persist failed:', err);
       }
-    })();
+      return full;
+    } catch (err) {
+      console.error(`triage cache ${reason} recompute failed:`, err);
+      throw err;
+    } finally {
+      backgroundRecomputePromise = null;
+    }
+  })();
+}
+
+/** Single-flight invalidate. Clears L1 and kicks off a background recompute
+ *  IF one isn't already running (otherwise reuses the in-flight one). Used
+ *  by per-row mutations (Accept / Revert / note edit) where the acting user
+ *  is covered by client-side optimistic UI and any other reader can tolerate
+ *  slightly-stale L2 for a few seconds. Returns the in-flight Promise so
+ *  callers MAY await; failures are caught internally so the Promise always
+ *  resolves.
+ *
+ *  WARNING: do NOT use the returned Promise for "ensure fresh after my
+ *  mutation" semantics. The promise is for whatever recompute happens to be
+ *  running, which may have started BEFORE your DB commit and miss your
+ *  changes. Use invalidateTriageQueueCacheAndAwaitFresh() instead. */
+export function invalidateTriageQueueCache(): Promise<void> {
+  memCache = null;
+  startRecompute('invalidate');
+  return backgroundRecomputePromise
+    ? backgroundRecomputePromise.then(() => undefined).catch(() => undefined)
+    : Promise.resolve();
+}
+
+/** Wait-then-restart invalidate — guarantees the cache reflects any DB
+ *  changes the caller committed before calling this function.
+ *
+ *  Why two functions: when a mutation route awaits invalidateTriageQueueCache()
+ *  but a recompute is ALREADY in flight (e.g. from a prior fire-and-forget
+ *  Accept), the single-flight pattern hands them the existing Promise. That
+ *  recompute's RPC may have started reading DB state BEFORE this caller's
+ *  commit landed, so awaiting it gives stale data. (This was the Sunlord
+ *  bug: upload committed Sunlord, awaited invalidate, got back a Promise
+ *  that resolved with pre-Sunlord state.)
+ *
+ *  This variant fixes that by:
+ *    1. Waiting for any in-flight recompute to finish (might be stale).
+ *    2. Clearing memCache + starting a fresh recompute (DB read happens
+ *       NOW, after our commit, so it's guaranteed fresh).
+ *    3. Awaiting the fresh recompute.
+ *
+ *  Used by batch-state mutations (upload, proceed, revert, regenerate,
+ *  batch delete, proceed-all-clean) where freshness is critical and the
+ *  user is already in a "waiting for slow operation" mental state. Cost:
+ *  up to ~2 recomputes per call (one stale + one fresh). Per-row mutations
+ *  intentionally do NOT use this to avoid doubling Supabase load. */
+export async function invalidateTriageQueueCacheAndAwaitFresh(): Promise<void> {
+  // Phase 1: drain any in-flight recompute (may have read pre-commit state).
+  while (backgroundRecomputePromise) {
+    try { await backgroundRecomputePromise; } catch { return; }
+  }
+  memCache = null;
+  // Phase 2: start a fresh recompute. Its RPC starts NOW, after our caller's
+  // commit, so it's guaranteed to include the caller's changes.
+  startRecompute('invalidate');
+  // Phase 3: drain again so we don't return until the fresh one is in L2.
+  while (backgroundRecomputePromise) {
+    try { await backgroundRecomputePromise; } catch { return; }
   }
 }
 
-/** Explicit SWR trigger — called by the route when a fresh L1 read isn't
- *  available but L2 came back stale. Idempotent; concurrent calls collapse
- *  to a single in-flight recompute. */
+/** Explicit SWR trigger — called by the route when L2 came back past the
+ *  staleness threshold. Idempotent; concurrent calls collapse to a single
+ *  in-flight recompute. */
 export function triggerBackgroundRecompute(): void {
-  if (registeredCompute && !backgroundRecomputeInFlight) {
-    const fn = registeredCompute;
-    backgroundRecomputeInFlight = true;
-    void (async () => {
-      try {
-        const fresh = await fn();
-        await writeCachedTriageData(fresh);
-      } catch (err) {
-        console.error('triage cache SWR recompute failed:', err);
-      } finally {
-        backgroundRecomputeInFlight = false;
-      }
-    })();
-  }
+  startRecompute('swr');
 }

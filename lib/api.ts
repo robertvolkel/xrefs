@@ -184,15 +184,18 @@ export async function getRecommendationsWithContext(
 export async function enrichWithFCBatch(
   mpns: string[],
   signal?: AbortSignal,
+  chineseMpns?: string[],
 ): Promise<Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }>> {
   if (mpns.length === 0) return {};
   try {
+    const body: { mpns: string[]; chineseMpns?: string[] } = { mpns };
+    if (chineseMpns && chineseMpns.length > 0) body.chineseMpns = chineseMpns;
     const result = await fetchApi<{ results: Record<string, { quotes: SupplierQuote[]; lifecycle: LifecycleInfo | null; compliance: ComplianceData | null }> }>(
       `${BASE}/fc/enrich`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mpns }),
+        body: JSON.stringify(body),
         signal,
       },
     );

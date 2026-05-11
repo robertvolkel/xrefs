@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
-import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 export async function GET(
   _request: NextRequest,
@@ -66,7 +66,8 @@ export async function DELETE(
       .eq('batch_id', batchId);
     if (delErr) throw new Error(delErr.message);
 
-    invalidateTriageQueueCache();
+    // Wait-then-restart so Triage reflects the deletion on next navigation.
+    await invalidateTriageQueueCacheAndAwaitFresh();
     return NextResponse.json({ success: true, manufacturer: batch.manufacturer });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

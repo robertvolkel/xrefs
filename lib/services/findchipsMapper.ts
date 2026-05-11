@@ -8,54 +8,12 @@
 
 import type { SupplierQuote, PriceBreak, LifecycleInfo, ComplianceData } from '@/lib/types';
 import type { FCDistributorResult, FCPart } from './findchipsClient';
+import { normalizeDistributorName } from './findchipsClient';
 
-// ============================================================
-// DISTRIBUTOR NAME NORMALIZATION
-// ============================================================
-
-const DISTRIBUTOR_NAME_MAP: Record<string, string> = {
-  'digi-key': 'digikey',
-  'digi-key electronics': 'digikey',
-  'digikey': 'digikey',
-  'mouser electronics': 'mouser',
-  'mouser': 'mouser',
-  'arrow electronics': 'arrow',
-  'arrow': 'arrow',
-  'lcsc': 'lcsc',
-  'element14 asia-pacific': 'element14',
-  'element14': 'element14',
-  'newark': 'newark',
-  'newark electronics': 'newark',
-  'farnell': 'farnell',
-  'rs': 'rs',
-  'rs components': 'rs',
-  'tme': 'tme',
-  'avnet': 'avnet',
-  'avnet americas': 'avnet',
-  'avnet abacus': 'avnet-abacus',
-  'avnet asia': 'avnet-asia',
-  'future electronics': 'future',
-  'rochester electronics': 'rochester',
-  'rutronik': 'rutronik',
-  'verical': 'verical',
-  'chip one stop': 'chip1stop',
-  'onlinecomponents.com': 'onlinecomponents',
-};
-
-/** Normalize FC distributor name to a stable lowercase key. */
-export function normalizeDistributorName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  if (DISTRIBUTOR_NAME_MAP[lower]) return DISTRIBUTOR_NAME_MAP[lower];
-
-  // Strip common suffixes and try again
-  const stripped = lower
-    .replace(/,?\s*(inc\.?|ltd\.?|co\.?|llc|gmbh|pte|limited|corporation|electronics)$/g, '')
-    .trim();
-  if (DISTRIBUTOR_NAME_MAP[stripped]) return DISTRIBUTOR_NAME_MAP[stripped];
-
-  // Fallback: lowercase with spaces replaced by hyphens
-  return stripped.replace(/\s+/g, '-');
-}
+// Re-exported here for back-compat with any external consumers that imported
+// it from the mapper. Single source of truth lives in findchipsClient.ts so
+// the merge/dedup helper and this mapper share the same canonicalization.
+export { normalizeDistributorName };
 
 // ============================================================
 // BEST PART SELECTION

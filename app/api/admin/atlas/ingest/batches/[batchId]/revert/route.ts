@@ -11,7 +11,7 @@ import { runIngestScript } from '@/lib/services/atlasIngestService';
 import { invalidateAtlasCache } from '@/app/api/admin/atlas/route';
 import { invalidateAtlasGrowthCache } from '@/app/api/admin/atlas/growth/route';
 import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
-import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 export const maxDuration = 600;
 
@@ -47,7 +47,8 @@ export async function POST(
     invalidateAtlasCache();
     invalidateAtlasGrowthCache();
     invalidateManufacturersListCache();
-    invalidateTriageQueueCache();
+    // Wait-then-restart so Triage reflects the revert on next navigation.
+    await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({
       success: true,
