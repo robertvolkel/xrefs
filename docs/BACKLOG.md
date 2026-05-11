@@ -899,3 +899,162 @@ When a single MFR ships products in two L2 categories with overlapping Chinese p
 **Priority:** P3
 
 The `get_triage_unmapped_aggregate` RPC walks every pending+applied batch's `report->'unmappedParams'` JSONB array on every cold cache miss. Currently fast enough (~2-3s) but scales linearly with batch count. Long-term, ingest writes a denormalized `unmapped_params_summary` table at apply time; the route reads from it directly (no JSONB iteration). Mirrors the `coverage_attrs_count` precomputed-column suggestion in Decision #179. Defer until cold-load times drift past ~10s as batches accumulate.
+
+---
+
+## Multi-Tenant SaaS — Compliance Roadmap
+
+Process, certification, and policy items spun out of the multi-tenant rebuild plan (`~/.claude/plans/the-application-needs-shimmying-planet.md`). These are **not engineering tasks** — they're paperwork, audits, and external services that unlock enterprise revenue. Architecture-level security foundations (audit log, RLS, MFA, tenant-isolation CI, etc.) are tracked in Phase 1.5 of the plan, not here.
+
+Each item lists its trigger condition. Don't start any of these before the trigger fires — they cost money and lead time.
+
+### SOC 2 Type II (via Vanta or Drata)
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** $30–100k + audit fees
+**Lead time:** 6–12 months
+**Trigger:** First serious enterprise deal signal (>$50k ACV prospect requests it).
+
+Unlocks every enterprise deal above ~$50k ACV. Vanta/Drata reduce the lift by automating evidence collection. Start scoping policies and procedures as soon as we have a confirmed deal in the pipeline so audit-ready state can land before contract signature.
+
+### ISO 27001
+**Status:** Not started
+**Priority:** P2 once triggered
+**Cost:** $20–50k
+**Lead time:** 9–18 months
+**Trigger:** EU enterprise pipeline.
+
+International equivalent of SOC 2; often paired. Usually requested instead of SOC 2 by European buyers.
+
+### GDPR DPA + subprocessor list
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** $2–5k legal
+**Lead time:** 2–4 weeks
+**Trigger:** First EU customer conversation.
+
+Legal template (Data Processing Agreement) + a public page at `xqatlas.com/trust/subprocessors`. Subprocessor list is already inventoried in `docs/SECURITY_DATA_INVENTORY.md` (Phase 1.5 deliverable).
+
+### CCPA notice
+**Status:** Not started
+**Priority:** P2 once triggered
+**Cost:** Covered by GDPR posture
+**Lead time:** 1 week
+**Trigger:** Same as GDPR — usually rolls into the same trust-page work.
+
+### Annual external pen test
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** $10–30k
+**Lead time:** 2–4 weeks
+**Trigger:** After Phase 3 ships.
+
+Hire a reputable firm (NCC, Bishop Fox, Trail of Bits, Cobalt) to run a black-box + grey-box test. Report becomes a sales asset.
+
+### Bug bounty program (private HackerOne)
+**Status:** Not started
+**Priority:** P2 once triggered
+**Cost:** $5–20k/yr in payouts
+**Lead time:** 2 weeks setup
+**Trigger:** After SOC 2 lands.
+
+Start private (invite-only). Public after a year of clean disclosures.
+
+### Cyber liability insurance
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** $5–15k/yr
+**Lead time:** 2–4 weeks
+**Trigger:** First $100k+ contract — buyer will ask for the certificate.
+
+### Trust center page — `xqatlas.com/trust`
+**Status:** Not started
+**Priority:** P1
+**Cost:** Internal time
+**Lead time:** 1 week
+**Trigger:** Ship alongside Phase 3.
+
+Single public page covering: subprocessors, encryption posture (TLS 1.2+, TDE at rest), authentication options (SSO/MFA/password), data residency, audit-log retention, tenant isolation explanation + diagram, compliance status (SOC 2 in progress / completed), vulnerability disclosure email, link to status page. Closes deals faster than any feature — procurement reads it before scheduling a call.
+
+### Public status page
+**Status:** Not started
+**Priority:** P1
+**Cost:** $25–100/month (StatusPage, Better Stack, or self-hosted Uptime Kuma)
+**Lead time:** 1 day
+**Trigger:** Ship alongside Phase 3.
+
+Uptime monitoring + incident history. Looks professional, cheap.
+
+### SSO / SAML
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** Supabase Pro upgrade + 2–3 weeks dev time
+**Lead time:** 2–3 weeks
+**Trigger:** First enterprise deal that requires it.
+
+Bundle into "Enterprise" license tier. Supabase Pro supports SAML 2.0 natively.
+
+### SCIM provisioning (Okta / Azure AD / Google Workspace)
+**Status:** Not started
+**Priority:** P2 once triggered
+**Cost:** Custom build, 4–6 weeks dev time
+**Lead time:** 4–6 weeks
+**Trigger:** Same as SSO — large-org requirement.
+
+Auto-provision and deprovision users from the customer's identity provider.
+
+### IP allowlisting (per-org CIDR list at middleware)
+**Status:** Not started
+**Priority:** P2 once triggered
+**Cost:** Internal time
+**Lead time:** 1 week
+**Trigger:** Enterprise tier requirement.
+
+`orgs.allowed_ip_ranges TEXT[]` column + middleware check. Rejects requests outside the org's CIDR list.
+
+### ITAR / EAR posture statement
+**Status:** Not started
+**Priority:** P1 once triggered
+**Cost:** $2–5k legal review
+**Lead time:** 2 weeks
+**Trigger:** First defense or aerospace prospect.
+
+One-page legal doc stating that XQ Atlas stores public parametric data (MPNs, specs, datasheets) and does not store ITAR-controlled technical data. Customer BOMs are tenant-isolated and never analyzed cross-tenant. Most electronics platforms don't have this — having it wins deals.
+
+### Quarterly security review process
+**Status:** Not started
+**Priority:** P2
+**Cost:** Internal time
+**Lead time:** 1 day to set up
+**Trigger:** Now — schedule the recurring review.
+
+Internal policy doc + calendar cadence: review audit logs for anomalies, rotate keys, confirm backups restore cleanly, review access reviews on profiles + api_keys.
+
+### Vendor risk assessment template for customers
+**Status:** Not started
+**Priority:** P2
+**Cost:** Internal time
+**Lead time:** 1 week
+**Trigger:** First questionnaire received.
+
+Pre-fill the common SIG Lite / CAIQ questions so we can respond same-day instead of re-typing each time.
+
+### Incident response plan + breach notification SLA
+**Status:** Not started
+**Priority:** P1
+**Cost:** Internal time + legal review
+**Lead time:** 2 weeks
+**Trigger:** Before SOC 2 audit.
+
+72-hour breach notification SLA (GDPR Article 33). Runbook for containment, eradication, recovery, customer comms. Tabletop exercise once written.
+
+### Backup / DR runbook
+**Status:** Not started
+**Priority:** P1
+**Cost:** Internal time
+**Lead time:** 1 week
+**Trigger:** Before SOC 2 audit.
+
+RPO / RTO targets documented. Quarterly restore test — actually restore a backup to a staging project and confirm app boots against it.
+
+**Bundling strategy:** SSO/SAML + SCIM + IP allowlisting + custom SLA make up the future "Enterprise" license tier. Mid-market gets the Phase 1.5 baseline (audit log, MFA flag, tenant isolation tests, session timeout, no-training assertion). Trust page + status page + SOC 2 are unconditional — they sell every deal above $25k ACV.
