@@ -10,6 +10,7 @@ import FactoryOutlinedIcon from '@mui/icons-material/FactoryOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import AssignmentLateOutlinedIcon from '@mui/icons-material/AssignmentLateOutlined';
+import HistoryEduOutlinedIcon from '@mui/icons-material/HistoryEduOutlined';
 import { useTranslation } from 'react-i18next';
 
 export type AdminSection =
@@ -17,6 +18,7 @@ export type AdminSection =
   | 'manufacturers'
   | 'atlas-dictionaries'
   | 'atlas-dict-triage'
+  | 'atlas-ai-log'
   | 'atlas-ingest'
   | 'param-mappings'
   | 'logic'
@@ -30,6 +32,7 @@ const atlasSections: SectionItem[] = [
   { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },
+  { id: 'atlas-ai-log', icon: HistoryEduOutlinedIcon, labelKey: 'admin.atlasAiLog' },
   { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
 ];
 

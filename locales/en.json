@@ -507,6 +507,7 @@
     "extraPartsioFields": "Additional Parts.io fields (not in schema)",
     "atlasDictionaries": "Atlas Dictionaries",
     "atlasDictTriage": "Atlas Dictionaries Triage",
+    "atlasAiLog": "AI Investigation Log",
     "atlasIngest": "Atlas Ingest",
     "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
     "atlasParamName": "Atlas Parameter",

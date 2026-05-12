@@ -16,6 +16,12 @@
 --                                suppress future foreign-family
 --                                detection for this paramName even
 --                                if it matches a registry signature.
+--        'unmappable'          — engineer (acting on AI investigation
+--                                verdict) confirmed this paramName
+--                                represents truly unique noise that
+--                                cannot be mapped to a canonical
+--                                attribute. Excluded from the default
+--                                triage view; visible in the All view.
 --        NULL                  — default; row is a free-form note
 --                                or an open synonym-mapping case.
 --
@@ -44,7 +50,7 @@ CREATE TABLE IF NOT EXISTS atlas_unmapped_param_notes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT atlas_unmapped_param_notes_status_check
-    CHECK (status IS NULL OR status IN ('wrong_family', 'confirmed_in_family')),
+    CHECK (status IS NULL OR status IN ('wrong_family', 'confirmed_in_family', 'unmappable')),
   CONSTRAINT atlas_unmapped_param_notes_flagged_by_check
     CHECK (flagged_by IS NULL OR flagged_by IN ('auto', 'engineer')),
   -- A row exists for one of two reasons: an engineer wrote a note,
@@ -74,14 +80,21 @@ ALTER TABLE atlas_unmapped_param_notes
 -- CONSTRAINT has no IF NOT EXISTS form prior to PG 17).
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  -- DROP-then-add the status CHECK so this migration is safe to re-run
+  -- whenever the allowed status set grows (currently: wrong_family,
+  -- confirmed_in_family, unmappable). Existing 'wrong_family' and
+  -- 'confirmed_in_family' rows continue to satisfy the new constraint
+  -- so the drop+recreate is non-destructive.
+  IF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'atlas_unmapped_param_notes_status_check'
   ) THEN
     ALTER TABLE atlas_unmapped_param_notes
-      ADD CONSTRAINT atlas_unmapped_param_notes_status_check
-      CHECK (status IS NULL OR status IN ('wrong_family', 'confirmed_in_family'));
+      DROP CONSTRAINT atlas_unmapped_param_notes_status_check;
   END IF;
+  ALTER TABLE atlas_unmapped_param_notes
+    ADD CONSTRAINT atlas_unmapped_param_notes_status_check
+    CHECK (status IS NULL OR status IN ('wrong_family', 'confirmed_in_family', 'unmappable'));
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'atlas_unmapped_param_notes_flagged_by_check'

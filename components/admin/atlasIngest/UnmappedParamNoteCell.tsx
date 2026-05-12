@@ -14,7 +14,7 @@ export type NoteRecord = {
    *  case or free-form note). 'wrong_family' = engineer Confirmed a registry
    *  auto-flag (or manually flagged). 'confirmed_in_family' = engineer
    *  rejected an auto-flag, suppressing the registry hit for this paramName. */
-  status?: 'wrong_family' | 'confirmed_in_family' | null;
+  status?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
   flaggedBy?: 'auto' | 'engineer' | null;
   autoDiagnosis?: Record<string, unknown> | null;
   updatedBy: string;

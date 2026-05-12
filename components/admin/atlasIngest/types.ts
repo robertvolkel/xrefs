@@ -91,7 +91,57 @@ export type AutoFlag = {
   matchingParam: string;
 };
 
-export type NoteStatus = 'wrong_family' | 'confirmed_in_family' | null;
+export type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+
+/** Structured AI verdict from /api/admin/atlas/dictionaries/investigate.
+ *  Fired on demand for rows where the per-row /suggest verdict is NOT
+ *  'accept' (defers + unscoped rows) and where the engineer needs a
+ *  concrete next action instead of "you investigate." Cached for 24h
+ *  server-side + 7d localStorage on the client. */
+export type DeepAnalysisBucket =
+  | 'new_canonical'
+  | 'disambiguation'
+  | 'wrong_family'
+  | 'unit_mismatch'
+  | 'unscoped_products'
+  | 'unmappable';
+
+export type DeepAnalysisActionPayload = {
+  // shape varies per bucket — see /investigate route for the discriminated union
+  [k: string]: unknown;
+};
+
+export type DeepAnalysis = {
+  bucket: DeepAnalysisBucket;
+  confidence: 'high' | 'medium' | 'low';
+  evidence: {
+    sampleProducts: Array<{ mpn: string; description: string | null; manufacturer: string; valueForParam: string | null; datasheetUrl?: string | null }>;
+    crossScopeOverrides: Array<{ familyId: string; attributeId: string; attributeName: string; rawParam: string }>;
+    nearestAcceptedInScope: Array<{ attributeId: string; attributeName: string; reasoning: string }>;
+    sampleValueDistribution: { numeric: number; categorical: number; mixed: number; units: string[] };
+    /** Diagnostic — present only when sampleProducts ended up empty (or to
+     *  audit why a particular set of MFRs didn't surface). Lets the UI
+     *  surface "we tried but couldn't find products" with specifics. */
+    sampleProductsDiag?: {
+      mfrSlugsRequested: number;
+      nameVariantsResolved: number;
+      nameVariantsList: string[];
+      productsScanned: number;
+      productsCarryingParam: number;
+      productsReturned: number;
+      sampleKeysObserved?: string[];
+      matchMode?: 'exact' | 'case_insensitive';
+    };
+  };
+  recommendation: {
+    summary: string;
+    primaryActionLabel: string;
+    primaryActionPayload: DeepAnalysisActionPayload;
+    alternativeActionLabel?: string;
+    alternativeActionPayload?: DeepAnalysisActionPayload;
+  };
+  prose: string;
+};
 
 export type GlobalUnmappedParam = {
   paramName: string;
