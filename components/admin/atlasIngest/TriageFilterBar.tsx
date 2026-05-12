@@ -13,6 +13,7 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
 import NoteAltIcon from '@mui/icons-material/NoteAlt';
+import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
 import type { GlobalUnmappedParam, StatusFilter } from './types';
 
 export type TriageMode = 'synonyms' | 'auto_flagged' | 'all';
@@ -26,6 +27,10 @@ export interface TriageFilters {
    *  revisited" workflow — engineers note params during triage and come
    *  back later to finish the mapping. */
   hasNote: boolean;
+  /** When true, show only rows the engineer has flagged via the bookmark
+   *  icon. Independent of `hasNote` — a row can be flagged with no note,
+   *  noted with no flag, or both. */
+  flaggedOnly: boolean;
 }
 
 export const EMPTY_FILTERS: TriageFilters = {
@@ -34,6 +39,7 @@ export const EMPTY_FILTERS: TriageFilters = {
   families: [],
   minProductCount: 0,
   hasNote: false,
+  flaggedOnly: false,
 };
 
 interface Props {
@@ -56,9 +62,12 @@ interface Props {
    *  badge on the "Has note" toggle so engineers see at a glance how many
    *  rows are pending follow-up. */
   noteCount?: number;
+  /** Total number of params the engineer has bookmark-flagged. Surfaced as
+   *  a chip badge on the "Flagged" toggle. */
+  flaggedCount?: number;
 }
 
-export default function TriageFilterBar({ rows, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount }: Props) {
+export default function TriageFilterBar({ rows, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount }: Props) {
   // Build option lists from the unfiltered row set so the dropdowns stay
   // stable as the user toggles filters (otherwise selecting a filter would
   // remove its own option from the list).
@@ -85,7 +94,8 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
     filters.mfrSlugs.length > 0 ||
     filters.families.length > 0 ||
     filters.minProductCount > 0 ||
-    filters.hasNote;
+    filters.hasNote ||
+    filters.flaggedOnly;
 
   const synonymsCount = triageCounts?.synonyms ?? 0;
   const autoFlaggedCount = triageCounts?.autoFlagged ?? 0;
@@ -229,9 +239,31 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
           </ToggleButton>
         </Tooltip>
 
+        <Tooltip title={`Show only rows you've flagged for follow-up. ${flaggedCount ?? 0} flagged total.`}>
+          <ToggleButton
+            size="small"
+            value="flaggedOnly"
+            selected={filters.flaggedOnly}
+            onChange={() => onChange({ ...filters, flaggedOnly: !filters.flaggedOnly })}
+            sx={{ whiteSpace: 'nowrap', px: 1.25 }}
+          >
+            <Stack direction="row" spacing={0.75} alignItems="center">
+              <BookmarkAddedIcon fontSize="small" sx={{ color: filters.flaggedOnly ? 'warning.main' : undefined }} />
+              <Box component="span" sx={{ fontSize: '0.75rem' }}>Flagged</Box>
+              {(flaggedCount ?? 0) > 0 && (
+                <Chip
+                  size="small"
+                  label={flaggedCount}
+                  sx={{ height: 18, fontSize: '0.65rem', bgcolor: filters.flaggedOnly ? 'warning.main' : 'action.selected', color: filters.flaggedOnly ? 'warning.contrastText' : undefined }}
+                />
+              )}
+            </Stack>
+          </ToggleButton>
+        </Tooltip>
+
         <TextField
           size="small"
-          placeholder="Search raw attribute name…"
+          placeholder="Search raw attribute name or UID (TR-…)"
           value={filters.search}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
           sx={{ minWidth: 240, flex: 1 }}

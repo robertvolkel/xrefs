@@ -98,6 +98,54 @@ Phase 1 (just shipped) treats the unmapped-params queue as the inverse of the di
 
 Today's pattern (no override → shows in queue, override exists → gone) is documented in [batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — the override-cross-reference filter is the part that goes away when this lands. Half day of work for the table + filter chips; another day for the optional notifications.
 
+### Cross-family fan-out for Triage Accept when cross-scope canonical exists
+
+Today every `atlas_dictionary_overrides` row is keyed on `(family_id, param_name)` — so "L×W (mm)" accepted in family 71 (Power Inductors) does NOT auto-apply to family 70 (Ferrite Beads) even if the queue contains the same paramName under the second family. The engineer has to accept it manually in each family's row. This is intentional (the same paramName can mean different things across families) but creates friction when an attributeId truly is universal — e.g. `footprint_lxw_mm` is the same concept whether the part is an inductor or a ferrite bead.
+
+**What this would add:**
+1. When the engineer clicks Accept on a row AND the AI Investigation's `crossScopeOverrides` evidence section showed the same paramName accepted in another family with the SAME attributeId, surface an inline prompt: "This paramName is also unmapped in families [B, C, D] — apply the same override there too?"
+2. Checkbox list of other affected families. Default-checked when the proposed attributeId already exists in that family's schema (safe), default-unchecked when it doesn't (engineer must verify).
+3. On Apply, create N additional override rows — one per checked target family — using the same `attributeId/Name/Unit`.
+4. Affected batches across all target families queued for regeneration in one pass.
+
+**Tradeoff**: lets engineers accept once and fan out, but adds a confirmation step to every Accept where cross-scope matches exist. Worth it only if engineers regularly see "same paramName, same canonical" across families. If most cross-scope hits are coincidental (same string, different concept), the confirmation friction outweighs the savings.
+
+**Triggers that flip this from defer to ship:**
+- Engineer regularly hits the same paramName Accept in 3+ families in one session.
+- The cross-scope evidence box in the AI Investigation regularly says "same attributeId in family X" with high confidence.
+- Multi-family Atlas MFR ingestions (single MFR shipping inductors + capacitors + ferrite beads with overlapping param vocabularies) become a workflow bottleneck.
+
+### Per-product family classification drawer for `unscoped_products` Triage rows (Decision #185 follow-up)
+
+When the AI Triage Investigator returns the `unscoped_products` bucket, the affected products have `family_id=null` AND `category=null`, so no override scope resolves and the engineer has no Triage-page action. The AI's recommendation payload already has the right shape (`perProductProposals: [{ mpn, proposedFamilyId, reasoning }]`) but the prompt rarely populates it and there's no UI to commit per-product `family_id` overrides anyway.
+
+**What this would add:**
+1. A drawer launched from the Triage row's investigation card listing the affected MPNs with their description, c1/c2/c3 source categories, sample value for the paramName, and an editable family-ID dropdown pre-filled with the AI's proposed family per product.
+2. Bulk "Apply all" + per-row checkbox to commit a per-product `family_id` override (new table `atlas_product_family_overrides` keyed on `(manufacturer_slug, mpn)` with priority over `classifyAtlasCategory` at read time).
+3. AI prompt revision: actually require + return `perProductProposals` for unscoped_products bucket, with model penalty when the array is empty for >5 affected products.
+4. Once products are classified, the existing override in the cross-scope match (e.g. B1 `rth_ja`) auto-applies — the Triage row resolves itself.
+
+**Triggers that flip this from defer to ship:**
+- Engineer regularly sees `unscoped_products` rows they can't action (already happening for YANGJIE diodes).
+- The classifier code-fix path becomes a bottleneck (i.e. you can't keep up with one-off MFR taxonomy quirks).
+- Per-product overrides become useful for OTHER cases (e.g. correcting wrongly-classified products).
+
+Phase 1 alternative (lighter): when investigation returns `unscoped_products`, just surface a "Mark for engineer review" button that sets a new note status `needs_classification` so the row drops from Open queue but is queryable later. Doesn't solve the problem, just parks it until I can fix the classifier — see the "needs_classification" note-status entry below.
+
+### `needs_classification` note status — park `unscoped_products` rows for engineer follow-up
+
+Triage today has no way to say "I've looked at this and it's blocked on upstream classification — hide it from Open until someone fixes the classifier." Engineers either leave it in Open as visual noise or mark it unmappable (wrong — it IS mappable, just not from Triage). Both are bad.
+
+**What this would add:**
+1. New value `needs_classification` in the `atlas_unmapped_param_notes.status` CHECK constraint.
+2. New "Mark for classifier fix" button on `unscoped_products` investigation rows (parallel to Mark Unmappable on `unmappable` rows). Persists the new status + the AI's diagnosis as the autoDiagnosis payload.
+3. Queue filter: `needs_classification` rows hidden from Open / Synonyms by default; visible under All. New status-filter chip "Needs Classification" so engineers can pull them up when they're ready to triage classifier fixes.
+4. AI Investigation Log records this as a new action (`marked_needs_classification`) so the audit trail captures it.
+
+When the classifier gets fixed and the row's products acquire `family_id`, the row's `dominantFamily` resolves and the existing cross-scope override auto-applies on re-ingest — the row drops out of the queue entirely. Engineer can also Revert the note status if they decide to look again.
+
+Half-day of work: schema migration + status handling + button + filter chip. Useful in isolation even without the heavier per-product classification drawer above.
+
 ### Per-row research helper on the Atlas Unmapped Parameters table
 
 Non-technical admins reviewing the unmapped-params panel often need to research what a parameter actually means before accepting (or overriding) the AI-suggested mapping — e.g. "PPAP" = Production Part Approval Process, "IFSM(A)" = Maximum Surge Forward Current, "ESD" = Electrostatic Discharge rating. Today they have to manually copy the param name into Google.

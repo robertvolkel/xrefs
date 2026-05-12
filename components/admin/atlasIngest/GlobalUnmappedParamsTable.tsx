@@ -33,6 +33,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
   Stack,
   Table,
   TableBody,
@@ -50,6 +51,8 @@ import CheckIcon from '@mui/icons-material/Check';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import FlagIcon from '@mui/icons-material/Flag';
+import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
+import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
 import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -103,6 +106,35 @@ function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'
   return null;
 }
 
+/** Aggressive paramName normalization — strips case + collapses every
+ *  non-alphanumeric run to a single underscore + trim. Mirrors the
+ *  server-side helper in the investigate route. Two paramNames that
+ *  collapse to the same string are cosmetic duplicates (whitespace /
+ *  case / paren-style variants like "T(mm)" / "T (mm)" / "t(mm)").
+ *  Non-ASCII characters (CJK, full-width punctuation) collapse to
+ *  underscores, so Chinese param names DON'T spuriously match each
+ *  other unless they're actually the same string. */
+function normalizeParamKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/** Deterministic short UID for a paramName — FNV-1a 32-bit hash printed
+ *  as 6 hex chars with a "TR-" prefix. Same input always yields the same
+ *  UID across sessions, machines, and the server, so engineers can
+ *  copy/paste "TR-a8f2c1" into a search field, a Slack message, or a
+ *  ticket and the row resolves consistently. 6 hex chars = 16M slots —
+ *  collision probability under our queue size (~1K paramNames) is
+ *  negligible. No DB / migration needed because the input itself (the
+ *  paramName string) is the canonical identity. */
+export function paramUid(paramName: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < paramName.length; i++) {
+    h ^= paramName.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return 'TR-' + (h >>> 0).toString(16).padStart(8, '0').slice(-6);
+}
+
 interface Props {
   rows: GlobalUnmappedParam[];
   onRegenerateAffected: (batchIds: string[]) => Promise<void>;
@@ -120,6 +152,16 @@ interface Props {
    *  acceptedOverride.isActive=false in-place. Same optimistic-UI motivation
    *  as onRowAccepted. */
   onRowReverted?: (paramName: string) => void;
+  /** Called after a successful flag mutation (PUT /unmapped-param-notes).
+   *  Parent should set the row's noteStatus + flaggedBy in-place so the row
+   *  transforms (or disappears from Open view) without waiting on a queue
+   *  refetch. `status=null` clears the flag (Revert flow). Same optimistic-UI
+   *  motivation as onRowAccepted/onRowReverted. */
+  onRowFlagged?: (
+    paramName: string,
+    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
+    flaggedBy: 'auto' | 'engineer' | null,
+  ) => void;
 }
 
 interface RowState {
@@ -139,11 +181,6 @@ interface RowState {
   deepAnalysis: DeepAnalysis | null;
   loadingDeepAnalysis: boolean;
   deepAnalysisError: string | null;
-  // Investigation row id returned by the /investigate route — used when
-  // recording the engineer's follow-up action (Accept/Confirm/Unmappable).
-  // Null if the audit insert failed or the analysis was loaded from a
-  // pre-audit-feature cache entry.
-  investigationId: string | null;
 }
 
 const SUGGESTION_CONCURRENCY = 4;
@@ -190,12 +227,17 @@ function writeSuggestionCache(paramName: string, familyId: string | null, sugges
 // Same cache pattern for deep investigations. Separate prefix so a schema
 // change to DeepAnalysis doesn't bust suggestion cache entries.
 // v2: added investigationId so cached entries support follow-up action
-// recording without re-firing the AI. Old v1 entries are orphaned (read
-// returns null on shape mismatch) and a fresh investigation creates a v2.
-const INVESTIGATE_LS_PREFIX = 'atlas-ingest-ai-investigate-v2:';
+//     recording without re-firing the AI.
+// v3: each sampleProduct now carries `origin: 'applied' | 'pending'` plus
+//     the diag has appliedCount/pendingCount/pendingBatchesScanned. v2
+//     entries are missing those fields.
+// v4: investigationId removed — audit rows are now created on engineer
+//     DECISION, not Investigate click. Cached entries from v3 still carry
+//     a stale investigationId field that the new flow ignores; bump so
+//     legacy entries aren't re-used with the wrong shape assumptions.
+const INVESTIGATE_LS_PREFIX = 'atlas-ingest-ai-investigate-v4:';
 type CachedDeepAnalysis = {
   analysis: DeepAnalysis;
-  investigationId: string | null;
   cachedAt: number;
 };
 
@@ -221,12 +263,11 @@ function writeInvestigateCache(
   paramName: string,
   scopeKey: string | null,
   analysis: DeepAnalysis,
-  investigationId: string | null,
 ): void {
   if (typeof window === 'undefined') return;
   try {
     const key = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + paramName;
-    const payload: CachedDeepAnalysis = { analysis, investigationId, cachedAt: Date.now() };
+    const payload: CachedDeepAnalysis = { analysis, cachedAt: Date.now() };
     localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // ignore
@@ -274,13 +315,20 @@ function writeFamilySchemaCache(familyId: string, schemaIds: string[]): void {
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
-  const fetchedRef = useRef(false);
+  // Per-paramName hydration guard. Previously a single bool ref ("did we
+  // hydrate at all yet?") — that fired once on first mount and short-circuited
+  // every subsequent filter change, so switching Status filter from Open to
+  // Accepted left the new rows with empty state (no editedAttributeId, no
+  // synthesized override suggestion, rendering as blank inputs + a misleading
+  // "Generate" CTA). The Set guard hydrates each paramName once and lets new
+  // rows entering the prop on a filter switch get seeded.
+  const hydratedParamsRef = useRef<Set<string>>(new Set());
   // Per-family canonical attributeId set, populated from the suggest endpoint.
   // Used to flag whether the row's (possibly edited) attributeId actually
   // exists in the family's logic table. Empty set ⇒ family had no schema info.
@@ -288,6 +336,39 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // How many rows to actually render. Bumped by the "Show more" button.
   // Resets when the rows prop changes (filters narrowed the set).
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_ROWS);
+
+  // Per-row opt-out from bulk normalized-match acceptance. By default,
+  // accepting a row that has cosmetic-duplicate paramNames in the same
+  // scope ALSO fires overrides for the duplicates. Click the × on the
+  // "+N similar" chip to scope the accept to just the primary row.
+  const [bulkOptedOut, setBulkOptedOut] = useState<Set<string>>(new Set());
+
+  /** For each row, the OTHER queue rows whose paramName normalizes to the
+   *  same string AND share the same scope AND are still actionable (no
+   *  active override). Accepting any of them with the engineer's chosen
+   *  attributeId/Name/Unit is safe — they're whitespace/case/paren-style
+   *  variants of the same concept ("T(mm)" / "T (mm)" / "t(mm)"). Built
+   *  once per `rows` change; O(N) over the queue. */
+  const normalizedMatchesByRow = useMemo(() => {
+    const groups = new Map<string, GlobalUnmappedParam[]>();
+    for (const r of rows) {
+      const scope = getOverrideScope(r);
+      if (!scope) continue; // unscoped — bulk-accept can't write an override
+      if (r.acceptedOverride?.isActive) continue; // already mapped; not actionable
+      const key = `${scope.kind}::${scope.key}::${normalizeParamKey(r.paramName)}`;
+      const list = groups.get(key) ?? [];
+      list.push(r);
+      groups.set(key, list);
+    }
+    const result: Record<string, GlobalUnmappedParam[]> = {};
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      for (const r of list) {
+        result[r.paramName] = list.filter((x) => x.paramName !== r.paramName);
+      }
+    }
+    return result;
+  }, [rows]);
   // Reset visible count whenever the rows prop changes — a filter change
   // shouldn't carry over an expanded "show all" state from the previous view.
   useEffect(() => {
@@ -325,14 +406,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // table or the per-row "Generate" mini-button. Cached rows survive across
   // sessions for 7 days (localStorage) + 24h (server in-memory).
   const hydrateFromCache = useCallback(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-
     const initialStates: Record<string, RowState> = {};
     const initialSchemaByFamily: Record<string, Set<string>> = {};
     const seenFamilies = new Set<string>();
     const familiesNeedingSchema = new Set<string>();
     for (const row of rows) {
+      // Skip rows already hydrated this session — preserves user edits to
+      // the input fields between filter switches. New paramNames entering
+      // the prop fall through and get seeded.
+      if (hydratedParamsRef.current.has(row.paramName)) continue;
+      hydratedParamsRef.current.add(row.paramName);
       const scope = getOverrideScope(row);
       const scopeKey = scope?.key ?? null;
       if (scopeKey && !seenFamilies.has(scopeKey)) {
@@ -360,29 +443,64 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
-          investigationId: null,
         };
         continue;
       }
       const cached = readSuggestionCache(row.paramName, scopeKey);
       const cachedDeep = readInvestigateCache(row.paramName, scopeKey);
+      // For already-accepted rows (active OR reverted override), seed the
+      // edit fields from the override so the Accepted / Undone status views
+      // show what was actually mapped instead of blank inputs + a "Generate"
+      // CTA that's irrelevant for a row that's already resolved. The AI
+      // suggestion cache still wins as the source of truth when present —
+      // engineer may have generated a fresh suggestion after revert.
+      const ov = row.acceptedOverride;
       if (cached) {
         initialStates[row.paramName] = {
           suggestion: cached,
           loadingSuggestion: false,
-          editedAttributeId: cached.suggestedAttributeId ?? '',
-          editedAttributeName: cached.suggestedAttributeName ?? '',
-          editedUnit: cached.suggestedUnit ?? '',
+          editedAttributeId: cached.suggestedAttributeId ?? ov?.attributeId ?? '',
+          editedAttributeName: cached.suggestedAttributeName ?? ov?.attributeName ?? '',
+          editedUnit: cached.suggestedUnit ?? ov?.unit ?? '',
           accepted: false,
           acceptError: null,
           accepting: false,
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
-          investigationId: cachedDeep?.investigationId ?? null,
+        };
+      } else if (ov) {
+        // Override-only seed — no AI suggestion was ever cached for this row
+        // (or it expired). Synthesize a minimal suggestion-like record so the
+        // UI shows the saved attributeId/Name/Unit AND the "AI translation"
+        // column renders the saved name instead of a misleading Generate
+        // button. suggestion.suggestion='accept' suppresses the Defer chip.
+        const syntheticSuggestion: DictSuggestion = {
+          translation: ov.attributeName,
+          suggestedAttributeId: ov.attributeId,
+          suggestedAttributeName: ov.attributeName,
+          suggestedUnit: ov.unit ?? null,
+          confidence: 'high',
+          reasoning: null,
+          suggestion: 'accept',
+          explanation: ov.isActive ? 'Saved mapping.' : 'Previously accepted (now reverted).',
+        };
+        initialStates[row.paramName] = {
+          suggestion: syntheticSuggestion,
+          loadingSuggestion: false,
+          editedAttributeId: ov.attributeId,
+          editedAttributeName: ov.attributeName,
+          editedUnit: ov.unit ?? '',
+          accepted: false,
+          acceptError: null,
+          accepting: false,
+          deepAnalysis: cachedDeep?.analysis ?? null,
+          loadingDeepAnalysis: false,
+          deepAnalysisError: null,
         };
       } else {
-        // Uncached — render a "Generate" button instead of auto-fetching.
+        // Uncached AND not previously accepted — render a "Generate" button
+        // instead of auto-fetching.
         initialStates[row.paramName] = {
           suggestion: null,
           loadingSuggestion: false,
@@ -395,7 +513,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
-          investigationId: cachedDeep?.investigationId ?? null,
         };
       }
     }
@@ -449,7 +566,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             deepAnalysis: null,
             loadingDeepAnalysis: false,
             deepAnalysisError: null,
-            investigationId: null,
           }),
           loadingSuggestion: true,
         } as RowState;
@@ -528,10 +644,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   }, []);
 
   useEffect(() => {
-    if (expanded && !fetchedRef.current && rows.length > 0) {
+    if (expanded && rows.length > 0) {
       hydrateFromCache();
     }
-  }, [expanded, rows.length, hydrateFromCache]);
+  }, [expanded, rows, hydrateFromCache]);
 
   // ─── Pending-suggestion accounting ──────────────────────
   // Rows that don't have a suggestion AND aren't auto-flagged AND aren't
@@ -557,33 +673,89 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // loading state and surface failures inline without alerts.
   const [flagState, setFlagState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
 
-  // Fire-and-forget audit-log update. PATCHes the investigation row so we
-  // know what the engineer DID after the AI's verdict. Failure is non-fatal —
-  // the engineer's primary action already succeeded; this just augments the
-  // history record. The PATCH endpoint is idempotent (first-action-wins), so
-  // race conditions between handlers can't corrupt the audit row.
+  // Fire-and-forget audit-log write. ONLY fires on engineer decisions
+  // (Accept / Confirm Wrong Family / Mark Unmappable), not on Investigate
+  // clicks. Per May 2026 redesign: the AI log records DECISIONS, not the
+  // ephemeral state of intermediate Investigate iterations — otherwise an
+  // engineer iterating on a tricky param leaves a trail of "Pending" rows
+  // that never resolve. Caller passes the in-state DeepAnalysis so the
+  // server captures what the AI said at the moment the decision was made.
+  // No-op when no investigation has been run (engineer accepted the lighter
+  // /suggest verdict without firing the deeper /investigate pass).
   const recordInvestigationAction = useCallback(async (
-    investigationId: string | null,
+    row: GlobalUnmappedParam,
     action: 'override_created' | 'flagged_wrong_family' | 'marked_unmappable' | 'dismissed',
     resultingOverrideId?: string,
   ) => {
-    if (!investigationId) return;
+    const state = states[row.paramName];
+    const analysis = state?.deepAnalysis;
+    if (!analysis) return;
+    const scope = getOverrideScope(row);
     try {
-      await fetch(`/api/admin/atlas/triage-investigations/${investigationId}`, {
-        method: 'PATCH',
+      await fetch('/api/admin/atlas/triage-investigations', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action_taken: action,
-          resulting_override_id: resultingOverrideId ?? null,
+          paramName: row.paramName,
+          scopeKind: scope?.kind ?? 'none',
+          scopeKey: scope?.key ?? null,
+          analysis,
+          actionTaken: action,
+          resultingOverrideId: resultingOverrideId ?? null,
         }),
       });
     } catch (err) {
       console.error('recordInvestigationAction failed:', err);
     }
-  }, []);
+  }, [states]);
 
   const confirmFlag = useCallback(async (row: GlobalUnmappedParam) => {
-    if (!row.autoFlag) return;
+    // Two sources feed this handler:
+    //   1. Registry-based auto-flag (row.autoFlag) — the FAMILY_PARAM_SIGNATURES
+    //      pass detected this paramName belongs to a different family. UI
+    //      surfaces the red Confirm button on the row directly.
+    //   2. AI-investigation verdict (state.deepAnalysis with bucket=wrong_family)
+    //      — engineer ran Investigate; AI returned wrong_family with a
+    //      signatureRecommendation. UI surfaces the red "Add wrong_family
+    //      signature" button inside the deep-analysis card.
+    // Either source provides the autoDiagnosis payload that gets snapshotted
+    // onto atlas_unmapped_param_notes for the audit record.
+    const deep = states[row.paramName]?.deepAnalysis;
+    const investigationVerdict =
+      deep?.bucket === 'wrong_family' ? deep : null;
+
+    let autoDiagnosis: Record<string, unknown> | null = null;
+    if (row.autoFlag) {
+      autoDiagnosis = {
+        source: 'registry',
+        suggestedFamily: row.autoFlag.suggestedFamily,
+        reasoning: row.autoFlag.reasoning,
+        matchingParam: row.autoFlag.matchingParam,
+        sourceFamily: row.dominantFamily,
+        confirmedAt: new Date().toISOString(),
+      };
+    } else if (investigationVerdict) {
+      const payload = (investigationVerdict.recommendation?.primaryActionPayload ?? {}) as {
+        actualFamilyId?: string;
+        signatureRecommendation?: { paramName?: string; familyId?: string; reasoning?: string };
+      };
+      autoDiagnosis = {
+        source: 'ai_investigation',
+        suggestedFamily: payload.signatureRecommendation?.familyId ?? payload.actualFamilyId ?? null,
+        reasoning: payload.signatureRecommendation?.reasoning ?? investigationVerdict.prose ?? null,
+        matchingParam: payload.signatureRecommendation?.paramName ?? row.paramName,
+        sourceFamily: row.dominantFamily,
+        confidence: investigationVerdict.confidence,
+        summary: investigationVerdict.recommendation?.summary ?? null,
+        confirmedAt: new Date().toISOString(),
+      };
+    } else {
+      // Neither source — nothing to flag against. Bail silently so the
+      // button can't no-op without explanation; the UI shouldn't render
+      // the button in this state but defend against the case anyway.
+      return;
+    }
+
     setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
     try {
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
@@ -591,33 +763,33 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'wrong_family',
-          flaggedBy: 'auto',
-          // Snapshot the registry hit at flag time so the audit record
-          // survives later registry edits / removals.
-          autoDiagnosis: {
-            suggestedFamily: row.autoFlag.suggestedFamily,
-            reasoning: row.autoFlag.reasoning,
-            matchingParam: row.autoFlag.matchingParam,
-            sourceFamily: row.dominantFamily,
-            confirmedAt: new Date().toISOString(),
-          },
+          // 'auto' when the registry caught it; 'engineer' when the AI
+          // investigation surfaced it and the engineer accepted the verdict.
+          // Lets the queue UI distinguish the two provenances on hover.
+          flaggedBy: row.autoFlag ? 'auto' : 'engineer',
+          autoDiagnosis,
         }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `Confirm failed (${res.status})`);
+      // Optimistic in-place update so the row visibly transforms (drops from
+      // Open view, or flips to confirmed-flag UI on Auto-flagged view) without
+      // a queue refetch. onRegenerateAffected([]) alone only bumps the Recent
+      // Accepts panel — it doesn't touch the row's noteStatus.
+      onRowFlagged?.(row.paramName, 'wrong_family', row.autoFlag ? 'auto' : 'engineer');
       // Record on the audit log that this confirm was the outcome of an
       // earlier AI investigation (if there was one). Fire-and-forget.
-      void recordInvestigationAction(states[row.paramName]?.investigationId ?? null, 'flagged_wrong_family');
-      // Refresh the queue so the row's persisted state is reflected (the
-      // route's classifier reads atlas_unmapped_param_notes on every fetch).
-      // No batches need regenerating — flagging doesn't change ingest output.
+      void recordInvestigationAction(row, 'flagged_wrong_family');
+      // Bump the Recent Accepts panel — the queue-row mutation is handled by
+      // onRowFlagged above. No batch regen needed; flagging doesn't change
+      // ingest output.
       await onRegenerateAffected([]);
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: null } }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Confirm failed';
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
     }
-  }, [onRegenerateAffected, recordInvestigationAction, states]);
+  }, [onRegenerateAffected, recordInvestigationAction, states, onRowFlagged]);
 
   const revertFlag = useCallback(async (row: GlobalUnmappedParam) => {
     setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
@@ -641,13 +813,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `Revert failed (${res.status})`);
+      // Mirror of confirmFlag — optimistic update so the row's UI reflects
+      // the new status without a queue refetch.
+      onRowFlagged?.(row.paramName, 'confirmed_in_family', 'engineer');
       await onRegenerateAffected([]);
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: null } }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Revert failed';
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
     }
-  }, [onRegenerateAffected]);
+  }, [onRegenerateAffected, onRowFlagged]);
 
   // ─── Per-row Accept ────────────────────────────────────
   const acceptRow = useCallback(async (row: GlobalUnmappedParam): Promise<{ ok: boolean; error?: string }> => {
@@ -725,7 +900,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         // If this Accept was the outcome of a deep-AI investigation,
         // close the audit loop: log the resulting override id on the
         // investigation row. Fire-and-forget — Accept already succeeded.
-        void recordInvestigationAction(state.investigationId ?? null, 'override_created', d.id);
+        void recordInvestigationAction(row, 'override_created', d.id);
       }
       return { ok: true };
     } catch (err) {
@@ -738,12 +913,195 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
   }, [states, onRowAccepted, recordInvestigationAction]);
 
+  /** Fire an override creation for one of the primary row's normalized
+   *  matches using the SAME attributeId/Name/Unit the engineer just used
+   *  on the primary. Fire-and-forget per match: a single failure must not
+   *  roll back the primary accept, and the engineer can retry the failed
+   *  match individually. Returns true on success so the caller can decide
+   *  whether to optimistically flip the row to Accepted in local state. */
+  const acceptMatchWithPrimaryOverride = useCallback(async (
+    match: GlobalUnmappedParam,
+    overrideValues: { attributeId: string; attributeName: string; unit: string },
+    primaryParamName: string,
+  ): Promise<boolean> => {
+    const scope = getOverrideScope(match);
+    if (!scope) return false;
+    try {
+      const res = await fetch('/api/admin/atlas/dictionaries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          familyId: scope.key,
+          paramName: match.paramName.toLowerCase(),
+          action: 'add',
+          attributeId: overrideValues.attributeId,
+          attributeName: overrideValues.attributeName,
+          unit: overrideValues.unit || undefined,
+          // Audit trail: tag the override so it's discoverable later as a
+          // bulk-applied match, with a pointer back to the primary row that
+          // drove the engineer's intent.
+          changeReason: `Bulk-applied with "${primaryParamName}" (normalized-match group, ${scope.kind === 'category' ? `L2: ${scope.key}` : `L3: ${scope.key}`})`,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) return false;
+      if (json.data && onRowAccepted) {
+        const d = json.data as {
+          id: string;
+          attributeId?: string;
+          attributeName?: string;
+          unit?: string;
+          createdBy: string;
+          createdAt: string;
+          updatedAt: string;
+          isActive: boolean;
+        };
+        onRowAccepted(match.paramName, {
+          id: d.id,
+          attributeId: d.attributeId ?? overrideValues.attributeId,
+          attributeName: d.attributeName ?? overrideValues.attributeName,
+          unit: d.unit ?? null,
+          createdBy: d.createdBy,
+          createdByName: 'You',
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt,
+          isActive: d.isActive,
+          wasEdited: false,
+        });
+        // Mark the match's local state so any in-flight RowState sees it
+        // as accepted (the parent's onRowAccepted update covers the parent
+        // queue, but this table also keeps per-row edit state).
+        setStates((prev) => ({
+          ...prev,
+          [match.paramName]: {
+            ...(prev[match.paramName] ?? {
+              suggestion: null,
+              loadingSuggestion: false,
+              editedAttributeId: '',
+              editedAttributeName: '',
+              editedUnit: '',
+              accepting: false,
+              acceptError: null,
+              deepAnalysis: null,
+              loadingDeepAnalysis: false,
+              deepAnalysisError: null,
+            }),
+            accepted: true,
+            accepting: false,
+            acceptError: null,
+          } as RowState,
+        }));
+      }
+      return true;
+    } catch (err) {
+      console.error('bulk match accept failed for', match.paramName, err);
+      return false;
+    }
+  }, [onRowAccepted]);
+
+  /** Chip surfaced next to the Accept button when a row has cosmetic-
+   *  duplicate paramName variants in the same scope. Default state: chip
+   *  is visible and on Accept the same override fires for every variant.
+   *  Click the × to scope the accept to just the primary row. Click the
+   *  smaller "just this row" chip (in opted-out state) to re-enable. */
+  const renderBulkMatchChip = (r: GlobalUnmappedParam) => {
+    const matches = normalizedMatchesByRow[r.paramName] ?? [];
+    if (matches.length === 0) return null;
+    const isOptedOut = bulkOptedOut.has(r.paramName);
+    if (isOptedOut) {
+      return (
+        <Tooltip title="Bulk-apply disabled. Click to re-enable so the same override also maps the similar paramNames.">
+          <Chip
+            label="just this row"
+            size="small"
+            variant="outlined"
+            onClick={() => setBulkOptedOut((prev) => {
+              const next = new Set(prev);
+              next.delete(r.paramName);
+              return next;
+            })}
+            sx={{ fontSize: '0.6rem', height: 18, color: 'text.disabled', borderStyle: 'dashed' }}
+          />
+        </Tooltip>
+      );
+    }
+    return (
+      <Tooltip
+        title={
+          <Box sx={{ p: 0.5 }}>
+            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+              Accept will also map {matches.length} similar paramName{matches.length === 1 ? '' : 's'}:
+            </Typography>
+            {matches.slice(0, 6).map((m, i) => (
+              <Typography key={i} variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                · {m.paramName}
+                {m.sampleValues.length > 0 && ` (e.g. ${m.sampleValues.slice(0, 3).join(', ')})`}
+              </Typography>
+            ))}
+            {matches.length > 6 && (
+              <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', fontStyle: 'italic' }}>
+                …and {matches.length - 6} more
+              </Typography>
+            )}
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.65rem' }}>
+              Click × to apply to just this row.
+            </Typography>
+          </Box>
+        }
+      >
+        <Chip
+          label={`+${matches.length} similar`}
+          size="small"
+          color="info"
+          variant="outlined"
+          onDelete={() => setBulkOptedOut((prev) => {
+            const next = new Set(prev);
+            next.add(r.paramName);
+            return next;
+          })}
+          sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-deleteIcon': { fontSize: 12 } }}
+        />
+      </Tooltip>
+    );
+  };
+
   const acceptAndRegenerate = useCallback(async (row: GlobalUnmappedParam) => {
     const result = await acceptRow(row);
-    if (result.ok) {
-      await onRegenerateAffected(row.affectedBatchIds);
+    if (!result.ok) return;
+
+    // Bulk-apply branch: if this row has normalized-match siblings AND the
+    // engineer hasn't opted out via the chip's ×, fire the same override
+    // for every sibling in parallel. The primary accept already succeeded
+    // by this point, so any match failure is contained — the engineer can
+    // retry that match's row individually.
+    const matches = normalizedMatchesByRow[row.paramName] ?? [];
+    const doBulk = matches.length > 0 && !bulkOptedOut.has(row.paramName);
+    if (doBulk) {
+      const primaryState = states[row.paramName];
+      if (primaryState && primaryState.editedAttributeId.trim()) {
+        const overrideValues = {
+          attributeId: primaryState.editedAttributeId.trim(),
+          attributeName: primaryState.editedAttributeName.trim(),
+          unit: primaryState.editedUnit.trim(),
+        };
+        await Promise.all(
+          matches.map((m) => acceptMatchWithPrimaryOverride(m, overrideValues, row.paramName)),
+        );
+        // Aggregate affected batches across the entire matched group so
+        // every batch that surfaced any of the variants gets regenerated
+        // in one pass — otherwise some batches would still show the
+        // sibling paramName as unmapped until the engineer clicks again.
+        const allBatchIds = new Set<string>(row.affectedBatchIds);
+        for (const m of matches) {
+          for (const b of m.affectedBatchIds) allBatchIds.add(b);
+        }
+        await onRegenerateAffected([...allBatchIds]);
+        return;
+      }
     }
-  }, [acceptRow, onRegenerateAffected]);
+
+    await onRegenerateAffected(row.affectedBatchIds);
+  }, [acceptRow, onRegenerateAffected, normalizedMatchesByRow, bulkOptedOut, states, acceptMatchWithPrimaryOverride]);
 
   // Per-row deep investigation — fires only on explicit click. Returns one
   // of six action buckets with evidence + a concrete next-step. The result
@@ -759,7 +1117,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     const isRefresh = !!states[row.paramName]?.deepAnalysis;
     if (isRefresh && typeof window !== 'undefined') {
       try {
-        const cacheKey = 'atlas-ingest-ai-investigate-v2:' + (scopeKey ?? '__none__') + '::' + row.paramName;
+        const cacheKey = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + row.paramName;
         localStorage.removeItem(cacheKey);
       } catch {
         // ignore
@@ -783,6 +1141,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           familyId: scope?.kind === 'family' ? scope.key : null,
           dominantCategory: scope?.kind === 'category' ? scope.key : null,
           affectedManufacturerSlugs: row.affectedManufacturers.map((m) => m.slug),
+          affectedBatchIds: row.affectedBatchIds,
           forceRefresh: isRefresh,
         }),
       });
@@ -791,8 +1150,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         throw new Error(json.error || json.detail || 'Investigation failed');
       }
       const analysis: DeepAnalysis = json.analysis;
-      const investigationId: string | null = json.investigationId ?? null;
-      writeInvestigateCache(row.paramName, scopeKey, analysis, investigationId);
+      writeInvestigateCache(row.paramName, scopeKey, analysis);
       setStates((prev) => ({
         ...prev,
         [row.paramName]: {
@@ -800,7 +1158,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: analysis,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
-          investigationId,
         } as RowState,
       }));
     } catch (err) {
@@ -838,6 +1195,62 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }));
   }, []);
 
+  /** Toggle the engineer-bookmark flag on a row. Independent of `status`
+   *  and `note` — purely a "I want to revisit this later" marker. PUT
+   *  carries through any existing note/status so the upsert doesn't
+   *  clobber them. Optimistic UI: we update notesByParam immediately
+   *  and roll back on error. */
+  const toggleFlag = useCallback(async (row: GlobalUnmappedParam, nextFlagged: boolean) => {
+    const existing = notesByParam[row.paramName];
+    // Build the optimistic NoteRecord that the parent will store. Use
+    // the existing note/status/etc when present so we don't drop them.
+    const optimistic: NoteRecord = {
+      paramName: row.paramName,
+      note: existing?.note ?? '',
+      status: existing?.status ?? null,
+      flaggedBy: existing?.flaggedBy ?? null,
+      autoDiagnosis: existing?.autoDiagnosis ?? null,
+      flagged: nextFlagged,
+      updatedBy: existing?.updatedBy ?? '',
+      updatedByName: 'You',
+      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    // Toggling OFF when there's no other signal on the row → server will
+    // delete the note row entirely. Reflect that locally too.
+    const willDelete = !nextFlagged
+      && !existing?.status
+      && (!existing?.note || existing.note.trim().length === 0);
+    onNoteChange(row.paramName, willDelete ? null : optimistic);
+    try {
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          note: existing?.note ?? '',
+          status: existing?.status ?? null,
+          flaggedBy: existing?.flaggedBy ?? null,
+          autoDiagnosis: existing?.autoDiagnosis ?? null,
+          flagged: nextFlagged,
+        }),
+      });
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !(json as { success?: boolean }).success) {
+        // Roll back the optimistic update on error.
+        onNoteChange(row.paramName, existing ?? null);
+        return;
+      }
+      // Reconcile with server-returned record (carries real updatedBy/At).
+      if ((json as { item?: NoteRecord }).item) {
+        onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
+      } else if ((json as { deleted?: boolean }).deleted) {
+        onNoteChange(row.paramName, null);
+      }
+    } catch {
+      onNoteChange(row.paramName, existing ?? null);
+    }
+  }, [notesByParam, onNoteChange]);
+
   const markUnmappable = useCallback(async (row: GlobalUnmappedParam) => {
     try {
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
@@ -853,7 +1266,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // notesByParam stays in sync. Queue cache invalidate fires server-side.
       onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
       // Close the AI audit loop. Fire-and-forget.
-      void recordInvestigationAction(states[row.paramName]?.investigationId ?? null, 'marked_unmappable');
+      void recordInvestigationAction(row, 'marked_unmappable');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to mark unmappable';
       setStates((prev) => ({
@@ -1009,6 +1422,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           <Table size="small" sx={{ tableLayout: 'fixed' }}>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ fontWeight: 600, width: 90 }}>UID</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 40, padding: '6px 4px', textAlign: 'center' }} aria-label="Flag" />
                 <TableCell sx={{ fontWeight: 600, width: 40, padding: '6px 4px' }} aria-label="Note" />
                 <TableCell sx={{ fontWeight: 600, width: 140 }}>Raw Attribute Name</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 70 }}>Family</TableCell>
@@ -1024,7 +1439,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </TableRow>
             </TableHead>
             <TableBody>
-              {visibleRows.map((r) => {
+              {visibleRows.map((r, rowIdx) => {
                 const state = states[r.paramName];
                 // Effective flag state per-row. autoFlag = live registry hit;
                 // noteStatus='wrong_family' = persisted (auto-confirmed or
@@ -1037,7 +1452,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const suggestedFam = r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null;
                 const confirmedFlag = r.noteStatus === 'wrong_family';
                 return (
-                  <Fragment key={r.paramName}>
+                  <Fragment key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}::${rowIdx}`}>
                   <TableRow
                     sx={{
                       // Three "done" states drop opacity:
@@ -1055,6 +1470,45 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         : undefined,
                     }}
                   >
+                    <TableCell sx={{ width: 90, padding: '4px 8px' }}>
+                      <Tooltip title={`Copy ${paramUid(r.paramName)} (paste into search to find this row again)`} placement="top">
+                        <Chip
+                          label={paramUid(r.paramName)}
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                              void navigator.clipboard.writeText(paramUid(r.paramName));
+                            }
+                          }}
+                          sx={{
+                            fontSize: '0.62rem',
+                            height: 18,
+                            fontFamily: 'monospace',
+                            cursor: 'pointer',
+                            '& .MuiChip-label': { px: 0.75 },
+                          }}
+                        />
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
+                      {(() => {
+                        const flagged = !!notesByParam[r.paramName]?.flagged;
+                        return (
+                          <Tooltip title={flagged ? 'Flagged for follow-up — click to unflag' : 'Flag for follow-up'}>
+                            <IconButton
+                              size="small"
+                              onClick={() => toggleFlag(r, !flagged)}
+                              sx={{ p: 0.25 }}
+                            >
+                              {flagged
+                                ? <BookmarkAddedIcon sx={{ fontSize: 16, color: 'warning.light' }} />
+                                : <BookmarkBorderIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
+                            </IconButton>
+                          </Tooltip>
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
                       <UnmappedParamNoteCell
                         paramName={r.paramName}
@@ -1506,6 +1960,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                               </span>
                             </Tooltip>
                           )}
+                          {renderBulkMatchChip(r)}
                         </Stack>
                       ) : flagged ? (
                         // Confirm + Revert. After Confirm the persisted status
@@ -1563,6 +2018,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                               </Button>
                             </span>
                           </Tooltip>
+                          {renderBulkMatchChip(r)}
                           {/* Investigate button. Visible when the row is either
                               unscoped (Accept grayed) or the AI verdict was
                               defer (Accept would be unsafe). Fires the deeper
@@ -1772,7 +2228,7 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
 
   return (
     <TableRow sx={{ bgcolor: 'action.hover' }}>
-      <TableCell colSpan={12} sx={{ py: 1.5, px: 2, borderBottom: '2px solid', borderBottomColor: 'divider' }}>
+      <TableCell colSpan={14} sx={{ py: 1.5, px: 2, borderBottom: '2px solid', borderBottomColor: 'divider' }}>
         <Stack spacing={1.2}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Chip
@@ -1820,10 +2276,17 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
                   ` (${analysis.evidence.sampleProductsDiag.nameVariantsList.slice(0, 8).join(', ')}${analysis.evidence.sampleProductsDiag.nameVariantsList.length > 8 ? '…' : ''})`}
               </Typography>
               <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
-                Products scanned: {analysis.evidence.sampleProductsDiag.productsScanned}
+                Applied tier — scanned: {analysis.evidence.sampleProductsDiag.productsScanned}
                 {' · '}
-                Products carrying this paramName: {analysis.evidence.sampleProductsDiag.productsCarryingParam}
+                carrying this paramName: {analysis.evidence.sampleProductsDiag.productsCarryingParam}
               </Typography>
+              {(analysis.evidence.sampleProductsDiag.pendingBatchesScanned ?? 0) > 0 && (
+                <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                  Pending tier — batches scanned: {analysis.evidence.sampleProductsDiag.pendingBatchesScanned}
+                  {' · '}
+                  products matched from source files: {analysis.evidence.sampleProductsDiag.pendingCount ?? 0}
+                </Typography>
+              )}
               {analysis.evidence.sampleProductsDiag.sampleKeysObserved && analysis.evidence.sampleProductsDiag.sampleKeysObserved.length > 0 && (
                 <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem', mt: 0.5 }}>
                   Actual JSONB keys seen in scanned products: {analysis.evidence.sampleProductsDiag.sampleKeysObserved.slice(0, 15).join(' | ')}
@@ -1837,45 +2300,80 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
               Each product's MPN becomes a datasheet link when atlas_products
               has a datasheet_url — the AI's prose often says "check the
               datasheet" and the engineer should be able to do so in one click. */}
-          {analysis.evidence?.sampleProducts && analysis.evidence.sampleProducts.length > 0 && (
-            <Box>
-              <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
-                Affected products ({analysis.evidence.sampleProducts.length}):
-              </Typography>
-              <Stack spacing={0.25}>
-                {analysis.evidence.sampleProducts.map((p, i) => (
-                  <Typography key={i} variant="caption" sx={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>
-                    {p.datasheetUrl ? (
-                      <Tooltip title="Open datasheet in new tab">
-                        <Box
-                          component="a"
-                          href={p.datasheetUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          sx={{
-                            fontWeight: 700,
-                            color: 'primary.light',
-                            textDecoration: 'none',
-                            '&:hover': { textDecoration: 'underline' },
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 0.25,
-                          }}
-                        >
-                          {p.manufacturer} {p.mpn}
-                          <OpenInNewIcon sx={{ fontSize: 10 }} />
-                        </Box>
-                      </Tooltip>
-                    ) : (
-                      <Box component="span" sx={{ fontWeight: 700 }}>{p.manufacturer} {p.mpn}</Box>
-                    )}
-                    {p.description ? ` — ${p.description}` : ''}
-                    {p.valueForParam ? ` (value: ${p.valueForParam})` : ''}
-                  </Typography>
-                ))}
-              </Stack>
-            </Box>
-          )}
+          {analysis.evidence?.sampleProducts && analysis.evidence.sampleProducts.length > 0 && (() => {
+            const products = analysis.evidence.sampleProducts;
+            const appliedN = products.filter((p) => p.origin === 'applied').length;
+            const pendingN = products.filter((p) => p.origin === 'pending').length;
+            const breakdownBits: string[] = [];
+            if (appliedN > 0) breakdownBits.push(`${appliedN} applied`);
+            if (pendingN > 0) breakdownBits.push(`${pendingN} pending`);
+            const breakdown = breakdownBits.length > 0 ? ` — ${breakdownBits.join(' · ')}` : '';
+            return (
+              <Box>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                  Affected products ({products.length}{breakdown}):
+                </Typography>
+                <Stack spacing={0.25}>
+                  {products.map((p, i) => {
+                    // 'pending' means the source batch hasn't been applied yet —
+                    // values come from raw JSON, not atlas_products. Engineer
+                    // should verify against the linked datasheet rather than
+                    // assuming the value is canonical.
+                    const isPending = p.origin === 'pending';
+                    return (
+                      <Box key={i} sx={{ display: 'flex', alignItems: 'baseline', gap: 0.5 }}>
+                        {p.origin && (
+                          <Tooltip
+                            title={
+                              isPending
+                                ? 'Pending: from the uploaded source file (batch not yet applied to atlas_products)'
+                                : 'Applied: live in atlas_products'
+                            }
+                          >
+                            <Chip
+                              label={isPending ? 'pending' : 'applied'}
+                              size="small"
+                              color={isPending ? 'warning' : 'success'}
+                              variant="outlined"
+                              sx={{ height: 16, fontSize: '0.6rem', '& .MuiChip-label': { px: 0.5 } }}
+                            />
+                          </Tooltip>
+                        )}
+                        <Typography variant="caption" sx={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>
+                          {p.datasheetUrl ? (
+                            <Tooltip title="Open datasheet in new tab">
+                              <Box
+                                component="a"
+                                href={p.datasheetUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                sx={{
+                                  fontWeight: 700,
+                                  color: 'primary.light',
+                                  textDecoration: 'none',
+                                  '&:hover': { textDecoration: 'underline' },
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 0.25,
+                                }}
+                              >
+                                {p.manufacturer} {p.mpn}
+                                <OpenInNewIcon sx={{ fontSize: 10 }} />
+                              </Box>
+                            </Tooltip>
+                          ) : (
+                            <Box component="span" sx={{ fontWeight: 700 }}>{p.manufacturer} {p.mpn}</Box>
+                          )}
+                          {p.description ? ` — ${p.description}` : ''}
+                          {p.valueForParam ? ` (value: ${p.valueForParam})` : ''}
+                        </Typography>
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              </Box>
+            );
+          })()}
 
           {analysis.evidence?.crossScopeOverrides && analysis.evidence.crossScopeOverrides.length > 0 && (
             <Box>

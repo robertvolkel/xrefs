@@ -163,6 +163,14 @@ function classifyAtlasCategory(c1, c2, c3) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
   }
 
+  // E1 Optocouplers / Optoisolators — c3 contains 'Optoisolator' or
+  // 'Photocoupler'. Mirror of atlasMapper.ts; without this, Everlight (亿光)
+  // and similar opto MFR products fall through to the L2 'ICs' catch-all.
+  if (lower.includes('optoisolator') || lower.includes('photocoupler')
+      || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
+    return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
+  }
+
   // L2 categories (no logic tables)
   // Use c1 guards to prevent cross-domain misclassification.
   if (lower.includes('microcontroller') || lower.includes('mcu')) return { category: 'Microcontrollers', subcategory: c3, familyId: null };
@@ -1388,6 +1396,55 @@ const FAMILY_PARAMS = {
     'power(mw)': { attributeId: '_power', attributeName: 'Power Consumption', unit: 'mW', sortOrder: 99 },
     'inl(lsb)': { attributeId: 'inl_lsb', attributeName: 'INL', unit: 'LSB', sortOrder: 10 },
   },
+
+  // ── E1 Optocouplers / Optoisolators ──────────────────────
+  // Maps Chinese opto-coupler param vocabulary to canonical attributeIds
+  // defined in lib/logicTables/e1Optocouplers.ts. Mirror of atlasMapper.ts —
+  // Chinese-only keys per the established ingest-time mjs pattern.
+  E1: {
+    '隔离电压(rms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    '隔离电压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    '输出通道数': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
+    '通道数': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
+    '输出类型': { attributeId: 'output_transistor_type', attributeName: 'Output Type', sortOrder: 3 },
+    '正向电压': { attributeId: 'input_forward_voltage_vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 4 },
+    '正向电流': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
+    // Input reverse voltage — new canonical (E1 logic table doesn't model it).
+    '反向电压': { attributeId: 'input_reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 6 },
+    // Vce(sat) — output transistor saturation. E1 canonical.
+    '集射极饱和电压(vce(sat)@ic,if)': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    '集射极饱和电压': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    // Switching times — new canonicals (logic table only has propagation_delay_us composite).
+    '上升时间': { attributeId: 'rise_time_us', attributeName: 'Rise Time', unit: 'µs', sortOrder: 8 },
+    '下降时间': { attributeId: 'fall_time_us', attributeName: 'Fall Time', unit: 'µs', sortOrder: 9 },
+    '传播延迟tplh/tphl': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay', unit: 'µs', sortOrder: 10 },
+    // DC output current (transistor-output) — new canonical.
+    '输出电流': { attributeId: 'output_current_ma', attributeName: 'Output Current', unit: 'mA', sortOrder: 11 },
+    // RMS output current (triac/SCR-output) — new canonical.
+    '输出电流(it(rms))': { attributeId: 'output_current_rms_a', attributeName: 'Output Current (It RMS)', unit: 'A', sortOrder: 12 },
+    // Receiver-side voltage — new canonical.
+    '接收端电压': { attributeId: 'receiver_voltage_v', attributeName: 'Receiver Voltage', unit: 'V', sortOrder: 13 },
+    // Input voltage type (DC/AC) — new canonical.
+    '输入电压类型': { attributeId: 'input_voltage_type', attributeName: 'Input Voltage Type', sortOrder: 14 },
+    '输入类型': { attributeId: 'input_voltage_type', attributeName: 'Input Voltage Type', sortOrder: 14 },
+    // Triac/SCR output type, zero-cross, Vdrm, dv/dt — for triac-output optos.
+    '可控硅类型': { attributeId: 'triac_type', attributeName: 'Triac Type', sortOrder: 15 },
+    '过零电路': { attributeId: 'zero_cross_circuit', attributeName: 'Zero-Cross Circuit', sortOrder: 16 },
+    '断态峰值电压(vdrm)': { attributeId: 'vdrm_v', attributeName: 'Vdrm', unit: 'V', sortOrder: 17 },
+    '静态dv/dt': { attributeId: 'static_dv_dt_v_us', attributeName: 'Static dv/dt', unit: 'V/µs', sortOrder: 18 },
+    // CMTI — for digital-isolator-style optocouplers.
+    '共模瞬变抗扰度cmti': { attributeId: 'cmti_kv_us', attributeName: 'CMTI', unit: 'kV/µs', sortOrder: 19 },
+    // Data rate — for high-speed Logic-output Optoisolators / digital isolators (10Mbit/s, 5Mbit/s).
+    '数据速率': { attributeId: 'data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 19 },
+    // Supply voltage (logic-output Vcc) — E1 canonical.
+    '电源电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage (Vcc)', unit: 'V', sortOrder: 20 },
+    // Operating temperature — E1 canonical 'operating_temp_range'.
+    '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 21 },
+    // Package — E1 canonical 'package_type'.
+    '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 22 },
+    // CTR — current transfer ratio. E1 canonical.
+    '电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+  },
 };
 
 // ── L2 Category Dictionaries (no logic tables, display-only) ─────────
@@ -1473,6 +1530,9 @@ const L2_PARAMS = {
     '带宽': { attributeId: 'bandwidth', attributeName: 'Bandwidth', unit: 'Hz', sortOrder: 12 },
     '响应时间': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
     '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 14 },
+    // Optical-sensor-specific (Phototransistors, Photodiodes — Everlight 亿光 ships under c1='Sensors, Transducers').
+    '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 14 },
+    '反向电压': { attributeId: 'reverse_voltage', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 15 },
     '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 16 },
     '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
     '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
@@ -1502,17 +1562,44 @@ const L2_PARAMS = {
   },
   'LEDs and Optoelectronics': {
     '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    // Synonym used by Everlight (亿光) for color
+    '发光颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
     '波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
     '主波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    // Peak wavelength is a distinct canonical from dominant wavelength
+    '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 4 },
     '光强': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '发光强度': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '视角': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    // Synonym used by Everlight (亿光) for viewing angle
+    '发光角度': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
     '正向电压': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '正向压降': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    // Suffix-tagged variant used by Everlight ('正向电压(VF)' lowercased)
+    '正向电压(vf)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '测试电流': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    // Lens color — distinct canonical for the LED's lens material/color
+    '透镜颜色': { attributeId: 'lens_color', attributeName: 'Lens Color', sortOrder: 9 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
+    // Forward Current (If) — LED operating current. New canonical (no logic
+    // table family models LEDs explicitly; B1's io_avg is for power rectifiers).
+    '正向电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    // Synonym used by Everlight on a small subset of LED products.
+    '工作电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    // Color temperature — relevant for white LEDs (warm/cool white). New canonical.
+    '色温': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    // Power dissipation — already a canonical (atlasMapper.ts:584). Unit W.
+    '功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    // Lamp base type — physical socket/header (E27, GU10, T1, etc.). New canonical.
+    '灯头类型': { attributeId: 'lamp_base_type', attributeName: 'Lamp Base Type', sortOrder: 16 },
+    // Diode configuration — array layout, common-anode vs common-cathode.
+    // Reuses existing 'configuration' canonical.
+    '二极管配置': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 17 },
+    // Operating temperature — uses established 'operating_temp' canonical
+    // (NOT 'operating_temperature'), consistent with 19+ existing usages.
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },

@@ -7,7 +7,8 @@ import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 
 interface CacheFreshnessBarProps {
   cachedAt: string | null;
-  onRefresh: () => Promise<void> | void;
+  /** Omit to hide the Refresh button (read-only contexts, e.g. end-user /atlas). */
+  onRefresh?: () => Promise<void> | void;
   refreshing: boolean;
 }
 
@@ -31,16 +32,18 @@ export default function CacheFreshnessBar({ cachedAt, onRefresh, refreshing }: C
           </Typography>
         </Tooltip>
       )}
-      <Button
-        size="small"
-        variant="outlined"
-        startIcon={<RefreshIcon fontSize="small" />}
-        onClick={() => void onRefresh()}
-        disabled={refreshing}
-        sx={{ textTransform: 'none' }}
-      >
-        {refreshing ? t('admin.atlasGrowth.refreshing') : t('admin.atlasGrowth.refreshNow')}
-      </Button>
+      {onRefresh && (
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<RefreshIcon fontSize="small" />}
+          onClick={() => void onRefresh()}
+          disabled={refreshing}
+          sx={{ textTransform: 'none' }}
+        >
+          {refreshing ? t('admin.atlasGrowth.refreshing') : t('admin.atlasGrowth.refreshNow')}
+        </Button>
+      )}
     </Box>
   );
 }

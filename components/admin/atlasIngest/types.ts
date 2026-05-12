@@ -115,7 +115,19 @@ export type DeepAnalysis = {
   bucket: DeepAnalysisBucket;
   confidence: 'high' | 'medium' | 'low';
   evidence: {
-    sampleProducts: Array<{ mpn: string; description: string | null; manufacturer: string; valueForParam: string | null; datasheetUrl?: string | null }>;
+    sampleProducts: Array<{
+      mpn: string;
+      description: string | null;
+      manufacturer: string;
+      valueForParam: string | null;
+      datasheetUrl?: string | null;
+      /** 'applied' = product is live in atlas_products (batch already proceeded).
+       *  'pending' = product was read from the source JSON because the batch
+       *  carrying this paramName is still in status='pending'. Engineers need
+       *  this distinction to know whether to verify the value live or via the
+       *  raw datasheet. */
+      origin?: 'applied' | 'pending';
+    }>;
     crossScopeOverrides: Array<{ familyId: string; attributeId: string; attributeName: string; rawParam: string }>;
     nearestAcceptedInScope: Array<{ attributeId: string; attributeName: string; reasoning: string }>;
     sampleValueDistribution: { numeric: number; categorical: number; mixed: number; units: string[] };
@@ -129,6 +141,11 @@ export type DeepAnalysis = {
       productsScanned: number;
       productsCarryingParam: number;
       productsReturned: number;
+      /** Per-origin breakdown — how many returned products came from each
+       *  side of the ingest line. */
+      appliedCount?: number;
+      pendingCount?: number;
+      pendingBatchesScanned?: number;
       sampleKeysObserved?: string[];
       matchMode?: 'exact' | 'case_insensitive';
     };

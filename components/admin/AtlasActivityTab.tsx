@@ -11,9 +11,11 @@ interface AtlasActivityTabProps {
   cachedAt: string | null;
   onRefresh: () => Promise<void> | void;
   refreshing: boolean;
+  /** Hide refresh control (end-user /atlas mount). */
+  readOnly?: boolean;
 }
 
-export default function AtlasActivityTab({ data, cachedAt, onRefresh, refreshing }: AtlasActivityTabProps) {
+export default function AtlasActivityTab({ data, cachedAt, onRefresh, refreshing, readOnly }: AtlasActivityTabProps) {
   const { t } = useTranslation();
 
   return (
@@ -34,7 +36,11 @@ export default function AtlasActivityTab({ data, cachedAt, onRefresh, refreshing
         <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 0.5 }}>
           {t('admin.atlasGrowth.headerTitle')}
         </Typography>
-        <CacheFreshnessBar cachedAt={cachedAt} onRefresh={onRefresh} refreshing={refreshing} />
+        <CacheFreshnessBar
+          cachedAt={cachedAt}
+          onRefresh={readOnly ? undefined : onRefresh}
+          refreshing={refreshing}
+        />
       </Box>
 
       <AtlasEventLogTable events={data.events} />

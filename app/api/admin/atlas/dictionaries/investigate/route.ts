@@ -17,6 +17,8 @@
  * not eager — so token spend stays controlled.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { promises as fs } from 'fs';
+import path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -38,6 +40,11 @@ interface SampleProduct {
   family_id: string | null;
   valueForParam: string | null;
   datasheetUrl: string | null;
+  /** Which side of the ingest line this product came from.
+   *  'applied' = lives in atlas_products (batch already proceeded).
+   *  'pending' = read from the raw source JSON file because the batch
+   *  is still in atlas_ingest_batches with status='pending'. */
+  origin: 'applied' | 'pending';
 }
 
 interface SampleProductsDiag {
@@ -47,12 +54,26 @@ interface SampleProductsDiag {
   productsScanned: number;
   productsCarryingParam: number;
   productsReturned: number;
+  /** Per-origin breakdown so the engineer can see at a glance whether a
+   *  pending batch or the applied tier (or both) contributed the affected
+   *  products list. Mirrors how the queue itself aggregates from both. */
+  appliedCount?: number;
+  pendingCount?: number;
+  pendingBatchesScanned?: number;
   /** A handful of actual JSONB keys observed across scanned products,
    *  shown when the paramName filter found nothing. Helps diagnose
    *  case / whitespace / normalization mismatches between the queue
    *  aggregation's reported paramName and the live JSONB shape. */
   sampleKeysObserved?: string[];
   matchMode?: 'exact' | 'case_insensitive';
+}
+
+/** Aggressive normalization used everywhere we need to match a paramName
+ *  against a JSONB / source-file key. Strips case + collapses every
+ *  non-alphanumeric run to a single underscore + trim. Catches:
+ *  "T(mm)" ↔ "t_mm", "Rds(on)" ↔ "rds_on", "阻抗值(Ω)" ↔ "阻抗值_Ω_". */
+function normalizeKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 interface CrossScopeOverride {
@@ -69,14 +90,254 @@ interface SampleValueDistribution {
   units: string[];
 }
 
-/** Pull up to 5 products that carry this paramName for the given MFR set,
- *  with the JSONB value at parameters->paramName so the AI can see what
- *  the values actually look like in context. */
+/** Resolve a set of MFR slugs to every known name variant
+ *  (display/en/zh/aliases, plus whitespace-split tokens). atlas_products
+ *  uses English-only manufacturer ("Sunlord") while atlas_manufacturers
+ *  carries the combined form ("Sunlord 顺络"); without the split we'd
+ *  miss every applied row. */
+async function resolveMfrNameVariants(mfrSlugs: string[]): Promise<Set<string>> {
+  const names = new Set<string>();
+  if (mfrSlugs.length === 0) return names;
+  const supabase = createServiceClient();
+  const { data: mfrRows } = await supabase
+    .from('atlas_manufacturers')
+    .select('name_display, name_en, name_zh, aliases')
+    .in('slug', mfrSlugs);
+  const addVariant = (v: string | null | undefined) => {
+    if (!v) return;
+    const trimmed = v.trim();
+    if (trimmed) names.add(trimmed);
+    for (const tok of trimmed.split(/\s+/)) {
+      const t = tok.trim();
+      if (t) names.add(t);
+    }
+  };
+  for (const r of mfrRows ?? []) {
+    addVariant(r.name_display as string | null);
+    addVariant(r.name_en as string | null);
+    addVariant(r.name_zh as string | null);
+    for (const a of ((r.aliases as string[] | null) ?? [])) addVariant(a);
+  }
+  return names;
+}
+
+/** Pull products carrying this paramName from atlas_products (i.e. already
+ *  applied batches). Returns up to `limit` matches plus per-pass diagnostics
+ *  so the caller can fold them into the combined diag. */
+async function fetchAppliedSampleProducts(
+  paramName: string,
+  names: Set<string>,
+  scopeKind: 'family' | 'category' | 'none',
+  scopeKey: string | null,
+  limit: number,
+): Promise<{
+  products: SampleProduct[];
+  productsScanned: number;
+  productsCarryingParam: number;
+  matchMode: 'exact' | 'case_insensitive';
+  sampleKeysObserved?: string[];
+}> {
+  if (names.size === 0 || limit <= 0) {
+    return { products: [], productsScanned: 0, productsCarryingParam: 0, matchMode: 'exact' };
+  }
+  const supabase = createServiceClient();
+
+  // Pull enough rows that we're likely to find at least `limit` carriers of
+  // this paramName, even when a fraction of the MFR's SKUs use it. Filter
+  // by scope to avoid the random sample landing on unrelated families
+  // (e.g. Sunlord ships both inductors and capacitors).
+  const SCAN_LIMIT = 500;
+  let scanQuery = supabase
+    .from('atlas_products')
+    .select('mpn, description, manufacturer, category, subcategory, family_id, parameters, datasheet_url')
+    .in('manufacturer', [...names])
+    .limit(SCAN_LIMIT);
+  if (scopeKind === 'family' && scopeKey) {
+    scanQuery = scanQuery.eq('family_id', scopeKey);
+  } else if (scopeKind === 'category' && scopeKey) {
+    scanQuery = scanQuery.eq('category', scopeKey);
+  }
+  const { data, error } = await scanQuery;
+  if (error) {
+    console.error('fetchAppliedSampleProducts query error:', error);
+    return { products: [], productsScanned: 0, productsCarryingParam: 0, matchMode: 'exact' };
+  }
+  const productsScanned = data?.length ?? 0;
+  if (!data || data.length === 0) {
+    return { products: [], productsScanned: 0, productsCarryingParam: 0, matchMode: 'exact' };
+  }
+
+  // First pass: exact-key match.
+  let matching = data.filter((r) => {
+    const params = r.parameters as Record<string, unknown> | null;
+    return !!params && Object.prototype.hasOwnProperty.call(params, paramName);
+  });
+  let matchMode: 'exact' | 'case_insensitive' = 'exact';
+
+  // Fallback: aggressive normalization.
+  if (matching.length === 0) {
+    const target = normalizeKey(paramName);
+    matching = data.filter((r) => {
+      const params = r.parameters as Record<string, unknown> | null;
+      if (!params) return false;
+      for (const k of Object.keys(params)) {
+        if (normalizeKey(k) === target) return true;
+      }
+      return false;
+    });
+    matchMode = 'case_insensitive';
+  }
+
+  let sampleKeysObserved: string[] | undefined;
+  if (matching.length === 0) {
+    const keysSeen = new Set<string>();
+    for (const r of data.slice(0, 5)) {
+      const params = r.parameters as Record<string, unknown> | null;
+      if (!params) continue;
+      for (const k of Object.keys(params)) {
+        keysSeen.add(k);
+        if (keysSeen.size >= 30) break;
+      }
+      if (keysSeen.size >= 30) break;
+    }
+    sampleKeysObserved = [...keysSeen];
+  }
+
+  const resolveActualKey = (params: Record<string, unknown>): string | null => {
+    if (Object.prototype.hasOwnProperty.call(params, paramName)) return paramName;
+    const target = normalizeKey(paramName);
+    for (const k of Object.keys(params)) {
+      if (normalizeKey(k) === target) return k;
+    }
+    return null;
+  };
+
+  const products: SampleProduct[] = matching.slice(0, limit).map((r) => {
+    const params = r.parameters as Record<string, unknown> | null;
+    const actualKey = params ? resolveActualKey(params) : null;
+    const raw = actualKey && params ? params[actualKey] : null;
+    let valueForParam: string | null = null;
+    if (raw && typeof raw === 'object' && 'value' in raw) {
+      const v = (raw as { value: unknown }).value;
+      valueForParam = v == null ? null : String(v);
+    } else if (raw != null) {
+      valueForParam = String(raw);
+    }
+    return {
+      mpn: r.mpn as string,
+      description: (r.description as string | null) ?? null,
+      manufacturer: r.manufacturer as string,
+      category: (r.category as string | null) ?? null,
+      subcategory: (r.subcategory as string | null) ?? null,
+      family_id: (r.family_id as string | null) ?? null,
+      valueForParam,
+      datasheetUrl: (r.datasheet_url as string | null) ?? null,
+      origin: 'applied',
+    };
+  });
+
+  return {
+    products,
+    productsScanned,
+    productsCarryingParam: matching.length,
+    matchMode,
+    sampleKeysObserved,
+  };
+}
+
+/** Pull products carrying this paramName from PENDING ingest batches by
+ *  reading the raw source JSON files off disk. The Triage queue surfaces
+ *  unmapped params the moment a batch is uploaded — long before it's
+ *  applied — but the products don't enter atlas_products until Proceed.
+ *  Reading the source file is the only way to give the engineer concrete
+ *  affected products + datasheet URLs for pre-apply triage. */
+async function fetchPendingSampleProducts(
+  paramName: string,
+  affectedBatchIds: string[],
+  limit: number,
+): Promise<{ products: SampleProduct[]; pendingBatchesScanned: number }> {
+  if (affectedBatchIds.length === 0 || limit <= 0) {
+    return { products: [], pendingBatchesScanned: 0 };
+  }
+  const supabase = createServiceClient();
+  // Only consider pending — applied batches are already covered by
+  // fetchAppliedSampleProducts (which sees the post-apply atlas_products
+  // rows). Querying both here would double-count.
+  const { data: batches, error } = await supabase
+    .from('atlas_ingest_batches')
+    .select('batch_id, source_file, manufacturer, status')
+    .in('batch_id', affectedBatchIds)
+    .eq('status', 'pending');
+  if (error || !batches || batches.length === 0) {
+    return { products: [], pendingBatchesScanned: 0 };
+  }
+
+  const target = normalizeKey(paramName);
+  const products: SampleProduct[] = [];
+
+  for (const batch of batches) {
+    if (products.length >= limit) break;
+    const sourceFile = batch.source_file as string;
+    if (!sourceFile) continue;
+    const filePath = path.resolve(process.cwd(), 'data/atlas', sourceFile);
+    let raw: string;
+    try {
+      raw = await fs.readFile(filePath, 'utf-8');
+    } catch (err) {
+      console.error('fetchPendingSampleProducts: failed to read', filePath, err);
+      continue;
+    }
+    let parsed: { manufacturer?: { name?: string }; models?: unknown[] };
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.error('fetchPendingSampleProducts: failed to parse', filePath, err);
+      continue;
+    }
+    const mfrName =
+      (parsed.manufacturer?.name as string | undefined) ?? (batch.manufacturer as string);
+    for (const m of (parsed.models ?? []) as Array<Record<string, unknown>>) {
+      if (products.length >= limit) break;
+      const paramList = (m.parameters as Array<{ name?: unknown; value?: unknown }> | undefined) ?? [];
+      let matchedValue: string | null = null;
+      for (const p of paramList) {
+        if (typeof p.name !== 'string') continue;
+        if (normalizeKey(p.name) === target) {
+          matchedValue = p.value == null ? null : String(p.value);
+          break;
+        }
+      }
+      if (matchedValue === null && !paramList.some((p) => typeof p.name === 'string' && normalizeKey(p.name) === target)) {
+        continue;
+      }
+      const cat = m.category as { c1?: { name?: string }; c2?: { name?: string }; c3?: { name?: string } } | undefined;
+      products.push({
+        mpn: (m.componentName as string) ?? '',
+        description: (m.description as string | null) ?? null,
+        manufacturer: mfrName,
+        category: cat?.c1?.name ?? null,
+        subcategory: cat?.c3?.name ?? cat?.c2?.name ?? null,
+        family_id: null,
+        valueForParam: matchedValue,
+        datasheetUrl: (m.datasheetUrl as string | null) ?? null,
+        origin: 'pending',
+      });
+    }
+  }
+
+  return { products, pendingBatchesScanned: batches.length };
+}
+
+/** Pull up to 5 products that carry this paramName for the given MFR set
+ *  AND/OR the given pending-batch ids. Mixes applied and pending so the
+ *  engineer sees both sides when a param spans batches at different
+ *  lifecycle states. */
 async function fetchSampleProducts(
   paramName: string,
   mfrSlugs: string[],
   scopeKind: 'family' | 'category' | 'none',
   scopeKey: string | null,
+  affectedBatchIds: string[],
 ): Promise<{ products: SampleProduct[]; diag: SampleProductsDiag }> {
   const diag: SampleProductsDiag = {
     mfrSlugsRequested: mfrSlugs.length,
@@ -85,155 +346,43 @@ async function fetchSampleProducts(
     productsScanned: 0,
     productsCarryingParam: 0,
     productsReturned: 0,
+    appliedCount: 0,
+    pendingCount: 0,
+    pendingBatchesScanned: 0,
   };
 
   try {
-    const supabase = createServiceClient();
-    if (mfrSlugs.length === 0) return { products: [], diag };
-
-    // Resolve slugs to EVERY known name variant for each MFR.
-    // atlas_products.manufacturer is English-only ("Sunlord") while
-    // atlas_manufacturers.name_display is often "ENGLISH Chinese"
-    // ("Sunlord 顺络"). Also split on whitespace so each token becomes a
-    // standalone variant — that catches the common case where name_en is
-    // null but name_display has both parts joined.
-    const { data: mfrRows } = await supabase
-      .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, aliases')
-      .in('slug', mfrSlugs);
-    const names = new Set<string>();
-    const addVariant = (v: string | null | undefined) => {
-      if (!v) return;
-      const trimmed = v.trim();
-      if (trimmed) names.add(trimmed);
-      // Also split on any whitespace and add tokens individually — "Sunlord 顺络"
-      // → also adds "Sunlord" and "顺络" so we hit atlas_products' single-token
-      // manufacturer column.
-      for (const tok of trimmed.split(/\s+/)) {
-        const t = tok.trim();
-        if (t) names.add(t);
-      }
-    };
-    for (const r of mfrRows ?? []) {
-      addVariant(r.name_display as string | null);
-      addVariant(r.name_en as string | null);
-      addVariant(r.name_zh as string | null);
-      for (const a of ((r.aliases as string[] | null) ?? [])) addVariant(a);
-    }
+    const names = await resolveMfrNameVariants(mfrSlugs);
     diag.nameVariantsResolved = names.size;
     diag.nameVariantsList = [...names];
-    if (names.size === 0) return { products: [], diag };
 
-    // Pull enough rows that we're likely to find at least 5 carriers of
-    // this paramName, even when a fraction of the MFRs' SKUs use it. Filter
-    // by the row's scope so we don't waste the scan on unrelated product
-    // families (Sunlord makes inductors AND capacitors AND … without this
-    // filter the random 500-row sample lands on capacitors, none of which
-    // have an inductor's "T(mm)" key).
-    const SCAN_LIMIT = 500;
-    let scanQuery = supabase
-      .from('atlas_products')
-      .select('mpn, description, manufacturer, category, subcategory, family_id, parameters, datasheet_url')
-      .in('manufacturer', [...names])
-      .limit(SCAN_LIMIT);
-    if (scopeKind === 'family' && scopeKey) {
-      scanQuery = scanQuery.eq('family_id', scopeKey);
-    } else if (scopeKind === 'category' && scopeKey) {
-      scanQuery = scanQuery.eq('category', scopeKey);
-    }
-    const { data, error } = await scanQuery;
-    if (error) {
-      console.error('fetchSampleProducts query error:', error);
-      return { products: [], diag };
-    }
-    diag.productsScanned = data?.length ?? 0;
-    if (!data || data.length === 0) return { products: [], diag };
+    const TOTAL_LIMIT = 5;
 
-    // First pass: exact-key match. Most common and fastest.
-    let matching = data.filter((r) => {
-      const params = r.parameters as Record<string, unknown> | null;
-      return !!params && Object.prototype.hasOwnProperty.call(params, paramName);
-    });
-    diag.matchMode = 'exact';
+    // Pass 1 — applied tier. Always fires; reports diag fields back so the
+    // engineer-facing diagnostic stays accurate for the applied path.
+    const applied = await fetchAppliedSampleProducts(
+      paramName,
+      names,
+      scopeKind,
+      scopeKey,
+      TOTAL_LIMIT,
+    );
+    diag.productsScanned = applied.productsScanned;
+    diag.productsCarryingParam = applied.productsCarryingParam;
+    diag.matchMode = applied.matchMode;
+    if (applied.sampleKeysObserved) diag.sampleKeysObserved = applied.sampleKeysObserved;
+    diag.appliedCount = applied.products.length;
 
-    // Fallback: aggressive normalization. Atlas ingest may snake_case keys
-    // ("T(mm)" → "t_mm") or vice versa, so we strip case + collapse every
-    // non-alphanumeric run to a single underscore + trim. Catches all of:
-    // "T(mm)" ↔ "t_mm", "Rds(on)" ↔ "rds_on", "I_F" ↔ "if", etc.
-    if (matching.length === 0) {
-      const norm = (s: string) =>
-        s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-      const target = norm(paramName);
-      matching = data.filter((r) => {
-        const params = r.parameters as Record<string, unknown> | null;
-        if (!params) return false;
-        for (const k of Object.keys(params)) {
-          if (norm(k) === target) return true;
-        }
-        return false;
-      });
-      diag.matchMode = 'case_insensitive';
-    }
+    // Pass 2 — pending tier. Fills any remaining slots from raw source JSON
+    // for batches still in status='pending'. Common case for newly-uploaded
+    // MFRs (e.g. INPAQ pre-Proceed) where atlas_products has zero rows yet.
+    const remaining = TOTAL_LIMIT - applied.products.length;
+    const pending = await fetchPendingSampleProducts(paramName, affectedBatchIds, remaining);
+    diag.pendingCount = pending.products.length;
+    diag.pendingBatchesScanned = pending.pendingBatchesScanned;
 
-    // Surface a sample of observed keys so the engineer can see what the
-    // JSONB actually contains when no match was found.
-    if (matching.length === 0) {
-      const keysSeen = new Set<string>();
-      for (const r of data.slice(0, 5)) {
-        const params = r.parameters as Record<string, unknown> | null;
-        if (!params) continue;
-        for (const k of Object.keys(params)) {
-          keysSeen.add(k);
-          if (keysSeen.size >= 30) break;
-        }
-        if (keysSeen.size >= 30) break;
-      }
-      diag.sampleKeysObserved = [...keysSeen];
-    }
-
-    diag.productsCarryingParam = matching.length;
-
-    const matches = matching.slice(0, 5);
-    diag.productsReturned = matches.length;
-
-    // For the case-insensitive matches, we need to find the ACTUAL key in
-    // each product's JSONB to read its value back. Same normalization rules
-    // as the filter above.
-    const resolveActualKey = (params: Record<string, unknown>): string | null => {
-      if (Object.prototype.hasOwnProperty.call(params, paramName)) return paramName;
-      const norm = (s: string) =>
-        s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-      const target = norm(paramName);
-      for (const k of Object.keys(params)) {
-        if (norm(k) === target) return k;
-      }
-      return null;
-    };
-
-    const products = matches.map((r) => {
-      const params = r.parameters as Record<string, unknown> | null;
-      const actualKey = params ? resolveActualKey(params) : null;
-      const raw = actualKey && params ? params[actualKey] : null;
-      // parameters JSONB shape: { paramName: { value: 'string', source: '...', ingested_at: '...' }, ... }
-      // Older rows may have just the bare value as a string/number/null.
-      let valueForParam: string | null = null;
-      if (raw && typeof raw === 'object' && 'value' in raw) {
-        const v = (raw as { value: unknown }).value;
-        valueForParam = v == null ? null : String(v);
-      } else if (raw != null) {
-        valueForParam = String(raw);
-      }
-      return {
-        mpn: r.mpn as string,
-        description: (r.description as string | null) ?? null,
-        manufacturer: r.manufacturer as string,
-        category: (r.category as string | null) ?? null,
-        subcategory: (r.subcategory as string | null) ?? null,
-        family_id: (r.family_id as string | null) ?? null,
-        valueForParam,
-        datasheetUrl: (r.datasheet_url as string | null) ?? null,
-      };
-    });
+    const products = [...applied.products, ...pending.products];
+    diag.productsReturned = products.length;
     return { products, diag };
   } catch (err) {
     console.error('fetchSampleProducts exception:', err);
@@ -319,7 +468,7 @@ function buildPrompt(args: {
       ? args.sampleProducts
           .map(
             (p) =>
-              `- ${p.manufacturer} ${p.mpn} (family=${p.family_id ?? 'null'}, category=${p.category ?? 'null'}/${p.subcategory ?? 'null'}): ${p.description ?? '(no description)'} — value: ${p.valueForParam ?? 'null'}`,
+              `- [${p.origin}] ${p.manufacturer} ${p.mpn} (family=${p.family_id ?? 'null'}, category=${p.category ?? 'null'}/${p.subcategory ?? 'null'}): ${p.description ?? '(no description)'} — value: ${p.valueForParam ?? 'null'}`,
           )
           .join('\n')
       : '(no affected products available)';
@@ -413,7 +562,7 @@ Respond in JSON ONLY, no markdown:
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { user, error: authError } = await requireAdmin();
+    const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -427,6 +576,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const familyId = (body.familyId as string | null) ?? null;
     const dominantCategory = (body.dominantCategory as string | null) ?? null;
     const mfrSlugs = (body.affectedManufacturerSlugs as string[]) ?? [];
+    const affectedBatchIds = (body.affectedBatchIds as string[]) ?? [];
     const forceRefresh = body.forceRefresh === true;
 
     if (!paramName) {
@@ -445,18 +595,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Cache by (paramName + scope). Sample values don't materially change
     // the verdict — they shape the prose but not the bucket — so we omit
-    // them from the cache key (same approach as /suggest). Cached payload
-    // includes investigationId — re-fires return the SAME investigation
-    // row id rather than logging a duplicate audit row.
+    // them from the cache key (same approach as /suggest).
+    //
+    // We do NOT persist an audit row here. Decision (May 2026): only
+    // engineer DECISIONS get audit rows, not every Investigate click.
+    // Otherwise an engineer firing Investigate 7 times while iterating
+    // on a tricky param creates 7 orphan "Pending" log entries that
+    // never resolve. The decision endpoint
+    // [POST /api/admin/atlas/triage-investigations] takes the analysis
+    // payload at action-time and writes a single complete row.
     const cacheKey = `${scopeKey ?? '__none__'}::${paramName}`;
     if (forceRefresh) INVESTIGATE_CACHE.delete(cacheKey);
     const cached = forceRefresh ? null : INVESTIGATE_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      const cachedPayload = cached.value as { analysis: unknown; investigationId: string };
+      const cachedPayload = cached.value as { analysis: unknown };
       return NextResponse.json({
         success: true,
         analysis: cachedPayload.analysis,
-        investigationId: cachedPayload.investigationId,
         cached: true,
       });
     }
@@ -465,7 +620,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const [schemaAttrs, acceptedCanonicals, sampleProductsResult, crossScopeOverrides] = await Promise.all([
       Promise.resolve(scopeKey ? getSchemaAttributes(scopeKey) : []),
       scopeKey ? fetchAcceptedCanonicals(scopeKey) : Promise.resolve([]),
-      fetchSampleProducts(paramName, mfrSlugs, scopeKind, scopeKey),
+      fetchSampleProducts(paramName, mfrSlugs, scopeKind, scopeKey, affectedBatchIds),
       fetchCrossScopeOverrides(paramName, scopeKey),
     ]);
     const sampleProducts = sampleProductsResult.products;
@@ -502,7 +657,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1200,
+      // 1600 vs the earlier 1200 — the prompt grew when we added the
+      // pending-tier source-file evidence + [applied|pending] origin
+      // tagging on each product. Disambiguation responses with full
+      // evidence sections were occasionally truncating, which produced
+      // unparseable JSON. 1600 gives Sonnet headroom without ballooning
+      // cost (3K-4K input prompt vs 1.6K output is still a small call).
+      max_tokens: 1600,
       system: prompt,
       messages: [{ role: 'user', content: `Investigate parameter: "${paramName}"` }],
     });
@@ -511,19 +672,57 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('');
+
+    // Multi-stage JSON extraction. Sonnet usually returns clean JSON, but
+    // we've seen three failure modes in practice:
+    //   1. Code-fence wrapping ("```json\n{...}\n```")
+    //   2. Conversational preamble ("Here is the analysis:\n{...}")
+    //   3. Trailing prose after the JSON
+    // Stage 1: try the original direct parse with code-fence stripping.
+    // Stage 2: slice between the first { and the last } — handles preamble
+    // AND trailing prose AND nested objects in a single shot since outermost
+    // {} bound the document.
+    let parsed: Record<string, unknown> | null = null;
+    let parseErrorMsg = '';
     const cleaned = text
       .trim()
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/, '')
       .trim();
-
-    let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
-      console.error('investigate JSON parse failed:', parseErr, 'raw:', text.slice(0, 500));
+      parseErrorMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      // Stage 2 fallback — outermost-{} slice.
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+        } catch (sliceErr) {
+          parseErrorMsg += ` | slice retry: ${sliceErr instanceof Error ? sliceErr.message : String(sliceErr)}`;
+        }
+      }
+    }
+
+    if (!parsed) {
+      const truncated = (response.stop_reason === 'max_tokens');
+      console.error(
+        'investigate JSON parse failed:',
+        parseErrorMsg,
+        'stop_reason:', response.stop_reason,
+        'raw:', text.slice(0, 800),
+      );
       return NextResponse.json(
-        { success: false, error: 'AI response could not be parsed', detail: text.slice(0, 200) },
+        {
+          success: false,
+          error: truncated
+            ? 'AI response was truncated (hit max_tokens). Try again, or shorten the prompt.'
+            : 'AI response could not be parsed as JSON',
+          detail: text.slice(0, 300),
+          parseError: parseErrorMsg,
+          stopReason: response.stop_reason,
+        },
         { status: 502 },
       );
     }
@@ -540,6 +739,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           manufacturer: p.manufacturer,
           valueForParam: p.valueForParam,
           datasheetUrl: p.datasheetUrl,
+          origin: p.origin,
         })),
         crossScopeOverrides,
         nearestAcceptedInScope:
@@ -549,47 +749,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     };
 
-    // Persist audit row. Fail-open: if the insert errors we still return
-    // the analysis so the UI works, just without an investigationId (so the
-    // engineer can't link follow-up actions to this row). Log the failure
-    // for diagnosis. RLS check: requireAdmin upstream is the gate; we use
-    // service-role here (Decision #176 lesson — RLS bites silently in some
-    // admin endpoints when relying on cookie-based auth).
-    let investigationId: string | null = null;
-    try {
-      const supabase = createServiceClient();
-      const insertRow = {
-        param_name: paramName,
-        scope_kind: scopeKind,
-        scope_key: scopeKey,
-        bucket: (parsed.bucket as string) ?? 'unmappable',
-        confidence: (parsed.confidence as string) ?? 'low',
-        summary: ((parsed.recommendation as Record<string, unknown> | undefined)?.summary as string | undefined) ?? null,
-        prose: (parsed.prose as string | undefined) ?? null,
-        primary_action_label: ((parsed.recommendation as Record<string, unknown> | undefined)?.primaryActionLabel as string | undefined) ?? null,
-        raw_response: analysis,
-        ran_by: user!.id,
-      };
-      const { data: inserted, error: insertErr } = await supabase
-        .from('atlas_triage_investigations')
-        .insert(insertRow)
-        .select('id')
-        .single();
-      if (insertErr) {
-        console.error('atlas_triage_investigations insert failed:', insertErr);
-      } else if (inserted) {
-        investigationId = inserted.id as string;
-      }
-    } catch (auditErr) {
-      console.error('atlas_triage_investigations insert exception:', auditErr);
-    }
-
     INVESTIGATE_CACHE.set(cacheKey, {
-      value: { analysis, investigationId },
+      value: { analysis },
       expiresAt: Date.now() + INVESTIGATE_CACHE_TTL_MS,
     });
 
-    return NextResponse.json({ success: true, analysis, investigationId });
+    return NextResponse.json({ success: true, analysis });
   } catch (err) {
     console.error('investigate route error:', err);
     return NextResponse.json(
