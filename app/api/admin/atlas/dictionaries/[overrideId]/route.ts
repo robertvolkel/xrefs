@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
-import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 /** PATCH /api/admin/atlas/dictionaries/:overrideId */
 export async function PATCH(
@@ -48,7 +48,7 @@ export async function PATCH(
       .single();
 
     if (row) invalidateDictOverrideCache(row.family_id as string);
-    invalidateTriageQueueCache();
+    await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -93,7 +93,7 @@ export async function DELETE(
     }
 
     if (row) invalidateDictOverrideCache(row.family_id as string);
-    invalidateTriageQueueCache();
+    await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({ success: true });
   } catch (error) {

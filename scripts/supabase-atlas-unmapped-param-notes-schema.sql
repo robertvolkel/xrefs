@@ -53,14 +53,15 @@ CREATE TABLE IF NOT EXISTS atlas_unmapped_param_notes (
     CHECK (status IS NULL OR status IN ('wrong_family', 'confirmed_in_family', 'unmappable')),
   CONSTRAINT atlas_unmapped_param_notes_flagged_by_check
     CHECK (flagged_by IS NULL OR flagged_by IN ('auto', 'engineer')),
-  -- A row exists for one of two reasons: an engineer wrote a note,
-  -- or a status was set. An empty row with neither would be deleted
-  -- by the PUT handler — enforce here too so the table cannot drift
-  -- to all-null rows on bad client writes.
+  -- A row exists for one of three reasons: an engineer wrote a note,
+  -- a status was set, OR the row was flagged. An empty row with none
+  -- of these would be deleted by the PUT handler — enforce here too
+  -- so the table cannot drift to all-null rows on bad client writes.
   CONSTRAINT atlas_unmapped_param_notes_has_signal
     CHECK (
       (note IS NOT NULL AND length(trim(note)) > 0)
       OR status IS NOT NULL
+      OR is_flagged = TRUE
     )
 );
 
@@ -75,6 +76,13 @@ ALTER TABLE atlas_unmapped_param_notes
   ADD COLUMN IF NOT EXISTS flagged_by TEXT;
 ALTER TABLE atlas_unmapped_param_notes
   ADD COLUMN IF NOT EXISTS auto_diagnosis JSONB;
+
+-- Generic per-row flag toggled by the engineer from the Triage UI.
+-- Independent of `status` (which is structured triage outcome). Use
+-- when you want to bookmark a row for later review without committing
+-- to a specific status. NULL or FALSE = unflagged; TRUE = flagged.
+ALTER TABLE atlas_unmapped_param_notes
+  ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Add CHECK constraints (idempotent via DO blocks — ALTER TABLE ADD
 -- CONSTRAINT has no IF NOT EXISTS form prior to PG 17).
@@ -103,18 +111,29 @@ BEGIN
       ADD CONSTRAINT atlas_unmapped_param_notes_flagged_by_check
       CHECK (flagged_by IS NULL OR flagged_by IN ('auto', 'engineer'));
   END IF;
-  IF NOT EXISTS (
+  -- DROP-then-add for has_signal so re-runs pick up the is_flagged
+  -- clause without leaving older two-axis constraint in place.
+  IF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'atlas_unmapped_param_notes_has_signal'
   ) THEN
     ALTER TABLE atlas_unmapped_param_notes
-      ADD CONSTRAINT atlas_unmapped_param_notes_has_signal
-      CHECK (
-        (note IS NOT NULL AND length(trim(note)) > 0)
-        OR status IS NOT NULL
-      );
+      DROP CONSTRAINT atlas_unmapped_param_notes_has_signal;
   END IF;
+  ALTER TABLE atlas_unmapped_param_notes
+    ADD CONSTRAINT atlas_unmapped_param_notes_has_signal
+    CHECK (
+      (note IS NOT NULL AND length(trim(note)) > 0)
+      OR status IS NOT NULL
+      OR is_flagged = TRUE
+    );
 END$$;
+
+-- Partial index for the flagged review queue. Queue route reads
+-- this when filter is "Flagged".
+CREATE INDEX IF NOT EXISTS idx_atlas_unmapped_notes_flagged
+  ON atlas_unmapped_param_notes (param_name)
+  WHERE is_flagged = TRUE;
 
 -- ─── Indexes ─────────────────────────────────────────────────
 

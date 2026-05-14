@@ -7,14 +7,12 @@ import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import CategoryOutlinedIcon from '@mui/icons-material/CategoryOutlined';
 import TranslateOutlinedIcon from '@mui/icons-material/TranslateOutlined';
 import FactoryOutlinedIcon from '@mui/icons-material/FactoryOutlined';
-import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined';
 import AssignmentLateOutlinedIcon from '@mui/icons-material/AssignmentLateOutlined';
 import HistoryEduOutlinedIcon from '@mui/icons-material/HistoryEduOutlined';
 import { useTranslation } from 'react-i18next';
 
 export type AdminSection =
-  | 'atlas-coverage'
   | 'manufacturers'
   | 'atlas-dictionaries'
   | 'atlas-dict-triage'
@@ -28,7 +26,6 @@ export type AdminSection =
 type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string };
 
 const atlasSections: SectionItem[] = [
-  { id: 'atlas-coverage', icon: InsightsOutlinedIcon, labelKey: 'admin.atlasCoverageNav' },
   { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },

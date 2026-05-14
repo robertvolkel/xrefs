@@ -94,9 +94,11 @@ interface AtlasOverviewTabProps {
   cachedAt: string | null;
   onRefresh: () => Promise<void> | void;
   refreshing: boolean;
+  /** Hide refresh control (end-user /atlas mount). PDF export stays visible. */
+  readOnly?: boolean;
 }
 
-export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartSlot, cachedAt, onRefresh, refreshing }: AtlasOverviewTabProps) {
+export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartSlot, cachedAt, onRefresh, refreshing, readOnly }: AtlasOverviewTabProps) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -241,7 +243,11 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
               {t('admin.atlasCoverageReport.title')}
             </Typography>
             <Box data-no-print="true">
-              <CacheFreshnessBar cachedAt={cachedAt} onRefresh={onRefresh} refreshing={refreshing} />
+              <CacheFreshnessBar
+                cachedAt={cachedAt}
+                onRefresh={readOnly ? undefined : onRefresh}
+                refreshing={refreshing}
+              />
             </Box>
             {/* PDF print version: a static "Generated on" line that replaces
                 the freshness bar (which doesn't make sense in a print export). */}

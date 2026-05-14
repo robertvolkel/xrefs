@@ -19,7 +19,6 @@ import LogicPanel from './LogicPanel';
 import ContextPanel from './ContextPanel';
 import TaxonomyPanel from './TaxonomyPanel';
 import ManufacturersPanel from './ManufacturersPanel';
-import AtlasCoveragePanel from './AtlasCoveragePanel';
 import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import AtlasIngestPanel from './atlasIngest/AtlasIngestPanel';
 import AtlasDictTriagePanel from './AtlasDictTriagePanel';
@@ -128,7 +127,7 @@ const MONITORING_REDIRECT_MAP: Record<string, string> = {
   'distributor-clicks': 'distributor-clicks',
 };
 
-const DEFAULT_SECTION: AdminSection = 'atlas-coverage';
+const DEFAULT_SECTION: AdminSection = 'manufacturers';
 
 function isValidSection(s: string | null): s is AdminSection {
   return s !== null && VALID_SECTIONS.has(s as AdminSection);
@@ -168,6 +167,14 @@ function AdminShellInner() {
       setActiveSection(initialSection);
     }
   }, [initialSection, activeSection]);
+
+  // atlas-coverage moved out of /admin to its own /atlas route (visible to all
+  // authenticated users). Preserve admin bookmarks pointing at the old URL.
+  useEffect(() => {
+    if (sectionParam === 'atlas-coverage') {
+      router.replace('/atlas');
+    }
+  }, [sectionParam, router]);
 
   // Handle off-page redirects (moved sections → /monitoring) on mount and on URL change
   useEffect(() => {
@@ -299,11 +306,7 @@ function AdminShellInner() {
         )}
 
         {/* Content */}
-        {activeSection === 'atlas-coverage' ? (
-          <Box sx={{ flex: 1, overflowY: 'auto' }}>
-            <AtlasCoveragePanel />
-          </Box>
-        ) : activeSection === 'atlas-ingest' ? (
+        {activeSection === 'atlas-ingest' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <AtlasIngestPanel />
           </Box>

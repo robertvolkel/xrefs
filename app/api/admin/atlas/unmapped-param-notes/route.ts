@@ -24,7 +24,7 @@ export async function GET(): Promise<NextResponse> {
 
     const { data, error } = await supabase
       .from('atlas_unmapped_param_notes')
-      .select('param_name, note, status, flagged_by, auto_diagnosis, updated_by, updated_at, created_at')
+      .select('param_name, note, status, flagged_by, auto_diagnosis, is_flagged, updated_by, updated_at, created_at')
       .order('updated_at', { ascending: false });
 
     if (error) {
@@ -43,9 +43,10 @@ export async function GET(): Promise<NextResponse> {
       // alone, with no engineer rationale). Project as empty string when
       // null so the existing UI can default-render an empty textarea.
       note: (r.note as string | null) ?? '',
-      status: (r.status as 'wrong_family' | 'confirmed_in_family' | null) ?? null,
+      status: (r.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null) ?? null,
       flaggedBy: (r.flagged_by as 'auto' | 'engineer' | null) ?? null,
       autoDiagnosis: (r.auto_diagnosis as Record<string, unknown> | null) ?? null,
+      flagged: (r.is_flagged as boolean | null) ?? false,
       updatedBy: r.updated_by as string,
       updatedByName: nameMap.get(r.updated_by as string) ?? 'Unknown',
       updatedAt: r.updated_at as string,

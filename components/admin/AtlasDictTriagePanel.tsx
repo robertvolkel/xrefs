@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress, Tooltip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSearchParams, useRouter } from 'next/navigation';
-import GlobalUnmappedParamsTable from './atlasIngest/GlobalUnmappedParamsTable';
+import GlobalUnmappedParamsTable, { paramUid } from './atlasIngest/GlobalUnmappedParamsTable';
 import RecentDictAcceptsPanel from './atlasIngest/RecentDictAcceptsPanel';
 import TriageFilterBar, { EMPTY_FILTERS, type TriageFilters, type TriageMode } from './atlasIngest/TriageFilterBar';
 import type { NoteRecord } from './atlasIngest/UnmappedParamNoteCell';
@@ -195,6 +195,86 @@ export default function AtlasDictTriagePanel() {
     });
   }, []);
 
+  // Optimistic in-place mutation after a successful Confirm-Flag or
+  // Revert-Flag PUT. Mirrors the onRowAccepted / onRowReverted pattern so
+  // the row's noteStatus updates immediately and the table's "wrong_family"
+  // render branches (or auto-flag suppression for 'confirmed_in_family')
+  // kick in without waiting on a queue refetch. The parent's notesByParam
+  // map also drives `liveNoteStatus` in filteredRows; this complements it
+  // by mutating row.noteStatus directly so the within-row UI (button
+  // labels, badge state) also responds.
+  const onRowFlagged = useCallback((
+    paramName: string,
+    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
+    flaggedBy: 'auto' | 'engineer' | null,
+  ) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      // Look up the row's pre-mutation classification so we can decrement
+      // the right mode bucket on its way out (and increment the right one
+      // on its way in). Mirrors the row-classification logic in
+      // filteredRows: a row is "auto-flagged" iff autoFlag exists OR
+      // noteStatus is 'wrong_family'; otherwise it's a "synonym" row.
+      const target = prev.unmappedParamsGlobal.find((r) => r.paramName === paramName);
+      const wasFlagged = target ? (!!target.autoFlag || target.noteStatus === 'wrong_family') : false;
+      const nextRows = prev.unmappedParamsGlobal.map((r) =>
+        r.paramName === paramName ? { ...r, noteStatus: status, flaggedBy } : r,
+      );
+      // triageCounts (Open Synonyms / Auto-flagged) — adjust based on the
+      // before/after classification + whether the row drops from the open
+      // queue entirely (status='unmappable' hides it from every default
+      // mode view, so it disappears from total too).
+      const isFlaggedNow = !!target?.autoFlag || status === 'wrong_family';
+      const isUnmappableNow = status === 'unmappable';
+      const wasUnmappable = target?.noteStatus === 'unmappable';
+      let triageCounts = prev.triageCounts;
+      if (triageCounts) {
+        let { synonyms, autoFlagged, total } = triageCounts;
+        // Remove from previous bucket
+        if (!wasUnmappable) {
+          if (wasFlagged) autoFlagged = Math.max(0, autoFlagged - 1);
+          else synonyms = Math.max(0, synonyms - 1);
+          if (isUnmappableNow) total = Math.max(0, total - 1);
+        }
+        // Add into new bucket
+        if (!isUnmappableNow) {
+          if (isFlaggedNow) autoFlagged += 1;
+          else synonyms += 1;
+          if (wasUnmappable) total += 1;
+        }
+        triageCounts = { synonyms, autoFlagged, total };
+      }
+      return { ...prev, unmappedParamsGlobal: nextRows, triageCounts };
+    });
+    // Also seed notesByParam so filteredRows' liveNoteStatus lookup picks
+    // up the change before the next /unmapped-param-notes refetch.
+    setNotesByParam((prev) => {
+      const existing = prev[paramName];
+      if (status === null) {
+        if (!existing) return prev;
+        const { [paramName]: _drop, ...rest } = prev;
+        void _drop;
+        return rest;
+      }
+      return {
+        ...prev,
+        [paramName]: existing
+          ? { ...existing, status, flaggedBy }
+          : {
+              paramName,
+              note: '',
+              status,
+              flaggedBy,
+              autoDiagnosis: null,
+              updatedBy: '',
+              updatedByName: 'You',
+              updatedAt: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+            },
+      };
+    });
+  }, []);
+
   // Optimistic in-place mutation after a successful Revert DELETE.
   // Flips acceptedOverride.isActive to false and bumps statusCounts
   // (accepted-1, undone+1). Open-bucket count stays put because reverting
@@ -299,7 +379,15 @@ export default function AtlasDictTriagePanel() {
       if (statusFilter === 'open' && ov) return false;
       if (statusFilter === 'accepted' && (!ov || !ov.isActive)) return false;
       if (statusFilter === 'undone' && (!ov || ov.isActive)) return false;
-      if (search && !row.paramName.toLowerCase().includes(search)) return false;
+      if (search) {
+        // Match against paramName OR the row's deterministic UID so an
+        // engineer can paste "TR-a8f2c1" (from a Slack thread, a ticket,
+        // an earlier debug session) into the search box and jump straight
+        // to the row.
+        const nameHit = row.paramName.toLowerCase().includes(search);
+        const uidHit = paramUid(row.paramName).toLowerCase().includes(search);
+        if (!nameHit && !uidHit) return false;
+      }
       if (filters.minProductCount > 0 && row.productCount < filters.minProductCount) return false;
       if (mfrSet.size > 0) {
         const hit = (row.affectedManufacturers ?? []).some((m) => mfrSet.has(m.slug));
@@ -309,9 +397,17 @@ export default function AtlasDictTriagePanel() {
         if (!row.dominantFamily || !famSet.has(row.dominantFamily)) return false;
       }
       if (filters.hasNote && !notesByParam[row.paramName]) return false;
+      if (filters.flaggedOnly && !notesByParam[row.paramName]?.flagged) return false;
       return true;
     });
   }, [allRows, filters, notesByParam, mode, statusFilter]);
+
+  // Count of flagged params across the whole notes map — surfaced as the
+  // chip badge on the Flagged toggle in the filter bar.
+  const flaggedCount = useMemo(
+    () => Object.values(notesByParam).filter((n) => n?.flagged).length,
+    [notesByParam],
+  );
 
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
@@ -437,6 +533,7 @@ export default function AtlasDictTriagePanel() {
             onStatusChange={setStatusFilter}
             statusCounts={data.statusCounts}
             noteCount={Object.keys(notesByParam).length}
+            flaggedCount={flaggedCount}
           />
           {data.unmappedParamsGlobal.length === 0 ? (
             <Alert severity="info" sx={{ my: 2 }}>
@@ -465,6 +562,7 @@ export default function AtlasDictTriagePanel() {
               onRegenerateAffected={onRegenerateAffected}
               onRowAccepted={onRowAccepted}
               onRowReverted={onRowReverted}
+              onRowFlagged={onRowFlagged}
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
             />

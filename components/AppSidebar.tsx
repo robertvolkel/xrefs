@@ -10,6 +10,7 @@ import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
+import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
@@ -35,6 +36,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
 
   const isListsActive = pathname === '/lists';
   const isReleasesActive = pathname === '/releases';
+  const isAtlasActive = pathname === '/atlas';
   const isAdminActive = pathname === '/admin';
   const isMonitoringActive = pathname === '/monitoring';
   const isOrgActive = pathname === '/organization';
@@ -249,6 +251,20 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <Badge variant="dot" color="error" invisible={!hasNewReleases}>
             <CampaignOutlinedIcon fontSize="small" />
           </Badge>
+        </IconButton>
+        <IconButton
+          onClick={() => router.push('/atlas')}
+          size="small"
+          title="Atlas coverage"
+          sx={{
+            mb: 1.5,
+            color: isAtlasActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isAtlasActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <PublicOutlinedIcon fontSize="small" />
         </IconButton>
         <IconButton
           onClick={() => router.push('/settings')}

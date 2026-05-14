@@ -37,6 +37,27 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
 import { useTranslation } from 'react-i18next';
+import { paramUid } from './atlasIngest/GlobalUnmappedParamsTable';
+
+/** Extract the canonical attributeId / attributeName the engineer mapped
+ *  this paramName to, sourced from the AI's primaryActionPayload at the
+ *  moment of decision. Only meaningful for buckets that mint or accept a
+ *  canonical (new_canonical / disambiguation / unit_mismatch); other
+ *  buckets return null for both fields. */
+function extractMapping(row: InvestigationRow): { attributeId: string | null; attributeName: string | null } {
+  const recommendation = (row.rawResponse?.recommendation as Record<string, unknown> | undefined);
+  const payload = (recommendation?.primaryActionPayload as Record<string, unknown> | undefined) ?? {};
+  // disambiguation nests the canonical under `primary`.
+  const source = (row.bucket === 'disambiguation'
+    ? (payload.primary as Record<string, unknown> | undefined)
+    : payload) ?? {};
+  const id = (source.attributeId ?? source.newAttributeId ?? source.attribute_id ?? source.new_attribute_id);
+  const name = (source.attributeName ?? source.newAttributeName ?? source.attribute_name ?? source.new_attribute_name);
+  return {
+    attributeId: typeof id === 'string' && id.trim() ? id.trim() : null,
+    attributeName: typeof name === 'string' && name.trim() ? name.trim() : null,
+  };
+}
 
 type Bucket = 'new_canonical' | 'disambiguation' | 'wrong_family' | 'unit_mismatch' | 'unscoped_products' | 'unmappable';
 type Action = 'override_created' | 'flagged_wrong_family' | 'marked_unmappable' | 'dismissed';
@@ -101,7 +122,7 @@ export default function AtlasAiLogPanel() {
   const [page, setPage] = useState(0);
   const [filters, setFilters] = useState<{
     bucket: Bucket | '';
-    action: Action | '' | 'pending' | 'reverted';
+    action: Action | '' | 'reverted';
     search: string;
   }>({
     bucket: '',
@@ -115,8 +136,7 @@ export default function AtlasAiLogPanel() {
     sp.set('limit', String(PAGE_SIZE));
     sp.set('offset', String(page * PAGE_SIZE));
     if (filters.bucket) sp.set('bucket', filters.bucket);
-    if (filters.action === 'pending') sp.set('pending_only', '1');
-    else if (filters.action === 'reverted') sp.set('reverted_only', '1');
+    if (filters.action === 'reverted') sp.set('reverted_only', '1');
     else if (filters.action) sp.set('action', filters.action);
     if (filters.search.trim()) sp.set('param_name', filters.search.trim());
     return sp.toString();
@@ -159,7 +179,7 @@ export default function AtlasAiLogPanel() {
         </Tooltip>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Every time you click <strong>Investigate</strong> in the Triage page, the AI&apos;s verdict gets recorded here. When you then accept, flag, or mark unmappable, the audit row is updated with the action. Persistent — survives cache expiry and reviewable months later.
+        Every <strong>decision</strong> you make on the Triage page — accept, flag, mark unmappable — is recorded here alongside the AI verdict that informed it. Repeat Investigate clicks on the same param don&apos;t create new rows; only the final action does. Persistent — survives cache expiry and reviewable months later.
       </Typography>
 
       <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
@@ -186,11 +206,10 @@ export default function AtlasAiLogPanel() {
           size="small"
           displayEmpty
           value={filters.action}
-          onChange={(e) => { setPage(0); setFilters((f) => ({ ...f, action: e.target.value as Action | '' | 'pending' | 'reverted' })); }}
+          onChange={(e) => { setPage(0); setFilters((f) => ({ ...f, action: e.target.value as Action | '' | 'reverted' })); }}
           sx={{ minWidth: 200, fontSize: '0.8rem' }}
         >
           <MenuItem value="">All outcomes</MenuItem>
-          <MenuItem value="pending" sx={{ fontSize: '0.8rem' }}>No action yet</MenuItem>
           <MenuItem value="reverted" sx={{ fontSize: '0.8rem' }}>Reverted</MenuItem>
           {(Object.keys(ACTION_COLOR) as Action[]).map((a) => (
             <MenuItem key={a} value={a} sx={{ fontSize: '0.8rem' }}>{ACTION_COLOR[a].label}</MenuItem>
@@ -208,25 +227,28 @@ export default function AtlasAiLogPanel() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, width: 160 }}>When</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 140 }}>Who</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Param</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 120 }}>Scope</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 140 }}>AI Verdict</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 90 }}>Conf.</TableCell>
-              <TableCell sx={{ fontWeight: 600, width: 200 }}>Outcome</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 140 }}>When</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 120 }}>Who</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 90 }}>UID</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 160 }}>Param</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 180 }}>Attribute ID</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 180 }}>Attribute Name</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 100 }}>Scope</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 130 }}>AI Verdict</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 70 }}>Conf.</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: 170 }}>Outcome</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {loading && items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} sx={{ textAlign: 'center', py: 4 }}>
+                <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4 }}>
                   <CircularProgress size={20} />
                 </TableCell>
               </TableRow>
             ) : items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                   No investigations match these filters.
                 </TableCell>
               </TableRow>
@@ -234,6 +256,7 @@ export default function AtlasAiLogPanel() {
               items.map((r) => {
                 const bucket = BUCKET_COLOR[r.bucket];
                 const outcome = r.actionTaken ? ACTION_COLOR[r.actionTaken] : null;
+                const { attributeId, attributeName } = extractMapping(r);
                 return (
                   <TableRow
                     key={r.id}
@@ -243,7 +266,29 @@ export default function AtlasAiLogPanel() {
                   >
                     <TableCell sx={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{formatTime(r.ranAt)}</TableCell>
                     <TableCell sx={{ fontSize: '0.75rem' }}>{r.ranByName}</TableCell>
+                    <TableCell sx={{ p: '4px 8px' }}>
+                      <Tooltip title="Click to copy">
+                        <Chip
+                          label={paramUid(r.paramName)}
+                          size="small"
+                          variant="outlined"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                              void navigator.clipboard.writeText(paramUid(r.paramName));
+                            }
+                          }}
+                          sx={{ fontSize: '0.62rem', height: 18, fontFamily: 'monospace', cursor: 'pointer', '& .MuiChip-label': { px: 0.75 } }}
+                        />
+                      </Tooltip>
+                    </TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', wordBreak: 'break-word' }}>{r.paramName}</TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: attributeId ? 'text.primary' : 'text.disabled' }}>
+                      {attributeId ?? '—'}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.72rem', color: attributeName ? 'text.primary' : 'text.disabled' }}>
+                      {attributeName ?? '—'}
+                    </TableCell>
                     <TableCell sx={{ fontSize: '0.75rem' }}>
                       {r.scopeKind === 'none' ? <span style={{ color: 'rgba(255,255,255,0.4)' }}>—</span> : (
                         <span>

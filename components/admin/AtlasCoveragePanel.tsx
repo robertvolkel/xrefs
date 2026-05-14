@@ -12,7 +12,12 @@ import type { AtlasGrowthResponse } from '@/app/api/admin/atlas/growth/route';
 
 type TabValue = 'overview' | 'activity';
 
-export default function AtlasCoveragePanel() {
+interface AtlasCoveragePanelProps {
+  /** Hide refresh controls — used by the end-user /atlas route. */
+  readOnly?: boolean;
+}
+
+export default function AtlasCoveragePanel({ readOnly }: AtlasCoveragePanelProps = {}) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabValue>('overview');
   const [coverage, setCoverage] = useState<AtlasResponse | null>(null);
@@ -131,6 +136,7 @@ export default function AtlasCoveragePanel() {
             cachedAt={coverage.cachedAt ?? null}
             onRefresh={handleRefreshCoverage}
             refreshing={coverageRefreshing}
+            readOnly={readOnly}
             growthChartSlot={growth ? <AtlasGrowthChart events={growth.events} /> : null}
             latestUpdatesSlot={
               growth ? (
@@ -148,6 +154,7 @@ export default function AtlasCoveragePanel() {
             cachedAt={growth.cachedAt ?? null}
             onRefresh={handleRefreshGrowth}
             refreshing={growthRefreshing}
+            readOnly={readOnly}
           />
         )}
         {tab === 'activity' && !growth && (

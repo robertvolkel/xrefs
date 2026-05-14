@@ -5,15 +5,16 @@
  * Body shape (PUT):
  *   {
  *     note?: string,                                  // free-form rationale
- *     status?: 'wrong_family' | 'confirmed_in_family' | null,
+ *     status?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
  *     flaggedBy?: 'auto' | 'engineer' | null,         // who set the status
- *     autoDiagnosis?: { suggestedFamily, reasoning, matchingParam } | null
+ *     autoDiagnosis?: { suggestedFamily, reasoning, matchingParam } | null,
+ *     flagged?: boolean,                               // engineer bookmark
  *   }
  *
- * Empty note + null/undefined status → row is deleted (the icon flips back
- * to empty + the auto-flag re-fires from the registry next render).
- * Non-empty note OR non-null status → row persists; the schema CHECK
- * constraint requires at least one of the two be present.
+ * Empty note + null/undefined status + flagged=false → row is deleted (the
+ * icon flips back to empty + the auto-flag re-fires from the registry next
+ * render). Non-empty note OR non-null status OR flagged=true → row persists;
+ * the schema CHECK constraint requires at least one of the three be present.
  *
  * Service-role writes (per Decision #176 lesson — admin auth gated by
  * requireAdmin() upstream).
@@ -71,13 +72,14 @@ export async function PUT(
     }
 
     const autoDiagnosis = body?.autoDiagnosis ?? null;
+    const isFlagged = body?.flagged === true;
 
     const supabase = createServiceClient();
 
     // Row needs at least one signal to persist (matches the schema CHECK).
-    // Empty note + null status → no reason to keep the row; delete it so
-    // the auto-flag registry can re-fire on the next render.
-    if (!note && status === null) {
+    // Empty note + null status + flagged=false → no reason to keep the row;
+    // delete it so the auto-flag registry can re-fire on the next render.
+    if (!note && status === null && !isFlagged) {
       const { error: delErr } = await supabase
         .from('atlas_unmapped_param_notes')
         .delete()
@@ -105,6 +107,7 @@ export async function PUT(
           status,
           flagged_by: flaggedBy,
           auto_diagnosis: autoDiagnosis,
+          is_flagged: isFlagged,
           updated_by: user!.id,
           updated_at: now,
         },
@@ -129,9 +132,10 @@ export async function PUT(
       item: {
         paramName: data.param_name as string,
         note: (data.note as string | null) ?? '',
-        status: (data.status as 'wrong_family' | 'confirmed_in_family' | null) ?? null,
+        status: (data.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null) ?? null,
         flaggedBy: (data.flagged_by as 'auto' | 'engineer' | null) ?? null,
         autoDiagnosis: (data.auto_diagnosis as Record<string, unknown> | null) ?? null,
+        flagged: (data.is_flagged as boolean | null) ?? false,
         updatedBy: data.updated_by as string,
         updatedByName: nameMap.get(data.updated_by as string) ?? 'Unknown',
         updatedAt: data.updated_at as string,

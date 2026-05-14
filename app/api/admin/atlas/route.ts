@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/supabase/auth-guard';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable, getAllLogicTables } from '@/lib/logicTables';
 
@@ -359,10 +359,24 @@ function triggerBackgroundRecompute() {
 
 export async function GET(request: NextRequest) {
   try {
-    const { error: authError } = await requireAdmin();
+    // End users (non-admin) read this endpoint via the /atlas page introduced
+    // alongside the existing /admin?section=atlas-coverage view. requireAuth()
+    // gates anonymous access; the `?refresh=1` cache-bust below is gated to
+    // admins only so end users can't trigger recompute.
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
-    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+    const refreshRequested = request.nextUrl.searchParams.get('refresh') === '1';
+    let forceRefresh = false;
+    if (refreshRequested && user) {
+      const svc = createServiceClient();
+      const { data: profile } = await svc
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
+      forceRefresh = profile?.role === 'admin';
+    }
 
     // L1: in-memory cache
     if (!forceRefresh && memCache && Date.now() - memCacheTimestamp < MEM_CACHE_TTL_MS) {

@@ -17,6 +17,10 @@ export type NoteRecord = {
   status?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
   flaggedBy?: 'auto' | 'engineer' | null;
   autoDiagnosis?: Record<string, unknown> | null;
+  /** Generic engineer bookmark — independent of `status`. Set via the flag
+   *  toggle icon in the Triage row UI; used to mark a row for later review
+   *  without committing to a specific status. */
+  flagged?: boolean;
   updatedBy: string;
   updatedByName: string;
   updatedAt: string;

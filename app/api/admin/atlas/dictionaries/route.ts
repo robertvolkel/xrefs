@@ -11,7 +11,7 @@ import {
   type AtlasParamMapping,
 } from '@/lib/services/atlasMapper';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
-import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
 
 /** GET /api/admin/atlas/dictionaries?familyId=B5  OR  ?category=Microcontrollers */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -181,17 +181,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const supabase = await createClient();
 
+    // Canonicalize param_name before storage and lookup. JS toLowerCase()
+    // alone is NOT enough — the same Chinese characters can be persisted
+    // in NFC vs NFD form depending on the source file's encoding, and a
+    // queue row built later may use the other form. Normalizing to NFC +
+    // trimming on every write makes the column safely string-equal
+    // comparable. The queue route's lookup applies the same transform on
+    // read so existing-but-mismatched rows still join correctly.
+    const canonicalParamName: string = (body.paramName as string).normalize('NFC').toLowerCase().trim();
+
     // Deactivate any existing active override for this family+param_name
     await supabase
       .from('atlas_dictionary_overrides')
       .update({ is_active: false, updated_at: new Date().toISOString() })
       .eq('family_id', body.familyId)
-      .eq('param_name', body.paramName)
+      .eq('param_name', canonicalParamName)
       .eq('is_active', true);
 
     const insert: Record<string, unknown> = {
       family_id: body.familyId,
-      param_name: body.paramName,
+      param_name: canonicalParamName,
       action: body.action,
       change_reason: body.changeReason,
       created_by: user!.id,
@@ -217,7 +226,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateDictOverrideCache(body.familyId);
-    invalidateTriageQueueCache();
+    // Wait-then-restart variant: the single-flight `invalidateTriageQueueCache()`
+    // kicks off a background recompute and returns immediately, which means
+    // the client's immediately-following refetch can race the recompute and
+    // still see the just-overridden row as Open. The await variant drains
+    // any in-flight recompute that may have read pre-insert DB state, fires
+    // a fresh one, AND waits for completion before returning success — so
+    // the very next GET sees the freshly-annotated queue (Decision #182).
+    await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({ success: true, data: mapRowToRecord(data) }, { status: 201 });
   } catch (error) {

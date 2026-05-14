@@ -65,6 +65,18 @@ function slugifyName(name: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+/** Stable lookup key for an override / row paramName. Applies in order:
+ *  Unicode NFC normalization → lowercase → trim. Both the map-construction
+ *  and lookup paths use this so previously-stored overrides whose paramName
+ *  ended up in a different Unicode form (or with trailing whitespace) than
+ *  the batch report's row paramName still join correctly. This was the root
+ *  cause of accepted Chinese-param rows reappearing in the Open queue —
+ *  the literal-equality match was sensitive to canonical-equivalent
+ *  representations of the same characters. */
+function normalizeOverrideKey(paramName: string): string {
+  return paramName.normalize('NFC').toLowerCase().trim();
+}
+
 // ── Module-scope types — shared between GET and computeTriageAggregation ──
 type AutoFlag = {
   suggestedFamily: string;        // familyId, e.g. 'B6'
@@ -197,7 +209,7 @@ async function computeTriageAggregation(): Promise<{
         updatedAt: o.updated_at as string,
         isActive: o.is_active as boolean,
       };
-      const key = `${meta.familyId}:${meta.paramName}`;
+      const key = `${meta.familyId}:${normalizeOverrideKey(meta.paramName)}`;
       if (meta.isActive) {
         if (!activeOverrideMap.has(key)) activeOverrideMap.set(key, meta);
       } else {
@@ -305,9 +317,10 @@ async function computeTriageAggregation(): Promise<{
   const seenOverrideIds = new Set<string>();
   function lookupOverride(entry: GlobalUnmapped): OverrideMeta | null {
     const candidates: string[] = [];
-    if (entry.dominantFamily) candidates.push(`${entry.dominantFamily}:${entry.paramName.toLowerCase()}`);
+    const normalizedParam = normalizeOverrideKey(entry.paramName);
+    if (entry.dominantFamily) candidates.push(`${entry.dominantFamily}:${normalizedParam}`);
     if (entry.dominantCategory && entry.dominantCategory !== entry.dominantFamily) {
-      candidates.push(`${entry.dominantCategory}:${entry.paramName.toLowerCase()}`);
+      candidates.push(`${entry.dominantCategory}:${normalizedParam}`);
     }
     for (const k of candidates) {
       const m = activeOverrideMap.get(k);

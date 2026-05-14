@@ -13,7 +13,7 @@
  * admin_stats_cache). Mirrors the L1/L2/SWR pattern used by /api/admin/atlas.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/supabase/auth-guard';
+import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
 import type { IngestDiffReport } from '@/lib/services/atlasIngestService';
@@ -453,11 +453,24 @@ function sliceForMode(payload: AtlasGrowthResponse, mode: string): AtlasGrowthRe
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    // End users (non-admin) read this endpoint via the /atlas page.
+    // requireAuth() gates anonymous access; `?refresh=1` cache-bust is gated
+    // to admins only.
+    const { user, error: authError } = await requireAuth();
     if (authError) return authError;
 
     const mode = request.nextUrl.searchParams.get('mode') === 'overview' ? 'overview' : 'full';
-    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+    const refreshRequested = request.nextUrl.searchParams.get('refresh') === '1';
+    let forceRefresh = false;
+    if (refreshRequested && user) {
+      const svc = createServiceClient();
+      const { data: profile } = await svc
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
+      forceRefresh = profile?.role === 'admin';
+    }
 
     if (!forceRefresh && memCache && Date.now() - memCacheTimestamp < MEM_CACHE_TTL_MS) {
       const parsed = JSON.parse(memCache.body) as AtlasGrowthResponse;
