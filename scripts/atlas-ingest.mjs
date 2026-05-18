@@ -120,6 +120,14 @@ function classifyAtlasCategory(c1, c2, c3) {
   if (lower.includes('varistor') || lower.includes('mov')) return { category: 'Protection', subcategory: 'Varistor', familyId: '65' };
   if (lower.includes('ptc resettable') || lower.includes('resettable fuse')) return { category: 'Protection', subcategory: 'PTC Resettable Fuse', familyId: '66' };
 
+  // E1 Optocouplers / Optoisolators — MUST come BEFORE discrete-semi rules.
+  // Everlight (亿光) ships 'Triac, SCR Output Optoisolators' etc. which would
+  // otherwise match the Triac/SCR keywords below and get misclassified.
+  if (lower.includes('optoisolator') || lower.includes('photocoupler')
+      || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
+    return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
+  }
+
   // Discrete — word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
   if (/\bscr\b/i.test(lower) && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
   if (lower.includes('triac')) return { category: 'Thyristors', subcategory: 'TRIAC', familyId: 'B8' };
@@ -163,14 +171,6 @@ function classifyAtlasCategory(c1, c2, c3) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
   }
 
-  // E1 Optocouplers / Optoisolators — c3 contains 'Optoisolator' or
-  // 'Photocoupler'. Mirror of atlasMapper.ts; without this, Everlight (亿光)
-  // and similar opto MFR products fall through to the L2 'ICs' catch-all.
-  if (lower.includes('optoisolator') || lower.includes('photocoupler')
-      || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
-    return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
-  }
-
   // L2 categories (no logic tables)
   // Use c1 guards to prevent cross-domain misclassification.
   if (lower.includes('microcontroller') || lower.includes('mcu')) return { category: 'Microcontrollers', subcategory: c3, familyId: null };
@@ -211,9 +211,10 @@ function classifyAtlasCategory(c1, c2, c3) {
 // When you add an entry to that registry, also add the equivalent here.
 const FAMILY_PARAM_SIGNATURES = [
   // ─── B6 BJTs ───
-  { pattern: /^(bvcbo|bvceo|bvebo)\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^b?(vcbo|vceo|vebo)\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
   { pattern: /^@?ic\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
   { pattern: /^hfe\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^ft\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
   // ─── B5 MOSFETs ───
   { pattern: /^rds[\s_(]*on/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
   { pattern: /^vgs[\s_(]*(th|threshold)/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
@@ -413,6 +414,36 @@ const FAMILY_PARAMS = {
     'source/sink current (a)': { attributeId: '_gate_drive', attributeName: 'Source/Sink Current', unit: 'A', sortOrder: 94 },
     'iout (a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
     'max output current(a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
+    // Isw / Peak Switch Current → display-only satellite (sortOrder 91).
+    // NOT iout_max — Isw is internal switch peak current, iout_max is
+    // application-derived deliverable load current. Same satellite
+    // pattern as B4 _vbr_max.
+    'isw(a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw (a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw_peak': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw_peak(a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw peak': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'peak switch current': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'switch current': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '峰值开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '内部开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    // Vipk / Peak Current-Sense Threshold Voltage → display-only satellite.
+    // MC34063-family internal comparator threshold (~300 mV) that triggers
+    // switch turn-off. Same satellite pattern as _vbr_max / _isw_peak_a / _icc_ma.
+    'vipk(mv)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk (mv)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk(mv)(typ.)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk(typ.)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'peak sense voltage': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'current sense threshold': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'isense threshold': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'sense voltage': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '峰值检测电压': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '电流检测阈值': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '电流检测电压': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
     'vout (v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
     'output(v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
     'channels': { attributeId: '_channels', attributeName: 'Number of Channels', sortOrder: 95 },
@@ -700,6 +731,12 @@ const FAMILY_PARAMS = {
     'ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
     'ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 8 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    // YANGJIE-style "IR at VR" naming
+    'ir@vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir@vr(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 8 },
+    'ir@vr (ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir@vr': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir @ vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
     'if(ma)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'mA', sortOrder: 4 },
     'if(a)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'A', sortOrder: 4 },
     'i(av)(a)': { attributeId: 'io_avg', attributeName: 'Average Forward Current', unit: 'A', sortOrder: 4 },
@@ -712,6 +749,20 @@ const FAMILY_PARAMS = {
     'polarity': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 10 },
     'vds (v)': { attributeId: 'vrrm', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 2 },
     'cj (pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
+    // Rd / Series (Dynamic) Resistance → satellite. RF-diode spec (PIN, varicap).
+    // No B1 logic rule. Same satellite pattern as _vbr_max / _isw_peak_a / _icc_ma.
+    'rd(ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd(ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd (ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd (ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs(ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs(ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'series resistance': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'dynamic resistance': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    '动态电阻': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    '串联电阻': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
     // YANGJIE-specific param names (verbose "Electrical Parameters X" schema)
     'electrical parameters vrrm': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
     'electrical parameters vr': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
@@ -814,6 +865,25 @@ const FAMILY_PARAMS = {
     '基准电压的容限率': { attributeId: 'vz_tolerance', attributeName: 'Vz Tolerance', sortOrder: 2 },
     '正向压降vf max': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     'zener voltage vz': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
+    // Vz Min/Max → existing satellites _vz_min / _vz_max. English synonyms.
+    'vz(min.)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz(min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz (min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz_min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz min(v)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage (min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage (minimum)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz(max.)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz(max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz (max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz_max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz max(v)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage (max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage (maximum)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
     'z power rating': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
     'z voltage tolerance': { attributeId: 'vz_tolerance', attributeName: 'Vz Tolerance', sortOrder: 2 },
     'zener current iz': { attributeId: '_izt', attributeName: 'Test Current (Izt)', unit: 'A', sortOrder: 93 },
@@ -826,6 +896,12 @@ const FAMILY_PARAMS = {
     'vz type(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
     'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    // YANGJIE-style "IR at VR" naming
+    'ir@vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir@vr(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 6 },
+    'ir@vr (ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir@vr': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir @ vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
     'pd(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
     // YANGJIE — Zener voltage / test current / impedance (canonical IDs)
     'vz@izt(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
@@ -858,6 +934,8 @@ const FAMILY_PARAMS = {
     '电源电压': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
     '击穿电压 v(br)-min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
     '击穿电压': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    '击穿电压(最大)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    '击穿电压最大': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     '击穿电压max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     '最大钳位电压': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
     '功率-峰值脉冲': { attributeId: 'ppk', attributeName: 'Peak Pulse Power', unit: 'W', sortOrder: 5 },
@@ -872,6 +950,16 @@ const FAMILY_PARAMS = {
     'polarity': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
     'operating standoff voltage': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
     'breakdown voltage vbr': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage (minimum)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr(min)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr (min)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'v(br) min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage (maximum)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'breakdown voltage max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'vbr(max)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'vbr (max)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'v(br) max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     'clamping voltage vc': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
     'power rating': { attributeId: 'ppk', attributeName: 'Peak Pulse Power', unit: 'W', sortOrder: 5 },
     'max peak current ipk': { attributeId: 'ipp', attributeName: 'Peak Pulse Current', unit: 'A', sortOrder: 6 },
@@ -893,14 +981,14 @@ const FAMILY_PARAMS = {
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
     // YANGJIE — TVS-specific param names (canonical attributeIds)
-    // Note: B4 logic table only has `vbr` (no separate min/max), so min and max
-    // both map to vbr. The matching engine sees the value at hand; with multiple
-    // values per part (min vs max), only the first one wins at JSONB merge time
-    // (later values overwrite earlier — last-write-wins per key).
+    // Min variants → primary `vbr` (the matching engine compares against this).
+    // Max variants → display-only `_vbr_max` satellite so both values survive
+    // JSONB merge (previously both pointed to `vbr` and the second write
+    // overwrote the first — last-write-wins per key).
     'vbr_min(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 },
-    'vbr_max(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Max)', unit: 'V', sortOrder: 3 },
+    'vbr_max(v)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     'vbr _min(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 }, // typo variant w/ space
-    'vbr _max(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Max)', unit: 'V', sortOrder: 3 },
+    'vbr _max(v)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     'vbr(v)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
     'vbr(v@1ma)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr @ 1mA)', unit: 'V', sortOrder: 3 },
     'breakdown voltage min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr Min)', unit: 'V', sortOrder: 3 },
@@ -946,6 +1034,16 @@ const FAMILY_PARAMS = {
     'vth(v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
     'vth (v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
     '阈值电压': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
+    // Min/Max canonical split — for MFRs reporting Vth as a range (e.g. KEXIN
+    // ships VTH(Min.)/VTH(Max.)). Coexists with the typical-value vgs_th
+    // canonical above; engine doesn't programmatically compare values today
+    // (B5 vgs_th rule is application_review weight 6) so this is additive.
+    'vth(min.)': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vth(max.)': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
+    'vgs(th) min': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vgs(th) max': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
+    'vgs(th)(min)': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vgs(th)(max)': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
     'id (a)': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
     'id(a) tc=25': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
     'id(a) ta=25': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
@@ -1045,6 +1143,10 @@ const FAMILY_PARAMS = {
     '集电极截止电流(icbo)': { attributeId: '_icbo', attributeName: 'Collector Cutoff Current', sortOrder: 91 },
     '功率(pd)': { attributeId: '_pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 8 },
     '特征频率(ft)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft(mhz)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft (mhz)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'transition frequency': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
     '集电极电流(ic)': { attributeId: '_ic', attributeName: 'Collector Current (Ic)', unit: 'A', sortOrder: 5 },
     'transistor polarity': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
     'vceo': { attributeId: 'vceo_max', attributeName: 'Vceo', unit: 'V', sortOrder: 3 },
@@ -1135,6 +1237,23 @@ const FAMILY_PARAMS = {
     '维持电流(ih)': { attributeId: 'ih', attributeName: 'Holding Current', unit: 'A', sortOrder: 7 },
     '保持电流(ih)': { attributeId: 'ih', attributeName: 'Holding Current', unit: 'A', sortOrder: 7 },
     '门极触发电压(vgt)': { attributeId: '_vgt', attributeName: 'Gate Trigger Voltage', unit: 'V', sortOrder: 91 },
+    // IGT µA → satellite. Sensitive-gate TRIACs only. Same satellite pattern
+    // as _vbr_max / _isw_peak_a / _icc_ma / _ipk_sense_voltage_mv.
+    'igt(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt (ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt (µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt_ua': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'gate trigger current(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'gate trigger current(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    '门极触发电流(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    '门极触发电流(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    // IGT mA → primary `igt` (consumed by B8 logic rule). Standard-gate TRIACs.
+    'igt(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    'igt (ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    'gate trigger current(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    '门极触发电流(igt)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    '门极触发电流(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
     '可控硅类型': { attributeId: '_device_subtype', attributeName: 'Device Subtype', sortOrder: 92 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     'packages': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
@@ -1158,6 +1277,15 @@ const FAMILY_PARAMS = {
     '输出电流': { attributeId: 'output_peak_current', attributeName: 'Output Peak Current', unit: 'A', sortOrder: 8 },
     '输出侧uvlo(v)': { attributeId: 'undervoltage_lockout', attributeName: 'UVLO', unit: 'V', sortOrder: 14 },
     '输出侧建议工作电压(v)': { attributeId: '_recommended_vout', attributeName: 'Recommended Output Voltage', unit: 'V', sortOrder: 94 },
+    // Isolated gate drivers (NOVOSENSE NSi6601, TI UCC52xx, etc.) have galvanically separated
+    // input/output supplies. Output-side VCC drives the MOSFET/IGBT/SiC gate (matches vdd_range);
+    // input-side VCC powers the controller-facing logic (separate canonical input_vdd_range).
+    // See lib/logicTables/gateDriver.ts for the rule definitions.
+    '输出侧vcc电压(max)(v)': { attributeId: 'vdd_range', attributeName: 'Gate Drive Supply VDD Range', unit: 'V', sortOrder: 8 },
+    '输入侧vcc电压(max)(v)': { attributeId: 'input_vdd_range', attributeName: 'Input-Side Logic Supply Range', unit: 'V', sortOrder: 21 },
+    // Isolation withstand voltage — safety-critical spec on isolated gate drivers.
+    // Conventionally measured in kVrms across all datasheets; no unit suffix on canonical.
+    '隔离耐压(kvrms)': { attributeId: 'isolation_voltage', attributeName: 'Isolation Withstand Voltage', unit: 'kVrms', sortOrder: 22 },
     '最大瞬态隔离电压 (vpk)': { attributeId: '_transient_isolation', attributeName: 'Transient Isolation Voltage', unit: 'Vpk', sortOrder: 95 },
     '最大浪涌隔离电压 (kvpk)': { attributeId: '_surge_isolation', attributeName: 'Surge Isolation Voltage', unit: 'kVpk', sortOrder: 96 },
     'esd 性能 hbm/cdm(kv)': { attributeId: '_esd', attributeName: 'ESD Rating', unit: 'kV', sortOrder: 97 },
@@ -1243,6 +1371,24 @@ const FAMILY_PARAMS = {
     'iq (µa, typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
     'iq (ma, max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
     'iq(μa,typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    // ICC / total package supply current → display-only satellite (sortOrder 99).
+    // Distinct from per-channel 'iq' (logic table primary, µA) and from the
+    // existing 'supply_current' canonical (de-facto per-channel use). Same
+    // satellite pattern as B4 _vbr_max and C2 _isw_peak_a.
+    'icc(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc (ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(typ.)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(typ.)(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(max.)(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(max)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc max': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc typ': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'total supply current': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'supply current': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '总电源电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '总电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '电源电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
     'iout(ma)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
     'sink/source current(ma)(typ.)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
     'ib(pa)(typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
@@ -1345,6 +1491,11 @@ const FAMILY_PARAMS = {
     'ton(ns)': { attributeId: 'tpd', attributeName: 'Propagation Delay', unit: 'ns', sortOrder: 10 },
     'toff(ns)': { attributeId: '_toff', attributeName: 'Turn-Off Time', unit: 'ns', sortOrder: 93 },
     'leakage current(na)': { attributeId: 'input_leakage', attributeName: 'Leakage Current', unit: 'nA', sortOrder: 94 },
+    // I2C-bus interface parts (level shifters, buffers, switches, I/O expanders, repeaters).
+    // Distinct from generic fmax (clocked-logic toggle rate) — see lib/logicTables/c5LogicICs.ts rule.
+    // Only the kHz-suffixed variant: the bare '频率(最大)' could be MHz on a non-I2C C5 part,
+    // so Triage handles that case if it ever surfaces.
+    '频率(最大)(khz)': { attributeId: 'i2c_bus_speed_max_khz', attributeName: 'Max I2C Bus Clock Speed', unit: 'kHz', sortOrder: 24 },
   },
 
   // ─── C8 Timers / Oscillators ───────────────────────────
@@ -1530,9 +1681,16 @@ const L2_PARAMS = {
     '带宽': { attributeId: 'bandwidth', attributeName: 'Bandwidth', unit: 'Hz', sortOrder: 12 },
     '响应时间': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
     '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 14 },
-    // Optical-sensor-specific (Phototransistors, Photodiodes — Everlight 亿光 ships under c1='Sensors, Transducers').
+    // Optical-sensor-specific (Phototransistors live here; Photodiodes
+    // actually route to LEDs and Optoelectronics via the 'photodiode'
+    // substring rule, NOT here).
     '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 14 },
+    // 反向电压 stays in Sensors for Phototransistor coverage even though
+    // Photodiodes are handled by the LED L2 dict.
     '反向电压': { attributeId: 'reverse_voltage', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 15 },
+    // Operating current — used by Optical Motion Sensors (e.g. Everlight's
+    // IR proximity sensors). Distinct from supply_voltage. New canonical.
+    '工作电流': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 17 },
     '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 16 },
     '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
     '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
@@ -1588,6 +1746,10 @@ const L2_PARAMS = {
     '正向电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Synonym used by Everlight on a small subset of LED products.
     '工作电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    // Reverse voltage — for Photodiodes (which route to LEDs and Optoelectronics
+    // via the 'photodiode' substring rule in the classifier, NOT to Sensors).
+    // Photodiodes operate in reverse-bias; this is the breakdown spec.
+    '反向电压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
     // Color temperature — relevant for white LEDs (warm/cool white). New canonical.
     '色温': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
     // Power dissipation — already a canonical (atlasMapper.ts:584). Unit W.
@@ -2355,6 +2517,58 @@ async function loadAndApplyDictOverrides() {
 
   console.log(`Loaded ${rows.length} dictionary overrides (add: ${added}, modify: ${modified}, remove: ${removed})`);
   return { count: rows.length, added, modified, removed };
+}
+
+// ─── Family Param Signature DB-merge (engineer-curated additions) ──
+//
+// Mirrors loadAllFamilyParamSignatures() in
+// lib/services/atlasFamilyParamSignatures.ts. Pulls active rows from
+// atlas_family_param_signatures and appends them to the local
+// FAMILY_PARAM_SIGNATURES array so reclassifyByParameterSignals picks
+// them up at next ingest. Code-defined entries always win on
+// (pattern source, targetFamilyId) collisions.
+async function loadAndApplyFamilyParamSignatures() {
+  if (!supabase) return { count: 0 };
+  let rows;
+  try {
+    const { data, error } = await supabase
+      .from('atlas_family_param_signatures')
+      .select('pattern, target_family_id, target_category, target_subcategory')
+      .eq('is_active', true);
+    if (error) {
+      console.warn(`  (family-param signatures skipped: ${error.message})`);
+      return { count: 0 };
+    }
+    rows = data ?? [];
+  } catch (err) {
+    console.warn(`  (family-param signatures skipped: ${err.message})`);
+    return { count: 0 };
+  }
+
+  const codeKeys = new Set(
+    FAMILY_PARAM_SIGNATURES.map((s) => `${s.pattern.source}::${s.target.familyId}`),
+  );
+  let added = 0;
+  for (const r of rows) {
+    const key = `${r.pattern}::${r.target_family_id}`;
+    if (codeKeys.has(key)) continue;
+    try {
+      FAMILY_PARAM_SIGNATURES.push({
+        pattern: new RegExp(r.pattern, 'i'),
+        target: {
+          category: r.target_category,
+          subcategory: r.target_subcategory,
+          familyId: r.target_family_id,
+        },
+      });
+      added++;
+    } catch {
+      // Bad regex — skip silently (POST endpoint validates on insert).
+    }
+  }
+
+  console.log(`Loaded ${added} engineer-curated family-param signatures from DB`);
+  return { count: added };
 }
 
 // ─── Mapping helper (used by report and proceed) ──────────
@@ -3132,6 +3346,10 @@ async function runRegenerateAffectedBy(paramName) {
     // Merge admin-curated dictionary overrides into FAMILY_PARAMS / L2_PARAMS
     // before any mapping runs. Safe no-op when supabase is null (--dry-run).
     await loadAndApplyDictOverrides();
+    // Same idea for engineer-curated family-param signatures: pull DB rows
+    // and append to FAMILY_PARAM_SIGNATURES so reclassifyByParameterSignals
+    // catches misclassifications added since last code commit.
+    await loadAndApplyFamilyParamSignatures();
 
     switch (mode) {
       case 'report':                 await runReport(); break;

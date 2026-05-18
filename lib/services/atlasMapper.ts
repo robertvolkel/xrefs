@@ -156,6 +156,18 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   if (lower.includes('varistor') || lower.includes('mov')) return { category: 'Protection', subcategory: 'Varistor', familyId: '65' };
   if (lower.includes('ptc resettable') || lower.includes('resettable fuse')) return { category: 'Protection', subcategory: 'PTC Resettable Fuse', familyId: '66' };
 
+  // ─── E1 Optocouplers / Optoisolators ───
+  // MUST be checked BEFORE the discrete-semi rules below: Everlight (亿光) and
+  // similar opto MFRs ship c3 values like 'Triac, SCR Output Optoisolators'
+  // and 'Transistor, Photovoltaic Output Optoisolators' — those would
+  // otherwise match the Triac/SCR/Transistor keywords in the discrete block
+  // and get misclassified as B8 / B5 / B6. The 'optoisolator' substring is
+  // the discriminating signal regardless of what's mentioned before it.
+  if (lower.includes('optoisolator') || lower.includes('photocoupler')
+      || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
+    return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
+  }
+
   // ─── Discrete Semiconductors ───
   // Thyristors — use word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
   if (/\bscr\b/i.test(lower) && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
@@ -214,19 +226,6 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
       lower.includes('latch') || lower.includes('counter') || lower.includes('shift register') ||
       (!isRF && lower.includes('multiplexer')) || lower.includes('decoder')) {
     return { category: 'Logic ICs', subcategory: 'Logic IC', familyId: 'C5' };
-  }
-
-  // ─── E1 Optocouplers / Optoisolators ───
-  // c1='Isolators' + c3 contains 'Optoisolator' (e.g. Everlight 亿光 ships
-  // 'Transistor, Photovoltaic Output Optoisolators', 'Triac, SCR Output
-  // Optoisolators', 'Logic Output Optoisolators'). Without this rule these
-  // products fall through every L3 + L2 check and land in the catch-all
-  // 'ICs' L2 — losing access to the E1 logic-table family AND the dedicated
-  // E1 param dictionary that maps Chinese opto terms to canonical IDs like
-  // isolation_voltage_vrms / channel_count / input_forward_voltage_vf.
-  if (lower.includes('optoisolator') || lower.includes('photocoupler')
-      || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
-    return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
   }
 
   // ─── L2 categories (no logic tables, display-only param maps) ───
@@ -421,6 +420,44 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'source/sink current (a)': { attributeId: '_gate_drive', attributeName: 'Source/Sink Current', unit: 'A', sortOrder: 94 },
     'iout (a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
     'max output current(a)': { attributeId: 'iout_max', attributeName: 'Max Output Current', unit: 'A', sortOrder: 6 },
+    // Isw / Peak Switch Current → display-only satellite (sortOrder 91).
+    // NOT mapped to iout_max: Isw is the internal switch peak-current rating,
+    // a device-physical spec; iout_max is the application-derived deliverable
+    // load current. They are related (iout_max ≈ Isw × (1−D) for boost) but
+    // not equal — conflating them would overstate deliverable current 2–3x
+    // for typical boost configs and pollute C2 matching. Same satellite
+    // pattern as B4 _vbr_max.
+    'isw(a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw (a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw_peak': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw_peak(a)': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'isw peak': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'peak switch current': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    'switch current': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '峰值开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    '内部开关电流': { attributeId: '_isw_peak_a', attributeName: 'Peak Switch Current', unit: 'A', sortOrder: 91 },
+    // Vipk / Peak Current-Sense Threshold Voltage → display-only satellite
+    // (sortOrder 92). Internal comparator threshold (typically 300 mV in
+    // MC34063-family) that triggers switch turn-off when V(Rsense) reaches
+    // it. Sets peak switch current via external Rsc = Vipk / Ipeak_desired.
+    // Distinct from vref (output regulation reference) and _isw_peak_a
+    // (peak current itself). No C2 logic rule consumes this yet — narrow
+    // applicability (MC34063-architecture only). Same satellite pattern as
+    // _vbr_max / _isw_peak_a / _icc_ma.
+    'vipk(mv)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk (mv)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk(mv)(typ.)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'vipk(typ.)': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'peak sense voltage': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'current sense threshold': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'isense threshold': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    'sense voltage': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '峰值检测电压': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '电流检测阈值': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
+    '电流检测电压': { attributeId: '_ipk_sense_voltage_mv', attributeName: 'Peak Current-Sense Threshold (Vipk)', unit: 'mV', sortOrder: 92 },
     'vout (v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
     'output(v)': { attributeId: '_output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
     'channels': { attributeId: '_channels', attributeName: 'Number of Channels', sortOrder: 95 },
@@ -709,6 +746,12 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'ir(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
     'ir(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 8 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    // YANGJIE-style "IR at VR" naming (reverse leakage at rated reverse voltage)
+    'ir@vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir@vr(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 8 },
+    'ir@vr (ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir@vr': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'ir @ vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
     'if(ma)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'mA', sortOrder: 4 },
     'if(a)': { attributeId: 'io_avg', attributeName: 'Forward Current', unit: 'A', sortOrder: 4 },
     'i(av)(a)': { attributeId: 'io_avg', attributeName: 'Average Forward Current', unit: 'A', sortOrder: 4 },
@@ -722,6 +765,24 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'vds (v)': { attributeId: 'vrrm', attributeName: 'Voltage Rating', unit: 'V', sortOrder: 2 },
     'cj (pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 9 },
     'qc (nc)': { attributeId: '_qc', attributeName: 'Total Capacitive Charge', unit: 'nC', sortOrder: 92 },
+    // Rd / Series (Dynamic) Resistance → display-only satellite. Critical
+    // RF-diode spec (PIN diodes for switching, varicaps for tuning) — slope
+    // of the V-I curve at the operating point. B1 has no logic rule for
+    // this because rectifier matching doesn't care about it. Until an
+    // RF-diode family/sub-family is built (see BACKLOG), Rd lives here as
+    // a satellite so values display correctly without polluting B1 matching.
+    'rd(ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd(ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd (ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd (ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rd': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs(ω)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs(ohm)': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'rs': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'series resistance': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    'dynamic resistance': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    '动态电阻': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
+    '串联电阻': { attributeId: '_rd_series_resistance', attributeName: 'Series Resistance (Rd)', unit: 'Ω', sortOrder: 93 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
@@ -751,6 +812,28 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '正向压降vf max': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     // English
     'zener voltage vz': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
+    // Vz Min/Max → existing satellites _vz_min / _vz_max (Chinese keys at
+    // lines 777-778). Adds English synonyms so future MFRs auto-route.
+    // 'vz' (primary) is the nominal Vz at Izt — the B3 logic table identity
+    // match. Min/Max are display-only spec-window bounds.
+    'vz(min.)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz(min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz (min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz_min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz min(v)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage (min)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage min': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'zener voltage (minimum)': { attributeId: '_vz_min', attributeName: 'Zener Voltage Min', unit: 'V', sortOrder: 91 },
+    'vz(max.)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz(max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz (max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz_max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'vz max(v)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage (max)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage max': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
+    'zener voltage (maximum)': { attributeId: '_vz_max', attributeName: 'Zener Voltage Max', unit: 'V', sortOrder: 90 },
     'z power rating': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
     'z voltage tolerance': { attributeId: 'vz_tolerance', attributeName: 'Vz Tolerance', sortOrder: 2 },
     'zener current iz': { attributeId: '_izt', attributeName: 'Test Current (Izt)', unit: 'A', sortOrder: 93 },
@@ -760,6 +843,12 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'vz type(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
     'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     'ir max(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    // YANGJIE-style "IR at VR" naming (reverse leakage at rated reverse voltage)
+    'ir@vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir@vr(ma)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'mA', sortOrder: 6 },
+    'ir@vr (ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir@vr': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
+    'ir @ vr(ua)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 6 },
     'pd(w)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 3 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
@@ -780,6 +869,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '电源电压': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
     '击穿电压 v(br)-min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
     '击穿电压': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    '击穿电压(最大)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    '击穿电压最大': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     '击穿电压max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     '最大钳位电压': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
     '功率-峰值脉冲': { attributeId: 'ppk', attributeName: 'Peak Pulse Power', unit: 'W', sortOrder: 5 },
@@ -795,6 +886,16 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'polarity': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
     'operating standoff voltage': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
     'breakdown voltage vbr': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage (minimum)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr(min)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr (min)': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'v(br) min': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'breakdown voltage (maximum)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'breakdown voltage max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'vbr(max)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'vbr (max)': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'v(br) max': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
     'clamping voltage vc': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
     'power rating': { attributeId: 'ppk', attributeName: 'Peak Pulse Power', unit: 'W', sortOrder: 5 },
     'max peak current ipk': { attributeId: 'ipp', attributeName: 'Peak Pulse Current', unit: 'A', sortOrder: 6 },
@@ -840,6 +941,18 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'vth(v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
     'vth (v)': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
     '阈值电压': { attributeId: 'vgs_th', attributeName: 'Gate Threshold (Vth)', unit: 'V', sortOrder: 8 },
+    // Min/Max canonical split for MFRs reporting Vth as a range (e.g. KEXIN
+    // ships VTH(Min.)/VTH(Max.)). Coexists with the typical-value vgs_th
+    // canonical above — the existing B5 logic-table rule (application_review
+    // weight 6) doesn't programmatically compare values, so this is a
+    // display-only addition. Future logic-table extension would consume
+    // these for automated range checks (drive-margin / noise-margin).
+    'vth(min.)': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vth(max.)': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
+    'vgs(th) min': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vgs(th) max': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
+    'vgs(th)(min)': { attributeId: 'vgs_th_min', attributeName: 'Gate Threshold Voltage (Min)', unit: 'V', sortOrder: 8 },
+    'vgs(th)(max)': { attributeId: 'vgs_th_max', attributeName: 'Gate Threshold Voltage (Max)', unit: 'V', sortOrder: 8 },
     // Current ratings
     'id (a)': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
     'id(a) tc=25': { attributeId: 'id_max', attributeName: 'Drain Current (Id)', unit: 'A', sortOrder: 9 },
@@ -928,6 +1041,10 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '集电极截止电流(icbo)': { attributeId: '_icbo', attributeName: 'Collector Cutoff Current', sortOrder: 91 },
     '功率(pd)': { attributeId: '_pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 8 },
     '特征频率(ft)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft(mhz)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft (mhz)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'ft': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
+    'transition frequency': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
     '集电极电流(ic)': { attributeId: '_ic', attributeName: 'Collector Current (Ic)', unit: 'A', sortOrder: 5 },
     // English
     'transistor polarity': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
@@ -1020,6 +1137,29 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '维持电流(ih)': { attributeId: 'ih', attributeName: 'Holding Current', unit: 'A', sortOrder: 7 },
     '保持电流(ih)': { attributeId: 'ih', attributeName: 'Holding Current', unit: 'A', sortOrder: 7 },
     '门极触发电压(vgt)': { attributeId: '_vgt', attributeName: 'Gate Trigger Voltage', unit: 'V', sortOrder: 91 },
+    // IGT in µA → display-only satellite (sortOrder 92). The B8 logic table
+    // has an `igt` rule (threshold lte, weight 7) but no dict entry currently
+    // feeds it. Sensitive-gate TRIACs (CR3AM/CR5AM with 'AM' suffix) genuinely
+    // spec IGT in µA range (5-50 µA). We keep µA values out of the `igt`
+    // canonical to prevent 1000× magnitude confusion if a future MFR ships
+    // standard-gate IGT in mA → `igt`. Same satellite pattern as _vbr_max /
+    // _isw_peak_a / _icc_ma / _ipk_sense_voltage_mv.
+    'igt(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt (ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt (µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'igt_ua': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'gate trigger current(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    'gate trigger current(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    '门极触发电流(µa)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    '门极触发电流(ua)': { attributeId: '_igt_ua', attributeName: 'Gate Trigger Current (µA)', unit: 'µA', sortOrder: 92 },
+    // IGT in mA → primary canonical `igt` (consumed by B8 logic rule).
+    // Standard-gate TRIACs typically spec IGT in 5-50 mA range.
+    'igt(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    'igt (ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    'gate trigger current(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    '门极触发电流(igt)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
+    '门极触发电流(ma)': { attributeId: 'igt', attributeName: 'Gate Trigger Current (IGT)', unit: 'mA', sortOrder: 8 },
     '可控硅类型': { attributeId: '_device_subtype', attributeName: 'Device Subtype', sortOrder: 92 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     'packages': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
@@ -1045,6 +1185,15 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '输出电流': { attributeId: 'output_peak_current', attributeName: 'Output Peak Current', unit: 'A', sortOrder: 8 },
     '输出侧uvlo(v)': { attributeId: 'undervoltage_lockout', attributeName: 'UVLO', unit: 'V', sortOrder: 14 },
     '输出侧建议工作电压(v)': { attributeId: '_recommended_vout', attributeName: 'Recommended Output Voltage', unit: 'V', sortOrder: 94 },
+    // Isolated gate drivers (NOVOSENSE NSi6601, TI UCC52xx, etc.) have galvanically separated
+    // input/output supplies. Output-side VCC drives the MOSFET/IGBT/SiC gate (matches vdd_range);
+    // input-side VCC powers the controller-facing logic (separate canonical input_vdd_range).
+    // See lib/logicTables/gateDriver.ts for the rule definitions.
+    '输出侧vcc电压(max)(v)': { attributeId: 'vdd_range', attributeName: 'Gate Drive Supply VDD Range', unit: 'V', sortOrder: 8 },
+    '输入侧vcc电压(max)(v)': { attributeId: 'input_vdd_range', attributeName: 'Input-Side Logic Supply Range', unit: 'V', sortOrder: 21 },
+    // Isolation withstand voltage — safety-critical spec on isolated gate drivers.
+    // Conventionally measured in kVrms across all datasheets; no unit suffix on canonical.
+    '隔离耐压(kvrms)': { attributeId: 'isolation_voltage', attributeName: 'Isolation Withstand Voltage', unit: 'kVrms', sortOrder: 22 },
     '最大瞬态隔离电压 (vpk)': { attributeId: '_transient_isolation', attributeName: 'Transient Isolation Voltage', unit: 'Vpk', sortOrder: 95 },
     '最大浪涌隔离电压 (kvpk)': { attributeId: '_surge_isolation', attributeName: 'Surge Isolation Voltage', unit: 'kVpk', sortOrder: 96 },
     'esd 性能 hbm/cdm(kv)': { attributeId: '_esd', attributeName: 'ESD Rating', unit: 'kV', sortOrder: 97 },
@@ -1140,6 +1289,26 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'iq (µa, typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
     'iq (ma, max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
     'iq(μa,typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    // ICC / total package supply current → display-only satellite (sortOrder 99).
+    // NOT mapped to 'iq' (which is per-channel µA in the C4 logic table) and
+    // NOT mapped to the existing 'supply_current' canonical (de-facto used for
+    // per-channel µA mappings, despite its name — a separate cleanup tracked
+    // in BACKLOG). ICC is the total device supply current in mA, a distinct
+    // datasheet spec. Same satellite pattern as B4 _vbr_max and C2 _isw_peak_a.
+    'icc(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc (ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(typ.)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(typ.)(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(max.)(ma)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc(max)': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc max': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'icc typ': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'total supply current': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    'supply current': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '总电源电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '总电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
+    '电源电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
     'iout(ma)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 96 },
     'sink/source current(ma)(typ.)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 96 },
     'ib(pa)(typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
@@ -1258,6 +1427,11 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'ton(ns)': { attributeId: 'tpd', attributeName: 'Propagation Delay', unit: 'ns', sortOrder: 10 },
     'toff(ns)': { attributeId: '_toff', attributeName: 'Turn-Off Time', unit: 'ns', sortOrder: 95 },
     'leakage current(na)': { attributeId: 'input_leakage', attributeName: 'Leakage Current', unit: 'nA', sortOrder: 96 },
+    // I2C-bus interface parts (level shifters, buffers, switches, I/O expanders, repeaters).
+    // Distinct from generic fmax (clocked-logic toggle rate) — see c5LogicICs.ts rule.
+    // Only the kHz-suffixed variant: the bare '频率(最大)' could be MHz on a non-I2C C5 part,
+    // so Triage handles that case if it ever surfaces.
+    '频率(最大)(khz)': { attributeId: 'i2c_bus_speed_max_khz', attributeName: 'Max I2C Bus Clock Speed', unit: 'kHz', sortOrder: 24 },
   },
 
   // ─── C8 Timers / Oscillators ───────────────────────────
@@ -1698,14 +1872,18 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     '响应时间': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
     'response time': { attributeId: 'response_time', attributeName: 'Response Time', sortOrder: 13 },
     '频率': { attributeId: 'frequency', attributeName: 'Frequency', unit: 'Hz', sortOrder: 14 },
-    // Optical-sensor-specific (Phototransistors, Photodiodes — Everlight ships
-    // these under c1='Sensors, Transducers'). Reuse existing wavelength_peak
-    // canonical from the LED L2 + Digikey LED L2 maps.
+    // Optical-sensor-specific (Phototransistors live here; Photodiodes
+    // actually route to LEDs and Optoelectronics via the 'photodiode'
+    // substring rule, NOT here).
     '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 14 },
     'peak wavelength': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 14 },
-    // Reverse voltage — for photodiode reverse-bias spec.
+    // 反向电压 stays in Sensors for Phototransistor coverage even though
+    // Photodiodes are handled by the LED L2 dict.
     '反向电压': { attributeId: 'reverse_voltage', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 15 },
     'reverse voltage': { attributeId: 'reverse_voltage', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 15 },
+    // Operating current — for Optical Motion Sensors (IR proximity etc.).
+    // New canonical, distinct from supply_voltage.
+    '工作电流': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 17 },
     '通道数': { attributeId: 'channel_count', attributeName: 'Number of Channels', sortOrder: 16 },
     '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
     '工作电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
@@ -1788,6 +1966,10 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     'forward current': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Synonym used by Everlight on a small subset of LED products
     '工作电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    // Reverse voltage — Photodiodes route to LEDs and Optoelectronics via the
+    // 'photodiode' substring rule (NOT to Sensors), so they need 反向电压 here.
+    '反向电压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
+    'reverse voltage': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
     // Color temperature — relevant for white LEDs (warm/cool white).
     // New canonical.
     '色温': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },

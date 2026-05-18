@@ -13,7 +13,7 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
 import NoteAltIcon from '@mui/icons-material/NoteAlt';
-import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
+import FlagIcon from '@mui/icons-material/Flag';
 import type { GlobalUnmappedParam, StatusFilter } from './types';
 
 export type TriageMode = 'synonyms' | 'auto_flagged' | 'all';
@@ -248,13 +248,13 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
             sx={{ whiteSpace: 'nowrap', px: 1.25 }}
           >
             <Stack direction="row" spacing={0.75} alignItems="center">
-              <BookmarkAddedIcon fontSize="small" sx={{ color: filters.flaggedOnly ? 'warning.main' : undefined }} />
+              <FlagIcon fontSize="small" sx={{ color: filters.flaggedOnly ? 'error.main' : undefined }} />
               <Box component="span" sx={{ fontSize: '0.75rem' }}>Flagged</Box>
               {(flaggedCount ?? 0) > 0 && (
                 <Chip
                   size="small"
                   label={flaggedCount}
-                  sx={{ height: 18, fontSize: '0.65rem', bgcolor: filters.flaggedOnly ? 'warning.main' : 'action.selected', color: filters.flaggedOnly ? 'warning.contrastText' : undefined }}
+                  sx={{ height: 18, fontSize: '0.65rem', bgcolor: filters.flaggedOnly ? 'error.main' : 'action.selected', color: filters.flaggedOnly ? 'error.contrastText' : undefined }}
                 />
               )}
             </Stack>

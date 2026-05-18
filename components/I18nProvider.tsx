@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { I18nextProvider, useTranslation } from 'react-i18next';
 import { useColorScheme } from '@mui/material/styles';
 import i18n, { DEFAULT_LANGUAGE, detectBrowserLanguage, SupportedLanguage } from '@/lib/i18n';
@@ -34,13 +34,15 @@ function LanguageSync() {
 function ThemeSync() {
   const { user } = useAuth();
   const { setMode } = useColorScheme();
+  const setModeRef = useRef(setMode);
+  setModeRef.current = setMode;
 
   useEffect(() => {
     const supabaseTheme = user?.user_metadata?.theme as 'light' | 'dark' | undefined;
     if (supabaseTheme) {
-      setMode(supabaseTheme);
+      setModeRef.current(supabaseTheme);
     }
-  }, [user?.user_metadata?.theme, setMode]);
+  }, [user?.user_metadata?.theme]);
 
   return null;
 }

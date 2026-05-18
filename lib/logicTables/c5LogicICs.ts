@@ -284,5 +284,14 @@ export const c5LogicICsLogicTable: LogicTable = {
       engineeringReason: 'Packaging format must match assembly process. DIP packages are tube-packaged and cannot be tape-and-reel. SMD logic ICs are typically tape-and-reel for production. Verify reel size (7-inch vs. 13-inch) for high-volume assembly line compatibility.',
       sortOrder: 23,
     },
+    {
+      attributeId: 'i2c_bus_speed_max_khz',
+      attributeName: 'Max I2C Bus Clock Speed (kHz)',
+      logicType: 'threshold',
+      thresholdDirection: 'gte',
+      weight: 5,
+      engineeringReason: 'For I2C bus interface ICs (level shifters, buffers, switches/multiplexers, I/O expanders, repeaters), replacement must support equal or higher max bus clock speed. Standard I2C modes: Standard-mode = 100 kHz, Fast-mode = 400 kHz, Fast-mode Plus (Fm+) = 1000 kHz (1 MHz), High-speed = 3400 kHz. A 400 kHz device on a Fm+ bus will not propagate edges fast enough and bus communication breaks. Distinct from generic fmax (clocked-logic toggle rate); this is bus-topology-specific. Missing data on non-I2C C5 parts (74-series flip-flops, plain gates) is expected and treated as review, not fail.',
+      sortOrder: 24,
+    },
   ],
 };

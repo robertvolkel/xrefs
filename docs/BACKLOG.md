@@ -146,6 +146,83 @@ When the classifier gets fixed and the row's products acquire `family_id`, the r
 
 Half-day of work: schema migration + status handling + button + filter chip. Useful in isolation even without the heavier per-product classification drawer above.
 
+### Constrain AI Triage Investigator to known family IDs (Decision #185 follow-up)
+
+The Investigator's `wrong_family` action bucket returns a `suggestedFamily` field that the prompt currently lets the model freely populate. Observed hallucination: for KEXIN pre-biased digital transistors (DTA/DMUN/UMA series) shipping `R1(KΩ)`, the Investigator returned `familyId: "BJT_DIGITAL"` — a family that doesn't exist. The correct destination is `B6` (BJTs); pre-biased digital transistors are a sub-type of B6, not a separate family.
+
+If an engineer copies the AI's JSON verbatim into `FAMILY_PARAM_SIGNATURES`, the registry entry would target a non-existent family and the reclassifier would have nowhere to send affected products. Today the only thing protecting against this is engineer-time review.
+
+**What this would add:**
+1. The `/api/admin/atlas/dictionaries/investigate` prompt should include the canonical family-ID list (B1–B9, C1–C10, D1–D2, E1, F1–F2) AND the L2 category list as the only allowed `suggestedFamily` / `familyId` values. Phrased as a hard constraint, not a hint.
+2. Server-side validation: after the model responds, validate `suggestedFamily` against the known set; if invalid, either retry once with an "INVALID — choose from this list" follow-up, or downgrade the bucket from `wrong_family` to `unmappable` with a note explaining the model couldn't pick a valid target.
+3. UI defense: when rendering the action button, validate the suggested family — if invalid, hide the button and show an "AI suggested an unknown family — review manually" warning chip instead of letting the engineer click through.
+
+**Why defer:** caught once so far. If hallucination recurs (engineer-time review missed it, or Investigator suggests other invented IDs), this becomes urgent. For now the workaround is engineer attention — when the suggested family ID looks unfamiliar, treat it as a reason to skip the registry add (as we did for R1(KΩ)).
+
+**Urgency bumped (Decision #188 follow-up):** the AI verdict is now load-bearing — one Confirm click writes the signature to the DB and retroactively reclassifies products. A bad `suggestedFamily` no longer just sits in a JSON snippet awaiting a code commit; it lands in `atlas_family_param_signatures` AND moves products to a non-existent family in `atlas_products` immediately. Add at minimum the server-side validation (item 2 above) before another invalid family slips through.
+
+### RF diode family / sub-family for PIN diodes and varicaps
+
+B1 (Rectifier Diodes) is currently a catch-all for any device classified as "diode" — including RF-specific devices that have nothing in common with rectifiers. Caught during Triage of KEXIN BAR64-05W / HVU131/132/133 / MMBV3401 (TR-ee4613), all of which were misrouted into B1:
+
+| Device class | What it does | Headline specs (NOT in B1 today) |
+|--------------|--------------|-----------------------------------|
+| PIN diode | RF switching, attenuation | Rd (series resistance), Cd, isolation, insertion loss |
+| Varicap (varactor) | RF tuning, voltage-controlled capacitance | Cj vs Vr, Q factor, capacitance ratio Cmax/Cmin |
+| Schottky RF | RF detection/mixing | Vf at very low currents, junction capacitance |
+
+The B1 logic table is built around forward-current handling (Vf, Ifsm, Irrm, trr) — these rules are largely meaningless when scoring two PIN diodes against each other. Conversely, the specs that DO matter for these devices (Rd, capacitance-vs-voltage curves, RF performance) are either missing from B1's schema or sitting in display-only satellites with no rules consuming them.
+
+**Two structural paths:**
+
+1. **New family B10 (RF Diodes)** — dedicated logic table + classifier rules + dict. Splits PIN, varicap, and RF Schottky as three sub-types under one family (same multi-subtype pattern as B8 Thyristors). Highest correctness, biggest build effort.
+
+2. **B1 sub-family route via `_device_subtype`** — keep these in B1 but add a context question "device function: rectifier / PIN switch / varicap / RF Schottky" that suppresses irrelevant B1 rules and activates new RF-specific rules (parallel to how B8 uses Q1 to suppress sub-type-irrelevant rules across SCR/TRIAC/DIAC). Lower lift, less clean separation.
+
+**Trigger to ship:** when RF diode count in Atlas grows past ~50 products AND/OR a user attempts cross-references on a PIN/varicap part and gets meaningless B1 rectifier-style scoring.
+
+**Files involved (Option 1):** new [lib/logicTables/rfDiodes.ts](../lib/logicTables/rfDiodes.ts), new [lib/contextQuestions/rfDiodes.ts](../lib/contextQuestions/rfDiodes.ts), entries in [lib/logicTables/index.ts](../lib/logicTables/index.ts), new RF diode detector in [lib/logicTables/familyClassifier.ts](../lib/logicTables/familyClassifier.ts), new B10 dict block in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs).
+
+### Suspicious-unit-value detector on Atlas ingest
+
+Some MFR data files appear to ship physically-implausible values for a given unit — likely upstream unit-label bugs at the MFR's data-export layer, not actual unusual specs. Caught during Triage of KEXIN B8 IGT(uA) row (TR-ddffc6):
+
+- KEXIN BT139B-600/800 listed IGT = 50 µA → real-world BT139 IGT is 5-50 **mA**, not µA. 1000× off.
+- KEXIN BT137-500 listed IGT = 50 µA → real-world BT137 IGT is ~25 mA per ST datasheet.
+- (Genuine sensitive-gate variants like CR3AM/CR5AM correctly listed at 20-30 µA.)
+
+The dictionary mapping has to respect the labeled unit (we can't second-guess the source), but a flag at ingest time would help engineers spot data-quality issues before they propagate to the matching engine.
+
+**What this would add:**
+
+A per-family per-attribute "expected value range" lookup (e.g., `B8.igt: { min: 0.5, max: 200, unit: 'mA', alt_unit: 'µA' for sensitive variants }`) and an ingest-time check that flags any value outside the typical range. Flagged values surface in the per-batch diff report under a new "Anomalous Values" section. Engineer reviews before Proceed; can override or note as legit (e.g., genuine sensitive-gate variant).
+
+Could reuse the existing logic-table engineering reasons as the source for "typical range" descriptions — Sonnet could generate the lookup table from logic-table prose in a one-time pre-pass.
+
+**Why defer:**
+
+- Current scope of caught cases is small (one pattern, one MFR).
+- The Triage AI Investigator's Disambiguation/Unit-Mismatch buckets already catch these at engineer-review time, so it's not silently corrupting data — just not flagging at the earliest possible point.
+- Building the value-range lookup is the bulk of the work; could be incremental (start with a few high-impact attributes per family, expand as more anomalies surface).
+
+**Trigger to flip from defer to ship:** if the same MFR ships another batch with similarly-suspicious values across multiple attributes, OR if a different MFR exhibits the same pattern (suggesting it's a data-export-layer bug worth catching globally).
+
+**Files involved:** new `lib/services/atlasValueAnomalies.ts` for the lookup + check, [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) to invoke at ingest time, [components/admin/atlasIngest/ProductDiffTable.tsx](../components/admin/atlasIngest/ProductDiffTable.tsx) to render the new "Anomalous Values" badge.
+
+### Rename C4 `supply_current` canonical to `_iq_per_channel` (or merge into `iq`)
+
+The C4 Op-Amps/Comparators dictionary has a `supply_current` canonical at [atlasMapper.ts:1138-1187](lib/services/atlasMapper.ts#L1138-L1187) used as the destination for 11+ paramName variants — but every existing variant is `iq(typ.)(per ch)` style per-channel µA-scaled (not actual total supply current). The name is misleading: it's holding Iq-per-channel values, not ICC-total values.
+
+Caught while triaging KEXIN ICC(mA) row (TR-647e33), where the AI suggested minting `supply_current_ma` — would have collided. Workaround: introduced `_icc_ma` satellite for true ICC values, leaving `supply_current` as-is.
+
+**Two cleanup paths:**
+1. **Rename `supply_current` → `_iq_per_channel`** (satellite, leading underscore). Honest naming. Doesn't participate in matching (it never did — no logic table rule). Requires updating all dict entries + any DB rows in `atlas_dictionary_overrides` keyed on `supply_current`.
+2. **Merge `supply_current` into existing `iq` canonical**. The C4 `iq` logic rule already exists ([opampComparator.ts:255-263](lib/logicTables/opampComparator.ts#L255-L263)) and would benefit from more values flowing into it. But unit normalization would need attention (some current entries are µA, some mA).
+
+Recommended: Option 1 first (low risk, makes naming honest). Option 2 later as a logic-table consolidation pass.
+
+**Files involved:** [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) C4 block + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) C4 mirror + any `atlas_dictionary_overrides` rows targeting `supply_current` in C4.
+
 ### Per-row research helper on the Atlas Unmapped Parameters table
 
 Non-technical admins reviewing the unmapped-params panel often need to research what a parameter actually means before accepting (or overriding) the AI-suggested mapping — e.g. "PPAP" = Production Part Approval Process, "IFSM(A)" = Maximum Surge Forward Current, "ESD" = Electrostatic Discharge rating. Today they have to manually copy the param name into Google.

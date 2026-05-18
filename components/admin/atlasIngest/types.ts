@@ -158,6 +158,16 @@ export type DeepAnalysis = {
     alternativeActionPayload?: DeepAnalysisActionPayload;
   };
   prose: string;
+  /** Server-side post-validation findings. Populated when the AI's
+   *  recommendation contained an invalid family ID (e.g., hallucinated
+   *  `BJT_DIGITAL`) or a canonical that near-duplicates an existing one.
+   *  When present, the UI should surface these as warning chips and
+   *  suppress the primary-action button — the engineer must review
+   *  manually rather than clicking through. */
+  validationErrors?: Array<{
+    kind: 'unknown_family' | 'duplicate_canonical';
+    detail: string;
+  }>;
 };
 
 export type GlobalUnmappedParam = {

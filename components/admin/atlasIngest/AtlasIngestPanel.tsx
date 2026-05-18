@@ -121,6 +121,11 @@ export default function AtlasIngestPanel() {
     if (filenames.length === 0) return;
     setReportRunning(true);
     try {
+      // Capture the baseline pending-batch count so polling can detect when
+      // the background script's new batches land.
+      const baselineBatchCount = batchData?.batches?.length ?? 0;
+      const expectedCount = baselineBatchCount + filenames.length;
+
       const res = await fetch('/api/admin/atlas/ingest/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -130,14 +135,51 @@ export default function AtlasIngestPanel() {
       if (!res.ok || !json.success) {
         throw new Error(json.error || `Report failed (${res.status})`);
       }
-      setSnack({ msg: `Reports generated for ${filenames.length} file(s)`, severity: 'success' });
-      await refreshBatches();
+
+      setSnack({
+        msg: `Report generation started for ${filenames.length} file(s). Watching for new batches…`,
+        severity: 'info',
+      });
+
+      // The script runs detached on the server. Poll the batches list every
+      // 5s until we see the expected count of new pending batches or hit the
+      // poll budget. Large files (20+ MB) can take several minutes.
+      const POLL_INTERVAL_MS = 5_000;
+      const POLL_BUDGET_MS = 30 * 60 * 1000; // 30 min
+      const startedAt = Date.now();
+
+      while (Date.now() - startedAt < POLL_BUDGET_MS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        await refreshBatches();
+        // refreshBatches updates batchData via setBatchData; re-read via ref
+        // is awkward here, so we just trust the next render to surface the
+        // new batches. Break when polling has run "long enough" for typical
+        // file sizes — the user will see new batches as they appear.
+        const current = (await (async () => {
+          const r = await fetch('/api/admin/atlas/ingest/batches?status=pending', { cache: 'no-store' });
+          if (!r.ok) return null;
+          const data = await r.json();
+          return data?.batches?.length ?? null;
+        })());
+        if (current != null && current >= expectedCount) {
+          setSnack({
+            msg: `Reports ready for ${filenames.length} file(s)`,
+            severity: 'success',
+          });
+          return;
+        }
+      }
+
+      setSnack({
+        msg: 'Report generation still running after 30 min — refresh manually to check progress',
+        severity: 'info',
+      });
     } catch (err) {
       setSnack({ msg: err instanceof Error ? err.message : 'Report failed', severity: 'error' });
     } finally {
       setReportRunning(false);
     }
-  }, [refreshBatches]);
+  }, [refreshBatches, batchData]);
 
   const proceedBatch = useCallback(async (batchId: string) => {
     setActionInFlight({ batchId, kind: 'proceed' });
