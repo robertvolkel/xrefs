@@ -121,6 +121,22 @@ Cost: ~$0.50 in Opus tokens; ~30 min of review. Output quality across the cohort
 
 Post-completion: optional re-audit run against new active card text would close the verification loop (prove Phase 1 actually eliminated the hallucination surface in production). Deferred unless a Triage row surfaces evidence of residual contamination.
 
+### Engineer cleanup pass — accepted overrides where attribute_id is not in the family logic table (Decision #192 follow-up)
+
+The May 18, 2026 spot-check of 20 random recently-accepted overrides found 85% precision (17 ✅ / 3 ⚠️ / 0 ❌). All three ⚠️ cases share one failure mode: when the family's schema lacks an exact canonical for the paramName, Sonnet picks something close-but-not-quite — a sibling attribute (B5 `vgs_th_max` vs canonical `vgs_th`), a related-but-distinct rule (family 69 `insulation_resistance` MΩ where schema only has `insulation_voltage` V), or a broadened L2 generic (RF `pass band → frequency_range`). These mappings don't break runtime — they create display-only attributes that don't participate in matching-engine scoring. Long-term effect: schema fragmentation as accepted overrides accumulate canonicals the logic tables don't know about.
+
+**What this would add:**
+1. Script `scripts/atlas-audit-orphan-canonicals.mjs` — service-role query joining `atlas_dictionary_overrides` against each family's `logicTableRegistry` rule set. Output: per-family list of accepted overrides where `attribute_id` is NOT in the logic table's rule attributeIds. Sorted by override volume (most-used orphans first).
+2. Per-orphan engineer decision: (a) re-route the override to an existing canonical that already exists in the logic table, (b) formally add a new rule to the logic table for this canonical (and re-evaluate the override fits), or (c) leave as display-only if the attribute genuinely doesn't matter for matching but is informational for users.
+3. Rerun cadence: every ~50–100 accepts, or quarterly. Light recurring engineer task.
+
+**Triggers that flip this from defer to ship:**
+- Spot-check precision drifts below 80% on a future re-audit (signal that orphan-canonical fragmentation is growing).
+- An engineer asks "why does this attributeId not match in the engine?" → orphan was accepted, never added to logic table.
+- Schema fragmentation visibly worsens — same physical concept mapped to 3+ different canonicals across families.
+
+Effort: ~2h for the audit script + per-family review process documentation. The engineer-decision pass scales linearly with orphan volume (~5 min per orphan).
+
 ### Dictionary Triage Phase 2 — explicit per-param status tracking
 
 Phase 1 (just shipped) treats the unmapped-params queue as the inverse of the dictionary-overrides table: a row shows up if no active override resolves it. That's enough when the engineer's only states are "haven't looked yet" and "accepted." It breaks down when they want to *park* a param without resolving it ("I researched PPAP, need to talk to procurement first, hide it from my queue for 2 weeks") or explicitly reject one ("not worth mapping, stop showing it").
