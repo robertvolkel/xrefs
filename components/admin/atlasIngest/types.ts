@@ -43,6 +43,27 @@ export type IngestDiffReport = {
    *  triage feature shipped. Older batches lack this field. */
   categoryCounts?: Record<string, number>;
   mappingStats: { total: number; mapped: number; errors: number };
+  /** MPN-quality issues detected at ingest time (phase 1: detection only).
+   *  Populated when the source data contains un-matchable MPN patterns —
+   *  range entries, "Series" sentinels, trailing-x placeholders, or
+   *  slash-delimited two-MPN rows. Engineers see this in the per-batch
+   *  diff report and fix manually upstream. Older batches omit the field.
+   *  Detection rules in lib/services/atlasMpnQualityValidator.ts. */
+  mpnQuality?: {
+    totalIssues: number;
+    byKind: {
+      range_thru: number;
+      range_series: number;
+      placeholder_x: number;
+      placeholder_xx_midword: number;
+      slash_variant: number;
+    };
+    samples: Array<{
+      originalMpn: string;
+      kind: 'range_thru' | 'range_series' | 'placeholder_x' | 'placeholder_xx_midword' | 'slash_variant';
+      reason: string;
+    }>;
+  };
 };
 
 export type IngestBatch = {

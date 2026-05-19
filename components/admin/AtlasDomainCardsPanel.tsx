@@ -20,7 +20,7 @@
  * DB-backed flow.
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Box,
   Stack,
@@ -43,6 +43,8 @@ import {
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import PushPinIcon from '@mui/icons-material/PushPin';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import CloseIcon from '@mui/icons-material/Close';
@@ -96,6 +98,29 @@ const HEALTH_META: Record<HealthLevel, { label: string; color: 'error' | 'warnin
 
 type FilterMode = 'all' | 'attention' | 'no-card' | 'draft' | 'active';
 
+const PINNED_STORAGE_KEY = 'atlas-domain-cards-pinned-v1';
+
+function loadPinnedFromStorage(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePinnedToStorage(ids: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    /* quota or disabled storage — non-fatal */
+  }
+}
+
 export default function AtlasDomainCardsPanel() {
   const [entries, setEntries] = useState<CardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +130,25 @@ export default function AtlasDomainCardsPanel() {
   // waiting on its Opus call.
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [drawerFamilyId, setDrawerFamilyId] = useState<string | null>(null);
+  // Pinned family IDs in pin-order (earliest pin first). Persisted to
+  // localStorage so a refresh keeps the same focus set. Per-browser only.
+  const [pinned, setPinned] = useState<string[]>([]);
+
+  useEffect(() => {
+    setPinned(loadPinnedFromStorage());
+  }, []);
+
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+
+  const togglePin = useCallback((familyId: string) => {
+    setPinned((prev) => {
+      const next = prev.includes(familyId)
+        ? prev.filter((id) => id !== familyId)
+        : [...prev, familyId];
+      savePinnedToStorage(next);
+      return next;
+    });
+  }, []);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -153,15 +197,25 @@ export default function AtlasDomainCardsPanel() {
     }
   }, [fetchList]);
 
-  const filteredEntries = entries.filter((e) => {
-    if (filter === 'attention') {
-      return e.health.level === 'refresh-recommended' || e.health.level === 'consider-refresh';
-    }
-    if (filter === 'no-card') return e.source === 'none';
-    if (filter === 'draft') return e.status === 'draft';
-    if (filter === 'active') return e.status === 'active';
-    return true;
-  });
+  const filteredEntries = useMemo(() => {
+    const filtered = entries.filter((e) => {
+      if (filter === 'attention') {
+        return e.health.level === 'refresh-recommended' || e.health.level === 'consider-refresh';
+      }
+      if (filter === 'no-card') return e.source === 'none';
+      if (filter === 'draft') return e.status === 'draft';
+      if (filter === 'active') return e.status === 'active';
+      return true;
+    });
+    // Stable-partition: pinned rows float to the top in pin-order,
+    // unpinned rows keep the server's health-priority ordering below.
+    const pinIndex = new Map(pinned.map((id, i) => [id, i]));
+    const pinnedRows = filtered
+      .filter((e) => pinnedSet.has(e.familyId))
+      .sort((a, b) => (pinIndex.get(a.familyId) ?? 0) - (pinIndex.get(b.familyId) ?? 0));
+    const unpinnedRows = filtered.filter((e) => !pinnedSet.has(e.familyId));
+    return [...pinnedRows, ...unpinnedRows];
+  }, [entries, filter, pinned, pinnedSet]);
 
   const counts = {
     total: entries.length,
@@ -217,6 +271,7 @@ export default function AtlasDomainCardsPanel() {
         <Table size="small">
           <TableHead>
             <TableRow>
+              <TableCell sx={{ width: 36, px: 0.5 }} align="center" />
               <TableCell sx={{ width: 70 }}>Family</TableCell>
               <TableCell>Name</TableCell>
               <TableCell sx={{ width: 180 }}>
@@ -248,8 +303,26 @@ export default function AtlasDomainCardsPanel() {
                     ? <Chip size="small" label="draft" color="info" />
                     : <Chip size="small" label="archived" color="default" variant="outlined" />;
               const healthMeta = HEALTH_META[e.health.level];
+              const isPinned = pinnedSet.has(e.familyId);
               return (
-                <TableRow key={e.familyId} hover>
+                <TableRow
+                  key={e.familyId}
+                  hover
+                  sx={isPinned ? { bgcolor: (t) => t.palette.action.selected } : undefined}
+                >
+                  <TableCell sx={{ px: 0.5 }} align="center">
+                    <Tooltip title={isPinned ? 'Unpin' : 'Pin to top'}>
+                      <IconButton
+                        size="small"
+                        onClick={() => togglePin(e.familyId)}
+                        sx={{ color: isPinned ? 'warning.main' : 'text.disabled' }}
+                      >
+                        {isPinned
+                          ? <PushPinIcon sx={{ fontSize: 16 }} />
+                          : <PushPinOutlinedIcon sx={{ fontSize: 16 }} />}
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{e.familyId}</TableCell>
                   <TableCell>{e.familyName}</TableCell>
                   <TableCell>

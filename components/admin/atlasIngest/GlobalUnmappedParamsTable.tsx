@@ -67,6 +67,7 @@ import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
 import { getLogicTable } from '@/lib/logicTables';
+import { isValidFamilyId } from '@/lib/services/validFamilyIds';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
 
@@ -172,6 +173,12 @@ interface Props {
     status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
     flaggedBy: 'auto' | 'engineer' | null,
   ) => void;
+  /** Stable key derived from the parent's filter inputs (mode, status,
+   *  search, MFR/family chips, etc.). When it changes, pagination resets
+   *  to INITIAL_VISIBLE_ROWS. Critically, it does NOT change when rows are
+   *  mutated in-place by Accept/Revert/Flag — so an engineer scrolled deep
+   *  into the queue stays scrolled deep after taking action on a row. */
+  viewKey: string;
 }
 
 interface RowState {
@@ -403,7 +410,7 @@ function writeFamilySchemaCache(
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
@@ -478,11 +485,23 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
     return result;
   }, [rows]);
-  // Reset visible count whenever the rows prop changes — a filter change
-  // shouldn't carry over an expanded "show all" state from the previous view.
+  // Reset visible count when the parent's filter context changes — a filter
+  // narrowing shouldn't carry over an expanded "show all" state from the
+  // previous view. Crucially this is NOT keyed off `rows`: optimistic
+  // Accept/Revert/Flag mutations replace the `rows` array reference too, and
+  // resetting on those was kicking engineers back to the first 50 rows after
+  // every single action on long queues.
   useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE_ROWS);
-  }, [rows]);
+  }, [viewKey]);
+  // Safety clamp: if the filtered set shrinks below the current visible count
+  // (e.g. accepting a row in Open status drops it from filteredRows), keep
+  // visibleCount in range so the "Show more" affordance stays meaningful.
+  useEffect(() => {
+    if (rows.length < visibleCount && rows.length >= INITIAL_VISIBLE_ROWS) {
+      setVisibleCount(rows.length);
+    }
+  }, [rows.length, visibleCount]);
   // Conditional stale-first sort. When toggled on (via the staleness banner),
   // rows whose cached suggestion OR investigation is stale rise to the top
   // of the queue so the engineer can refresh them without scrolling. The
@@ -1041,27 +1060,38 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // and (b) retroactively reclassify existing atlas_products that carry
       // the offending paramName under the wrong family. Both happen server-
       // side in one call. Reasoning + targetFamily come from the AI verdict.
+      //
+      // Pre-flight validation: skip the POST entirely if the AI's
+      // suggested family isn't a real L3 family. The server-side endpoint
+      // would 400 on this anyway (Decision #185 BACKLOG follow-up), but
+      // catching it client-side gives a cleaner message and avoids a
+      // misleading "signature insert failed" tooltip when the real issue
+      // is "the AI hallucinated a family ID."
       let sigError: string | null = null;
       if (investigationVerdict && autoDiagnosis?.suggestedFamily) {
-        try {
-          const sigRes = await fetch('/api/admin/atlas/family-param-signatures', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              paramName: row.paramName,
-              targetFamilyId: autoDiagnosis.suggestedFamily,
-              reasoning: autoDiagnosis.reasoning ?? investigationVerdict.prose ?? 'Engineer confirmed AI wrong-family verdict.',
-            }),
-          });
-          const sigJson = await sigRes.json();
-          if (!sigRes.ok || !sigJson.success) {
-            // Don't fail the whole Confirm — the wrong_family note already
-            // persisted. Surface the signature failure as a non-blocking
-            // warning so engineer knows the registry didn't update.
-            sigError = `Flag confirmed, but signature insert failed: ${sigJson.error ?? 'unknown error'}`;
+        if (!isValidFamilyId(autoDiagnosis.suggestedFamily as string)) {
+          sigError = `Flag confirmed, but skipped registry insert — AI suggested unknown family '${autoDiagnosis.suggestedFamily}'. Edit the signature manually if needed.`;
+        } else {
+          try {
+            const sigRes = await fetch('/api/admin/atlas/family-param-signatures', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                paramName: row.paramName,
+                targetFamilyId: autoDiagnosis.suggestedFamily,
+                reasoning: autoDiagnosis.reasoning ?? investigationVerdict.prose ?? 'Engineer confirmed AI wrong-family verdict.',
+              }),
+            });
+            const sigJson = await sigRes.json();
+            if (!sigRes.ok || !sigJson.success) {
+              // Don't fail the whole Confirm — the wrong_family note already
+              // persisted. Surface the signature failure as a non-blocking
+              // warning so engineer knows the registry didn't update.
+              sigError = `Flag confirmed, but signature insert failed: ${sigJson.error ?? 'unknown error'}`;
+            }
+          } catch (e) {
+            sigError = `Flag confirmed, but signature insert errored: ${(e as Error).message}`;
           }
-        } catch (e) {
-          sigError = `Flag confirmed, but signature insert errored: ${(e as Error).message}`;
         }
       }
 

@@ -5627,3 +5627,104 @@ Plus migration adds `idx_atlas_products_manufacturer_trgm` (GIN trigram on manuf
 **Deploy.** Apply [scripts/supabase-atlas-explorer-search-rpc.sql](../scripts/supabase-atlas-explorer-search-rpc.sql) in Supabase SQL Editor. Idempotent — `CREATE EXTENSION IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `DROP FUNCTION IF EXISTS` + `CREATE FUNCTION`. No data risk.
 
 **Verification.** Cookie-auth search returns <250ms for both MPN substring and manufacturer prefix/substring queries on the 114K-row table. Full devtools Network confirms 200 + sub-second across multiple MFRs (`MJD122` → 3 rows, `ACPR1208S100MT` → 1 row, `Sunlord` → 50 capped). Service-role and cookie-auth paths now within 2x of each other.
+
+## Decision #190 — Family-ID Validation Hardening: Four-Layer Defense Against AI-Hallucinated Family IDs (May 2026)
+
+Decision #188 made the AI Triage Investigator's `wrong_family` verdict load-bearing — one engineer click now writes the signature to the persistent `atlas_family_param_signatures` table AND immediately reclassifies products via the RPC. A hallucinated `targetFamilyId` like the observed `"BJT_DIGITAL"` would have corrupted both the signature registry and `atlas_products.family_id` for affected rows. Decision #185's BACKLOG follow-up flagged this risk; this entry records the four-layer defense that closes it.
+
+**Decision: build four independent layers, each able to catch an invalid family ID on its own, so a slip in any single layer leaves three behind it.**
+
+**Layer 1 — Anthropic SDK enum constraint at the tool-use boundary.** [`/api/admin/atlas/dictionaries/investigate`](../app/api/admin/atlas/dictionaries/investigate/route.ts) defines the `submit_triage_verdict` tool's JSON schema with `enum: KNOWN_FAMILY_IDS_LIST` on every family-ID field (`actualFamilyId`, `signatureRecommendation.familyId`, `perProductProposals[].proposedFamilyId`). The model literally cannot return an out-of-set value via tool-use mode — the SDK rejects it at parse time. This was already in place pre-#190 but wasn't documented as a layer.
+
+**Layer 2 — Server-side post-validation in the investigate route.** Same route runs `validateFamilyId()` from `atlasTriageContext.ts` on the parsed response as belt-and-suspenders. Failures surface via the response's `validationErrors` array, which the UI consumes to suppress the deep-analysis Primary Action button. Also already in place pre-#190.
+
+**Layer 3 — `family-param-signatures` POST endpoint guard.** This is what #190 actually shipped. New helper [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts) exports `VALID_FAMILY_IDS` (set), `isValidFamilyId()`, and `listValidFamilyIds()` — derived from `logicTableRegistry` keys. **L3-only by design** because `atlas_products.family_id` is L3-only and that's the reclassify destination; the broader `KNOWN_FAMILY_IDS` in `atlasTriageContext.ts` (L3 + L2 category names) is for the investigate prompt where both kinds are valid expressions of intent, but only L3 is a valid *destination*. POST returns 400 with `code: 'INVALID_FAMILY_ID'` + the canonical list when `targetFamilyId` fails the check.
+
+**Layer 4 — UI pre-flight in `confirmFlag`.** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) checks `isValidFamilyId(autoDiagnosis.suggestedFamily)` before POSTing to the signatures endpoint. When invalid, skips the POST entirely and surfaces a specific message ("AI suggested unknown family 'X' — edit manually if needed") rather than a misleading "signature insert failed" tooltip from the 400 response.
+
+**Why two separate valid-family-ID modules?** `validFamilyIds.ts` (L3-only) and `atlasTriageContext.ts`'s `KNOWN_FAMILY_IDS` (L3+L2) serve different consumers. L3-only modules: things that write to `atlas_products` or call the reclassify RPC. L3+L2 modules: things that interact with `atlas_dictionary_overrides` (which is scope-overloaded per Decision #178) or generate AI prompts (where L2 category names are valid as override scopes). Two named sets, two named purposes — never blur.
+
+**Files touched:**
+- New: [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts) — L3-only valid set + helpers.
+- [app/api/admin/atlas/family-param-signatures/route.ts](../app/api/admin/atlas/family-param-signatures/route.ts) — added validation block + `INVALID_FAMILY_ID` error code.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — `confirmFlag` pre-flight check.
+
+**Verification.** Type check clean. atlasMapper tests 21/21 pass. End-to-end: a manually-crafted POST to `/api/admin/atlas/family-param-signatures` with `targetFamilyId: 'BJT_DIGITAL'` returns 400 + the canonical list. The original AI hallucination scenario (KEXIN `R1(KΩ)` row with AI suggesting `BJT_DIGITAL`) now blocks at the UI before reaching the server.
+
+## Decision #191 — Atlas MPN-Quality Validator Phase 1: Detect Un-Matchable MPN Patterns at Ingest (May 2026)
+
+A May-2026 survey across atlas_products found **250+ un-matchable MPN rows** spanning **5 MFRs and 4 distinct upstream-encoding patterns**: CREATEK's "Thru"/"Through" range entries (168 rows), "Series" sentinels (78 rows across CREATEK/AWINIC/KEXIN), GIGADEVICE's trailing-x placeholders, Geehy's slash-delimited variants, and (added May 18) Gainsil's mid-MPN `xx` placeholder pattern + Refond LED RGB `xx` mid-MPN. All five patterns produce rows that look like normal ingests but are silently unfindable by exact MPN lookup and pollute family-volume statistics. Originally a defer-line BACKLOG item; survey-driven escalation when "fourth MFR" and "200+ rows" trigger conditions both hit.
+
+**Decision: ship phase 1 — detection + ingest-time surfacing + backfill survey tool. Expansion to actual MPN rows deferred to phase 2.**
+
+**Five detection kinds** in [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts):
+1. `range_thru` — Thru/thru/thur (CREATEK typo)/through, word-boundary anchored
+2. `range_series` — "X Series" or KEXIN-style Chinese full-width `（Series）` wrapping
+3. `placeholder_x` — trailing single x/X with TX/RX endings exempted, alphanumeric-before required
+4. `placeholder_xx_midword` — Gainsil-style `-xx[A-Z][suffix]$`; conservative regex requiring alphabetic suffix after the `xx` to avoid false-positive on legitimate MPNs containing `xx` mid-word
+5. `slash_variant` — `[A-Za-z0-9]/[A-Za-z0-9]` (slash not legal in any observed MFR MPN)
+
+**Ingest-time wiring.** `mapManufacturerProducts()` in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) collects issues per-batch and emits them on `report.mpnQuality` (optional field — back-compat with older batches that omit it). Mirror function in the .mjs script duplicates the TS detection logic byte-for-byte, per the established no-import-path convention (Decisions #174 / #176).
+
+**UI surfacing.** [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) renders a warning card on the per-batch UI when `mpnQuality.totalIssues > 0`, showing total count, per-kind breakdown, and a scrollable sample-MPN list. Only renders when issues exist (zero-noise design).
+
+**Type extensions.** `IngestDiffReport.mpnQuality` added as an optional field to both [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) and [lib/services/atlasIngestService.ts](../lib/services/atlasIngestService.ts) — kept in sync per the existing duplication convention.
+
+**Backfill survey.** [scripts/atlas-mpn-quality-survey.mjs](../scripts/atlas-mpn-quality-survey.mjs) — on-demand scan of existing `atlas_products` to catalog the legacy backlog. Uses indexed Postgres ILIKE filters with tightened patterns (`%-xx%` not `%xx%`, slash skipped because `%/%` times out). Survey is best-effort categorization based on ILIKE match — runtime detection in atlas-ingest.mjs is authoritative.
+
+**Phase 1 explicitly does NOT expand.** Detection surfaces the problem; engineers either chase upstream cleanup at the MFR / dataset provider or hand-fix in SQL. Per-MFR voltage-code expansion is phase 2 (separate BACKLOG entry; deferred until engineer hand-fix load justifies the per-MFR-table build).
+
+**Why ship phase 1 alone.** Phase 1 captures the visibility value (engineers see un-matchable rows at apply-batch time, not months later when a user search misses) without committing to the high-cost expansion-table maintenance. Phase 2 trigger conditions tied to engineer hand-fix load / backlog growth past 500 rows.
+
+**Lessons.**
+- **Survey-first decision-making.** The original BACKLOG estimate was "30 + 5 + 1 = 36 rows" based on opportunistic discoveries during domain-card reviews. A 5-minute survey via indexed ILIKE queries revealed 250+ rows — 8x estimate. Both trigger conditions hit simultaneously. Don't decide on shipping cost-vs-benefit without sizing the actual problem; opportunistic discovery underestimates by an order of magnitude.
+- **Ingest validators framework is forming.** This is the fourth ingest-time-data-quality item in the P1 cluster (after suspicious-unit-value detector + Schottky/small-signal MPN-prefix recognizer + B6 misclassification cleanup). When the fifth lands, lift to a shared `lib/services/atlasIngestValidators/` framework rather than continuing per-pattern modules.
+- **Survey-discovered MFRs.** Building the detector itself surfaced new MFR cohorts — Refond LED RGB `xx` placeholders weren't visible in the original CREATEK + GIGADEVICE + Geehy survey. Each new detection rule finds previously-invisible MFRs; the "if a new MFR exhibits the pattern" trigger condition was already self-validating before the build completed.
+- **Tightening ILIKE patterns for backfill surveys.** `%xx%` and `%/%` are too common across 114K rows and time out under the cookie-auth statement_timeout. Tighten to `%-xx%` or skip the pattern and document the SQL-direct alternative. Same general rule from Decision #189: targeted ILIKE > broad pattern when working against indexed but timeout-bounded queries.
+
+**Files touched:**
+- New: [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts) — 5 detection kinds + summary helper.
+- New: [scripts/atlas-mpn-quality-survey.mjs](../scripts/atlas-mpn-quality-survey.mjs) — backfill survey tool.
+- New: [\_\_tests\_\_/services/atlasMpnQualityValidator.test.ts](../__tests__/services/atlasMpnQualityValidator.test.ts) — 23 cases.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror functions + integration in `mapManufacturerProducts()`.
+- [lib/services/atlasIngestService.ts](../lib/services/atlasIngestService.ts) + [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — `mpnQuality?` field added to `IngestDiffReport`.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — warning card UI section.
+
+**Verification.** 23 tests pass; type check clean. Backfill survey confirms 250 un-matchable rows across the expected MFRs + Refond as a newly-discovered cohort.
+
+## Decision #192 — Atlas Family Domain Card Hallucination Audit + Phase 1 Grounded Generate (May 2026)
+
+The AI Domain Cards system (Decision #185 / #186 lineage) lets engineers click "Generate" on a family row to fire an Opus 4.7 one-shot that writes a domain knowledge card injected into the Triage AI's `/suggest` and `/investigate` prompts. The original implementation fed Opus the family's logic-table rules + signature entries + accepted overrides + cross-family canonicals + a TS-fallback "existing hand-written card" as style reference. **It did NOT feed Opus any view of `atlas_products`.** Opus filled the resulting gap with priors — Western MFR cohorts (Murata GRM / Samsung CL / TDK CGA / Yageo / Kemet / Vishay / etc.) that exist in `atlas_manufacturers` as cross-ref targets but ship **zero products** under the relevant `family_id`.
+
+The defect compounded through the manual review loop. When an engineer collaborated with Claude in-session to "refine" a card and pasted the built-in draft as context, Claude anchored on the seeded prose and treated MFR-cohort lines as facts to keep, not claims to verify. Across 12 cards drafted this way (12, 52, 71, B1, B3, B4, B5, B6, C1, C2, C3, C5), every single one shipped to `active` status with hallucinated cohorts.
+
+**Audit (May 18, 2026).** Cross-checked every claimed MFR and MPN prefix in those 12 cards against `atlas_products` (verified MFR = ≥1 product under `family_id`; verified prefix = ≥1 product whose MPN matches the prefix under that family). Results: ALL 12 cards flagged SUSPECTED_HALLUCINATIONS. Headline numbers — family 12 (MLCC): **1/26 MFRs verified** (only CCTC); family 52: 5/21; family 71: 11/32; B1: 11/37; B3: 7/27; B4: 7/21; B5: 16/38; B6: 12/38; C1: 23/57; C2: 24/62; C3: 12/41; C5: 9/39. Western majors uniformly invented. Verified MFRs are uniformly Chinese (3PEAK, CHIPANALOG, COSINE, HONGWAN, DIOO, Ruimeng, BDASIC, CCTC, Fortior, Geehy, NOVOSENSE). Full per-card detail saved to [docs/audits/domain-card-audit-2026-05-18.md](audits/domain-card-audit-2026-05-18.md).
+
+**Why this matters.** The hallucinated cards inject into every Triage `/suggest` and `/investigate` call. A Sonnet 4.6 model handed "this family ships Murata GRM and Samsung CL" as authoritative context will (1) generate confidence-inflated verdicts on Chinese-MFR rows by anchoring to a non-existent comparable, (2) lean toward "looks similar to a Murata GRM" reasoning when the actual data has none, (3) propagate the fabricated names into engineer-facing tooltips and the AI Log. Quiet error mode, hard to detect at the Triage row level.
+
+**Fix — Phase 1: Grounded Generate.** Three components, ~2h build:
+
+1. **New SQL migration**: [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql). Two SECURITY DEFINER RPCs — `get_atlas_family_mfr_grounding(familyId, mfr_limit, sample_limit)` returns the top-N MFRs by product count with sample MPNs in one round-trip (vs fetching all 18.7K family-71 rows app-side); `get_atlas_family_grounding_counts(familyId)` returns total product + distinct MFR counts for snapshot.
+
+2. **New service**: [lib/services/atlasFamilyCardGrounding.ts](../lib/services/atlasFamilyCardGrounding.ts). `buildGroundingBlock(familyId)` calls both RPCs in parallel + extracts the family's Chinese-character dict entries from `atlasMapper.getAtlasParamDictionary()`. `formatGroundingForPrompt()` emits a plain-text VERIFIED_MFRS + GROUNDING_COUNTS + CHINESE_PARAM_DICTIONARY block.
+
+3. **Refit endpoint**: [app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts). Parallel-fetches the grounding block alongside existing context. Adds **HARD ANTI-HALLUCINATION RULES** to the Opus prompt — explicit blocklist for Western majors (Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim) unless they appear in VERIFIED_MFRS; "ONLY prefixes you can SEE in sample MPNs" rule; required explicit "Atlas currently has only N MFR(s)" line when VERIFIED_MFRS has fewer than 3 entries; Chinese conventions must come from CHINESE_PARAM_DICTIONARY verbatim. **Removes** the prior "EXISTING HAND-WRITTEN CARD" style-reference injection — that mechanism was anchoring Opus on its own prior hallucinations across regenerations. Adds `groundedAtProductCount` / `groundedAtMfrCount` / `verifiedMfrCount` / `chineseDictEntryCount` to `data_snapshot` so a future Phase 2 staleness signal can compare against current atlas state.
+
+**Smoke test (B1 Regenerate, May 18).** Output cohort: YANGJIE, YFW, KEXIN, AK, Prisemi, ISC, JINGDAO, Jsmc, Rectron, CREATEK, Macmic, Techsem, CBI, YONGYUTAI, RUILON — 15 MFRs, all verified, zero Western intrusions. Card explicitly states "Do NOT introduce Vishay/onsemi/Diodes Inc/ST." MPN prefixes (1N4001-1N4007 JEDEC generics, 10A1-10A10 YANGJIE/YFW, ES1D-ES1J RUILON ultrafast, M1-M7 Prisemi SMA-body) all observable in the sample MPNs the grounding block delivered. Card density and idiosyncratic-knowledge load match or beat manual-drafted standard. Phase 1 verified working before fan-out.
+
+**Why phase 1 alone is enough (for now).** The single highest-cost behavior was Opus hallucinating MFRs from priors with no grounding. Phase 1 closes that. Phase 2 (staleness signal — surface "card grounding stale, 152 new products since last save" on the Domain Cards panel) and Phase 3 (section-level diff dialog when regenerating an active card — preserve engineer prose, swap only grounding) are useful refinements but not load-bearing. They wait until Phase 1's grounding fix has stabilized across all 12 polluted families.
+
+**Lessons.**
+- **AI generators with no view of "what we actually have" hallucinate from priors.** The defect surface was identical to a developer pulling open a fresh repo and writing a feature based on the README without reading the code. Opus was given labels (logic-table rules) and authoritative templates (existing cards) but no view into the data state. That gap is exactly where priors leak in. Any future AI-assisted content generator on top of any data store must have a deterministic ground-truth-from-DB step before the AI step.
+- **Style-reference injection propagates hallucinations across regenerations.** The "existing hand-written card → use this as your style guide" mechanism is the AI equivalent of cargo-culting. The model can't tell which parts of the reference are factual (the canonical attribute list) vs decorative (the MFR cohort) — it preserves both. Remove style references from anti-hallucination-bounded generators; convey style via explicit instructions instead.
+- **Same anchoring mechanism applies to human-AI collaboration.** When the user pasted "here's what's in the system currently" prose into a Claude session and asked for refinement, Claude anchored on the seeded MFR list and treated cohort lines as facts to keep rather than claims to verify. This is the human-loop version of the style-reference problem — and it's why establishing "query atlas BEFORE seeing the existing draft" was the methodology fix that didn't take until the audit forced it.
+- **Audit before patching.** Tempting fix path was to re-draft the cards manually and ship. Audit-first path (cross-check ALL claimed MFRs + prefixes against atlas_products) revealed the defect surface was 100% of cards, not the handful we'd noticed during MLCC redraft. Forced the structural fix (Phase 1 grounded Generate) instead of 12 one-off manual rewrites. Pattern: when you find one hallucination in AI-generated content, assume the same generator produced more, and audit before re-drafting.
+- **Anti-hallucination prompt rules need explicit blocklists, not just positive constraints.** "Use ONLY MFRs in VERIFIED_MFRS" is necessary but not sufficient — the model will still surface a Murata reference as "comparable to" or "industry analog of." The explicit "Do NOT introduce Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim" enumeration is what makes the constraint stick at output time. Mirror this pattern in other AI generators where prior-leakage is a known failure mode.
+
+**Files touched:**
+- New: [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql) — 2 SECURITY DEFINER RPCs.
+- New: [lib/services/atlasFamilyCardGrounding.ts](../lib/services/atlasFamilyCardGrounding.ts) — `buildGroundingBlock` + `formatGroundingForPrompt`.
+- [app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts) — grounding fetch + HARD ANTI-HALLUCINATION RULES + removed existingCardSection + extended data_snapshot.
+- New: [docs/audits/domain-card-audit-2026-05-18.md](audits/domain-card-audit-2026-05-18.md) — full per-card audit report.
+
+**Verification.** B1 Regenerate output meets the manual-drafting bar. Type check clean. Migration to be applied to production Supabase before Generate can be re-run on the other 11 polluted families.

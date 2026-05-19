@@ -2571,6 +2571,48 @@ async function loadAndApplyFamilyParamSignatures() {
   return { count: added };
 }
 
+// ─── MPN quality validator (mirror of lib/services/atlasMpnQualityValidator.ts) ──
+//
+// Phase 1: detect un-matchable MPN patterns (range entries, "Series"
+// sentinels, trailing-x placeholders, slash-delimited rows) at ingest
+// time and surface them in the IngestDiffReport. No auto-expansion in
+// this pass — engineers see the issue and fix manually upstream or in
+// SQL. Mirrors the TS module byte-for-byte; keep in sync.
+
+function detectMpnQualityIssue(rawMpn) {
+  if (!rawMpn) return null;
+  const mpn = String(rawMpn).trim();
+  if (!mpn) return null;
+  if (/\b(thru|thur|through)\b/i.test(mpn)) {
+    return { originalMpn: rawMpn, kind: 'range_thru', reason: 'Range entry — encodes multiple MPNs as a single row. Expand to individual parts or flag for upstream cleanup.' };
+  }
+  if (/(?:^|[^a-zA-Z])series\b/i.test(mpn) || /Series[）)]/.test(mpn)) {
+    return { originalMpn: rawMpn, kind: 'range_series', reason: 'Series entry — refers to a family of parts rather than a single MPN. Replace with the specific variant(s) needed.' };
+  }
+  if (/[a-z0-9]x$/.test(mpn) || (/[a-z0-9]X$/.test(mpn) && !/[TR]X$/.test(mpn))) {
+    return { originalMpn: rawMpn, kind: 'placeholder_x', reason: 'Placeholder MPN — trailing x/X encodes "any variant" rather than a specific part number. Enumerate the actual variants from the MFR datasheet.' };
+  }
+  if (/[a-z0-9-]xx[A-Za-z][A-Za-z0-9-]*$/.test(mpn)) {
+    return { originalMpn: rawMpn, kind: 'placeholder_xx_midword', reason: 'Placeholder MPN — mid-MPN "xx" encodes "any variant" between a prefix and a suffix (e.g. GS2019-xxTR). Enumerate the actual variant codes from the MFR datasheet.' };
+  }
+  if (/[A-Za-z0-9]\/[A-Za-z0-9]/.test(mpn)) {
+    return { originalMpn: rawMpn, kind: 'slash_variant', reason: 'Slash-delimited row — two related MPNs collapsed into one. Split on slash and ingest as separate rows.' };
+  }
+  return null;
+}
+
+function summarizeMpnQualityIssues(issues, maxSamples = 25) {
+  const byKind = { range_thru: 0, range_series: 0, placeholder_x: 0, placeholder_xx_midword: 0, slash_variant: 0 };
+  const all = [];
+  for (const i of issues) {
+    byKind[i.kind]++;
+    all.push(i);
+  }
+  const KIND_ORDER = ['range_thru', 'range_series', 'placeholder_x', 'placeholder_xx_midword', 'slash_variant'];
+  all.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+  return { totalIssues: all.length, byKind, samples: all.slice(0, maxSamples) };
+}
+
 // ─── Mapping helper (used by report and proceed) ──────────
 function mapManufacturerProducts(filePath) {
   const fileName = basename(filePath);
@@ -2581,6 +2623,10 @@ function mapManufacturerProducts(filePath) {
 
   const mappedProducts = [];
   const perProductUnmapped = [];
+  // Per-batch MPN-quality issues. Populated during the model loop below
+  // by detectMpnQualityIssue() — surfaced in the IngestDiffReport so
+  // engineers see un-matchable rows at ingest time, not at user-search time.
+  const mpnQualityIssues = [];
   let total = 0, mapped = 0, skipped = 0, errors = 0;
   const familyCounts = {};
   // Parallel category roll-up. Used by the Triage queue to derive a
@@ -2603,6 +2649,11 @@ function mapManufacturerProducts(filePath) {
       familyCounts[fam] = (familyCounts[fam] || 0) + 1;
       const cat = result.classification.category || '(uncovered)';
       categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      // Detect un-matchable MPN patterns. Don't reject the row — keep
+      // it for backward compat (engineer may want to inspect it in the
+      // existing-products list) but record the issue for the report.
+      const qualityIssue = detectMpnQualityIssue(result.part.mpn);
+      if (qualityIssue) mpnQualityIssues.push(qualityIssue);
       mappedProducts.push({
         mpn: result.part.mpn,
         manufacturer: result.part.manufacturer,
@@ -2632,7 +2683,7 @@ function mapManufacturerProducts(filePath) {
     }
   }
 
-  return { fileName, mfrName, mappedProducts, perProductUnmapped, total, mapped, skipped, errors, familyCounts, categoryCounts };
+  return { fileName, mfrName, mappedProducts, perProductUnmapped, total, mapped, skipped, errors, familyCounts, categoryCounts, mpnQualityIssues };
 }
 
 async function fetchExistingProducts(mfrName) {
@@ -2830,7 +2881,7 @@ async function reportOneFile(filePath) {
   const fileSha = sha256File(filePath);
 
   const mapResult = mapManufacturerProducts(filePath);
-  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts } = mapResult;
+  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
 
   // Tag new atlas params
   for (const p of mappedProducts) {
@@ -2859,6 +2910,13 @@ async function reportOneFile(filePath) {
     familyCounts,
     categoryCounts,
     mappingStats: { total, mapped, errors },
+    // MPN-quality detection (phase 1, see Decision-pending entry in
+    // BACKLOG). Surfaces un-matchable rows so engineers see them at
+    // ingest time. Only populated when issues exist — older batches
+    // omit the field entirely (UI handles undefined gracefully).
+    ...(mpnQualityIssues && mpnQualityIssues.length > 0
+      ? { mpnQuality: summarizeMpnQualityIssues(mpnQualityIssues) }
+      : {}),
   };
 
   let batchId = null;

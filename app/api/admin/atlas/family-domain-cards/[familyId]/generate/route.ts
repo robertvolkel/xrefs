@@ -36,10 +36,11 @@ import {
   getCrossFamilyCanonicalSummary,
   fetchAcceptedCanonicals,
 } from '@/lib/services/atlasTriageContext';
+import { invalidateDomainCardCache } from '@/lib/services/atlasFamilyDomainCards';
 import {
-  invalidateDomainCardCache,
-  ATLAS_FAMILY_DOMAIN_CARDS,
-} from '@/lib/services/atlasFamilyDomainCards';
+  buildGroundingBlock,
+  formatGroundingForPrompt,
+} from '@/lib/services/atlasFamilyCardGrounding';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Opus card-write can take 20-40s.
@@ -72,9 +73,14 @@ export async function POST(
     }
 
     // ── Gather context for the generator ──────────────────────────────
-    const [crossFamilyInventory, acceptedCanonicals] = await Promise.all([
+    // The grounding block (verified MFRs from atlas_products + Chinese
+    // dict from atlasMapper) is Phase-1 of the post-audit fix. Without
+    // it the model invents Western MFR cohorts from priors — the cause
+    // of the May 2026 hallucination audit. See docs/audits/.
+    const [crossFamilyInventory, acceptedCanonicals, groundingBlock] = await Promise.all([
       getCrossFamilyCanonicalSummary(),
       fetchAcceptedCanonicals(familyId),
+      buildGroundingBlock(familyId),
     ]);
 
     // Logic table rules — the model's primary source of truth for what
@@ -113,10 +119,12 @@ export async function POST(
       .map((c) => `- ${c.attributeId} (in: ${c.families.join(', ')})`)
       .join('\n');
 
-    const existingCard = ATLAS_FAMILY_DOMAIN_CARDS[familyId] ?? null;
-    const existingCardSection = existingCard
-      ? `\n\nEXISTING HAND-WRITTEN CARD (for reference — your output should match this style and depth, refined with the data above):\n${existingCard}`
-      : '';
+    // Deliberately omit the prior hand-written / DB-stored card as
+    // "style reference" — that anchoring mechanism is what propagated
+    // hallucinated Western MFR cohorts forward across regenerations
+    // (May 2026 audit). The grounding block + hard constraints below
+    // give the model the right inputs without seeded prose.
+    const groundingSection = formatGroundingForPrompt(groundingBlock, familyId);
 
     const prompt = `You are writing a domain knowledge card that will be injected into a triage AI prompt for electronics-component parameter mapping. The triage AI runs on Sonnet 4.6 and has the family's schema labels but lacks the deeper domain context that distinguishes look-alike canonicals, identifies foreign-family paramNames, and surfaces sub-type distinctions.
 
@@ -124,13 +132,19 @@ Your card will be injected into every /suggest and /investigate call for paramet
 
 Your output goal: a concrete, lesson-dense card of ~200-300 words that captures the gotchas a smart-but-not-domain-expert model would miss when looking at this family's parameters. Generic "this is a family of X" framing is NOT what we want — the model already knows that. Encode the IDIOSYNCRATIC knowledge that's not derivable from the schema labels.
 
-Content the card SHOULD include (when applicable):
+HARD ANTI-HALLUCINATION RULES (these supersede everything else — violation makes the card unusable):
+- When you describe the MFR cohort that ships under this family, list ONLY manufacturers in VERIFIED_MFRS below. Do NOT introduce Western majors (Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim / etc.) unless they appear in VERIFIED_MFRS — they may exist in atlas_manufacturers as cross-ref targets but do NOT ship products under this family in our data.
+- When you mention MPN prefixes, cite ONLY prefixes you can observe directly in the sample MPN strings provided in VERIFIED_MFRS. Do NOT bring in prefixes from prior knowledge of typical MFR part-number conventions.
+- If VERIFIED_MFRS is empty or has fewer than 3 entries, say so explicitly in the card: e.g. "Atlas currently has only N MFR(s) shipping under family X — do not invent additional cohorts."
+- When you describe Chinese paramName conventions, cite ONLY entries from CHINESE_PARAM_DICTIONARY. Do not paraphrase, invent, or translate Chinese terms not in that list.
+
+Content the card SHOULD include (when applicable, AFTER respecting the rules above):
 - SUB-TYPES within the family that look interchangeable but matter (e.g., isolated vs non-isolated gate drivers, fixed vs adjustable LDOs, NPN vs PNP). Call out the canonical-naming consequences.
 - NAMING confusions — labels that sound generic but mean something specific in this family (e.g., "Gate Drive Supply VDD Range" = OUTPUT side of isolated driver, NOT generic VCC).
 - CONVENTIONAL UNITS — when a unit is industry-standard and shouldn't be encoded in the canonical name (e.g., isolation_voltage is always kVrms — no need for "_kvrms" suffix).
 - FOREIGN-FAMILY PARAM NAMES — labels that belong unambiguously to this family (covered by signatures below), so the model can flag misclassified products.
 - HARD GATES — which specs are never substitutable (polarity, topology, etc.).
-- COMMON MPN PREFIXES that frequently surface — helps the model recognize part lineages.
+- COMMON MPN PREFIXES OBSERVED IN VERIFIED_MFRS — prefixes you can SEE in the provided sample MPNs.
 - TYPICAL VALUE RANGES that anchor sanity-checking.
 
 FORMATTING:
@@ -155,7 +169,9 @@ Engineer-accepted overrides for this family (real paramNames the AI has previous
 ${acceptedList}
 
 Cross-family canonicals (attributeIds that exist in OTHER families — if your card discusses spec X and there's already a canonical for it elsewhere, NOTE that the family should reuse the existing name rather than mint a variant):
-${crossFamilyList || '(no cross-family canonicals)'}${existingCardSection}
+${crossFamilyList || '(no cross-family canonicals)'}
+
+${groundingSection}
 
 Write the card now. Output the card text ONLY — no preamble, no closing remarks.`;
 
@@ -191,6 +207,13 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
           acceptedCount: acceptedCanonicals.length,
           signatureCount: familySignatures.length,
           crossFamilyCount: crossFamilyInventory.length,
+          // Phase-1 grounding snapshot. Phase 2 will compare current
+          // atlas counts to these to surface a staleness signal on the
+          // AI Domain Cards panel when the cohort has drifted.
+          groundedAtProductCount: groundingBlock.counts.totalProductCount,
+          groundedAtMfrCount: groundingBlock.counts.totalMfrCount,
+          verifiedMfrCount: groundingBlock.verifiedMfrs.length,
+          chineseDictEntryCount: groundingBlock.chineseDictEntries.length,
           generatedAt: new Date().toISOString(),
         },
         created_by: user?.id ?? null,

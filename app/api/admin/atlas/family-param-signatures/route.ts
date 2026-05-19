@@ -32,6 +32,7 @@ import {
   FAMILY_PARAM_SIGNATURES,
   invalidateFamilyParamSignaturesCache,
 } from '@/lib/services/atlasFamilyParamSignatures';
+import { isValidFamilyId, listValidFamilyIds } from '@/lib/services/validFamilyIds';
 
 interface PostBody {
   paramName?: string;
@@ -102,6 +103,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     if (!targetFamilyId) {
       return NextResponse.json({ success: false, error: 'targetFamilyId required' }, { status: 400 });
+    }
+    // Guard against hallucinated family IDs from the AI Investigator
+    // (Decision #185 BACKLOG follow-up; load-bearing because Decision #188's
+    // one-click flow would otherwise write the bad ID to the signatures
+    // table AND immediately reclassify products into a non-existent
+    // family in atlas_products). Reject with the canonical list so the
+    // engineer / UI can decide whether to map the AI's intent to a real
+    // family or skip the signature.
+    if (!isValidFamilyId(targetFamilyId)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Unknown targetFamilyId: '${targetFamilyId}'. Must be one of: ${listValidFamilyIds().join(', ')}`,
+          code: 'INVALID_FAMILY_ID',
+          validFamilyIds: listValidFamilyIds(),
+        },
+        { status: 400 },
+      );
     }
     if (!reasoning) {
       return NextResponse.json({ success: false, error: 'reasoning required' }, { status: 400 });
