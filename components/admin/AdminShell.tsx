@@ -23,6 +23,7 @@ import AtlasDictionaryPanel from './AtlasDictionaryPanel';
 import AtlasIngestPanel from './atlasIngest/AtlasIngestPanel';
 import AtlasDictTriagePanel from './AtlasDictTriagePanel';
 import AtlasAiLogPanel from './AtlasAiLogPanel';
+import AtlasDomainCardsPanel from './AtlasDomainCardsPanel';
 import { getAtlasDictionaryFamilyIds, getAtlasL2DictionaryCategories } from '@/lib/services/atlasMapper';
 
 // --- Static data (computed once at module level) ---
@@ -317,6 +318,10 @@ function AdminShellInner() {
         ) : activeSection === 'atlas-ai-log' ? (
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             <AtlasAiLogPanel />
+          </Box>
+        ) : activeSection === 'atlas-domain-cards' ? (
+          <Box sx={{ flex: 1, overflowY: 'auto' }}>
+            <AtlasDomainCardsPanel />
           </Box>
         ) : (
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, pb: 3, pt: '16px' }}>

@@ -45,7 +45,7 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <InitColorSchemeScript attribute="data-mui-color-scheme" />
+        <InitColorSchemeScript attribute="data-mui-color-scheme" modeStorageKey="xrefs-mui-mode" defaultMode="light" />
         <ThemeRegistry>
           <AuthProvider initialUser={user} initialProfile={initialProfile}>
             <I18nProvider initialLocale={(user?.user_metadata?.language as string) || undefined}>

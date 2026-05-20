@@ -79,6 +79,48 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Domain Card Phase 2 — staleness signal (Decision #192)
+
+Phase 1 (just shipped) makes `Generate` and `Regenerate` produce grounded cards from `atlas_products` data. But the grounded snapshot drifts: as new MFRs ingest, the saved card's MFR cohort gets stale. Today there's no in-app signal — the engineer has to remember to regenerate, or notice manually that "we ingested Sunlord last week but the card still says only CCTC ships under family 12."
+
+**What this would add:**
+1. Storage: `atlas_family_domain_cards.data_snapshot.groundedAtProductCount` + `groundedAtMfrCount` already populated by Phase 1. No schema migration needed.
+2. New API: extend `GET /api/admin/atlas/family-domain-cards` (or new endpoint) to compute current atlas counts per family + delta against snapshot, return alongside the card row.
+3. UI: per-row warning chip on the AI Domain Cards panel when delta crosses threshold — e.g. `≥50 new products` OR `≥1 new MFR with ≥50 products`. Tooltip names the delta ("142 new products + 1 new MFR (KEXIN: 87 products) since 2026-05-17"). Chip uses warning amber, sits next to the OK/none health chip.
+4. Sort affordance: "Show stale first" toggle on the Domain Cards header.
+
+**Triggers that flip this from defer to ship:**
+- ≥3 new MFRs ingested under any family without the card being regenerated (silent drift in production).
+- Engineer asks "which cards should I refresh?" — proves the staleness state needs surfacing.
+
+Effort ~1.5h. Architecture pattern mirrors Decision #187 (proactive staleness signaling for cached AI verdicts) — same shape, applied to domain cards instead of Triage suggestion caches.
+
+### Domain Card Phase 3 — section-level diff dialog when regenerating (Decision #192)
+
+Today's `Regenerate` overwrites the entire card with the new Opus draft, wiping any engineer prose edits. That's fine when the card was last AI-generated (and probably contained hallucinations anyway — Decision #192 audit), but punishes the engineer who handcrafts the foreign-family-indicator section over the course of a Triage session.
+
+**What this would add:**
+1. New dialog opened on Regenerate: 3-column diff showing Current card / New card / Merged result.
+2. Section-level accept/reject. Three sections detected by the ALL-CAPS section labels the prompt convention uses (SUB-TYPES / NAMING / CONVENTIONAL UNITS / FOREIGN-FAMILY / HARD GATES / MFR COHORT / MPN PREFIXES / etc.). Default behavior: accept new for sections whose content is data-derived (MFR cohort, MPN prefixes, Chinese paramName lines), keep current for sections that look engineer-edited (foreign-family indicators with bespoke pattern descriptions, hard-gate rationale prose).
+3. Engineer can override any section default with a click. "Accept all" shortcut for full overwrite. "Keep current" shortcut to discard the regeneration entirely.
+4. Save commits the merged result + bumps the grounding snapshot.
+
+**Triggers that flip this from defer to ship:**
+- Engineer reports losing prose edits after a Regenerate (one round of frustration = ship signal).
+- We start asking AI to handcraft foreign-family pattern descriptions and engineers actually edit them (today's cards lean heavily on the AI prose; not enough manual editing for the cost to bite yet).
+
+Effort ~2h. Should be built before any future bulk-regeneration script — losing manual edits at scale is the failure mode this prevents.
+
+### Regenerate remaining hallucinated domain cards — DONE May 18, 2026 (Decision #192)
+
+All 12 audit-flagged cards plus B7 (precautionary) regenerated via grounded Generate on May 18, 2026:
+- **Cards 12, 52, 71** — replaced via manual paste of grounded drafts (10:54-10:55 AM)
+- **B1, B3, B4, B5, B6, B7, C1, C2, C3, C5** — regenerated via Phase 1 grounded Generate endpoint (11:42 AM – 12:05 PM), each reviewed and approved to `active` status.
+
+Cost: ~$0.50 in Opus tokens; ~30 min of review. Output quality across the cohort consistently matched or exceeded the manual-drafting bar (Triage AI gets richer foreign-family flags, sub-type distinctions, Chinese paramName mappings, MPN-suffix decoding than pre-Phase-1).
+
+Post-completion: optional re-audit run against new active card text would close the verification loop (prove Phase 1 actually eliminated the hallucination surface in production). Deferred unless a Triage row surfaces evidence of residual contamination.
+
 ### Dictionary Triage Phase 2 — explicit per-param status tracking
 
 Phase 1 (just shipped) treats the unmapped-params queue as the inverse of the dictionary-overrides table: a row shows up if no active override resolves it. That's enough when the engineer's only states are "haven't looked yet" and "accepted." It breaks down when they want to *park* a param without resolving it ("I researched PPAP, need to talk to procurement first, hide it from my queue for 2 weeks") or explicitly reject one ("not worth mapping, stop showing it").
@@ -145,6 +187,325 @@ Triage today has no way to say "I've looked at this and it's blocked on upstream
 When the classifier gets fixed and the row's products acquire `family_id`, the row's `dominantFamily` resolves and the existing cross-scope override auto-applies on re-ingest — the row drops out of the queue entirely. Engineer can also Revert the note status if they decide to look again.
 
 Half-day of work: schema migration + status handling + button + filter chip. Useful in isolation even without the heavier per-product classification drawer above.
+
+### ~~Constrain AI Triage Investigator to known family IDs~~ COMPLETED (May 2026)
+
+Shipped as a three-layer defense after Decision #188 made the AI verdict load-bearing:
+
+1. **Anthropic SDK enum constraint at the tool-use boundary** ([app/api/admin/atlas/dictionaries/investigate/route.ts](../app/api/admin/atlas/dictionaries/investigate/route.ts)) — the `submit_triage_verdict` tool's JSON schema declares `actualFamilyId`, `signatureRecommendation.familyId`, and `perProductProposals[].proposedFamilyId` with `enum: KNOWN_FAMILY_IDS_LIST`. The model literally cannot return an out-of-set value.
+2. **Server-side post-validation in the investigate route** (lines ~912-951) — belt-and-suspenders check using `validateFamilyId()` from `atlasTriageContext.ts`. Surfaces invalid IDs via `validationErrors`. UI suppresses the deep-analysis Primary Action button when present.
+3. **Server-side validation in `/api/admin/atlas/family-param-signatures` POST** — load-bearing because this endpoint persists signatures and reclassifies products in one click. Returns 400 with `code: 'INVALID_FAMILY_ID'` + the canonical list when `targetFamilyId` isn't a real L3 family. Uses new `isValidFamilyId()` from [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts) (derived from `logicTableRegistry` keys; L3-only because `atlas_products.family_id` is L3-only and that's the reclassify destination).
+4. **UI defense in `confirmFlag`** ([components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx)) — pre-flight check before POST. When AI's `suggestedFamily` isn't in the L3 set, skips the registry POST and surfaces a clear "Flag confirmed, but skipped registry insert — AI suggested unknown family 'X'" message instead of a misleading "signature insert failed" tooltip.
+
+Files: new [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts), updates to [app/api/admin/atlas/family-param-signatures/route.ts](../app/api/admin/atlas/family-param-signatures/route.ts) + [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx).
+
+---
+
+### ~~Constrain AI Triage Investigator to known family IDs~~ (original entry, kept for context)
+
+The Investigator's `wrong_family` action bucket returns a `suggestedFamily` field that the prompt currently lets the model freely populate. Observed hallucination: for KEXIN pre-biased digital transistors (DTA/DMUN/UMA series) shipping `R1(KΩ)`, the Investigator returned `familyId: "BJT_DIGITAL"` — a family that doesn't exist. The correct destination is `B6` (BJTs); pre-biased digital transistors are a sub-type of B6, not a separate family.
+
+If an engineer copies the AI's JSON verbatim into `FAMILY_PARAM_SIGNATURES`, the registry entry would target a non-existent family and the reclassifier would have nowhere to send affected products. Today the only thing protecting against this is engineer-time review.
+
+**What this would add:**
+1. The `/api/admin/atlas/dictionaries/investigate` prompt should include the canonical family-ID list (B1–B9, C1–C10, D1–D2, E1, F1–F2) AND the L2 category list as the only allowed `suggestedFamily` / `familyId` values. Phrased as a hard constraint, not a hint.
+2. Server-side validation: after the model responds, validate `suggestedFamily` against the known set; if invalid, either retry once with an "INVALID — choose from this list" follow-up, or downgrade the bucket from `wrong_family` to `unmappable` with a note explaining the model couldn't pick a valid target.
+3. UI defense: when rendering the action button, validate the suggested family — if invalid, hide the button and show an "AI suggested an unknown family — review manually" warning chip instead of letting the engineer click through.
+
+**Why defer:** caught once so far. If hallucination recurs (engineer-time review missed it, or Investigator suggests other invented IDs), this becomes urgent. For now the workaround is engineer attention — when the suggested family ID looks unfamiliar, treat it as a reason to skip the registry add (as we did for R1(KΩ)).
+
+**Urgency bumped (Decision #188 follow-up):** the AI verdict is now load-bearing — one Confirm click writes the signature to the DB and retroactively reclassifies products. A bad `suggestedFamily` no longer just sits in a JSON snippet awaiting a code commit; it lands in `atlas_family_param_signatures` AND moves products to a non-existent family in `atlas_products` immediately. Add at minimum the server-side validation (item 2 above) before another invalid family slips through.
+
+### RF diode family / sub-family for PIN diodes and varicaps
+
+B1 (Rectifier Diodes) is currently a catch-all for any device classified as "diode" — including RF-specific devices that have nothing in common with rectifiers. Caught during Triage of KEXIN BAR64-05W / HVU131/132/133 / MMBV3401 (TR-ee4613), all of which were misrouted into B1:
+
+| Device class | What it does | Headline specs (NOT in B1 today) |
+|--------------|--------------|-----------------------------------|
+| PIN diode | RF switching, attenuation | Rd (series resistance), Cd, isolation, insertion loss |
+| Varicap (varactor) | RF tuning, voltage-controlled capacitance | Cj vs Vr, Q factor, capacitance ratio Cmax/Cmin |
+| Schottky RF | RF detection/mixing | Vf at very low currents, junction capacitance |
+
+The B1 logic table is built around forward-current handling (Vf, Ifsm, Irrm, trr) — these rules are largely meaningless when scoring two PIN diodes against each other. Conversely, the specs that DO matter for these devices (Rd, capacitance-vs-voltage curves, RF performance) are either missing from B1's schema or sitting in display-only satellites with no rules consuming them.
+
+**Two structural paths:**
+
+1. **New family B10 (RF Diodes)** — dedicated logic table + classifier rules + dict. Splits PIN, varicap, and RF Schottky as three sub-types under one family (same multi-subtype pattern as B8 Thyristors). Highest correctness, biggest build effort.
+
+2. **B1 sub-family route via `_device_subtype`** — keep these in B1 but add a context question "device function: rectifier / PIN switch / varicap / RF Schottky" that suppresses irrelevant B1 rules and activates new RF-specific rules (parallel to how B8 uses Q1 to suppress sub-type-irrelevant rules across SCR/TRIAC/DIAC). Lower lift, less clean separation.
+
+**Trigger to ship:** when RF diode count in Atlas grows past ~50 products AND/OR a user attempts cross-references on a PIN/varicap part and gets meaningless B1 rectifier-style scoring.
+
+**Files involved (Option 1):** new [lib/logicTables/rfDiodes.ts](../lib/logicTables/rfDiodes.ts), new [lib/contextQuestions/rfDiodes.ts](../lib/contextQuestions/rfDiodes.ts), entries in [lib/logicTables/index.ts](../lib/logicTables/index.ts), new RF diode detector in [lib/logicTables/familyClassifier.ts](../lib/logicTables/familyClassifier.ts), new B10 dict block in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs).
+
+### Suspicious-unit-value detector on Atlas ingest
+
+Some MFR data files appear to ship physically-implausible values for a given unit — likely upstream unit-label bugs at the MFR's data-export layer, not actual unusual specs. Caught during Triage of KEXIN B8 IGT(uA) row (TR-ddffc6):
+
+- KEXIN BT139B-600/800 listed IGT = 50 µA → real-world BT139 IGT is 5-50 **mA**, not µA. 1000× off.
+- KEXIN BT137-500 listed IGT = 50 µA → real-world BT137 IGT is ~25 mA per ST datasheet.
+- (Genuine sensitive-gate variants like CR3AM/CR5AM correctly listed at 20-30 µA.)
+
+The dictionary mapping has to respect the labeled unit (we can't second-guess the source), but a flag at ingest time would help engineers spot data-quality issues before they propagate to the matching engine.
+
+**What this would add:**
+
+A per-family per-attribute "expected value range" lookup (e.g., `B8.igt: { min: 0.5, max: 200, unit: 'mA', alt_unit: 'µA' for sensitive variants }`) and an ingest-time check that flags any value outside the typical range. Flagged values surface in the per-batch diff report under a new "Anomalous Values" section. Engineer reviews before Proceed; can override or note as legit (e.g., genuine sensitive-gate variant).
+
+Could reuse the existing logic-table engineering reasons as the source for "typical range" descriptions — Sonnet could generate the lookup table from logic-table prose in a one-time pre-pass.
+
+**Why defer:**
+
+- Current scope of caught cases is small (one pattern, one MFR).
+- The Triage AI Investigator's Disambiguation/Unit-Mismatch buckets already catch these at engineer-review time, so it's not silently corrupting data — just not flagging at the earliest possible point.
+- Building the value-range lookup is the bulk of the work; could be incremental (start with a few high-impact attributes per family, expand as more anomalies surface).
+
+**Trigger to flip from defer to ship:** if the same MFR ships another batch with similarly-suspicious values across multiple attributes, OR if a different MFR exhibits the same pattern (suggesting it's a data-export-layer bug worth catching globally).
+
+**Files involved:** new `lib/services/atlasValueAnomalies.ts` for the lookup + check, [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) to invoke at ingest time, [components/admin/atlasIngest/ProductDiffTable.tsx](../components/admin/atlasIngest/ProductDiffTable.tsx) to render the new "Anomalous Values" badge.
+
+### Ingest-time Schottky / small-signal diode auto-routing (B1 misclassification cleanup)
+
+Discovered during MLCC/Chip Resistor/TVS/Power-Inductor/Rectifier domain-card review (May 2026) — Family B1 (Rectifier Diodes) currently contains a meaningful number of products that should be in B2 (Schottky) or in a not-yet-existing "small-signal switching diode" bucket. Sample evidence from `atlas_products WHERE family_id = 'B1'` across 20 ingested MFRs (12,150 rows):
+
+- **Schottky-prefixed** (should be B2): MBR0520, MBR840, MBR6040, MBRB10200, MBR2020CT (at YFW, AK, ISC); SS14, SS220, SS56, SS34, B0530 (at AK, JINGDAO); BAS40, BAT54 (at CREATEK, CBI). Likely hundreds to low-thousands of rows.
+- **Small-signal switching** (no dedicated family today): 1N4148, BAS16, BAS316, BAV70, BAV21, MMBD4148 (at YFW, Prisemi, CREATEK, CBI, YONGYUTAI, Rectron, TECH PUBLIC). Lower volume but recurring across MFRs.
+
+The classifier in `atlasMapper.ts → classifyAtlasCategory()` and the c3-based mapping route these under "Rectifier Diode" because the source data labels them that way. Decision #175's `reclassifyByParameterSignals` doesn't catch them because the misclassification isn't via the `Type` parameter — it's via the MPN prefix + the absence of Schottky-specific signals.
+
+**What this would add:**
+
+Two-stage ingest-time auto-routing for B1:
+
+1. **MPN-prefix recognizer** — a small lookup of known Schottky and small-signal MPN families (MBR/MBRB/SS/SR/SB/STPS/B05/B07 for Schottky; 1N414x/1N400x/BAS16/BAS31x/BAV7x/BAV21/MMBD for small-signal). If the MPN matches a known Schottky pattern AND no Schottky-incompatible signal is present (e.g., trr ≥ 500ns), reclassify B1→B2 at ingest. If matches small-signal AND Io < 200mA, flag for engineer review with a "small-signal diode" note (no auto-route since there's no destination family).
+2. **Parameter signal recognizer** — when MPN-prefix is ambiguous, check parameters: low Vf (<0.4V) + low Vrrm (<100V) + trr unspecified → Schottky. Vf<1V + Io<200mA + no thermal-resistance spec → small-signal.
+
+Either stage triggers `reclassifyByParameterSignals`-style re-routing in `atlasMapper.ts` AND its mirror in `scripts/atlas-ingest.mjs`. Both stages should also emit a `MisclassificationCandidate` row into the diff report so the engineer sees what got moved (with an undo path via the existing batch-revert mechanism).
+
+**Cross-family pattern:** This is the same shape as Decision #188 (engineer-driven FAMILY_PARAM_SIGNATURES) but for MPN-prefix-driven misclassifications rather than param-name-driven. Could share the underlying merge layer: code-defined Schottky/small-signal patterns + DB-backed engineer additions. The AI Triage Investigator's `wrong_family` bucket is already the human-in-the-loop fallback; this is the automated front line.
+
+**Why defer:**
+
+- The Triage AI Investigator (Decision #185) already surfaces these as `wrong_family` candidates one-by-one, so they're not silently mis-served — engineers see them and can confirm via the Decision #188 one-click flow. The cost is per-row Sonnet calls and engineer time, which scales with backlog volume.
+- Domain cards for B1 and B2 (when generated) will sharpen the Triage AI's `wrong_family` verdicts on these rows further.
+- Building the MPN-prefix lookup is the bulk of the work; could be incremental.
+
+**Trigger to flip from defer to ship:** if Triage queue grows past a few hundred B1 rows that are demonstrably Schottky/small-signal (visible via auto-flag count when `recovery_category` is null + Vf<0.4V), OR if a new MFR ingest adds another large batch of misclassified Schottkys (one batch of >200 misclassified rows justifies the build cost).
+
+**Small-signal diode family question:** the small-signal switching diodes (1N4148-class) don't have an own logic table today. Worth a separate design decision: do they belong as a B1 variant (like B3/B4 variants of B1), or do they need their own family entry (e.g., B10) with a logic table tuned for low-current, low-capacitance switching specs? Defer until volume justifies — but raise when scoping this auto-routing item, because the answer determines whether the recognizer reclassifies or just flags.
+
+**Files involved:** new `lib/services/atlasMpnFamilyHints.ts` (Schottky + small-signal MPN patterns + parameter signal recognizers), [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) `reclassifyByParameterSignals` to call into the new helper, [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) mirror, batch report shape to include `misclassificationsRouted` array for engineer visibility.
+
+### ~~Detect un-matchable MPN patterns at ingest (phase 1: detection)~~ COMPLETED (May 2026)
+
+Shipped phase 1 — detection only, no expansion. Triggers caught: 4 MFRs (CREATEK + GIGADEVICE + Geehy + AWINIC, + partial KEXIN); 250+ confirmed un-matchable rows across atlas_products. Survey-driven decision to promote from defer → ship.
+
+**What's live:**
+
+- **Detection module:** [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts) — `detectMpnQualityIssue()` + `summarizeMpnQualityIssues()`. Five detection kinds: `range_thru` (Thru/thru/thur/through), `range_series` ("X Series" / Chinese full-width parens), `placeholder_x` (trailing x/X with TX/RX exemption), `placeholder_xx_midword` (Gainsil-style `-xx-` between prefix and suffix — added May 18 after discovery during C1 LDO review; also catches Refond LED RGB MPNs), `slash_variant` (alphanumeric/alphanumeric).
+- **Ingest-time wiring:** [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror of the TS module + per-batch collection in `mapManufacturerProducts()`. Populates `report.mpnQuality` when issues found; field is optional so older batches continue to work.
+- **UI surfacing:** [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — warning card on per-batch UI with total count, per-kind breakdown, scrollable sample list. Engineer sees the problem at apply-batch time.
+- **Backfill survey:** [scripts/atlas-mpn-quality-survey.mjs](../scripts/atlas-mpn-quality-survey.mjs) — on-demand scan of existing `atlas_products` to catalog the legacy backlog. `--verbose` for per-row listing, `--json` for piping.
+- **Tests:** 18 cases in [\_\_tests\_\_/services/atlasMpnQualityValidator.test.ts](../__tests__/services/atlasMpnQualityValidator.test.ts) covering each detection kind, exemptions (TX/RX, mid-word substrings, hyphen-x), and the summary helper.
+
+**Phase 1 explicitly does NOT expand.** Detection surfaces the problem; engineers either chase upstream cleanup at the MFR / dataset provider or hand-fix in SQL. Per-MFR voltage-code expansion is phase 2 (separate entry below).
+
+**Verification:** survey script run against current atlas_products confirms 250 un-matchable rows across the expected MFRs. Tests pass.
+
+---
+
+### Phase 2: per-MFR MPN-range expansion tables (phase 1 follow-up)
+
+Phase 1 shipped detection in May 2026. Phase 2 adds actual expansion — turning `BZT52B2V4S thru BZT52B75S` into ~30 individual rows in `atlas_products` rather than leaving the engineer to do it manually.
+
+**Scope:**
+1. Per-MFR voltage-code sequence tables. CREATEK alone needs JEDEC Zener sequences for BZT52 (2V4, 2V7, 3V0, …, 75V), CZ3D (2V4–39V), 1SMA (4728–4777 = 3.3V–200V), 1SML (4728–4764, 5913–5956), Schottky barrier voltages for SS/SK/SR series (12, 14, 16, …, 120V), bridge rectifier voltages for GBU/KBP (15xx–10x series). Each is a documented industry-standard sequence.
+2. Expansion path in ingest: when detection fires `range_thru`, look up the start/end tokens in the voltage-code table, enumerate the intermediate values, emit one `atlas_products` row per resolved MPN with parameters copied from the source row.
+3. Diff-report addition: new "MPN expansions" section showing engineer what got expanded vs flagged for manual review. Already half-built (`mpnQuality.samples` shape is forward-compat).
+4. UI: expansion summary in BatchCard alongside the phase 1 warning card.
+5. Backfill: optional re-process of existing un-matchable rows in `atlas_products` using the same expansion logic.
+
+**Why defer (still):**
+- Phase 1 detection + survey gives engineers visibility now without per-MFR knowledge encoded in the system.
+- Building correct voltage-code tables requires either (a) datasheet access per MFR/series OR (b) curating from JEDEC public data. Both take real time and the cost-benefit calc depends on whether the 250-row backlog grows further.
+- Phase 1 already surfaces the problem at ingest time — bad data doesn't silently land any more.
+
+**Trigger to ship phase 2:**
+- Engineer reports spending non-trivial time hand-expanding ranges in SQL (manual cleanup load justifies the build).
+- Backlog grows past ~500 un-matchable rows in production.
+- Phase 1 surfaces a new wave of range entries from a future ingest that engineer can't realistically hand-fix at scale.
+
+**Files involved:**
+- New: `lib/services/atlasMpnRangeExpander.ts` (per-MFR voltage-code tables + expansion logic).
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — call expansion in `mapManufacturerProducts()` when detection returns `range_thru`.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — add expansion summary section.
+
+---
+
+### ~~Detect un-matchable MPN patterns at ingest~~ (original entry pre-phase-1-ship, kept for context)
+
+Discovered during Zener Diode (B3) and Switching Regulator (C2) domain-card review (May 2026). Two related un-matchable-MPN patterns visible:
+
+**(1) CREATEK "thru" / Series range entries.** CREATEK is ingesting series-range entries as single rows in `atlas_products.mpn`, e.g.:
+
+- `"BZT52B2V4S thur BZT52B75S"` (note the typo "thur" → "thru")
+- `"CZ3D2V4B Thru CZ3D39B"`
+- `"1SMA4728AF Thru 1SMA4777AF"`
+- `"1SML4728A Thru 1SML4764A"`
+- `"1SML5913A Thru 1SML5956A"`
+- `"BAS40T Series"` (also CREATEK, in family B1)
+
+Each likely represents 10–50 individual MPNs that were collapsed in the source data (possibly from a datasheet table that listed the family as a range). Visible at scale today: 30 B3 rows for CREATEK; almost-certainly more across B1/B2/B4 if surveyed.
+
+**(2) GIGADEVICE literal-placeholder `x` MPNs.** GIGADEVICE C2 rows ingest with a literal lowercase `x` (or sometimes uppercase `X`) at the end of the MPN where a variant code should appear:
+
+- `GD30DC1101x`
+- `GD30DC1104NSTR-I`
+- `GD30DC1105X`
+- `GD30DC2300x`
+- `GD30DC2301x`
+
+The `x` is a placeholder for an unspecified variant character (likely temperature grade, packaging suffix, or speed bin per their datasheet table). 5+ visible rows in family C2 today; the same pattern likely affects other GIGADEVICE families if surveyed. Like the CREATEK ranges, these are un-matchable by exact MPN lookup and pollute family volume statistics.
+
+**(3) Geehy slash-delimited two-MPN-in-one-row.** Geehy ingests rows that encode two related MPNs separated by a slash, where the second token is an abbreviated variant of the first:
+
+- `GHD3440/3440R` (family C3) — `GHD3440` and `GHD3440R` (R suffix likely "reverse polarity" or "reel packaging")
+
+The slash isn't a known MPN character — it's a datasheet shorthand for "this part comes in standard and -R variants." Currently visible at 1 row in family C3; surveying all Geehy families would likely surface more. Same root issue as Cohorts 1 and 2: un-matchable by exact lookup, polluted statistics.
+
+**Why this matters:**
+
+- These rows are **un-matchable by exact MPN lookup.** A user searching `BZT52B5V1S` will not find CREATEK's row, even though that part is genuinely included in the range.
+- They pollute the family-volume statistics (one row counted as one product instead of N).
+- They will silently fail xref scoring — the matching engine has nothing to compare against.
+- The Triage AI cannot help here because the issue is in the MPN field itself, not the parameters.
+
+**What this would add:**
+
+A pre-ingest MPN-shape validator covering both patterns:
+
+For **CREATEK-style ranges:**
+1. Pattern detect: regex `/\b(thru|thur|through|series|to)\b/i` in the `mpn` field, OR an em-dash/en-dash/hyphen between two recognizable MPN-like tokens.
+2. Per-MFR expansion strategy table — for the common patterns (BZT52, CZ3D, 1SMA, 1SML, MMSZ, etc.) the voltage suffix increments predictably (e.g., BZT52B**2V4** through B**75** maps to JEDEC Zener voltage code series). Expand programmatically using the known voltage-code sequence per family.
+3. For patterns we can't expand (e.g., `"BAS40T Series"` — too ambiguous about what's in the series), flag for engineer review with a "manual expansion needed" diff-report badge.
+
+For **GIGADEVICE-style `x` placeholders:**
+1. Pattern detect: trailing literal `x` or `X` on an MPN that otherwise matches the MFR's known prefix (regex `/[xX]$/` on rows where the prefix-stripped body is otherwise valid).
+2. Cross-reference the MFR's published variant codes per part-family — GIGADEVICE GD30DC1101 likely has fixed enumerable variants (e.g., -A, -B, -TR, -ESTR). Expand to one row per variant when the variant set is known; flag for engineer review otherwise.
+3. Same diff-report surfacing as the range path.
+
+For **Geehy-style slash-delimited variants:**
+1. Pattern detect: regex `/\//` (literal slash) in the `mpn` field. Slash is not a legal MPN character at any MFR we've seen — its presence reliably signals "two MPN tokens collapsed."
+2. Split on the slash; treat both tokens as candidate MPNs. Validate each against the MFR's prefix convention. When the second token is a known suffix-only variant (e.g., `GHD3440/3440R` → `GHD3440` and `GHD3440R`), expand to two rows with shared parameters and distinct MPNs. When the second token doesn't share enough of the first's structure to be a confident variant (ambiguous), flag for engineer review.
+3. Same diff-report surfacing.
+
+All three paths produce real rows in `atlas_products` with proper MPNs; the original range/placeholder/slash row is dropped (or kept with a `status='unmappable'` marker for audit).
+
+Mirror in `scripts/atlas-ingest.mjs` and the upstream `mapManufacturerProducts()` path. Surfaces in the diff report under a new "MPN range expansions" section so engineers see what got expanded vs flagged.
+
+**Cross-family pattern:** Same author-defined-data-quality shape as the suspicious-unit-value detector above (also a P1 backlog item) and the Schottky/small-signal MPN-prefix recognizer. A natural place for a shared "ingest-time validators" framework if more of these patterns surface.
+
+**Why defer:**
+
+- Affects ~30 CREATEK rows in B3 + 5+ GIGADEVICE rows in C2 + 1 Geehy row in C3 today, plus unknown counts in other families. Not large absolute vs the 100K+ total Atlas dataset.
+- Voltage-code, variant-set, and slash-split expansion logic is non-trivial per family — JEDEC Zener voltages, GD30 variant suffixes, and per-MFR suffix conventions all differ.
+- Three distinct upstream-encoding patterns now confirmed across three different MFRs (was two when this item was first written). Pattern recurrence suggests this is a class of bugs worth a unified validator framework, even at small absolute volume.
+
+**Trigger to flip from defer to ship:** if a fourth MFR exhibits any of these patterns (would confirm the class is a project-wide hazard), OR if combined affected count grows past ~200 rows across families, OR if a user-facing search miss is reported on a part that should be in one of these collapsed rows, OR if any of the three current MFRs surfaces additional families with the same pattern (suggesting the upstream issue is per-MFR systematic rather than per-family one-off).
+
+**Files involved:** new `lib/services/atlasMpnRangeExpander.ts` (pattern detection + family-specific expansion), [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) `mapManufacturerProducts()` to call before insert, [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) mirror, batch report shape to include `mpnRangesExpanded` and `mpnRangesNeedingReview` arrays.
+
+### B6 (BJT) misclassification cleanup — three distinct cohorts observed in atlas_products
+
+Discovered during BJT (B6) domain-card review (May 2026). Of 6,101 rows currently classified as B6, three distinct cohorts are actually different families. All three share the "ingest-time classifier misroute" root cause but have different fix shapes — listing them together so they can be triaged as one effort.
+
+**Cohort A — IGBT misclassifications (YANGJIE + VANGUARD + Prisemi, ~800 rows):**
+
+- YANGJIE DGZ/DGW with `N65` voltage code (731 rows): DGZ50N65CTS2A, DGW75N65CTS2A, etc. The "N65" pattern (~65V class) plus the high current implication of the leading number is characteristic of IGBTs, not BJTs (which are typically ≤300V Vceo but more commonly ≤80V at high current). Likely belong in B7.
+- VANGUARD HCKD/HCKW with same `N65` pattern (15 rows): HCKD5N65AM2, HCKW60N65BH2A. Same diagnosis as YANGJIE.
+- Prisemi PI*F65 / PI*S120 series (48 rows): PI160F65TDK1B7, PI15S120T3HA7. 120V class + the PI prefix (inconsistent with Prisemi's "P + industry MPN" convention in B1/B3/B4 families) suggests these are IGBT-line products mis-routed.
+
+Fix shape: same as the Schottky/small-signal item above — MPN-prefix recognizer in `atlasMpnFamilyHints.ts`. Add YANGJIE DGZ/DGW + VANGUARD HCKD/HCKW + Prisemi PI*F/PI*S patterns with a B6→B7 route when paired with a high-voltage code (≥60V) AND IGBT-discriminating params (vce_sat present, eon/eoff present, NO hfe).
+
+**Cohort B — Photo interrupters (Everlight, 39 rows):**
+
+Everlight ships ITR/EAITRDA-prefixed products under B6: ITR9809-F/T, EAITRDA2, EAITRDA3, ITR9813. These are definitively photo interrupters / photointerrupters (LED + phototransistor in a slotted package for object detection / encoder use) — NOT discrete BJTs.
+
+Fix shape: more complex. Photo interrupters don't have a dedicated logic table today. Two options:
+1. Route to E1 (Optocouplers) — closest existing family, but optos are for galvanic isolation, not slot-based optical sensing. Schema fit is partial.
+2. Create a new family (e.g., E2 Photo Interrupters / Optical Sensors) with its own logic table tuned for slot width, detection distance, response time, and dual-output (logic/analog) variants.
+
+Recommended: defer the new-family decision until volume justifies (39 rows is below threshold), but in the meantime add Everlight ITR/EAITRDA + similar prefixes (Omron EE-SX, Sharp GP1A, TT Electronics OPB) to the MPN recognizer with a "manual classification needed" flag at ingest.
+
+**Cohort C — Darlington array driver ICs (MIXIC, WADE, BL, IDCHIP, ~17 rows):**
+
+ULN2003 / ULN2402 / ULN2803 family at MIXIC (11), WADE (5), BL (2), IDCHIP (1). These are integrated 7-channel Darlington arrays with built-in flyback diodes — semantically driver ICs (often paired with relays, motors, stepper coils), not discrete transistors. The B6 logic table doesn't score them meaningfully: hfe / vce_sat / fT all apply per-channel inside the IC but the user-facing spec is "per-channel current sink" + "max output voltage" + "input logic threshold."
+
+Fix shape: open design decision needed:
+1. Carve out a sub-family or new family for sink/source driver arrays (would also catch ULN2001/2002/2004 variants and SN754x / TPL7xxx equivalents).
+2. Reclassify into an existing C-block IC family (no current fit — none of C1–C10 is a "discrete logic driver array").
+3. Leave them in B6 with a "_array_channels" satellite attribute and a triage flag. Cheapest but doesn't help xref scoring.
+
+**Why defer all three together:**
+
+- Total affected rows ~860 across B6 (about 14% of the family) — noticeable but not catastrophic. Until B6 domain card + Triage AI Investigator are doing per-row reclassification work at scale, the impact is bounded.
+- Cohort A is the biggest payoff and has the same fix shape as the existing Schottky/small-signal item (also in this BACKLOG section) — natural candidate for shared `atlasMpnFamilyHints.ts` infrastructure.
+- Cohorts B and C need design decisions that go beyond a single fix.
+
+**Trigger to flip from defer to ship:** if the B6 Triage queue surfaces these cohorts as wrong_family verdicts at high frequency (engineer time burned on the same diagnosis over and over), OR if a new ingest adds another large batch with the same patterns (suggests it's a recurring upstream issue), OR if Cohort A is bundled into the broader MPN-prefix recognizer build for Schottky/small-signal.
+
+**Files involved:** extends the `lib/services/atlasMpnFamilyHints.ts` proposed in the Schottky item above. Cohort B needs design decision; Cohort C needs design decision plus possible new logic table.
+
+### Rename C4 `supply_current` canonical to `_iq_per_channel` (or merge into `iq`)
+
+The C4 Op-Amps/Comparators dictionary has a `supply_current` canonical at [atlasMapper.ts:1138-1187](lib/services/atlasMapper.ts#L1138-L1187) used as the destination for 11+ paramName variants — but every existing variant is `iq(typ.)(per ch)` style per-channel µA-scaled (not actual total supply current). The name is misleading: it's holding Iq-per-channel values, not ICC-total values.
+
+Caught while triaging KEXIN ICC(mA) row (TR-647e33), where the AI suggested minting `supply_current_ma` — would have collided. Workaround: introduced `_icc_ma` satellite for true ICC values, leaving `supply_current` as-is.
+
+**Two cleanup paths:**
+1. **Rename `supply_current` → `_iq_per_channel`** (satellite, leading underscore). Honest naming. Doesn't participate in matching (it never did — no logic table rule). Requires updating all dict entries + any DB rows in `atlas_dictionary_overrides` keyed on `supply_current`.
+2. **Merge `supply_current` into existing `iq` canonical**. The C4 `iq` logic rule already exists ([opampComparator.ts:255-263](lib/logicTables/opampComparator.ts#L255-L263)) and would benefit from more values flowing into it. But unit normalization would need attention (some current entries are µA, some mA).
+
+Recommended: Option 1 first (low risk, makes naming honest). Option 2 later as a logic-table consolidation pass.
+
+**Files involved:** [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) C4 block + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) C4 mirror + any `atlas_dictionary_overrides` rows targeting `supply_current` in C4.
+
+### Split C2 Switching Regulators into chip-level vs module/brick sub-families
+
+Discovered during C2 (Switching Regulators) domain-card review (May 2026). The C2 family currently mixes two semantically-distinct product classes under one logic table:
+
+**Chip-level switching regulators** (the schema's design intent): silicon die in a SOT-23 / SOIC / QFN / VQFN-style package. Specs are die-level: `vref`, `fsw`, `control_mode`, `compensation_type`, `qg`, `rds_on` of integrated FET, etc. Logic table rules score against these.
+
+**Board-level DC-DC modules / bricks**: complete subsystems with the inductor, output caps, sense pins, and sometimes the isolation transformer all on a small daughter board. User-facing spec is "12V input, 5V/3A output, 15W, 75°C ambient" — most chip-level canonicals (`fsw`, `vref`, `control_mode`, `compensation_type`) are unspecified because they're encapsulated inside the module.
+
+**Observed mix in current data** (901 C2 rows):
+- DELTA: 401 rows, mostly modules/bricks (`PJ-12V150WLRA`, `DNL10S0A0S16PFD`, `E48SR05012NMFA`)
+- CYNTEC: 16 rows, point-of-load modules (`MUN3C1HR6-FB`, `MSN12AD12-MP`)
+- Hi-Link: 12 rows, isolated DC-DC bricks (`B0505S-1WR2`, `HLK-10D2405`)
+
+That's ~430 rows / 48% of the family that don't fit chip-level scoring. The matching engine will compare a Hi-Link `HLK-10D2405` (10W isolated 24V→5V brick) against a TPS54xxx chip on `topology=buck` and `vout_range=5V` and produce nonsense scores because most other canonicals are unspecified on the module side.
+
+**What this would add:**
+
+Two paths to evaluate:
+
+1. **Split into C2-IC (chip) and C2-MOD (module).** New family ID for modules with its own logic table tuned for module-level specs: input voltage class, output voltage, output power rating, isolation voltage (if isolated), efficiency curve, MTBF, dimensions, mounting style (PCB pin / DIN rail / surface mount). Ingest classifier routes by MPN-prefix heuristic + presence/absence of chip-level params. Cross-family scoring blocked (chip ≠ module).
+
+2. **Keep C2 unified but add a `form_factor` identity gate.** Adds `form_factor: 'chip' | 'module_pcb' | 'module_brick' | 'module_din'` as a new identity attribute. Hard gate on form-factor mismatch. Doesn't require schema split but requires every existing logic-table rule to be re-evaluated for module applicability (most won't apply to modules).
+
+Option 1 is cleaner long-term; Option 2 is cheaper to ship.
+
+**Why defer:**
+
+- The 430 module rows aren't actively producing bad recommendations yet because the Triage AI Investigator's `wrong_family` bucket isn't currently surfacing them as cross-misclassified (they're labeled C2 in source data, so the AI agrees). The harm is silent: cross-scoring a module against a chip produces a recommendation that won't actually fit, but the user has no way to know until they try to source it.
+- C2 isn't a top user-facing search target today (no current evidence of users hitting brick-vs-chip recommendation confusion).
+- Building C2-MOD with its own logic table is a non-trivial design effort (new attribute IDs, new rules, dictionary additions).
+
+**Trigger to flip from defer to ship:** if a user reports getting an inappropriate brick recommendation for a chip search (or vice versa), OR if module-MFR ingestion volume grows past ~1000 rows (cumulative across DELTA / CYNTEC / Hi-Link and any new module-shipping MFRs), OR if a similar split need emerges in another family (gate drivers, LDOs — both also have module-equivalent products).
+
+**Related families likely to need the same split:** C1 LDOs (some MFRs ship LDO modules), C3 Gate Drivers (gate driver modules exist for high-power applications). If this becomes a pattern, lift to a project-wide "chip vs module" classifier with consistent semantics across families.
+
+**Files involved:** new `lib/logicTables/c2ModuleSwitchingRegulator.ts` (if Option 1) OR additions to existing [lib/logicTables/switchingRegulator.ts](../lib/logicTables/switchingRegulator.ts) (if Option 2). New dictionary entries in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) + [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) for module-side params. Ingest classifier extension in either case.
 
 ### Per-row research helper on the Atlas Unmapped Parameters table
 

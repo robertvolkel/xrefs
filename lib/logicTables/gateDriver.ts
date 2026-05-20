@@ -239,5 +239,23 @@ export const gateDriverLogicTable: LogicTable = {
       engineeringReason: 'Must match production line requirements. SOT-23-5/6 single drivers on 8mm tape/reel. SOIC-8 half-bridge drivers on 12mm tape/reel, typically 2,500 pieces. DIP-8 (industrial controls) in 25-piece tubes. Isolated gate drivers in wide-body SOIC-16 on 16mm tape. Exposed thermal pad DFN/QFN require stencil aperture management.',
       sortOrder: 20,
     },
+    {
+      attributeId: 'input_vdd_range',
+      attributeName: 'Input-Side Logic Supply Range (VCCI / VDDI)',
+      logicType: 'threshold',
+      thresholdDirection: 'range_superset',
+      weight: 5,
+      engineeringReason: 'For ISOLATED gate drivers only — the input-side supply (VCCI / VDDI / VDD1) powers the controller-facing logic, galvanically separated from the gate-drive output supply (vdd_range). Typical operating range is 3.0–5.5V to match MCU/controller rails; abs-max often ~17V. Replacement input-side range must contain the actual controller supply voltage. Distinct from vdd_range (which is the OUTPUT side that drives the power device gate). N/A on non-isolated bootstrap drivers (single supply); missing data on those is review, not fail. The input/output split is a defining property of isolated drivers (NOVOSENSE NSi6601, TI UCC52xx, Silicon Labs Si82xx, ADI ADuM4xxx, Infineon 1ED).',
+      sortOrder: 21,
+    },
+    {
+      attributeId: 'isolation_voltage',
+      attributeName: 'Isolation Withstand Voltage (kVrms)',
+      logicType: 'threshold',
+      thresholdDirection: 'gte',
+      weight: 9,
+      engineeringReason: 'For ISOLATED gate drivers (transformer, optocoupler, digital isolator), the isolation withstand voltage is the safety-critical spec: it determines whether the part is qualified for the reinforced/basic isolation requirement of the application. Replacement isolation rating must be equal to or higher than the original — never downgrade. Typical ratings: 2.5 / 3.0 / 3.75 / 5.0 / 5.7 kVrms (NOVOSENSE NSi6601 series, ADI ADuM4xxx, Silicon Labs Si82xx, TI UCC5310). Industrial drives typically need 2.5–3.75 kVrms; medical and EV charging often need 5+ kVrms reinforced. Convention is kVrms across all datasheets, so no unit suffix on the canonical. N/A on non-isolated bootstrap drivers — those are already filtered out by the isolation_type BLOCKING gate, so missing data here is review, not fail. Aligns with safety standards (IEC 62368, UL 60950, IEC 60601 for medical, ISO 26262 for automotive).',
+      sortOrder: 22,
+    },
   ],
 };

@@ -16,6 +16,8 @@ import {
   getL2ParamMapForCategory,
   type ParamMapping,
 } from '@/lib/services/digikeyParamMap';
+import { createServiceClient } from '@/lib/supabase/service';
+import { computeSchemaVersion } from '@/lib/services/atlasSchemaVersion';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -43,7 +45,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    return NextResponse.json({ success: true, schemaIds: [...ids] });
+    // Also return the family's domain card version (the active row's
+    // updated_at). The client bakes it into the /suggest localStorage
+    // cache key, so when an admin approves a new/updated card the
+    // engineer's cached suggestions become unreachable on next page
+    // load — fresh /suggest calls happen and pick up the new card.
+    let cardUpdatedAt: string | null = null;
+    try {
+      const supabase = createServiceClient();
+      const { data } = await supabase
+        .from('atlas_family_domain_cards')
+        .select('updated_at')
+        .eq('family_id', familyId)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (data?.updated_at) cardUpdatedAt = data.updated_at as string;
+    } catch {
+      // Fail-open — without this, the cache key just degrades to the
+      // old format and stale entries persist normally until 7d expiry.
+    }
+
+    // Schema fingerprint — deterministic hash over the family's logic-table
+    // rules + targeting signatures. Drives proactive staleness chips on the
+    // Triage page: when the engineer adds a rule or edits an engineeringReason,
+    // this hash flips and cached suggestions for that family render as stale.
+    const schemaVersion = computeSchemaVersion(familyId);
+
+    return NextResponse.json({ success: true, schemaIds: [...ids], cardUpdatedAt, schemaVersion });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ success: false, error: message }, { status: 500 });

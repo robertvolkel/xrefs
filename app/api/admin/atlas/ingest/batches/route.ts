@@ -34,7 +34,10 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import type { IngestBatch, IngestRisk, IngestStatus } from '@/lib/services/atlasIngestService';
-import { detectForeignFamily } from '@/lib/services/atlasFamilyParamSignatures';
+import {
+  detectForeignFamilyWithList,
+  loadAllFamilyParamSignatures,
+} from '@/lib/services/atlasFamilyParamSignatures';
 import {
   readCachedTriageData,
   writeCachedTriageData,
@@ -386,7 +389,10 @@ async function computeTriageAggregation(): Promise<{
   }
   const overrideResolved = [...overrideAnnotated, ...orphans];
 
-  // Foreign-family auto-flag classification.
+  // Foreign-family auto-flag classification. Loads merged code+DB
+  // signatures so engineer-curated entries (added via the AI Investigator
+  // "wrong family" Confirm flow) take effect on the next queue render.
+  const allSignatures = await loadAllFamilyParamSignatures();
   const classified: Classified[] = overrideResolved.map((entry) => {
     const noteRecord = noteStatusByParam.get(entry.paramName);
     const noteStatus: NoteStatus = noteRecord?.status ?? null;
@@ -394,7 +400,7 @@ async function computeTriageAggregation(): Promise<{
 
     let autoFlag: AutoFlag | undefined;
     if (noteStatus !== 'confirmed_in_family') {
-      const sig = detectForeignFamily(entry.paramName, entry.dominantFamily);
+      const sig = detectForeignFamilyWithList(entry.paramName, entry.dominantFamily, allSignatures);
       if (sig) {
         autoFlag = {
           suggestedFamily: sig.target.familyId,

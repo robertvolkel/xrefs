@@ -153,6 +153,11 @@ export const c5LogicICsContext: FamilyContextConfig = {
               effect: 'escalate_to_primary',
               note: 'Bus hold becomes primary in shared bus applications — missing bus hold leaves lines undefined during bus arbitration or startup.',
             },
+            {
+              attributeId: 'i2c_bus_speed_max_khz',
+              effect: 'escalate_to_primary',
+              note: 'Max I2C bus clock speed becomes primary for I2C-bus interface parts (level shifters, buffers, switches, I/O expanders). Replacement must support equal or higher Fast-mode (400 kHz) or Fast-mode Plus (1000 kHz). Not blockOnMissing because Q3 also fires for SPI / parallel buses where this attribute is N/A.',
+            },
           ],
         },
         {

@@ -63,6 +63,25 @@ export type IngestDiffReport = {
    *  (familyId=null but real category, e.g. Microcontrollers). */
   categoryCounts?: Record<string, number>;
   mappingStats: { total: number; mapped: number; errors: number };
+  /** MPN-quality issues detected at ingest time (phase 1: detection only).
+   *  See lib/services/atlasMpnQualityValidator.ts. Populated only when
+   *  the source data contains un-matchable MPN patterns; older batches
+   *  omit the field entirely. UI consumers must treat as optional. */
+  mpnQuality?: {
+    totalIssues: number;
+    byKind: {
+      range_thru: number;
+      range_series: number;
+      placeholder_x: number;
+      placeholder_xx_midword: number;
+      slash_variant: number;
+    };
+    samples: Array<{
+      originalMpn: string;
+      kind: 'range_thru' | 'range_series' | 'placeholder_x' | 'placeholder_xx_midword' | 'slash_variant';
+      reason: string;
+    }>;
+  };
 };
 
 export type IngestBatch = {

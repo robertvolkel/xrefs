@@ -508,6 +508,7 @@
     "atlasDictionaries": "Atlas Dictionaries",
     "atlasDictTriage": "Atlas Dictionaries Triage",
     "atlasAiLog": "AI Investigation Log",
+    "atlasDomainCards": "AI Domain Cards",
     "atlasIngest": "Atlas Ingest",
     "atlasDictDesc": "Translation dictionaries mapping Atlas parameter names to internal attributes.",
     "atlasParamName": "Atlas Parameter",

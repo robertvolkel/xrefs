@@ -402,6 +402,27 @@ export default function AtlasDictTriagePanel() {
     });
   }, [allRows, filters, notesByParam, mode, statusFilter]);
 
+  // Stable key the table uses to decide when to reset its pagination. Encodes
+  // every input that should genuinely change the "view" (mode, status,
+  // search, MFR/family chips, etc.) but NOT row-content mutations from
+  // Accept/Revert/Flag. Without this, the table was keying off the `rows`
+  // prop reference, which churned on every optimistic mutation and kicked
+  // engineers back to the first 50 rows after every action.
+  const viewKey = useMemo(
+    () => JSON.stringify({
+      mode,
+      statusFilter,
+      search: filters.search.trim().toLowerCase(),
+      mfrSlugs: [...filters.mfrSlugs].sort(),
+      families: [...filters.families].sort(),
+      minProductCount: filters.minProductCount,
+      hasNote: filters.hasNote,
+      flaggedOnly: filters.flaggedOnly,
+      batchFilter,
+    }),
+    [mode, statusFilter, filters, batchFilter],
+  );
+
   // Count of flagged params across the whole notes map — surfaced as the
   // chip badge on the Flagged toggle in the filter bar.
   const flaggedCount = useMemo(
@@ -558,6 +579,7 @@ export default function AtlasDictTriagePanel() {
           ) : (
             <GlobalUnmappedParamsTable
               rows={filteredRows}
+              viewKey={viewKey}
               pendingBatchCount={data.aggregate.counts.total}
               onRegenerateAffected={onRegenerateAffected}
               onRowAccepted={onRowAccepted}

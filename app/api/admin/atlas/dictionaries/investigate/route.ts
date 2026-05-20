@@ -25,11 +25,173 @@ import { createServiceClient } from '@/lib/supabase/service';
 import {
   getSchemaAttributes,
   fetchAcceptedCanonicals,
+  validateFamilyId,
+  getCrossFamilyCanonicalSummary,
+  detectCanonicalCollision,
+  KNOWN_FAMILY_IDS_LIST,
 } from '@/lib/services/atlasTriageContext';
+import { getFamilyDomainCard } from '@/lib/services/atlasFamilyDomainCards';
+import { computeSchemaVersion } from '@/lib/services/atlasSchemaVersion';
 
 type CacheEntry = { value: unknown; expiresAt: number };
 const INVESTIGATE_CACHE = new Map<string, CacheEntry>();
 const INVESTIGATE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Bump when the tool schema or post-validation logic changes — old
+// cached responses use a different shape and must expire.
+// v6: migrated to Anthropic tool-use mode with strict enum on family IDs.
+const INVESTIGATE_CACHE_VERSION = 'v9';
+
+/**
+ * Tool definition for the structured-output investigation verdict.
+ *
+ * Why tool-use instead of text+JSON.parse:
+ *   1. Family ID fields (`actualFamilyId`, `signatureRecommendation.familyId`,
+ *      `perProductProposals[].proposedFamilyId`) carry a strict `enum`
+ *      constraint listing every valid family ID in the system. Sonnet sees
+ *      this as part of the tool definition and is heavily nudged to
+ *      comply — the previous text-JSON path let it invent IDs like
+ *      `BJT_DIGITAL` freely.
+ *   2. No JSON-text-extraction fallbacks needed. The model returns
+ *      `tool_use` block with parsed input directly.
+ *   3. Schema doubles as in-code documentation of the response contract.
+ *
+ * Post-validation still runs as a backstop (defense in depth) — if a
+ * model somehow returns an out-of-enum value despite the tool definition,
+ * the route catches and surfaces it via `validationErrors`.
+ */
+function buildTriageVerdictTool(): Anthropic.Tool {
+  return {
+    name: 'submit_triage_verdict',
+    description:
+      'Submit the structured triage verdict for the parameter under investigation. Use this tool exclusively — do not produce any text response outside the tool call.',
+    input_schema: {
+      type: 'object' as const,
+      required: ['bucket', 'confidence', 'recommendation', 'prose'],
+      properties: {
+        bucket: {
+          type: 'string' as const,
+          enum: [
+            'new_canonical',
+            'disambiguation',
+            'wrong_family',
+            'unit_mismatch',
+            'unscoped_products',
+            'unmappable',
+          ],
+          description: 'The chosen action bucket.',
+        },
+        confidence: {
+          type: 'string' as const,
+          enum: ['high', 'medium', 'low'],
+        },
+        evidence: {
+          type: 'object' as const,
+          description:
+            'Echo back relevant evidence. The route backfills sampleProducts and crossScopeOverrides from raw fetched data, so only nearestAcceptedInScope needs to be populated here.',
+          properties: {
+            nearestAcceptedInScope: {
+              type: 'array' as const,
+              items: {
+                type: 'object' as const,
+                properties: {
+                  attributeId: { type: 'string' as const },
+                  attributeName: { type: 'string' as const },
+                  reasoning: { type: 'string' as const },
+                },
+              },
+            },
+          },
+        },
+        recommendation: {
+          type: 'object' as const,
+          required: ['summary', 'primaryActionLabel', 'primaryActionPayload'],
+          properties: {
+            summary: { type: 'string' as const },
+            primaryActionLabel: { type: 'string' as const },
+            primaryActionPayload: {
+              type: 'object' as const,
+              description:
+                'Bucket-specific payload — only populate fields relevant to the chosen bucket. Family ID fields MUST be from the enumerated list.',
+              properties: {
+                // new_canonical
+                attributeId: { type: 'string' as const },
+                attributeName: { type: 'string' as const },
+                unit: { type: ['string', 'null'] as ('string' | 'null')[] },
+                // unit_mismatch
+                existingCanonicalId: { type: 'string' as const },
+                newAttributeId: { type: 'string' as const },
+                newAttributeName: { type: 'string' as const },
+                newUnit: { type: ['string', 'null'] as ('string' | 'null')[] },
+                // disambiguation
+                primary: {
+                  type: 'object' as const,
+                  properties: {
+                    attributeId: { type: 'string' as const },
+                    attributeName: { type: 'string' as const },
+                    rationale: { type: 'string' as const },
+                  },
+                },
+                alternative: {
+                  type: 'object' as const,
+                  properties: {
+                    attributeId: { type: 'string' as const },
+                    attributeName: { type: 'string' as const },
+                    rationale: { type: 'string' as const },
+                  },
+                },
+                // wrong_family — family ID fields are ENUM-CONSTRAINED
+                actualFamilyId: {
+                  type: 'string' as const,
+                  enum: [...KNOWN_FAMILY_IDS_LIST],
+                  description:
+                    'The family the affected products actually belong to. MUST be one of the enumerated values — do not invent new IDs.',
+                },
+                signatureRecommendation: {
+                  type: 'object' as const,
+                  properties: {
+                    paramName: { type: 'string' as const },
+                    familyId: {
+                      type: 'string' as const,
+                      enum: [...KNOWN_FAMILY_IDS_LIST],
+                      description:
+                        'Target family for the FAMILY_PARAM_SIGNATURES entry. MUST be one of the enumerated values.',
+                    },
+                    reasoning: { type: 'string' as const },
+                  },
+                },
+                // unscoped_products
+                perProductProposals: {
+                  type: 'array' as const,
+                  items: {
+                    type: 'object' as const,
+                    required: ['mpn', 'proposedFamilyId'],
+                    properties: {
+                      mpn: { type: 'string' as const },
+                      proposedFamilyId: {
+                        type: 'string' as const,
+                        enum: [...KNOWN_FAMILY_IDS_LIST],
+                        description:
+                          'Proposed family for this product. MUST be one of the enumerated values.',
+                      },
+                      reasoning: { type: 'string' as const },
+                    },
+                  },
+                },
+              },
+            },
+            alternativeActionLabel: { type: 'string' as const },
+            alternativeActionPayload: { type: 'object' as const },
+          },
+        },
+        prose: {
+          type: 'string' as const,
+          description: '3-5 sentences in engineer-note voice citing specific evidence.',
+        },
+      },
+    },
+  };
+}
 
 interface SampleProduct {
   mpn: string;
@@ -70,10 +232,15 @@ interface SampleProductsDiag {
 
 /** Aggressive normalization used everywhere we need to match a paramName
  *  against a JSONB / source-file key. Strips case + collapses every
- *  non-alphanumeric run to a single underscore + trim. Catches:
- *  "T(mm)" ↔ "t_mm", "Rds(on)" ↔ "rds_on", "阻抗值(Ω)" ↔ "阻抗值_Ω_". */
+ *  non-letter / non-digit run to a single underscore + trim. Uses Unicode
+ *  property escapes (\p{L} = any letter, \p{N} = any digit) so CJK chars,
+ *  Greek (Ω, μ), Cyrillic, etc. are preserved (the prior ASCII-only regex
+ *  collapsed CJK to a single underscore, causing semantically-different
+ *  Chinese paramNames to falsely match — e.g. 输入侧 / 输出侧 both stripped
+ *  to nothing). Catches: "T(mm)" ↔ "t_mm", "Rds(on)" ↔ "rds_on",
+ *  "阻抗值(Ω)" ↔ "阻抗值_ω". */
 function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
 }
 
 interface CrossScopeOverride {
@@ -462,6 +629,9 @@ function buildPrompt(args: {
   crossScopeOverrides: CrossScopeOverride[];
   sampleValues: string[];
   distribution: SampleValueDistribution;
+  /** Pre-resolved domain card text (caller awaited getFamilyDomainCard).
+   *  buildPrompt stays sync so it remains easy to test. */
+  domainCard: string | undefined;
 }): string {
   const productsList =
     args.sampleProducts.length > 0
@@ -490,10 +660,14 @@ function buildPrompt(args: {
       ? 'NO SCOPE RESOLVED — these products have neither a family_id nor a category. The override cannot be saved until upstream classification is fixed.'
       : `Scope: ${args.scopeKind} = "${args.scopeKey}"`;
 
+  const domainSection = args.domainCard
+    ? `\n${args.scopeKey} DOMAIN CONTEXT — sub-types, common confusions, conventional units, foreign-family indicators (use this to disambiguate same-named canonicals and avoid inventing duplicates):\n${args.domainCard}\n`
+    : '';
+
   return `You are an electronics component parameter triage assistant. Your job is to look at a Chinese/English parameter name that the engineer has NOT been able to confidently accept yet, gather the evidence below, and produce a structured next-action verdict. The engineer is overwhelmed and needs ONE concrete next step, not generic "investigate this" advice.
 
 ${scopeLine}
-
+${domainSection}
 Schema attributes in this scope (canonical attributeIds with weighted matching rules):
 ${args.schemaList}
 
@@ -528,36 +702,28 @@ CRITICAL RULES:
 - If scope is "none", you MUST pick "unscoped_products" or "unmappable" — the other buckets require a resolvable scope.
 - For "wrong_family", be specific: state which family the products actually belong to (e.g. "B6 — these are BJTs") and which specific paramName + family pair should be added to FAMILY_PARAM_SIGNATURES.
 - For "new_canonical" and "unit_mismatch", invent specific attributeIds (e.g. "reverse_current_ua", not "current") and explain why no existing canonical fits.
+- BEFORE picking "new_canonical", CHECK the cross-scope override hits and the cross-family canonical inventory: if a canonical with the SAME concept already exists in another family (e.g., \`isolation_voltage\` exists in L2 Power Supplies / Transformers for the same physical spec), PROPOSE THAT EXISTING attributeId verbatim in primaryActionPayload — do NOT mint a unit-suffixed variant like \`isolation_voltage_kvrms\` just to dodge a name collision. Reusing the existing canonical name across families is the correct outcome; the unit is conventional and implied. The engineer will accept the override, and the family's logic table will get a rule added separately so the matching engine consumes the value.
+- primaryActionLabel MUST embed the specific proposed attributeId in backticks so the engineer can see what they're committing to. Format: \`Create new canonical \`<attributeId>\`\` (new_canonical), \`Mint \`<newAttributeId>\` (unit variant)\` (unit_mismatch), \`Map to \`<attributeId>\`\` (disambiguation). NEVER use a generic label like "Create new canonical attribute" — always include the actual ID.
 - Confidence: "high" iff one bucket is clearly correct given the evidence. "medium" if you're choosing between two close calls. "low" if evidence is genuinely thin.
 - Prose: 3-5 sentences in engineer-note voice. Cite the specific evidence (MPNs, sample values, cross-scope hits). Concrete, not generic.
 
-PRIMARY ACTION PAYLOAD shape varies by bucket — fill the appropriate fields:
+FAMILY ID CONSTRAINT — HARD ENUMERATED LIST:
+When populating ANY family ID field (actualFamilyId, signatureRecommendation.familyId, perProductProposals[].proposedFamilyId), you MUST choose from this exact list. Do NOT invent new IDs. If none of these fit, use bucket "unmappable" instead.
 
-new_canonical: { "attributeId": "...", "attributeName": "...", "unit": "... or null" }
-disambiguation: { "primary": { "attributeId": "...", "attributeName": "...", "rationale": "..." }, "alternative": { "attributeId": "...", "attributeName": "...", "rationale": "..." } }
-wrong_family: { "actualFamilyId": "...", "signatureRecommendation": { "paramName": "...", "familyId": "...", "reasoning": "..." } }
-unit_mismatch: { "existingCanonicalId": "...", "newAttributeId": "...", "newAttributeName": "...", "newUnit": "..." }
-unscoped_products: { "perProductProposals": [{ "mpn": "...", "proposedFamilyId": "...", "reasoning": "..." }, ...] }
-unmappable: {}
+Valid family IDs: ${KNOWN_FAMILY_IDS_LIST.join(', ')}
 
-Respond in JSON ONLY, no markdown:
-{
-  "bucket": "new_canonical|disambiguation|wrong_family|unit_mismatch|unscoped_products|unmappable",
-  "confidence": "high|medium|low",
-  "evidence": {
-    "nearestAcceptedInScope": [{ "attributeId": "...", "attributeName": "...", "reasoning": "..." }],
-    "crossScopeOverrides": [{ "familyId": "...", "attributeId": "...", "attributeName": "...", "rawParam": "..." }],
-    "sampleProducts": [{ "mpn": "...", "description": "...", "manufacturer": "...", "valueForParam": "..." }]
-  },
-  "recommendation": {
-    "summary": "1-2 sentences plain English next step",
-    "primaryActionLabel": "specific button label (e.g. 'Mint canonical reverse_current_ua')",
-    "primaryActionPayload": { ... shape per bucket above ... },
-    "alternativeActionLabel": "optional second-option button label (disambiguation only)",
-    "alternativeActionPayload": { ... or omit ... }
-  },
-  "prose": "3-5 sentences in engineer-note voice with specific evidence cited"
-}`;
+(L3 IDs like B5/C2 are component families with logic tables. L2 names like "Microcontrollers"/"Sensors" are broader category buckets used as override scopes per Decision #178. Both are valid as family ID values.)
+
+Return your verdict using the submit_triage_verdict tool. Field shapes per bucket:
+
+new_canonical → primaryActionPayload: { attributeId, attributeName, unit }
+disambiguation → primaryActionPayload: { primary: { attributeId, attributeName, rationale }, alternative: { attributeId, attributeName, rationale } }
+wrong_family → primaryActionPayload: { actualFamilyId, signatureRecommendation: { paramName, familyId, reasoning } }   // BOTH actualFamilyId AND signatureRecommendation.familyId must be from the enum list
+unit_mismatch → primaryActionPayload: { existingCanonicalId, newAttributeId, newAttributeName, newUnit }
+unscoped_products → primaryActionPayload: { perProductProposals: [{ mpn, proposedFamilyId, reasoning }] }   // each proposedFamilyId must be from the enum list
+unmappable → primaryActionPayload: {}
+
+Do NOT respond with text — submit the verdict via the tool call only.`;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -604,7 +770,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // never resolve. The decision endpoint
     // [POST /api/admin/atlas/triage-investigations] takes the analysis
     // payload at action-time and writes a single complete row.
-    const cacheKey = `${scopeKey ?? '__none__'}::${paramName}`;
+    const cacheKey = `${INVESTIGATE_CACHE_VERSION}::${scopeKey ?? '__none__'}::${paramName}`;
+    // Resolve current schema + card versions for staleness signaling
+    // (returned on both cache-hit and miss branches so the client can
+    // store them with the cached analysis).
+    const currentSchemaVersion = scopeKind === 'family' ? computeSchemaVersion(scopeKey) : null;
+    let currentCardVersion: string | null = null;
+    if (scopeKind === 'family' && scopeKey) {
+      try {
+        const supabase = createServiceClient();
+        const { data: cardRow } = await supabase
+          .from('atlas_family_domain_cards')
+          .select('updated_at')
+          .eq('family_id', scopeKey)
+          .eq('status', 'active')
+          .maybeSingle();
+        if (cardRow?.updated_at) currentCardVersion = cardRow.updated_at as string;
+      } catch {
+        // Fail-open
+      }
+    }
+
     if (forceRefresh) INVESTIGATE_CACHE.delete(cacheKey);
     const cached = forceRefresh ? null : INVESTIGATE_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -613,6 +799,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         success: true,
         analysis: cachedPayload.analysis,
         cached: true,
+        currentCardVersion,
+        currentSchemaVersion,
       });
     }
 
@@ -628,9 +816,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const distribution = classifySampleValues(samples);
 
+    // Include engineering reason per attribute so the model can disambiguate
+    // same-named canonicals (e.g., distinguish output-side `vdd_range` from
+    // a generic VCC reading on an isolated driver's input side). Without
+    // this, prior /investigate runs proposed unit-suffixed variants like
+    // `isolation_voltage_kvrms` because the existing `isolation_voltage`
+    // looked like a generic label. L2 entries have no engineering reason
+    // and render with id+name only.
     const schemaList =
       schemaAttrs.length > 0
-        ? schemaAttrs.map((a) => `- ${a.attributeId}: ${a.attributeName}${a.unit ? ` (${a.unit})` : ''}`).join('\n')
+        ? schemaAttrs.map((a) => {
+            const head = `- ${a.attributeId}: ${a.attributeName}${a.unit ? ` (${a.unit})` : ''}`;
+            return a.engineeringReason ? `${head}\n    Reason: ${a.engineeringReason}` : head;
+          }).join('\n')
         : '(no schema attributes available)';
     const acceptedList =
       acceptedCanonicals.length > 0
@@ -642,6 +840,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             .join('\n')
         : '(none yet)';
 
+    // Resolve the per-family domain card (DB-active row OR TS fallback).
+    // Only for family-scope rows — L2 category rows don't get cards.
+    const domainCard = scopeKind === 'family' ? await getFamilyDomainCard(scopeKey) : undefined;
+
     const prompt = buildPrompt({
       paramName,
       scopeKind,
@@ -652,79 +854,152 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       crossScopeOverrides,
       sampleValues: samples.slice(0, 20),
       distribution,
+      domainCard,
     });
 
     const client = new Anthropic({ apiKey });
+    const triageTool = buildTriageVerdictTool();
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      // 1600 vs the earlier 1200 — the prompt grew when we added the
-      // pending-tier source-file evidence + [applied|pending] origin
-      // tagging on each product. Disambiguation responses with full
-      // evidence sections were occasionally truncating, which produced
-      // unparseable JSON. 1600 gives Sonnet headroom without ballooning
-      // cost (3K-4K input prompt vs 1.6K output is still a small call).
+      // 1600 was set when the prompt added pending-tier source-file
+      // evidence + [applied|pending] origin tagging. Tool-use mode
+      // skips the JSON instructions in the prompt, so the model has
+      // slightly more headroom — but keep 1600 to avoid truncation
+      // on complex disambiguation responses.
       max_tokens: 1600,
       system: prompt,
       messages: [{ role: 'user', content: `Investigate parameter: "${paramName}"` }],
+      tools: [triageTool],
+      tool_choice: { type: 'tool', name: 'submit_triage_verdict' },
     });
 
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
+    // Extract the tool_use block. With `tool_choice` forcing this tool,
+    // Sonnet must return a tool_use content block; if it somehow doesn't,
+    // surface the failure to the engineer rather than guessing.
+    const toolUseBlock = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === 'submit_triage_verdict',
+    );
 
-    // Multi-stage JSON extraction. Sonnet usually returns clean JSON, but
-    // we've seen three failure modes in practice:
-    //   1. Code-fence wrapping ("```json\n{...}\n```")
-    //   2. Conversational preamble ("Here is the analysis:\n{...}")
-    //   3. Trailing prose after the JSON
-    // Stage 1: try the original direct parse with code-fence stripping.
-    // Stage 2: slice between the first { and the last } — handles preamble
-    // AND trailing prose AND nested objects in a single shot since outermost
-    // {} bound the document.
-    let parsed: Record<string, unknown> | null = null;
-    let parseErrorMsg = '';
-    const cleaned = text
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (parseErr) {
-      parseErrorMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      // Stage 2 fallback — outermost-{} slice.
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        try {
-          parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
-        } catch (sliceErr) {
-          parseErrorMsg += ` | slice retry: ${sliceErr instanceof Error ? sliceErr.message : String(sliceErr)}`;
-        }
-      }
-    }
-
-    if (!parsed) {
-      const truncated = (response.stop_reason === 'max_tokens');
+    if (!toolUseBlock) {
+      const truncated = response.stop_reason === 'max_tokens';
       console.error(
-        'investigate JSON parse failed:',
-        parseErrorMsg,
+        'investigate tool-use missing:',
         'stop_reason:', response.stop_reason,
-        'raw:', text.slice(0, 800),
+        'content_types:', response.content.map((b) => b.type).join(','),
       );
       return NextResponse.json(
         {
           success: false,
           error: truncated
-            ? 'AI response was truncated (hit max_tokens). Try again, or shorten the prompt.'
-            : 'AI response could not be parsed as JSON',
-          detail: text.slice(0, 300),
-          parseError: parseErrorMsg,
+            ? 'AI response was truncated (hit max_tokens). Try again.'
+            : 'AI did not invoke the submit_triage_verdict tool.',
           stopReason: response.stop_reason,
         },
         { status: 502 },
       );
+    }
+
+    const parsed = toolUseBlock.input as Record<string, unknown>;
+
+    // ── Post-validation backstop ──────────────────────────────────────
+    //
+    // With tool-use mode + family-ID enum constraints, Sonnet should
+    // virtually never return out-of-set values. This block remains as
+    // belt-and-suspenders: if the model somehow slips through (or if a
+    // future schema loosening introduces a gap), surface the issue via
+    // `validationErrors` so the UI suppresses the action button.
+
+    const validationErrors: Array<{ kind: 'unknown_family' | 'duplicate_canonical'; detail: string }> = [];
+
+    const rec = (parsed.recommendation as Record<string, unknown> | undefined) ?? {};
+    const payload = (rec.primaryActionPayload as Record<string, unknown> | undefined) ?? {};
+
+    // (1a) wrong_family bucket: `actualFamilyId` AND
+    //      `signatureRecommendation.familyId` both must be valid.
+    const invalidFamilyIds = new Set<string>();
+    const actualFamilyId = payload.actualFamilyId;
+    if (typeof actualFamilyId === 'string' && actualFamilyId && !validateFamilyId(actualFamilyId)) {
+      invalidFamilyIds.add(actualFamilyId);
+    }
+    const sigRec = payload.signatureRecommendation as Record<string, unknown> | undefined;
+    const sigFamilyId = sigRec?.familyId;
+    if (typeof sigFamilyId === 'string' && sigFamilyId && !validateFamilyId(sigFamilyId)) {
+      invalidFamilyIds.add(sigFamilyId);
+    }
+    if (invalidFamilyIds.size > 0) {
+      validationErrors.push({
+        kind: 'unknown_family',
+        detail: `AI returned unknown family ID(s): ${[...invalidFamilyIds].map((id) => `'${id}'`).join(', ')}. Valid IDs are limited to L3 family codes (B1-F2, numeric passives like '52') and L2 category names. Manual review required.`,
+      });
+    }
+
+    // (1b) unscoped_products bucket:
+    //      perProductProposals[].proposedFamilyId all must be valid.
+    const perProduct = payload.perProductProposals;
+    if (Array.isArray(perProduct)) {
+      const invalidProductIds = new Set<string>();
+      for (const item of perProduct) {
+        const fid = (item as Record<string, unknown> | undefined)?.proposedFamilyId;
+        if (typeof fid === 'string' && fid && !validateFamilyId(fid)) invalidProductIds.add(fid);
+      }
+      if (invalidProductIds.size > 0) {
+        validationErrors.push({
+          kind: 'unknown_family',
+          detail: `AI suggested per-product family ID(s) '${[...invalidProductIds].join(', ')}' which are not in the known set.`,
+        });
+      }
+    }
+
+    // (2) Canonical collision check — new_canonical bucket carries the
+    // proposed attributeId at payload.attributeId. Verify against the
+    // full cross-family inventory.
+    //
+    // Two collision kinds, two policies:
+    //   - 'near' (e.g., `isolation_voltage_kvrms` vs existing `isolation_voltage`)
+    //     → hard validation error. The engineer should either reuse the
+    //     existing canonical name or differentiate clearly. Action button
+    //     suppressed.
+    //   - 'exact' (proposed ID is verbatim identical to an existing canonical)
+    //     → NON-blocking note. Engineer is proposing to reuse a known
+    //     canonical and extend it to the current family — that's the right
+    //     call. We rewrite the AI's prose so the engineer sees "extending
+    //     existing canonical" and clicks Accept. The matching engine still
+    //     needs a rule added to the family's logic table for that ID to be
+    //     consulted at score time, but the override write itself is fine.
+    const bucket = parsed.bucket as string | undefined;
+    const proposedAttrId = payload.attributeId as string | undefined;
+    if (bucket === 'new_canonical' && proposedAttrId) {
+      const inventory = await getCrossFamilyCanonicalSummary();
+      const collision = detectCanonicalCollision(proposedAttrId, inventory, scopeKey ?? '');
+      if (collision?.kind === 'near') {
+        validationErrors.push({
+          kind: 'duplicate_canonical',
+          detail: `Proposed canonical '${proposedAttrId}' near-duplicates existing '${collision.existingId}' (${collision.existingName}) in ${collision.families.join(', ')}. Consider reusing the existing canonical or picking a clearly differentiated name.`,
+        });
+      } else if (collision?.kind === 'exact') {
+        // Annotate the recommendation summary in place rather than blocking.
+        const extendNote = `Note: this canonical already exists in ${collision.families.join(', ')}. Accepting will extend it to ${scopeKey ?? 'the current family'}. The matching engine will treat values as display-only until a logic-table rule is added for '${collision.existingId}' in ${scopeKey ?? 'this family'}.`;
+        if (parsed.recommendation && typeof parsed.recommendation === 'object') {
+          const rec = parsed.recommendation as Record<string, unknown>;
+          const summary = (rec.summary as string | undefined) ?? '';
+          rec.summary = summary ? `${summary}\n\n${extendNote}` : extendNote;
+        }
+      }
+    }
+    // Also check unit_mismatch bucket's newAttributeId field.
+    const newAttrId = payload.newAttributeId as string | undefined;
+    if (bucket === 'unit_mismatch' && newAttrId) {
+      const inventory = await getCrossFamilyCanonicalSummary();
+      const collision = detectCanonicalCollision(newAttrId, inventory, scopeKey ?? '');
+      // unit_mismatch is specifically about minting a unit-variant, so
+      // even an 'exact' match here is suspicious — we still flag it so
+      // the engineer can decide whether to actually fork by unit.
+      if (collision) {
+        validationErrors.push({
+          kind: 'duplicate_canonical',
+          detail: `Proposed unit-variant canonical '${newAttrId}' ${collision.kind === 'exact' ? 'duplicates' : 'near-duplicates'} existing '${collision.existingId}' in ${collision.families.join(', ')}.`,
+        });
+      }
     }
 
     // Backfill the evidence layer with the raw fetched context. Sonnet
@@ -732,6 +1007,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // authoritative source — UI renders the raw data, not the AI's echo.
     const analysis = {
       ...parsed,
+      validationErrors: validationErrors.length > 0 ? validationErrors : undefined,
       evidence: {
         sampleProducts: sampleProducts.map((p) => ({
           mpn: p.mpn,
@@ -754,7 +1030,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       expiresAt: Date.now() + INVESTIGATE_CACHE_TTL_MS,
     });
 
-    return NextResponse.json({ success: true, analysis });
+    return NextResponse.json({
+      success: true,
+      analysis,
+      currentCardVersion,
+      currentSchemaVersion,
+    });
   } catch (err) {
     console.error('investigate route error:', err);
     return NextResponse.json(

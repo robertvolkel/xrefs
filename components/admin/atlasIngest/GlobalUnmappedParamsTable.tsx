@@ -33,6 +33,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Stack,
   Table,
@@ -50,18 +54,22 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FlagIcon from '@mui/icons-material/Flag';
-import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
-import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
+import OutlinedFlagIcon from '@mui/icons-material/OutlinedFlag';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
 import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SearchIcon from '@mui/icons-material/Search';
 import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
 import { getLogicTable } from '@/lib/logicTables';
+import { isValidFamilyId } from '@/lib/services/validFamilyIds';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
+import DeepAnalysisDrawer from './DeepAnalysisDrawer';
 
 /** Compact relative time format used in accept-audit chips/tooltips.
  *  Mirrors the helper in RecentDictAcceptsPanel.tsx; if a third surface
@@ -107,15 +115,18 @@ function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'
 }
 
 /** Aggressive paramName normalization — strips case + collapses every
- *  non-alphanumeric run to a single underscore + trim. Mirrors the
+ *  non-letter / non-digit run to a single underscore + trim. Mirrors the
  *  server-side helper in the investigate route. Two paramNames that
  *  collapse to the same string are cosmetic duplicates (whitespace /
  *  case / paren-style variants like "T(mm)" / "T (mm)" / "t(mm)").
- *  Non-ASCII characters (CJK, full-width punctuation) collapse to
- *  underscores, so Chinese param names DON'T spuriously match each
- *  other unless they're actually the same string. */
+ *  Uses Unicode property escapes (\p{L} = any letter, \p{N} = any digit)
+ *  so CJK characters, Greek (Ω, μ), Cyrillic, etc. are PRESERVED — they
+ *  carry meaning and stripping them caused spurious bulk-match collisions
+ *  (e.g. "输入侧VCC电压(Max)(V)" and "输出侧VCC电压(Max)(V)" both collapsed
+ *  to "vcc_max_v" with the prior ASCII-only regex, which incorrectly
+ *  bulk-applied an output-side override to an input-side row). */
 function normalizeParamKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
 }
 
 /** Deterministic short UID for a paramName — FNV-1a 32-bit hash printed
@@ -162,6 +173,12 @@ interface Props {
     status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
     flaggedBy: 'auto' | 'engineer' | null,
   ) => void;
+  /** Stable key derived from the parent's filter inputs (mode, status,
+   *  search, MFR/family chips, etc.). When it changes, pagination resets
+   *  to INITIAL_VISIBLE_ROWS. Critically, it does NOT change when rows are
+   *  mutated in-place by Accept/Revert/Flag — so an engineer scrolled deep
+   *  into the queue stays scrolled deep after taking action on a row. */
+  viewKey: string;
 }
 
 interface RowState {
@@ -181,6 +198,14 @@ interface RowState {
   deepAnalysis: DeepAnalysis | null;
   loadingDeepAnalysis: boolean;
   deepAnalysisError: string | null;
+  // Versions present at the time the suggestion / investigation was cached.
+  // Compared against the current versions on render to drive the staleness
+  // signal (left-border stripe + receded chip + ↻ icon). null when no
+  // suggestion / investigation is cached, or for rows seeded from overrides.
+  suggestionCardVersionAtWrite: string | null;
+  suggestionSchemaVersionAtWrite: string | null;
+  deepAnalysisCardVersionAtWrite: string | null;
+  deepAnalysisSchemaVersionAtWrite: string | null;
 }
 
 const SUGGESTION_CONCURRENCY = 4;
@@ -192,14 +217,31 @@ const SUGGESTION_CONCURRENCY = 4;
 // orphaned (deleted on next miss path) and fresh suggestions are fetched.
 // v2: added `suggestion` ('accept' | 'defer') + `explanation` fields when
 // upgrading the model from Haiku to Sonnet 4.6.
-const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest-v2:';
+// v7: cache key drops the cardVersion segment. Versions now live INSIDE
+// the cached payload as `cardVersionAtWrite` + `schemaVersionAtWrite` so
+// stale entries stay readable and the UI renders proactive staleness
+// signals (left-border stripe + receded verdict chip + ↻ icon) instead
+// of silently orphaning the entry.
+const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest-v7:';
 const SUGGEST_LS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-type CachedSuggestion = { suggestion: DictSuggestion; cachedAt: number };
+type CachedSuggestion = {
+  suggestion: DictSuggestion;
+  cachedAt: number;
+  cardVersionAtWrite: string | null;
+  schemaVersionAtWrite: string | null;
+};
 
-function readSuggestionCache(paramName: string, familyId: string | null): DictSuggestion | null {
+function suggestLsKey(familyId: string | null, paramName: string): string {
+  return SUGGEST_LS_PREFIX + (familyId ?? '') + '::' + paramName;
+}
+
+/** Read a cached suggestion. Returns the full record (suggestion + at-write
+ *  versions) so the caller can compare against current versions and decide
+ *  staleness. Returns null on missing / expired entries. */
+function readSuggestionCacheRecord(paramName: string, familyId: string | null): CachedSuggestion | null {
   if (typeof window === 'undefined') return null;
   try {
-    const key = SUGGEST_LS_PREFIX + (familyId ?? '') + '::' + paramName;
+    const key = suggestLsKey(familyId, paramName);
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CachedSuggestion;
@@ -207,21 +249,49 @@ function readSuggestionCache(paramName: string, familyId: string | null): DictSu
       localStorage.removeItem(key);
       return null;
     }
-    return parsed.suggestion;
+    return parsed;
   } catch {
     return null;
   }
 }
 
-function writeSuggestionCache(paramName: string, familyId: string | null, suggestion: DictSuggestion): void {
+function writeSuggestionCache(
+  paramName: string,
+  familyId: string | null,
+  suggestion: DictSuggestion,
+  cardVersionAtWrite: string | null,
+  schemaVersionAtWrite: string | null,
+): void {
   if (typeof window === 'undefined') return;
   try {
-    const key = SUGGEST_LS_PREFIX + (familyId ?? '') + '::' + paramName;
-    const payload: CachedSuggestion = { suggestion, cachedAt: Date.now() };
+    const key = suggestLsKey(familyId, paramName);
+    const payload: CachedSuggestion = {
+      suggestion,
+      cachedAt: Date.now(),
+      cardVersionAtWrite,
+      schemaVersionAtWrite,
+    };
     localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // localStorage full or disabled — silently degrade to no cache
   }
+}
+
+/** Compare a cached entry's at-write versions against the current versions
+ *  for that family. Returns null if fresh; otherwise a short reason string
+ *  used in tooltips and the header banner. Engineer-friendly wording — no
+ *  "version" jargon, just plain English. */
+function computeStaleness(
+  atWriteCard: string | null,
+  atWriteSchema: string | null,
+  currentCard: string | null,
+  currentSchema: string | null,
+): string | null {
+  const reasons: string[] = [];
+  if (atWriteCard !== currentCard) reasons.push('domain card updated');
+  if (atWriteSchema !== currentSchema) reasons.push('schema changed');
+  if (reasons.length === 0) return null;
+  return reasons.join(' and ');
 }
 
 // Same cache pattern for deep investigations. Separate prefix so a schema
@@ -235,10 +305,14 @@ function writeSuggestionCache(paramName: string, familyId: string | null, sugges
 //     DECISION, not Investigate click. Cached entries from v3 still carry
 //     a stale investigationId field that the new flow ignores; bump so
 //     legacy entries aren't re-used with the wrong shape assumptions.
-const INVESTIGATE_LS_PREFIX = 'atlas-ingest-ai-investigate-v4:';
+// v10: cache record gains cardVersionAtWrite + schemaVersionAtWrite for
+//      proactive staleness signaling (mirrors the v7 suggest cache shape).
+const INVESTIGATE_LS_PREFIX = 'atlas-ingest-ai-investigate-v10:';
 type CachedDeepAnalysis = {
   analysis: DeepAnalysis;
   cachedAt: number;
+  cardVersionAtWrite: string | null;
+  schemaVersionAtWrite: string | null;
 };
 
 function readInvestigateCache(paramName: string, scopeKey: string | null): CachedDeepAnalysis | null {
@@ -263,24 +337,36 @@ function writeInvestigateCache(
   paramName: string,
   scopeKey: string | null,
   analysis: DeepAnalysis,
+  cardVersionAtWrite: string | null,
+  schemaVersionAtWrite: string | null,
 ): void {
   if (typeof window === 'undefined') return;
   try {
     const key = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + paramName;
-    const payload: CachedDeepAnalysis = { analysis, cachedAt: Date.now() };
+    const payload: CachedDeepAnalysis = {
+      analysis,
+      cachedAt: Date.now(),
+      cardVersionAtWrite,
+      schemaVersionAtWrite,
+    };
     localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // ignore
   }
 }
 
-// Per-family canonical attributeId set, cached separately from suggestions so
-// the cache survives even when individual suggestion entries expire and so we
-// don't duplicate the schema list across hundreds of suggestion entries.
-const SCHEMA_LS_PREFIX = 'atlas-ingest-family-schema:';
-type CachedSchema = { schemaIds: string[]; cachedAt: number };
+// Per-family canonical attributeId set + current versions for staleness
+// comparison. v6 bump because the cached shape now carries schemaVersion
+// alongside cardUpdatedAt.
+const SCHEMA_LS_PREFIX = 'atlas-ingest-family-schema-v6:';
+type CachedSchema = {
+  schemaIds: string[];
+  cardUpdatedAt: string | null;
+  schemaVersion: string | null;
+  cachedAt: number;
+};
 
-function readFamilySchemaCache(familyId: string): string[] | null {
+function readFamilySchemaCache(familyId: string): { schemaIds: string[]; cardUpdatedAt: string | null; schemaVersion: string | null } | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(SCHEMA_LS_PREFIX + familyId);
@@ -290,16 +376,25 @@ function readFamilySchemaCache(familyId: string): string[] | null {
       localStorage.removeItem(SCHEMA_LS_PREFIX + familyId);
       return null;
     }
-    return parsed.schemaIds;
+    return {
+      schemaIds: parsed.schemaIds,
+      cardUpdatedAt: parsed.cardUpdatedAt ?? null,
+      schemaVersion: parsed.schemaVersion ?? null,
+    };
   } catch {
     return null;
   }
 }
 
-function writeFamilySchemaCache(familyId: string, schemaIds: string[]): void {
+function writeFamilySchemaCache(
+  familyId: string,
+  schemaIds: string[],
+  cardUpdatedAt: string | null,
+  schemaVersion: string | null,
+): void {
   if (typeof window === 'undefined') return;
   try {
-    const payload: CachedSchema = { schemaIds, cachedAt: Date.now() };
+    const payload: CachedSchema = { schemaIds, cardUpdatedAt, schemaVersion, cachedAt: Date.now() };
     localStorage.setItem(SCHEMA_LS_PREFIX + familyId, JSON.stringify(payload));
   } catch {
     // ignore
@@ -315,7 +410,7 @@ function writeFamilySchemaCache(familyId: string, schemaIds: string[]): void {
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
@@ -333,15 +428,36 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Used to flag whether the row's (possibly edited) attributeId actually
   // exists in the family's logic table. Empty set ⇒ family had no schema info.
   const [schemaByFamily, setSchemaByFamily] = useState<Record<string, Set<string>>>({});
+  /** Per-family current versions used for the staleness comparison. The
+   *  cached suggestion / investigation stores the at-write versions
+   *  separately; on render we compare against these "current" values
+   *  fetched from the server. When they differ → row renders stale UI. */
+  const [cardVersionByFamily, setCardVersionByFamily] = useState<Record<string, string | null>>({});
+  const cardVersionByFamilyRef = useRef<Record<string, string | null>>({});
+  useEffect(() => { cardVersionByFamilyRef.current = cardVersionByFamily; }, [cardVersionByFamily]);
+  const [schemaVersionByFamily, setSchemaVersionByFamily] = useState<Record<string, string | null>>({});
+  const schemaVersionByFamilyRef = useRef<Record<string, string | null>>({});
+  useEffect(() => { schemaVersionByFamilyRef.current = schemaVersionByFamily; }, [schemaVersionByFamily]);
   // How many rows to actually render. Bumped by the "Show more" button.
   // Resets when the rows prop changes (filters narrowed the set).
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_ROWS);
+  /** When true, the table re-orders so rows with stale cached AI work
+   *  surface to the top. Engineer toggles via the staleness-banner button.
+   *  Off by default so a fresh page load preserves the parent panel's
+   *  source order (which is itself sorted by triage priority upstream). */
+  const [staleFirstSort, setStaleFirstSort] = useState(false);
 
   // Per-row opt-out from bulk normalized-match acceptance. By default,
   // accepting a row that has cosmetic-duplicate paramNames in the same
   // scope ALSO fires overrides for the duplicates. Click the × on the
   // "+N similar" chip to scope the accept to just the primary row.
   const [bulkOptedOut, setBulkOptedOut] = useState<Set<string>>(new Set());
+
+  /** When set, the right-side AI Investigation drawer is open showing the
+   *  cached deepAnalysis for that paramName. Single-instance drawer: clicking
+   *  another row's verdict chip swaps the content. Closes via ESC, backdrop
+   *  click, or after the engineer commits an action (auto-close). */
+  const [drawerParamName, setDrawerParamName] = useState<string | null>(null);
 
   /** For each row, the OTHER queue rows whose paramName normalizes to the
    *  same string AND share the same scope AND are still actionable (no
@@ -369,13 +485,54 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
     return result;
   }, [rows]);
-  // Reset visible count whenever the rows prop changes — a filter change
-  // shouldn't carry over an expanded "show all" state from the previous view.
+  // Reset visible count when the parent's filter context changes — a filter
+  // narrowing shouldn't carry over an expanded "show all" state from the
+  // previous view. Crucially this is NOT keyed off `rows`: optimistic
+  // Accept/Revert/Flag mutations replace the `rows` array reference too, and
+  // resetting on those was kicking engineers back to the first 50 rows after
+  // every single action on long queues.
   useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE_ROWS);
-  }, [rows]);
-  const visibleRows = rows.slice(0, visibleCount);
-  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
+  }, [viewKey]);
+  // Safety clamp: if the filtered set shrinks below the current visible count
+  // (e.g. accepting a row in Open status drops it from filteredRows), keep
+  // visibleCount in range so the "Show more" affordance stays meaningful.
+  useEffect(() => {
+    if (rows.length < visibleCount && rows.length >= INITIAL_VISIBLE_ROWS) {
+      setVisibleCount(rows.length);
+    }
+  }, [rows.length, visibleCount]);
+  // Conditional stale-first sort. When toggled on (via the staleness banner),
+  // rows whose cached suggestion OR investigation is stale rise to the top
+  // of the queue so the engineer can refresh them without scrolling. The
+  // sort is stable: within the stale group, source order preserved; within
+  // fresh group, source order preserved. Off by default — preserves the
+  // parent panel's intentional ordering.
+  const orderedRows = useMemo(() => {
+    if (!staleFirstSort) return rows;
+    const isRowStale = (row: GlobalUnmappedParam): boolean => {
+      const st = states[row.paramName];
+      if (!st) return false;
+      const scope = getOverrideScope(row);
+      const scopeKey = scope?.key ?? null;
+      if (!scopeKey) return false;
+      const curCard = cardVersionByFamily[scopeKey] ?? null;
+      const curSchema = schemaVersionByFamily[scopeKey] ?? null;
+      if (st.suggestion && (st.suggestionCardVersionAtWrite !== curCard || st.suggestionSchemaVersionAtWrite !== curSchema)) return true;
+      if (st.deepAnalysis && (st.deepAnalysisCardVersionAtWrite !== curCard || st.deepAnalysisSchemaVersionAtWrite !== curSchema)) return true;
+      return false;
+    };
+    // Stable partition: stales first (preserved relative order), then fresh.
+    const stale: GlobalUnmappedParam[] = [];
+    const fresh: GlobalUnmappedParam[] = [];
+    for (const r of rows) {
+      if (isRowStale(r)) stale.push(r);
+      else fresh.push(r);
+    }
+    return [...stale, ...fresh];
+  }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort]);
+  const visibleRows = orderedRows.slice(0, visibleCount);
+  const hiddenCount = Math.max(0, orderedRows.length - visibleRows.length);
   // useTransition lets React keep the UI responsive while it renders the
   // additional rows. Without this, the synchronous setVisibleCount blocked
   // the main thread for several seconds on large queues, triggering "Page
@@ -408,12 +565,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const hydrateFromCache = useCallback(() => {
     const initialStates: Record<string, RowState> = {};
     const initialSchemaByFamily: Record<string, Set<string>> = {};
+    const initialCardVersionByFamily: Record<string, string | null> = {};
+    const initialSchemaVersionByFamily: Record<string, string | null> = {};
     const seenFamilies = new Set<string>();
     const familiesNeedingSchema = new Set<string>();
     for (const row of rows) {
-      // Skip rows already hydrated this session — preserves user edits to
-      // the input fields between filter switches. New paramNames entering
-      // the prop fall through and get seeded.
       if (hydratedParamsRef.current.has(row.paramName)) continue;
       hydratedParamsRef.current.add(row.paramName);
       const scope = getOverrideScope(row);
@@ -421,11 +577,20 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       if (scopeKey && !seenFamilies.has(scopeKey)) {
         seenFamilies.add(scopeKey);
         const cachedSchema = readFamilySchemaCache(scopeKey);
-        if (cachedSchema && cachedSchema.length > 0) {
-          initialSchemaByFamily[scopeKey] = new Set(cachedSchema);
-        } else {
-          familiesNeedingSchema.add(scopeKey);
+        if (cachedSchema && cachedSchema.schemaIds.length > 0) {
+          // Seed from LS cache for instant render — schemaIds rarely change.
+          initialSchemaByFamily[scopeKey] = new Set(cachedSchema.schemaIds);
+          initialCardVersionByFamily[scopeKey] = cachedSchema.cardUpdatedAt;
+          initialSchemaVersionByFamily[scopeKey] = cachedSchema.schemaVersion;
         }
+        // ALWAYS refetch the schema endpoint, even on LS cache hit. The
+        // cardUpdatedAt + schemaVersion fields drive staleness comparison;
+        // if we trust the 7-day LS cache, a card edit performed BETWEEN page
+        // loads never reaches the staleness check (cached versions match the
+        // suggestion's at-write versions, so no staleness signal renders).
+        // The endpoint is cheap (logic-table read + one DB query for the
+        // active card row); ~50ms × N families per page load is acceptable.
+        familiesNeedingSchema.add(scopeKey);
       }
       // Auto-flagged rows are misclassifications, not synonym gaps. Seed an
       // empty state so cells render placeholders; they're never eligible for
@@ -443,31 +608,45 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
+          suggestionCardVersionAtWrite: null,
+          suggestionSchemaVersionAtWrite: null,
+          deepAnalysisCardVersionAtWrite: null,
+          deepAnalysisSchemaVersionAtWrite: null,
         };
         continue;
       }
-      const cached = readSuggestionCache(row.paramName, scopeKey);
+      const cachedRecord = readSuggestionCacheRecord(row.paramName, scopeKey);
+      const cached = cachedRecord?.suggestion ?? null;
       const cachedDeep = readInvestigateCache(row.paramName, scopeKey);
       // For already-accepted rows (active OR reverted override), seed the
       // edit fields from the override so the Accepted / Undone status views
       // show what was actually mapped instead of blank inputs + a "Generate"
-      // CTA that's irrelevant for a row that's already resolved. The AI
-      // suggestion cache still wins as the source of truth when present —
-      // engineer may have generated a fresh suggestion after revert.
+      // CTA that's irrelevant for a row that's already resolved.
+      //
+      // Precedence: override wins over AI suggestion when both exist. The
+      // override represents the engineer's committed decision (potentially
+      // edited away from the AI's proposal — e.g. user overrides
+      // vgs_th → vgs_th_min). Always honor that over the stale AI cache.
+      // For rows with no override yet, AI suggestion fills the fields as
+      // a starting point for the engineer to review/edit.
       const ov = row.acceptedOverride;
       if (cached) {
         initialStates[row.paramName] = {
           suggestion: cached,
           loadingSuggestion: false,
-          editedAttributeId: cached.suggestedAttributeId ?? ov?.attributeId ?? '',
-          editedAttributeName: cached.suggestedAttributeName ?? ov?.attributeName ?? '',
-          editedUnit: cached.suggestedUnit ?? ov?.unit ?? '',
+          editedAttributeId: ov?.attributeId ?? cached.suggestedAttributeId ?? '',
+          editedAttributeName: ov?.attributeName ?? cached.suggestedAttributeName ?? '',
+          editedUnit: ov?.unit ?? cached.suggestedUnit ?? '',
           accepted: false,
           acceptError: null,
           accepting: false,
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
+          suggestionCardVersionAtWrite: cachedRecord?.cardVersionAtWrite ?? null,
+          suggestionSchemaVersionAtWrite: cachedRecord?.schemaVersionAtWrite ?? null,
+          deepAnalysisCardVersionAtWrite: cachedDeep?.cardVersionAtWrite ?? null,
+          deepAnalysisSchemaVersionAtWrite: cachedDeep?.schemaVersionAtWrite ?? null,
         };
       } else if (ov) {
         // Override-only seed — no AI suggestion was ever cached for this row
@@ -497,6 +676,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
+          // Synthetic suggestion (from override) is never "stale" against
+          // current versions — engineer accepted it intentionally.
+          suggestionCardVersionAtWrite: null,
+          suggestionSchemaVersionAtWrite: null,
+          deepAnalysisCardVersionAtWrite: cachedDeep?.cardVersionAtWrite ?? null,
+          deepAnalysisSchemaVersionAtWrite: cachedDeep?.schemaVersionAtWrite ?? null,
         };
       } else {
         // Uncached AND not previously accepted — render a "Generate" button
@@ -513,12 +698,22 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
+          suggestionCardVersionAtWrite: null,
+          suggestionSchemaVersionAtWrite: null,
+          deepAnalysisCardVersionAtWrite: cachedDeep?.cardVersionAtWrite ?? null,
+          deepAnalysisSchemaVersionAtWrite: cachedDeep?.schemaVersionAtWrite ?? null,
         };
       }
     }
     setStates((prev) => ({ ...prev, ...initialStates }));
     if (Object.keys(initialSchemaByFamily).length > 0) {
       setSchemaByFamily((prev) => ({ ...prev, ...initialSchemaByFamily }));
+    }
+    if (Object.keys(initialCardVersionByFamily).length > 0) {
+      setCardVersionByFamily((prev) => ({ ...prev, ...initialCardVersionByFamily }));
+    }
+    if (Object.keys(initialSchemaVersionByFamily).length > 0) {
+      setSchemaVersionByFamily((prev) => ({ ...prev, ...initialSchemaVersionByFamily }));
     }
 
     // Schema fallback runs even when no suggestions are generated — the
@@ -530,8 +725,18 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           const res = await fetch(`/api/admin/atlas/family-schema?familyId=${encodeURIComponent(fam)}`);
           const json = await res.json();
           if (json?.success && Array.isArray(json.schemaIds)) {
-            writeFamilySchemaCache(fam, json.schemaIds);
+            const cardUpdatedAt = (typeof json.cardUpdatedAt === 'string' ? json.cardUpdatedAt : null) as string | null;
+            const schemaVersion = (typeof json.schemaVersion === 'string' ? json.schemaVersion : null) as string | null;
+            writeFamilySchemaCache(fam, json.schemaIds, cardUpdatedAt, schemaVersion);
+            // schemaIds: keep the "don't clobber if already set" guard — the
+            // set is identity-stable so re-creating it would force a needless
+            // re-render. The version state, however, MUST overwrite: that's
+            // the whole point of the always-fetch refresh — bring the latest
+            // cardUpdatedAt + schemaVersion to the staleness comparison even
+            // if the LS cache pre-seeded older values.
             setSchemaByFamily((prev) => prev[fam] ? prev : { ...prev, [fam]: new Set(json.schemaIds) });
+            setCardVersionByFamily((prev) => ({ ...prev, [fam]: cardUpdatedAt }));
+            setSchemaVersionByFamily((prev) => ({ ...prev, [fam]: schemaVersion }));
           }
         } catch {
           // schema fallback failed — indicator just stays dark for this family
@@ -545,7 +750,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // suggestions for N rows" button and the per-row "Generate" mini-button.
   // Concurrency-limited to SUGGESTION_CONCURRENCY parallel calls so we don't
   // slam Anthropic when the user generates a large batch at once.
-  const generateSuggestionsForRows = useCallback(async (targetRows: GlobalUnmappedParam[]) => {
+  const generateSuggestionsForRows = useCallback(async (targetRows: GlobalUnmappedParam[], opts?: { force?: boolean }) => {
+    const force = opts?.force === true;
     const queue = targetRows.filter((r) => !r.autoFlag);
     if (queue.length === 0) return;
 
@@ -595,22 +801,33 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               // L3 logic-table → L2 param-map internally, so an L2 category
               // string (e.g. 'Microcontrollers') routes to the right schema.
               familyId: rowScopeKey ?? '',
+              // force=true bypasses server-side SUGGEST_CACHE for this call.
+              // Used by the bulk "Refresh AI suggestions" action so post-card
+              // / post-rule changes propagate even when the card version
+              // didn't change (which would otherwise auto-invalidate).
+              force,
             }),
           });
           const json = await res.json();
           const suggestion: DictSuggestion | null = json?.success ? json.suggestion : null;
+          // Server returns the current versions on every response. Use them as
+          // the at-write versions stored alongside the cache entry — they're
+          // the freshest values seen, and the staleness check on next render
+          // compares THESE against future "current" values fetched on next
+          // page load. If versions differ later → row renders stale UI.
+          const currentCardVersion = (typeof json?.currentCardVersion === 'string' ? json.currentCardVersion : null) as string | null;
+          const currentSchemaVersion = (typeof json?.currentSchemaVersion === 'string' ? json.currentSchemaVersion : null) as string | null;
           if (suggestion) {
-            writeSuggestionCache(row.paramName, rowScopeKey, suggestion);
+            writeSuggestionCache(row.paramName, rowScopeKey, suggestion, currentCardVersion, currentSchemaVersion);
           }
-          // Capture the schema list returned alongside the suggestion. We only need
-          // it once per scope so the conditional setSchemaByFamily check avoids
-          // rerendering rows whose scope already has the set populated. Also
-          // persist to localStorage so the next page load lights up indicators
-          // synchronously (no API roundtrip needed).
+          // Capture the schema list returned alongside the suggestion + bump
+          // local version state so the next /suggest write uses fresh values.
           if (Array.isArray(json?.schemaIds) && rowScopeKey) {
             const fam = rowScopeKey;
             setSchemaByFamily((prev) => prev[fam] ? prev : { ...prev, [fam]: new Set(json.schemaIds) });
-            writeFamilySchemaCache(fam, json.schemaIds);
+            setCardVersionByFamily((prev) => ({ ...prev, [fam]: currentCardVersion }));
+            setSchemaVersionByFamily((prev) => ({ ...prev, [fam]: currentSchemaVersion }));
+            writeFamilySchemaCache(fam, json.schemaIds, currentCardVersion, currentSchemaVersion);
           }
           setStates((prev) => ({
             ...prev,
@@ -624,6 +841,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               accepted: false,
               acceptError: null,
               accepting: false,
+              suggestionCardVersionAtWrite: currentCardVersion,
+              suggestionSchemaVersionAtWrite: currentSchemaVersion,
             },
           }));
         } catch {
@@ -667,6 +886,60 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const generateOne = useCallback((row: GlobalUnmappedParam) => {
     generateSuggestionsForRows([row]);
   }, [generateSuggestionsForRows]);
+
+  // Bulk-refresh state. The "stale" subsets — rows whose cached suggestion /
+  // investigation was written against an older card or schema version than
+  // is current. These drive the proactive header banner + targeted refresh.
+  const cachedSuggestionRows = useMemo(
+    () => rows.filter((r) => !r.autoFlag && !!states[r.paramName]?.suggestion && !states[r.paramName]?.loadingSuggestion),
+    [rows, states],
+  );
+  const cachedInvestigationRows = useMemo(
+    () => rows.filter((r) => !!states[r.paramName]?.deepAnalysis && !states[r.paramName]?.loadingDeepAnalysis),
+    [rows, states],
+  );
+
+  /** Per-row helper — exposed at component scope so the row-render code can
+   *  drive the stripe / chip styling / ↻ icon visibility. */
+  const getRowSuggestionStaleness = useCallback((row: GlobalUnmappedParam): string | null => {
+    const st = states[row.paramName];
+    if (!st?.suggestion) return null;
+    const scope = getOverrideScope(row);
+    const scopeKey = scope?.key ?? null;
+    if (!scopeKey) return null;
+    return computeStaleness(
+      st.suggestionCardVersionAtWrite,
+      st.suggestionSchemaVersionAtWrite,
+      cardVersionByFamily[scopeKey] ?? null,
+      schemaVersionByFamily[scopeKey] ?? null,
+    );
+  }, [states, cardVersionByFamily, schemaVersionByFamily]);
+
+  const getRowInvestigationStaleness = useCallback((row: GlobalUnmappedParam): string | null => {
+    const st = states[row.paramName];
+    if (!st?.deepAnalysis) return null;
+    const scope = getOverrideScope(row);
+    const scopeKey = scope?.key ?? null;
+    if (!scopeKey) return null;
+    return computeStaleness(
+      st.deepAnalysisCardVersionAtWrite,
+      st.deepAnalysisSchemaVersionAtWrite,
+      cardVersionByFamily[scopeKey] ?? null,
+      schemaVersionByFamily[scopeKey] ?? null,
+    );
+  }, [states, cardVersionByFamily, schemaVersionByFamily]);
+
+  const staleSuggestionRows = useMemo(
+    () => cachedSuggestionRows.filter((r) => getRowSuggestionStaleness(r) !== null),
+    [cachedSuggestionRows, getRowSuggestionStaleness],
+  );
+  const staleInvestigationRows = useMemo(
+    () => cachedInvestigationRows.filter((r) => getRowInvestigationStaleness(r) !== null),
+    [cachedInvestigationRows, getRowInvestigationStaleness],
+  );
+
+  const [refreshConfirm, setRefreshConfirm] = useState<{ kind: 'suggestions' | 'investigations'; count: number } | null>(null);
+  const [bulkRefreshProgress, setBulkRefreshProgress] = useState<{ done: number; total: number } | null>(null);
 
   // ─── Per-row flag actions (Confirm / Revert) ────────────
   // Tracks in-flight + last-error per paramName so the buttons can show
@@ -780,11 +1053,53 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // Record on the audit log that this confirm was the outcome of an
       // earlier AI investigation (if there was one). Fire-and-forget.
       void recordInvestigationAction(row, 'flagged_wrong_family');
+
+      // For AI-driven confirms (NOT registry auto-flags — those are already
+      // in the code registry by definition), also: (a) persist the signature
+      // to atlas_family_param_signatures so future ingests auto-reclassify,
+      // and (b) retroactively reclassify existing atlas_products that carry
+      // the offending paramName under the wrong family. Both happen server-
+      // side in one call. Reasoning + targetFamily come from the AI verdict.
+      //
+      // Pre-flight validation: skip the POST entirely if the AI's
+      // suggested family isn't a real L3 family. The server-side endpoint
+      // would 400 on this anyway (Decision #185 BACKLOG follow-up), but
+      // catching it client-side gives a cleaner message and avoids a
+      // misleading "signature insert failed" tooltip when the real issue
+      // is "the AI hallucinated a family ID."
+      let sigError: string | null = null;
+      if (investigationVerdict && autoDiagnosis?.suggestedFamily) {
+        if (!isValidFamilyId(autoDiagnosis.suggestedFamily as string)) {
+          sigError = `Flag confirmed, but skipped registry insert — AI suggested unknown family '${autoDiagnosis.suggestedFamily}'. Edit the signature manually if needed.`;
+        } else {
+          try {
+            const sigRes = await fetch('/api/admin/atlas/family-param-signatures', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                paramName: row.paramName,
+                targetFamilyId: autoDiagnosis.suggestedFamily,
+                reasoning: autoDiagnosis.reasoning ?? investigationVerdict.prose ?? 'Engineer confirmed AI wrong-family verdict.',
+              }),
+            });
+            const sigJson = await sigRes.json();
+            if (!sigRes.ok || !sigJson.success) {
+              // Don't fail the whole Confirm — the wrong_family note already
+              // persisted. Surface the signature failure as a non-blocking
+              // warning so engineer knows the registry didn't update.
+              sigError = `Flag confirmed, but signature insert failed: ${sigJson.error ?? 'unknown error'}`;
+            }
+          } catch (e) {
+            sigError = `Flag confirmed, but signature insert errored: ${(e as Error).message}`;
+          }
+        }
+      }
+
       // Bump the Recent Accepts panel — the queue-row mutation is handled by
       // onRowFlagged above. No batch regen needed; flagging doesn't change
       // ingest output.
       await onRegenerateAffected([]);
-      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: null } }));
+      setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: sigError } }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Confirm failed';
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
@@ -1150,7 +1465,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         throw new Error(json.error || json.detail || 'Investigation failed');
       }
       const analysis: DeepAnalysis = json.analysis;
-      writeInvestigateCache(row.paramName, scopeKey, analysis);
+      // Server returns current versions on every response — use them as
+      // the at-write versions so the staleness check on next render compares
+      // against then-future "current" values fetched at page load.
+      const currentCardVersion = (typeof json.currentCardVersion === 'string' ? json.currentCardVersion : null) as string | null;
+      const currentSchemaVersion = (typeof json.currentSchemaVersion === 'string' ? json.currentSchemaVersion : null) as string | null;
+      writeInvestigateCache(row.paramName, scopeKey, analysis, currentCardVersion, currentSchemaVersion);
       setStates((prev) => ({
         ...prev,
         [row.paramName]: {
@@ -1158,6 +1478,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: analysis,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
+          deepAnalysisCardVersionAtWrite: currentCardVersion,
+          deepAnalysisSchemaVersionAtWrite: currentSchemaVersion,
         } as RowState,
       }));
     } catch (err) {
@@ -1172,6 +1494,44 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       }));
     }
   }, [states]);
+
+  // ─── Bulk refresh handlers ────────────────────────────
+  // Declared AFTER runInvestigate so the closure can safely reference it
+  // (avoids TDZ on the const). Suggestions go through generateSuggestionsForRows
+  // (parallel, concurrency-limited via SUGGESTION_CONCURRENCY); investigations
+  // run sequentially because they're more expensive and fan out to several
+  // server-side fetches each.
+  const requestRefreshSuggestions = useCallback(() => {
+    if (staleSuggestionRows.length === 0) return;
+    setRefreshConfirm({ kind: 'suggestions', count: staleSuggestionRows.length });
+  }, [staleSuggestionRows.length]);
+
+  const requestRefreshInvestigations = useCallback(() => {
+    if (staleInvestigationRows.length === 0) return;
+    setRefreshConfirm({ kind: 'investigations', count: staleInvestigationRows.length });
+  }, [staleInvestigationRows.length]);
+
+  const confirmRefresh = useCallback(async () => {
+    if (!refreshConfirm) return;
+    const { kind } = refreshConfirm;
+    setRefreshConfirm(null);
+    if (kind === 'suggestions') {
+      await generateSuggestionsForRows(staleSuggestionRows, { force: true });
+    } else {
+      const total = staleInvestigationRows.length;
+      setBulkRefreshProgress({ done: 0, total });
+      try {
+        for (let i = 0; i < total; i++) {
+          const row = staleInvestigationRows[i];
+          if (!row) continue;
+          await runInvestigate(row);
+          setBulkRefreshProgress({ done: i + 1, total });
+        }
+      } finally {
+        setBulkRefreshProgress(null);
+      }
+    }
+  }, [refreshConfirm, staleSuggestionRows, staleInvestigationRows, generateSuggestionsForRows, runInvestigate]);
 
   // Apply a primary or alternative action from the deep-analysis card.
   // For new_canonical / unit_mismatch / disambiguation: prefills the row's
@@ -1405,6 +1765,80 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </Alert>
         )}
 
+        {/* Proactive staleness banner — replaces the previous always-visible
+            "Refresh AI suggestions / investigations" buttons. Renders ONLY
+            when the visible queue contains stale entries (cached against an
+            older card or schema version than is currently active). Hidden
+            entirely when nothing is stale, so a fresh Triage page is noise-free. */}
+        {!suggestionProgress && !bulkRefreshProgress && (staleSuggestionRows.length > 0 || staleInvestigationRows.length > 0) && (
+          <Alert
+            severity="warning"
+            icon={<RefreshIcon fontSize="small" />}
+            sx={{ my: 1, py: 0.75 }}
+            action={
+              <Stack direction="row" spacing={1} alignItems="center">
+                {/* Sort affordance — flips the table to surface stale rows
+                    at the top so the engineer can refresh without scrolling.
+                    Off by default; on persists for the session (state lives
+                    in the table component, not localStorage). */}
+                <Tooltip title={staleFirstSort
+                  ? 'Restore source order'
+                  : 'Sort the table so stale rows surface to the top'}>
+                  <Button
+                    size="small"
+                    variant={staleFirstSort ? 'contained' : 'outlined'}
+                    color="warning"
+                    onClick={() => setStaleFirstSort((v) => !v)}
+                    sx={{ fontSize: '0.7rem' }}
+                  >
+                    {staleFirstSort ? 'Stale-first ✓' : 'Show stale first'}
+                  </Button>
+                </Tooltip>
+                {staleSuggestionRows.length > 0 && (
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="warning"
+                    startIcon={<RefreshIcon sx={{ fontSize: 14 }} />}
+                    onClick={requestRefreshSuggestions}
+                  >
+                    Refresh {staleSuggestionRows.length} stale suggestion{staleSuggestionRows.length === 1 ? '' : 's'}
+                  </Button>
+                )}
+                {staleInvestigationRows.length > 0 && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    startIcon={<RefreshIcon sx={{ fontSize: 14 }} />}
+                    onClick={requestRefreshInvestigations}
+                  >
+                    Refresh {staleInvestigationRows.length} stale investigation{staleInvestigationRows.length === 1 ? '' : 's'}
+                  </Button>
+                )}
+              </Stack>
+            }
+          >
+            <Typography variant="body2">
+              {staleSuggestionRows.length > 0 && <strong>{staleSuggestionRows.length} suggestion{staleSuggestionRows.length === 1 ? '' : 's'}</strong>}
+              {staleSuggestionRows.length > 0 && staleInvestigationRows.length > 0 && <> and </>}
+              {staleInvestigationRows.length > 0 && <strong>{staleInvestigationRows.length} investigation{staleInvestigationRows.length === 1 ? '' : 's'}</strong>}
+              {' '}in this view {staleSuggestionRows.length + staleInvestigationRows.length === 1 ? 'is' : 'are'} stale —
+              the AI verdict was generated before recent domain card or schema changes.
+              Refresh to see updated AI verdicts that reflect the current context.
+            </Typography>
+          </Alert>
+        )}
+
+        {bulkRefreshProgress && (
+          <Box sx={{ my: 1 }}>
+            <LinearProgress variant="determinate" value={(bulkRefreshProgress.done / bulkRefreshProgress.total) * 100} />
+            <Typography variant="caption" color="text.secondary">
+              Refreshing AI investigations: {bulkRefreshProgress.done} / {bulkRefreshProgress.total}
+            </Typography>
+          </Box>
+        )}
+
         {suggestionProgress && (
           <Box sx={{ my: 1 }}>
             <LinearProgress variant="determinate" value={(suggestionProgress.done / suggestionProgress.total) * 100} />
@@ -1451,6 +1885,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const flagError = flagState[r.paramName]?.error ?? null;
                 const suggestedFam = r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null;
                 const confirmedFlag = r.noteStatus === 'wrong_family';
+                // Staleness signals — drive the per-row visual cues described
+                // in the staleness banner section. Amber border, receded chip,
+                // and ↻ icon. Computed once per row to avoid recomputing in
+                // multiple cells.
+                const suggestionStaleReason = getRowSuggestionStaleness(r);
+                const investigationStaleReason = getRowInvestigationStaleness(r);
+                const isStale = !!(suggestionStaleReason || investigationStaleReason);
                 return (
                   <Fragment key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}::${rowIdx}`}>
                   <TableRow
@@ -1460,14 +1901,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       //   - confirmedFlag (auto-flag confirmed by engineer)
                       // Both visually recede so unreviewed work is at eye level.
                       opacity: state?.accepted ? 0.5 : (confirmedFlag ? 0.55 : 1),
-                      // Red left-border accent makes flagged rows scannable in
-                      // the All view. Confirmed flags soften the border to
-                      // grey so the eye still parses "flag", but the row no
-                      // longer reads as needing attention.
-                      borderLeft: flagged ? '3px solid' : undefined,
+                      // Left-border accent: red for flagged (highest signal),
+                      // amber for stale (high signal, lower than flagged), none
+                      // when neither. Keeps the strongest signal visible when
+                      // both states overlap on the same row.
+                      borderLeft: flagged || isStale ? '4px solid' : undefined,
                       borderLeftColor: flagged
                         ? (confirmedFlag ? 'text.disabled' : 'error.main')
-                        : undefined,
+                        : (isStale ? 'warning.main' : undefined),
                     }}
                   >
                     <TableCell sx={{ width: 90, padding: '4px 8px' }}>
@@ -1502,8 +1943,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                               sx={{ p: 0.25 }}
                             >
                               {flagged
-                                ? <BookmarkAddedIcon sx={{ fontSize: 16, color: 'warning.light' }} />
-                                : <BookmarkBorderIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
+                                ? <FlagIcon sx={{ fontSize: 16, color: 'error.main' }} />
+                                : <OutlinedFlagIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
                             </IconButton>
                           </Tooltip>
                         );
@@ -1538,7 +1979,19 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                           <Chip size="small" icon={<FlagIcon sx={{ fontSize: 12 }} />} label={r.dominantFamily ?? '?'} sx={{ fontSize: '0.6rem', height: 18, bgcolor: 'error.dark', color: 'error.contrastText' }} />
                         </Tooltip>
                       ) : r.dominantFamily ? (
-                        <Chip size="small" label={r.dominantFamily} variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                        // Tooltip surfaces the human-readable family name so
+                        // engineers can map "C3" → "Gate Drivers" without
+                        // having to memorize the L3 ID list. Other admin
+                        // panels (Dictionary, Logic, Param Mappings) all use
+                        // the full English name in their family pickers.
+                        (() => {
+                          const fam = getFamilyDisplayName(r.dominantFamily);
+                          return (
+                            <Tooltip title={fam ? `${r.dominantFamily} — ${fam.full}` : r.dominantFamily}>
+                              <Chip size="small" label={r.dominantFamily} variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                            </Tooltip>
+                          );
+                        })()
                       ) : r.dominantCategory ? (
                         // L2-only row (no logic-table family). Show "L2"
                         // marker so engineers see at a glance that this is
@@ -1650,11 +2103,29 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         <CircularProgress size={12} />
                       ) : state?.suggestion?.translation ? (
                         <Stack spacing={0.5}>
-                          <Tooltip title={state.suggestion.reasoning ?? ''}>
-                            <Typography variant="caption" sx={{ fontStyle: 'italic' }}>
-                              {state.suggestion.translation}
-                            </Typography>
-                          </Tooltip>
+                          <Stack direction="row" spacing={0.5} alignItems="flex-start">
+                            <Tooltip title={state.suggestion.reasoning ?? ''}>
+                              <Typography variant="caption" sx={{ fontStyle: 'italic', flex: 1 }}>
+                                {state.suggestion.translation}
+                              </Typography>
+                            </Tooltip>
+                            {/* Per-row refresh ↻ — appears ONLY when the cached
+                                suggestion is stale against current card / schema
+                                versions. Click re-fires /suggest with force=true
+                                so the server skips its cache too. */}
+                            {suggestionStaleReason && (
+                              <Tooltip title={`⚠ Stale — ${suggestionStaleReason}. Click to refresh this row's AI suggestion.`}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => generateSuggestionsForRows([r], { force: true })}
+                                  sx={{ p: 0.25, color: 'warning.main' }}
+                                  aria-label="Refresh stale AI suggestion"
+                                >
+                                  <RefreshIcon sx={{ fontSize: 14 }} />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </Stack>
                           {state.suggestion.explanation && (
                             // Symmetric in-cell explanation — visible by default
                             // for BOTH Accept and Defer rows so Claude doesn't
@@ -1835,7 +2306,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                           const tooltipBody = (
                             <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
                               <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
-                                Resolved via deeper investigation · Confidence: {deep.confidence}
+                                Click to open full analysis · Confidence: {deep.confidence}
                               </Typography>
                               {deep.recommendation?.summary && (
                                 <Typography variant="caption" sx={{ display: 'block' }}>
@@ -1850,7 +2321,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                                 size="small"
                                 icon={meta.icon}
                                 label={meta.label}
-                                sx={{ bgcolor: meta.bg, color: meta.fg, fontSize: '0.6rem', height: 18, fontWeight: 600 }}
+                                onClick={() => setDrawerParamName(r.paramName)}
+                                sx={{
+                                  bgcolor: meta.bg,
+                                  color: meta.fg,
+                                  fontSize: '0.6rem',
+                                  height: 18,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  '&:hover': { filter: 'brightness(1.15)' },
+                                }}
                               />
                             </Tooltip>
                           );
@@ -1860,8 +2340,19 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                           return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
                         }
                         const isAccept = sug.suggestion === 'accept';
+                        // When stale, modify the existing chip's appearance
+                        // (no new chip): dotted warning border + reduced
+                        // opacity so it visually recedes. The tooltip body
+                        // gets a leading "⚠ Stale — …" line so the engineer
+                        // sees WHY at a glance.
+                        const stale = suggestionStaleReason;
                         const tooltipBody = (
                           <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                            {stale && (
+                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5, color: 'warning.light' }}>
+                                ⚠ Stale — {stale}. Click ↻ to refresh.
+                              </Typography>
+                            )}
                             <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
                               Suggestion: {isAccept ? 'Accept' : 'Defer'} · Confidence: {sug.confidence}
                             </Typography>
@@ -1884,6 +2375,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                                 fontSize: '0.6rem',
                                 height: 18,
                                 fontWeight: 600,
+                                ...(stale && {
+                                  opacity: 0.7,
+                                  border: '1.5px dotted',
+                                  borderColor: 'warning.main',
+                                }),
                               }}
                             />
                           </Tooltip>
@@ -2026,35 +2522,42 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                               with evidence. Hidden on confident-accept rows
                               where the engineer just needs to click Accept. */}
                           {(!getOverrideScope(r) || state?.suggestion?.suggestion === 'defer') && (
-                            <Tooltip title={state?.deepAnalysisError ?? 'Investigate: AI runs a deeper analysis pulling affected products, cross-scope overrides, and proposes a concrete next action.'}>
-                              <span>
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  color={state?.deepAnalysisError ? 'error' : 'secondary'}
-                                  disabled={state?.loadingDeepAnalysis}
-                                  onClick={() => runInvestigate(r)}
-                                  startIcon={state?.loadingDeepAnalysis ? <CircularProgress size={10} color="inherit" /> : <SearchIcon sx={{ fontSize: 14 }} />}
-                                  sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
-                                >
-                                  {state?.deepAnalysis ? 'Refresh' : 'Investigate'}
-                                </Button>
-                              </span>
-                            </Tooltip>
+                            <>
+                              {/* View: re-opens the cached deepAnalysis in the
+                                  drawer without re-running /investigate. Only
+                                  shown once an analysis exists. */}
+                              {state?.deepAnalysis && (
+                                <Tooltip title="View AI investigation">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => setDrawerParamName(r.paramName)}
+                                    sx={{ p: 0.25 }}
+                                  >
+                                    <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              <Tooltip title={state?.deepAnalysisError ?? 'Investigate: AI runs a deeper analysis pulling affected products, cross-scope overrides, and proposes a concrete next action.'}>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    color={state?.deepAnalysisError ? 'error' : 'secondary'}
+                                    disabled={state?.loadingDeepAnalysis}
+                                    onClick={() => runInvestigate(r)}
+                                    startIcon={state?.loadingDeepAnalysis ? <CircularProgress size={10} color="inherit" /> : <SearchIcon sx={{ fontSize: 14 }} />}
+                                    sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
+                                  >
+                                    {state?.deepAnalysis ? 'Refresh' : 'Investigate'}
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                            </>
                           )}
                         </Stack>
                       )}
                     </TableCell>
                   </TableRow>
-                  {state?.deepAnalysis && (
-                    <DeepAnalysisRow
-                      row={r}
-                      analysis={state.deepAnalysis}
-                      onApplyPrefill={(payload) => applyDeepAction(r, payload)}
-                      onConfirmWrongFamily={() => confirmFlag(r)}
-                      onMarkUnmappable={() => markUnmappable(r)}
-                    />
-                  )}
                   </Fragment>
                 );
               })}
@@ -2087,6 +2590,75 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </Stack>
         )}
       </AccordionDetails>
+
+      {/* Bulk-refresh confirm dialog. Per-call cost: ~$0.005 (Sonnet
+          4.6 /suggest) or ~$0.05 (Sonnet 4.6 /investigate). Total
+          shown to engineer so they don't accidentally burn $50 on a
+          misclick over a large queue. */}
+      <Dialog open={refreshConfirm !== null} onClose={() => setRefreshConfirm(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          Refresh {refreshConfirm?.kind === 'suggestions' ? 'AI suggestions' : 'AI investigations'}?
+        </DialogTitle>
+        <DialogContent>
+          {refreshConfirm && (() => {
+            const isSuggestions = refreshConfirm.kind === 'suggestions';
+            const perRowCost = isSuggestions ? 0.005 : 0.05;
+            const totalCost = (refreshConfirm.count * perRowCost).toFixed(2);
+            return (
+              <Stack spacing={1.5}>
+                <Typography variant="body2">
+                  This will re-fire {isSuggestions ? '/suggest (Sonnet 4.6)' : '/investigate (Sonnet 4.6, deeper)'} for{' '}
+                  <strong>{refreshConfirm.count}</strong> row{refreshConfirm.count === 1 ? '' : 's'}, bypassing the cache.
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Approximate cost: <strong>${totalCost}</strong> in Anthropic API tokens.
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {isSuggestions
+                    ? 'Suggestions run in parallel (concurrency-limited). Should complete in 1-3 minutes for typical queue sizes.'
+                    : 'Investigations run sequentially. Each takes 10-30 seconds — large refreshes can take a while.'}
+                </Typography>
+              </Stack>
+            );
+          })()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRefreshConfirm(null)}>Cancel</Button>
+          <Button onClick={() => void confirmRefresh()} variant="contained" color="primary" startIcon={<RefreshIcon sx={{ fontSize: 14 }} />}>
+            Refresh
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Single-instance right-side drawer for AI Investigation results.
+          Replaces the inline second-row expansion (Decision: drawer over
+          inline collapse). Click any row's verdict chip OR the View icon
+          button to open. Drawer auto-closes after the engineer commits
+          a primary/alternative action via DeepAnalysisContent's onAfterAction. */}
+      {(() => {
+        const drawerRow = drawerParamName ? rows.find((r) => r.paramName === drawerParamName) ?? null : null;
+        const drawerAnalysis = drawerParamName ? states[drawerParamName]?.deepAnalysis ?? null : null;
+        const closeDrawer = () => setDrawerParamName(null);
+        return (
+          <DeepAnalysisDrawer
+            open={drawerParamName !== null && drawerAnalysis !== null}
+            onClose={closeDrawer}
+            uid={drawerRow ? paramUid(drawerRow.paramName) : null}
+            paramName={drawerRow?.paramName ?? null}
+          >
+            {drawerRow && drawerAnalysis && (
+              <DeepAnalysisContent
+                row={drawerRow}
+                analysis={drawerAnalysis}
+                onApplyPrefill={(payload) => applyDeepAction(drawerRow, payload)}
+                onConfirmWrongFamily={() => confirmFlag(drawerRow)}
+                onMarkUnmappable={() => markUnmappable(drawerRow)}
+                onAfterAction={closeDrawer}
+              />
+            )}
+          </DeepAnalysisDrawer>
+        );
+      })()}
     </Accordion>
   );
 }
@@ -2103,12 +2675,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
 // uniform avoids a second Accept code path that could drift from the
 // authoritative one.
 
-interface DeepAnalysisRowProps {
+export interface DeepAnalysisContentProps {
   row: GlobalUnmappedParam;
   analysis: DeepAnalysis;
   onApplyPrefill: (payload: { attributeId?: string; attributeName?: string; unit?: string | null }) => void;
   onConfirmWrongFamily: () => void;
   onMarkUnmappable: () => void;
+  /** Optional hook invoked after a primary/alternative action completes.
+   *  Used by the drawer to auto-close so the engineer returns to the table. */
+  onAfterAction?: () => void;
 }
 
 const BUCKET_LABELS: Record<DeepAnalysis['bucket'], { label: string; color: 'primary' | 'warning' | 'error' | 'info' | 'success' }> = {
@@ -2120,7 +2695,7 @@ const BUCKET_LABELS: Record<DeepAnalysis['bucket'], { label: string; color: 'pri
   unmappable: { label: 'Unmappable', color: 'error' },
 };
 
-function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, onMarkUnmappable }: DeepAnalysisRowProps) {
+export function DeepAnalysisContent({ row, analysis, onApplyPrefill, onConfirmWrongFamily, onMarkUnmappable, onAfterAction }: DeepAnalysisContentProps) {
   const bucketMeta = BUCKET_LABELS[analysis.bucket];
   // Narrow the unknown payload to a discriminated shape per bucket up front
   // so JSX renders don't trip TS's ReactNode constraint on `unknown` values.
@@ -2142,10 +2717,16 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
   // specific ID into the label ("Mint canonical width_mm") than into the
   // payload ("attributeId": "width"); the user's expectation is set by the
   // visible label, so it takes precedence over the payload.
+  // Guard: reject generic words ("attribute", "id", "field") that match the
+  // regex when the AI produces a non-specific label like "Create new canonical
+  // attribute" — those would otherwise be committed as the literal attributeId.
   function attributeIdFromLabel(): string | undefined {
     const label = analysis.recommendation?.primaryActionLabel ?? '';
     const m = label.match(/canonical\s+`?([a-z][a-z0-9_]*)`?/i);
-    return m && m[1] ? m[1] : undefined;
+    if (!m || !m[1]) return undefined;
+    const GENERIC_LABEL_WORDS = new Set(['attribute', 'attributes', 'id', 'field', 'name', 'value', 'parameter', 'param']);
+    if (GENERIC_LABEL_WORDS.has(m[1].toLowerCase())) return undefined;
+    return m[1];
   }
 
   // Permissive key extraction — Sonnet sometimes returns slightly different
@@ -2214,6 +2795,7 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
         break;
       // unscoped_products: no inline commit. Engineer addresses upstream.
     }
+    onAfterAction?.();
   };
 
   const handleAlternative = () => {
@@ -2224,12 +2806,11 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
       attributeName: pickAttributeName(altSource),
       unit: pickUnit(altSource),
     });
+    onAfterAction?.();
   };
 
   return (
-    <TableRow sx={{ bgcolor: 'action.hover' }}>
-      <TableCell colSpan={14} sx={{ py: 1.5, px: 2, borderBottom: '2px solid', borderBottomColor: 'divider' }}>
-        <Stack spacing={1.2}>
+    <Stack spacing={1.2}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Chip
               size="small"
@@ -2417,7 +2998,7 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
           {analysis.bucket === 'wrong_family' && signatureRecommendation && (
             <Box sx={{ p: 1, bgcolor: 'background.default', border: 1, borderColor: 'divider', borderRadius: 1 }}>
               <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', display: 'block', mb: 0.5 }}>
-                Suggested FAMILY_PARAM_SIGNATURES entry (engineer adds to atlasFamilyParamSignatures.ts):
+                Signature that will be persisted on Confirm:
               </Typography>
               <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
                 {JSON.stringify(signatureRecommendation)}
@@ -2425,9 +3006,54 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
             </Box>
           )}
 
-          {/* Action buttons */}
+          {/* Server-side post-validation warnings — suppress the primary
+              action button when the AI's recommendation is provably bad
+              (invalid family ID or duplicate canonical). Engineer must
+              review manually rather than clicking through. */}
+          {analysis.validationErrors && analysis.validationErrors.length > 0 && (
+            <Box
+              sx={{
+                p: 1,
+                mb: 1,
+                bgcolor: 'warning.dark',
+                color: 'warning.contrastText',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'warning.main',
+              }}
+            >
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                <WarningAmberIcon sx={{ fontSize: 18, mt: 0.25, flexShrink: 0 }} />
+                <Box>
+                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block' }}>
+                    AI recommendation failed server-side validation — review manually
+                  </Typography>
+                  {analysis.validationErrors.map((err, i) => (
+                    <Typography
+                      key={i}
+                      variant="caption"
+                      sx={{ display: 'block', fontSize: '0.7rem', mt: 0.25 }}
+                    >
+                      • {err.detail}
+                    </Typography>
+                  ))}
+                </Box>
+              </Stack>
+            </Box>
+          )}
+
+          {/* Action buttons — hidden when validation errors are present so
+              the engineer can't accidentally click through to a bad action.
+              For wrong_family we override the AI's primaryActionLabel
+              because the AI tends to write copy implying both code-registry
+              edit + reclassification happen on click. Both DO happen now
+              (signature-insert endpoint handles persist + retroactive
+              reclassify) — so the override here states it plainly without
+              overpromising the wording. */}
           <Stack direction="row" spacing={1}>
-            {analysis.recommendation?.primaryActionLabel && analysis.bucket !== 'unscoped_products' && (
+            {analysis.recommendation?.primaryActionLabel
+              && analysis.bucket !== 'unscoped_products'
+              && !(analysis.validationErrors && analysis.validationErrors.length > 0) && (
               <Button
                 size="small"
                 variant="contained"
@@ -2436,10 +3062,14 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
                 onClick={handlePrimary}
                 sx={{ fontSize: '0.7rem' }}
               >
-                {analysis.recommendation.primaryActionLabel}
+                {analysis.bucket === 'wrong_family' && signatureRecommendation?.familyId
+                  ? `Confirm: reclassify to ${signatureRecommendation.familyId} + add signature`
+                  : analysis.recommendation.primaryActionLabel}
               </Button>
             )}
-            {analysis.bucket === 'disambiguation' && analysis.recommendation?.alternativeActionLabel && (
+            {analysis.bucket === 'disambiguation'
+              && analysis.recommendation?.alternativeActionLabel
+              && !(analysis.validationErrors && analysis.validationErrors.length > 0) && (
               <Button
                 size="small"
                 variant="outlined"
@@ -2458,7 +3088,5 @@ function DeepAnalysisRow({ row, analysis, onApplyPrefill, onConfirmWrongFamily, 
             </Typography>
           </Stack>
         </Stack>
-      </TableCell>
-    </TableRow>
   );
 }

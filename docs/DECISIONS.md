@@ -5481,3 +5481,250 @@ DELETE FROM atlas_triage_investigations WHERE action_taken IS NULL;
 ```
 
 **Verification.** Type check clean. Manual end-to-end: (a) accept a row — confirm it disappears from Open and reappears in Accepted across page reloads (Unicode key + cache invalidation working); (b) flag a row via bookmark icon — confirm it shows under the Flagged filter chip and the count badge updates; (c) click Investigate then Confirm Wrong Family on an AI-detected row with no registry autoFlag — confirm row disappears from Open Synonyms, Auto-flagged count increments, AI Log gets a `flagged_wrong_family` row with the AI verdict captured; (d) click "+N similar" Accept on a row with cosmetic variants — confirm all variants drop from Open in one shot.
+
+## Decision #187 — Proactive Staleness Signaling for Cached AI Suggestions/Investigations (May 2026)
+
+Decision #186 wired the Triage page to silently auto-invalidate cached `/suggest` results when a family domain card was approved — a row that previously had an AI verdict reverted to "Generate" with no explanation. That was *anti*-proactive: the engineer lost context for why a verdict disappeared and had to spend tokens regenerating to figure out whether anything changed. With domain-card edits + logic-rule edits becoming a daily activity, this silent churn was burning trust and money.
+
+**Decision: keep cached verdicts readable, mark them stale, and let the engineer choose to refresh.** Same pattern as the Domain Cards "Health" column — show both the old data and a staleness signal, engineer decides whether to act. Three coordinated changes:
+
+**(1) Cache value carries versions at write, not the key.** Previously cardVersion was baked into the LS cache key, which made stale entries unreachable. Switched to:
+```ts
+type CachedSuggestion = {
+  suggestion: DictSuggestion;
+  cachedAt: number;
+  cardVersionAtWrite: string | null;
+  schemaVersionAtWrite: string | null;
+};
+```
+Same for cached investigations. The key drops cardVersion; the value stores both versions. `SUGGEST_CACHE_VERSION` bumped `v6 → v7`, `SUGGEST_LS_PREFIX` `v6 → v7`, `INVESTIGATE_LS_PREFIX` `v9 → v10`, `SCHEMA_LS_PREFIX` `v5 → v6` so legacy entries clear on first read.
+
+**(2) Schema fingerprint hash for proactive staleness.** New [lib/services/atlasSchemaVersion.ts](../lib/services/atlasSchemaVersion.ts) — `computeSchemaVersion(familyId)` returns a deterministic FNV-1a 32-bit hash over the stable parts of a family's logic-table prompt context: rule attributeId/Name/weight/engineeringReason + `FAMILY_PARAM_SIGNATURES` entries that target this family. Same input → same hash. Edit a rule's reason → hash changes → cached suggestions for that family flag stale on next page load. Hash purposely excludes domain-card text (cards and schemas evolve independently; surfacing WHICH one drove staleness is more informative than a single combined version).
+
+**(3) Server returns current versions on /suggest, /investigate, and /family-schema.** Client compares `cached.{cardVersion,schemaVersion}AtWrite` against the server's current values per-render. Non-matches set `stalenessReason: "domain card updated"`, `"schema changed"`, or `"… and …"`. The family-schema endpoint becomes an always-refetched instant-render seed (LS cache is only for first-paint speed; staleness is determined by the live response).
+
+**Visibility, not new chips.** The Triage row already carries 8+ chips (UID, family, category, status, AI verdict, override, flag, similar-count, MFR origin). Adding a "Stale" chip would compete for attention. Instead, three non-chip channels compound:
+- **Row left-border accent** — 4px warning-amber stripe on stale rows. Visible at a glance while skimming a long queue; the eye picks up the vertical stripe before processing chip text.
+- **Modify the existing AI verdict chip** — dotted warning border + 0.7 opacity (visually receded so engineer knows it's no-longer-fresh). Chip tooltip prepended with `⚠ Stale — domain card updated 2h ago. Click row's ↻ to refresh.`.
+- **Inline ↻ refresh icon-button** — small, monochrome, ONLY rendered when stale (zero footprint when fresh). One-click re-fires `/suggest force=true` for the row.
+
+**Aggregate: header banner + sort toggle, not filter.** When stale count > 0, a `<Alert severity="warning">` at the top of the Triage table reads `12 suggestions and 3 investigations in this view are stale because of recent card / schema changes. The AI verdicts shown may not reflect the latest context.` with two action buttons: `[Refresh 12 stale suggestions]` `[Refresh 3 stale investigations]`. Hidden when stale = 0 (no noise when fresh).
+
+Plus a **"Show stale first"** sort toggle in `TriageFilterBar` (not a filter — engineers wanted to keep the full queue visible while triaging in stale-first order). When on, stale rows sort to the top with their existing sub-ordering preserved within stale/fresh groups.
+
+**Reverse the silent invalidation.** Removed the `invalidateSuggestCacheForFamily()` call from the card-approve PATCH handler. Cards approving no longer wipes suggestion cache — the staleness signal does the work instead, and the cached verdict stays readable.
+
+**Schema-LS cache trap (post-implementation fix).** First-cut implementation read schema versions from LS cache only on mount, with a 7-day TTL. Symptom: user edits a B7 card, no staleness UI appears on B7 rows because the schema-fetch hook short-circuited on the still-valid LS cache. Fix: always refetch the schema endpoint on mount (treating LS as instant-render seed only) and have the response handler **overwrite** version state unconditionally — not the cache-hit guard. The 7-day LS TTL stays but is purely a first-paint optimization, not a freshness contract.
+
+**CJK normalization bug.** Bulk normalized-match (Decision #186) used `/[^a-z0-9]+/g` to compute the dedup key, which stripped Chinese characters and false-matched semantically different paramNames. Fixed with Unicode property escapes: `/[^\p{L}\p{N}]+/gu`.
+
+**Files touched (summary):**
+- New: [lib/services/atlasSchemaVersion.ts](../lib/services/atlasSchemaVersion.ts) — FNV-1a per-family schema fingerprint.
+- [lib/services/atlasSuggestCache.ts](../lib/services/atlasSuggestCache.ts) — drop cardVersion from key, bump SUGGEST_CACHE_VERSION='v7'.
+- [app/api/admin/atlas/family-domain-cards/[familyId]/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/route.ts) — removed `invalidateSuggestCacheForFamily()` from PATCH.
+- [app/api/admin/atlas/family-schema/route.ts](../app/api/admin/atlas/family-schema/route.ts) — return `schemaIds` + `cardUpdatedAt` + `schemaVersion`.
+- [app/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts) — return `currentCardVersion` + `currentSchemaVersion`.
+- [app/api/admin/atlas/dictionaries/investigate/route.ts](../app/api/admin/atlas/dictionaries/investigate/route.ts) — same, bump `INVESTIGATE_CACHE_VERSION='v9'`.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — cache-value shape, schema-state ref-mirroring, `computeStaleness()` helper, three per-row visual channels, header banner, schema-fetch always-refetch.
+- [components/admin/atlasIngest/TriageFilterBar.tsx](../components/admin/atlasIngest/TriageFilterBar.tsx) — "Show stale first" sort toggle.
+
+**Deploy.** No SQL migration needed — all client/server changes. Caches auto-clear on first read because prefix versions bumped.
+
+**Verification.** Type check clean; all 1557 tests pass. End-to-end: (1) cache a B7 row's suggestion, edit a B7 logic rule's engineeringReason, reload Triage → 12 stale B7 rows render with stripe + dotted chip + ↻ icon and a banner shows up with count. (2) Click "Refresh 12 stale suggestions" → confirm dialog shows stale-only count + cost (e.g. `12 rows, ~$0.06`); refresh fires only on the stale subset. (3) Click "Show stale first" → stale rows sort to top, full queue still visible. (4) Domain-card edit alone → only `cardVersion`-driven staleness fires (tooltip says "domain card updated"); schema-rule edit alone → only `schemaVersion`-driven (tooltip says "schema changed"). (5) Hard refresh on a fresh state → no stripe, no banner, no ↻ icon anywhere.
+
+## Decision #188 — Engineer-Driven FAMILY_PARAM_SIGNATURES via DB Layer + One-Click Reclassify (May 2026)
+
+Decision #185's wrong_family bucket surfaced a critical UX gap: when the AI Investigator high-confidence diagnosed a misclassification (e.g. `@IB(mA)` on YANGJIE products labeled as IGBT — IB is a BJT-exclusive parameter), the "Confirm" button only wrote `status='wrong_family'` to the notes table. The button label said *"Reclassify Products to B6 and flag @IB(mA) as B6 signature"* but did neither — it just recorded "engineer agrees this is misclassified" without actually moving products or persisting the rule. The engineer/developer had to:
+1. Hand-edit [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) to add the signature
+2. Code commit + redeploy
+3. Run `scripts/atlas-reclassify-by-type-param.mjs` (or equivalent) to fix existing products
+
+A non-technical user had no path to close this loop. The audit row from Decision #186 captured the engineer's intent, but the registry never updated and products stayed in the wrong family.
+
+**Decision: lift FAMILY_PARAM_SIGNATURES from code-only to code + DB-merged, and make the Confirm button do everything in one click.** Three coordinated changes:
+
+**(1) New table `atlas_family_param_signatures`.** Engineer-curated rows that augment the code baseline. Columns: `pattern` (regex source as text), `target_family_id` / `target_category` / `target_subcategory`, `reasoning`, `source` enum (`engineer_via_ai` | `engineer_manual`), `source_investigation_id` (optional FK to audit row), `is_active`, `created_by`. Unique active index on `(pattern, target_family_id)` — same pattern pointing to two different families is a real split and allowed. RLS: admins read/insert/update.
+
+**(2) Server-side merge layer with code-wins-on-collision.** [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) gains:
+- `loadAllFamilyParamSignatures()` — async loader that returns code-defined entries merged with active DB rows; 5-min in-process cache.
+- `invalidateFamilyParamSignaturesCache()` — cache bust used by the POST endpoint.
+- `detectForeignFamilyWithList(paramName, currentFamily, signatures)` — new variant that takes an explicit signatures list (queue route uses this with the merged set).
+- `detectForeignFamily(...)` — unchanged behavior, still uses code-only baseline. Reserved for sync call sites (`atlasMapper.reclassifyByParameterSignals` at search-time, `atlasSchemaVersion`) that intentionally want the audited baseline.
+
+Code-defined entries are the audited, tested baseline; DB rows are additive. On `(pattern, targetFamilyId)` collision, **code wins** — accidental DB rows cannot override audited behavior.
+
+**(3) One-click POST endpoint persists + reclassifies in one shot.** New [/api/admin/atlas/family-param-signatures](../app/api/admin/atlas/family-param-signatures/route.ts). Body: `{ paramName, targetFamilyId, reasoning, (optional targetCategory/Subcategory) }`. The endpoint:
+1. Escapes the paramName, wraps in `^...$`, validates as compileable regex.
+2. Derives `(category, subcategory)` from any existing code-defined entry targeting the same family (or body params for new families).
+3. INSERTs the signature row with `source='engineer_via_ai'`. On `23505` duplicate, fetches existing id and proceeds (engineer may be re-confirming after partial failure).
+4. Calls `invalidateFamilyParamSignaturesCache()` so queue auto-flag picks it up immediately.
+5. Calls `reclassify_products_by_param_key(param_key, target_family_id, target_category, target_subcategory)` RPC — single Postgres statement updates every row where `parameters ? <sanitized key>` AND `family_id != target`. The sanitized key mirrors `fromParametersJsonb`'s storage format (e.g. `@IB(mA)` → `ib_ma`).
+6. Returns `{ productsReclassified, reclassifyErrors? }`.
+
+**Sanitized key mirroring.** Unmapped params land in `atlas_products.parameters` JSONB under a sanitized key: `raw.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')`. The endpoint applies the same transformation so the Postgres `?` operator lookup uses the actual stored key. No regex match — the RPC does indexable JSONB key existence.
+
+**atlas-ingest.mjs mirror.** Added `loadAndApplyFamilyParamSignatures()` next to the existing `loadAndApplyDictOverrides()`. Pulls active DB rows on script start and appends them to the local `FAMILY_PARAM_SIGNATURES` array (with the same code-wins-on-collision logic). Future ingests automatically apply engineer-curated signatures without code commits. Mirrors the pattern from Decision #176.
+
+**UI wiring.** `confirmFlag` in [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) splits two paths:
+- **Registry auto-flag** (`row.autoFlag` set) — code registry already has this signature, only writes the notes row.
+- **AI-investigation verdict** (`investigationVerdict` set, no `row.autoFlag`) — writes the notes row AND POSTs to `/api/admin/atlas/family-param-signatures`.
+
+POST failure is non-blocking: the wrong_family note still persists; the signature failure surfaces in the Confirm tooltip as `Flag confirmed, but signature insert failed: …`. Lets the engineer retry without losing the underlying classification decision.
+
+**Honest button label.** Wrong_family bucket no longer renders the AI's `primaryActionLabel`. Now displays: *"Confirm: reclassify to {familyId} + add signature"*. Matches what the click actually does. Caption above the JSON snippet changed from *"engineer adds to atlasFamilyParamSignatures.ts"* to *"Signature that will be persisted on Confirm"*.
+
+**Retroactive reclassify RPC.** [scripts/supabase-atlas-family-param-signatures-schema.sql](../scripts/supabase-atlas-family-param-signatures-schema.sql) defines `reclassify_products_by_param_key(param_key, target_family_id, target_category, target_subcategory)`. SECURITY DEFINER, GRANTed to service_role only. Returns count of rows updated. Single Postgres statement keeps round trips minimal even when a signature affects hundreds of products.
+
+**Lesson on layered side-effects.** First implementation considered splitting signature-insert and reclassify into two separate endpoints with a coordination layer in the client. Settled on one endpoint with two side effects because the engineer's mental model is "click Confirm" — splitting leaks coordination concerns into the client and creates a half-done state if the second call fails (signature persisted but products not moved, or vice versa). The endpoint encapsulates the transactional intent even though Postgres doesn't enforce it; the duplicate-row handling on `23505` and the reclassify-error array let the route be re-run idempotently.
+
+**Files touched:**
+- New: [scripts/supabase-atlas-family-param-signatures-schema.sql](../scripts/supabase-atlas-family-param-signatures-schema.sql) — table + RLS + reclassify RPC.
+- New: [app/api/admin/atlas/family-param-signatures/route.ts](../app/api/admin/atlas/family-param-signatures/route.ts) — POST endpoint.
+- [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) — added `loadAllFamilyParamSignatures()`, `invalidateFamilyParamSignaturesCache()`, `detectForeignFamilyWithList()`.
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — switched queue route to merged signatures (async load before classified.map).
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — added `loadAndApplyFamilyParamSignatures()` mirror, called from dispatcher next to dict overrides.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — `confirmFlag` AI-driven path POSTs to new endpoint; wrong_family button label override; signature snippet caption.
+
+**Deploy.** Apply [scripts/supabase-atlas-family-param-signatures-schema.sql](../scripts/supabase-atlas-family-param-signatures-schema.sql) in Supabase SQL Editor.
+
+**Verification.** Type check clean (excluding pre-existing test-file noise); atlasMapper tests 21/21 pass. End-to-end: confirm `@IB(mA)` on YANGJIE wrong_family row from the AI Investigator drawer → row drops from Open Synonyms (status=wrong_family), `atlas_family_param_signatures` row appears with `source='engineer_via_ai'`, all 5 affected YANGJIE products move from `family_id='B7'` → `family_id='B6'` in `atlas_products` (verified via service-role query). Re-clicking Confirm on the same row succeeds (duplicate-23505 path).
+
+## Decision #189 — Atlas Explorer Search via SECURITY DEFINER RPC + Manufacturer Trigram Index (May 2026)
+
+The admin Atlas MFRs → Search tab broke completely at ~114K rows in `atlas_products`. Every search returned 500 + 8s, blocked by Postgres statement_timeout (error code 57014, "canceling statement due to statement timeout"). User-visible symptom: "No Atlas products found for 'MJD122'" despite the rows clearly existing under multiple manufacturers.
+
+**Root cause: two compounding issues.**
+
+1. The endpoint used `.or('mpn.ilike.%${q}%,manufacturer.ilike.%${q}%')`. Postgres' planner doesn't pick up the `idx_atlas_products_mpn_trgm` GIN trigram index when the predicate is inside an OR — it falls back to sequential scan on 114K rows.
+2. The `manufacturer` column had only a btree index, not a trigram. So even *alone*, substring ILIKE on manufacturer was always full-scan.
+
+**Secondary problem: silent failure mode hid the issue.** The route's `catch {}` swallowed everything (including the timeout) and returned a generic `'Internal server error'` 500 with no detail. The client's catch then surfaced an empty `results: []` and rendered "No Atlas products found". Two layers of error hiding made it look like a data problem when it was a perf problem.
+
+**Decision: SECURITY DEFINER RPC with explicit indexed CTEs.** New function [scripts/supabase-atlas-explorer-search-rpc.sql](../scripts/supabase-atlas-explorer-search-rpc.sql) defines `search_atlas_products_admin(q TEXT, lim INTEGER)` that:
+
+1. **SECURITY DEFINER** — runs as table owner. Gives the planner consistent access to indexes regardless of who calls it. Resolves an additional unknown: the `authenticated` role's statement_timeout was set lower than the (already slow) sequential scan needed.
+2. **`SET LOCAL statement_timeout = '30s'`** — headroom for cold cache. Cap that was killing the cookie-auth path doesn't apply inside the function.
+3. **Explicit UNION over two indexed CTEs** — `mpn_hits` does `mpn ILIKE pattern LIMIT lim`, `mfr_hits` does `manufacturer ILIKE pattern LIMIT lim`. Each CTE is its own indexable predicate; UNION (with implicit dedup on `id`) joins them. Planner uses the trigram indexes on each side cleanly.
+
+Plus migration adds `idx_atlas_products_manufacturer_trgm` (GIN trigram on manufacturer) — was missing from the base schema. `pg_trgm` extension ensured installed (idempotent).
+
+**Route handler simplified to one RPC call.** [app/api/admin/atlas/explorer/route.ts](../app/api/admin/atlas/explorer/route.ts) now does `supabase.rpc('search_atlas_products_admin', { q, lim: 50 })` instead of the previous `.or()` query. Result shape unchanged from the caller's perspective.
+
+**Error logging unsilenced.** Both error paths in the route now log to dev server console AND include a `detail` field in the 500 response body. Without this we'd never have found the timeout without service-role diagnostic queries.
+
+**Performance.** Cookie-auth search for `MJD122` (3 rows): from timeout → ~200ms. `ACPR1208S100MT` (1 row): ~150ms. Both under the cookie-auth cap and well under the 30s function-local cap.
+
+**Lessons.**
+- **`.or()` over indexed columns is a planner regression risk.** Even with the right indexes, the planner may fall back to seq-scan when predicates are OR'd. Default to UNION when both sides are indexable.
+- **Add trigram indexes on every column you ILIKE substring against.** Btree doesn't help for `%X%`. The base schema had it for mpn (where developers had been searching) but not manufacturer (which the explorer UI also accepts).
+- **SECURITY DEFINER RPC is the right hammer for "slow under cookie auth but fast under service role"** workloads on big tables — bypasses both per-role statement_timeout disparities and any RLS-induced planning differences. Use sparingly because it bypasses RLS; gate via the route handler (`requireAdmin()`) instead.
+- **Silent try/catch in route handlers hides real errors as empty results.** The pre-existing `catch {}` made the cookie-auth path look like a data bug for over a session of debugging. Default to surfacing `detail` + console.error on every server-route catch.
+
+**Files touched:**
+- New: [scripts/supabase-atlas-explorer-search-rpc.sql](../scripts/supabase-atlas-explorer-search-rpc.sql) — `pg_trgm` extension + manufacturer trigram index + SECURITY DEFINER RPC.
+- [app/api/admin/atlas/explorer/route.ts](../app/api/admin/atlas/explorer/route.ts) — switched to RPC call; error logging unsilenced with `detail` field.
+
+**Deploy.** Apply [scripts/supabase-atlas-explorer-search-rpc.sql](../scripts/supabase-atlas-explorer-search-rpc.sql) in Supabase SQL Editor. Idempotent — `CREATE EXTENSION IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `DROP FUNCTION IF EXISTS` + `CREATE FUNCTION`. No data risk.
+
+**Verification.** Cookie-auth search returns <250ms for both MPN substring and manufacturer prefix/substring queries on the 114K-row table. Full devtools Network confirms 200 + sub-second across multiple MFRs (`MJD122` → 3 rows, `ACPR1208S100MT` → 1 row, `Sunlord` → 50 capped). Service-role and cookie-auth paths now within 2x of each other.
+
+## Decision #190 — Family-ID Validation Hardening: Four-Layer Defense Against AI-Hallucinated Family IDs (May 2026)
+
+Decision #188 made the AI Triage Investigator's `wrong_family` verdict load-bearing — one engineer click now writes the signature to the persistent `atlas_family_param_signatures` table AND immediately reclassifies products via the RPC. A hallucinated `targetFamilyId` like the observed `"BJT_DIGITAL"` would have corrupted both the signature registry and `atlas_products.family_id` for affected rows. Decision #185's BACKLOG follow-up flagged this risk; this entry records the four-layer defense that closes it.
+
+**Decision: build four independent layers, each able to catch an invalid family ID on its own, so a slip in any single layer leaves three behind it.**
+
+**Layer 1 — Anthropic SDK enum constraint at the tool-use boundary.** [`/api/admin/atlas/dictionaries/investigate`](../app/api/admin/atlas/dictionaries/investigate/route.ts) defines the `submit_triage_verdict` tool's JSON schema with `enum: KNOWN_FAMILY_IDS_LIST` on every family-ID field (`actualFamilyId`, `signatureRecommendation.familyId`, `perProductProposals[].proposedFamilyId`). The model literally cannot return an out-of-set value via tool-use mode — the SDK rejects it at parse time. This was already in place pre-#190 but wasn't documented as a layer.
+
+**Layer 2 — Server-side post-validation in the investigate route.** Same route runs `validateFamilyId()` from `atlasTriageContext.ts` on the parsed response as belt-and-suspenders. Failures surface via the response's `validationErrors` array, which the UI consumes to suppress the deep-analysis Primary Action button. Also already in place pre-#190.
+
+**Layer 3 — `family-param-signatures` POST endpoint guard.** This is what #190 actually shipped. New helper [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts) exports `VALID_FAMILY_IDS` (set), `isValidFamilyId()`, and `listValidFamilyIds()` — derived from `logicTableRegistry` keys. **L3-only by design** because `atlas_products.family_id` is L3-only and that's the reclassify destination; the broader `KNOWN_FAMILY_IDS` in `atlasTriageContext.ts` (L3 + L2 category names) is for the investigate prompt where both kinds are valid expressions of intent, but only L3 is a valid *destination*. POST returns 400 with `code: 'INVALID_FAMILY_ID'` + the canonical list when `targetFamilyId` fails the check.
+
+**Layer 4 — UI pre-flight in `confirmFlag`.** [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) checks `isValidFamilyId(autoDiagnosis.suggestedFamily)` before POSTing to the signatures endpoint. When invalid, skips the POST entirely and surfaces a specific message ("AI suggested unknown family 'X' — edit manually if needed") rather than a misleading "signature insert failed" tooltip from the 400 response.
+
+**Why two separate valid-family-ID modules?** `validFamilyIds.ts` (L3-only) and `atlasTriageContext.ts`'s `KNOWN_FAMILY_IDS` (L3+L2) serve different consumers. L3-only modules: things that write to `atlas_products` or call the reclassify RPC. L3+L2 modules: things that interact with `atlas_dictionary_overrides` (which is scope-overloaded per Decision #178) or generate AI prompts (where L2 category names are valid as override scopes). Two named sets, two named purposes — never blur.
+
+**Files touched:**
+- New: [lib/services/validFamilyIds.ts](../lib/services/validFamilyIds.ts) — L3-only valid set + helpers.
+- [app/api/admin/atlas/family-param-signatures/route.ts](../app/api/admin/atlas/family-param-signatures/route.ts) — added validation block + `INVALID_FAMILY_ID` error code.
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — `confirmFlag` pre-flight check.
+
+**Verification.** Type check clean. atlasMapper tests 21/21 pass. End-to-end: a manually-crafted POST to `/api/admin/atlas/family-param-signatures` with `targetFamilyId: 'BJT_DIGITAL'` returns 400 + the canonical list. The original AI hallucination scenario (KEXIN `R1(KΩ)` row with AI suggesting `BJT_DIGITAL`) now blocks at the UI before reaching the server.
+
+## Decision #191 — Atlas MPN-Quality Validator Phase 1: Detect Un-Matchable MPN Patterns at Ingest (May 2026)
+
+A May-2026 survey across atlas_products found **250+ un-matchable MPN rows** spanning **5 MFRs and 4 distinct upstream-encoding patterns**: CREATEK's "Thru"/"Through" range entries (168 rows), "Series" sentinels (78 rows across CREATEK/AWINIC/KEXIN), GIGADEVICE's trailing-x placeholders, Geehy's slash-delimited variants, and (added May 18) Gainsil's mid-MPN `xx` placeholder pattern + Refond LED RGB `xx` mid-MPN. All five patterns produce rows that look like normal ingests but are silently unfindable by exact MPN lookup and pollute family-volume statistics. Originally a defer-line BACKLOG item; survey-driven escalation when "fourth MFR" and "200+ rows" trigger conditions both hit.
+
+**Decision: ship phase 1 — detection + ingest-time surfacing + backfill survey tool. Expansion to actual MPN rows deferred to phase 2.**
+
+**Five detection kinds** in [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts):
+1. `range_thru` — Thru/thru/thur (CREATEK typo)/through, word-boundary anchored
+2. `range_series` — "X Series" or KEXIN-style Chinese full-width `（Series）` wrapping
+3. `placeholder_x` — trailing single x/X with TX/RX endings exempted, alphanumeric-before required
+4. `placeholder_xx_midword` — Gainsil-style `-xx[A-Z][suffix]$`; conservative regex requiring alphabetic suffix after the `xx` to avoid false-positive on legitimate MPNs containing `xx` mid-word
+5. `slash_variant` — `[A-Za-z0-9]/[A-Za-z0-9]` (slash not legal in any observed MFR MPN)
+
+**Ingest-time wiring.** `mapManufacturerProducts()` in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) collects issues per-batch and emits them on `report.mpnQuality` (optional field — back-compat with older batches that omit it). Mirror function in the .mjs script duplicates the TS detection logic byte-for-byte, per the established no-import-path convention (Decisions #174 / #176).
+
+**UI surfacing.** [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) renders a warning card on the per-batch UI when `mpnQuality.totalIssues > 0`, showing total count, per-kind breakdown, and a scrollable sample-MPN list. Only renders when issues exist (zero-noise design).
+
+**Type extensions.** `IngestDiffReport.mpnQuality` added as an optional field to both [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) and [lib/services/atlasIngestService.ts](../lib/services/atlasIngestService.ts) — kept in sync per the existing duplication convention.
+
+**Backfill survey.** [scripts/atlas-mpn-quality-survey.mjs](../scripts/atlas-mpn-quality-survey.mjs) — on-demand scan of existing `atlas_products` to catalog the legacy backlog. Uses indexed Postgres ILIKE filters with tightened patterns (`%-xx%` not `%xx%`, slash skipped because `%/%` times out). Survey is best-effort categorization based on ILIKE match — runtime detection in atlas-ingest.mjs is authoritative.
+
+**Phase 1 explicitly does NOT expand.** Detection surfaces the problem; engineers either chase upstream cleanup at the MFR / dataset provider or hand-fix in SQL. Per-MFR voltage-code expansion is phase 2 (separate BACKLOG entry; deferred until engineer hand-fix load justifies the per-MFR-table build).
+
+**Why ship phase 1 alone.** Phase 1 captures the visibility value (engineers see un-matchable rows at apply-batch time, not months later when a user search misses) without committing to the high-cost expansion-table maintenance. Phase 2 trigger conditions tied to engineer hand-fix load / backlog growth past 500 rows.
+
+**Lessons.**
+- **Survey-first decision-making.** The original BACKLOG estimate was "30 + 5 + 1 = 36 rows" based on opportunistic discoveries during domain-card reviews. A 5-minute survey via indexed ILIKE queries revealed 250+ rows — 8x estimate. Both trigger conditions hit simultaneously. Don't decide on shipping cost-vs-benefit without sizing the actual problem; opportunistic discovery underestimates by an order of magnitude.
+- **Ingest validators framework is forming.** This is the fourth ingest-time-data-quality item in the P1 cluster (after suspicious-unit-value detector + Schottky/small-signal MPN-prefix recognizer + B6 misclassification cleanup). When the fifth lands, lift to a shared `lib/services/atlasIngestValidators/` framework rather than continuing per-pattern modules.
+- **Survey-discovered MFRs.** Building the detector itself surfaced new MFR cohorts — Refond LED RGB `xx` placeholders weren't visible in the original CREATEK + GIGADEVICE + Geehy survey. Each new detection rule finds previously-invisible MFRs; the "if a new MFR exhibits the pattern" trigger condition was already self-validating before the build completed.
+- **Tightening ILIKE patterns for backfill surveys.** `%xx%` and `%/%` are too common across 114K rows and time out under the cookie-auth statement_timeout. Tighten to `%-xx%` or skip the pattern and document the SQL-direct alternative. Same general rule from Decision #189: targeted ILIKE > broad pattern when working against indexed but timeout-bounded queries.
+
+**Files touched:**
+- New: [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts) — 5 detection kinds + summary helper.
+- New: [scripts/atlas-mpn-quality-survey.mjs](../scripts/atlas-mpn-quality-survey.mjs) — backfill survey tool.
+- New: [\_\_tests\_\_/services/atlasMpnQualityValidator.test.ts](../__tests__/services/atlasMpnQualityValidator.test.ts) — 23 cases.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror functions + integration in `mapManufacturerProducts()`.
+- [lib/services/atlasIngestService.ts](../lib/services/atlasIngestService.ts) + [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) — `mpnQuality?` field added to `IngestDiffReport`.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — warning card UI section.
+
+**Verification.** 23 tests pass; type check clean. Backfill survey confirms 250 un-matchable rows across the expected MFRs + Refond as a newly-discovered cohort.
+
+## Decision #192 — Atlas Family Domain Card Hallucination Audit + Phase 1 Grounded Generate (May 2026)
+
+The AI Domain Cards system (Decision #185 / #186 lineage) lets engineers click "Generate" on a family row to fire an Opus 4.7 one-shot that writes a domain knowledge card injected into the Triage AI's `/suggest` and `/investigate` prompts. The original implementation fed Opus the family's logic-table rules + signature entries + accepted overrides + cross-family canonicals + a TS-fallback "existing hand-written card" as style reference. **It did NOT feed Opus any view of `atlas_products`.** Opus filled the resulting gap with priors — Western MFR cohorts (Murata GRM / Samsung CL / TDK CGA / Yageo / Kemet / Vishay / etc.) that exist in `atlas_manufacturers` as cross-ref targets but ship **zero products** under the relevant `family_id`.
+
+The defect compounded through the manual review loop. When an engineer collaborated with Claude in-session to "refine" a card and pasted the built-in draft as context, Claude anchored on the seeded prose and treated MFR-cohort lines as facts to keep, not claims to verify. Across 12 cards drafted this way (12, 52, 71, B1, B3, B4, B5, B6, C1, C2, C3, C5), every single one shipped to `active` status with hallucinated cohorts.
+
+**Audit (May 18, 2026).** Cross-checked every claimed MFR and MPN prefix in those 12 cards against `atlas_products` (verified MFR = ≥1 product under `family_id`; verified prefix = ≥1 product whose MPN matches the prefix under that family). Results: ALL 12 cards flagged SUSPECTED_HALLUCINATIONS. Headline numbers — family 12 (MLCC): **1/26 MFRs verified** (only CCTC); family 52: 5/21; family 71: 11/32; B1: 11/37; B3: 7/27; B4: 7/21; B5: 16/38; B6: 12/38; C1: 23/57; C2: 24/62; C3: 12/41; C5: 9/39. Western majors uniformly invented. Verified MFRs are uniformly Chinese (3PEAK, CHIPANALOG, COSINE, HONGWAN, DIOO, Ruimeng, BDASIC, CCTC, Fortior, Geehy, NOVOSENSE). Full per-card detail saved to [docs/audits/domain-card-audit-2026-05-18.md](audits/domain-card-audit-2026-05-18.md).
+
+**Why this matters.** The hallucinated cards inject into every Triage `/suggest` and `/investigate` call. A Sonnet 4.6 model handed "this family ships Murata GRM and Samsung CL" as authoritative context will (1) generate confidence-inflated verdicts on Chinese-MFR rows by anchoring to a non-existent comparable, (2) lean toward "looks similar to a Murata GRM" reasoning when the actual data has none, (3) propagate the fabricated names into engineer-facing tooltips and the AI Log. Quiet error mode, hard to detect at the Triage row level.
+
+**Fix — Phase 1: Grounded Generate.** Three components, ~2h build:
+
+1. **New SQL migration**: [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql). Two SECURITY DEFINER RPCs — `get_atlas_family_mfr_grounding(familyId, mfr_limit, sample_limit)` returns the top-N MFRs by product count with sample MPNs in one round-trip (vs fetching all 18.7K family-71 rows app-side); `get_atlas_family_grounding_counts(familyId)` returns total product + distinct MFR counts for snapshot.
+
+2. **New service**: [lib/services/atlasFamilyCardGrounding.ts](../lib/services/atlasFamilyCardGrounding.ts). `buildGroundingBlock(familyId)` calls both RPCs in parallel + extracts the family's Chinese-character dict entries from `atlasMapper.getAtlasParamDictionary()`. `formatGroundingForPrompt()` emits a plain-text VERIFIED_MFRS + GROUNDING_COUNTS + CHINESE_PARAM_DICTIONARY block.
+
+3. **Refit endpoint**: [app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts). Parallel-fetches the grounding block alongside existing context. Adds **HARD ANTI-HALLUCINATION RULES** to the Opus prompt — explicit blocklist for Western majors (Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim) unless they appear in VERIFIED_MFRS; "ONLY prefixes you can SEE in sample MPNs" rule; required explicit "Atlas currently has only N MFR(s)" line when VERIFIED_MFRS has fewer than 3 entries; Chinese conventions must come from CHINESE_PARAM_DICTIONARY verbatim. **Removes** the prior "EXISTING HAND-WRITTEN CARD" style-reference injection — that mechanism was anchoring Opus on its own prior hallucinations across regenerations. Adds `groundedAtProductCount` / `groundedAtMfrCount` / `verifiedMfrCount` / `chineseDictEntryCount` to `data_snapshot` so a future Phase 2 staleness signal can compare against current atlas state.
+
+**Smoke test (B1 Regenerate, May 18).** Output cohort: YANGJIE, YFW, KEXIN, AK, Prisemi, ISC, JINGDAO, Jsmc, Rectron, CREATEK, Macmic, Techsem, CBI, YONGYUTAI, RUILON — 15 MFRs, all verified, zero Western intrusions. Card explicitly states "Do NOT introduce Vishay/onsemi/Diodes Inc/ST." MPN prefixes (1N4001-1N4007 JEDEC generics, 10A1-10A10 YANGJIE/YFW, ES1D-ES1J RUILON ultrafast, M1-M7 Prisemi SMA-body) all observable in the sample MPNs the grounding block delivered. Card density and idiosyncratic-knowledge load match or beat manual-drafted standard. Phase 1 verified working before fan-out.
+
+**Why phase 1 alone is enough (for now).** The single highest-cost behavior was Opus hallucinating MFRs from priors with no grounding. Phase 1 closes that. Phase 2 (staleness signal — surface "card grounding stale, 152 new products since last save" on the Domain Cards panel) and Phase 3 (section-level diff dialog when regenerating an active card — preserve engineer prose, swap only grounding) are useful refinements but not load-bearing. They wait until Phase 1's grounding fix has stabilized across all 12 polluted families.
+
+**Lessons.**
+- **AI generators with no view of "what we actually have" hallucinate from priors.** The defect surface was identical to a developer pulling open a fresh repo and writing a feature based on the README without reading the code. Opus was given labels (logic-table rules) and authoritative templates (existing cards) but no view into the data state. That gap is exactly where priors leak in. Any future AI-assisted content generator on top of any data store must have a deterministic ground-truth-from-DB step before the AI step.
+- **Style-reference injection propagates hallucinations across regenerations.** The "existing hand-written card → use this as your style guide" mechanism is the AI equivalent of cargo-culting. The model can't tell which parts of the reference are factual (the canonical attribute list) vs decorative (the MFR cohort) — it preserves both. Remove style references from anti-hallucination-bounded generators; convey style via explicit instructions instead.
+- **Same anchoring mechanism applies to human-AI collaboration.** When the user pasted "here's what's in the system currently" prose into a Claude session and asked for refinement, Claude anchored on the seeded MFR list and treated cohort lines as facts to keep rather than claims to verify. This is the human-loop version of the style-reference problem — and it's why establishing "query atlas BEFORE seeing the existing draft" was the methodology fix that didn't take until the audit forced it.
+- **Audit before patching.** Tempting fix path was to re-draft the cards manually and ship. Audit-first path (cross-check ALL claimed MFRs + prefixes against atlas_products) revealed the defect surface was 100% of cards, not the handful we'd noticed during MLCC redraft. Forced the structural fix (Phase 1 grounded Generate) instead of 12 one-off manual rewrites. Pattern: when you find one hallucination in AI-generated content, assume the same generator produced more, and audit before re-drafting.
+- **Anti-hallucination prompt rules need explicit blocklists, not just positive constraints.** "Use ONLY MFRs in VERIFIED_MFRS" is necessary but not sufficient — the model will still surface a Murata reference as "comparable to" or "industry analog of." The explicit "Do NOT introduce Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim" enumeration is what makes the constraint stick at output time. Mirror this pattern in other AI generators where prior-leakage is a known failure mode.
+
+**Files touched:**
+- New: [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql) — 2 SECURITY DEFINER RPCs.
+- New: [lib/services/atlasFamilyCardGrounding.ts](../lib/services/atlasFamilyCardGrounding.ts) — `buildGroundingBlock` + `formatGroundingForPrompt`.
+- [app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts) — grounding fetch + HARD ANTI-HALLUCINATION RULES + removed existingCardSection + extended data_snapshot.
+- New: [docs/audits/domain-card-audit-2026-05-18.md](audits/domain-card-audit-2026-05-18.md) — full per-card audit report.
+
+**Verification.** B1 Regenerate output meets the manual-drafting bar. Type check clean. Migration to be applied to production Supabase before Generate can be re-run on the other 11 polluted families.

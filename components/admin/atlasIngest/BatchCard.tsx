@@ -305,6 +305,42 @@ export default function BatchCard({
               </Typography>
             </Box>
           )}
+
+          {/* MPN-quality issues — un-matchable MPN patterns the upstream
+              data shipped (range entries, "Series" sentinels, trailing-x
+              placeholders, slash-delimited rows). Engineer-facing notice;
+              no inline fix yet (phase 2 of the ingest-validators framework). */}
+          {r?.mpnQuality && r.mpnQuality.totalIssues > 0 && (
+            <Box sx={{ mt: 2, p: 1.5, bgcolor: 'warning.main', color: 'warning.contrastText', borderRadius: 1, opacity: 0.95 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block' }}>
+                ⚠ {r.mpnQuality.totalIssues} un-matchable MPN row{r.mpnQuality.totalIssues === 1 ? '' : 's'} in this batch
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontSize: '0.7rem' }}>
+                {[
+                  r.mpnQuality.byKind.range_thru > 0 && `${r.mpnQuality.byKind.range_thru} range ("Thru")`,
+                  r.mpnQuality.byKind.range_series > 0 && `${r.mpnQuality.byKind.range_series} "Series"`,
+                  r.mpnQuality.byKind.placeholder_x > 0 && `${r.mpnQuality.byKind.placeholder_x} placeholder (x/X trailing)`,
+                  r.mpnQuality.byKind.placeholder_xx_midword > 0 && `${r.mpnQuality.byKind.placeholder_xx_midword} placeholder (xx mid-word)`,
+                  r.mpnQuality.byKind.slash_variant > 0 && `${r.mpnQuality.byKind.slash_variant} slash-delimited`,
+                ].filter(Boolean).join(' · ')}
+              </Typography>
+              <Typography variant="caption" sx={{ display: 'block', mt: 0.75, fontSize: '0.65rem', fontStyle: 'italic' }}>
+                These rows will be ingested but un-matchable by exact MPN lookup. Sample MPNs:
+              </Typography>
+              <Box sx={{ mt: 0.5, fontFamily: 'monospace', fontSize: '0.65rem', maxHeight: 120, overflowY: 'auto' }}>
+                {r.mpnQuality.samples.map((s, i) => (
+                  <Typography key={i} variant="caption" sx={{ display: 'block', fontSize: '0.65rem' }}>
+                    <Box component="span" sx={{ fontWeight: 700 }}>[{s.kind}]</Box> {s.originalMpn}
+                  </Typography>
+                ))}
+                {r.mpnQuality.totalIssues > r.mpnQuality.samples.length && (
+                  <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', fontStyle: 'italic', mt: 0.5 }}>
+                    … +{r.mpnQuality.totalIssues - r.mpnQuality.samples.length} more
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          )}
         </Box>
       </Collapse>
     </Paper>

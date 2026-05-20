@@ -52,9 +52,9 @@ export interface ParamSignature {
 export const FAMILY_PARAM_SIGNATURES: ParamSignature[] = [
   // ─── B6 BJTs ───
   {
-    pattern: /^(bvcbo|bvceo|bvebo)\b/i,
+    pattern: /^b?(vcbo|vceo|vebo)\b/i,
     target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' },
-    reasoning: 'Collector/base/emitter breakdown voltage (BVCBO/BVCEO/BVEBO) is BJT-specific — diodes have no collector/base/emitter.',
+    reasoning: 'Collector/base/emitter breakdown voltage (VCBO/VCEO/VEBO, optionally B-prefixed as BVCBO/BVCEO/BVEBO). The "O" suffix means "open" terminal (open-base or open-emitter) — a BJT-specific measurement condition. IGBTs use Vces/Vcesat (no O suffix); diodes have no collector/base/emitter. Confirmed via KEXIN BC857S/KC847BS/BC847PN/BC856S/KTC601U (classic BC8xx-series BJTs) misrouted to B7 because the prior pattern required the B prefix that most datasheets omit.',
   },
   {
     pattern: /^@?ic\b/i,
@@ -65,6 +65,11 @@ export const FAMILY_PARAM_SIGNATURES: ParamSignature[] = [
     pattern: /^hfe\b/i,
     target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' },
     reasoning: 'Forward current gain (hFE / β) is BJT-specific — gain has no meaning for a passive diode.',
+  },
+  {
+    pattern: /^ft\b/i,
+    target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' },
+    reasoning: 'fT (transition frequency / unity-gain bandwidth) is a defining small-signal BJT spec, typically 80–500 MHz. IGBTs do not spec fT — switching speed is characterized by Eon/Eoff instead. Confirmed via KEXIN BC857S/KC847BS/BC847PN/KC856S/KTC601U (classic BC8xx-series small-signal BJTs) misrouted to B7. Note: high-frequency RF MOSFETs may also spec fT — if a future MOSFET ingest gets misrouted to B6 by this pattern, refine to require a BJT-co-occurring param.',
   },
   // ─── B5 MOSFETs ───
   {
@@ -117,17 +122,98 @@ export const FAMILY_PARAM_SIGNATURES: ParamSignature[] = [
  * current family, or null. A signature whose target equals the current family
  * is not a foreign-family signal — keep it null so unmapped params under the
  * correct family follow the synonym workflow as usual.
+ *
+ * Variant that takes an explicit signatures list — use this when the caller
+ * has loaded merged code+DB signatures via loadAllFamilyParamSignatures().
  */
-export function detectForeignFamily(
+export function detectForeignFamilyWithList(
   paramName: string,
   currentFamily: string | null,
+  signatures: ParamSignature[],
 ): ParamSignature | null {
   if (!currentFamily) return null;
   const trimmed = paramName.trim();
-  for (const sig of FAMILY_PARAM_SIGNATURES) {
+  for (const sig of signatures) {
     if (sig.pattern.test(trimmed) && sig.target.familyId !== currentFamily) {
       return sig;
     }
   }
   return null;
+}
+
+/** Code-only variant — used by call sites that intentionally want the
+ *  audited baseline without the DB merge (e.g. reclassifyByParameterSignals
+ *  in atlasMapper.ts, which runs at search-time). */
+export function detectForeignFamily(
+  paramName: string,
+  currentFamily: string | null,
+): ParamSignature | null {
+  return detectForeignFamilyWithList(paramName, currentFamily, FAMILY_PARAM_SIGNATURES);
+}
+
+// ─── DB-merge layer ────────────────────────────────────────────────
+// Loads engineer-curated rows from atlas_family_param_signatures and
+// merges them with the code baseline. Code wins on duplicate
+// (pattern source, targetFamilyId) so accidental DB rows can't
+// override audited behavior. Cached 5 min.
+
+interface CachedSignatures {
+  signatures: ParamSignature[];
+  expiresAt: number;
+}
+
+let signaturesCache: CachedSignatures | null = null;
+const SIGNATURES_TTL_MS = 5 * 60 * 1000;
+
+/** Force a refetch on the next loadAllFamilyParamSignatures() call.
+ *  Called by the POST endpoint after a successful insert so the
+ *  Triage queue picks up the new signature on its next render. */
+export function invalidateFamilyParamSignaturesCache(): void {
+  signaturesCache = null;
+}
+
+/** Server-only: returns code-defined entries merged with active DB rows. */
+export async function loadAllFamilyParamSignatures(): Promise<ParamSignature[]> {
+  if (signaturesCache && signaturesCache.expiresAt > Date.now()) {
+    return signaturesCache.signatures;
+  }
+
+  // Lazy import to keep this module client-importable. The Triage UI
+  // pulls types/regexps from here too; only the server-side queue
+  // route hits the DB path.
+  const { createServiceClient } = await import('@/lib/supabase/service');
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from('atlas_family_param_signatures')
+    .select('pattern, target_family_id, target_category, target_subcategory, reasoning')
+    .eq('is_active', true);
+
+  let dbSigs: ParamSignature[] = [];
+  if (!error && Array.isArray(data)) {
+    const codePatterns = new Set(
+      FAMILY_PARAM_SIGNATURES.map((s) => `${s.pattern.source}::${s.target.familyId}`),
+    );
+    for (const row of data) {
+      const key = `${row.pattern}::${row.target_family_id}`;
+      if (codePatterns.has(key)) continue; // Code wins.
+      try {
+        dbSigs.push({
+          pattern: new RegExp(row.pattern as string, 'i'),
+          target: {
+            category: row.target_category as ComponentCategory,
+            subcategory: row.target_subcategory as string,
+            familyId: row.target_family_id as string,
+          },
+          reasoning: row.reasoning as string,
+        });
+      } catch {
+        // Bad regex — skip silently rather than crash the queue.
+        // Insert path validates patterns, so this should never fire.
+      }
+    }
+  }
+
+  const merged = [...FAMILY_PARAM_SIGNATURES, ...dbSigs];
+  signaturesCache = { signatures: merged, expiresAt: Date.now() + SIGNATURES_TTL_MS };
+  return merged;
 }

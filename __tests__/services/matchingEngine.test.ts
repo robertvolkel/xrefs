@@ -1332,8 +1332,8 @@ describe('matchingEngine', () => {
       expect(gateDriverLogicTable.category).toBe('Integrated Circuits');
     });
 
-    it('has 20 rules', () => {
-      expect(gateDriverLogicTable.rules).toHaveLength(20);
+    it('has 22 rules', () => {
+      expect(gateDriverLogicTable.rules).toHaveLength(22);
     });
 
     it('driver_configuration is identity w10 with blockOnMissing', () => {
@@ -1577,8 +1577,8 @@ describe('matchingEngine', () => {
       expect(c5LogicICsLogicTable.category).toBe('Integrated Circuits');
     });
 
-    it('has 23 rules', () => {
-      expect(c5LogicICsLogicTable.rules).toHaveLength(23);
+    it('has 24 rules', () => {
+      expect(c5LogicICsLogicTable.rules).toHaveLength(24);
     });
 
     it('logic_function is identity w10 blockOnMissing (HARD GATE)', () => {

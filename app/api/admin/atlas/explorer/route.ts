@@ -29,17 +29,37 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createClient();
 
-    const { data, error } = await supabase
-      .from('atlas_products')
-      .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, parameters')
-      .or(`mpn.ilike.%${q}%,manufacturer.ilike.%${q}%`)
-      .limit(50);
+    // RPC instead of supabase-js builder. The cookie-auth path was
+    // hitting Postgres statement_timeout (57014) on 114K+ rows because
+    // the planner under the `authenticated` role wasn't picking up the
+    // trigram indexes consistently. The RPC (search_atlas_products_admin,
+    // defined in scripts/supabase-atlas-explorer-search-rpc.sql) runs
+    // SECURITY DEFINER with SET LOCAL statement_timeout = '30s' and uses
+    // an explicit UNION over two indexed CTEs, which gives the planner
+    // a path it can execute fast.
+    const { data, error } = await supabase.rpc('search_atlas_products_admin', {
+      q,
+      lim: 50,
+    });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('atlas-explorer search failed:', { query: q, error });
+      return NextResponse.json({ error: error.message, detail: error }, { status: 500 });
     }
 
-    const results = (data ?? []).map((row) => {
+    interface SearchRow {
+      id: string;
+      mpn: string;
+      manufacturer: string;
+      description: string | null;
+      clean_description: string | null;
+      category: string;
+      subcategory: string;
+      family_id: string | null;
+      status: string | null;
+      parameters: Record<string, unknown> | null;
+    }
+    const results = ((data ?? []) as SearchRow[]).map((row) => {
       const familyId = row.family_id as string | null;
       const table = familyId ? getLogicTable(familyId) : null;
       const params = row.parameters as Record<string, unknown> | null;
@@ -89,7 +109,11 @@ export async function GET(request: NextRequest) {
       total: results.length,
       capped: results.length === 50,
     });
-  } catch {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  } catch (err) {
+    console.error('atlas-explorer route threw:', err);
+    return NextResponse.json(
+      { error: 'Internal server error', detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
   }
 }
