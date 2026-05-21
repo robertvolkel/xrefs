@@ -5816,3 +5816,63 @@ This contributed to a Supabase resource-exhaustion event: hung triage queue comp
 ### Verification
 
 All edits type-clean (`npx tsc --noEmit`). Phase 2 chip visual verified live by user (7 no-card HIGH families surfaced with red chips). AI verdict filter verified by user clustering Accept verdicts. Ingest chunk fixes verified by user successfully proceeding SG Micro and SIMCOM batches. Production-stability lessons verified by the cascade itself.
+
+---
+
+## Decision #194 — Measure-First Discipline: Don't Ship the Triage RPC Optimization (May 21, 2026)
+
+### Context
+
+The May 20 production cascade (Decision #193) ended with a 15s timeout wrapper around `computeTriageAggregation()` in `app/api/admin/atlas/ingest/batches/route.ts` — a band-aid covering for cold-compute observations of 30–90s on the triage queue aggregation. The BACKLOG P1 entry "Optimize computeTriageAggregation" proposed two structural fixes: **Option A** (CTE restructure + `MATERIALIZED` hint to eliminate repeated JSONB scanning in `get_triage_unmapped_aggregate`) and **Option B** (precomputed per-batch unmapped-summary table).
+
+The plan for May 21 was: baseline measure → ship Option A → measure again → decide on B.
+
+### Decision
+
+**Do not ship Option A. Do not ship Option B. Remove the 15s timeout band-aid.**
+
+The pre-optimization baseline showed `get_triage_unmapped_aggregate` running in **707ms cold / 266ms warm** against current production scale (31 applied batches, 907 dictionary overrides, 171K atlas_products). The 30–90s symptom that motivated the BACKLOG entry does not reproduce.
+
+Three things changed between the bad observation and the new baseline:
+1. **Compute tier upgrade** Nano → Small (Decision #193, May 20)
+2. **Postgres major-version upgrade** (Supabase user-initiated, night of May 20→21)
+3. **24h of natural query-plan + buffer warming** at the new tier
+
+The bottleneck was Nano-tier resource contention under Free-tier connection pool exhaustion, not an RPC algorithmic problem. The CTE structure that A would have optimized was not the actual cost driver.
+
+### Why Not Just Ship A Anyway
+
+A was a low-risk one-keyword change (`MATERIALIZED` on the `expanded` CTE) plus an optional single-pass restructure. Tempting to ship because "it can't hurt." Reasons to hold:
+
+1. **Measurement attribution breaks.** If we ship A on top of the upgrade and future-us sees `get_triage_unmapped_aggregate` running fast, we won't know whether A or the upgrade was responsible. That ambiguity bites the NEXT time something looks slow — we'd waste a cycle re-deriving what we already know.
+2. **Yesterday's lesson** (Decision #193): cost-shifting is not optimization. Optimizing against a symptom that no longer exists is a related failure mode — fixing what isn't broken.
+3. **Solo-dev discipline.** No human reviewer to catch "you optimized the wrong thing." Holding off when the data doesn't support shipping is the discipline mechanism.
+
+### Actions Taken
+
+1. **Removed the 15s timeout wrapper** in `batches/route.ts`. The cold-compute path now awaits `computeTriageAggregation()` directly with a comment pointing to this decision. Total LOC removed: ~20.
+2. **Ran `ANALYZE`** on the four hot tables (`atlas_ingest_batches`, `atlas_products`, `atlas_dictionary_overrides`, `atlas_unmapped_param_notes`) to refresh planner statistics post-PG-upgrade. `pg_trgm 1.6` / `pgcrypto 1.3` / `plpgsql 1.0` all on current versions — no extension lag from the upgrade.
+3. **Marked the BACKLOG entry resolved** with explicit "watch triggers" (cold compute > 5s, Proceed wait > 10s, applied batches > 75) that would re-open it.
+
+### Watch Triggers (Re-open If Any Fire)
+
+- Cold compute on `get_triage_unmapped_aggregate` climbs back above 5s on a fresh measurement.
+- Operator-perceived Proceed wait exceeds 10s in real use.
+- Applied-batch count crosses 75, OR per-batch JSONB unmapped-entry counts trend up sharply (signal that scale is finally hitting the algorithmic ceiling A would have addressed).
+- A second symptom emerges that ALSO maps to JSONB-scanning cost (e.g. atlas-coverage RPC slowing) — at that point the structural fix would resolve a class of problems, not just one.
+
+### Lessons
+
+1. **Re-baseline before optimizing — especially after infra changes.** A 24-hour-old performance observation is not a current baseline. The work to confirm "still slow" is cheap (one script run); the work to ship + later re-ship if wrong is expensive.
+2. **Compute upgrades and algorithmic optimizations address different failure modes.** When both are theoretically applicable, do compute first (cheap, reversible) and re-measure before doing algorithmic (irreversible code commitment). Skipping the re-measure is what causes the cost-shifting failure pattern from #193.
+3. **The 15s timeout band-aid should not have been left in for "one more session of safety."** It hid the underlying state — was the RPC fast, or was the timeout firing? Removing band-aids promptly when the underlying issue is resolved keeps the system's behavior legible.
+4. **A decision to NOT ship is still a decision worth documenting.** Future-me looking at this codebase six months from now should be able to find this entry and understand why there's no Option A / Option B sitting around as half-finished work.
+
+### Files Touched
+
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — removed 15s timeout wrapper; cold-compute path now awaits directly
+- [docs/BACKLOG.md](BACKLOG.md) — marked `Optimize computeTriageAggregation` entry resolved with watch triggers
+
+### Verification
+
+Baseline measured via temp script timing the live Supabase RPC: 707ms cold, 266–268ms warm across two consecutive calls. Extension versions confirmed current via SQL Editor. `ANALYZE` completed on hot tables without error. `npx tsc --noEmit` clean after timeout removal.

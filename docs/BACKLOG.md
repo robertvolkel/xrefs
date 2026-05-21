@@ -185,7 +185,25 @@ Cost: ~$0.50 in Opus tokens; ~30 min of review. Output quality across the cohort
 
 Post-completion: optional re-audit run against new active card text would close the verification loop (prove Phase 1 actually eliminated the hallucination surface in production). Deferred unless a Triage row surfaces evidence of residual contamination.
 
-### Optimize computeTriageAggregation — both Proceed AND page-load slow as queue grows (May 20, 2026)
+### ~~Optimize computeTriageAggregation — both Proceed AND page-load slow as queue grows (May 20, 2026)~~ RESOLVED BY INFRA UPGRADE (May 21, 2026)
+
+**Resolution:** Post-Supabase upgrade (Free→Pro + Nano→Small compute per Decision #193, plus PG version upgrade May 20→21) re-baselined `get_triage_unmapped_aggregate` at **707ms cold / 266ms warm** against 31 applied batches + 907 overrides + 171K products. Down from the 30–90s observation that motivated this entry. Symptom was Nano-tier resource exhaustion under Free-tier connection limits, not an RPC algorithmic issue.
+
+**Actions taken May 21:**
+- Removed 15s timeout band-aid in `app/api/admin/atlas/ingest/batches/route.ts` — no longer protecting anything.
+- Verified planner stats post-PG-upgrade via `ANALYZE` on hot tables.
+- Decision #194 captures the full sequence + reasoning for NOT shipping the planned Option A SQL optimization (cost-shifting against a non-reproducing symptom).
+
+**Watch triggers (re-open this entry if any fire):**
+- Cold compute climbs back above 5s on a fresh measurement.
+- Proceed wait exceeds 10s in real operator use.
+- Applied-batch count crosses 75 OR JSONB unmapped entries per batch trend up sharply.
+
+Original content preserved below for context:
+
+---
+
+### ~~Original entry — Optimize computeTriageAggregation~~ (now resolved, see above)
 
 The triage queue aggregation RPC (`get_triage_unmapped_aggregate`, Decision #180) is the bottleneck for two routes:
 1. **Proceed** (single + Proceed All Clean): awaits the recompute via `invalidateTriageQueueCacheAndAwaitFresh` to guarantee the next Triage navigation sees post-apply data. Cost: 30-90s per Proceed at current data scale (30+ applied batches, 500+ unmapped params).
@@ -208,21 +226,31 @@ May 20, 2026 attempted hotfix: switched Proceed to fire-and-forget. That shifted
 
 Effort: ~4-6h for option (1), ~2-3h for option (2), ~3-4h for option (3). Option (1) most robust but biggest change.
 
-### Atlas apply-batch upsert → SECURITY DEFINER RPC (May 19, 2026)
+### Atlas apply-batch upsert → SECURITY DEFINER RPC (May 19, 2026 — updated May 21, 2026)
 
-`scripts/atlas-ingest.mjs` apply-batch step (`/api/admin/atlas/ingest/batches/[batchId]/proceed/`) hit a statement_timeout on SG Micro May 19, 2026 with a 500-row upsert chunk. Quick fix shipped: reduced chunk to 100, more round-trips but each well under the service-role 60s budget. Works in production today.
+**Status:** chunk sizes restored to 500 upserts / 200 snapshots (May 21, 2026) after Decision #193's Nano→Small compute upgrade made the May-19 reductions unnecessary. Instrumented Proceed-timing run on May 21 (3,921-row AK batch) confirmed the bottleneck is per-round-trip latency, not statement_timeout — sequential round-trips dominated 93% of the 21s wall-clock Proceed time. Post-bump, a 5,482-row Jingheng batch Proceeded in 13.2s script time (15.2s end-to-end). Per-row processing time fell 2.2× (5.3ms → 2.4ms). **No timeouts observed at 500-chunk on Small compute.**
 
-**Proper fix:** convert the upsert step to a SECURITY DEFINER RPC `apply_atlas_batch_upserts(p_batch_id, p_rows JSONB)` (or similar) with `SET LOCAL statement_timeout='120s'` and atomic application of the full upsert batch in one transaction. Same pattern as Decisions #179 / #180 / #183 / #189. Benefits:
-- Atomicity: full batch upsert either all-or-nothing within a transaction. Today chunked upserts can leave partial state if one chunk fails mid-batch (the snapshot step protects against this but it's hygiene risk).
-- Explicit timeout budget per-statement, not bound by cookie-auth role default.
-- Avoids round-trip overhead — 100-row chunks ship ~N/100 round-trips per batch; one RPC = one round-trip.
+**Why this entry stays open:** the chunk bump is a quick win, not the structural fix. Network + Postgres execute time still dominates 13s on a 5.5K-row batch. The RPC pattern would eliminate it — `apply_atlas_batch_upserts(p_batch_id, p_rows JSONB)` with `SET LOCAL statement_timeout='120s'` doing all upserts + snapshots in one transaction. Same pattern as Decisions #179 / #180 / #183 / #189. Estimated: ~2s end-to-end Proceed (~7× win on top of today's chunk bump).
 
-**Triggers that flip from defer to ship:**
-- Another statement_timeout on a different MFR with chunk=100. Means JSONB payload is heavier than headroom — RPC budget needed.
-- Apply-batch step becomes the long-pole in re-ingest cadence (e.g. takes >5 min per batch on routine MFRs).
-- Snapshot/upsert partial-state failure observed in production (the today's chunked path leaves room for this).
+**Proper fix benefits unchanged:**
+- Atomicity: full batch upsert all-or-nothing in one transaction. Today's chunked path can leave partial state if one chunk fails mid-batch (the snapshot step ahead protects against data loss but is hygiene risk).
+- Explicit per-statement timeout budget, not bound by cookie-auth role default.
+- Single round-trip vs ~28 (5,482 rows at 500 upsert / 200 snapshot chunks).
 
-Effort: ~3-4h. SQL RPC + route adjustment to call rpc instead of per-chunk upsert + dry-run script.
+**Triggers that flip from defer to ship (refined May 21, 2026 with real numbers):**
+- A single MFR batch crosses 10,000 rows. Linear math: 10K rows × 2.4ms/row ≈ 24s end-to-end, past operator tolerance.
+- Statement_timeout reappears on any MFR at the new 500/200 chunk sizes (means Small compute headroom is insufficient — RPC fix becomes the only path).
+- Operator workflow gets bottlenecked on Proceed waits (subjective; user feedback). Current 15s on 5.5K rows is "acceptable" per the May-21 owner check-in.
+- Snapshot/upsert partial-state failure observed in production (a chunk fails mid-batch).
+- A second Atlas write path needs the same shape of fix (e.g. revert flow at scale) — at that point the RPC is reused across paths.
+
+Effort: ~3-4h. SQL RPC + atlas-ingest.mjs swap to call rpc instead of per-chunk upsert + dry-run script verifying row counts match. Keep chunked path as `--legacy-chunked` fallback during the transition session.
+
+**What we know after May 21 measurement (don't rediscover next time):**
+- Compute-tier was the actual May-19 problem; chunking was a band-aid.
+- 500-upsert / 200-snapshot chunks are stable on Small compute up to at least 5,482 rows.
+- The .mjs script's per-row math: ~2.4ms/row at current chunk sizes; ~5.3ms/row at the old 100/50 chunks.
+- Triage cache invalidation is NOT the bottleneck (1.5s out of 15s, mostly inevitable from wait-then-restart pattern).
 
 ### Engineer cleanup pass — accepted overrides where attribute_id is not in the family logic table (Decision #192 follow-up)
 

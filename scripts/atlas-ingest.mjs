@@ -3076,15 +3076,17 @@ async function runProceed(batchId) {
 
   // 1. Insert snapshots first (so revert is possible if subsequent steps fail)
   console.log(`  Writing ${snapshotRows.length} snapshots...`);
-  // SNAP_CHUNK=200 hit statement_timeout on SIMCOM on May 19, 2026 (small
-  // 1.9MB file but snapshot insert still failed at chunk=200 — likely
-  // because snapshots carry the full prev_row JSONB which is heavier per
-  // row than the source file's payload, especially when the MFR has many
-  // existing atlas_products rows being updated). Dropped to 50 for safety
-  // — small enough that even rich JSONB snapshots stay within the
-  // service-role statement_timeout budget. BACKLOG: convert apply-batch
-  // to SECURITY DEFINER RPC for atomicity + explicit timeout.
-  const SNAP_CHUNK = 50;
+  // Chunk size history:
+  //   - May 19, 2026: SNAP_CHUNK=200 hit statement_timeout on SIMCOM under
+  //     Nano compute on Free tier. Dropped to 50 as band-aid.
+  //   - May 21, 2026: post-Supabase upgrade (Free→Pro + Nano→Small compute,
+  //     Decision #193), the May-20 instrumented Proceed showed ~119 sequential
+  //     Supabase round-trips dominating Proceed time (21s on a 3,921-row
+  //     batch). Bumped back to 200 to cut snapshot round-trips ~4x. If the
+  //     largest MFRs still timeout, the proper fix is the BACKLOG entry to
+  //     convert apply-batch to SECURITY DEFINER RPC (atomic, single
+  //     round-trip, explicit per-statement timeout).
+  const SNAP_CHUNK = 200;
   for (let i = 0; i < snapshotRows.length; i += SNAP_CHUNK) {
     const chunk = snapshotRows.slice(i, i + SNAP_CHUNK);
     const { error } = await supabase.from('atlas_products_snapshots').insert(chunk);
@@ -3094,11 +3096,16 @@ async function runProceed(batchId) {
   // 2. Upserts
   if (upsertRows.length > 0) {
     console.log(`  Upserting ${upsertRows.length} products...`);
-    // CHUNK=500 hit statement_timeout on SG Micro May 19, 2026 (heavy
-    // JSONB parameters payload). Dropped to 100 — more round-trips but
-    // each well under the service-role 60s budget. BACKLOG: convert to
-    // SECURITY DEFINER RPC for atomicity + explicit per-statement timeout.
-    const CHUNK = 100;
+    // Chunk size history:
+    //   - May 19, 2026: CHUNK=500 hit statement_timeout on SG Micro
+    //     (heavy JSONB parameters payload) under Nano compute. Dropped
+    //     to 100 as band-aid.
+    //   - May 21, 2026: post-Supabase upgrade (Decision #193), the
+    //     May-20 instrumented Proceed showed sequential round-trips
+    //     dominating Proceed time. Bumped back to 500 to cut upsert
+    //     round-trips 5x. If the largest MFRs still timeout, the proper
+    //     fix is the BACKLOG SECURITY DEFINER RPC.
+    const CHUNK = 500;
     for (let i = 0; i < upsertRows.length; i += CHUNK) {
       const chunk = upsertRows.slice(i, i + CHUNK);
       const { error } = await supabase
