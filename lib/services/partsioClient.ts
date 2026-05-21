@@ -16,7 +16,9 @@ import {
   TTL_NOT_FOUND_MS,
 } from './partDataCache';
 
-const BASE_URL = process.env.PARTSIO_API_URL;
+const DEFAULT_PARTSIO_API_URL =
+  'http://api.qa.parts.io/solr/partsio/listings';
+const BASE_URL = process.env.PARTSIO_API_URL ?? DEFAULT_PARTSIO_API_URL;
 
 // ============================================================
 // RESPONSE TYPES
