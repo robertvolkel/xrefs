@@ -5728,3 +5728,91 @@ The defect compounded through the manual review loop. When an engineer collabora
 - New: [docs/audits/domain-card-audit-2026-05-18.md](audits/domain-card-audit-2026-05-18.md) — full per-card audit report.
 
 **Verification.** B1 Regenerate output meets the manual-drafting bar. Type check clean. Migration to be applied to production Supabase before Generate can be re-run on the other 11 polluted families.
+
+## Decision #193 — Domain Card Phase 2 (Grounding-Drift Signal + No-Card Volume Awareness + Flag Auto-Clearance) + May 20 Production-Stability Lessons (May 2026)
+
+Three follow-up changes to Decision #192's domain card system, plus a hard-earned set of production-stability lessons from a same-day Supabase resource-exhaustion cascade. All shipped May 19-20, 2026.
+
+### Phase 2 — Grounding-Drift Signal
+
+Phase 1 (Decision #192) added `groundedAtProductCount` / `groundedAtMfrCount` snapshot fields to `atlas_family_domain_cards.data_snapshot` at card-Generate time. Phase 2 surfaces this snapshot as a **proactive Health-chip signal** so engineers see "this card's grounding cohort is stale because new MFRs/products landed" without having to wait for the slower flagCount signal to accumulate.
+
+**New SECURITY DEFINER RPC** in [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql): `get_atlas_all_family_grounding_counts()` returns per-family current product+MFR counts in one round-trip. Used by `/api/admin/atlas/family-domain-cards` route to populate `currentGroundingCounts` for every family in parallel with the existing flag-count + DB-row fetches.
+
+**`computeDomainCardHealth` extended** in [lib/services/atlasFamilyDomainCards.ts](../lib/services/atlasFamilyDomainCards.ts) to compute `groundingProductDrift` + `groundingMfrDrift` (clamped non-negative) and roll into worst-case tier:
+- Red (`refresh-recommended`): ≥3 new MFRs OR ≥500 new products
+- Yellow (`consider-refresh`): ≥1 new MFR OR ≥100 new products
+- Tooltip explicitly distinguishes which signal fired (flag / rule-drift / grounding-drift) and what action clears each — preventing the May 19 confusion where regenerating cards didn't drop the chip (flag count is rolling-30-day, not regen-cleared).
+
+### No-Card Chip Volume Awareness
+
+Original no-card chip was binary (card exists / doesn't) regardless of atlas activity. A family with 1,143 products from 22 MFRs but no card showed identical UI to a dormant zero-products family. Operators couldn't tell which uncarded families were urgent.
+
+Fixed by:
+1. Computing drift even for no-card families (against zero baseline — current volume IS the drift). Stored in `groundingProductDrift` / `groundingMfrDrift` so downstream logic treats it uniformly with carded families.
+2. Reason text differentiates priority: "HIGH PRIORITY: 1,143 products from 22 MFRs with no domain coverage. Click Generate ASAP" vs "Family is dormant" vs "LOW PRIORITY: 89 products..."
+3. Sort within no-card tier by `groundingProductDrift` desc so urgent uncarded families bubble above dormant.
+4. Chip visual override in [AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx) — no-card chip now renders as 🔴 / 🟡 / ⚪ + count based on volume, matching refresh-recommended urgency.
+
+May 20 audit ran via subagent: surfaced 7 HIGH-priority uncarded families (C4 Op-Amps top with 1,143 products / 22 MFRs) plus 5 MEDIUM + 14 dormant. Without this fix, all of those were silently labeled identically — engineers wouldn't have known C4 needed a card.
+
+### Flag Auto-Clearance on Card Activate
+
+The `flagCount` signal counts AI-emitted `atlas_ai_context_flags` rows where Sonnet self-flagged `needsDomainCard: true` during a /suggest call. Per Decision #186, flags only cleared via the 30-day rolling window or by future /suggest calls stopping the bleed.
+
+Surfaced gap: when an engineer regenerates a card and approves the new draft, the new card presumably addresses the gaps the old flags pointed at. But the chip stayed red for 30+ days regardless, which trained operators to ignore the signal.
+
+Fixed in [app/api/admin/atlas/family-domain-cards/[familyId]/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/route.ts) PATCH handler: when status transitions to 'active', fire-and-forget DELETE on `atlas_ai_context_flags` rows for that family with `flagged_at < approved_at`. Fire-and-forget so flag cleanup failure never blocks the approve action; flags are advisory by design.
+
+### Triage AI Verdict Filter
+
+Adjacent UX win: added `aiVerdict: 'all' | 'accept' | 'defer' | 'none'` field to `TriageFilters` ([components/admin/atlasIngest/TriageFilterBar.tsx](../components/admin/atlasIngest/TriageFilterBar.tsx)) with a ToggleButtonGroup. Filter applies inside [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx)'s `orderedRows` useMemo where per-row suggestion state lives. `viewKey` includes the filter so pagination resets on toggle.
+
+Without this, operators had to scroll the entire 500+ row queue looking for green Accept verdicts to burn through. Now: click "Accept" toggle, see only Accept-verdict rows clustered together, blast through them.
+
+### Ingest Reliability Hotfixes
+
+Three statement_timeout fixes shipped same day:
+1. Upload cap bumped 50MB → 200MB in [app/api/admin/atlas/ingest/upload/route.ts](../app/api/admin/atlas/ingest/upload/route.ts) (72MB MFR dump triggered cap).
+2. atlas-ingest.mjs upsert chunk: 500 → 100 (SG Micro statement_timeout on heavy JSONB upsert).
+3. atlas-ingest.mjs snapshot chunk: 200 → 50 (SIMCOM snapshot insert timeout — even on a 1.9MB file, because snapshots carry full prev_row JSONB which is heavy per row).
+
+Plus a 15s timeout wrapper in [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) cold-compute path — page renders degraded (0/0/0 triage counts) instead of hanging when L2 cache is cold and the aggregation RPC is slow at current scale. **This is a band-aid pending the proper RPC optimization (BACKLOG P1).**
+
+### Production-Stability Lessons (May 20 Cascade)
+
+Late in the session, attempted to "fix" slow Proceed responsiveness by switching from `invalidateTriageQueueCacheAndAwaitFresh` to fire-and-forget plain `invalidateTriageQueueCache`. Theory: page-loads would hit L2-cached and respond fast, while Proceed didn't have to wait for full recompute. **The theory was wrong.** L2 was cold for several routes, so page-loads hit the cold-compute path and hung. Cost was shifted from Proceed (where operator expects to wait) to page-load (where operator expects instant response). Reverted both routes back to await-fresh.
+
+This contributed to a Supabase resource-exhaustion event: hung triage queue computes held connections; multiple consecutive hangs exhausted the free-tier connection pool; eventually the project's auth endpoints stopped responding even to login attempts. User had to upgrade Supabase Free → Pro ($25/mo flat) AND Nano → Small compute ($15/mo) to recover, plus restart the project to drain connections, plus accept a Postgres version upgrade prompt mid-recovery.
+
+**Lessons (engraved in this decision because they should constrain future engineering judgment):**
+
+1. **Cost-shifting between routes does not optimize.** If a query is fundamentally expensive, paying for it on route A vs route B is a wash — the total compute load on the database is unchanged. Real optimization means reducing the query cost itself (indexes, materialized aggregates, etc.). Resist the temptation to "make this route fast by moving work to another route."
+
+2. **Postgres connection pool exhaustion has cascading failure modes.** Hung queries don't release connections cleanly; the pool fills; subsequent requests (including unrelated ones like auth) start failing. The symptoms look like "Supabase is down" but the root cause is on your side. Watch connection-pool metrics; alert on pool saturation BEFORE hung-query backlog cascades.
+
+3. **Free tier is not viable for production-bound work.** Pro plan ($25/mo) unlocks: no auto-pause (Free pauses inactive projects — would 5xx for customers), PITR backups (no recovery from "oops"), upgradeable compute (Free locked at Nano = 0.5 GB RAM), email support, longer log retention. The compute upgrade alone is irrelevant on Free since you can't change tiers without Pro.
+
+4. **Compute upgrade is a symptom-fix not a root-cause-fix.** Small tier ($15/mo, 2 GB RAM, dedicated CPU) gave immediate headroom, but the underlying inefficient RPC remains. Compute upgrade buys time; query optimization is still required.
+
+5. **Don't ship infrastructure changes (Postgres upgrade, etc.) during incident recovery.** Mid-cascade, Supabase prompted user to upgrade Postgres. User clicked through. Lucky it completed cleanly — could just as easily have added a second failure mode on top of the first. Defer infra changes to known-good windows.
+
+6. **Solo development on production-bound code requires extra discipline.** No human reviewer caught the cost-shifting error before it shipped. Mitigations: every meaningful change runs `npx tsc --noEmit` before commit (already standard); for SQL migrations and route handler logic, propose plan + get user approval before coding; consider `/ultrareview` before deploying any session's work to customers.
+
+### Files Touched
+
+- [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql) — new `get_atlas_all_family_grounding_counts()` RPC
+- [lib/services/atlasFamilyDomainCards.ts](../lib/services/atlasFamilyDomainCards.ts) — extended DomainCardHealthDetail + DomainCardDataSnapshot, no-card volume awareness, fetchCurrentGroundingCountsByFamily
+- [app/api/admin/atlas/family-domain-cards/route.ts](../app/api/admin/atlas/family-domain-cards/route.ts) — wired grounding counts + no-card sort
+- [app/api/admin/atlas/family-domain-cards/[familyId]/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/route.ts) — flag auto-clearance on activate
+- [components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx) — chip visual override for no-card volume tiers
+- [components/admin/atlasIngest/TriageFilterBar.tsx](../components/admin/atlasIngest/TriageFilterBar.tsx) — AI verdict filter UI
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — filter applied in orderedRows
+- [components/admin/AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) — pass aiVerdict + include in viewKey
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — upsert + snapshot chunk reductions
+- [app/api/admin/atlas/ingest/upload/route.ts](../app/api/admin/atlas/ingest/upload/route.ts) — 50MB → 200MB cap
+- [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts) — 15s timeout wrapper for cold-compute degradation
+
+### Verification
+
+All edits type-clean (`npx tsc --noEmit`). Phase 2 chip visual verified live by user (7 no-card HIGH families surfaced with red chips). AI verdict filter verified by user clustering Accept verdicts. Ingest chunk fixes verified by user successfully proceeding SG Micro and SIMCOM batches. Production-stability lessons verified by the cascade itself.
