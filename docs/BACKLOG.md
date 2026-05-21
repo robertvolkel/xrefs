@@ -185,6 +185,55 @@ Cost: ~$0.50 in Opus tokens; ~30 min of review. Output quality across the cohort
 
 Post-completion: optional re-audit run against new active card text would close the verification loop (prove Phase 1 actually eliminated the hallucination surface in production). Deferred unless a Triage row surfaces evidence of residual contamination.
 
+### Domain card auto-audit on generation + Activate gating (Decision #195 Phase 2 — added May 21, 2026)
+
+Phase 1 of Decision #195's auto-audit pattern shipped today as a CLI script (`scripts/atlas-audit-domain-cards.mjs`). Phase 2 wires it into the Generate flow so the engineer never has to remember to run it.
+
+**Scope:**
+
+1. **Extract audit logic from `.mjs` script to a TS service module** — `lib/services/atlasFamilyCardAudit.ts` exporting `auditFamilyDomainCard(familyId, cardText): Promise<AuditResult>`. The .mjs stays as the CLI entrypoint (imports from the new module, or duplicates the logic per the atlas-ingest.mjs precedent for standalone runs).
+2. **Schema migration:** add `audit_results JSONB` column to `atlas_family_domain_cards`. Stores the latest audit findings + computed_at timestamp. Idempotent `ADD COLUMN IF NOT EXISTS`.
+3. **Generate endpoint hook:** [/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/generate/route.ts) runs the audit immediately after the Anthropic call returns and persists results alongside the draft card. Failure modes documented: if audit throws, persist the card anyway with `audit_results: { error: '...' }` — don't block Generate on audit failure.
+4. **UI: audit results panel** in the existing card review UI ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx) or wherever cards are reviewed). Default-expanded showing pass/fail summary; expand-on-click for per-issue detail. Same visual language as Triage's foreign-family warnings (Decision #177).
+5. **Manual "Re-run audit" button** for cases where `atlas_products` has changed since the audit was last run (e.g. operator applied a batch that brought new MFRs into the family). POSTs to a new route `POST /api/admin/atlas/family-domain-cards/[familyId]/audit` that re-runs + persists.
+6. **Activate gating with configurable threshold** — the riskiest piece, do last. Add an audit-severity score (e.g. count of BOGUS_MFR + WRONG_PREFIX + FABRICATED_DICT issues — those are the high-confidence-of-actual-error categories; MFR_OMISSION is editorial soft signal). When `severityScore > threshold` AND audit has run, the existing Activate action shows a warning + requires a typed confirmation ("I understand this card has N flagged issues") before proceeding. Threshold initially hardcoded; expose as admin config (`atlas_family_card_settings` row?) only if needed. **Do NOT silently block** — engineer must always be able to override with intent.
+
+**Why phase this:**
+- Pieces 1–4 are additive (new column, new module, new UI panel). Low risk.
+- Piece 5 is also additive (new route, new button).
+- Piece 6 modifies an existing user workflow (Activate). That's the gate-change shape that bit us during the May 20 cascade — easy to get wrong, deserves focused attention with `/ultrareview` before commit.
+
+**Recommended order for the session:**
+1. Schema migration first (apply via Supabase SQL Editor — engineer runs manually; no service-role schema changes from script)
+2. Extract audit to TS service + type-check
+3. Generate endpoint hook + verify a fresh Generate call writes `audit_results`
+4. UI panel + verify rendering in dev
+5. Manual re-run button + verify
+6. Activate gating — propose diff, get approval, ship, `/ultrareview`
+7. Update DECISIONS.md (this entry → resolved + Decision #195's Phase 2 status updated)
+
+**Estimated effort:** 2.5–3h focused session. Solo dev — propose-plan-before-code on Piece 6 specifically.
+
+**Open questions to resolve in the next session:**
+- Should `audit_results` invalidate automatically when atlas_products changes (any ingest apply)? Or only on manual re-run? Trade-off: stale audits vs operational cost of re-auditing all cards on every batch apply.
+- Severity threshold default — start at 1 (any non-omission issue blocks)? Or 3 (multiple issues)? Likely needs a few weeks of real-card data to tune.
+- Does Activate gating apply to BOTH new card activations AND re-activations after Regenerate? (Probably yes — same risk surface.)
+
+### Apply auto-audit pattern to other AI-generated content (Decision #195 Phase 3 — added May 21, 2026)
+
+Phase 2 ships auto-audit for family domain cards specifically. The structural risk applies equally to:
+- **Triage AI suggester verdicts** ([/api/admin/atlas/dictionaries/suggest/route.ts](../app/api/admin/atlas/dictionaries/suggest/route.ts)) — Sonnet returns `'accept' | 'defer'` + explanation. Verdict shape is already constrained by tool-use enum (good); explanation prose isn't (potential drift).
+- **Triage AI investigator action buckets** ([/api/admin/atlas/dictionaries/investigate/route.ts](../app/api/admin/atlas/dictionaries/investigate/route.ts)) — six-bucket verdict + evidence claims. Bucket is enum-constrained; evidence prose isn't.
+- **AI override-suggestion explanations** that engineers read when deciding to Accept.
+
+For each, identify what factual claims the AI makes + whether a deterministic ground-truth source exists for verification. Where it does, run the same pattern (auto-audit alongside generation, surface findings in UI, optional gating). Where it doesn't (subjective explanations, judgment calls), leave alone.
+
+**Triggers that flip from defer to ship:**
+- Operator reports surprising AI verdict in any of the above (similar to the C4 cheat sheet review that prompted Decision #195).
+- A spot-check audit finds >15% factual-claim error rate in any AI surface.
+
+**Effort:** ~2h per surface (similar shape to Phase 2). Schedule one surface per session.
+
 ### ~~Optimize computeTriageAggregation — both Proceed AND page-load slow as queue grows (May 20, 2026)~~ RESOLVED BY INFRA UPGRADE (May 21, 2026)
 
 **Resolution:** Post-Supabase upgrade (Free→Pro + Nano→Small compute per Decision #193, plus PG version upgrade May 20→21) re-baselined `get_triage_unmapped_aggregate` at **707ms cold / 266ms warm** against 31 applied batches + 907 overrides + 171K products. Down from the 30–90s observation that motivated this entry. Symptom was Nano-tier resource exhaustion under Free-tier connection limits, not an RPC algorithmic issue.

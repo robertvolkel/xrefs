@@ -5876,3 +5876,83 @@ A was a low-risk one-keyword change (`MATERIALIZED` on the `expanded` CTE) plus 
 ### Verification
 
 Baseline measured via temp script timing the live Supabase RPC: 707ms cold, 266–268ms warm across two consecutive calls. Extension versions confirmed current via SQL Editor. `ANALYZE` completed on hot tables without error. `npx tsc --noEmit` clean after timeout removal.
+
+---
+
+## Decision #195 — Auto-Audit Pattern for AI-Generated Content (May 21, 2026)
+
+### Context
+
+Decision #192's Phase 1 grounding (May 18, 2026) was supposed to eliminate Western-MFR hallucinations in atlas family domain cards by injecting verified atlas_products data into the Generate prompt. May 21 review of the C4 (Op-Amps / Comparators / In-Amps) draft card revealed Phase 1 is necessary but **not sufficient** — even with correct grounding data in the prompt, the AI still produced:
+
+- **`DIA- (DIOO)` prefix claim** — DIOO's grounding samples literally showed `DIO2331`, `DIO2554G`, `DIO2352B`. AI saw `DIO` and wrote `DIA`.
+- **`HAD- (HXYMOS)` prefix claim** — HXYMOS uses an `-HXY` SUFFIX, not a `HAD-` prefix. No `HAD` anywhere in grounding data.
+- **COSINE missing from jellybean MFR list** — COSINE is the 3rd-largest C4 MFR (169 products, including LM-series clones); grounding data included it; output didn't.
+- **`放大器数 → channels` claim** — phrase doesn't exist in atlasMapper.ts C4 dictionary at all.
+- **`isc(ma) → output_current` claim** — no isc mapping in dict; `output_current` rule receives zero Chinese-source data.
+
+### Root Cause — The Limits of Prompt-Based Grounding
+
+An LLM is not a database client. It's a probability machine. When generating each token, the output distribution is a mix of:
+1. Grounding context in the prompt (e.g. `DIOO — samples: DIO2331, DIO2554G, ...`)
+2. Training priors (Chinese fabless MFR conventions, datasheet-style prefix patterns)
+3. Pattern plausibility (what "looks right" for the slot)
+
+Putting accurate data in the prompt **shifts probabilities** toward the right answer. It does not **enforce** them. Hard rules in the prompt ("ONLY prefixes you can SEE in sample MPNs") are themselves just text — the model can violate them, especially when its priors are strong.
+
+This is why Decision #190's four-layer family-ID defense works: the constraint is at the **tool-use enum schema** layer, not the prompt. The SDK literally rejects any out-of-set value before it reaches application code. Prose generation has no equivalent enforcement mechanism — every claim in free-form text is a place where priors can win against grounding.
+
+### Decision
+
+Build the auto-audit pattern: **any AI-generated content with factual claims gets cross-checked against authoritative sources automatically, with results surfaced to the engineer at decision time.**
+
+Phase 1 of this pattern (shipped today, this session):
+- New script `scripts/atlas-audit-domain-cards.mjs` cross-checks every active + draft card against `atlas_products` + `atlas_manufacturers` + `atlasMapper.ts`.
+- Four classes of check: BOGUS MFR / MFR OMISSION / WRONG PREFIX / FABRICATED DICT.
+- Heuristic / regex-driven — explicitly informational, not gating. Engineer eyeballs flagged items.
+- Run on demand via CLI (`node scripts/atlas-audit-domain-cards.mjs`).
+
+Phase 2 (planned, next session): wire the audit into the Generate endpoint so it runs automatically when a card is produced. Results persist in a new `atlas_family_domain_cards.audit_results` JSONB column. UI shows audit summary alongside card content. Optional configurable threshold blocks Activate when critical issues are present. **Tracked in BACKLOG as a discrete entry**.
+
+Phase 3 (future): apply the same pattern to other AI-generated content where it can be automated — Triage AI suggester verdicts, Triage AI investigator action buckets, AI suggestion explanations on overrides. Where deterministic ground-truth checks exist, run them automatically alongside the AI output.
+
+### Refinements During Build (Real Findings)
+
+The audit script went through several debug iterations against the C4 card. Each iteration surfaced a class of false positive that taught a generalizable lesson:
+
+1. **Supabase 1000-row default cap on `.select()` causes long-tail MFR omissions in family ranking** — bit me when NOVOSENSE/Corebai/HXYMOS at the tail of C4's 1,250-row population didn't appear in my ranked-MFR computation. Fix: `fetchAllPages()` helper paginating in 1000-row chunks. Same pattern as Decision #123.
+2. **Case-insensitive MFR-name matching collides with circuit-analysis abbreviations** — "isc(ma)" matched ISC the MFR; "(CMOS/JFET)" matched Cmos the MFR. Fix: case-sensitive boundary check for short ASCII MFR names, case-insensitive for Han/long names.
+3. **`atlas_manufacturers.aliases` carries lowercase normalizer variants** that defeat case-sensitive matching — ISC's aliases include `'isc'`. Fix: drop aliases that are merely lowercase forms of an existing primary name.
+4. **"Any sample starts with prefix" check passes when MFR has one outlier part** — DIOO has 19 DIO-prefix MPNs and one DIA20722, so claiming "DIA- (DIOO)" passed. Fix: prefix-distribution analysis (≥20% share + top-2 rank).
+5. **Prefix regex `[A-Z][A-Z0-9]{1,8}` is too loose** — extracted MPN-substrings like "NCA9545" and "N4007" as prefix claims. Fix: 2-5 char cap.
+6. **Strict X→Y arrow regex misses prose-embedded claims** — "放大器数 and 通道数 both → channels" doesn't match because of intervening words. Fix: proximity check (arrow OR attributeId-shaped token within 50 chars after Chinese phrase).
+7. **Omission check flags trivial-cohort MFRs as editorial oversights** — HXYMOS with 2 products in B8 isn't a card omission, it's a focus decision. Fix: threshold ≥100 products AND ≥3% of family.
+8. **Common technical abbreviations get matched as MFR names** — `DC 东晨`, `HC 虹成电子`, `PTC 普诚`, `Fast 法思特`, `Milliohm 毫欧` all triggered BOGUS_MFR flags because cards discuss DC bias, 74HC logic, PTC thermistors, fast recovery, milliohm units. Fix: `MFR_NAME_BLOCKLIST` for known technical-term collisions.
+
+### Baseline Audit Results (May 21, 2026, 22 cards)
+
+After refinements: 41 issues across 16 cards. Notable real catches beyond C4:
+- **Family 52 (Chip Resistors): TA-I omitted** — 3,341 products = 86% of family. Major omission.
+- **Family C2 (Switching Regulators): Richtek named but doesn't ship; DELTA D12-prefix claim doesn't match actual PJ-prefix MPNs**
+- **Family B5 (MOSFETs): HXYMOS (10%) and SWST (8%) omitted**
+- **Family 12 (MLCCs), 58 (Aluminum Electrolytic), 59 (Tantalum), 65 (Varistors), C3 (Gate Drivers): each have at least one fabricated Chinese dict claim**
+
+A few remaining false positives expected (`THD 台华达` in C9 vs Total Harmonic Distortion abbreviation; `RS 容硕` in C7 vs RS-485 protocol) — acceptable for a heuristic check. Engineer eyeballs flagged items.
+
+### Lessons
+
+1. **Prompt-based grounding is necessary but never sufficient for AI-generated factual claims.** Even with the exact correct data in the prompt, the model can produce contradicting output. Pair every grounding pass with a verification pass against the same source.
+2. **Verification scope must match generation scope.** If the AI generates prose covering MFR cohort + prefixes + dict claims + sub-types, the audit needs all four checks. Partial verification gives false confidence.
+3. **Where structured output is possible (tool-use with enum schemas), use it instead of post-hoc verification.** Decision #190's family-ID enum is the cleanest example: the model literally can't generate an invalid value. Prose can't be enum-constrained, so prose needs verification.
+4. **Generalize the pattern across all AI-generated content.** This is not just about family domain cards. Triage AI verdicts, AI investigator analyses, AI suggestion explanations all share the same structural risk. Decision #190 added it for family-ID specifically; we should look at where else the pattern applies.
+5. **Heuristic audits are valuable even when imperfect.** 41 flagged items took ~2 min to scan and surfaced ~30 real issues. False-positive rate ~25% is fine when the alternative is no automated check at all.
+
+### Files Touched This Session
+
+- [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) — new audit script (406 lines)
+- [docs/BACKLOG.md](BACKLOG.md) — entry for next-session Phase 2 work (auto-audit-on-generation + Activate gating)
+- [CLAUDE.md](../CLAUDE.md) — script inventory updated to reference audit script
+
+### Verification
+
+Script tested against C4 (where errors were known): caught DIOO/DIA, HXYMOS/HAD, and `放大器数` correctly after refinements. Full-corpus scan completed in ~45s, surfaced 41 issues across 16 cards. False positive rate manually assessed at ~25% — acceptable for a heuristic-first check.

@@ -233,6 +233,7 @@ scripts/                      # Utility scripts (Digikey param discovery, Supaba
   atlas-manufacturers-import.mjs # Excel import for manufacturer master list
   atlas-api-validate-ids.mjs  # Validate API partner IDs vs local atlas_id
   atlas-api-sync-profiles.mjs # Sync manufacturer profiles from Atlas external API
+  atlas-audit-domain-cards.mjs # Auto-audit family domain cards for hallucinations (Decision #195)
 locales/                      # i18n translations (en, de, zh-CN)
 theme/theme.ts                # MUI M3 dark theme configuration
 jest.config.ts                # Jest config (next/jest.js, SWC transforms, path aliases)
