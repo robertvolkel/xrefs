@@ -18,6 +18,8 @@ import type { GlobalUnmappedParam, StatusFilter } from './types';
 
 export type TriageMode = 'synonyms' | 'auto_flagged' | 'all';
 
+export type AiVerdictFilter = 'all' | 'accept' | 'defer' | 'none';
+
 export interface TriageFilters {
   search: string;
   mfrSlugs: string[];
@@ -31,6 +33,13 @@ export interface TriageFilters {
    *  icon. Independent of `hasNote` — a row can be flagged with no note,
    *  noted with no flag, or both. */
   flaggedOnly: boolean;
+  /** Filter by the cached AI Triage verdict (Sonnet 4.6 /suggest output).
+   *  'all' (default) shows everything; 'accept' / 'defer' surface only
+   *  rows where Sonnet returned that verdict; 'none' shows rows that
+   *  haven't been AI-evaluated yet (cold rows). Verdict state lives in
+   *  the table's RowState (loaded from localStorage); the filter is
+   *  applied inside GlobalUnmappedParamsTable's orderedRows useMemo. */
+  aiVerdict: AiVerdictFilter;
 }
 
 export const EMPTY_FILTERS: TriageFilters = {
@@ -40,6 +49,7 @@ export const EMPTY_FILTERS: TriageFilters = {
   minProductCount: 0,
   hasNote: false,
   flaggedOnly: false,
+  aiVerdict: 'all',
 };
 
 interface Props {
@@ -95,7 +105,8 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
     filters.families.length > 0 ||
     filters.minProductCount > 0 ||
     filters.hasNote ||
-    filters.flaggedOnly;
+    filters.flaggedOnly ||
+    filters.aiVerdict !== 'all';
 
   const synonymsCount = triageCounts?.synonyms ?? 0;
   const autoFlaggedCount = triageCounts?.autoFlagged ?? 0;
@@ -259,6 +270,35 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
               )}
             </Stack>
           </ToggleButton>
+        </Tooltip>
+
+        {/* AI verdict filter. Filters to rows whose cached Sonnet /suggest
+            verdict matches the chosen value. 'none' shows cold rows
+            (never generated). The actual filtering happens inside
+            GlobalUnmappedParamsTable's orderedRows useMemo where the
+            per-row suggestion state lives. */}
+        <Tooltip title="Filter by AI verdict: Accept (Sonnet proposes a clean mapping), Defer (Sonnet wants engineer judgment), None (no AI suggestion yet — click Generate)">
+          <ToggleButtonGroup
+            size="small"
+            value={filters.aiVerdict}
+            exclusive
+            onChange={(_e, v) => v && onChange({ ...filters, aiVerdict: v as AiVerdictFilter })}
+            aria-label="AI verdict filter"
+            sx={{ ml: 0.5 }}
+          >
+            <ToggleButton value="all" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
+              <Box component="span" sx={{ fontSize: '0.75rem' }}>AI: All</Box>
+            </ToggleButton>
+            <ToggleButton value="accept" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
+              <Box component="span" sx={{ fontSize: '0.75rem', color: filters.aiVerdict === 'accept' ? 'success.main' : undefined }}>Accept</Box>
+            </ToggleButton>
+            <ToggleButton value="defer" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
+              <Box component="span" sx={{ fontSize: '0.75rem', color: filters.aiVerdict === 'defer' ? 'warning.main' : undefined }}>Defer</Box>
+            </ToggleButton>
+            <ToggleButton value="none" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
+              <Box component="span" sx={{ fontSize: '0.75rem' }}>None</Box>
+            </ToggleButton>
+          </ToggleButtonGroup>
         </Tooltip>
 
         <TextField

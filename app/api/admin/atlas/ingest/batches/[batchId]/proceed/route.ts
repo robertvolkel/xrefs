@@ -58,6 +58,13 @@ export async function POST(
     invalidateManufacturersListCache();
     // Wait-then-restart so Triage reflects the now-applied batch on next
     // navigation. Plain invalidate could return a stale in-flight promise.
+    //
+    // May 20, 2026 NOTE: briefly tried fire-and-forget to make Proceed faster.
+    // That shifted the compute cost to the next page-load instead, which felt
+    // worse (page hangs while loading). Reverted. The proper fix is to
+    // optimize computeTriageAggregation itself (BACKLOG entry: precomputed
+    // per-batch unmapped-summary table OR lighter aggregation RPC) so neither
+    // Proceed nor page-load pays minutes of compute.
     await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({

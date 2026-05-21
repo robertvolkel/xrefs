@@ -71,6 +71,12 @@ interface HealthDetail {
   level: HealthLevel;
   flagCount: number;
   ruleDrift: number;
+  /** Phase 2 of Decision #192 — atlas product/MFR drift since the card's
+   *  grounding snapshot. For no-card families these fields carry the
+   *  current absolute counts (used to differentiate HIGH/MED/LOW
+   *  uncarded families visually). */
+  groundingProductDrift: number;
+  groundingMfrDrift: number;
   reason: string;
 }
 
@@ -302,7 +308,20 @@ export default function AtlasDomainCardsPanel() {
                   : e.status === 'draft'
                     ? <Chip size="small" label="draft" color="info" />
                     : <Chip size="small" label="archived" color="default" variant="outlined" />;
-              const healthMeta = HEALTH_META[e.health.level];
+              // Phase 2 follow-up (May 19, 2026): no-card families now carry
+              // their current atlas volume in `groundingProductDrift` (see
+              // computeDomainCardHealth no-card branch). Override the chip
+              // visual based on volume so HIGH-priority uncarded families
+              // (e.g. C4 with 1,143 products) visually pop as red instead
+              // of blending in with dormant no-card families.
+              let healthMeta = HEALTH_META[e.health.level];
+              if (e.health.level === 'no-card') {
+                const vol = e.health.groundingProductDrift;
+                if (vol >= 500) healthMeta = { label: `No card · HIGH (${vol.toLocaleString()})`, color: 'error', emoji: '🔴' };
+                else if (vol >= 100) healthMeta = { label: `No card · MED (${vol})`, color: 'warning', emoji: '🟡' };
+                else if (vol > 0) healthMeta = { label: `No card · LOW (${vol})`, color: 'default', emoji: '⚪' };
+                // else: vol === 0 (dormant) — keep default "No card" label
+              }
               const isPinned = pinnedSet.has(e.familyId);
               return (
                 <TableRow

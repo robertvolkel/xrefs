@@ -90,3 +90,35 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION get_atlas_family_grounding_counts(TEXT) TO authenticated, service_role;
+
+-- ============================================================
+-- All-families grounding counts companion — single round-trip variant
+-- used by the Domain Cards panel health rollup (Phase 2 of Decision #192).
+-- Avoids 43-parallel-RPCs to compute grounding-drift per family on every
+-- panel load. Returns one row per family currently present in atlas_products.
+-- Families absent here mean zero products under that family_id today.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_atlas_all_family_grounding_counts()
+RETURNS TABLE (
+  family_id TEXT,
+  product_count BIGINT,
+  mfr_count BIGINT
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+SET statement_timeout = '30s'
+AS $$
+  SELECT
+    atlas_products.family_id,
+    COUNT(*) AS product_count,
+    COUNT(DISTINCT atlas_products.manufacturer) FILTER (
+      WHERE atlas_products.manufacturer IS NOT NULL AND atlas_products.manufacturer <> ''
+    ) AS mfr_count
+  FROM atlas_products
+  WHERE atlas_products.family_id IS NOT NULL
+  GROUP BY atlas_products.family_id;
+$$;
+
+GRANT EXECUTE ON FUNCTION get_atlas_all_family_grounding_counts() TO authenticated, service_role;

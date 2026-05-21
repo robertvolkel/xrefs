@@ -293,6 +293,14 @@ export interface DomainCardDataSnapshot {
   signatureCount?: number;
   crossFamilyCount?: number;
   generatedAt?: string;
+  /** Phase 1 of Decision #192 — atlas_products counts captured at draft
+   *  time. Phase 2 (Decision #192 follow-up shipped May 19, 2026) compares
+   *  these against current atlas state to surface grounding-drift in the
+   *  Health chip without waiting for flagCount to accumulate. */
+  groundedAtProductCount?: number;
+  groundedAtMfrCount?: number;
+  verifiedMfrCount?: number;
+  chineseDictEntryCount?: number;
 }
 
 /** Health rollup for a family card. Surfaces in the admin panel so the
@@ -318,6 +326,12 @@ export interface DomainCardHealthDetail {
   /** Number of logic-table rules added since the card was generated. 0
    *  for Built-in cards (we don't track their original rule count). */
   ruleDrift: number;
+  /** Atlas product-count drift since this card was generated. Positive =
+   *  new products landed. 0 for cards without a grounding snapshot
+   *  (Built-in TS cards + DB cards generated before Phase 1 of #192). */
+  groundingProductDrift: number;
+  /** Atlas distinct-MFR-count drift since this card was generated. */
+  groundingMfrDrift: number;
   /** One-line plain-English reason for the level — used as the tooltip. */
   reason: string;
 }
@@ -402,6 +416,29 @@ export async function fetchFlagCountsByFamily(windowDays = 30): Promise<Map<stri
   return out;
 }
 
+/** Phase 2 of Decision #192 — fetch CURRENT atlas product + MFR counts
+ *  per family in one round-trip via the all-families grounding RPC.
+ *  Used by the Domain Cards panel to compute grounding-drift signal
+ *  (compare snapshot saved at card-gen time vs current atlas state).
+ *  Fail-open: returns empty map on DB error so health degrades gracefully. */
+export async function fetchCurrentGroundingCountsByFamily(): Promise<Map<string, { productCount: number; mfrCount: number }>> {
+  const out = new Map<string, { productCount: number; mfrCount: number }>();
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase.rpc('get_atlas_all_family_grounding_counts');
+    if (error || !data) return out;
+    for (const row of data as Array<{ family_id: string; product_count: number | string; mfr_count: number | string }>) {
+      out.set(row.family_id, {
+        productCount: Number(row.product_count),
+        mfrCount: Number(row.mfr_count),
+      });
+    }
+  } catch {
+    // Fail-open
+  }
+  return out;
+}
+
 /** Compute the health rollup for a single family card.
  *  Inputs are pre-fetched so the caller can batch the underlying queries. */
 export function computeDomainCardHealth(args: {
@@ -410,17 +447,43 @@ export function computeDomainCardHealth(args: {
   dataSnapshot: DomainCardDataSnapshot | null;
   currentRuleCount: number;
   flagCount: number;
+  currentGroundingCounts?: { productCount: number; mfrCount: number };
 }): DomainCardHealthDetail {
-  const { source, status, dataSnapshot, currentRuleCount, flagCount } = args;
+  const { source, status, dataSnapshot, currentRuleCount, flagCount, currentGroundingCounts } = args;
 
   // No card at all — top of the priority list. The engineer should
   // Generate one before worrying about anything else.
+  //
+  // Phase 2 follow-up (May 19, 2026): surface atlas-volume drift even for
+  // no-card families. Without this, a family with 1,200 products from 20
+  // MFRs but no card looked identical to a dormant zero-products family —
+  // operators had no signal which uncarded families were urgent.
+  // Now: reason text names the current volume; route sorts no-card
+  // families by product count desc so high-volume ones bubble up.
   if (source === 'none') {
+    const productCount = currentGroundingCounts?.productCount ?? 0;
+    const mfrCount = currentGroundingCounts?.mfrCount ?? 0;
+    const baseReason = 'No card exists for this family yet.';
+    let reason: string;
+    if (productCount === 0) {
+      reason = `${baseReason} Family is dormant (zero atlas products) — no card needed unless atlas ingest pulls it in later.`;
+    } else if (productCount >= 500) {
+      reason = `${baseReason} HIGH PRIORITY: atlas has ${productCount.toLocaleString()} products from ${mfrCount} MFR${mfrCount === 1 ? '' : 's'} under this family with no domain coverage. Click Generate ASAP — Triage AI lacks context for these products.`;
+    } else if (productCount >= 100) {
+      reason = `${baseReason} MEDIUM PRIORITY: atlas has ${productCount.toLocaleString()} products from ${mfrCount} MFR${mfrCount === 1 ? '' : 's'} under this family. Click Generate when convenient.`;
+    } else {
+      reason = `${baseReason} LOW PRIORITY: atlas has ${productCount} products from ${mfrCount} MFR${mfrCount === 1 ? '' : 's'} under this family. Card optional for now.`;
+    }
     return {
       level: 'no-card',
       flagCount,
       ruleDrift: 0,
-      reason: 'No card exists for this family yet. Click Generate to write the first draft.',
+      // For no-card families, current volume IS the drift (vs zero baseline).
+      // Surfacing as drift fields lets sort/filter logic treat it uniformly
+      // with carded families' drift.
+      groundingProductDrift: productCount,
+      groundingMfrDrift: mfrCount,
+      reason,
     };
   }
 
@@ -432,6 +495,21 @@ export function computeDomainCardHealth(args: {
     ? Math.max(0, currentRuleCount - snapshotRuleCount)
     : 0;
 
+  // Phase 2 of #192 — compute grounding drift (product + MFR counts vs
+  // snapshot). Only meaningful for DB cards generated via /generate
+  // post-Phase-1; older cards + Built-in TS cards have no snapshot fields.
+  // Negative drift (atlas shrunk) is clamped to 0 — only growth signals
+  // a regenerate need; shrinkage is informational and rarely happens
+  // outside of revert flows.
+  const snapshotProductCount = dataSnapshot?.groundedAtProductCount;
+  const snapshotMfrCount = dataSnapshot?.groundedAtMfrCount;
+  const groundingProductDrift = (typeof snapshotProductCount === 'number' && currentGroundingCounts)
+    ? Math.max(0, currentGroundingCounts.productCount - snapshotProductCount)
+    : 0;
+  const groundingMfrDrift = (typeof snapshotMfrCount === 'number' && currentGroundingCounts)
+    ? Math.max(0, currentGroundingCounts.mfrCount - snapshotMfrCount)
+    : 0;
+
   // Archived cards: don't show health alerts. The engineer explicitly
   // retired the card.
   if (status === 'archived') {
@@ -439,33 +517,77 @@ export function computeDomainCardHealth(args: {
       level: 'ok',
       flagCount,
       ruleDrift,
+      groundingProductDrift,
+      groundingMfrDrift,
       reason: 'Card is archived.',
     };
   }
 
+  // Reason text must be honest about which action helps. Regenerate
+  // rewrites card content (addresses ruleDrift, refreshes grounding
+  // cohort) but does NOT clear flagCount — flags are AI-emitted by
+  // Sonnet on /suggest calls when it self-flags "needsDomainCard:true"
+  // for a paramName. They drop ONLY via (a) the 30-day rolling window
+  // ageing them out, OR (b) future /suggest calls stopping the bleed
+  // because the regenerated card now has enough context that Sonnet
+  // no longer flags. Engineers can't directly resolve these flags;
+  // they're automatic self-correcting signals.
+  //
+  // groundingDrift IS cleared by regeneration — the new card writes a
+  // fresh snapshot. So the reason text explicitly says "Regenerate clears
+  // this" for drift contributors.
+  function buildReason(parts: {
+    flagPart: string | null;
+    drifPart: string | null;
+    groundPart: string | null;
+  }, level: string): string {
+    const segs: string[] = [];
+    if (parts.flagPart) segs.push(parts.flagPart);
+    if (parts.drifPart) segs.push(parts.drifPart);
+    if (parts.groundPart) segs.push(parts.groundPart);
+    const summary = segs.join(' · ');
+    const actions: string[] = [];
+    if (parts.drifPart) actions.push('Regenerate rewrites the card with the latest rules');
+    if (parts.groundPart) actions.push('Regenerate refreshes the MFR cohort and sample MPNs against current atlas data');
+    if (parts.flagPart) actions.push('flag count drops as the 30-day window ages out OR as future /suggest calls stop self-flagging (regenerated cards typically generate fewer flags going forward) — regeneration does NOT immediately clear flags');
+    return `${level}: ${summary}. ${actions.join('. ')}.`;
+  }
+
+  // Thresholds for grounding drift. Tuned conservatively — a single MFR
+  // landing under a family is enough to surface yellow; meaningful
+  // product-cohort growth (≥500) escalates to red.
+  const groundingStrong = groundingMfrDrift >= 3 || groundingProductDrift >= 500;
+  const groundingModerate = groundingMfrDrift >= 1 || groundingProductDrift >= 100;
+
   // Strong signal tier.
-  if (flagCount >= 10 || ruleDrift >= 5) {
-    const parts: string[] = [];
-    if (flagCount >= 10) parts.push(`${flagCount} self-flags in the last 30 days`);
-    if (ruleDrift >= 5) parts.push(`${ruleDrift} new logic-table rules added since this card was written`);
+  if (flagCount >= 10 || ruleDrift >= 5 || groundingStrong) {
     return {
       level: 'refresh-recommended',
       flagCount,
       ruleDrift,
-      reason: `Refresh recommended: ${parts.join(' · ')}. Click Regenerate so Opus rewrites the card with the latest data.`,
+      groundingProductDrift,
+      groundingMfrDrift,
+      reason: buildReason({
+        flagPart: flagCount >= 10 ? `${flagCount} self-flags in the last 30 days` : null,
+        drifPart: ruleDrift >= 5 ? `${ruleDrift} new logic-table rules added since this card was written` : null,
+        groundPart: groundingStrong ? `${groundingMfrDrift} new MFR${groundingMfrDrift === 1 ? '' : 's'} + ${groundingProductDrift.toLocaleString()} new product${groundingProductDrift === 1 ? '' : 's'} since this card was grounded` : null,
+      }, 'Refresh recommended'),
     };
   }
 
   // Moderate signal tier.
-  if (flagCount >= 3 || ruleDrift >= 1) {
-    const parts: string[] = [];
-    if (flagCount >= 3) parts.push(`${flagCount} self-flags in the last 30 days`);
-    if (ruleDrift >= 1) parts.push(`${ruleDrift} new rule${ruleDrift === 1 ? '' : 's'} added`);
+  if (flagCount >= 3 || ruleDrift >= 1 || groundingModerate) {
     return {
       level: 'consider-refresh',
       flagCount,
       ruleDrift,
-      reason: `Consider refresh: ${parts.join(' · ')}.`,
+      groundingProductDrift,
+      groundingMfrDrift,
+      reason: buildReason({
+        flagPart: flagCount >= 3 ? `${flagCount} self-flags in the last 30 days` : null,
+        drifPart: ruleDrift >= 1 ? `${ruleDrift} new rule${ruleDrift === 1 ? '' : 's'} added` : null,
+        groundPart: groundingModerate ? `${groundingMfrDrift} new MFR${groundingMfrDrift === 1 ? '' : 's'} + ${groundingProductDrift.toLocaleString()} new product${groundingProductDrift === 1 ? '' : 's'} since this card was grounded` : null,
+      }, 'Consider refresh'),
     };
   }
 
@@ -473,8 +595,10 @@ export function computeDomainCardHealth(args: {
     level: 'ok',
     flagCount,
     ruleDrift,
-    reason: flagCount === 0 && ruleDrift === 0
-      ? 'No issues detected in the last 30 days.'
-      : `OK — ${flagCount} self-flag${flagCount === 1 ? '' : 's'}, ${ruleDrift} rule drift.`,
+    groundingProductDrift,
+    groundingMfrDrift,
+    reason: flagCount === 0 && ruleDrift === 0 && groundingProductDrift === 0 && groundingMfrDrift === 0
+      ? 'No issues detected.'
+      : `OK — ${flagCount} self-flag${flagCount === 1 ? '' : 's'}, ${ruleDrift} rule drift, ${groundingProductDrift.toLocaleString()} grounding-product drift.`,
   };
 }

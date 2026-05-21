@@ -179,6 +179,12 @@ interface Props {
    *  mutated in-place by Accept/Revert/Flag — so an engineer scrolled deep
    *  into the queue stays scrolled deep after taking action on a row. */
   viewKey: string;
+  /** Filter by cached AI Triage verdict. 'all' = no filter (default).
+   *  'accept' / 'defer' = only rows whose state.suggestion.suggestion
+   *  matches. 'none' = only cold rows (no AI suggestion yet). Filter
+   *  applies in orderedRows after the row-fetch but before the stale
+   *  partition + visible-count pagination. */
+  aiVerdictFilter?: 'all' | 'accept' | 'defer' | 'none';
 }
 
 interface RowState {
@@ -410,7 +416,7 @@ function writeFamilySchemaCache(
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all' }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
@@ -509,7 +515,19 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // fresh group, source order preserved. Off by default — preserves the
   // parent panel's intentional ordering.
   const orderedRows = useMemo(() => {
-    if (!staleFirstSort) return rows;
+    // Apply AI verdict filter first — reduces work for the stale partition
+    // and pagination. Filter reads each row's cached suggestion verdict
+    // from `states`. 'none' = rows with no AI suggestion yet (cold rows).
+    let filtered: GlobalUnmappedParam[] = rows;
+    if (aiVerdictFilter && aiVerdictFilter !== 'all') {
+      filtered = rows.filter((r) => {
+        const st = states[r.paramName];
+        const verdict = st?.suggestion?.suggestion ?? null;
+        if (aiVerdictFilter === 'none') return verdict === null;
+        return verdict === aiVerdictFilter;
+      });
+    }
+    if (!staleFirstSort) return filtered;
     const isRowStale = (row: GlobalUnmappedParam): boolean => {
       const st = states[row.paramName];
       if (!st) return false;
@@ -525,12 +543,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // Stable partition: stales first (preserved relative order), then fresh.
     const stale: GlobalUnmappedParam[] = [];
     const fresh: GlobalUnmappedParam[] = [];
-    for (const r of rows) {
+    for (const r of filtered) {
       if (isRowStale(r)) stale.push(r);
       else fresh.push(r);
     }
     return [...stale, ...fresh];
-  }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort]);
+  }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter]);
   const visibleRows = orderedRows.slice(0, visibleCount);
   const hiddenCount = Math.max(0, orderedRows.length - visibleRows.length);
   // useTransition lets React keep the UI responsive while it renders the

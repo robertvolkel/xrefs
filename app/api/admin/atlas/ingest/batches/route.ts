@@ -598,11 +598,34 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     } else {
       // Fully cold cache (first load post-deploy or after explicit purge).
-      const fresh = await computeTriageAggregation();
-      classified = fresh.classified;
-      cachedTriageCounts = fresh.triageCounts;
-      cachedStatusCounts = fresh.statusCounts;
-      await writeCachedTriageData(fresh);
+      // May 20, 2026: at current data scale (30+ applied batches, 500+
+      // unmapped params), this compute takes minutes and hangs the page-load
+      // request. Wrap in a timeout — if it doesn't complete in 15s, return
+      // empty aggregation data so the page renders (degraded). Background
+      // recompute continues; subsequent page-loads will hit the warm cache.
+      // Proper fix: optimize get_triage_unmapped_aggregate RPC (BACKLOG).
+      const COMPUTE_TIMEOUT_MS = 15_000;
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), COMPUTE_TIMEOUT_MS);
+      });
+      const computePromise = computeTriageAggregation().then((fresh) => {
+        // Even if the route already responded with empty data, persist the
+        // computed result so the NEXT request hits warm cache.
+        void writeCachedTriageData(fresh).catch(() => {});
+        return fresh;
+      });
+      const result = await Promise.race([computePromise, timeoutPromise]);
+      if (result) {
+        classified = result.classified;
+        cachedTriageCounts = result.triageCounts;
+        cachedStatusCounts = result.statusCounts;
+      } else {
+        // Timed out — return empty aggregation so page renders. Triage
+        // counts will show 0 / 0 / 0 until next page-load when cache warm.
+        classified = [];
+        cachedTriageCounts = { synonyms: 0, autoFlagged: 0, total: 0 };
+        cachedStatusCounts = { open: 0, accepted: 0, undone: 0 };
+      }
     }
 
     // ── Aggregate counters (per-request, depend on the visible batch list) ─

@@ -79,6 +79,49 @@ Also added `mapped:cpn` — optional Customer Part Number / Internal Part Number
 
 ## P1 — Medium Priority
 
+### Per-row visibility of atlas_ai_context_flags on Triage queue (May 19, 2026)
+
+A "flag" in this system = `atlas_ai_context_flags` row inserted when Sonnet's /suggest output sets `needsDomainCard: true`. The aggregate count drives the Domain Cards Health chip — but there's **no per-row visual on the Triage page** showing which paramNames triggered flags or what Sonnet's `gap_description` said.
+
+Engineers can't:
+- See which specific Triage row was flagged by Sonnet
+- Read the AI's one-line gap explanation ("could not distinguish input-side vs output-side VCC") without querying the DB directly
+- Use the flag info to prioritize which paramNames most need engineer review
+
+**What this would add:**
+1. A flag icon (or chip) in the Triage row when an `atlas_ai_context_flags` row exists for `(family_id, param_name)`.
+2. Tooltip showing the most recent `gap_description`.
+3. Optional "Show flagged only" toggle in the TriageFilterBar — same shape as "Has note" / "Flagged" engineer-flag filter from Decision #186, but for AI-emitted flags.
+
+**Triggers that flip from defer to ship:**
+- Engineer joins and asks "I know B6 has 12 flags — which rows are they on?"
+- We want to prioritize Triage processing by AI-confidence signals (flagged rows = AI was uncertain → engineer attention more valuable here).
+
+Effort: ~1.5h. New endpoint query joining `atlas_ai_context_flags` against the Triage queue + UI chip + filter toggle.
+
+### Unify three domain-card staleness signals into one model (May 19, 2026)
+
+Today the AI Domain Cards panel has TWO independent staleness signals, and Decision #192's Phase 2 plan adds a THIRD that overlaps with one of them. Operators can't tell which signal fired or what action will clear it.
+
+**The three signals:**
+1. **`flagCount`** (existing) — number of engineer self-flags on this family's unmapped Triage params in the last 30 days. Drops only when flagged rows get resolved or the 30-day window ages out. **Regenerate does NOT clear it.**
+2. **`ruleDrift`** (existing) — `currentRuleCount − snapshotRuleCount` from the card's `data_snapshot`. Regenerate clears it (writes a new snapshot).
+3. **`groundedProductDrift` / `groundedMfrDrift`** (Phase-1-snapshot, Phase-2-display) — `currentAtlasCount − groundedAtSnapshotCount` from the Phase-1-extended `data_snapshot`. Not surfaced in the UI yet. Regenerate clears it.
+
+**Today's user-perceived bug:** operator clicks Regenerate, expects red chip to drop to green, but it persists because flagCount was the trigger (not ruleDrift). Reason text said "Click Regenerate" — misleading. **Hotfix May 19, 2026: reason text now differentiates which signal fired and what action helps.**
+
+**What this would add:** unify into one health-rollup computation that:
+1. Computes all three signals independently.
+2. Emits the chip color from the worst-case of the three.
+3. Tooltip names each signal's contribution and what action clears it.
+4. Adds a "what would Regenerate clear?" dry-run preview button — shows operator whether Regenerating now would actually drop the chip or whether they need other action (resolve flags / wait for window).
+
+**Triggers that flip from defer to ship:**
+- Operators ask "I just regenerated, why is it still red?" more than once (already happened May 19, 2026 — hotfix shipped).
+- Phase 2 (groundedSnapshotDrift surfacing) lands and a third signal compounds the confusion.
+
+Effort: ~3-4h. Includes Phase-2 surface AND the unification refactor. Best done together since both touch the same compute path.
+
 ### Domain Card Phase 2 — staleness signal (Decision #192)
 
 Phase 1 (just shipped) makes `Generate` and `Regenerate` produce grounded cards from `atlas_products` data. But the grounded snapshot drifts: as new MFRs ingest, the saved card's MFR cohort gets stale. Today there's no in-app signal — the engineer has to remember to regenerate, or notice manually that "we ingested Sunlord last week but the card still says only CCTC ships under family 12."
@@ -94,6 +137,27 @@ Phase 1 (just shipped) makes `Generate` and `Regenerate` produce grounded cards 
 - Engineer asks "which cards should I refresh?" — proves the staleness state needs surfacing.
 
 Effort ~1.5h. Architecture pattern mirrors Decision #187 (proactive staleness signaling for cached AI verdicts) — same shape, applied to domain cards instead of Triage suggestion caches.
+
+### Domain Card draft diff view — visual delta vs prior active card (May 19, 2026)
+
+Lighter / faster-to-ship alternative to the full Phase 3 dialog below. When the operator opens a draft (post-Regenerate, pre-Approve), default to a **two-pane diff view** vs the prior active card:
+- Left pane: prior active card text
+- Right pane: new draft text
+- Inline highlighting — green for added, red strikethrough for removed, neutral for unchanged
+- Toggle: "Show diff" / "Show new only" for engineers who prefer to read fresh prose
+
+Approve button works the same — diff is purely informational. Helps operators spot regressions (Sonnet dropped a useful MFR, made a section vaguer, etc.) and quickly distinguish "substantive new content" from "cosmetic rephrasing."
+
+**Why ship this even before the full Phase 3**: operators currently regenerate cards blind to what changed. Yesterday's session surfaced this when the operator regenerated 12+ cards and had no way to quickly confirm whether each new draft was an improvement, regression, or wash.
+
+**Implementation**:
+- Use a small line-diff library (jsdiff or similar) — line-level is the v1, word-level is a refinement
+- Render in the existing card-preview dialog/drawer
+- Trade-off: Sonnet often rewords identical content. Line-diff will show "lots changed" for what's really rephrasing. Word-level diff cleaner but more effort.
+
+**Effort**: ~1.5h for line-diff v1.
+
+**Relationship to Phase 3 below**: Phase 3 adds section-level accept/reject + smart section detection. This diff view is the read-only precursor — if Phase 3 ever ships, the diff visualization is reused as its "current state" pane.
 
 ### Domain Card Phase 3 — section-level diff dialog when regenerating (Decision #192)
 
@@ -120,6 +184,45 @@ All 12 audit-flagged cards plus B7 (precautionary) regenerated via grounded Gene
 Cost: ~$0.50 in Opus tokens; ~30 min of review. Output quality across the cohort consistently matched or exceeded the manual-drafting bar (Triage AI gets richer foreign-family flags, sub-type distinctions, Chinese paramName mappings, MPN-suffix decoding than pre-Phase-1).
 
 Post-completion: optional re-audit run against new active card text would close the verification loop (prove Phase 1 actually eliminated the hallucination surface in production). Deferred unless a Triage row surfaces evidence of residual contamination.
+
+### Optimize computeTriageAggregation — both Proceed AND page-load slow as queue grows (May 20, 2026)
+
+The triage queue aggregation RPC (`get_triage_unmapped_aggregate`, Decision #180) is the bottleneck for two routes:
+1. **Proceed** (single + Proceed All Clean): awaits the recompute via `invalidateTriageQueueCacheAndAwaitFresh` to guarantee the next Triage navigation sees post-apply data. Cost: 30-90s per Proceed at current data scale (30+ applied batches, 500+ unmapped params).
+2. **Atlas Ingest page-load** (`/api/admin/atlas/ingest/batches`): if L1 is cold AND L2 is cold/stale, computes synchronously. Same 30-90s cost.
+
+May 20, 2026 attempted hotfix: switched Proceed to fire-and-forget. That shifted the cost to the NEXT page-load (page hung at infinite loader). Reverted — cost-shifting doesn't help, only the underlying compute is the real cost. Both routes now back to await-fresh.
+
+**Proper fix options (pick one):**
+
+1. **Precomputed per-batch unmapped-summary table.** Materialized at apply time: one row per batch storing the unmapped count + per-paramName mini-rollup. Aggregation route just sums across batches (cheap). Trade-off: requires writing the summary on every apply + invalidation logic on override changes (paramName might newly resolve or unresolve).
+
+2. **Lighter aggregation RPC.** Today's RPC pulls `report->'unmappedParams'` JSONB and runs CTE aggregation. Could be made faster by adding indexes on the JSONB path, or by extracting the unmappedParams into a dedicated relational table at apply time.
+
+3. **Async recompute with stale-tolerance UI.** Apply → kick off background recompute → page-load shows "data is recomputing" banner if it sees recently-invalidated L2 with no fresh recompute yet. Trade-off: UI complexity, but no awaited wait anywhere.
+
+**Triggers that flip from defer to ship:**
+- Already hit: per-Proceed wait >30s observed May 19/20, 2026.
+- If applied-batch count crosses 50 and per-Proceed wait crosses 2 minutes.
+- If operator workflow gets bottlenecked on triage-queue cache rebuilds.
+
+Effort: ~4-6h for option (1), ~2-3h for option (2), ~3-4h for option (3). Option (1) most robust but biggest change.
+
+### Atlas apply-batch upsert → SECURITY DEFINER RPC (May 19, 2026)
+
+`scripts/atlas-ingest.mjs` apply-batch step (`/api/admin/atlas/ingest/batches/[batchId]/proceed/`) hit a statement_timeout on SG Micro May 19, 2026 with a 500-row upsert chunk. Quick fix shipped: reduced chunk to 100, more round-trips but each well under the service-role 60s budget. Works in production today.
+
+**Proper fix:** convert the upsert step to a SECURITY DEFINER RPC `apply_atlas_batch_upserts(p_batch_id, p_rows JSONB)` (or similar) with `SET LOCAL statement_timeout='120s'` and atomic application of the full upsert batch in one transaction. Same pattern as Decisions #179 / #180 / #183 / #189. Benefits:
+- Atomicity: full batch upsert either all-or-nothing within a transaction. Today chunked upserts can leave partial state if one chunk fails mid-batch (the snapshot step protects against this but it's hygiene risk).
+- Explicit timeout budget per-statement, not bound by cookie-auth role default.
+- Avoids round-trip overhead — 100-row chunks ship ~N/100 round-trips per batch; one RPC = one round-trip.
+
+**Triggers that flip from defer to ship:**
+- Another statement_timeout on a different MFR with chunk=100. Means JSONB payload is heavier than headroom — RPC budget needed.
+- Apply-batch step becomes the long-pole in re-ingest cadence (e.g. takes >5 min per batch on routine MFRs).
+- Snapshot/upsert partial-state failure observed in production (the today's chunked path leaves room for this).
+
+Effort: ~3-4h. SQL RPC + route adjustment to call rpc instead of per-chunk upsert + dry-run script.
 
 ### Engineer cleanup pass — accepted overrides where attribute_id is not in the family logic table (Decision #192 follow-up)
 
@@ -909,6 +1012,24 @@ Status text in `PartsListTable` (e.g., "Validated", "Error", "Searching") and lo
 ---
 
 ## P2 — Low Priority
+
+### Applied batch cards — show "currently unresolved" alongside frozen historical unmapped count (May 19, 2026)
+
+Applied batch cards in AtlasIngestPanel today show the unmappedParams count frozen at apply time. After an engineer accepts dict overrides that resolve some of those params, the frozen card count doesn't update — even though the live Triage queue (computed against current overrides per Decision #180) correctly excludes the now-resolved rows.
+
+Result: cognitive dissonance. Operator looks at a NOVOSENSE Applied batch showing "50 unmapped" but the Triage queue shows fewer. They're both correct but measure different things (historical-at-apply vs currently-unresolved).
+
+**What this would add:** on each Applied batch card, render BOTH counts side-by-side:
+- "50 unmapped at apply" (historical, what was frozen — same as today)
+- "12 currently unresolved" (live, computed from frozen unmapped list filtered by current `atlas_dictionary_overrides`)
+
+The live count is already computed by the queue route's override-filter logic; just needs to be aggregated per-batch and surfaced on the card. Or batch-card consumers can call a new per-batch endpoint that does the same filter scoped to one batch.
+
+Effort: ~1-2h. Pure UX clarity; no data model change.
+
+**Triggers that flip from defer to ship:**
+- Operator asks "why does the card say 50 but the queue total moved less than that when I cleared the family?"
+- Operators routinely use the per-card count to drive prioritization decisions and the staleness misleads them.
 
 ### Atlas stats RPC scales poorly past ~70K products (Decision #174 follow-up)
 **Files:** `scripts/supabase-mfr-stats-rpc.sql`, `scripts/atlas-ingest.mjs`.

@@ -121,6 +121,29 @@ export async function PATCH(
     // (left-border stripe + receded verdict chip + ↻ refresh icon + header
     // banner with stale counts). Approve no longer wipes the cache.
 
+    // On status transition to 'active', clear all atlas_ai_context_flags
+    // for this family older than approved_at. Those flags are Sonnet
+    // self-complaints about the OLD card's content gaps; by approving a
+    // new card, the engineer asserts those gaps are now addressed. Without
+    // this, the health chip lingers red for ~30 days even after a dense
+    // regenerated card lands (the only clearance mechanism was the rolling
+    // 30-day window). Fire-and-forget — flag cleanup failure doesn't block
+    // the approve action.
+    if (body.status === 'active' && data.approved_at) {
+      const approvedAt = data.approved_at as string;
+      void (async () => {
+        try {
+          await supabase
+            .from('atlas_ai_context_flags')
+            .delete()
+            .eq('family_id', familyId)
+            .lt('flagged_at', approvedAt);
+        } catch {
+          // Flag cleanup is advisory — never block the approve response.
+        }
+      })();
+    }
+
     return NextResponse.json({ success: true, card: data });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

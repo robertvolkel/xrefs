@@ -3076,7 +3076,15 @@ async function runProceed(batchId) {
 
   // 1. Insert snapshots first (so revert is possible if subsequent steps fail)
   console.log(`  Writing ${snapshotRows.length} snapshots...`);
-  const SNAP_CHUNK = 200;
+  // SNAP_CHUNK=200 hit statement_timeout on SIMCOM on May 19, 2026 (small
+  // 1.9MB file but snapshot insert still failed at chunk=200 — likely
+  // because snapshots carry the full prev_row JSONB which is heavier per
+  // row than the source file's payload, especially when the MFR has many
+  // existing atlas_products rows being updated). Dropped to 50 for safety
+  // — small enough that even rich JSONB snapshots stay within the
+  // service-role statement_timeout budget. BACKLOG: convert apply-batch
+  // to SECURITY DEFINER RPC for atomicity + explicit timeout.
+  const SNAP_CHUNK = 50;
   for (let i = 0; i < snapshotRows.length; i += SNAP_CHUNK) {
     const chunk = snapshotRows.slice(i, i + SNAP_CHUNK);
     const { error } = await supabase.from('atlas_products_snapshots').insert(chunk);
@@ -3086,7 +3094,11 @@ async function runProceed(batchId) {
   // 2. Upserts
   if (upsertRows.length > 0) {
     console.log(`  Upserting ${upsertRows.length} products...`);
-    const CHUNK = 500;
+    // CHUNK=500 hit statement_timeout on SG Micro May 19, 2026 (heavy
+    // JSONB parameters payload). Dropped to 100 — more round-trips but
+    // each well under the service-role 60s budget. BACKLOG: convert to
+    // SECURITY DEFINER RPC for atomicity + explicit per-statement timeout.
+    const CHUNK = 100;
     for (let i = 0; i < upsertRows.length; i += CHUNK) {
       const chunk = upsertRows.slice(i, i + CHUNK);
       const { error } = await supabase

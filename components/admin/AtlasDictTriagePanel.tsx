@@ -418,6 +418,7 @@ export default function AtlasDictTriagePanel() {
       minProductCount: filters.minProductCount,
       hasNote: filters.hasNote,
       flaggedOnly: filters.flaggedOnly,
+      aiVerdict: filters.aiVerdict,
       batchFilter,
     }),
     [mode, statusFilter, filters, batchFilter],
@@ -587,6 +588,7 @@ export default function AtlasDictTriagePanel() {
               onRowFlagged={onRowFlagged}
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
+              aiVerdictFilter={filters.aiVerdict}
             />
           )}
         </>

@@ -40,6 +40,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     invalidateManufacturersListCache();
     // Wait-then-restart — bulk apply changes many batches at once and the
     // user typically goes to Triage right after to review what's left.
+    // (Briefly tried fire-and-forget May 20, 2026 — page-load became
+    // hung-loading instead. Reverted. See proceed route note.)
     await invalidateTriageQueueCacheAndAwaitFresh();
 
     return NextResponse.json({

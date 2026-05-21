@@ -20,6 +20,7 @@ import {
   ATLAS_FAMILY_DOMAIN_CARDS,
   listAllDomainCardRows,
   fetchFlagCountsByFamily,
+  fetchCurrentGroundingCountsByFamily,
   computeDomainCardHealth,
   type DomainCardListEntry,
 } from '@/lib/services/atlasFamilyDomainCards';
@@ -31,10 +32,13 @@ export async function GET(): Promise<NextResponse> {
     const { error: authError } = await requireAdmin();
     if (authError) return authError;
 
-    // Batch the slow reads in parallel — both queries take ~50-200ms.
-    const [dbRows, flagCounts] = await Promise.all([
+    // Batch the slow reads in parallel — all three queries take ~50-200ms.
+    // groundingCounts is Phase 2 of Decision #192 — surfaces grounding-drift
+    // proactively on the Health chip without waiting for flagCount to accumulate.
+    const [dbRows, flagCounts, groundingCounts] = await Promise.all([
       listAllDomainCardRows(),
       fetchFlagCountsByFamily(30),
+      fetchCurrentGroundingCountsByFamily(),
     ]);
 
     // Build entries for every L3 family — even those with no card — so the
@@ -46,6 +50,7 @@ export async function GET(): Promise<NextResponse> {
       const familyName = table?.familyName ?? familyId;
       const currentRuleCount = table?.rules.length ?? 0;
       const flagCount = flagCounts.get(familyId) ?? 0;
+      const currentGroundingCounts = groundingCounts.get(familyId);
 
       const dbRow = dbRows.get(familyId);
       if (dbRow) {
@@ -55,6 +60,7 @@ export async function GET(): Promise<NextResponse> {
           dataSnapshot: dbRow.dataSnapshot,
           currentRuleCount,
           flagCount,
+          currentGroundingCounts,
         });
         return {
           familyId,
@@ -77,6 +83,7 @@ export async function GET(): Promise<NextResponse> {
           dataSnapshot: null,
           currentRuleCount,
           flagCount,
+          currentGroundingCounts,
         });
         return {
           familyId,
@@ -99,6 +106,7 @@ export async function GET(): Promise<NextResponse> {
         dataSnapshot: null,
         currentRuleCount,
         flagCount,
+        currentGroundingCounts,
       });
       return {
         familyId,
@@ -131,6 +139,17 @@ export async function GET(): Promise<NextResponse> {
       if (a.health.level === b.health.level && a.status !== b.status) {
         if (a.status === 'draft') return -1;
         if (b.status === 'draft') return 1;
+      }
+      // Within "no-card" specifically: sort by current atlas volume desc
+      // so high-volume uncarded families (e.g. C4 with 1,143 products)
+      // surface above dormant ones. Without this the operator couldn't
+      // tell which uncarded families were urgent — May 19, 2026 audit
+      // identified 7 HIGH-priority uncarded families hidden in the middle
+      // of an alphabetical list.
+      if (a.health.level === 'no-card' && b.health.level === 'no-card') {
+        const va = a.health.groundingProductDrift;
+        const vb = b.health.groundingProductDrift;
+        if (va !== vb) return vb - va;
       }
       return a.familyId.localeCompare(b.familyId);
     });

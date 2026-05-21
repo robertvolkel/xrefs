@@ -25,7 +25,12 @@ import {
 } from '@/lib/services/atlasIngestService';
 
 const ATLAS_DIR = resolve(process.cwd(), 'data/atlas');
-const MAX_BYTES_PER_FILE = 50 * 1024 * 1024; // 50MB safety cap
+// Bumped 50MB → 200MB on May 19, 2026 after a 72MB MFR dump from a
+// large-catalog manufacturer hit the prior cap. JSON dumps for big MFRs
+// (1000+ products each carrying rich parameter JSONB) trend toward
+// 50-150MB; 200MB gives headroom. The streaming-based request.formData()
+// reader is memory-efficient enough to handle this on a modest server.
+const MAX_BYTES_PER_FILE = 200 * 1024 * 1024; // 200MB safety cap
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
