@@ -236,12 +236,26 @@ export function isDomainCompatible(
     ) {
       return { compatible: true, deviation: false };
     }
-    // Deviation (industrial_harsh / commercial under automotive)
-    return {
-      compatible: true,
-      deviation: true,
-      reason: `Candidate classified as ${humanReadable(candidateDomain)} — not AEC-Q200 qualified`,
-    };
+    // Hard-exclude confirmed-commercial / industrial-harsh under automotive
+    // intent. A classifier only emits these domains when it has positive
+    // evidence the part is NOT automotive (e.g. Murata GRM series → commercial).
+    // `unknown` is intentionally NOT excluded — most non-classified MFRs
+    // (especially Atlas / Chinese cohorts that rarely carry an `aec_q200`
+    // attribute) land in `unknown`, and hiding them would wipe out
+    // legitimately-qualified parts. They surface with a verify-qualification
+    // badge instead via the deviation flag computed upstream.
+    if (
+      candidateDomain === 'commercial' ||
+      candidateDomain === 'industrial_harsh'
+    ) {
+      return {
+        compatible: false,
+        deviation: false,
+        reason: `Candidate classified as ${humanReadable(candidateDomain)} — not AEC-Q200 qualified`,
+      };
+    }
+    // Any remaining state (shouldn't happen — `unknown` handled above) — allow.
+    return { compatible: true, deviation: false };
   }
 
   // Phase 1: no gating for other contexts
@@ -356,4 +370,23 @@ export function contextActivatesDomainGate(
   context: ApplicationContext | null | undefined,
 ): boolean {
   return contextExpectedDomains(context).size > 0;
+}
+
+/**
+ * True when a `part.qualifications[]` entry is already represented by the
+ * `DomainChip`. UI render paths use this to filter out duplicate AEC chips —
+ * `DomainChip` shows "AEC-Q200" for the `automotive_q200` domain, and the data
+ * layer also pushes the literal string "AEC-Q200" onto `part.qualifications`,
+ * so without this filter both render side-by-side.
+ *
+ * Match is case-insensitive on the canonical AEC token; tolerant of trailing
+ * notes like "AEC-Q200 (Murata GCM)".
+ */
+export function isDomainCoveredQualification(label: string): boolean {
+  const normalized = label.trim().toUpperCase();
+  return (
+    normalized.startsWith('AEC-Q200') ||
+    normalized.startsWith('AEC-Q100') ||
+    normalized.startsWith('AEC-Q101')
+  );
 }

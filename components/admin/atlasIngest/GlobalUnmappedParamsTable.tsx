@@ -146,6 +146,102 @@ export function paramUid(paramName: string): string {
   return 'TR-' + (h >>> 0).toString(16).padStart(8, '0').slice(-6);
 }
 
+/** Local helper — renders the matchingImpact column. Colour tiers chosen to
+ *  give an at-a-glance prioritisation signal across the queue. Estimate rows
+ *  (no override yet, default weight=7 assumption) get a dashed border so
+ *  engineers know the score will sharpen once the row is accepted with a
+ *  definitive canonical. */
+function ImpactChip({
+  impact,
+  productCount,
+}: {
+  impact?: GlobalUnmappedParam['matchingImpact'];
+  productCount: number;
+}): React.ReactElement {
+  // Server didn't compute (older cached payload, defensive). Fall back to
+  // product_count as the only signal available.
+  if (!impact) {
+    return (
+      <Chip
+        label={productCount.toLocaleString()}
+        size="small"
+        sx={{ height: 20, fontSize: '0.65rem', bgcolor: 'action.hover' }}
+      />
+    );
+  }
+  const { score, weight, canonical, isEstimate } = impact;
+  // Display-only target → no matching impact, even if product reach is high.
+  // Engineers should know accepting won't move recommendation quality.
+  if (weight === 0) {
+    return (
+      <Tooltip
+        arrow
+        title={
+          <Box>
+            <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
+              Display only
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              {canonical
+                ? `'${canonical}' is not in the matching engine's logic table (satellite or L2 display-only attribute).`
+                : 'Destination scope is L2/uncovered — no matching-engine impact, just display.'}
+            </Typography>
+          </Box>
+        }
+      >
+        <Chip
+          label="—"
+          size="small"
+          sx={{ height: 20, fontSize: '0.65rem', bgcolor: 'action.hover', color: 'text.disabled' }}
+        />
+      </Tooltip>
+    );
+  }
+  // Tier thresholds picked so the queue self-organises: a 🔥 row should be
+  // worth dropping everything for (1000s of products on a blocking gate),
+  // 🟠 is high-value batch work, 🟡 is moderate, ⚪ is small fish.
+  let icon = '⚪';
+  let bg = 'action.hover';
+  let fg = 'text.primary';
+  if (score >= 50000) { icon = '🔥'; bg = 'error.dark'; fg = 'error.contrastText'; }
+  else if (score >= 10000) { icon = '🟠'; bg = 'warning.dark'; fg = 'warning.contrastText'; }
+  else if (score >= 1000) { icon = '🟡'; bg = 'warning.light'; fg = 'warning.contrastText'; }
+  const formatted = score >= 1000 ? `${(score / 1000).toFixed(score >= 10000 ? 0 : 1)}k` : score.toString();
+  return (
+    <Tooltip
+      arrow
+      title={
+        <Box>
+          <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
+            Matching impact: {score.toLocaleString()}
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block' }}>
+            {productCount.toLocaleString()} products × weight {weight}
+            {canonical ? ` (→ ${canonical})` : ''}
+          </Typography>
+          {isEstimate && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic' }}>
+              Estimate — weight defaults to 7 until the row is accepted with a definitive canonical.
+            </Typography>
+          )}
+        </Box>
+      }
+    >
+      <Chip
+        label={`${icon} ${formatted}`}
+        size="small"
+        sx={{
+          height: 20,
+          fontSize: '0.65rem',
+          bgcolor: bg,
+          color: fg,
+          ...(isEstimate && { border: '1px dashed', borderColor: 'divider', opacity: 0.85 }),
+        }}
+      />
+    </Tooltip>
+  );
+}
+
 interface Props {
   rows: GlobalUnmappedParam[];
   onRegenerateAffected: (batchIds: string[]) => Promise<void>;
@@ -422,6 +518,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const [expanded, setExpanded] = useState(true);
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
+  // Cancel flag for the bulk AI Generate run. Set true by the Stop button;
+  // each worker checks it between fetches and exits cleanly. We use a ref so
+  // the flag is observable inside the async closure without re-rendering the
+  // table mid-run. Reset to false at the start of every new generate batch.
+  const generateCancelRef = useRef<boolean>(false);
+  // Mirror of the cancel ref for UI feedback (button label/disabled). Ref
+  // alone won't re-render the Stop button when clicked.
+  const [generateStopping, setGenerateStopping] = useState(false);
   // Per-paramName hydration guard. Previously a single bool ref ("did we
   // hydrate at all yet?") — that fired once on first mount and short-circuited
   // every subsequent filter change, so switching Status filter from Open to
@@ -527,6 +631,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         return verdict === aiVerdictFilter;
       });
     }
+    // Default sort: matching impact desc. Engineers see the highest-leverage
+    // pending accepts at the top of every view without configuring anything.
+    // Stable-ish — ties (e.g., orphans with score=0) preserve insertion order.
+    // Server provides matchingImpact; we sort client-side so the column
+    // header can later support click-to-toggle direction without a refetch.
+    filtered = [...filtered].sort(
+      (a, b) => (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0),
+    );
     if (!staleFirstSort) return filtered;
     const isRowStale = (row: GlobalUnmappedParam): boolean => {
       const st = states[row.paramName];
@@ -797,12 +909,20 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       return next;
     });
     setSuggestionProgress({ done: 0, total: queue.length });
+    // Reset cancel flag at the start of every new batch — a previous Stop
+    // shouldn't poison the next run.
+    generateCancelRef.current = false;
+    setGenerateStopping(false);
 
     let done = 0;
     let next = 0;
 
     async function worker() {
       while (next < queue.length) {
+        // Stop button sets this. We exit between fetches (not mid-fetch) so
+        // in-flight requests still resolve and update their row — clean stop,
+        // no orphan loading spinners.
+        if (generateCancelRef.current) break;
         const row = queue[next++];
         if (!row) break;
         const key = row.paramName;
@@ -877,6 +997,23 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
 
     const workers = Array.from({ length: Math.min(SUGGESTION_CONCURRENCY, queue.length) }, () => worker());
     await Promise.all(workers);
+    // If the user hit Stop, some queued rows were marked loading but never
+    // fetched. Clear their spinners so the UI doesn't strand them. Rows that
+    // got a verdict (or errored) already had their state set above.
+    if (generateCancelRef.current) {
+      setStates((prev) => {
+        const next = { ...prev };
+        for (const row of queue) {
+          const s = next[row.paramName];
+          if (s?.loadingSuggestion) {
+            next[row.paramName] = { ...s, loadingSuggestion: false };
+          }
+        }
+        return next;
+      });
+    }
+    generateCancelRef.current = false;
+    setGenerateStopping(false);
     setSuggestionProgress(null);
   }, []);
 
@@ -1859,9 +1996,30 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
 
         {suggestionProgress && (
           <Box sx={{ my: 1 }}>
-            <LinearProgress variant="determinate" value={(suggestionProgress.done / suggestionProgress.total) * 100} />
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+              <Box sx={{ flex: 1 }}>
+                <LinearProgress variant="determinate" value={(suggestionProgress.done / suggestionProgress.total) * 100} />
+              </Box>
+              {/* Stop button — sets the cancel ref. Workers finish their
+                  in-flight fetch and exit before picking the next row, so
+                  this is a clean stop, not an abort. */}
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                disabled={generateStopping}
+                onClick={() => {
+                  generateCancelRef.current = true;
+                  setGenerateStopping(true);
+                }}
+                sx={{ fontSize: '0.7rem', py: 0.25 }}
+              >
+                {generateStopping ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Stack>
             <Typography variant="caption" color="text.secondary">
               Generating AI suggestions: {suggestionProgress.done} / {suggestionProgress.total}
+              {generateStopping ? ' — stopping after current in-flight calls' : ''}
             </Typography>
           </Box>
         )}
@@ -1882,6 +2040,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 <TableCell sx={{ fontWeight: 600, width: 160 }}>Category</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 180 }}>Sample values</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 60 }}>Prods</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 90 }}>
+                  <Tooltip
+                    arrow
+                    title="Matching impact — product reach × destination attribute weight. Higher = bigger lift to recommendation quality. Sorted by this column by default."
+                  >
+                    <span>Impact</span>
+                  </Tooltip>
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 180 }}>AI translation</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 300 }}>attributeId</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 240 }}>attributeName</TableCell>
@@ -2098,6 +2264,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       ) : (
                         r.productCount
                       )}
+                    </TableCell>
+
+                    <TableCell sx={{ fontSize: '0.7rem', padding: '4px 8px' }}>
+                      <ImpactChip impact={r.matchingImpact} productCount={r.productCount} />
                     </TableCell>
 
                     <TableCell sx={{ fontSize: '0.7rem', maxWidth: 200 }}>

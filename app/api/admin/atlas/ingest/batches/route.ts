@@ -44,6 +44,7 @@ import {
   registerTriageCompute,
   triggerBackgroundRecompute,
 } from '@/lib/services/triageQueueCache';
+import { getLogicTable } from '@/lib/logicTables';
 
 // Force the route to run dynamically on every request (no Next.js auto-caching).
 // We have our own L1+L2 cache layer with explicit invalidation; we don't want
@@ -87,6 +88,26 @@ type AutoFlag = {
   matchingParam: string;          // the paramName that triggered the hit
 };
 type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+/** Per-row signal of how much accepting this row would improve matching
+ *  quality. Used by the Triage table to sort + colour-tier rows so engineers
+ *  can prioritise high-leverage accepts. See computeMatchingImpact() below. */
+type MatchingImpact = {
+  /** product_count × weight. Higher = more impact. Always ≥ 0. */
+  score: number;
+  /** Destination attribute weight (0–10). 0 = display-only (satellite or
+   *  not in any logic table). 10 = blocking gate. */
+  weight: number;
+  /** Destination attributeId if known (from acceptedOverride). Null when
+   *  the row is still pending an AI suggestion / accept — score is then
+   *  computed off a default weight estimate (see isEstimate). */
+  canonical: string | null;
+  /** True when weight was guessed (no override yet); false when looked up
+   *  in the destination family's logic table. The client uses this to dim
+   *  the chip slightly so engineers know the score will sharpen after
+   *  Generate AI Suggestions runs (which the route doesn't see — server
+   *  doesn't have access to client-side suggestion cache). */
+  isEstimate: boolean;
+};
 type GlobalUnmapped = {
   paramName: string;
   sampleValues: string[];
@@ -114,6 +135,8 @@ type GlobalUnmapped = {
     wasEdited: boolean;
   };
   orphaned?: boolean;
+  /** Set in computeMatchingImpact() after override annotation. */
+  matchingImpact?: MatchingImpact;
 };
 type Classified = GlobalUnmapped & { effective: 'synonym' | 'flagged' };
 type OverrideMeta = {
@@ -335,6 +358,54 @@ async function computeTriageAggregation(): Promise<{
     }
     return null;
   }
+  /** Look up the matching-engine weight of an attributeId within a family's
+   *  logic table. Returns 0 for satellite attrs (`_*` convention) and for
+   *  attrs that aren't in the logic table (display-only canonicals like the
+   *  L2 RF param map). Memoised per (family, attr) for the duration of this
+   *  request to amortise the rule scan. */
+  const ruleWeightCache = new Map<string, number>();
+  function lookupRuleWeight(familyId: string | null, attrId: string): number {
+    if (!familyId || !attrId) return 0;
+    if (attrId.startsWith('_')) return 0;
+    const key = `${familyId}::${attrId}`;
+    const hit = ruleWeightCache.get(key);
+    if (hit !== undefined) return hit;
+    const table = getLogicTable(familyId);
+    const w = table?.rules.find((r) => r.attributeId === attrId)?.weight ?? 0;
+    ruleWeightCache.set(key, w);
+    return w;
+  }
+  /** Score a row's matching impact = how much coverage / matching quality
+   *  would improve if this accept landed. Server-side estimate; client may
+   *  refine for rows with cached AI suggestions (those carry a definitive
+   *  suggestedAttributeId that the server can't see).
+   *
+   *  Formula: product_count × weight. Weight resolution:
+   *    - If acceptedOverride is set → look up that attributeId in the
+   *      dominantFamily's logic table. Exact, isEstimate=false.
+   *    - Else if dominantFamily is L3 (has a logic table) → default to 7
+   *      (medium-high). Most params being triaged tend to be matching-
+   *      relevant; this biases sort toward "looks like real matching work".
+   *      isEstimate=true.
+   *    - Else (L2-only, e.g. RF/Microcontrollers) → weight 2 (display-only).
+   *      isEstimate=true. */
+  function computeMatchingImpact(entry: GlobalUnmapped): MatchingImpact {
+    const family = entry.dominantFamily;
+    const accepted = entry.acceptedOverride;
+    if (accepted) {
+      const w = lookupRuleWeight(family, accepted.attributeId);
+      return {
+        score: entry.productCount * w,
+        weight: w,
+        canonical: accepted.attributeId,
+        isEstimate: false,
+      };
+    }
+    if (family && getLogicTable(family)) {
+      return { score: entry.productCount * 7, weight: 7, canonical: null, isEstimate: true };
+    }
+    return { score: entry.productCount * 2, weight: 2, canonical: null, isEstimate: true };
+  }
   function annotateOverride(entry: GlobalUnmapped): GlobalUnmapped {
     const ov = lookupOverride(entry);
     if (!ov) return entry;
@@ -387,7 +458,10 @@ async function computeTriageAggregation(): Promise<{
     });
     seenOverrideIds.add(ov.id);
   }
-  const overrideResolved = [...overrideAnnotated, ...orphans];
+  const overrideResolved = [...overrideAnnotated, ...orphans].map((entry) => ({
+    ...entry,
+    matchingImpact: computeMatchingImpact(entry),
+  }));
 
   // Foreign-family auto-flag classification. Loads merged code+DB
   // signatures so engineer-curated entries (added via the AI Investigator

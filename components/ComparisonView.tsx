@@ -27,6 +27,7 @@ import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 import { OverviewSkeleton, CommercialSkeleton } from './AttributesPanel';
 import DomainChip from './DomainChip';
+import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 import MatchPercentageBadge from './MatchPercentageBadge';
 import ProposeAliasButton from './admin/ProposeAliasButton';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
@@ -213,7 +214,7 @@ export default function ComparisonView({
                 deviation={recommendation.domainDeviation}
                 contextActive={recommendation.domainDeviation === true || !!replPart.qualificationDomain}
               />
-              {replPart.qualifications?.map(q => (
+              {replPart.qualifications?.filter(q => !isDomainCoveredQualification(q)).map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
               {(() => {

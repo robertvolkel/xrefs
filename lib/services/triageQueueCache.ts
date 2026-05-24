@@ -5,20 +5,24 @@
  * Mirrors the L1/L2/SWR pattern used by /api/admin/atlas (atlas-coverage)
  * and /api/admin/atlas/growth (atlas-growth).
  *
- * Why this layering:
- *   - L1 (30 min): protects against rapid repeat requests in a single
- *     server instance. Cleared on invalidation; recomputed in background.
- *   - L2 (persistent): survives restarts/deploys. Keeps users from ever
- *     hitting a fully-cold synchronous compute (10–60+s) once the cache
- *     has been warmed at least once.
- *   - SWR (6h): if L2 is older than this, serve it AND kick off a silent
- *     background recompute. Safety net for invalidations we missed and
- *     for ingest paths that bypass the API routes (e.g. CLI scripts).
- *   - Background recompute on invalidation: when a mutation route calls
- *     invalidateTriageQueueCache(), L1 is cleared and a registered compute
- *     fn (registered by the batches route at module-load) runs async to
- *     refresh L2. Users keep seeing slightly-stale L2 data for the ~10–30s
- *     the recompute takes — never a blank synchronous wait.
+ * Why this layering (May 2026 redesign — see Decision #198):
+ *   - L2 is the SOURCE OF TRUTH. Invalidation DELETEs the L2 row, which is
+ *     visible to every Next.js module instance + worker on next read. This
+ *     fixed a dev-mode HMR fragility where one module instance's L1 wipe
+ *     couldn't clear another instance's L1, leaving accepted Triage rows
+ *     visible for up to 30 min after Accept.
+ *   - L1 (30 sec) is a tiny burst-absorption layer. Stale L1 in a fragmented
+ *     instance now self-heals within seconds rather than the prior 30-min
+ *     TTL — staleness is bounded, not unbounded.
+ *   - SWR (6h): if L2 is older than this on read, serve it AND kick off a
+ *     silent background recompute. Safety net for ingest paths that bypass
+ *     the API routes (e.g. CLI scripts) and don't call invalidate.
+ *   - Background recompute on invalidation: when invalidate is called, the
+ *     L2 DELETE is the durability guarantee. A registered compute (set by
+ *     the batches route at module-load) fires async to pre-warm L2 so the
+ *     next reader doesn't pay cold-compute cost. If registeredCompute isn't
+ *     bound in this module instance (HMR), the next reader sync-computes
+ *     and writes L2 — still correct, just ~2-3s slower for that one reader.
  *
  * Process scope:
  *   L1 lives in module memory; each Next.js worker has its own copy. L2 is
@@ -44,7 +48,13 @@ export type CacheReadResult =
   | { data: CachedTriageData; source: 'l2-stale' };
 
 const L2_CACHE_KEY = 'triage-queue';
-const MEM_CACHE_TTL_MS = 30 * 60 * 1000;        // 30 min
+// L1 TTL is intentionally SHORT (was 30 min — caused dev-mode HMR fragility
+// where one module instance's invalidate couldn't clear another instance's
+// L1, leaving accepted rows visible for hours). With a 30-second TTL, even
+// if invalidation misses a fragmented L1, staleness bounds to 30s. L1 is
+// now strictly a burst-absorption layer, not a durability layer — L2 is the
+// source of truth and is cleared cross-process via DELETE on invalidate.
+const MEM_CACHE_TTL_MS = 30 * 1000;             // 30 sec
 const SWR_STALE_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 let memCache: CachedTriageData | null = null;
@@ -165,12 +175,26 @@ function startRecompute(reason: 'invalidate' | 'swr'): void {
  *  mutation" semantics. The promise is for whatever recompute happens to be
  *  running, which may have started BEFORE your DB commit and miss your
  *  changes. Use invalidateTriageQueueCacheAndAwaitFresh() instead. */
-export function invalidateTriageQueueCache(): Promise<void> {
+export async function invalidateTriageQueueCache(): Promise<void> {
+  // Local L1 wipe (this module instance only — dev-HMR-safe, see below).
   memCache = null;
+  // L2 wipe — the durability fix. DELETE on a shared Supabase row is visible
+  // to every module instance in every Next.js worker on next read. Without
+  // this, dev-mode HMR fragmentation left the queue route's L1 stuck with
+  // pre-accept data for up to 30 min while the dictionaries route happily
+  // cleared its own local copy (May 2026 incident).
+  try {
+    const supabase = createServiceClient();
+    await supabase.from('admin_stats_cache').delete().eq('key', L2_CACHE_KEY);
+  } catch (err) {
+    // Non-fatal — short L1 TTL (30s) bounds staleness even if the DELETE fails.
+    console.error('triage cache L2 delete failed:', err);
+  }
+  // Kick a background recompute so the next reader doesn't pay the cold compute.
+  // Best-effort; if registeredCompute isn't bound in this module instance
+  // (HMR), the next read just computes synchronously — still correct, just
+  // ~2-3s slower for that one reader.
   startRecompute('invalidate');
-  return backgroundRecomputePromise
-    ? backgroundRecomputePromise.then(() => undefined).catch(() => undefined)
-    : Promise.resolve();
 }
 
 /** Wait-then-restart invalidate — guarantees the cache reflects any DB
@@ -196,15 +220,29 @@ export function invalidateTriageQueueCache(): Promise<void> {
  *  up to ~2 recomputes per call (one stale + one fresh). Per-row mutations
  *  intentionally do NOT use this to avoid doubling Supabase load. */
 export async function invalidateTriageQueueCacheAndAwaitFresh(): Promise<void> {
-  // Phase 1: drain any in-flight recompute (may have read pre-commit state).
+  // Phase 1: drain any in-flight recompute (its RPC may have read pre-commit
+  // state). If we returned now and started Phase 2 alongside the stale one,
+  // a concurrent reader could still hit the stale Promise's resolution.
   while (backgroundRecomputePromise) {
     try { await backgroundRecomputePromise; } catch { return; }
   }
+  // Phase 2: hard wipe. Local L1 + shared L2 row. The L2 DELETE is the
+  // durability guarantee — any other module instance (dev HMR) or worker
+  // (prod multi-worker) reading the cache after this point sees L2 missing
+  // and triggers a fresh compute. See invalidateTriageQueueCache() above
+  // for the May 2026 incident motivating this design.
   memCache = null;
-  // Phase 2: start a fresh recompute. Its RPC starts NOW, after our caller's
-  // commit, so it's guaranteed to include the caller's changes.
+  try {
+    const supabase = createServiceClient();
+    await supabase.from('admin_stats_cache').delete().eq('key', L2_CACHE_KEY);
+  } catch (err) {
+    console.error('triage cache L2 delete failed:', err);
+  }
+  // Phase 3: start + await a fresh recompute. RPC fires NOW (post-commit),
+  // so it's guaranteed to include the caller's changes. If registeredCompute
+  // isn't bound in this instance (HMR), startRecompute is a no-op — that's
+  // fine, the L2 DELETE alone is sufficient; the next reader computes.
   startRecompute('invalidate');
-  // Phase 3: drain again so we don't return until the fresh one is in L2.
   while (backgroundRecomputePromise) {
     try { await backgroundRecomputePromise; } catch { return; }
   }

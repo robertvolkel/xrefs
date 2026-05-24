@@ -5,6 +5,7 @@ import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
 import { computePriceRange, formatPrice } from './AttributesTabContent';
 import DomainChip from './DomainChip';
+import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 import MatchPercentageBadge from './MatchPercentageBadge';
 
 interface RecommendationCardProps {
@@ -68,7 +69,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   deviation={recommendation.domainDeviation}
                   contextActive={contextActive}
                 />
-                {part.qualifications?.map(q => (
+                {part.qualifications?.filter(q => !isDomainCoveredQualification(q)).map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
                 {(() => {

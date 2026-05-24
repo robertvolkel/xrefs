@@ -43,6 +43,10 @@ import {
 } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import { diffWordsWithSpace } from 'diff';
+import type { CardAuditResult } from '@/lib/services/atlasFamilyCardAuditTypes';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
@@ -90,6 +94,9 @@ interface CardEntry {
   updatedAt: string | null;
   dataSnapshot: DataSnapshot | null;
   health: HealthDetail;
+  /** Decision #195 Phase 2 — persisted output of atlasFamilyCardAudit.ts.
+   *  Null when never audited (TS-fallback / pre-Phase-2 / no card). */
+  auditResults: CardAuditResult | null;
 }
 
 /** Color + label config for the stoplight chip rendered in the Health
@@ -289,6 +296,13 @@ export default function AtlasDomainCardsPanel() {
               </TableCell>
               <TableCell sx={{ width: 100 }}>Source</TableCell>
               <TableCell sx={{ width: 100 }}>Status</TableCell>
+              <TableCell sx={{ width: 110 }}>
+                <Tooltip title="Auto-audit cross-checks the card against atlas_products + atlasMapper.ts. Surfaces bogus MFRs, wrong MPN prefixes, fabricated Chinese mappings (block), and top-MFR omissions (warn).">
+                  <Box component="span" sx={{ borderBottom: '1px dotted', borderBottomColor: 'text.secondary', cursor: 'help' }}>
+                    Audit
+                  </Box>
+                </Tooltip>
+              </TableCell>
               <TableCell sx={{ width: 130 }}>Last Updated</TableCell>
               <TableCell sx={{ width: 240 }} align="right">Actions</TableCell>
             </TableRow>
@@ -323,6 +337,7 @@ export default function AtlasDomainCardsPanel() {
                 // else: vol === 0 (dormant) — keep default "No card" label
               }
               const isPinned = pinnedSet.has(e.familyId);
+              const auditChip = renderAuditChip(e.auditResults);
               return (
                 <TableRow
                   key={e.familyId}
@@ -357,6 +372,7 @@ export default function AtlasDomainCardsPanel() {
                   </TableCell>
                   <TableCell>{sourceChip}</TableCell>
                   <TableCell>{statusChip}</TableCell>
+                  <TableCell>{auditChip}</TableCell>
                   <TableCell sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
                     {e.updatedAt ? new Date(e.updatedAt).toLocaleString() : '—'}
                   </TableCell>
@@ -403,6 +419,222 @@ export default function AtlasDomainCardsPanel() {
 
 // ────────────────────────────────────────────────────────────────────
 
+/** Advisory (warn-level) item count: dict coverage gaps + MFR omissions.
+ *  Decision #197 — these do NOT gate Approve. */
+function advisoryCount(audit: CardAuditResult): number {
+  return audit.fabricatedDict.length + audit.omittedMfrs.length;
+}
+
+/** Small chip rendered in the Audit column. Severity-driven (Decision #197):
+ *  block → red ❌ with hallucination count (bogus MFR + wrong prefix only)
+ *  warn  → amber ⚠ with advisory count (dict gaps + omissions)
+ *  clean → green ✓
+ *  error → grey ! (audit threw, treat as un-audited for gating)
+ *  null  → "—" placeholder (never audited yet) */
+function renderAuditChip(audit: CardAuditResult | null) {
+  if (!audit) {
+    return <Chip size="small" label="—" variant="outlined" sx={{ fontSize: '0.7rem' }} />;
+  }
+  if (audit.error) {
+    return (
+      <Tooltip title={`Audit error: ${audit.error}`}>
+        <Chip size="small" label="! error" color="default" variant="outlined" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
+      </Tooltip>
+    );
+  }
+  if (audit.severity === 'block') {
+    const breakdown: string[] = [];
+    if (audit.bogusMfrs.length) breakdown.push(`${audit.bogusMfrs.length} bogus MFR`);
+    if (audit.wrongPrefixes.length) breakdown.push(`${audit.wrongPrefixes.length} wrong prefix`);
+    return (
+      <Tooltip title={breakdown.join(', ') || 'Hallucination issues found'}>
+        <Chip size="small" label={`❌ ${audit.issueCount}`} color="error" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
+      </Tooltip>
+    );
+  }
+  if (audit.severity === 'warn') {
+    const breakdown: string[] = [];
+    if (audit.fabricatedDict.length) breakdown.push(`${audit.fabricatedDict.length} dict coverage gap(s)`);
+    if (audit.omittedMfrs.length) breakdown.push(`${audit.omittedMfrs.length} top-MFR omission(s)`);
+    return (
+      <Tooltip title={`${breakdown.join(', ')} — advisory, doesn't block Approve`}>
+        <Chip size="small" label={`⚠ ${advisoryCount(audit)}`} color="warning" variant="outlined" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip title={`Clean — audited ${new Date(audit.auditedAt).toLocaleString()}`}>
+      <Chip size="small" label="✓ clean" color="success" variant="outlined" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
+    </Tooltip>
+  );
+}
+
+/** Inline audit-detail panel rendered above the card text in the drawer.
+ *  Default-expanded — Decision #195 calls audit a safety net, so the
+ *  engineer should always see it. Collapses irrelevant sub-sections. */
+function AuditDetailPanel({ audit }: { audit: CardAuditResult | null }) {
+  if (!audit) {
+    return (
+      <Alert severity="info" icon={false} sx={{ mb: 2, fontSize: '0.78rem' }}>
+        <strong>Not audited.</strong> Click <em>Re-run audit</em> above to check this card against atlas_products and the dictionary.
+      </Alert>
+    );
+  }
+  if (audit.error) {
+    return (
+      <Alert severity="warning" sx={{ mb: 2, fontSize: '0.78rem' }}>
+        <strong>Audit error:</strong> {audit.error}
+      </Alert>
+    );
+  }
+  const auditedAt = new Date(audit.auditedAt).toLocaleString();
+  const severityColor: 'success' | 'warning' | 'error' =
+    audit.severity === 'clean' ? 'success' : audit.severity === 'warn' ? 'warning' : 'error';
+  const warnBreakdown: string[] = [];
+  if (audit.fabricatedDict.length) warnBreakdown.push(`${audit.fabricatedDict.length} dictionary coverage gap(s)`);
+  if (audit.omittedMfrs.length) warnBreakdown.push(`${audit.omittedMfrs.length} top-MFR omission(s)`);
+  const headline =
+    audit.severity === 'clean'
+      ? '✓ Audit clean'
+      : audit.severity === 'warn'
+        ? `⚠ ${warnBreakdown.join(' + ')} — advisory only`
+        : `❌ ${audit.issueCount} hallucination issue(s) — blocks Approve`;
+
+  return (
+    <Alert
+      severity={severityColor}
+      icon={false}
+      sx={{ mb: 2, fontSize: '0.78rem', '& .MuiAlert-message': { width: '100%' } }}
+    >
+      <Stack spacing={1}>
+        <Stack direction="row" alignItems="baseline" justifyContent="space-between">
+          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.82rem' }}>{headline}</Typography>
+          <Typography variant="caption" color="text.secondary">audited {auditedAt}</Typography>
+        </Stack>
+        {audit.bogusMfrs.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'error.main' }}>
+              Bogus MFRs ({audit.bogusMfrs.length}) — mentioned in card but don&apos;t ship under this family
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {audit.bogusMfrs.map((m) => <li key={m}>{m}</li>)}
+            </Box>
+          </Box>
+        )}
+        {audit.wrongPrefixes.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'error.main' }}>
+              Wrong prefixes ({audit.wrongPrefixes.length}) — claimed prefix doesn&apos;t match MFR&apos;s MPN samples
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {audit.wrongPrefixes.map((w, i) => (
+                <li key={`${w.mfr}-${w.claimed}-${i}`}>
+                  <strong>{w.mfr}</strong>: claimed &quot;{w.claimed}&quot; ({w.claimedShare}% of samples).
+                  {' '}Actual top: {w.actualTop.join(', ')}.
+                  {' '}Samples: {w.actualSamples.join(', ')}
+                </li>
+              ))}
+            </Box>
+          </Box>
+        )}
+        {audit.fabricatedDict.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'warning.main' }}>
+              Dictionary coverage gaps ({audit.fabricatedDict.length}) — Chinese phrase not catalogued in atlasMapper.ts
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {audit.fabricatedDict.map((f, i) => (
+                <li key={`${f.phrase}-${i}`}><code>{f.phrase}</code> — {f.claimedTarget}</li>
+              ))}
+            </Box>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic' }}>
+              Advisory only — usually a dictionary TODO (the term may be a real
+              synonym not yet added), not a hallucination. Verify against
+              atlasMapper.ts before treating as a card error.
+            </Typography>
+          </Box>
+        )}
+        {audit.omittedMfrs.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'warning.main' }}>
+              Omitted top MFRs ({audit.omittedMfrs.length}) — editorial, doesn&apos;t block
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {audit.omittedMfrs.map((o) => (
+                <li key={o.name}>{o.name} — {o.productCount.toLocaleString()} products ({o.share}% of family)</li>
+              ))}
+            </Box>
+          </Box>
+        )}
+      </Stack>
+    </Alert>
+  );
+}
+
+/** Word-level diff renderer. Deletions strike through in red; insertions
+ *  underline in green; unchanged tokens render plain. Word-level (not
+ *  line-level) is critical for prose where a single-token swap inside a
+ *  sentence ("CJ005" → "CJO") would otherwise mark the whole line as
+ *  changed. */
+function CardDiffView({ before, after }: { before: string; after: string }) {
+  const parts = useMemo(() => diffWordsWithSpace(before, after), [before, after]);
+  return (
+    <Box
+      sx={{
+        fontFamily: 'monospace',
+        fontSize: '0.78rem',
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        p: 1.5,
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1,
+        bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+        maxHeight: 480,
+        overflowY: 'auto',
+      }}
+    >
+      {parts.map((part, i) => {
+        if (part.added) {
+          return (
+            <Box
+              key={i}
+              component="span"
+              sx={{
+                bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(46, 160, 67, 0.25)' : 'rgba(46, 160, 67, 0.18)',
+                color: 'success.main',
+                textDecoration: 'underline',
+                textDecorationStyle: 'dotted',
+              }}
+            >
+              {part.value}
+            </Box>
+          );
+        }
+        if (part.removed) {
+          return (
+            <Box
+              key={i}
+              component="span"
+              sx={{
+                bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(248, 81, 73, 0.25)' : 'rgba(248, 81, 73, 0.18)',
+                color: 'error.main',
+                textDecoration: 'line-through',
+              }}
+            >
+              {part.value}
+            </Box>
+          );
+        }
+        return <Box key={i} component="span">{part.value}</Box>;
+      })}
+    </Box>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+
 interface CardReviewDrawerProps {
   entry: CardEntry;
   onClose: () => void;
@@ -414,6 +646,104 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
   const [saving, setSaving] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [auditing, setAuditing] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  // Local override of the panel's audit results — lets the engineer see
+  // a freshly re-run audit without waiting for the parent listing fetch
+  // to round-trip. Cleared when the drawer's entry changes.
+  const [localAudit, setLocalAudit] = useState<CardAuditResult | null>(entry.auditResults);
+  // Proposed fix from Sonnet — when non-null, the diff view replaces the
+  // textarea and Accept/Discard buttons appear. Accept now saves + auto-
+  // re-audits in one click (collapsed from prior 2-step flow).
+  const [proposedFix, setProposedFix] = useState<{ before: string; after: string } | null>(null);
+
+  useEffect(() => {
+    setLocalAudit(entry.auditResults);
+    setProposedFix(null);
+  }, [entry.familyId, entry.auditResults]);
+
+  const handleReAudit = async () => {
+    setAuditing(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/admin/atlas/family-domain-cards/${entry.familyId}/audit`, {
+        method: 'POST',
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setErr(json.error ?? 'Audit failed');
+      } else {
+        setLocalAudit(json.auditResults as CardAuditResult);
+        // Refresh the parent so the table chip + sort orders update.
+        await onSaved();
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const handleFixWithAI = async () => {
+    if (!localAudit) return;
+    setFixing(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/admin/atlas/family-domain-cards/${entry.familyId}/fix-issues`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardText: text, auditResults: localAudit }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setErr(json.error ?? 'AI fix failed');
+      } else {
+        // Stash before/after for the diff view. NOT saved yet — engineer
+        // reviews the diff, clicks Accept, then Save edits.
+        setProposedFix({ before: text, after: json.proposedText as string });
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFixing(false);
+    }
+  };
+
+  const acceptProposedFix = async () => {
+    if (!proposedFix) return;
+    const newText = proposedFix.after;
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/admin/atlas/family-domain-cards/${entry.familyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardText: newText }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setErr(json.error ?? 'Save failed');
+        // Keep the proposal on screen so the engineer can retry or discard.
+        return;
+      }
+      // Order matters: write text into editable textarea BEFORE clearing
+      // proposedFix, so the textarea swap-in shows the correct content.
+      setText(newText);
+      setProposedFix(null);
+      await onSaved();
+      // Re-audit fires the new severity into the panel without a second
+      // click — the whole point of the one-click flow.
+      void handleReAudit();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const discardProposedFix = () => {
+    setProposedFix(null);
+  };
 
   // Sync local text when the drawer's entry changes (different family
   // selected without closing the drawer, or a Customize call swapped
@@ -445,6 +775,14 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
         setErr(json.error ?? 'Save failed');
       } else {
         await onSaved();
+        // Decision #195 Phase 2 — any save that changes cardText auto-
+        // triggers a re-audit so the engineer sees the new severity
+        // immediately. Consistent across all paths: Accept fix → save,
+        // manual textarea hand-edit → Save edits. Audit is the backstop
+        // against AI-introduced or hand-edit-introduced regressions.
+        if (typeof updates.cardText === 'string') {
+          void handleReAudit();
+        }
         if (updates.status === 'active' || updates.status === 'archived') {
           onClose();
         }
@@ -546,6 +884,65 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
         <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
           {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr(null)}>{err}</Alert>}
 
+          {/* Audit panel — default-expanded per Decision #195 Phase 2.
+              Re-run button sits in the header above so it's discoverable
+              even when the audit is clean. */}
+          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+            <Stack direction="row" spacing={0.75} alignItems="center">
+              <FactCheckOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                Audit
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={1}>
+              {/* Fix with AI — Sonnet 4.6 produces minimal-edit corrections
+                  for BLOCK-level issues (bogus MFRs, wrong prefixes). Not
+                  offered for warn-level dict gaps — those are usually real
+                  synonyms to ADD to the dict, not card errors to remove
+                  (Decision #197). Disabled while a proposal is on screen. */}
+              <Tooltip title={
+                !localAudit
+                  ? 'Run audit first'
+                  : localAudit.issueCount === 0
+                    ? 'No blocking issues to fix (dict coverage gaps are advisory — resolve by adding terms to the dictionary, not by editing the card)'
+                    : isBuiltIn
+                      ? 'Customize the card first to enable AI fixes'
+                      : 'Sonnet 4.6 produces a minimal-edit correction. Review diff before accepting.'
+              }>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    startIcon={fixing ? <CircularProgress size={12} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 14 }} />}
+                    onClick={() => void handleFixWithAI()}
+                    disabled={
+                      fixing ||
+                      isBuiltIn ||
+                      !localAudit ||
+                      localAudit.issueCount === 0 ||
+                      proposedFix !== null
+                    }
+                    sx={{ fontSize: '0.7rem' }}
+                  >
+                    Fix with AI
+                  </Button>
+                </span>
+              </Tooltip>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={auditing ? <CircularProgress size={12} color="inherit" /> : <RefreshIcon sx={{ fontSize: 14 }} />}
+                onClick={() => void handleReAudit()}
+                disabled={auditing}
+                sx={{ fontSize: '0.7rem' }}
+              >
+                Re-run audit
+              </Button>
+            </Stack>
+          </Stack>
+          <AuditDetailPanel audit={localAudit} />
+
           {isBuiltIn && (
             <Alert
               severity="info"
@@ -572,17 +969,47 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
             </Alert>
           )}
 
-          <TextField
-            multiline
-            fullWidth
-            minRows={20}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            disabled={isBuiltIn}
-            sx={{
-              '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5 },
-            }}
-          />
+          {proposedFix ? (
+            <Stack spacing={1}>
+              <Alert severity="info" icon={false} sx={{ fontSize: '0.78rem' }}>
+                <strong>Proposed AI fix</strong> — review the diff below. <span style={{ color: 'var(--mui-palette-error-main)' }}>red strikethrough</span> = removed,{' '}
+                <span style={{ color: 'var(--mui-palette-success-main)' }}>green underline</span> = added. <strong>Accept</strong> saves the fix and re-runs the audit in one step. <strong>Discard</strong> drops the proposal — original text is unchanged.
+              </Alert>
+              <CardDiffView before={proposedFix.before} after={proposedFix.after} />
+              <Stack direction="row" spacing={1} justifyContent="flex-end">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={discardProposedFix}
+                  disabled={saving}
+                >
+                  Discard fix
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="success"
+                  onClick={() => void acceptProposedFix()}
+                  disabled={saving}
+                  startIcon={saving ? <CircularProgress size={12} color="inherit" /> : undefined}
+                >
+                  {saving ? 'Saving + auditing…' : 'Accept fix'}
+                </Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <TextField
+              multiline
+              fullWidth
+              minRows={20}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              disabled={isBuiltIn}
+              sx={{
+                '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5 },
+              }}
+            />
+          )}
         </Box>
 
         <Box sx={{ position: 'sticky', bottom: 0, bgcolor: 'background.paper', borderTop: 1, borderColor: 'divider', px: 2, py: 1.5 }}>

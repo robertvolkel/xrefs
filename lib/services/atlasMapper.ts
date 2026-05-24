@@ -839,6 +839,20 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'zener current iz': { attributeId: '_izt', attributeName: 'Test Current (Izt)', unit: 'A', sortOrder: 93 },
     'zener impedance at iz': { attributeId: 'zzt', attributeName: 'Zener Impedance (Zzt)', unit: 'Ohm', sortOrder: 4 },
     'zener impedance at izk': { attributeId: '_zzk', attributeName: 'Knee Impedance (Zzk)', unit: 'Ohm', sortOrder: 94 },
+    // IZK (Zener knee current) — display-only satellite. The B3 logic
+    // table treats IZK as a test condition documented alongside ZZK
+    // rather than an independent matching spec, so this lives as a
+    // satellite (underscore prefix) following the same convention as
+    // _vz_min / _vz_max / _izt above. Sonnet has historically misclassified
+    // "Dynamic Impedance @IZK mA"-named params onto zzk (the impedance)
+    // — these dict entries route them to _izk instead. Sample values
+    // are typically 0.25–1 mA for low-power Zeners.
+    'izk': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
+    'izk(ma)': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
+    'izk (ma)': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
+    'knee current': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
+    'knee current izk': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
+    'dynamic impedance @izk ma': { attributeId: '_izk', attributeName: 'Zener Knee Current (Izk)', unit: 'mA', sortOrder: 95 },
     // CREATEK English MFR-specific formats
     'vz type(v)': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
     'vf (v)': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
@@ -915,6 +929,16 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'c typ.(pf)': { attributeId: 'cj', attributeName: 'Junction Capacitance (Cj)', unit: 'pF', sortOrder: 7 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
+    // "Size code" — a real synonym for package_case used in some Chinese
+    // TVS datasheet headers. Traditional 尺寸代碼 also matches via the
+    // trad→simp normalization layer in chineseNormalize.ts.
+    '尺寸代码': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
+    // "Inches" — semantically a unit, not a parameter, but appears in card
+    // prose as `英时(公釐)` annotations on package_case dimensions. Mapped
+    // to package_case to suppress audit noise; not load-bearing for ingest
+    // because Atlas params don't carry English/Chinese unit names as
+    // standalone fields.
+    '英时': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 12 },
     // "Type" on TVS encodes polarity (Bi/Uni/Bidirectional/Unidirectional) —
     // route to the polarity attribute so it feeds the matching engine. If
@@ -2038,8 +2062,38 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     'data rate': { attributeId: 'data_rate_max', attributeName: 'Data Rate (Max)', sortOrder: 8 },
     '输出功率': { attributeId: 'output_power', attributeName: 'Output Power', sortOrder: 9 },
     'output power': { attributeId: 'output_power', attributeName: 'Output Power', sortOrder: 9 },
+    // Explicit Max/Min variants — followed the existing `_max` convention
+    // used in this dict (data_rate_max line 2047) and Power Supplies
+    // (output_current_max line 2072). For RF modules with Max + Min spec
+    // pairs (e.g. SIMCOM cellular conducted_rf_output_power-Max/Min),
+    // these preserve both values instead of collapsing onto `output_power`
+    // and losing one. L2-only — display in parts lists; no matching-engine
+    // participation (no L3 RF-modules family today).
+    '输出功率(最大)': { attributeId: 'output_power_max', attributeName: 'Output Power (Max)', sortOrder: 9 },
+    '输出功率(最小)': { attributeId: 'output_power_min', attributeName: 'Output Power (Min)', sortOrder: 9 },
+    '最大输出功率': { attributeId: 'output_power_max', attributeName: 'Output Power (Max)', sortOrder: 9 },
+    '最小输出功率': { attributeId: 'output_power_min', attributeName: 'Output Power (Min)', sortOrder: 9 },
+    'output power (max)': { attributeId: 'output_power_max', attributeName: 'Output Power (Max)', sortOrder: 9 },
+    'output power (min)': { attributeId: 'output_power_min', attributeName: 'Output Power (Min)', sortOrder: 9 },
+    'max output power': { attributeId: 'output_power_max', attributeName: 'Output Power (Max)', sortOrder: 9 },
+    'min output power': { attributeId: 'output_power_min', attributeName: 'Output Power (Min)', sortOrder: 9 },
     '灵敏度': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 10 },
     'sensitivity': { attributeId: 'sensitivity', attributeName: 'Sensitivity', sortOrder: 10 },
+    // Cellular-module sensitivity variants. Real datasheets specify
+    // receiver sensitivity per (cellular technology, test methodology,
+    // statistic) tuple — collapsing them onto a single `sensitivity`
+    // canonical silently overwrites all but one value per product on
+    // ingest. These explicit canonicals preserve the distinctions so
+    // engineers can compare products on the spec they actually care
+    // about. As more cellular MFRs/bands surface in ingests, extend this
+    // block (Cat-M1, GSM, LTE B1–B40, etc.). L2 — display only; no
+    // matching impact until a Cellular Modules L3 family is stood up.
+    'cat-nb1 reference sensitivity (max)': { attributeId: 'sensitivity_cat_nb1_max', attributeName: 'Sensitivity (Cat-NB1, Max)', unit: 'dBm', sortOrder: 10 },
+    'cat-nb1 reference sensitivity (typ)': { attributeId: 'sensitivity_cat_nb1_typ', attributeName: 'Sensitivity (Cat-NB1, Typ)', unit: 'dBm', sortOrder: 10 },
+    'cat-nb1 reference sensitivity (typical)': { attributeId: 'sensitivity_cat_nb1_typ', attributeName: 'Sensitivity (Cat-NB1, Typ)', unit: 'dBm', sortOrder: 10 },
+    'conducted receiver sensitivity (max)': { attributeId: 'sensitivity_conducted_max', attributeName: 'Sensitivity (Conducted, Max)', unit: 'dBm', sortOrder: 10 },
+    'conducted receiver sensitivity (typ)': { attributeId: 'sensitivity_conducted_typ', attributeName: 'Sensitivity (Conducted, Typ)', unit: 'dBm', sortOrder: 10 },
+    'conducted receiver sensitivity (typical)': { attributeId: 'sensitivity_conducted_typ', attributeName: 'Sensitivity (Conducted, Typ)', unit: 'dBm', sortOrder: 10 },
     '增益': { attributeId: 'gain', attributeName: 'Gain', sortOrder: 11 },
     'gain': { attributeId: 'gain', attributeName: 'Gain', sortOrder: 11 },
     '供电电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 14 },

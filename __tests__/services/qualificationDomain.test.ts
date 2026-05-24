@@ -212,20 +212,22 @@ describe('isDomainCompatible — automotive row of exclusion matrix', () => {
     expect(result.compatible).toBe(false);
   });
 
-  test('commercial under automotive → compatible with deviation flag', () => {
+  test('commercial under automotive → HARD EXCLUDE (Phase 1.5)', () => {
     const result = isDomainCompatible(automotiveContext, 'commercial');
-    expect(result.compatible).toBe(true);
-    expect(result.deviation).toBe(true);
+    expect(result.compatible).toBe(false);
     expect(result.reason).toMatch(/not AEC-Q200/i);
   });
 
-  test('industrial_harsh under automotive → compatible with deviation flag', () => {
+  test('industrial_harsh under automotive → HARD EXCLUDE (Phase 1.5)', () => {
     const result = isDomainCompatible(automotiveContext, 'industrial_harsh');
-    expect(result.compatible).toBe(true);
-    expect(result.deviation).toBe(true);
+    expect(result.compatible).toBe(false);
   });
 
-  test('unknown under automotive → compatible, no deviation (ranking signal only)', () => {
+  test('unknown under automotive → STILL VISIBLE (Atlas + un-classified MFR safety)', () => {
+    // Critical: most Atlas products and non-Murata MLCCs land in `unknown`
+    // because no classifier is registered yet. Hiding them would wipe out
+    // legitimately-qualified parts. They surface with a verify-qualification
+    // badge via the upstream deviation flag (not via this matrix).
     const result = isDomainCompatible(automotiveContext, 'unknown');
     expect(result.compatible).toBe(true);
     expect(result.deviation).toBe(false);

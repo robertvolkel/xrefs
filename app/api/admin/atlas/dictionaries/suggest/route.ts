@@ -10,6 +10,7 @@ import {
 } from '@/lib/services/atlasTriageContext';
 import { FAMILY_PARAM_SIGNATURES } from '@/lib/services/atlasFamilyParamSignatures';
 import { getFamilyDomainCard } from '@/lib/services/atlasFamilyDomainCards';
+import { withAnthropicRetry } from '@/lib/services/anthropicRetry';
 
 // In-memory module-scope cache keyed by (paramName + familyId). Survives multiple
 // requests within a server process lifetime — typically dev server until restart,
@@ -216,12 +217,16 @@ Respond in JSON only, no markdown:
     const userMsg = `Chinese parameter: "${paramName}"${samples.length > 0 ? `\nSample values: ${samples.join(', ')}` : ''}`;
 
     const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 600,
-      system: prompt,
-      messages: [{ role: 'user', content: userMsg }],
-    });
+    const response = await withAnthropicRetry(
+      () =>
+        client.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 600,
+          system: prompt,
+          messages: [{ role: 'user', content: userMsg }],
+        }),
+      { label: `suggest ${paramName}` }
+    );
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

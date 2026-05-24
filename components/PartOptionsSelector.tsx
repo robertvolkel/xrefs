@@ -2,6 +2,7 @@
 import { useMemo } from 'react';
 import { Card, CardActionArea, CardContent, Typography, Stack, Chip } from '@mui/material';
 import { PartSummary } from '@/lib/types';
+import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 
 interface PartOptionsSelectorProps {
   parts: PartSummary[];
@@ -68,7 +69,7 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 {part.status && (
                   <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" />
                 )}
-                {part.qualifications?.map(q => (
+                {part.qualifications?.filter(q => !isDomainCoveredQualification(q)).map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}
                 {typeof part.distributorCount === 'number' && part.distributorCount > 0 && (

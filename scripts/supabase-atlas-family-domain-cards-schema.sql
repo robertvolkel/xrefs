@@ -89,3 +89,15 @@ DROP TRIGGER IF EXISTS trg_atlas_family_domain_cards_updated_at ON atlas_family_
 CREATE TRIGGER trg_atlas_family_domain_cards_updated_at
   BEFORE UPDATE ON atlas_family_domain_cards
   FOR EACH ROW EXECUTE FUNCTION update_atlas_family_domain_cards_updated_at();
+
+-- ============================================================
+-- Decision #195 Phase 2 — audit_results column
+-- ============================================================
+-- Persisted output of lib/services/atlasFamilyCardAudit.ts. Populated on
+-- every Generate; manually re-runnable. Null = never audited.
+-- Shape (TS): CardAuditResult — see atlasFamilyCardAudit.ts.
+--   { auditedAt, error?, bogusMfrs, omittedMfrs, wrongPrefixes,
+--     fabricatedDict, issueCount, severity: 'clean'|'warn'|'block' }
+-- Apply via Supabase SQL Editor.
+ALTER TABLE atlas_family_domain_cards
+  ADD COLUMN IF NOT EXISTS audit_results JSONB;

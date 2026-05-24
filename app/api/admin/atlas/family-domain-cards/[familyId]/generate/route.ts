@@ -41,6 +41,11 @@ import {
   buildGroundingBlock,
   formatGroundingForPrompt,
 } from '@/lib/services/atlasFamilyCardGrounding';
+import {
+  auditFamilyDomainCard,
+  type CardAuditResult,
+} from '@/lib/services/atlasFamilyCardAudit';
+import { withAnthropicRetry } from '@/lib/services/anthropicRetry';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Opus card-write can take 20-40s.
@@ -137,6 +142,9 @@ HARD ANTI-HALLUCINATION RULES (these supersede everything else — violation mak
 - When you mention MPN prefixes, cite ONLY prefixes you can observe directly in the sample MPN strings provided in VERIFIED_MFRS. Do NOT bring in prefixes from prior knowledge of typical MFR part-number conventions.
 - If VERIFIED_MFRS is empty or has fewer than 3 entries, say so explicitly in the card: e.g. "Atlas currently has only N MFR(s) shipping under family X — do not invent additional cohorts."
 - When you describe Chinese paramName conventions, cite ONLY entries from CHINESE_PARAM_DICTIONARY. Do not paraphrase, invent, or translate Chinese terms not in that list.
+- TECHNICAL CLAIMS — every assertion about how this family substitutes, what its blocking specs are, what its sub-type behaviors are, what its value ranges are, or what its unit conventions are MUST be derivable from a specific logic-table rule (cite the attributeId inline, e.g. "isolation_voltage is the safety-critical blocking spec") or from an engineer-accepted-override entry. If you cannot ground a claim in those sources, OMIT it. Do NOT paraphrase domain knowledge from training data. The logic-table rules + accepted overrides are the source of truth — anything beyond them is unverifiable noise that propagates downstream into the Triage AI.
+- VALUE RANGES — never invent a typical voltage / current / frequency / time / temperature range. Only state a range if it appears in a logic-table rule's engineering reason or in an accepted-override example value. If a sub-type's typical range matters but isn't documented, say so ("typical range not captured in our logic table") rather than fabricate one.
+- SUB-TYPE BEHAVIOR — never assert "X sub-type requires/forbids/needs Y" unless Y is a logic-table attributeId and the assertion is supported by that rule's engineering reason. If you describe a sub-type distinction, name the attributeId(s) that capture it.
 
 Content the card SHOULD include (when applicable, AFTER respecting the rules above):
 - SUB-TYPES within the family that look interchangeable but matter (e.g., isolated vs non-isolated gate drivers, fixed vs adjustable LDOs, NPN vs PNP). Call out the canonical-naming consequences.
@@ -176,11 +184,14 @@ ${groundingSection}
 Write the card now. Output the card text ONLY — no preamble, no closing remarks.`;
 
     const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: 'claude-opus-4-7',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const response = await withAnthropicRetry(
+      () => client.messages.create({
+        model: 'claude-opus-4-7',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      { label: `card-generate ${familyId}` },
+    );
 
     const textBlock = response.content.find((b) => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
@@ -233,7 +244,37 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
     }
 
     invalidateDomainCardCache();
-    return NextResponse.json({ success: true, card: data });
+
+    // Decision #195 Phase 2 — auto-audit the freshly-generated card and
+    // persist results. Awaited so the response carries audit_results on the
+    // same payload (UI doesn't need a second fetch). Audit is fast (~1-2s)
+    // relative to the Opus call. Failure is non-fatal: we persist an error
+    // marker and return the card so the engineer isn't blocked. The audit
+    // is a safety net, not a critical path.
+    let auditResults: CardAuditResult | { auditedAt: string; error: string; severity: 'clean'; issueCount: 0 };
+    try {
+      auditResults = await auditFamilyDomainCard(familyId, cardText);
+    } catch (auditErr) {
+      const errMsg = auditErr instanceof Error ? auditErr.message : String(auditErr);
+      auditResults = {
+        auditedAt: new Date().toISOString(),
+        error: errMsg,
+        severity: 'clean',
+        issueCount: 0,
+      };
+    }
+    // Fire-and-forget the persist — if the UPDATE fails for any reason
+    // (transient DB blip) the card is still in DB and Re-audit can recover.
+    void supabase
+      .from('atlas_family_domain_cards')
+      .update({ audit_results: auditResults })
+      .eq('family_id', familyId)
+      .then(() => undefined);
+
+    return NextResponse.json({
+      success: true,
+      card: { ...data, audit_results: auditResults },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });

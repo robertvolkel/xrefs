@@ -230,6 +230,7 @@ export const ATLAS_FAMILY_DOMAIN_CARDS: Record<string, string> = {
 // after an admin write. Mirrors the alias/override cache pattern.
 
 import { createServiceClient } from '@/lib/supabase/service';
+import type { CardAuditResult } from './atlasFamilyCardAuditTypes';
 
 interface DomainCardCacheEntry {
   cards: Map<string, string>;
@@ -347,6 +348,10 @@ export interface DomainCardListEntry {
   updatedAt: string | null;
   dataSnapshot: DomainCardDataSnapshot | null;
   health: DomainCardHealthDetail;
+  /** Persisted output of atlasFamilyCardAudit.ts (Decision #195 Phase 2).
+   *  Null for never-audited rows (no DB row, or row pre-dates audit_results
+   *  column, or row from a Generate that ran before the column was added). */
+  auditResults: CardAuditResult | null;
 }
 
 /** Read every DB row (any status) keyed by family_id. Bypasses the
@@ -358,6 +363,7 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
   modelUsed: string | null;
   updatedAt: string;
   dataSnapshot: DomainCardDataSnapshot | null;
+  auditResults: CardAuditResult | null;
 }>> {
   const out = new Map<string, {
     status: 'draft' | 'active' | 'archived';
@@ -365,12 +371,13 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
     modelUsed: string | null;
     updatedAt: string;
     dataSnapshot: DomainCardDataSnapshot | null;
+    auditResults: CardAuditResult | null;
   }>();
   try {
     const supabase = createServiceClient();
     const { data, error } = await supabase
       .from('atlas_family_domain_cards')
-      .select('family_id, card_text, status, model_used, updated_at, data_snapshot');
+      .select('family_id, card_text, status, model_used, updated_at, data_snapshot, audit_results');
     if (error || !data) return out;
     for (const row of data) {
       const fam = row.family_id as string;
@@ -381,6 +388,7 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
         modelUsed: (row.model_used as string | null) ?? null,
         updatedAt: row.updated_at as string,
         dataSnapshot: (row.data_snapshot as DomainCardDataSnapshot | null) ?? null,
+        auditResults: (row.audit_results as CardAuditResult | null) ?? null,
       });
     }
   } catch {

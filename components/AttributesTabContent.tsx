@@ -18,6 +18,7 @@ import type { TFunction } from 'i18next';
 import { Part, SupplierQuote, XrefRecommendation, deriveRecommendationCategories } from '@/lib/types';
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
+import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 
 type T = TFunction<'translation', undefined>;
 
@@ -181,7 +182,8 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
   const targetPrice = computeTargetPrice(part.supplierQuotes);
   const xrefSummary = summarizeCrossRefs(allRecommendations);
 
-  const hasQualifications = (part.qualifications?.length ?? 0) > 0;
+  const visibleQualifications = part.qualifications?.filter(q => !isDomainCoveredQualification(q)) ?? [];
+  const hasQualifications = visibleQualifications.length > 0;
   const hasCompliance = !!part.rohsStatus || !!part.reachCompliance || !!part.eccnCode || !!part.htsCode || (part.complianceData?.some(c => c.htsCodesByRegion || c.rohsStatus || c.eccnCode) ?? false);
 
   return (
@@ -312,7 +314,7 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
           <SectionHeader label="Qualifications" />
           <Box sx={{ px: 2, py: 0.75 }}>
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-              {part.qualifications!.map(q => (
+              {visibleQualifications.map(q => (
                 <Chip
                   key={q}
                   label={q}

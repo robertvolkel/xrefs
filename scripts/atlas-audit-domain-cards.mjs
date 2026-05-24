@@ -35,6 +35,17 @@
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { Converter as OpenCCConverter } from 'opencc-js';
+
+// Mirrored from lib/services/chineseNormalize.ts — singleton tw→cn
+// converter. Used by the FABRICATED_DICT check to recognize traditional
+// card phrases as matches against simplified atlasMapper.ts entries.
+let _tcConverter = null;
+function toSimplified(s) {
+  if (!s) return s;
+  if (!_tcConverter) _tcConverter = OpenCCConverter({ from: 'tw', to: 'cn' });
+  return _tcConverter(s);
+}
 
 // ── env loading ──
 function loadEnv() {
@@ -86,12 +97,144 @@ const MFR_NAME_BLOCKLIST = new Set([
   'TVS',        // TVS diode type
   'LED',        // common term
   'IC',         // integrated circuit
+  'VIBRATION',  // a real Chinese MFR (振浩微); collides with prose "vibration"
+  'CTR',        // "Current Transfer Ratio" — central optocoupler spec; collides with MFR 长泰尔电子
 ]);
+
+// Trigger phrases that, when they appear shortly BEFORE a MFR mention,
+// mean the mention is a NEGATIVE-LIST instruction ("do not introduce X")
+// rather than a positive claim. Mirrored verbatim from
+// lib/services/atlasFamilyCardAudit.ts — keep these two lists in sync.
+const NEGATIVE_LIST_TRIGGERS = [
+  'do not introduce',
+  'do not include',
+  'do not mention',
+  'do not use',
+  'don\'t introduce',
+  'don\'t include',
+  'don\'t use',
+  'not present in',
+  'not in atlas',
+  'avoid ',
+  'exclude ',
+  'never ',
+  'etc.',
+  'such as',
+  // "Competitor MFR being described, not claimed as shipping" patterns.
+  // Mirrored from lib/services/atlasFamilyCardAudit.ts.
+  'echo ',
+  'clone ',
+  'cloning ',
+  'compatible with ',
+  'second-source ',
+  'second-sources ',
+  'drop-in for ',
+  'pin-compatible ',
+  'mimics ',
+  'successor to ',
+];
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — Chinese unit words.
+// Units, never parameter names; FABRICATED_DICT check skips them.
+const CHINESE_UNIT_WORDS = new Set([
+  '英吋', '英时', '英寸',
+  '公釐', '毫米',
+  '公分', '厘米',
+  '伏特', '安培', '欧姆', '歐姆',
+  '瓦特', '赫兹', '赫茲',
+  '法拉', '亨利',
+]);
+
+function isNegativeListContext(text, mfrMatchIndex) {
+  const lookbackStart = Math.max(0, mfrMatchIndex - 60);
+  const window = text.slice(lookbackStart, mfrMatchIndex).toLowerCase();
+  return NEGATIVE_LIST_TRIGGERS.some((trigger) => window.includes(trigger));
+}
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — `"AM" suffix` style
+// MPN-affix descriptions, not MFR claims.
+const QUOTED_DESCRIPTOR_WORDS = ['suffix', 'prefix', 'series', 'designator', 'code', 'marker', 'tag'];
+
+function isQuotedDescriptorContext(text, mentionIndex, name) {
+  const before = mentionIndex > 0 ? text[mentionIndex - 1] : '';
+  const after = text[mentionIndex + name.length] ?? '';
+  const isQuotedBothSides =
+    (before === '"' || before === "'" || before === '`') &&
+    (after === '"' || after === "'" || after === '`');
+  if (!isQuotedBothSides) return false;
+  const afterQuoteStart = mentionIndex + name.length + 1;
+  const window = text.slice(afterQuoteStart, afterQuoteStart + 30).toLowerCase();
+  return QUOTED_DESCRIPTOR_WORDS.some((w) => window.includes(w));
+}
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — `RS-485`, `USB-2`
+// shape. Token followed by `-<digit>` is part of a standard/protocol
+// designator, not a MFR claim.
+function isProtocolNumberContext(text, mentionIndex, name) {
+  const afterStart = mentionIndex + name.length;
+  if (text[afterStart] !== '-') return false;
+  const next = text[afterStart + 1] ?? '';
+  return /\d/.test(next);
+}
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — `TC-prefix` shape.
+// Token is describing an MPN affix convention, not a MFR claim.
+function isDashDescriptorContext(text, mentionIndex, name) {
+  const afterStart = mentionIndex + name.length;
+  if (text[afterStart] !== '-') return false;
+  const window = text.slice(afterStart + 1, afterStart + 1 + 20).toLowerCase();
+  return QUOTED_DESCRIPTOR_WORDS.some((w) => window.startsWith(w));
+}
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — MPN-suffix shape
+// `5.0SMDJ10A-AM`. Token is a part-number variant code, not a MFR.
+function isMpnSuffixContext(text, mentionIndex) {
+  if (mentionIndex < 2) return false;
+  if (text[mentionIndex - 1] !== '-') return false;
+  let cursor = mentionIndex - 2;
+  const minStart = Math.max(0, mentionIndex - 1 - 12);
+  while (cursor >= minStart && /[A-Z0-9.]/.test(text[cursor] ?? '')) cursor--;
+  const mpnCandidate = text.slice(cursor + 1, mentionIndex - 1);
+  if (mpnCandidate.length < 4) return false;
+  return /[0-9]/.test(mpnCandidate);
+}
 
 function chip(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
 // Escape regex special chars in a string for use in `new RegExp`.
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Mirrored from lib/services/atlasFamilyCardAudit.ts — every contiguous
+// `/`-joined sub-span containing a captured phrase (e.g. for
+// `电阻类型/技术/工艺` → ['技术/工艺', '电阻类型/技术/工艺']).
+function getSlashCompoundCandidates(text, mentionIndex, phrase) {
+  const isHan = (c) => /[\p{Script=Han}]/u.test(c);
+  let start = mentionIndex;
+  let end = mentionIndex + phrase.length;
+  while (start >= 2 && text[start - 1] === '/' && isHan(text[start - 2] ?? '')) {
+    let p = start - 2;
+    while (p >= 0 && isHan(text[p] ?? '')) p--;
+    start = p + 1;
+  }
+  while (text[end] === '/' && isHan(text[end + 1] ?? '')) {
+    let p = end + 1;
+    while (p < text.length && isHan(text[p] ?? '')) p++;
+    end = p;
+  }
+  const full = text.slice(start, end);
+  if (!full.includes('/')) return [];
+  const parts = full.split('/');
+  const phraseIdx = parts.indexOf(phrase);
+  if (phraseIdx === -1) return [full];
+  const candidates = [];
+  for (let i = 0; i <= phraseIdx; i++) {
+    for (let j = phraseIdx; j < parts.length; j++) {
+      if (i === j) continue;
+      candidates.push(parts.slice(i, j + 1).join('/'));
+    }
+  }
+  return candidates;
+}
 
 // True if `s` mentions `name` as a standalone token.
 // Strategy:
@@ -103,16 +246,43 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 //    manufacturer), "Iq" (no MFR), etc. The atlas_products manufacturer column
 //    is the authoritative case for these short codes.
 function mentionsName(text, name) {
-  if (!name) return false;
+  return findMentionIndex(text, name) !== -1;
+}
+
+function findMentionIndex(text, name) {
+  if (!name) return -1;
   const n = name.trim();
-  if (n.length < 2) return false;
+  if (n.length < 2) return -1;
   const hasChinese = /[\p{Script=Han}]/u.test(n);
   if (hasChinese || n.length >= 8 || n.includes(' ')) {
-    return text.toLowerCase().includes(n.toLowerCase());
+    return text.toLowerCase().indexOf(n.toLowerCase());
   }
-  // Short ASCII — case-sensitive, word-boundary
   const re = new RegExp(`(^|[^A-Za-z0-9])${escapeRe(n)}([^A-Za-z0-9]|$)`);
-  return re.test(text);
+  const m = re.exec(text);
+  if (!m) return -1;
+  return m[1] && m[1].length > 0 ? m.index + m[1].length : m.index;
+}
+
+// Fetch accepted dict overrides for a family. Mirrored from
+// lib/services/atlasFamilyCardAudit.ts — see notes there. Returns Set
+// of canonicalized (NFC + lowercase + trim) param_name strings.
+async function fetchAcceptedOverrideParamNames(familyId) {
+  const out = new Set();
+  if (!familyId) return out;
+  try {
+    const { data, error } = await sb
+      .from('atlas_dictionary_overrides')
+      .select('param_name')
+      .eq('family_id', familyId)
+      .eq('is_active', true);
+    if (error || !data) return out;
+    for (const row of data) {
+      if (row.param_name) out.add(row.param_name);
+    }
+  } catch {
+    // fail-open
+  }
+  return out;
 }
 
 // Fetch every row from a Supabase table that matches the given filter,
@@ -204,15 +374,35 @@ for (const card of cards) {
   for (const r of rankRows) mfrCounts[r.manufacturer] = (mfrCounts[r.manufacturer] ?? 0) + 1;
   const rankedMfrs = Object.entries(mfrCounts).sort((a, b) => b[1] - a[1]);
 
+  // Engineer-accepted dict overrides for this family. Used in CHECK 4
+  // alongside the static atlasMapper.ts lookup.
+  const acceptedOverrideParams = await fetchAcceptedOverrideParamNames(family_id);
+
   // ── CHECK 1: BOGUS MFRs — MFRs named in card text that don't ship this family ──
   for (const mfr of allMfrIdentities) {
     // Skip MFRs whose primary names are technical-term collisions.
     const primaryNames = mfr.names.filter((n) => !/[\p{Script=Han}]/u.test(n));
     if (primaryNames.some((n) => MFR_NAME_BLOCKLIST.has(n))) continue;
 
-    const mentioned = mfr.names.some((n) => mentionsName(card_text, n));
-    if (!mentioned) continue;
-    // Find any of its names in the per-family ranking
+    // Only count POSITIVE mentions — skip if every occurrence sits in a
+    // negative-list context ("do not introduce X", "Western majors such
+    // as Y"), or in a quoted-descriptor context (`"AM" suffix`). The card
+    // is either constraining the Triage AI or describing an MPN affix,
+    // not claiming X ships.
+    let positiveMention = false;
+    for (const n of mfr.names) {
+      const idx = findMentionIndex(card_text, n);
+      if (idx === -1) continue;
+      if (isNegativeListContext(card_text, idx)) continue;
+      const isShortAscii = !/[\p{Script=Han}]/u.test(n) && n.length < 8 && !n.includes(' ');
+      if (isShortAscii && isQuotedDescriptorContext(card_text, idx, n)) continue;
+      if (isShortAscii && isProtocolNumberContext(card_text, idx, n)) continue;
+      if (isShortAscii && isDashDescriptorContext(card_text, idx, n)) continue;
+      if (isShortAscii && isMpnSuffixContext(card_text, idx)) continue;
+      positiveMention = true;
+      break;
+    }
+    if (!positiveMention) continue;
     const shipping = mfr.names.some((n) => {
       return rankedMfrs.some(([rmfr]) => rmfr.toLowerCase() === n.toLowerCase());
     });
@@ -331,16 +521,78 @@ for (const card of cards) {
       if (phrasesSeen.has(phrase)) continue;
       phrasesSeen.add(phrase);
 
+      // Skip known Chinese unit words — units, not parameter names.
+      if (CHINESE_UNIT_WORDS.has(phrase)) continue;
       const foundInDict = atlasMapperSrc.includes(`'${phrase}`) || atlasMapperSrc.includes(`"${phrase}`);
       if (foundInDict) continue;
+      // Traditional → simplified retry. atlasMapper.ts entries are
+      // simplified-only by convention.
+      const simplified = toSimplified(phrase);
+      if (simplified !== phrase) {
+        const foundSimplified =
+          atlasMapperSrc.includes(`'${simplified}`) || atlasMapperSrc.includes(`"${simplified}`);
+        if (foundSimplified) continue;
+      }
+      // Engineer-accepted overrides (NFC + lowercase + trim normalization
+      // matches the POST handler at app/api/admin/atlas/dictionaries/route.ts).
+      const canonOriginal = phrase.normalize('NFC').toLowerCase().trim();
+      if (acceptedOverrideParams.has(canonOriginal)) continue;
+      if (simplified !== phrase) {
+        const canonSimplified = simplified.normalize('NFC').toLowerCase().trim();
+        if (acceptedOverrideParams.has(canonSimplified)) continue;
+      }
+      // Slash-compound reconstruction — `封装/外壳`-style combined keys,
+      // checking every sub-span containing the phrase.
+      const compoundCandidates = getSlashCompoundCandidates(card_text, m.index, phrase);
+      let compoundResolved = false;
+      for (const candidate of compoundCandidates) {
+        const candSimplified = toSimplified(candidate);
+        const forms = candSimplified !== candidate ? [candidate, candSimplified] : [candidate];
+        for (const form of forms) {
+          if (atlasMapperSrc.includes(`'${form}`) || atlasMapperSrc.includes(`"${form}`)) {
+            compoundResolved = true;
+            break;
+          }
+          if (acceptedOverrideParams.has(form.normalize('NFC').toLowerCase().trim())) {
+            compoundResolved = true;
+            break;
+          }
+        }
+        if (compoundResolved) break;
+      }
+      if (compoundResolved) continue;
+
+      // Skip parenthetical clarifiers — `<Chinese>(<phrase>) → ...` is a
+      // disambiguation note on the preceding Chinese term, not a standalone
+      // mapping subject. Real example: `稳压值(范围) → _vz_range`.
+      const before = m.index > 0 ? card_text[m.index - 1] : '';
+      const after = card_text[m.index + phrase.length] ?? '';
+      const isParenthetical = (before === '(' || before === '（') && (after === ')' || after === '）');
+      if (isParenthetical) {
+        const beforeParen = m.index >= 2 ? card_text[m.index - 2] : '';
+        if (beforeParen && /[\p{Script=Han}]/u.test(beforeParen)) continue;
+      }
+      // Skip compound-suffix fragments — `<Han>-<phrase>` means the
+      // phrase is a sub-component of a Chinese compound, not a standalone
+      // mapping subject. Example: `电流-最大值 → max_fault_current` maps
+      // the whole compound; the regex captures 最大值 separately because
+      // the dash breaks the Han run.
+      if (before === '-' && m.index >= 2) {
+        const beforeDash = card_text[m.index - 2] ?? '';
+        if (/[\p{Script=Han}]/u.test(beforeDash)) continue;
+      }
 
       // Proximity check: within 50 chars AFTER the phrase, look for arrow or
-      // attributeId-shaped token (lowercase_underscored or quoted identifier).
+      // attributeId-shaped quoted identifier.
       const afterStart = m.index + phrase.length;
       const afterWindow = card_text.slice(afterStart, afterStart + 50);
+      // Require explicit mapping SYNTAX — an arrow OR a quoted/backticked
+      // lowercase identifier (the canonical-name shape). Bare English prose
+      // words ("verify", "invent", "map") are NOT a mapping claim and were
+      // the dominant false-positive class in the May 21 audit.
       const hasMappingSignal =
         /(?:→|->)/.test(afterWindow) ||
-        /\b[a-z][a-z_0-9]{3,}\b/.test(afterWindow); // attributeId-ish identifier
+        /['"`][a-z][a-z_0-9]{2,}['"`]/.test(afterWindow);
 
       if (hasMappingSignal) {
         result.fabricatedDict.push({ phrase, claimedTarget: '(referenced in mapping-like context, not in dict)' });

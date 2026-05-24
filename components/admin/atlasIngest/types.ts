@@ -241,6 +241,15 @@ export type GlobalUnmappedParam = {
    *  paramName in any current JSONB report). Means productCount=0 etc. — UI
    *  renders a "no longer in any pending batch" indicator. */
   orphaned?: boolean;
+  /** Server-computed matching-engine impact score. See the route's
+   *  computeMatchingImpact() — drives the Impact column / chip in the Triage
+   *  table and the default sort. */
+  matchingImpact?: {
+    score: number;
+    weight: number;
+    canonical: string | null;
+    isEstimate: boolean;
+  };
 };
 
 export type StatusFilter = 'open' | 'accepted' | 'undone' | 'all';

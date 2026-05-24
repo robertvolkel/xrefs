@@ -72,6 +72,7 @@ export async function GET(): Promise<NextResponse> {
           updatedAt: dbRow.updatedAt,
           dataSnapshot: dbRow.dataSnapshot,
           health,
+          auditResults: dbRow.auditResults,
         };
       }
 
@@ -97,6 +98,10 @@ export async function GET(): Promise<NextResponse> {
           updatedAt: null,
           dataSnapshot: null,
           health,
+          // Built-in cards have no DB row to persist onto; the manual
+          // audit re-run endpoint returns the result without persisting
+          // (engineer must Customize first to get a writable row).
+          auditResults: null,
         };
       }
 
@@ -118,6 +123,7 @@ export async function GET(): Promise<NextResponse> {
         updatedAt: null,
         dataSnapshot: null,
         health,
+        auditResults: null,
       };
     });
 

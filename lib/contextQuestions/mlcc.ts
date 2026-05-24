@@ -89,14 +89,15 @@ export const mlccContext: FamilyContextConfig = {
           label: 'Automotive',
           description: 'AEC-Q200 qualification required',
           // No attributeEffects. The `aec_q200` rule stays at its base weight —
-          // enforcement now lives in the qualification-domain filter
-          // (Decision #155), which hard-excludes medical/mil-spec/space
-          // candidates and flags commercial/industrial as deviations. The
-          // legacy `escalate_to_mandatory` on aec_q200 was a near-noop once
-          // domain became the real mechanism (bumping 8→10 only shifted the
-          // denominator when both source and candidate had AEC data — doesn't
-          // change pass/fail), so it was removed to keep a single clear
-          // enforcement path.
+          // enforcement lives in the qualification-domain filter (Decision
+          // #155). Phase 1.5 (May 2026): the filter now hard-excludes
+          // candidates classified as `commercial` or `industrial_harsh`
+          // alongside the existing medical/mil-spec/space exclusions.
+          // `unknown` candidates (most non-classified MFRs and most Atlas
+          // products that lack an `aec_q200` field) still surface — hiding
+          // them would wipe out legitimately-qualified parts that just lack
+          // an explicit qualification signal. They get a verify badge via
+          // the upstream deviation flag.
           attributeEffects: [],
         },
         {

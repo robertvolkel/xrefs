@@ -21,6 +21,8 @@ import {
 } from '@mui/material';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import { useRouter } from 'next/navigation';
 import { useTranslation } from 'react-i18next';
 import AtlasCoverageDrawer from './AtlasCoverageDrawer';
 import AtlasExplorerTab from './AtlasExplorerTab';
@@ -79,6 +81,7 @@ function MfrRow({
   onToggle: (manufacturer: string, enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const mfrBreakdown = breakdown.filter((b) => b.manufacturer === row.manufacturer);
 
@@ -113,9 +116,30 @@ function MfrRow({
           <Typography variant="body2">{row.scorableCount.toLocaleString()}</Typography>
         </TableCell>
         <TableCell align="right">
-          <Typography variant="body2" sx={{ opacity: row.coveragePct > 0 ? 1 : 0.3 }}>
-            {row.coveragePct > 0 ? `${row.coveragePct}%` : '\u2014'}
-          </Typography>
+          <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end' }}>
+            <Typography variant="body2" sx={{ opacity: row.coveragePct > 0 ? 1 : 0.3 }}>
+              {row.coveragePct > 0 ? `${row.coveragePct}%` : '\u2014'}
+            </Typography>
+            {/* Per-MFR Triage drilldown. Deep-links into the Dict Triage page
+                with `?mfr=<slug>` pre-applied so the engineer lands on the
+                queue filtered to this manufacturer, sorted by matching impact
+                (Triage default sort). Quick path from "coverage is low" to
+                "here are the accepts that would lift it" (Decision #200). */}
+            {row.slug && (
+              <Tooltip arrow title={`Open Triage filtered to ${row.nameEn || row.manufacturer} \u2014 see pending accepts ranked by impact`}>
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/admin?section=atlas-dict-triage&mfr=${encodeURIComponent(row.slug!)}`);
+                  }}
+                  sx={{ p: 0.25, opacity: 0.6, '&:hover': { opacity: 1 } }}
+                >
+                  <BuildOutlinedIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
         </TableCell>
         <TableCell>
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>

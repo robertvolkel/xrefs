@@ -5956,3 +5956,273 @@ A few remaining false positives expected (`THD 台华达` in C9 vs Total Harmoni
 ### Verification
 
 Script tested against C4 (where errors were known): caught DIOO/DIA, HXYMOS/HAD, and `放大器数` correctly after refinements. Full-corpus scan completed in ~45s, surfaced 41 issues across 16 cards. False positive rate manually assessed at ~25% — acceptable for a heuristic-first check.
+
+---
+
+## Decision #196 — Qualification-Domain Filter Phase 1.5: Hard-Exclude Commercial / Industrial-Harsh Under Automotive (May 2026)
+
+### Status
+
+RESOLVED.
+
+### Context
+
+A user reported that when they answered **Automotive** in the replacement context questions, the system still returned candidates without AEC qualification. Investigation traced the bug to the qualification-domain compatibility matrix (`isDomainCompatible` in `lib/services/qualificationDomain.ts`):
+
+- Phase 1 (Decision #155) hard-excluded only `medical_implant`, `medical_general`, `mil_spec`, `space` under automotive context.
+- `commercial` and `industrial_harsh` returned `{ compatible: true, deviation: true }` — they passed the filter, just with a downstream badge.
+- The `aec_q200` rule in MLCC family 12 had its `escalate_to_mandatory` context effect removed when #155 shipped (the rule is `identity_flag`, which short-circuits to pass when source has no AEC field — common in Digikey/Atlas/parts.io data).
+
+Net result: the automotive context Q had no effective gate against non-qualified parts, contrary to user expectation.
+
+### Decision
+
+Tighten the automotive row of the compatibility matrix to hard-exclude `commercial` and `industrial_harsh` candidates. Keep `unknown` candidates visible.
+
+The three-state distinction matters:
+
+| Candidate domain | Under automotive context | Why |
+|---|---|---|
+| `automotive_q200` / `_q100` / `_q101` | Show, no badge | Confirmed qualified |
+| `commercial`, `industrial_harsh` | **Hard exclude** | Classifier emitted these only with positive evidence the part is NOT automotive (e.g. Murata GRM series → commercial) |
+| `medical_*`, `mil_spec`, `space` | Hard exclude | Phase 1 — cross-domain incompatible |
+| `unknown` | Show, no badge | Most Atlas products + non-classified MFRs land here; AEC field is rarely populated in Atlas extractions even when the part IS qualified. Hiding `unknown` would wipe out legitimately-qualified Chinese-MFR + TDK / Samsung / Yageo MLCC + similar cohorts |
+
+### Critical asymmetry — why `unknown` stays visible
+
+Atlas products typically lack the `aec_q200` attribute even when the part is AEC-qualified. The asymmetric `upgradeFromAttributes` already handles the positive case (only `aec_q200 = "true"` upgrades unknown → automotive_q200; missing or "false" stays unknown — see #155). The matrix mirrors this asymmetry: only `commercial` / `industrial_harsh` (positive evidence of NOT qualified) trigger exclusion. Filtering on field-absence would punish parts for living in a less-rich data source.
+
+### Scope
+
+The filter site in `partDataService.ts:1431` is already family-agnostic — it runs whenever the user picks automotive context, regardless of family. So this matrix change applies uniformly to every family that has an automotive context option. No per-family wiring needed.
+
+Note: classifier coverage is still Phase 1 (Murata MLCC only). For all other MFRs and families, candidates land in `unknown` and remain visible — correct behavior given Atlas constraints, but it means TDK CGA / Samsung CL series MLCCs (which ARE automotive-qualified) currently show un-badged-as-qualified rather than as confirmed-qualified. Promoting these from `unknown` → `automotive_q200` is the natural Phase 2 work tracked in BACKLOG: expand classifier registry to TDK / Samsung / Yageo / KEMET / AVX / Kyocera / Taiyo Yuden + non-MLCC families.
+
+### Files Touched
+
+- `lib/services/qualificationDomain.ts` — `isDomainCompatible` matrix update (commercial + industrial_harsh → hard exclude)
+- `lib/contextQuestions/mlcc.ts` — refresh stale comment on empty `attributeEffects` array
+- `__tests__/services/qualificationDomain.test.ts` — flip two test cases to assert hard exclusion + add explanatory note about `unknown` safety
+
+### Verification
+
+- 36 / 36 tests in `qualificationDomain.test.ts` pass.
+- `npx tsc --noEmit` — no new errors in touched files.
+- End-to-end smoke (deferred to first real cross-ref run by user): search for an MLCC where Atlas/non-Murata candidates appear, answer Automotive, confirm GRM-series Murata candidates are excluded and Atlas + TDK candidates remain (with verify-qualification badge).
+
+### Lessons
+
+1. **Soft deviation flags don't satisfy user intent.** When a user explicitly says "automotive," they expect a gate, not a hint. The deviation/badge UX assumed the user would do final filtering — they don't.
+2. **Decision #155's Phase 1 was correct about the mechanism, wrong about the matrix.** The architectural choice (domain filter as enforcement layer, not rule escalation) holds up. The matrix configuration was over-conservative on commercial/industrial_harsh.
+3. **Asymmetry is a feature.** `unknown` exists because data is incomplete; treating it as "not qualified" would conflate "unknown" with "no" — which the entire Atlas cohort depends on us NOT doing.
+4. **Test fixtures sometimes encode buggy expectations.** The Phase 1 tests asserted `commercial under automotive → deviation flag` — exactly the behavior the user reported as broken. Flipping the tests was as important as flipping the code.
+
+### Addendum — Duplicate AEC-Q200 chips on cards
+
+Same session, a related user report: replacement cards rendered **two** "AEC-Q200" chips side-by-side — a green one from `DomainChip` (the unified #155 badge) and a blue one from a separate `part.qualifications?.map()` render.
+
+**Cause:** `part.qualifications[]` is populated at the data-source layer (Atlas `atlasClient.ts`, Digikey `digikeyMapper.ts`) with the literal string `'AEC-Q200'`. `DomainChip` ALSO renders "AEC-Q200" for the `automotive_q200` domain — which is itself derived from the same `aec_q200` flag via `upgradeFromAttributes()`. Both paths converge on the same string.
+
+**Fix:** New exported helper `isDomainCoveredQualification(label)` in `qualificationDomain.ts` returns true for `AEC-Q200`/`Q100`/`Q101` (case-insensitive, tolerant of trailing notes). All five UI render sites filter `part.qualifications` through it: `RecommendationCard.tsx`, `AttributesPanel.tsx`, `PartOptionsSelector.tsx`, `ComparisonView.tsx`, `AttributesTabContent.tsx`. The data array is left intact — the matching engine and other non-UI consumers still see the full `qualifications[]`. Non-AEC qualifications (future MIL-PRF, RoHS, etc.) still render. In `AttributesTabContent.tsx` the `hasQualifications` flag was recomputed from the filtered list so the dedicated "Qualifications" section header doesn't render when AEC was its only entry.
+
+**Lesson:** When two systems derive a display value from the same underlying datum, expect them to collide on screen. The fix is a single shared predicate, not five ad-hoc inline checks — one source of truth for "what does DomainChip already own."
+
+### Files Touched — chip dedup
+
+- `lib/services/qualificationDomain.ts` — `isDomainCoveredQualification()` helper
+- `components/RecommendationCard.tsx`, `components/AttributesPanel.tsx`, `components/PartOptionsSelector.tsx`, `components/ComparisonView.tsx`, `components/AttributesTabContent.tsx` — filter `qualifications` render through the helper
+
+## Decision #197 — Domain-Card Audit: Downgrade FABRICATED_DICT from Block to Warn (May 22, 2026)
+
+**Context.** Decision #195 Phase 2 shipped a four-check auto-audit on AI-generated family domain cards: BOGUS_MFR, WRONG_PREFIX, FABRICATED_DICT, OMITTED_MFR. During the May 22 card-regeneration sweep, the FABRICATED_DICT check fired on five consecutive cards (B4 `英吋`, 12 `外壳`, 52 `工艺`, 65 `暂态能量`, 65 `电容`) — **0 real catches, 5 false positives**. Each was a legitimate Chinese param name the check couldn't resolve.
+
+**Root cause.** FABRICATED_DICT extracts bare Han character runs from the card and substring-matches them against `atlasMapper.ts` source. Real param names appear in rich syntactic forms the bare-run extraction can't reconstruct:
+- **Unit words** — `英吋` ("inch"), `公釐` ("mm") are units, never parameter names.
+- **Slash-compounds** — `电阻类型/技术/工艺` is a synonym group; the dict stores sub-spans (`技术/工艺` is a key) at varying granularity.
+- **Trailing parentheticals** — `电容(khz)` is one param name; the regex captures only `电容`.
+- **Synonym siblings** — `暂态能量/能量` lists two synonyms; `能量` is in the dict, `暂态能量` is an uncatalogued-but-valid variant.
+
+Eight tightenings (negative-list context, quoted/dash descriptors, MPN-suffix, protocol-number, traditional→simplified normalization via opencc-js, accepted-overrides lookup, slash-compound sub-span reconstruction, Chinese unit-word skip set) cut the noise substantially but each new card kept surfacing another shape. The check was chasing an asymptote.
+
+**Deeper problem.** FABRICATED_DICT never validated mapping *correctness* — only "is this Chinese phrase present in the dict." A flag means "phrase not catalogued," which is almost always a **dictionary coverage gap**, not a hallucination. The genuinely dangerous case — Opus mapping a phrase to the *wrong* canonical — was never in scope for this check. Meanwhile BOGUS_MFR and WRONG_PREFIX are grounded in `atlas_products` (real shipped data) and proved reliable in the same sweep (the C4 INPAQ/SXN/KOHER prefix catches were all genuine, verified against MPN samples).
+
+**Decision.** FABRICATED_DICT downgraded from **block** to **warn** severity:
+- `issueCount` (the block-gating count) now counts BOGUS_MFR + WRONG_PREFIX only.
+- FABRICATED_DICT + OMITTED_MFR are warn-level — advisory, surfaced in the audit panel, do NOT gate Approve and do NOT count as "hallucination issues."
+- UI relabels FABRICATED_DICT as "Dictionary coverage gaps" (warning color, not error), with inline text explaining it's usually a dict TODO — the term may be a real synonym to add, verify against `atlasMapper.ts` before treating as a card error.
+- "Fix with AI" is no longer offered for warn-only cards — dict gaps are resolved by *adding* terms to the dictionary, not by editing the card. Removing a legit synonym would be the wrong action.
+
+**What stays block:** BOGUS_MFR + WRONG_PREFIX. Both verifiable against `atlas_products`, both genuinely dangerous if wrong.
+
+**Lessons.**
+1. **A check is only as trustworthy as its reference.** Substring-matching source code is a lossy reference; querying real data (`atlas_products`) is not. Audit checks grounded in data outperformed checks grounded in code-text by a wide margin.
+2. **"Not in dict" ≠ "fabricated."** The check's name overpromised. It detects coverage gaps. Naming a check after the failure you fear, rather than the thing it actually measures, mis-sets the severity and the engineer's mental model.
+3. **Know when to stop tightening.** Eight heuristics in, false positives still outnumbered real catches. The signal to stop isn't "the next tightening is hard" — it's "the precision isn't improving." Downgrade-and-keep-as-advisory beats an infinite regex chase.
+4. **Severity is a product decision, not a code default.** The clean/warn/block enum existed; the mistake was assigning FABRICATED_DICT to block without evidence its precision warranted gating. Real-card data corrected it.
+
+### Files Touched
+
+- `lib/services/atlasFamilyCardAudit.ts` — severity rollup: `issueCount` = bogus + wrongPrefix; fabricatedDict + omittedMfrs are advisory; file-header severity doc updated.
+- `components/admin/AtlasDomainCardsPanel.tsx` — `advisoryCount()` helper; audit chip + `AuditDetailPanel` reframe FABRICATED_DICT as "Dictionary coverage gaps" (warning color + advisory note); "Fix with AI" enable keys off `issueCount` (hallucinations) only.
+- `scripts/atlas-audit-domain-cards.mjs` — CLI report unchanged (shows all four checks; severity enum is a TS-service/UI concept).
+
+## Decision #198 — Triage Queue Cache: L2 as Source of Truth (May 22, 2026)
+
+### Context
+
+May 22, the Triage queue UI surfaced accepted dictionary rows for hours after Accept. Verified all 8 sampled overrides were in `atlas_dictionary_overrides` with correct family/attribute and `is_active=true`. L2 cache (`admin_stats_cache.triage-queue`) row was null. The queue route's RPC returned the rows correctly. The `lookupOverride()` filter key construction matched (`${familyId}:${normalizeOverrideKey(paramName)}` on both sides, with NFC+lowercase+trim applied symmetrically per Decision #186).
+
+Root cause: Next.js dev-mode HMR fragments modules. `triageQueueCache.ts` was imported by both `app/api/admin/atlas/dictionaries/route.ts` (Accept POST) and `app/api/admin/atlas/ingest/batches/route.ts` (queue GET). HMR gave each route a separate module instance with its own `let memCache` and its own `let registeredCompute`. Accept's `invalidateTriageQueueCacheAndAwaitFresh()` cleared the Accept route's L1 and tried to start a background recompute via the Accept route's `registeredCompute` — which was never registered there (only the batches route registers at module-load), so recompute was a no-op. Meanwhile the batches route's L1 happily held the pre-accept data for the full 30-min TTL.
+
+Symptom: hard refresh, log out / log in, accept a different row — none of it cleared the queue route's local L1. Only `?refresh=1` (which `forceFresh=true` → bypasses L1 entirely) worked.
+
+### Decision
+
+Shift the cache contract from L1-as-truth to L2-as-truth.
+
+1. **Invalidation DELETEs the L2 Supabase row.** `supabase.from('admin_stats_cache').delete().eq('key', 'triage-queue')` runs through a service-role client and is visible to every module instance + worker on next read. Cross-process safe by construction.
+
+2. **L1 TTL dropped from 30 min → 30 sec.** L1 is now a tiny burst-absorption layer for repeated reads within a single page render or rapid navigation, not a durability layer. Staleness in a fragmented HMR instance now self-heals in seconds.
+
+3. **Read contract unchanged.** Routes still call `readCachedTriageData(forceFresh)` → returns null when L1 and L2 are both empty → caller sync-computes and writes back via `writeCachedTriageData`. SWR on `l2-stale` (6h threshold) still triggers background recompute. The only behavior change: invalidation paths now reliably reach all readers.
+
+4. **Both invalidate variants updated.** `invalidateTriageQueueCache()` (single-flight, per-row mutations) and `invalidateTriageQueueCacheAndAwaitFresh()` (drain-then-wipe-then-await, batch-state mutations) both DELETE the L2 row + clear local L1 + best-effort background recompute. The wait-then-restart machinery in the await variant is retained for in-flight stale-promise drainage but is no longer the durability mechanism.
+
+### Why not alternative fixes
+
+- **"Just fix HMR" / move the cache module to a different scope:** dev-mode-only; doesn't help if prod ever exhibits the same fragmentation under multi-worker. L2-DELETE is correct for both.
+- **Drop L1 entirely:** L2 round-trip per request is fast (~50-100ms cookie-auth path) but accumulates under burst load. 30s L1 absorbs that without staleness risk.
+- **Add L2 freshness ping on every L1 hit:** would catch fragmentation but doubles Supabase reads. 30s L1 TTL bounds the staleness window enough that the extra ping isn't worth it.
+- **Force `?refresh=1` on every queue load:** what we were de facto doing today. Defeats the purpose of caching; full sync compute on every page load.
+
+### Trade-offs
+
+- After Accept, the next reader (in the fragmented batches-route instance) may pay a sync compute (~2-3s) because the background recompute fired in the Accept route's instance, not the batches route's instance. This is a one-time cost per invalidation, bounded by L2 being warmed by that recompute (or by the next reader's sync compute). The 30s L1 then absorbs subsequent reads.
+- Acceptable for an admin-only route. Not appropriate for a customer-facing read path where 2-3s cold compute would surface as latency.
+
+### Files Touched
+
+- `lib/services/triageQueueCache.ts` — L2 DELETE in both invalidate functions; L1 TTL 30 min → 30 sec; updated file-header docs to reflect L2-as-source-of-truth contract.
+
+### Forward-looking
+
+Same pattern (L1 with HMR-fragile invalidation, L2 with persistent storage) exists in `atlas-coverage` (Decision #179) and `atlas-growth` (Decision #183). They have the same fragility in dev mode but haven't surfaced because (a) their write paths are batch ingest (rare) and (b) they're routinely refreshed by manual buttons. Pre-emptively migrating them would be cheap follow-up; tracking in BACKLOG.
+
+## Decision #199 — Retroactive Dict Override Backfill (May 23, 2026)
+
+### Context
+
+May 22-23: ~150 dict overrides accepted during a focused Triage session — `gaia-capacitance-Typ → cj`, `gaia-conducted_sensitivity → sensitivity`, etc. User assumed (and I initially confirmed) that accepts immediately improved matching quality for existing `atlas_products` via read-time override consultation. **This was wrong.**
+
+Verification surfaced: dict overrides fire at INGEST TIME ONLY. `atlas-ingest.mjs → mapManufacturerProducts() → loadAndApplyDictOverrides()` consults overrides when translating raw MFR JSON params → canonical attributeIds at write-time. `lib/services/atlasMapper.ts → fromParametersJsonb()` uses overrides only for *display names*, not key translation — the JSONB keys are already post-translation by the time it reads them. So products in `atlas_products` carry whatever sanitization was active at THEIR original ingest. New accepts only affected future ingests.
+
+Symptom: user accepted `gaia-capacitance-Typ → cj` for 73 YFW B4 products → DB still showed those products with whatever raw-English sanitization (`capacitance`, dropped, etc.) was applied at original ingest. Coverage % unchanged. Matching engine sees the old sanitization. Cross-checked: SIMCOM products have `transmit_power_min` / `hsdpa_max_data_rate` in JSONB, NOT `gaia-...` raw forms.
+
+### Decision
+
+Ship a retroactive backfill that closes the gap without requiring engineers to re-upload every MFR file through the ingest UI.
+
+New script mode: `node scripts/atlas-ingest.mjs --backfill-translations [--dry-run] [--mfr <slug>] [--verbose]`. Wired as `npm run atlas:backfill` (and `:dry`).
+
+**Architecture:**
+- Mounted on `atlas-ingest.mjs` as a new dispatcher case — NOT a separate script — so mapping logic stays single-sourced. Reuses `mapManufacturerProducts()`, `fetchExistingProducts()`, `mergeAtlasParameters()`, `tagAtlasParameters()` verbatim.
+- Walks every `mfr_*_params.json` in `data/atlas/`. For each MFR: re-runs mapper with current overrides + signatures → diffs against existing `atlas_products` → UPDATEs `parameters` JSONB in place.
+- Provenance-preserving via existing `mergeAtlasParameters`: `source='extraction'` (LLM) + `source='manual'` entries protected; only `source='atlas'` (and legacy untagged) atoms get replaced.
+- Idempotent: comparison via `compareParamsIgnoringIngestedAt()` skips writes when fresh merge equals existing (ignores the `ingested_at` timestamp which would otherwise mark every row dirty).
+- Cache invalidation: deletes `admin_stats_cache` rows for `atlas-coverage` + `manufacturers-list` after a non-dry run with changes.
+- Does NOT INSERT new products. MPNs present in source files but absent from DB are reported as `missing` and skipped — those need `--proceed` (full ingest pipeline) to land. Backfill is parameters-only rewrite for already-ingested products.
+
+**Smoke test → first real run (May 23):**
+- Scanned 198,626 products across 144 MFR source files
+- Changed 37,514 (top: SWST 3,623; Good-Ark 2,955; INPAQ 1,684; HXYMOS 1,317; DELTA 1,176)
+- Unchanged 145,425 (already current — confirms idempotence)
+- Missing 15,687 (in source, not in DB — biggest: Brightking 3,373, likely an unproceeded MFR)
+- Errors 0
+
+### Why this architecture (and not the alternatives I considered first)
+
+**Rejected: override-aware coverage RPC** (Option B in original planning). Would have modified `get_atlas_coverage_aggregates` to take an `override_map` and translate keys at query time. **This would have been wrong** — it would credit the coverage % display for keys the matching engine doesn't actually see. The matching engine reads `atlas_products.parameters` JSONB as-is and matches rules against the stored keys; if those keys are old sanitizations, the rules don't fire, so the candidate doesn't score regardless of what the coverage % display says. Display-vs-reality divergence is the worst kind of bug. Backfill fixes both layers symmetrically.
+
+**Rejected: re-upload every MFR via ingest UI.** Real busywork (144 manual uploads), repeats every accept burst, and has the human-in-the-loop overhead of batch review even for files that haven't changed.
+
+**Deferred: auto-trigger on dict mutation.** Each Accept would trigger a 110K-row scan — too aggressive. Manual is the right default for now; auto could be a future button or a nightly cron when there's evidence engineers want it.
+
+### Trade-offs
+
+- Cost: each run is a full source-file walk + 37K UPDATEs in the worst case. Took ~5 minutes against the prod Supabase project on May 23. Fine as a manual/nightly job; not appropriate as a per-Accept trigger.
+- Granularity: re-translates ALL atlas-tagged atoms per product, not just the ones touched by the changed overrides. Necessary because we don't track per-atom override provenance. Idempotence guard means re-runs without override changes are cheap (zero writes).
+- Missing-products visibility: the `missing` count surfaces unproceeded MFRs (Brightking 3,373) which is a useful side signal for operator review.
+
+### Honest correction
+
+I incorrectly told the user earlier in this session that dict overrides apply at read time and "every accept improves matching quality on the very next query." That was wrong. They apply at ingest write time only. Verifying the data shape took less than 5 minutes once I stopped and looked — should have done that before claiming it. Memory updated to call out this verification step (`grounded-ai-generators-anti-hallucination` pattern applied to my own claims too: when telling a user how their data flows, look at the data before answering).
+
+### Files Touched
+
+- `scripts/atlas-ingest.mjs` — new `--backfill-translations` mode + `runBackfillTranslations()` + `compareParamsIgnoringIngestedAt()` helper + CLI flag + usage update.
+- `package.json` — `atlas:backfill` + `atlas:backfill:dry` npm scripts.
+
+## Decision #200 — Coverage Repair Workflow: Matching Impact + Per-MFR Drilldown + One-Click Backfill (May 23, 2026)
+
+### Context
+
+May 23 session: user accepted ~150 overrides in a focused Triage session, ran the new backfill from Decision #199, and noticed SWST still sitting at 15% coverage. Investigation surfaced multiple gaps that turned "is coverage low because the data's thin?" into "is coverage low because of broken workflow signal?"
+
+Three failures the existing Triage UI didn't address:
+
+1. **No impact prioritisation.** Triage rows are surfaced by global volume rollup but the queue doesn't tell the engineer which accepts would actually move matching quality vs which are display-only. A high-volume row mapped to a satellite attr (`_vbr_max`) looks identical to one mapped to a blocking gate (`vrwm`). Engineers default to working top-to-bottom and miss the leverage.
+2. **No per-MFR drilldown.** Engineer sees "SWST: 15% coverage" in Atlas MFRs panel. Mental cross-reference to "which pending Triage rows would lift it?" is manual — requires opening the Triage queue, scrolling, scanning for SWST in `affectedManufacturers` lists, etc. The two views don't talk to each other.
+3. **No one-click backfill.** Decision #199's `npm run atlas:backfill` is the right script, but typing it in a terminal between Triage sessions adds friction. Coverage % visibly lags every accept session until the engineer remembers to run it.
+
+### Decision
+
+Ship a three-part Coverage Repair workflow that closes the loop:
+
+**Part 1 — Matching Impact score on every Triage row.**
+
+Server (`/api/admin/atlas/ingest/batches`) computes `matchingImpact` per row after the override-annotation pass: `score = productCount × weight`, where `weight` is the destination attribute's rule weight in the dominantFamily's logic table (0 = display-only / satellite / not in logic table, 10 = blocking gate). For accepted rows, weight is looked up exactly (`isEstimate=false`). For pending rows without acceptedOverride, weight defaults to 7 (medium-high — `isEstimate=true` for the dashed-border UI hint).
+
+Triage UI ([components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx)) renders an `ImpactChip` column with tiered colours (🔥 red ≥50k, 🟠 orange ≥10k, 🟡 yellow ≥1k, ⚪ grey <1k, "—" for display-only). Tooltip shows `productCount × weight (→ canonical)` + the estimate disclaimer. **Sort by impact desc is now the default ordering** for every Triage view — engineers see the highest-leverage pending accepts at the top automatically.
+
+**Part 2 — Per-MFR drilldown from Atlas MFRs panel.**
+
+Each MFR row in [components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx) (the live component — `AtlasPanel.tsx` is dead code; got it wrong the first time) carries a small 🔧 wrench icon next to its coverage %. Click → navigates to `/admin?section=atlas-dict-triage&mfr=<slug>`. The Triage panel reads the `?mfr=` query param on mount and pre-applies it as an MFR filter (one-shot — doesn't write back on subsequent user filter changes).
+
+Empty-state handling for the drilldown: when the only active filter is a single MFR slug and the filtered result is empty, render a green success banner — "No pending unmapped params for {MFR}. With current dictionary overrides, every param this MFR ships is already mapped to a canonical attribute." — instead of the generic "no params match" message. Otherwise an MFR with zero queue presence (like CCTC, 1 product, fully mapped) looks broken when it's actually correct.
+
+**Part 3 — One-click backfill from Atlas MFRs panel header.**
+
+`POST /api/admin/atlas/backfill-translations` spawns `node scripts/atlas-ingest.mjs --backfill-translations` as a detached child process (mirroring the existing ingest/report pattern). Returns 202 immediately. Status (started/finished/scanned/changed/errors) persisted in `admin_stats_cache` row keyed `'atlas-backfill-status'`. `GET` on the same path reads the status row. The status row IS the lock — concurrent POST during in-flight returns 409. Stale-lock guard auto-clears after 10 min so a crashed run doesn't strand the button.
+
+UI: new "Refresh from accepts" button in [components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx) header. Inline status badge ("Backfill 23m ago · 37,514 changed") shown when there's any history. Click → toast "Backfill started — coverage will update in ~5 min" → button switches to "Backfilling…" disabled → polls status every 10s → on completion auto-refreshes the MFR list so coverage % updates visibly.
+
+### Why not the alternatives
+
+**Per-accept auto-backfill** (rejected): each backfill is ~5 min × 198K-product scan. 150 accepts in today's session would have been ~12 hours of compute + race conditions on `atlas_products` writes. Scoped per-accept (only the products with that raw key) is faster but still 30s-2min per accept and adds latency to every Accept click. The burst-session pattern fits a manual button better than per-accept triggers.
+
+**Per-Proceed auto-backfill** (deferred): coherent with the engineer mental model ("apply the batch, then apply its accepts") but Proceed is already an attention-cost operation. Adding ~5 min on top would degrade ingest UX. Revisit after we see how the manual button gets used.
+
+**Nightly cron** (BACKLOG): right answer if button usage settles into daily-or-more cadence. Cheap to add (~1 line of platform config). Deferred from ship so we can see real usage first.
+
+**Override-aware coverage RPC** (rejected per Decision #199): would have shown overrides translating keys at query time, but the matching engine reads `atlas_products.parameters` as-is — display would claim coverage the matching engine doesn't actually see. Backfill is the symmetric fix because it brings storage and matching back into sync.
+
+### Trade-offs
+
+- **Engineer remembers to click the button.** Decision #199's correction held: dict overrides apply at ingest time only. Backfill is the retroactive bridge. Manual click is the cost of doing this right; the auto-trigger backlog entry tracks the followup.
+- **Impact weight defaults to 7 for un-accepted rows.** Without a definitive canonical, the server estimates. The dashed-border `ImpactChip` makes the uncertainty visible. Future enhancement: client refines the estimate after Generate AI Suggestions populates a `suggestedAttributeId` — the route can't see that cache (it's per-route module scope).
+- **L2 cache invalidation.** The backfill script ends with `DELETE` on `admin_stats_cache.atlas-coverage` + `manufacturers-list` (per Decision #198 L2-as-source-of-truth pattern). Next admin page load recomputes from updated `atlas_products`. Already proven during today's first real run — 37,514 changed in ~5 min.
+
+### Files Touched
+
+- `app/api/admin/atlas/ingest/batches/route.ts` — `MatchingImpact` type + `computeMatchingImpact()` + `lookupRuleWeight()` memo cache + extension to GlobalUnmapped + apply post-override-annotation.
+- `components/admin/atlasIngest/types.ts` — `matchingImpact` on `GlobalUnmappedParam`.
+- `components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx` — `ImpactChip` local component + Impact column header + cell + default sort by `matchingImpact.score`.
+- `components/admin/AtlasDictTriagePanel.tsx` — `?mfr=` URL param consumed on mount + single-MFR empty-state success banner.
+- `components/admin/ManufacturersPanel.tsx` — `BuildOutlinedIcon` wrench in coverage cell + "Refresh from accepts" button in header + status badge + poll-while-in-flight effect + auto-refresh MFR list on completion + alert for start success/error.
+- `app/api/admin/atlas/backfill-translations/route.ts` (new) — POST spawn + GET status + lock-by-status + stale-lock TTL.
+
+### Lessons
+
+1. **Look at what's actually rendered, not what's named "obvious."** Spent ~10 min editing `AtlasPanel.tsx` (dead code, zero imports) thinking that was the Atlas MFRs panel before grepping for `MfrRow` references and discovering the live component was `ManufacturersPanel.tsx`. Pattern: when adding a feature to "the X panel," grep for `X` to find the file isn't enough — also grep for `import X` to confirm something actually mounts it.
+2. **Empty states are silent bugs.** The drilldown worked correctly for CCTC (zero pending Triage rows) but the user couldn't tell whether the filter was broken. Friendly empty-state messaging is cheap and converts "looks broken" into "looks complete."
+3. **Workflow signal isn't the same as data signal.** SWST showing 15% coverage wasn't "the data's thin." It was "the workflow doesn't tell you which accepts would lift it." Spent 15K product-impact accepts (e.g. `package_outline → package_case`) sitting in the queue unprioritised. The Impact score + drilldown together turn this into a visible workflow signal.

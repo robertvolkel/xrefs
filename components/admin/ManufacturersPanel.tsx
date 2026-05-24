@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Alert,
@@ -22,10 +22,12 @@ import {
   Switch,
   Skeleton,
   InputAdornment,
+  IconButton,
 } from '@mui/material';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SyncIcon from '@mui/icons-material/Sync';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import { useTranslation } from 'react-i18next';
 import AtlasExplorerTab from './AtlasExplorerTab';
 import FlaggedProductsTab from './FlaggedProductsTab';
@@ -81,6 +83,21 @@ export default function ManufacturersPanel() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // Atlas translation backfill state — drives the "Refresh from accepts"
+  // button + inline status badge. Polled every 10s while in-flight; idle
+  // when null. See /api/admin/atlas/backfill-translations for the contract.
+  const [backfillStatus, setBackfillStatus] = useState<{
+    lastStartedAt: string;
+    lastFinishedAt: string | null;
+    scanned: number;
+    changed: number;
+    unchanged: number;
+    missing: number;
+    errors: number;
+    exitCode: number | null;
+  } | null>(null);
+  const [backfillSubmitting, setBackfillSubmitting] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
 
   useEffect(() => {
     getAtlasFlags('open').then((resp) => setFlaggedCount(resp.flags.length)).catch(() => {});
@@ -119,6 +136,79 @@ export default function ManufacturersPanel() {
       setRefreshing(false);
     }
   }, [loadData]);
+
+  // ── Atlas translation backfill ──────────────────────────
+  // Fetch current status (called on mount + after start + during in-flight
+  // polling). Idempotent — just reads the admin_stats_cache status row.
+  const fetchBackfillStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/atlas/backfill-translations', { cache: 'no-store' });
+      if (!res.ok) return;
+      const json = await res.json();
+      setBackfillStatus(json.status ?? null);
+    } catch {
+      // Status read failure is non-fatal — button keeps working.
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchBackfillStatus();
+  }, [fetchBackfillStatus]);
+
+  // Poll every 10s while a run is in-flight. Stops automatically once
+  // lastFinishedAt > lastStartedAt. Also reloads MFR list once when the
+  // run completes so the coverage % column reflects the rewrite.
+  useEffect(() => {
+    if (!backfillStatus) return;
+    const inFlight = !backfillStatus.lastFinishedAt;
+    if (!inFlight) return;
+    const interval = setInterval(async () => {
+      const before = backfillStatus.lastFinishedAt;
+      await fetchBackfillStatus();
+      // After fetch, the closure-captured backfillStatus is stale; the
+      // setter inside fetchBackfillStatus already wrote the new value, so
+      // checking `before` against the latest from a re-fetched read isn't
+      // worth it here. Instead let the next render's effect re-evaluate
+      // `inFlight` and tear down on the next cycle.
+      void before;
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [backfillStatus, fetchBackfillStatus]);
+
+  // Side-effect: when the run completes (lastFinishedAt transitions from
+  // null → set), refresh the MFR list so coverage % updates. The cache
+  // invalidation on the script side already deleted the L2 row; this
+  // just kicks the UI fetch. Tracked via ref so the transition detection
+  // doesn't fire on every render.
+  const prevFinishedAtRef = useRef<string | null>(null);
+  useEffect(() => {
+    const cur = backfillStatus?.lastFinishedAt ?? null;
+    if (cur && cur !== prevFinishedAtRef.current) {
+      void loadData(true);
+    }
+    prevFinishedAtRef.current = cur;
+  }, [backfillStatus?.lastFinishedAt, loadData]);
+
+  const handleRunBackfill = useCallback(async () => {
+    setBackfillSubmitting(true);
+    setBackfillMessage(null);
+    try {
+      const res = await fetch('/api/admin/atlas/backfill-translations', { method: 'POST' });
+      const json = await res.json();
+      if (res.status === 202) {
+        setBackfillMessage('Backfill started — coverage will update in ~5 min.');
+        await fetchBackfillStatus();
+      } else if (res.status === 409) {
+        setBackfillMessage('A backfill is already running — please wait.');
+      } else {
+        setBackfillMessage(`Start failed: ${json?.error ?? `HTTP ${res.status}`}`);
+      }
+    } catch (err) {
+      setBackfillMessage(`Start failed: ${err instanceof Error ? err.message : 'network error'}`);
+    } finally {
+      setBackfillSubmitting(false);
+    }
+  }, [fetchBackfillStatus]);
 
   const handleSyncProfiles = useCallback(async () => {
     setSyncing(true);
@@ -276,6 +366,39 @@ export default function ManufacturersPanel() {
                       </Typography>
                     </Tooltip>
                   )}
+                  {/* Backfill status badge — shown when there's any history
+                      to report. Counts come from the most-recent run's
+                      parsed summary; relative time tells the engineer how
+                      long since the coverage column reflected today's
+                      accepts. Decision #200. */}
+                  {backfillStatus?.lastFinishedAt && (
+                    <Tooltip
+                      arrow
+                      title={`Last backfill: ${new Date(backfillStatus.lastFinishedAt).toLocaleString()} — ${backfillStatus.changed.toLocaleString()} of ${backfillStatus.scanned.toLocaleString()} products updated${backfillStatus.errors > 0 ? `, ${backfillStatus.errors} errors` : ''}`}
+                    >
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                        Backfill {formatRelativeTime(backfillStatus.lastFinishedAt)} · {backfillStatus.changed.toLocaleString()} changed
+                      </Typography>
+                    </Tooltip>
+                  )}
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<BuildOutlinedIcon fontSize="small" />}
+                    onClick={handleRunBackfill}
+                    disabled={
+                      backfillSubmitting ||
+                      (backfillStatus && !backfillStatus.lastFinishedAt) ||
+                      false
+                    }
+                    sx={{ textTransform: 'none' }}
+                  >
+                    {backfillSubmitting
+                      ? 'Starting…'
+                      : backfillStatus && !backfillStatus.lastFinishedAt
+                        ? 'Backfilling…'
+                        : 'Refresh from accepts'}
+                  </Button>
                   <Button
                     size="small"
                     variant="outlined"
@@ -301,6 +424,15 @@ export default function ManufacturersPanel() {
               {syncResult && (
                 <Alert severity={syncResult.includes('failed') ? 'error' : 'success'} sx={{ mb: 2 }} onClose={() => setSyncResult(null)}>
                   {syncResult}
+                </Alert>
+              )}
+              {backfillMessage && (
+                <Alert
+                  severity={backfillMessage.startsWith('Start failed') ? 'error' : 'info'}
+                  sx={{ mb: 2 }}
+                  onClose={() => setBackfillMessage(null)}
+                >
+                  {backfillMessage}
                 </Alert>
               )}
 
@@ -404,9 +536,31 @@ export default function ManufacturersPanel() {
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
-                            <Typography variant="body2" sx={{ opacity: mfr.coveragePct > 0 ? 1 : 0.3 }}>
-                              {mfr.coveragePct > 0 ? `${mfr.coveragePct}%` : '\u2014'}
-                            </Typography>
+                            <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end' }}>
+                              <Typography variant="body2" sx={{ opacity: mfr.coveragePct > 0 ? 1 : 0.3 }}>
+                                {mfr.coveragePct > 0 ? `${mfr.coveragePct}%` : '\u2014'}
+                              </Typography>
+                              {/* Per-MFR Triage drilldown \u2014 deep-links to the
+                                  Dict Triage page filtered to this MFR with
+                                  the queue sorted by matching impact, so the
+                                  engineer lands on the highest-leverage
+                                  pending accepts for the manufacturer they
+                                  just looked at. Decision #200. */}
+                              {mfr.slug && (
+                                <Tooltip arrow title={`Open Triage filtered to ${mfr.nameEn} \u2014 see pending accepts ranked by impact`}>
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      router.push(`/admin?section=atlas-dict-triage&mfr=${encodeURIComponent(mfr.slug)}`);
+                                    }}
+                                    sx={{ p: 0.25, opacity: 0.6, '&:hover': { opacity: 1 } }}
+                                  >
+                                    <BuildOutlinedIcon sx={{ fontSize: 14 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                            </Box>
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ opacity: mfr.crossRefCount > 0 ? 1 : 0.3, color: mfr.crossRefCount > 0 ? '#66BB6A' : undefined }}>

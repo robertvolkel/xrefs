@@ -19,7 +19,7 @@
  * Uses service role key to bypass RLS for admin writes.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -2372,6 +2372,8 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--discard')              { mode = 'discard'; modeArg = args[++i]; continue; }
   if (a === '--list-pending')         { mode = 'list-pending'; continue; }
   if (a === '--regenerate-affected-by') { mode = 'regenerate-affected-by'; modeArg = args[++i]; continue; }
+  if (a === '--backfill-translations') { mode = 'backfill-translations'; continue; }
+  if (a === '--mfr')                  { modeArg = args[++i]; continue; }
   if (a === '--summary')              { summaryFlag = true; continue; }
   if (a === '--dry-run')              { dryRun = true; continue; }
   if (a === '--family')               { familyFilter = args[++i]; continue; }
@@ -2419,6 +2421,14 @@ Discard a pending batch without applying:
 Regenerate every pending batch that surfaced a particular unmapped param
 (useful after adding a dictionary mapping for that param):
   node scripts/atlas-ingest.mjs --regenerate-affected-by "<paramName>"
+
+Backfill translations — re-run mapper on already-ingested products using
+CURRENT dict overrides + signatures. Closes the retroactive gap when
+accepts were made after proceed. Provenance-preserving (extraction/manual
+attrs untouched). Idempotent.
+  node scripts/atlas-ingest.mjs --backfill-translations [--dry-run] [--mfr <slug>] [--verbose]
+  npm run atlas:backfill          (same as above without flags)
+  npm run atlas:backfill:dry      (preview without writes)
 `);
 }
 
@@ -3417,6 +3427,180 @@ async function runRegenerateAffectedBy(paramName) {
   await runReport();
 }
 
+// ─── Backfill translations ────────────────────────────────
+// Re-runs the ingest mapper against each source MFR JSON file in data/atlas/
+// using the CURRENT set of dict overrides + family-param signatures, then
+// UPDATEs atlas_products.parameters in place. Closes the retroactive gap
+// where engineers accepted overrides AFTER an MFR was already proceeded —
+// without this, those accepts only benefit future ingests.
+//
+// What's preserved (per Decision #174 provenance model):
+//   - `source: 'extraction'` entries (LLM datasheet extraction) — untouched
+//   - `source: 'manual'` entries — untouched
+//   - `source: 'atlas'` (and legacy untagged) entries — REPLACED by fresh
+//     translation. Atlas-tagged keys present in old JSONB but absent from
+//     new translation get dropped (param disappeared from upstream OR is
+//     newly mapped to a different canonical).
+//
+// What's NOT changed:
+//   - Product rows themselves (family_id, description, status, etc.) —
+//     this is a parameters-only rewrite. Use --proceed for full reingest.
+//   - Source files in data/atlas/ — read-only.
+//   - LLM-extracted attributes — provenance shield holds.
+//
+// Idempotent: re-running with no override changes since last run results
+// in zero writes (every product's merged JSONB equals existing).
+//
+// Flags:
+//   --dry-run    Print what WOULD change; no DB writes.
+//   --mfr <slug> Limit to a single MFR (matches by source-file basename
+//                substring, case-insensitive). Useful for smoke-testing.
+//   --verbose    Per-product diff (otherwise just per-MFR summary).
+async function runBackfillTranslations(mfrFilter) {
+  if (!supabase) throw new Error('Supabase client required for backfill');
+
+  // Iterate every source JSON in data/atlas/ — these are the canonical
+  // source of truth for raw MFR params. If a file is missing, the MFR's
+  // existing atlas_products rows stay untouched (we can't re-translate
+  // without the source).
+  const allFiles = readdirSync('data/atlas/')
+    .filter(f => /^mfr_.+\.json$/i.test(f))
+    .map(f => `data/atlas/${f}`);
+
+  const filtered = mfrFilter
+    ? allFiles.filter(p => basename(p).toLowerCase().includes(mfrFilter.toLowerCase()))
+    : allFiles;
+
+  if (filtered.length === 0) {
+    console.error(`No matching source files found${mfrFilter ? ` for filter '${mfrFilter}'` : ''}.`);
+    process.exit(1);
+  }
+
+  console.log(`\nBackfill — ${filtered.length} source file${filtered.length === 1 ? '' : 's'}${dryRun ? ' (DRY RUN)' : ''}`);
+  console.log('─'.repeat(60));
+
+  let grandTotal = { scanned: 0, changed: 0, unchanged: 0, missing: 0, errors: 0 };
+
+  for (const filePath of filtered) {
+    let mapResult;
+    try {
+      mapResult = mapManufacturerProducts(filePath);
+    } catch (err) {
+      console.error(`  ${basename(filePath)}: parse failed — ${err.message}`);
+      grandTotal.errors++;
+      continue;
+    }
+    const { mfrName, mappedProducts } = mapResult;
+    if (mappedProducts.length === 0) {
+      // Empty source file or filter-skipped — nothing to do.
+      continue;
+    }
+
+    // Pull existing atlas_products for this MFR. fetchExistingProducts
+    // already paginates around the 1000-row PostgREST limit.
+    let existingMap;
+    try {
+      existingMap = await fetchExistingProducts(mfrName);
+    } catch (err) {
+      console.error(`  ${mfrName}: fetch failed — ${err.message}`);
+      grandTotal.errors++;
+      continue;
+    }
+
+    let mfrChanged = 0, mfrUnchanged = 0, mfrMissing = 0;
+
+    for (const np of mappedProducts) {
+      grandTotal.scanned++;
+      const existing = existingMap.get(np.mpn);
+      if (!existing) {
+        // Source has an MPN that's not in atlas_products. Could happen if
+        // the row was hard-deleted or never proceeded. Skip — backfill
+        // intentionally doesn't INSERT (that's what --proceed is for).
+        mfrMissing++;
+        grandTotal.missing++;
+        continue;
+      }
+
+      // Compute fresh merged JSONB using the same merge function ingest uses.
+      const newAtlasTagged = tagAtlasParameters(np.parameters);
+      const merged = mergeAtlasParameters(existing.parameters, newAtlasTagged);
+
+      // Compare. Drop the `ingested_at` timestamp on atlas-tagged entries
+      // for the diff, since tagAtlasParameters always stamps "now" — without
+      // this, every row would look changed on every run.
+      const sameShape = compareParamsIgnoringIngestedAt(existing.parameters, merged);
+      if (sameShape) {
+        mfrUnchanged++;
+        grandTotal.unchanged++;
+        continue;
+      }
+
+      mfrChanged++;
+      grandTotal.changed++;
+
+      if (verbose) {
+        const before = Object.keys(existing.parameters || {}).sort();
+        const after = Object.keys(merged).sort();
+        const added = after.filter(k => !before.includes(k));
+        const removed = before.filter(k => !after.includes(k));
+        if (added.length || removed.length) {
+          console.log(`    ${np.mpn}: +${added.length} -${removed.length}`);
+          if (added.length) console.log(`      added: ${added.slice(0, 5).join(', ')}${added.length > 5 ? ` (+${added.length - 5})` : ''}`);
+          if (removed.length) console.log(`      removed: ${removed.slice(0, 5).join(', ')}${removed.length > 5 ? ` (+${removed.length - 5})` : ''}`);
+        }
+      }
+
+      if (!dryRun) {
+        const { error } = await supabase
+          .from('atlas_products')
+          .update({ parameters: merged, updated_at: new Date().toISOString() })
+          .eq('id', existing.id);
+        if (error) {
+          console.error(`    UPDATE ${np.mpn} failed: ${error.message}`);
+          grandTotal.errors++;
+        }
+      }
+    }
+
+    const verb = dryRun ? 'would change' : 'changed';
+    console.log(`  ${mfrName.padEnd(35)} ${mfrChanged.toString().padStart(5)} ${verb} / ${mfrUnchanged} same / ${mfrMissing} missing`);
+  }
+
+  console.log('─'.repeat(60));
+  console.log(`Scanned ${grandTotal.scanned} / Changed ${grandTotal.changed} / Unchanged ${grandTotal.unchanged} / Missing ${grandTotal.missing} / Errors ${grandTotal.errors}`);
+
+  if (!dryRun && grandTotal.changed > 0) {
+    // Invalidate the coverage cache so the admin panel reflects the rewrite
+    // on next load. Best-effort — fall through on error.
+    try {
+      await supabase.from('admin_stats_cache').delete().in('key', ['atlas-coverage', 'manufacturers-list']);
+      console.log('Coverage cache invalidated.');
+    } catch (err) {
+      console.error('Cache invalidation failed (non-fatal):', err.message);
+    }
+  }
+}
+
+/** Compare two parameters JSONB blobs, ignoring ingested_at timestamp on
+ *  atlas-tagged entries. Returns true if "effectively identical" — same
+ *  keys, same source tags, same values. */
+function compareParamsIgnoringIngestedAt(a, b) {
+  const aKeys = Object.keys(a || {}).sort();
+  const bKeys = Object.keys(b || {}).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    if (aKeys[i] !== bKeys[i]) return false;
+    const ae = a[aKeys[i]];
+    const be = b[bKeys[i]];
+    if (!ae || !be) return ae === be;
+    // Compare value + unit + source. Skip ingested_at.
+    if (ae.value !== be.value) return false;
+    if (ae.unit !== be.unit) return false;
+    if ((ae.source ?? 'atlas') !== (be.source ?? 'atlas')) return false;
+  }
+  return true;
+}
+
 // ─── Dispatcher ───────────────────────────────────────────
 (async () => {
   try {
@@ -3436,6 +3620,7 @@ async function runRegenerateAffectedBy(paramName) {
       case 'discard':                await runDiscard(modeArg); break;
       case 'list-pending':           await runListPending(summaryFlag); break;
       case 'regenerate-affected-by': await runRegenerateAffectedBy(modeArg); break;
+      case 'backfill-translations': await runBackfillTranslations(modeArg); break;
       default:
         printUsage();
         process.exit(1);

@@ -24,6 +24,7 @@ import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
 import { pillGroupSx, OverviewContent, CommercialContent } from './AttributesTabContent';
 import DomainChip, { inferContextActive } from './DomainChip';
+import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 
 interface AttributesPanelProps {
   attributes: PartAttributes | null;
@@ -158,7 +159,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                 classification={attributes.part.qualificationDomain}
                 contextActive={inferContextActive(allRecommendations ?? [])}
               />
-              {attributes.part.qualifications?.map(q => (
+              {attributes.part.qualifications?.filter(q => !isDomainCoveredQualification(q)).map(q => (
                 <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
               ))}
             </Stack>

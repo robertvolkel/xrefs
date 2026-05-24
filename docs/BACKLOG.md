@@ -301,21 +301,22 @@ Effort: ~3-4h. SQL RPC + atlas-ingest.mjs swap to call rpc instead of per-chunk 
 - The .mjs script's per-row math: ~2.4ms/row at current chunk sizes; ~5.3ms/row at the old 100/50 chunks.
 - Triage cache invalidation is NOT the bottleneck (1.5s out of 15s, mostly inevitable from wait-then-restart pattern).
 
-### Engineer cleanup pass — accepted overrides where attribute_id is not in the family logic table (Decision #192 follow-up)
+### ~~Engineer cleanup pass — accepted overrides where attribute_id is not in the family logic table (Decision #192 follow-up)~~ DETECTION SHIPPED May 21, 2026
 
-The May 18, 2026 spot-check of 20 random recently-accepted overrides found 85% precision (17 ✅ / 3 ⚠️ / 0 ❌). All three ⚠️ cases share one failure mode: when the family's schema lacks an exact canonical for the paramName, Sonnet picks something close-but-not-quite — a sibling attribute (B5 `vgs_th_max` vs canonical `vgs_th`), a related-but-distinct rule (family 69 `insulation_resistance` MΩ where schema only has `insulation_voltage` V), or a broadened L2 generic (RF `pass band → frequency_range`). These mappings don't break runtime — they create display-only attributes that don't participate in matching-engine scoring. Long-term effect: schema fragmentation as accepted overrides accumulate canonicals the logic tables don't know about.
+**Script shipped:** [scripts/atlas-audit-orphan-canonicals.ts](../scripts/atlas-audit-orphan-canonicals.ts) — `npx tsx scripts/atlas-audit-orphan-canonicals.ts` (or `--family <id>` / `--min-volume <n>` / `--json <out>`).
 
-**What this would add:**
-1. Script `scripts/atlas-audit-orphan-canonicals.mjs` — service-role query joining `atlas_dictionary_overrides` against each family's `logicTableRegistry` rule set. Output: per-family list of accepted overrides where `attribute_id` is NOT in the logic table's rule attributeIds. Sorted by override volume (most-used orphans first).
-2. Per-orphan engineer decision: (a) re-route the override to an existing canonical that already exists in the logic table, (b) formally add a new rule to the logic table for this canonical (and re-evaluate the override fits), or (c) leave as display-only if the attribute genuinely doesn't matter for matching but is informational for users.
-3. Rerun cadence: every ~50–100 accepts, or quarterly. Light recurring engineer task.
+**First-run findings (May 21, 2026):**
+- 23 L3 families scanned, 14 with orphans
+- 50 orphan rows / 507 active overrides (~10% rate — tracks Decision #192's spot-check)
+- 31 distinct orphan attributeIds: 22 real orphans need engineer decision, 9 already satellite-tagged (`_name`)
+- Top concentrations: **C2 Switching Regulators 36% orphan rate** (9 rows), **71 Power Inductors 20%** (9 rows including `典型值溫升電流 → length_mm` — a totally unrelated mismap), **B5 MOSFETs 11%** (7 rows including the Decision #192 example `vgs_th_max` / `vgs_th_min`).
+- L2-category overrides (241 of them, Decision #178 scope-overload) correctly skipped — no logic table applies.
 
-**Triggers that flip this from defer to ship:**
-- Spot-check precision drifts below 80% on a future re-audit (signal that orphan-canonical fragmentation is growing).
-- An engineer asks "why does this attributeId not match in the engine?" → orphan was accepted, never added to logic table.
-- Schema fragmentation visibly worsens — same physical concept mapped to 3+ different canonicals across families.
+**Still TODO (the engineer-decision pass):** for each orphan, decide (a) re-route to existing canonical, (b) add new rule to logic table, or (c) leave as display-only with satellite `_name` rename. Highest-leverage: walk the C2 (9 orphans) and 71 (9 orphans) lists first — those are concentrated enough that fixes will visibly drop the orphan rate. Re-run the script after each batch of decisions to see the count fall.
 
-Effort: ~2h for the audit script + per-family review process documentation. The engineer-decision pass scales linearly with orphan volume (~5 min per orphan).
+**Rerun cadence:** every ~50–100 accepts, or quarterly. Light recurring engineer task. Script is read-only, idempotent — no DB writes.
+
+**Original framing kept for context:** orphans don't fail at runtime — they produce display-only attributes that silently don't participate in matching-engine scoring. Failure mode: when family schema lacks exact canonical, Sonnet picks close-but-not-quite (sibling attribute like B5 `vgs_th_max` vs canonical `vgs_th`, related-but-distinct rule, or broadened L2 generic). Long-term effect: schema fragmentation. May 18, 2026 spot-check of 20 random recently-accepted overrides found 85% precision (17 ✅ / 3 ⚠️ / 0 ❌).
 
 ### Dictionary Triage Phase 2 — explicit per-param status tracking
 
@@ -459,6 +460,8 @@ Could reuse the existing logic-table engineering reasons as the source for "typi
 **Trigger to flip from defer to ship:** if the same MFR ships another batch with similarly-suspicious values across multiple attributes, OR if a different MFR exhibits the same pattern (suggesting it's a data-export-layer bug worth catching globally).
 
 **Files involved:** new `lib/services/atlasValueAnomalies.ts` for the lookup + check, [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) to invoke at ingest time, [components/admin/atlasIngest/ProductDiffTable.tsx](../components/admin/atlasIngest/ProductDiffTable.tsx) to render the new "Anomalous Values" badge.
+
+**Additional trigger evidence (May 22, 2026):** YFW B4 (TVS Diodes) `gaia-capacitance-Typ` row in Triage shipped sample values 0.05 pF → 4100 pF — 5 orders of magnitude. Real TVS Cj is sub-100 pF; 4100 pF is varistor / MLCC territory, indicating non-TVS products got swept into the B4 family by Gaia extraction. Mapping (`cj`) is correct; the data-quality issue is upstream. Pattern: now have two distinct MFRs (KEXIN, YFW) shipping physically-implausible values, suggesting this is recurring enough to warrant the ingest-time check rather than relying on engineer Triage review to catch.
 
 ### Ingest-time Schottky / small-signal diode auto-routing (B1 misclassification cleanup)
 
@@ -766,7 +769,9 @@ Phase 1 shipped `mapped:unitCost` auto-detection + `sys:priceDelta` (Repl. Savin
 3. **Cost-optimization view template preset** — ship a default master template tuned for cost reduction (Unit Cost + Repl. Price + Repl. Savings + Repl. Distributor + sort by savings). Surface it as a one-click "apply" in the view picker.
 4. **Multi-currency reconciliation** — when the user's unit-cost currency differs from the replacement quote's currency, today the math runs blind. Need either FX conversion or an explicit warning/per-row currency tag.
 
-### Qualification-domain Phase 2 — MFR classifier coverage (Decision #155)
+### Qualification-domain Phase 2 — MFR classifier coverage (Decisions #155, #196)
+
+**Promoted by #196 (May 2026)** — now the obvious next step. The matrix was tightened to hard-exclude `commercial` / `industrial_harsh` candidates under automotive context, but the filter only fires when a classifier has positive evidence the part is NOT automotive. Today only Murata MLCCs have a classifier, so most other MFRs land in `unknown` and pass the gate. That's correct given Atlas data gaps, but it means TDK CGA / Samsung CL / Yageo AC parts (which ARE automotive-qualified) currently show un-promoted from `unknown` rather than as confirmed-qualified.
 
 Phase 1 shipped the qualification-domain filter for Murata MLCCs only. Non-Murata parts universally classify `unknown/no_classifier` today, rank below context-matched in automotive searches, and show the amber "Domain unknown — verify" chip. That's a deliberate ranking tier, not an exclusion — but every non-Murata BOM hits it, so Phase 2 classifier coverage is on the critical path.
 
@@ -1681,3 +1686,60 @@ Pre-fill the common SIG Lite / CAIQ questions so we can respond same-day instead
 RPO / RTO targets documented. Quarterly restore test — actually restore a backup to a staging project and confirm app boots against it.
 
 **Bundling strategy:** SSO/SAML + SCIM + IP allowlisting + custom SLA make up the future "Enterprise" license tier. Mid-market gets the Phase 1.5 baseline (audit log, MFA flag, tenant isolation tests, session timeout, no-training assertion). Trust page + status page + SOC 2 are unconditional — they sell every deal above $25k ACV.
+
+## B5 dual-MOSFET handling — `num_channels` logic rule + composite Channel parser
+**Status:** Not started
+**Priority:** P2 (matching correctness gap)
+**Cost:** 1-2 days (logic rule + tests + ingest parser update + mirror to atlas-ingest.mjs)
+**Lead time:** Anytime
+**Trigger:** When a customer reports a dual-MOSFET cross that shouldn't have passed (or proactively to close a known false-positive class).
+
+The B5 logic table has `channel_type` (polarity: N/P/Complementary) but no `num_channels`. Today, dual MOSFETs (e.g. SOT-363 dual-N in one package) cross-reference against single MOSFETs as if equivalent on the channel dimension — wrong for matching because dual ≠ two singles (shared substrate, different footprint, thermal coupling, board real estate).
+
+Discovered May 23, 2026 during Triage of the "Channel" param on B5 (1,433 products, 3 MFRs — SWST, etc.). Sample values are `"1"`, `"Dual N"`, `"Dual P"`, `"Dual N/P"`, `"Dual-N"` — composites that encode both polarity AND count.
+
+**Three-part fix:**
+
+1. **Logic table:** add `num_channels` rule to B5 (likely `identity`, weight 7-9, blocking — dual cannot substitute for single).
+2. **Ingest mapper:** extend the B5 path in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs)' `mapModel` so that composite values like `"Dual N"` produce TWO JSONB entries: `channel_type='N'` + `num_channels=2`. `"Dual N/P"` → `channel_type='Complementary'` + `num_channels=2`. Mirror into [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) per the duplicated-by-design convention.
+3. **Dict override:** map `'channel'` → `channel_type` at B5 scope (already done as the workaround). Once the rule + parser ship, the composite values get split correctly.
+
+**Why deferred from the May 23 session:** the in-band fix was to accept `channel_type` and capture polarity (the more critical gate). The dual/single false-positive is a real but lower-volume failure mode worth scheduling, not blocking on.
+
+**Related concern:** B4 TVS has `channel → num_channels` at L4 (signal-line count for ESD arrays). Semantically distinct from B5's MOSFET-conduction-channel sense. The two `num_channels` canonicals share a name but mean different things across families — that's fine because logic-table scope is per-family, but worth a comment in both rules so a future refactor doesn't try to unify them.
+
+## Near-miss canonical detector (Coverage Repair view)
+**Status:** Not started
+**Priority:** P2 (engineer-productivity, large coverage upside)
+**Cost:** 2-3 days (analyzer + admin route + table view)
+**Lead time:** Anytime — high ROI per hour spent.
+**Trigger:** After SWST/Good-Ark/INPAQ-tier MFRs are sitting at <30% coverage and the Triage queue isn't surfacing the easy wins (`package_outline → package_case`, `aec_q101_qualified → aec_q101`-style 100%-of-products one-line accepts).
+
+The Triage queue surfaces *raw unmapped params* — but the ingest mapper has a fallback that stores unrecognised params as sanitized-English JSONB keys (`package_outline`, `aec_q101_qualified`, `vfif_a`). Those become silent uncanonicals — they ARE flagged into the Triage queue but volume-prioritisation today doesn't make them obvious. Meanwhile, the Coverage Drawer per Decision #69 shows what canonicals are *missing* per MFR but doesn't show what near-miss keys are *present*. Two halves of the same picture, only one rendered.
+
+**Build:**
+
+1. **Analyzer** (`lib/services/coverageRepairAnalyzer.ts`): for each (MFR, family) tuple, compute the diff between (a) family rule attrIds and (b) uncanonical JSONB keys actually present in that MFR's atlas_products rows. Rank candidate near-misses by:
+   - Edit distance / substring overlap (e.g. `package_outline` vs `package_case` — high overlap → high candidate score)
+   - Product reach (how many products carry the near-miss key)
+   - Rule weight of the missing canonical (only suggest the swap if filling it would actually move coverage)
+2. **Admin endpoint** `GET /api/admin/atlas/coverage-repair?manufacturer=<slug>`: returns top-N near-miss candidates with `{ rawKey, suggestedCanonical, productCount, weight, projectedCoverageDelta }`.
+3. **UI**: new Coverage Repair tab (or expanded inline section) on the per-MFR detail page (`/admin/manufacturers/[slug]`). Each row has one-click Accept that creates the dict override + queues a backfill.
+
+**Why this is decision-critical:** today, the user looked at SWST's 15% coverage and assumed it was a real ceiling. Actual cause was two missing accepts (`package_outline → package_case` 100%, `aec_q101_qualified → aec_q101` 11%) that would jump SWST to ~25%+ in one apply. Without surfacing this signal, low-coverage MFRs stay low until someone manually inspects them.
+
+## Auto-trigger backfill (cron + dict-mutation threshold)
+**Status:** Not started
+**Priority:** P3 (ergonomic — manual button works fine for current usage)
+**Cost:** Half-day per trigger mechanism
+**Lead time:** Anytime
+**Trigger:** When the "Refresh from accepts" button gets clicked daily-or-more, OR when we forget to run it for a week and customer-facing coverage % drifts stale.
+
+Decision #200 shipped a manual "Refresh from accepts" button. Two upgrades to evaluate once we see real usage patterns:
+
+1. **Nightly cron** (~1 line of vercel.json or platform equivalent): runs `npm run atlas:backfill` at 02:00. Removes the engineer-remembers-to-click step entirely. Safe — backfill is idempotent.
+2. **Dict-mutation threshold trigger**: count `atlas_dictionary_overrides` rows created since last backfill run. If ≥ N (e.g. 25), surface a banner in admin: "25 accepts pending backfill — run now?". Or auto-run if ≥ N (e.g. 50).
+
+Either covers the "I forgot to click the button" failure mode. Both are cheap to add — the script + status row + invalidation hook are all in place from Decision #200; only the trigger surface is new.
+
+**Why deferred from #200 ship:** wanted to see how often the manual button actually gets used before optimising. If usage is daily, cron is the right answer. If usage is weekly, threshold-based-banner is better signal-to-noise. If usage is monthly, neither — manual stays.

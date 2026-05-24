@@ -45,7 +45,18 @@ export default function AtlasDictTriagePanel() {
   const [recentRefreshSignal, setRecentRefreshSignal] = useState(0);
   // Page-level filter state (search/MFR/family/min-prods/has-note). Pure
   // client-side slicing of the in-memory queue — no extra fetches.
-  const [filters, setFilters] = useState<TriageFilters>(EMPTY_FILTERS);
+  //
+  // URL contract: optional `?mfr=<slug>` query param pre-seeds the MFR
+  // filter on mount. Used by the Atlas MFRs admin panel's per-row "🔧
+  // Repair coverage" link to deep-link engineers straight into a focused
+  // queue for one manufacturer (Decision #200). The param is consumed
+  // once-on-mount; user-driven filter changes from there on don't write
+  // back to the URL (intentional — the URL is a starting point, not a
+  // session-state mirror).
+  const initialMfrSlug = searchParams.get('mfr');
+  const [filters, setFilters] = useState<TriageFilters>(() =>
+    initialMfrSlug ? { ...EMPTY_FILTERS, mfrSlugs: [initialMfrSlug] } : EMPTY_FILTERS,
+  );
   // Notes per paramName — owned at the panel level so the filter bar can
   // scope rows by has-note (the rows-needing-followup workflow). Single
   // fetch on mount; subsequent edits reconcile via onNoteChange.
@@ -566,17 +577,58 @@ export default function AtlasDictTriagePanel() {
                   : 'No rows match the current view.'}
             </Alert>
           ) : filteredRows.length === 0 ? (
-            <Alert severity="info" sx={{ my: 2 }}>
-              No params match the current filters. Adjust or{' '}
-              <Box
-                component="span"
-                onClick={() => setFilters(EMPTY_FILTERS)}
-                sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
-              >
-                clear all filters
-              </Box>
-              .
-            </Alert>
+            // Single-MFR drilldown from the Atlas MFRs admin panel
+            // (?mfr=<slug>) needs its own success state. Otherwise an
+            // engineer who arrives via the 🔧 wrench can't tell whether
+            // the filter is broken or the MFR genuinely has nothing left
+            // to triage. Detect: exactly one mfrSlug filter active + no
+            // other restrictive filters. If so, lift the name out of any
+            // row (defensive fallback to the slug if the MFR has zero
+            // queue presence — which is exactly the case we're handling).
+            (() => {
+              const onlyMfrFilter =
+                filters.mfrSlugs.length === 1 &&
+                filters.families.length === 0 &&
+                !filters.search.trim() &&
+                !filters.hasNote &&
+                !filters.flaggedOnly &&
+                filters.minProductCount === 0 &&
+                (!filters.aiVerdict || filters.aiVerdict === 'all');
+              if (onlyMfrFilter) {
+                const slug = filters.mfrSlugs[0];
+                const mfrName =
+                  allRows
+                    .flatMap((r) => r.affectedManufacturers ?? [])
+                    .find((m) => m.slug === slug)?.name ?? slug;
+                return (
+                  <Alert severity="success" sx={{ my: 2 }}>
+                    No pending unmapped params for <strong>{mfrName}</strong>. With current dictionary overrides,
+                    every param this MFR ships is already mapped to a canonical attribute — nothing left to triage here.{' '}
+                    <Box
+                      component="span"
+                      onClick={() => setFilters(EMPTY_FILTERS)}
+                      sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
+                    >
+                      Clear filter
+                    </Box>
+                    {' '}to see the rest of the queue.
+                  </Alert>
+                );
+              }
+              return (
+                <Alert severity="info" sx={{ my: 2 }}>
+                  No params match the current filters. Adjust or{' '}
+                  <Box
+                    component="span"
+                    onClick={() => setFilters(EMPTY_FILTERS)}
+                    sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
+                  >
+                    clear all filters
+                  </Box>
+                  .
+                </Alert>
+              );
+            })()
           ) : (
             <GlobalUnmappedParamsTable
               rows={filteredRows}
