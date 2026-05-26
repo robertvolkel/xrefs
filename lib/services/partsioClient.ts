@@ -16,7 +16,9 @@ import {
   TTL_NOT_FOUND_MS,
 } from './partDataCache';
 
-const BASE_URL = 'http://api.qa.parts.io/solr/partsio/listings';
+const DEFAULT_PARTSIO_API_URL =
+  'http://api.qa.parts.io/solr/partsio/listings';
+const BASE_URL = process.env.PARTSIO_API_URL ?? DEFAULT_PARTSIO_API_URL;
 
 // ============================================================
 // RESPONSE TYPES
@@ -200,6 +202,7 @@ export function selectBestRecord(listings: PartsioListing[]): PartsioListing | n
 const PARTSIO_TIMEOUT_MS = 8000;
 
 async function partsioFetch(url: string): Promise<Response> {
+  console.log('[partsio]', url.replace(/api_key=[^&]+/i, 'api_key=***').replace(/([?&]key=)[^&]+/i, '$1***'));
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const res = await fetch(url, { signal: AbortSignal.timeout(PARTSIO_TIMEOUT_MS) });
