@@ -866,7 +866,6 @@ export interface AtlasManufacturer {
   contactInfo: string | null;
   coreProducts: string | null;
   stockCode: string | null;
-  gaiaId: string | null;
   apiSyncedAt: string | null;
   createdAt: string;
   updatedAt: string;

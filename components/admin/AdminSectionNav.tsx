@@ -1,6 +1,6 @@
 'use client';
 
-import { List, ListItemButton, ListItemIcon, ListItemText, Divider } from '@mui/material';
+import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Typography, Box } from '@mui/material';
 import CompareArrowsOutlinedIcon from '@mui/icons-material/CompareArrowsOutlined';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -29,11 +29,11 @@ type SectionItem = { id: AdminSection; icon: React.ElementType; labelKey: string
 
 const atlasSections: SectionItem[] = [
   { id: 'manufacturers', icon: FactoryOutlinedIcon, labelKey: 'admin.manufacturers' },
+  { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
   { id: 'atlas-dictionaries', icon: TranslateOutlinedIcon, labelKey: 'admin.atlasDictionaries' },
   { id: 'atlas-dict-triage', icon: AssignmentLateOutlinedIcon, labelKey: 'admin.atlasDictTriage' },
   { id: 'atlas-ai-log', icon: HistoryEduOutlinedIcon, labelKey: 'admin.atlasAiLog' },
   { id: 'atlas-domain-cards', icon: MenuBookOutlinedIcon, labelKey: 'admin.atlasDomainCards' },
-  { id: 'atlas-ingest', icon: CloudUploadOutlinedIcon, labelKey: 'admin.atlasIngest' },
 ];
 
 const dataLogicSections: SectionItem[] = [
@@ -86,13 +86,28 @@ function SectionList({ sections, activeSection, onSectionChange, t }: {
   );
 }
 
+function GroupHeader({ label }: { label: string }) {
+  return (
+    <Box sx={{ px: 2, pt: 1.5, pb: 0.5 }}>
+      <Typography
+        variant="overline"
+        sx={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', color: 'text.secondary', lineHeight: 1.5 }}
+      >
+        {label}
+      </Typography>
+    </Box>
+  );
+}
+
 export default function AdminSectionNav({ activeSection, onSectionChange }: AdminSectionNavProps) {
   const { t } = useTranslation();
 
   return (
     <List disablePadding sx={{ pt: 1 }}>
+      <GroupHeader label={t('admin.atlasGroup')} />
       <SectionList sections={atlasSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
       <Divider sx={{ my: 1 }} />
+      <GroupHeader label={t('admin.attrLogicGroup')} />
       <SectionList sections={dataLogicSections} activeSection={activeSection} onSectionChange={onSectionChange} t={t} />
     </List>
   );

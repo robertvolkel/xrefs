@@ -79,7 +79,6 @@ function rowToAtlasManufacturer(row: AtlasManufacturerRow): AtlasManufacturer {
     contactInfo: row.contact_info,
     coreProducts: row.core_products,
     stockCode: row.stock_code,
-    gaiaId: row.gaia_id,
     apiSyncedAt: row.api_synced_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

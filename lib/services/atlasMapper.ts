@@ -23,6 +23,21 @@ import {
 } from './atlasGaiaDictionaries';
 import { getLogicTable } from '../logicTables';
 import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
+
+/**
+ * Belt-and-suspenders guard: ensure no user-facing parameter name ever leaks
+ * the "gaia-" prefix from our datasheet-extraction vendor. The happy path
+ * already strips it via parseGaiaParam(), so this is a no-op on every
+ * dictionary-mapped value. Only fires on the fallback paths where a raw,
+ * malformed gaia-prefixed name could otherwise slip through unchanged.
+ *
+ * Operates ONLY on the leading "gaia-" prefix — does not touch any other
+ * substring, so dictionary-mapped names (e.g. "Drain Source Voltage") and
+ * matching-engine attributeIds (e.g. "vrrm", "rdc_max") are untouched.
+ */
+function stripGaiaPrefix(s: string): string {
+  return s.replace(/^gaia[-_]/i, '');
+}
 import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
@@ -2486,7 +2501,7 @@ export function mapAtlasModel(
         seenAttributeIds.add(rawId);
         parameters.push({
           parameterId: rawId,
-          parameterName: p.name.trim(),
+          parameterName: stripGaiaPrefix(p.name.trim()),
           value: p.value.trim(),
           numericValue: extractNumeric(p.value),
           sortOrder: 200 + parameters.length,
@@ -2787,7 +2802,7 @@ export function fromParametersJsonb(
     const lookup = nameLookup.get(attributeId);
     const recognized = !!lookup;
     // Fallback: humanize the attributeId (e.g., rdc_max → Rdc Max)
-    const attributeName = lookup?.name ?? humanizeStem(attributeId);
+    const attributeName = lookup?.name ?? stripGaiaPrefix(humanizeStem(attributeId));
     const sortOrder = lookup?.sortOrder ?? sortCounter++;
 
     result.push({

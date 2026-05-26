@@ -197,7 +197,6 @@ export async function GET(
         contactInfo: mfr.contact_info ?? null,
         coreProducts: mfr.core_products ?? null,
         stockCode: mfr.stock_code ?? null,
-        gaiaId: mfr.gaia_id ?? null,
         apiSyncedAt: mfr.api_synced_at ?? null,
       },
       stats: {
@@ -235,7 +234,7 @@ export async function PATCH(
       'logo_url', 'is_second_source', 'certifications', 'manufacturing_locations',
       'product_categories', 'authorized_distributors', 'compliance_flags',
       'design_resources', 'enabled', 'contact_info', 'core_products',
-      'stock_code', 'gaia_id', 'aliases',
+      'stock_code', 'aliases',
     ];
 
     const updates: Record<string, unknown> = {};

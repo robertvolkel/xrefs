@@ -6226,3 +6226,51 @@ UI: new "Refresh from accepts" button in [components/admin/ManufacturersPanel.ts
 1. **Look at what's actually rendered, not what's named "obvious."** Spent ~10 min editing `AtlasPanel.tsx` (dead code, zero imports) thinking that was the Atlas MFRs panel before grepping for `MfrRow` references and discovering the live component was `ManufacturersPanel.tsx`. Pattern: when adding a feature to "the X panel," grep for `X` to find the file isn't enough — also grep for `import X` to confirm something actually mounts it.
 2. **Empty states are silent bugs.** The drilldown worked correctly for CCTC (zero pending Triage rows) but the user couldn't tell whether the filter was broken. Friendly empty-state messaging is cheap and converts "looks broken" into "looks complete."
 3. **Workflow signal isn't the same as data signal.** SWST showing 15% coverage wasn't "the data's thin." It was "the workflow doesn't tell you which accepts would lift it." Spent 15K product-impact accepts (e.g. `package_outline → package_case`) sitting in the queue unprioritised. The Impact score + drilldown together turn this into a visible workflow signal.
+
+## Decision #201 — Vendor-Name Hygiene: "gaia-" Prefix Must Never Reach End Users (May 24, 2026)
+
+### Context
+
+GAIA is the third-party vendor that did our Atlas datasheet parameter extraction. Their output lands in `atlas_products.parameters` JSONB with a `gaia-{snake_case_stem}-{Min|Max|Typ}` naming convention. End users have no business knowing about that vendor — it's an internal implementation detail of the ingest pipeline.
+
+Audit found that the happy path is already clean (`parseGaiaParam()` in `atlasGaiaDictionaries.ts` strips the prefix at parse time, and both `atlasMapper.ts` + `atlas-ingest.mjs` store under `gaia.stem`, never the raw prefixed key), but two real leak vectors remained:
+
+1. **`gaiaId` field on the `AtlasManufacturer` type** was being mapped into the API response of `/api/admin/manufacturers/[slug]`. No component rendered it, but the field name was visible in browser DevTools network inspector to any admin user. The field is purely an internal foreign key for the Atlas external API sync script — it has no UI consumer.
+2. **Fallback paths in `atlasMapper.ts`** — line 2489 (ingest fallback when a gaia-prefixed name has no dictionary entry) and line 2790 (DB-read humanize fallback when JSONB carries an unrecognized key) — would store `p.name.trim()` or `humanizeStem(attributeId)` verbatim as `parameterName`. If a malformed gaia name slipped past `parseGaiaParam()` (e.g. format drift on the vendor side, or stale JSONB rows from pre-strip ingest), the string would render to users with the vendor prefix intact.
+
+### Decision
+
+Two-part vendor-name hygiene:
+
+**Part 1 — Drop `gaiaId` from over-the-wire responses.**
+
+Removed `gaiaId` from `AtlasManufacturer` interface in [lib/types.ts](../lib/types.ts), from `rowToAtlasManufacturer()` in [lib/services/manufacturerProfileService.ts](../lib/services/manufacturerProfileService.ts), and from both the GET response payload and the PATCH `allowedFields` list in [app/api/admin/manufacturers/[slug]/route.ts](../app/api/admin/manufacturers/[slug]/route.ts). The `gaia_id` DB column stays — it's read directly by `scripts/atlas-api-sync-profiles.mjs` and `lib/services/atlasProfileSync.ts` (server-only). No more network exposure to admin clients.
+
+**Part 2 — Belt-and-suspenders sanitizer at fallback construction sites.**
+
+Added `stripGaiaPrefix(s)` helper at the top of [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts). Tight regex `/^gaia[-_]/i` — only strips a literal leading `gaia-` or `gaia_`, does not touch any other substring. Applied at exactly two leak vectors:
+
+- Line 2489 in `mapAtlasModel()` — the ingest fallback where `parameterName: p.name.trim()` stores raw paramName when no dictionary mapping exists.
+- Line 2790 in `fromParametersJsonb()` — the DB-read humanize fallback where `humanizeStem(attributeId)` runs on a JSONB key without a recognized lookup.
+
+**Critical property: zero impact on parameter mapping.** The sanitizer runs purely on the user-facing `parameterName` display string. It does not touch `parameterId` (matching engine's lookup key — and `rawId` derivation at line 2484 already replaces hyphens with underscores, so a `gaia-` prefix could never survive into `parameterId` anyway). Dictionary-mapped values (`"Drain Source Voltage"`, `"vrrm"`, `"rdc_max"`) never start with `gaia-`, so the sanitizer is a no-op on every happy-path value. All 1580 tests pass unchanged.
+
+### Why not the alternatives
+
+- **Strip at the database layer (rewrite atlas_products rows)?** No — the JSONB keys are already stems (no prefix), so there's nothing to strip there. The leak vector is in the display path, not storage.
+- **Rename the dictionary file / function names internally?** No — those are server-only. The "never show the vendor" rule applies to end-user surfaces (UI, network responses to clients), not internal symbol names.
+- **Aggressive regex like `/\bgaia[-_]/gi`?** No — that could in principle mutate a real parameterName if "gaia" ever appears as a substring inside a dictionary entry (unlikely but not guaranteed by construction). The tight `^gaia[-_]` anchor only fires on the actual leak shape and leaves everything else untouched, satisfying the "must not affect mapping in any way" requirement.
+- **Leave the admin-only `GlobalUnmappedParamsTable` untouched (still shows raw `gaia-...` paramNames)?** Yes — engineers triaging unmapped params need to see the vendor-side raw name to author dictionary entries. Acceptable per the existing "admin = internal" carve-out, same precedent as `ManufacturerDetailPage`.
+
+### Files Touched
+
+- `lib/types.ts` — drop `gaiaId` from `AtlasManufacturer`.
+- `lib/services/manufacturerProfileService.ts` — drop `gaiaId` from `rowToAtlasManufacturer()` mapping.
+- `app/api/admin/manufacturers/[slug]/route.ts` — drop from GET response + PATCH allowlist.
+- `lib/services/atlasMapper.ts` — add `stripGaiaPrefix()` helper + apply at two fallback construction sites.
+
+### Lessons
+
+1. **"Already clean in the happy path" is not "guaranteed clean."** Ingest correctness depends on the vendor's naming format staying stable. A defensive sanitizer at the output stage costs near-zero runtime and converts a vendor-format-drift bug from "user-visible leak" to "missing dictionary entry shows humanized stem."
+2. **Internal foreign keys don't belong on the wire.** `gaiaId` had no UI consumer but shipped to every admin client. Whenever a DB-row type is the response shape for an admin endpoint, audit which fields are actually consumed by the UI — anything else is a leak surface for naming, schema details, or vendor identity.
+3. **Audit the network tab, not just the rendered UI.** Field names in JSON responses count as "user-visible" even when no React component renders them. DevTools network inspector is a real reading path for curious customers and integrators.
