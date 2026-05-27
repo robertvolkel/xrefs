@@ -137,7 +137,7 @@ export default function AtlasCoveragePanel({ readOnly }: AtlasCoveragePanelProps
             onRefresh={handleRefreshCoverage}
             refreshing={coverageRefreshing}
             readOnly={readOnly}
-            growthChartSlot={growth ? <AtlasGrowthChart events={growth.events} /> : null}
+            growthChartSlot={growth ? <AtlasGrowthChart series={growth.series} /> : null}
             latestUpdatesSlot={
               growth ? (
                 <AtlasLatestUpdatesWidget

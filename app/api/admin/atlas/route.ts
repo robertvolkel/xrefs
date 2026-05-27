@@ -81,6 +81,10 @@ async function computeAtlasCoverage(): Promise<object> {
   // ── Manufacturer identity rows: small (~115), no aggregation needed.
   // ── Legacy settings table: tiny fallback when atlas_manufacturers is empty.
   const [aggResult, mfrRecordsResult, mfrSettingsResult] = await Promise.all([
+    // RPC returns a single jsonb array (one element per
+    // (mfr, family_id, category, subcategory) tuple). Previously RETURNS
+    // TABLE, which made PostgREST's max-rows cap (1000 on Supabase) silently
+    // truncate the result once atlas_products grew past ~120 MFRs.
     supabase.rpc('get_atlas_coverage_aggregates', { family_attrs: familyAttrs }),
     supabase.from('atlas_manufacturers').select('name_display, name_en, name_zh, slug, id, enabled'),
     supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),

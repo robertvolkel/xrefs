@@ -160,7 +160,7 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
         styles={{
           '#atlas-print-portal': { display: 'none' },
           '@media print': {
-            '@page': { margin: '0.5in', size: 'letter' },
+            '@page': { margin: '0.4in', size: 'letter' },
             'html, body': {
               background: '#fff !important',
               margin: 0,
@@ -207,11 +207,50 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
             '.atlas-coverage-print-root': {
               maxWidth: 'none !important',
               padding: '0 !important',
+              fontSize: '0.88em !important',
             },
             // The freshness bar is hidden via data-no-print; this static
             // "Generated on …" caption replaces it for the print export.
             '.atlas-print-only': {
               display: 'block !important',
+            },
+            // KPI tiles: the responsive grid falls back to xs (2 cols) at
+            // Letter width (~720px at 96 DPI). Force 4 cols in print so the
+            // tiles share a single row and page 1 isn't half-empty.
+            '.atlas-coverage-kpi-grid': {
+              gridTemplateColumns: 'repeat(4, 1fr) !important',
+              gap: '8px !important',
+            },
+            // Category cards: 4-col on screen, but at the smaller print font
+            // 5 cols pack the block grid more tightly without truncating.
+            '.atlas-coverage-category-grid': {
+              gridTemplateColumns: 'repeat(5, 1fr) !important',
+              gap: '6px !important',
+            },
+            '.atlas-coverage-category-grid > div': {
+              minHeight: '56px !important',
+              padding: '6px 8px !important',
+            },
+            // MFR table: tighter rows so the breakdown fits on a single
+            // page where possible.
+            '.atlas-coverage-print-root .MuiTableCell-root': {
+              padding: '6px 8px !important',
+              fontSize: '0.7rem !important',
+            },
+            // KPI value: shrink h5 numbers in print so tiles don't blow up.
+            '.atlas-coverage-print-root .MuiTypography-h5': {
+              fontSize: '1.25rem !important',
+            },
+            // MUI x-charts: axis lines + ticks + tick labels + legend labels
+            // are themed off divider / text.secondary, which are nearly
+            // invisible on white once the SVG colors are baked in at render
+            // time under dark mode. Override the cloned chart's classes so
+            // the chart is readable in the PDF without re-rendering it.
+            '#atlas-print-portal .MuiChartsAxis-line, #atlas-print-portal .MuiChartsAxis-tick': {
+              stroke: 'rgba(0, 0, 0, 0.38) !important',
+            },
+            '#atlas-print-portal .MuiChartsAxis-tickLabel, #atlas-print-portal .MuiChartsAxis-label, #atlas-print-portal .MuiChartsLegend-label': {
+              fill: 'rgba(0, 0, 0, 0.7) !important',
             },
           },
         }}
@@ -274,7 +313,7 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
 
         {/* KPI tiles */}
         <Box
-          className="atlas-coverage-section"
+          className="atlas-coverage-section atlas-coverage-kpi-grid"
           sx={{
             display: 'grid',
             gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
@@ -306,9 +345,10 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
         </Box>
 
         {/* Growth chart — sits directly above Latest MFRs updated.
-            data-no-print="true" so PDF export keeps the static-snapshot feel. */}
+            Included in PDF export; print CSS overrides axis/legend colors so
+            the cloned SVG (rendered under dark theme) reads on white. */}
         {growthChartSlot && (
-          <Box data-no-print="true" sx={{ mb: 3 }}>
+          <Box className="atlas-coverage-section" sx={{ mb: 3 }}>
             {growthChartSlot}
           </Box>
         )}
@@ -349,6 +389,7 @@ export default function AtlasOverviewTab({ data, latestUpdatesSlot, growthChartS
                     {block.label}
                   </Typography>
                   <Box
+                    className="atlas-coverage-category-grid"
                     sx={{
                       display: 'grid',
                       gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)' },

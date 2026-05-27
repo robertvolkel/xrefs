@@ -23,17 +23,19 @@
 -- Idempotent — safe to re-run via CREATE OR REPLACE.
 -- ============================================================
 
+-- Returns a single jsonb array — one element per (manufacturer, family_id,
+-- category, subcategory) tuple. Previously RETURNS TABLE, which made every
+-- tuple a Postgres row and made the response subject to PostgREST's
+-- server-side max-rows cap (1000 on Supabase). Once atlas_products grew
+-- past ~120 MFRs the route silently truncated and totalProducts /
+-- enabledProducts under-reported by tens of thousands. JSONB is a single
+-- scalar value so the cap doesn't apply.
+--
+-- Mirrors the established pattern from get_atlas_growth_aggregates
+-- (Decision #183) and get_triage_unmapped_aggregate (Decision #180) —
+-- both return jsonb for exactly this reason.
 CREATE OR REPLACE FUNCTION get_atlas_coverage_aggregates(family_attrs JSONB DEFAULT '{}'::jsonb)
-RETURNS TABLE (
-  manufacturer TEXT,
-  family_id TEXT,
-  category TEXT,
-  subcategory TEXT,
-  product_count BIGINT,
-  total_covered BIGINT,
-  total_rules BIGINT,
-  last_updated TIMESTAMPTZ
-)
+RETURNS jsonb
 LANGUAGE sql
 STABLE
 -- Per-function timeout override. The aggregation walks ~71K atlas_products
@@ -45,42 +47,45 @@ STABLE
 -- but this unblocks the page.
 SET statement_timeout = '300s'
 AS $$
-  SELECT
-    p.manufacturer,
-    p.family_id,
-    p.category,
-    p.subcategory,
-    COUNT(*)::BIGINT AS product_count,
+  SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb)
+  FROM (
+    SELECT
+      p.manufacturer,
+      p.family_id,
+      p.category,
+      p.subcategory,
+      COUNT(*)::BIGINT AS product_count,
 
-    -- Covered rule count: for scorable rows whose family_id is in the
-    -- passed-in attrs map, count how many of that family's rule attributes
-    -- appear as JSONB keys in the product's parameters. Non-scorable rows
-    -- (family_id IS NULL) and rows for families not in family_attrs
-    -- contribute 0. COALESCE handles the SUM-over-empty edge case.
-    COALESCE(SUM(
-      CASE
-        WHEN p.family_id IS NOT NULL AND family_attrs ? p.family_id THEN
-          (SELECT COUNT(*)
-             FROM jsonb_array_elements_text(family_attrs->p.family_id) AS rule_attr
-             WHERE p.parameters ? rule_attr)
-        ELSE 0
-      END
-    ), 0)::BIGINT AS total_covered,
+      -- Covered rule count: for scorable rows whose family_id is in the
+      -- passed-in attrs map, count how many of that family's rule attributes
+      -- appear as JSONB keys in the product's parameters. Non-scorable rows
+      -- (family_id IS NULL) and rows for families not in family_attrs
+      -- contribute 0. COALESCE handles the SUM-over-empty edge case.
+      COALESCE(SUM(
+        CASE
+          WHEN p.family_id IS NOT NULL AND family_attrs ? p.family_id THEN
+            (SELECT COUNT(*)
+               FROM jsonb_array_elements_text(family_attrs->p.family_id) AS rule_attr
+               WHERE p.parameters ? rule_attr)
+          ELSE 0
+        END
+      ), 0)::BIGINT AS total_covered,
 
-    -- Total rules in this row's family × number of rows in this group.
-    -- jsonb_array_length is constant within the group, so SUM == COUNT *
-    -- length, but expressing it as SUM keeps the CASE logic uniform.
-    COALESCE(SUM(
-      CASE
-        WHEN p.family_id IS NOT NULL AND family_attrs ? p.family_id THEN
-          jsonb_array_length(family_attrs->p.family_id)
-        ELSE 0
-      END
-    ), 0)::BIGINT AS total_rules,
+      -- Total rules in this row's family × number of rows in this group.
+      -- jsonb_array_length is constant within the group, so SUM == COUNT *
+      -- length, but expressing it as SUM keeps the CASE logic uniform.
+      COALESCE(SUM(
+        CASE
+          WHEN p.family_id IS NOT NULL AND family_attrs ? p.family_id THEN
+            jsonb_array_length(family_attrs->p.family_id)
+          ELSE 0
+        END
+      ), 0)::BIGINT AS total_rules,
 
-    MAX(p.updated_at) AS last_updated
-  FROM atlas_products p
-  GROUP BY p.manufacturer, p.family_id, p.category, p.subcategory;
+      MAX(p.updated_at) AS last_updated
+    FROM atlas_products p
+    GROUP BY p.manufacturer, p.family_id, p.category, p.subcategory
+  ) t;
 $$;
 
 -- Permissions: the route uses the service-role client (bypasses RLS), so
