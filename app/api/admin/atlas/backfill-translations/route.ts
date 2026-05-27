@@ -151,7 +151,11 @@ export async function POST(): Promise<NextResponse> {
       exitCode: null,
     });
 
-    const child = spawn('node', [scriptPath, '--backfill-translations'], {
+    // Spread an args array (not a literal) so Turbopack doesn't statically
+    // analyse the spawn() call and mis-resolve scriptPath as a module import.
+    // Same trick as app/api/admin/atlas/ingest/report/route.ts.
+    const scriptArgs = ['--backfill-translations'];
+    const child = spawn('node', [scriptPath, ...scriptArgs], {
       cwd,
       env: { ...process.env },
       detached: true,
