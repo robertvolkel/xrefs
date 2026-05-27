@@ -1285,7 +1285,11 @@ const FAMILY_PARAMS = {
     'cmti(kv/μs)': { attributeId: '_cmti', attributeName: 'CMTI', unit: 'kV/us', sortOrder: 93 },
     '输出最大拉/灌电流(a)': { attributeId: 'output_peak_current', attributeName: 'Output Peak Current', unit: 'A', sortOrder: 8 },
     '输出电流': { attributeId: 'output_peak_current', attributeName: 'Output Peak Current', unit: 'A', sortOrder: 8 },
-    '输出侧uvlo(v)': { attributeId: 'undervoltage_lockout', attributeName: 'UVLO', unit: 'V', sortOrder: 14 },
+    // Output-side UVLO threshold on isolated gate drivers — canonical must match
+    // the C3 logic table rule attributeId 'uvlo' (lib/logicTables/gateDriver.ts).
+    // Previously routed to 'undervoltage_lockout', an orphan canonical no rule
+    // scores against — surfaced by the May 2026 C3 domain-card audit.
+    '输出侧uvlo(v)': { attributeId: 'uvlo', attributeName: 'UVLO', unit: 'V', sortOrder: 14 },
     '输出侧建议工作电压(v)': { attributeId: '_recommended_vout', attributeName: 'Recommended Output Voltage', unit: 'V', sortOrder: 94 },
     // Isolated gate drivers (NOVOSENSE NSi6601, TI UCC52xx, etc.) have galvanically separated
     // input/output supplies. Output-side VCC drives the MOSFET/IGBT/SiC gate (matches vdd_range);

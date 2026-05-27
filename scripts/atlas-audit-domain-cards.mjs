@@ -96,6 +96,7 @@ const MFR_NAME_BLOCKLIST = new Set([
   'BC',         // JEDEC BJT prefix (BC807/BC817 etc.) — collides with MFR "BC 宝成" / "BC 台湾诚阳"
   'RS',         // RUNIC MPN prefix + RS-485/RS-232 protocol — collides with MFR "RS 容硕"
   'CS',         // Chip Select (SPI signal) — collides with MFR "CS 创世"
+  'MAX',        // "MIN AND MAX VARIANTS" / "vth(max.)" / "id_max" — extremely common in spec prose; collides with MFR "MAX 迈旭" AND Maxim Integrated's MAX-prefix MPNs cited in card prose ("Do NOT assume Maxim")
   'Fast',       // "fast recovery", "fast switching"
   'Milliohm',   // milliohm — unit of resistance
   'TVS',        // TVS diode type
@@ -104,6 +105,10 @@ const MFR_NAME_BLOCKLIST = new Set([
   'VIBRATION',  // a real Chinese MFR (振浩微); collides with prose "vibration"
   'CTR',        // "Current Transfer Ratio" — central optocoupler spec; collides with MFR 长泰尔电子
   'FTR',        // tolerance/packaging letter-code suffix on resistor MPNs (e.g. AMF03FTTR001, MRF6432(2512)LR001FTR); collides with MFR "FTR 乔光电子"
+  'HT',         // "High Temperature" qualifier in datasheet prose (e.g. "SiC HT 175°C" on C3 Gate Drivers); collides with MFR "HT 金誉" (0 products in any family)
+  'SY',         // Silergy MPN prefix shorthand ("SM/SY (SILERGY)" on C2 card); collides with MFR "SY 顺烨" (0 C2 products)
+  'THD',        // "Total Harmonic Distortion" — central ADC/DAC/op-amp spec; collides with MFR "THD 台华达"
+  'TLC',        // TI MPN prefix (TLC1543, TLC555); cited as second-source clone anchor on C9 (HGSEMI); collides with MFR "TLC 竞沃"
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,
@@ -489,10 +494,16 @@ for (const card of cards) {
       if (lead) samplePrefixCounts[lead] = (samplePrefixCounts[lead] ?? 0) + 1;
     }
     const ranked = Object.entries(samplePrefixCounts).sort((a, b) => b[1] - a[1]);
-    const claimedCount = samplePrefixCounts[prefixUpper] ?? 0;
+    // Count samples whose extracted lead STARTS WITH the claimed prefix —
+    // lets a "JMT" claim legitimately match JMTQ/JMTG/JMTP variants of the
+    // same prefix family (trailing letter is a variant code, not a different
+    // prefix). Mirror of .ts behavior.
+    let claimedCount = 0;
+    for (const [lead, count] of Object.entries(samplePrefixCounts)) {
+      if (lead.startsWith(prefixUpper)) claimedCount += count;
+    }
     const claimedShare = samples.length === 0 ? 0 : claimedCount / samples.length;
-    const claimedRank = ranked.findIndex(([p]) => p === prefixUpper); // -1 = not present
-    const acceptable = claimedShare >= 0.2 && claimedRank >= 0 && claimedRank <= 1;
+    const acceptable = claimedShare >= 0.2;
     if (!acceptable) {
       result.wrongPrefixes.push({
         mfr: identity.canonical,

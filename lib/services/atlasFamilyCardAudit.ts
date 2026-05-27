@@ -39,7 +39,7 @@ const OMIT_MIN_SHARE = 0.03;
 // MFRs whose names collide with common technical abbreviations used in
 // datasheet prose. Mirror of .mjs blocklist — see notes there.
 const MFR_NAME_BLOCKLIST = new Set([
-  'DC', 'AC', 'HC', 'PTC', 'NTC', 'TC', 'BC', 'RS', 'CS', 'Fast', 'Milliohm', 'TVS', 'LED', 'IC',
+  'DC', 'AC', 'HC', 'PTC', 'NTC', 'TC', 'BC', 'RS', 'CS', 'MAX', 'Fast', 'Milliohm', 'TVS', 'LED', 'IC',
   // VIBRATION (a real Chinese MFR, display name "VIBRATION 振浩微") collides
   // with the English word "vibration" used in datasheet prose around shock/
   // vibration characterization. Same trade as DC/AC/HC — small blind spot,
@@ -54,6 +54,24 @@ const MFR_NAME_BLOCKLIST = new Set([
   // resistor families 52/53/54/55 routinely cite these suffixes in their
   // NAMING sections. Collides with minor Chinese MFR "FTR 乔光电子".
   'FTR',
+  // HT — "High Temperature" qualifier used in datasheet prose
+  // (e.g. "SiC HT 175°C" on the C3 Gate Drivers card). Collides with
+  // minor Chinese MFR "HT 金誉" which ships zero products in any family
+  // — yet its registration alone was tripping the word-boundary regex
+  // on space-bounded " HT " in temperature-anchor prose.
+  'HT',
+  // SY — Silergy MPN prefix shorthand. C2 Switching Regulators card cites
+  // "SM/SY (SILERGY)" in its prefix-attribution list. Collides with minor
+  // Chinese MFR "SY 顺烨" which ships zero C2 products. Same trade as TC/BC/RS.
+  'SY',
+  // THD — "Total Harmonic Distortion", a central ADC/DAC/op-amp spec.
+  // C9 ADCs card cites it in its UNITS line. Collides with minor Chinese
+  // MFR "THD 台华达" (0 C9 products). Will also help future C4/C10 cards.
+  'THD',
+  // TLC — TI's TLC-series MPN prefix (TLC1543, TLC555, etc.) cited as a
+  // second-source clone anchor in C9 (HGSEMI clones) and likely future
+  // C1/C4/C8 cards. Collides with minor Chinese MFR "TLC 竞沃".
+  'TLC',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean
@@ -509,10 +527,18 @@ export async function auditFamilyDomainCard(
       if (lead) samplePrefixCounts[lead] = (samplePrefixCounts[lead] ?? 0) + 1;
     }
     const ranked = Object.entries(samplePrefixCounts).sort((a, b) => b[1] - a[1]);
-    const claimedCount = samplePrefixCounts[prefixUpper] ?? 0;
+    // Count samples whose extracted lead STARTS WITH the claimed prefix.
+    // The leading uppercase-letter run captures variant suffixes (JMTQ/JMTG/
+    // JMTP all share the "JMT" prefix family; the trailing Q/G/P is a variant
+    // code, not a different prefix family). Without startsWith matching, an
+    // engineer-accurate "JMT-family" claim gets falsely flagged as 0% match
+    // because no individual sample starts with literally "JMT" alone.
+    let claimedCount = 0;
+    for (const [lead, count] of Object.entries(samplePrefixCounts)) {
+      if (lead.startsWith(prefixUpper)) claimedCount += count;
+    }
     const claimedShare = claimedCount / samples.length;
-    const claimedRank = ranked.findIndex(([p]) => p === prefixUpper);
-    const acceptable = claimedShare >= 0.2 && claimedRank >= 0 && claimedRank <= 1;
+    const acceptable = claimedShare >= 0.2;
     if (!acceptable) {
       result.wrongPrefixes.push({
         mfr: identity.canonical,
