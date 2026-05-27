@@ -723,6 +723,15 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    '操作溫度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    // Dimension trio — height is a real matching canonical (see powerInductors.ts).
+    // length/width have no logic-table canonical; stored deprioritized to preserve data.
+    '高(公釐)': { attributeId: 'height', attributeName: 'Height', unit: 'mm', sortOrder: 11 },
+    '高': { attributeId: 'height', attributeName: 'Height', unit: 'mm', sortOrder: 11 },
+    '长(公釐)': { attributeId: '_length_mm', attributeName: 'Length', unit: 'mm', sortOrder: 91 },
+    '長(公釐)': { attributeId: '_length_mm', attributeName: 'Length', unit: 'mm', sortOrder: 91 },
+    '宽(公釐)': { attributeId: '_width_mm', attributeName: 'Width', unit: 'mm', sortOrder: 92 },
+    '寬(公釐)': { attributeId: '_width_mm', attributeName: 'Width', unit: 'mm', sortOrder: 92 },
   },
 
   // ─── Discrete Semiconductors ───────────────────────────
@@ -911,6 +920,7 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '反向漏电流(ir)': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', sortOrder: 8 },
     '通道数': { attributeId: 'num_channels', attributeName: 'Number of Channels', sortOrder: 9 },
     '电路数': { attributeId: 'num_channels', attributeName: 'Number of Channels', sortOrder: 9 },
+    '靜電次數': { attributeId: 'esd_pulse_count', attributeName: 'ESD Pulse Count', sortOrder: 11 },
     // English
     'polarity': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
     'operating standoff voltage': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
@@ -1384,16 +1394,16 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
   C7: {
     // Transceivers (Chinese)
     '总线故障保护(v)': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Protection', unit: 'V', sortOrder: 8 },
-    'hbm esd总线引脚(±kv)': { attributeId: 'esd_rating', attributeName: 'ESD Rating', unit: 'kV', sortOrder: 10 },
+    'hbm esd总线引脚(±kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating — Bus Pins', unit: 'kV', sortOrder: 11 },
     '共模输入电压(v)': { attributeId: '_common_mode_range', attributeName: 'Common Mode Range', unit: 'V', sortOrder: 90 },
     '速率(mbps)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
     'signaling rate (mbps)  速率': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
     '总线可挂节点': { attributeId: '_num_nodes', attributeName: 'Bus Nodes', sortOrder: 91 },
-    '通讯模式': { attributeId: '_operating_mode', attributeName: 'Operating Mode', sortOrder: 92 },
+    '通讯模式': { attributeId: 'operating_mode', attributeName: 'Operating Mode', sortOrder: 3 },
     '远程唤醒': { attributeId: '_remote_wakeup', attributeName: 'Remote Wakeup', sortOrder: 93 },
     'supply voltage(s) (v)  供电电压': { attributeId: '_supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
     'low power current (ua)  低功耗电流': { attributeId: '_low_power_current', attributeName: 'Low Power Current', unit: 'uA', sortOrder: 95 },
-    'dominant time-out  显性超时': { attributeId: '_dominant_timeout', attributeName: 'Dominant Timeout', sortOrder: 96 },
+    'dominant time-out  显性超时': { attributeId: 'txd_dominant_timeout', attributeName: 'TXD Dominant Timeout', sortOrder: 9 },
     // Digital Isolators (Chinese)
     '隔离等级(vrms)': { attributeId: '_isolation_rating', attributeName: 'Isolation Rating', unit: 'Vrms', sortOrder: 97 },
     '是否集成隔离电源': { attributeId: '_integrated_power', attributeName: 'Integrated Isolated Power', sortOrder: 98 },
@@ -1405,7 +1415,7 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '默认输出': { attributeId: '_default_output', attributeName: 'Default Output', sortOrder: 103 },
     'cmti(kv/μs)': { attributeId: '_cmti', attributeName: 'CMTI', unit: 'kV/us', sortOrder: 104 },
     '浪涌等级 (kvpk)': { attributeId: '_surge_rating', attributeName: 'Surge Rating', unit: 'kVpk', sortOrder: 105 },
-    'esd等级 (单双边,v)': { attributeId: 'esd_rating', attributeName: 'ESD Rating', sortOrder: 10 },
+    'esd等级 (单双边,v)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating — Bus Pins', sortOrder: 11 },
     'package  封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '封装形式': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
@@ -1414,8 +1424,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'max data rate(mbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'Mbps', sortOrder: 5 },
     'max data rate(kbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'kbps', sortOrder: 5 },
     'data rate (max)(kbps)': { attributeId: 'data_rate', attributeName: 'Max Data Rate', unit: 'kbps', sortOrder: 5 },
-    'iec-61000-4-2 contact(kv)': { attributeId: 'esd_rating', attributeName: 'ESD Rating (IEC 61000-4-2)', unit: 'kV', sortOrder: 10 },
-    'esd hbm(kv)': { attributeId: 'esd_rating', attributeName: 'ESD HBM', unit: 'kV', sortOrder: 10 },
+    'iec-61000-4-2 contact(kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating — Bus Pins (IEC 61000-4-2)', unit: 'kV', sortOrder: 11 },
+    'esd hbm(kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating — Bus Pins (HBM)', unit: 'kV', sortOrder: 11 },
     'surge voltage capability(vpk)': { attributeId: '_surge_rating', attributeName: 'Surge Voltage', unit: 'Vpk', sortOrder: 105 },
     'cmti(kv/μs)(static)': { attributeId: '_cmti', attributeName: 'CMTI (Static)', unit: 'kV/µs', sortOrder: 104 },
     'cmti(kv/μs)(dynamic)': { attributeId: '_cmti_dynamic', attributeName: 'CMTI (Dynamic)', unit: 'kV/µs', sortOrder: 106 },

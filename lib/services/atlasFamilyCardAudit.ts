@@ -39,7 +39,7 @@ const OMIT_MIN_SHARE = 0.03;
 // MFRs whose names collide with common technical abbreviations used in
 // datasheet prose. Mirror of .mjs blocklist — see notes there.
 const MFR_NAME_BLOCKLIST = new Set([
-  'DC', 'AC', 'HC', 'PTC', 'NTC', 'Fast', 'Milliohm', 'TVS', 'LED', 'IC',
+  'DC', 'AC', 'HC', 'PTC', 'NTC', 'TC', 'BC', 'RS', 'CS', 'Fast', 'Milliohm', 'TVS', 'LED', 'IC',
   // VIBRATION (a real Chinese MFR, display name "VIBRATION 振浩微") collides
   // with the English word "vibration" used in datasheet prose around shock/
   // vibration characterization. Same trade as DC/AC/HC — small blind spot,
@@ -590,8 +590,28 @@ export async function auditFamilyDomainCard(
       const after = cardText[m.index + phrase.length] ?? '';
       const isParenthetical = (before === '(' || before === '（') && (after === ')' || after === '）');
       if (isParenthetical) {
-        const beforeParen = m.index >= 2 ? cardText[m.index - 2] : '';
-        if (beforeParen && /[\p{Script=Han}]/u.test(beforeParen)) continue;
+        // Walk back through any chain of preceding parentheticals — e.g.
+        // `电阻-初始(ri)(最小值)` has 最小值 wrapped in parens but preceded
+        // by another `(ri)` paren-group, not a bare Han char. Skip past
+        // each `(...)` group, then check whether the underlying root is Han.
+        let cursor = m.index - 2;
+        while (cursor >= 0) {
+          const c = cardText[cursor];
+          if (c === ')' || c === '）') {
+            let depth = 1;
+            cursor--;
+            while (cursor >= 0 && depth > 0) {
+              const cc = cardText[cursor];
+              if (cc === ')' || cc === '）') depth++;
+              else if (cc === '(' || cc === '（') depth--;
+              cursor--;
+            }
+            continue;
+          }
+          break;
+        }
+        const rootChar = cursor >= 0 ? cardText[cursor] : '';
+        if (rootChar && /[\p{Script=Han}]/u.test(rootChar)) continue;
       }
       // Skip compound-suffix fragments — `<Han>-<phrase>` pattern means
       // the phrase is the tail of a multi-part Chinese term, not a

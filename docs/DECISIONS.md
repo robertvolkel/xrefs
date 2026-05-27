@@ -6274,3 +6274,169 @@ Added `stripGaiaPrefix(s)` helper at the top of [lib/services/atlasMapper.ts](..
 1. **"Already clean in the happy path" is not "guaranteed clean."** Ingest correctness depends on the vendor's naming format staying stable. A defensive sanitizer at the output stage costs near-zero runtime and converts a vendor-format-drift bug from "user-visible leak" to "missing dictionary entry shows humanized stem."
 2. **Internal foreign keys don't belong on the wire.** `gaiaId` had no UI consumer but shipped to every admin client. Whenever a DB-row type is the response shape for an admin endpoint, audit which fields are actually consumed by the UI — anything else is a leak surface for naming, schema details, or vendor identity.
 3. **Audit the network tab, not just the rendered UI.** Field names in JSON responses count as "user-visible" even when no React component renders them. DevTools network inspector is a real reading path for curious customers and integrators.
+
+## Decision #202 — Improvement Potential Column on Manufacturers Admin Page (May 26, 2026)
+
+### Context
+
+Decision #200 closed the loop on per-row prioritisation inside the Triage queue (Matching Impact score per unmapped paramName) and on per-MFR drilldown (🔧 wrench → filtered Triage). What it didn't address: when a non-technical operator opens `/admin/manufacturers` to assign their engineer's next sprint, the Coverage % column tells them *current* state but not *upside*. A 40%-coverage MFR could be a goldmine (huge ruleweight stuck behind a handful of unmapped Chinese param names) or a lost cause (no fixable unmapped params).
+
+User framing was explicit: "I need to be able to prioritize the work of my engineer. I want them to tackle the MFRs that have the most improvement potential."
+
+### Decision
+
+Add a sortable **Improvement Potential** column between Coverage and MFR Crosses on [components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx). Server computes a weighted per-MFR ppt estimate; UI tier-colours the cell and exposes a three-state visual contract so zero-values don't blur into cache-cold values.
+
+**Server-side computation** in [app/api/admin/manufacturers/route.ts](../app/api/admin/manufacturers/route.ts) `computeStats()`:
+
+1. Adds `weightedTotalRules` alongside the existing count-based `totalRules` per (MFR, family) bucket. Denominator = `Σ (Σ rule.weight in family) × productCount`. Family weight sums memoised at module scope.
+2. Reads the existing triage cache via `readCachedTriageData(false)` in parallel with the manufacturers query — cold-safe (returns null, UI shows "—" rather than blocking the whole page on the heavy aggregation).
+3. Re-inverts the triage queue's `affectedManufacturers` per row: each unmapped param contributes `perMfrProductCount × estimatedWeight` to its affected MFRs. Rows with `noteStatus='unmappable'` are skipped (engineer has explicitly decided those can't contribute).
+4. Per-MFR result folded across alias variants (same pattern as `productAgg` to handle `atlas_products.manufacturer` ↔ `atlas_manufacturers.name_display` mismatch).
+5. Final `improvementPotentialPpt = min(100, (addressableSlots / weightedTotalRules) × 100)`. Cap defends against the default-7-weight heuristic over-estimating on un-triaged rows.
+
+**Weight resolution** mirrors `computeMatchingImpact()` in the batches route (Decision #200) for consistency:
+
+- `acceptedOverride.attributeId` in dominantFamily's logic table → exact rule weight (0 if not a matching attr).
+- L3 family without override → default 7 (medium-high; most unmapped params being triaged end up mapping to matching-relevant attrs).
+- L2-only / no family → default 2 (display-only weight).
+
+**Three-state UI display:**
+
+| State | Render | Tooltip | When |
+|---|---|---|---|
+| No scorable products | `—` (opacity 0.3) | "No scorable products for this manufacturer — no matching budget to improve." | `scorableCount === 0` |
+| Cache cold | `—` (opacity 0.3) | "Improvement potential is still loading — refresh in a few seconds…" | Triage cache returned null |
+| In queue, fully addressed | `0.0 ppt` (opacity 0.3) | "No currently-unmapped params in the Triage queue affect this manufacturer. Either its products are fully mapped, or it hasn't been ingested recently." | `ppt === 0` with scorable products |
+| Actionable | `+X.X ppt` (green ≥5, amber 1–5) | `N unmapped params · M weighted product-rule slots addressable` | `ppt > 0` |
+
+Sort on DESC sequence: real values > 0 first → real zeros → cache-cold (`—`) → no-scorable (`—`). Engineers ranking by upside hit the actionable rows first; "no signal yet" rows sink.
+
+Cache key bumped from `manufacturers-list` → `manufacturers-list-v2` so persisted rows recompute on next load with the new field. Both `manufacturers-list` AND `triage-queue` invalidation paths already fire on all relevant batch mutations (Decision #180) — no new invalidation hooks needed; the column updates organically as engineers accept overrides in Triage.
+
+### Why not the alternatives
+
+**Count-based improvement potential** (rejected): would have mirrored the existing Coverage % math exactly (rule-count numerator over rule-count denominator). Rejected because a weight-10 blocking gate unmapped is far more valuable to fix than a weight-2 display rule, and the whole point of the column is engineer-time prioritisation. The user pushed back on the original count-based draft explicitly: "should we not take weight of the rules into consideration as well?" Weight-based ranks the same MFRs differently than count-based — sometimes the highest-count-impact MFR isn't the highest-weighted-impact MFR.
+
+**Also switch Coverage % to weight-based** (deferred): would unify the two metrics' units but breaks calibration for operators who've been reading the existing column for months. Decision #200's Matching Impact already lives in weight units inside Triage; this column also lives in weight units on Manufacturers. Coverage % stays count-based as the stable "what's already covered" reference. Worth revisiting if/when we re-design the whole coverage-analytics surface.
+
+**New SQL RPC for per-MFR weighted aggregation** (rejected): tempting given the SQL-aggregation pattern of Decisions #179/#180/#183/#189. Rejected because the triage cache already lives in Node memory + Supabase via `triageQueueCache.ts`, the manufacturers route already does Node-side aggregation for the count-based denominator, and the per-MFR rollup is bounded (~1000 MFR × ~thousands of triage rows = single-digit ms). No RPC needed; route-layer merge is sufficient and avoids a new schema artefact.
+
+**Strict mode (only count override-resolved or AI-suggested rows)** (rejected): would have under-counted MFRs heavily for the typical case where most queue rows haven't been triaged yet. User picked the upper-bound option explicitly: "rankings stay correct: the MFR with the biggest pile of unmapped × products will still be the highest-priority target." The cap-at-100 + tier-colouring + tooltip-explained heuristic accept the over-estimation tradeoff for ranking-correctness.
+
+### Trade-offs
+
+- **`+X.X ppt` is an estimate, not a contract.** When a row hasn't been triaged, the default weight is 7. If the eventual accept maps to a weight-2 satellite, the displayed ppt over-estimated. Ranking is still correct (over-estimates scale uniformly across MFRs in the same queue state), but the user shouldn't read the absolute number as "this is how much coverage will exactly rise."
+- **Cache-cold MFRs render `—`.** Cold cache is all-or-nothing — the triage aggregation either has fired for the request or hasn't. Acceptable trade-off: blocking the manufacturers page on a multi-second triage compute would degrade the page that the operator visits most often.
+- **Triage-queue staleness lags by up to 6h** (the SWR threshold from Decision #180). A burst of Accepts inside the queue UI flips the ppt for affected MFRs immediately (per-row invalidation runs on Accept), but a cold-cache rebuild without explicit invalidation can return slightly-stale numbers. Acceptable; this is the same staleness contract the Triage UI itself runs on.
+
+### Files Touched
+
+- `app/api/admin/manufacturers/route.ts` — `getFamilyWeightSum()` module-scope memo; `estimateUnmappedParamWeight()` heuristic; `weightedTotalRules` on per-MFR coverage struct; parallel `readCachedTriageData()`; per-MFR `mfrWeightedImpact` rollup; `improvementPotentialPpt` + `improvementPotentialDetail` on result rows. Cache key bumped to `manufacturers-list-v2`.
+- `components/admin/ManufacturersPanel.tsx` — `improvementPotentialPpt` / `improvementPotentialDetail` on `MfrListItem`; new `improvementPotentialPpt` sort key; sortable column header with tooltip; tier-coloured cell with three-state display; skeleton column.
+
+### Lessons
+
+1. **Two metrics with different units beats one over-loaded metric.** Coverage % was count-based and stable in operators' heads. The right move was leaving it alone and adding a sibling column in weight units, not retrofitting the existing column. Same playbook Decision #200 followed with Matching Impact inside Triage.
+2. **"0" and "no data" need to look different.** Initial render used `opacity: 0.3` for both cache-cold (`—`) and real-zero (`0.0 ppt`). User immediately flagged "many MFRs don't have this figure...empty...why?" — the answer was visual ambiguity, not a data bug. Three-state display with distinct strings + tooltips converted a "looks broken" experience into a "looks complete" one. Same lesson as Decision #200's empty-state success banner — silent zeros are silent bugs.
+3. **The user's weight question wasn't a feature request, it was a correctness check.** Initial plan defaulted to count-based math because it was simpler and mirrored Coverage %. User push-back ("should we not take weight of the rules into consideration as well?") was the correctness signal — engineers prioritising work need the metric to reflect what they actually optimise for. Weight matters.
+
+---
+
+## Decision #203 — Clickable Atlas-MFR Mentions in Chat + Hardening Decision #166 (May 26, 2026)
+
+### Context
+
+Two-part change. (a) A user asks "tell me about 3PEAK" and gets a textual answer; today there's no way to click the MFR name in the chat response to open the same right-hand `ManufacturerProfilePanel` that opens from recommendation-card MFR clicks. Inline MPN linkification (Decision #165) already covers MPNs in chat prose; the parallel affordance for MFR names was missing. (b) Before adding the clickable affordance, audit whether Decision #166's MFR claim-discipline rules still cover every code path that can talk about a manufacturer. Same failure-mode pattern that produced #166 (GigaDevice `stockCode` was in the DB but dropped from the LLM projection → "Private company" fabrication) could be lurking on fields not yet projected, on null-vs-omitted asymmetry, or on orchestrators where the rules don't apply.
+
+### Decision
+
+Audit + linkification ship together. Audit closes three concrete gaps; linkification adds a parallel `knownAtlasManufacturers` Set with the same combined-regex pattern that MPNs use.
+
+**Audit gaps closed (hardening Decision #166):**
+
+1. **`designResources` projected to the LLM** ([lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — `executeGetManufacturerProfile()`). `mapAtlasToManufacturerProfile()` populated `designResources` (SPICE models, reference designs, app notes) from the Atlas row, but the tool projection dropped it. If a user asked "does X publish SPICE models?", the LLM had no backing field — exact same shape as the original `stockCode` bug.
+2. **Explicit `null` normalization for all optional fields** in the same projection. Previously `foundedYear`, `logoUrl`, `headquarters`, `stockCode`, `websiteUrl`, `contactInfo`, `partsioName`, `distributorCount`, `catalogSize`, `familyCount` were passed directly to `JSON.stringify` which silently drops `undefined` keys. The LLM could not distinguish "queried + no data" (should produce "not in our profile") from "never queried this field" (training-data inference risk). Now every optional field is `?? null` so the JSON always carries the key, and the prompt is updated to instruct the model to treat null as "not in our profile — verify with the manufacturer directly".
+3. **`get_manufacturer_profile` exposed to `refinementChat()` and `listChat()`**, with a condensed claim-discipline paragraph (`MFR_CLAIM_DISCIPLINE_MINI`) injected into both system prompts. Previously only `chat()` had the tool + the discipline rules — net-new fabrication surface for users asking about a MFR from inside the per-part refinement modal or the list-agent drawer. Tool definition + handler hoisted to a single shared `GET_MFR_PROFILE_TOOL` constant + `executeGetManufacturerProfile()` helper at module scope; main `chat()` `executeTool()` and both other orchestrators reference them, eliminating copy-paste drift.
+
+**Linkification (Atlas-only scope):**
+
+- New `knownAtlasManufacturers: ReadonlySet<string>` memo in [components/AppShell.tsx](../components/AppShell.tsx), parallel to the existing `knownMpns`. Sources: `XrefRecommendation.part.mfrOrigin === 'atlas'` (canonical signal per Decision #161), `PartSummary.dataSource === 'atlas'` on search-result matches and source part, plus MFRs already opened in the side panel this session that resolved to Atlas.
+- `useManufacturerProfile` ([hooks/useManufacturerProfile.ts](../hooks/useManufacturerProfile.ts)) now exposes `atlasNamesQueried` — a state-tracked Set of canonical MFR names that resolved to `source: 'atlas'`. Updated inside `applyResult` so panel-opened-then-rotated-off MFRs remain link-able. Set identity is preserved on duplicate add to avoid spurious re-renders.
+- Single combined regex in [components/MessageBubble.tsx](../components/MessageBubble.tsx): `buildLinkPattern(knownMpns, knownMfrs)` returns `{ regex, mpnGroup, mfrGroup }` with longest-first alternations and `\b...\b` boundaries. `linkifyChildren()` dispatches by which capture group matched. One linear scan preserves document order and prevents one pass wrapping a span the other pass already wrapped (the failure mode if MFR names happen to overlap MPN substrings or vice versa).
+- Visual: MFR matches use the same primary-color underline-on-hover as MPNs but drop the monospace font (MFR names aren't part numbers).
+- Atlas-only scope is deliberate. Western MFR mentions in chat won't linkify even when the tool returned mock data — we only want clickable affordances where we have rich profile data. Aliases (e.g. "GD" → GigaDevice) deferred — the orchestrator prompt already steers the model to canonical names, and substring matching on short aliases has too much false-positive risk in English prose.
+
+### Files Touched
+
+- [lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) — extracted `GET_MFR_PROFILE_TOOL` + `executeGetManufacturerProfile()` + `MFR_CLAIM_DISCIPLINE_MINI` to module scope; projection adds `designResources` + null-normalizes 10 optional fields; `refinementTools` + `listAgentTools` include the tool; both orchestrators' tool-dispatch loops handle `get_manufacturer_profile`; both system prompts append the mini discipline rules. `listChat` tool-result mapper switched from sync `.map` to `await Promise.all(...)` to accommodate the now-async dispatch.
+- [hooks/useManufacturerProfile.ts](../hooks/useManufacturerProfile.ts) — adds `atlasNamesQueried` state Set, updated in `applyResult` when `source === 'atlas'`.
+- [components/AppShell.tsx](../components/AppShell.tsx) — `knownAtlasManufacturers` memo, threaded down to both layouts.
+- [components/DesktopLayout.tsx](../components/DesktopLayout.tsx), [components/MobileAppLayout.tsx](../components/MobileAppLayout.tsx) — accept + forward `knownAtlasManufacturers` to `ChatInterface`; pass existing `onManufacturerClick` callback (already wired for cards) to chat.
+- [components/ChatInterface.tsx](../components/ChatInterface.tsx) — accept + forward the two new props to `MessageBubble`.
+- [components/MessageBubble.tsx](../components/MessageBubble.tsx) — `buildLinkPattern()` + extended `linkifyChildren()` with two-group dispatch; MPN vs MFR styling branch.
+
+### Why not the alternatives
+
+- **Audit-only, no code change.** Would have left two real fabrication surfaces open (refinement modal + list agent). Decision #166 had grown the discipline rules for the main chat but the lift to other orchestrators never happened — Triage Phase 3 hardening (Decision #186) showed the same drift on a different axis.
+- **Linkify every MFR name the LLM writes (global NER).** Considered and rejected. Would require a global MFR dictionary or NER pass; "Texas" matching as a prefix of "Texas Instruments" has too much false-positive risk in prose. Atlas-only scope keeps the set small (~115 names, mostly romanized Chinese) and the false-positive risk near-zero.
+- **Two separate regex passes for MPN + MFR.** Considered. Combined single-regex pass with capture-group dispatch is cheaper to compile, preserves document order, and prevents double-wrapping when one identifier overlaps another's substring.
+- **A new "Profile" badge/chip next to MFR mentions.** Would have made the affordance more discoverable but cluttered chat density. Reusing the MPN underline pattern keeps visual noise low — same affordance, same hover behavior, user picks it up by analogy.
+
+### Lessons
+
+1. **Audit before extending.** The user asked for a linkification feature and wanted reassurance that the existing hallucination rules were holding. The audit surfaced three real gaps that no one would have noticed from product use (`designResources` would only manifest on a question we haven't yet seen; refinement/list MFR questions silently failed-open with no claim discipline). The pattern: when a user asks "is this safe?", treat it as a real audit prompt, not as a request for verbal reassurance.
+2. **Null-vs-omitted is the same failure shape as not-projected.** Decision #166 was about a field that existed in the DB but never reached the LLM. Two years later, the same shape recurs at a finer grain: a field that's projected but only when populated. `JSON.stringify` dropping `undefined` is a silent-failure pattern that's easy to write past during review. The fix (`?? null`) is small; the discipline is to apply it to every optional field uniformly, not just the ones that have caused a reported bug.
+3. **Extract the shared helper at the moment of the second copy.** Three orchestrators now need the same tool definition + handler. Extracting `GET_MFR_PROFILE_TOOL` + `executeGetManufacturerProfile()` at the time of the change costs ~10 minutes and prevents the now-classic drift pattern where one of three copies grows a fix the others don't get. The async-Promise-all switch in `listChat`'s tool mapper is the visible second-order cost of this move — acceptable.
+4. **`Part.mfrOrigin` lives on `Part`, not `XrefRecommendation`.** Caught by `tsc` immediately. Worth recording because it's a common cross-cutting concern — `XrefRecommendation.part.mfrOrigin` looks identical to `r.part.dataSource` and `r.dataSource` (the rec has its own `dataSource` distinct from the candidate part's). When the type system gives you the answer for free, lean on it.
+
+## Decision #204 — Domain Card Approval Workflow Hardening (May 27, 2026)
+
+### Context
+
+Bulk review of generated `atlas_family_domain_cards` (Decision #192 grounding + #195 audit) surfaced four recurring friction patterns when an operator tries to Approve a dozen+ cards in a single session:
+
+1. **False-positive bogus-MFR flags on 2-letter codes** that collide with engineering abbreviations. `atlas_manufacturers` has registered entries like `TC 德昌`, `BC 宝成`, `RS 容硕`, `CS 创世`. The audit's mention-detection regex extracted bare `TC` / `BC` / `RS` / `CS` tokens from card prose where they actually meant case-temperature, BJT MPN prefix, RS-485 / RUNIC, and Chip Select (SPI signal) respectively — and flagged the cards as making false MFR claims that block Approve. The existing `MFR_NAME_BLOCKLIST` was the right structural fix (DC/AC/HC/PTC/NTC already there); just had to grow the list as more collisions surfaced.
+
+2. **False-positive Chinese-substring fabricated-dict flags** when a card cites a compound dict key. Cards cite real keys like `电阻-初始(ri)(最小值)` (existing in the dict), but the FABRICATED_DICT check's regex extracts `最小值` from inside the chained parentheticals and looks it up in isolation, where it's not present. The existing parenthetical-exemption only walked back ONE char to check for a Han root, missing the case `<HanRoot>(qualifier1)(qualifier2)` where the char immediately before the open paren is the close paren of the prior qualifier group.
+
+3. **`ON CONFLICT DO UPDATE` errors during Proceed** when vendor JSON contains the same MPN twice for one MFR. Postgres rejects the entire upsert chunk because two rows in the same statement target the same primary key `(mpn, manufacturer)`. The ingest script was building the upsert list directly from the vendor JSON without dedup, propagating data-quality issues from third-party vendor files into hard Proceed failures.
+
+4. **Native `confirm()` dialog on every Proceed** asking "this batch has N unmapped params — apply anyway?" is correct safety messaging for new operators but adds a click per batch for engineers who've already triaged and know about the queue. No way to opt out per session.
+
+### Decision
+
+Five surgical changes — none of them rewrites; each is a localized hardening to the existing patterns:
+
+1. **Grow `MFR_NAME_BLOCKLIST` with engineering-abbreviation collisions.** Added `TC`, `BC`, `RS`, `CS` to both [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) (runtime, used by the live audit UI) AND [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) (offline batch script mirror). Each entry carries a one-line comment naming the colliding engineering term and the MFR it would otherwise false-positive against. The existing comment on the blocklist already documents this as the explicit trade — "small blind spot if a card legitimately discusses one of these MFRs by name, acceptable trade."
+
+2. **Walk-back through chained parentheticals in the FABRICATED_DICT check.** In both audit modules, replaced the single-char `cardText[m.index - 2]` check with a loop that skips past every `(...)` group preceding the current parenthetical phrase, then checks whether the underlying root char is Han. Handles `电阻-初始(ri)(最小值)` and any other `<HanRoot>(qualifier)(qualifier)...` chain. Depth-counting paren matcher (handles nested parens cleanly). Mirror kept byte-for-byte in [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) per the existing convention.
+
+3. **Defensive MPN dedup in `atlas-ingest.mjs`** at the entry to the per-MFR apply function. Vendor JSON gets collapsed via `Map(mpn → product)` keeping the LAST occurrence (matches "last write wins" Postgres semantics that would apply if duplicates were applied sequentially). Logs `⚠ N duplicate MPN(s) collapsed` when dupes are found so the operator can spot which vendor files have data-quality issues without it being a fatal error. Snapshot rows + soft/hard-delete tracking all derive from the deduped list, so consistency is preserved automatically.
+
+4. **MUI Dialog + "Don't ask again this session" checkbox in [BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx).** Replaced native `confirm()` with a real MUI Dialog. State stored in `sessionStorage` under key `atlas-ingest-suppress-unmapped-warn`. First Proceed on any unmapped batch shows the dialog; if user checks the box + Apply, subsequent Proceeds skip the dialog until tab refresh. Preserves the warning for first-time-in-session reminder AND for "Proceed All Clean" bulk operations (one click can apply 50 batches), but eliminates per-batch friction for routine per-batch clicks.
+
+5. **Atlas Mapper dict cleanups (3 cards' worth, illustrative of the pattern):** C7 Interface ICs (6 deprioritized aliases promoted to canonical `operating_mode` / `txd_dominant_timeout` / `esd_bus_pins`), Family 71 Power Inductors (added `操作溫度` traditional Chinese + dimension trio `高`/`长`/`宽` with `(公釐)` qualifier; `height` is a real canonical, `_length_mm` / `_width_mm` stored deprioritized since no logic-table canonical exists yet), B4 TVS Diodes (added bare `靜電次數` alongside existing `靜電次數(pulses)` parenthesized form). Each cleanup mirrored to [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) per the existing convention. Pattern: when an audit advisory flags a real-but-uncatalogued Chinese term, the right fix is usually to add the dict entry, not edit the card prose.
+
+### Files Touched
+
+- [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) — `MFR_NAME_BLOCKLIST` grew by 4 entries (TC, BC, RS, CS); FABRICATED_DICT parenthetical walk-back replaces single-char lookup.
+- [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) — mirror of both changes.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — `applyBatch()` deduplicates `mappedProducts` by MPN at entry, logs collapsed-dupe count; C7 / family-71 / B4 dict entries promoted/added.
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — same dict edits as the .mjs mirror.
+- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — native `confirm()` → MUI Dialog with sessionStorage-backed "don't ask again" checkbox.
+
+### Why not the alternatives
+
+- **Don't grow the blocklist; make the MFR matcher smarter (require capitalization context, etc.).** Would eliminate the ad-hoc list growth, but the structural fix would have to draw a line between "TC means case temp here" vs "TC means a manufacturer in this card" that's fundamentally context-dependent — hard to encode robustly without a token-context-aware NER pass. Blocklist is cheap, the existing comment explicitly documents the trade as acceptable, and each addition is a 30-second edit. Bigger fix can land later if the list grows past ~20 entries.
+- **Fail the ingest on duplicate MPNs instead of deduping.** Considered. Rejected because the vendor JSON quality is variable (~115 Chinese MFRs, third-party data) and the dupes are recoverable — silently last-write-wins matches what would happen if applied sequentially anyway. The `⚠` log line preserves visibility for engineers who want to chase down the upstream data-quality issue.
+- **Remove the unmapped-params Proceed dialog entirely.** Considered. Rejected because Decision #176 explicitly added it as the operator-confirm gate — bulk "Proceed All Clean" can apply 50 batches in one click and the warning is genuine safety messaging. Per-session opt-out preserves that safety net for the first click while clearing routine friction.
+- **Edit the card prose to defeat the audit regex** (e.g., rewrite "TC=80°C" to avoid bare TC). Tried in B6 BJTs, then realized it's whack-a-mole. The audit regex extracting "TC" from any case-temperature mention is the actual bug — fixing the regex is the root cause. Cards stay clean and engineering-accurate.
+
+### Lessons
+
+1. **Audit regex precision is the right place to fix recurring false positives, not the cards themselves.** Once you've manually rewritten three cards to avoid bare "TC" tokens, the audit script is the bug, not the cards. Same applies to the parenthetical walk-back fix — the prose `电阻-初始(ri)(最小值)` is engineering-accurate; the audit's substring extraction needed to know about chained qualifiers.
+2. **The audit script's two-file mirror (.ts runtime + .mjs offline) needs the same discipline as the atlasMapper.ts / atlas-ingest.mjs mirror.** Same "duplicated by design, no import path" convention. Every change to one file needs the byte-for-byte equivalent in the other or audits diverge between live UI and batch script.
+3. **`MFR_NAME_BLOCKLIST` is a working idiom for the ambiguous-2-letter-code problem.** Pattern: when a 2-letter MFR name exists AND that 2-letter token has a standard engineering meaning, the blocklist entry is the safe move. The cost — small blind spot if a card legitimately mentions one of those MFRs by name — is acceptable because (a) the MFRs in question are tiny in volume (zero products in most families) and (b) the engineering term usage vastly outweighs the MFR usage in card prose.
+4. **Vendor data quality assumptions belong in the script, not the route handler.** The ON CONFLICT error came back as an opaque 500 in the UI. Defensive normalization in the script (dedup, sanitize, log) catches data issues at the boundary where context is best for both detection and recovery, rather than turning each new vendor quirk into a route-handler firefight.
+5. **sessionStorage is the right scope for "I've acknowledged this warning."** Not localStorage (too permanent — a new operator on the same browser shouldn't inherit the suppression), not in-memory (loses scope across React unmounts). Tab lifetime matches the engineer's review session.

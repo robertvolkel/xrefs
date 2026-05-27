@@ -19,15 +19,24 @@ import { useState } from 'react';
 import {
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
+  FormControlLabel,
   IconButton,
   Paper,
   Stack,
   Typography,
 } from '@mui/material';
+
+const SUPPRESS_UNMAPPED_WARN_KEY = 'atlas-ingest-suppress-unmapped-warn';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -70,6 +79,8 @@ export default function BatchCard({
   // Applied batches anyway — make it opt-in via the button below.
   const [fullReport, setFullReport] = useState<IngestDiffReport | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
+  const [showUnmappedDialog, setShowUnmappedDialog] = useState(false);
+  const [suppressFuture, setSuppressFuture] = useState(false);
   const loadFullReport = async () => {
     if (fullReport || loadingFull) return;
     setLoadingFull(true);
@@ -143,14 +154,15 @@ export default function BatchCard({
                 onClick={() => {
                   // Surface unmapped-params status so operator knows engineer
                   // review hasn't happened yet (Decision-driven Model 3).
-                  // Light friction only — operator can still proceed.
-                  if (unmappedCount > 0) {
-                    const ok = confirm(
-                      `This batch has ${unmappedCount} unmapped parameter${unmappedCount === 1 ? '' : 's'} that haven't been reviewed by an engineer. ` +
-                      `Proceeding will apply the batch as-is; the unmapped values will store under raw IDs and can be cleaned up later via Dictionary Triage.\n\n` +
-                      `Apply anyway?`
-                    );
-                    if (!ok) return;
+                  // Light friction only — operator can still proceed. Once
+                  // suppressed (sessionStorage), subsequent Proceeds skip
+                  // the warning until tab refresh.
+                  if (
+                    unmappedCount > 0 &&
+                    sessionStorage.getItem(SUPPRESS_UNMAPPED_WARN_KEY) !== '1'
+                  ) {
+                    setShowUnmappedDialog(true);
+                    return;
                   }
                   onProceed?.();
                 }}
@@ -343,6 +355,41 @@ export default function BatchCard({
           )}
         </Box>
       </Collapse>
+      <Dialog open={showUnmappedDialog} onClose={() => setShowUnmappedDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Apply batch with unmapped parameters?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This batch has {unmappedCount} unmapped parameter{unmappedCount === 1 ? '' : 's'} that
+            haven&apos;t been reviewed by an engineer. Proceeding will apply the batch as-is; the
+            unmapped values will store under raw IDs and can be cleaned up later via Dictionary Triage.
+          </DialogContentText>
+          <FormControlLabel
+            sx={{ mt: 2 }}
+            control={
+              <Checkbox
+                checked={suppressFuture}
+                onChange={(e) => setSuppressFuture(e.target.checked)}
+              />
+            }
+            label="Don't ask again this session"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowUnmappedDialog(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (suppressFuture) {
+                sessionStorage.setItem(SUPPRESS_UNMAPPED_WARN_KEY, '1');
+              }
+              setShowUnmappedDialog(false);
+              onProceed?.();
+            }}
+          >
+            Apply anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }

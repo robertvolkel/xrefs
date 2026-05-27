@@ -92,6 +92,10 @@ const MFR_NAME_BLOCKLIST = new Set([
   'HC',         // 74HC logic family
   'PTC',        // positive temperature coefficient (resistor type, fuse type)
   'NTC',        // negative temperature coefficient (thermistor type)
+  'TC',         // case temperature (Tc) — collides with MFR "TC 德昌"
+  'BC',         // JEDEC BJT prefix (BC807/BC817 etc.) — collides with MFR "BC 宝成" / "BC 台湾诚阳"
+  'RS',         // RUNIC MPN prefix + RS-485/RS-232 protocol — collides with MFR "RS 容硕"
+  'CS',         // Chip Select (SPI signal) — collides with MFR "CS 创世"
   'Fast',       // "fast recovery", "fast switching"
   'Milliohm',   // milliohm — unit of resistance
   'TVS',        // TVS diode type
@@ -569,8 +573,28 @@ for (const card of cards) {
       const after = card_text[m.index + phrase.length] ?? '';
       const isParenthetical = (before === '(' || before === '（') && (after === ')' || after === '）');
       if (isParenthetical) {
-        const beforeParen = m.index >= 2 ? card_text[m.index - 2] : '';
-        if (beforeParen && /[\p{Script=Han}]/u.test(beforeParen)) continue;
+        // Walk back through any chain of preceding parentheticals — e.g.
+        // `电阻-初始(ri)(最小值)` has 最小值 wrapped in parens but preceded
+        // by another `(ri)` paren-group, not a bare Han char. Skip past
+        // each `(...)` group, then check whether the underlying root is Han.
+        let cursor = m.index - 2;
+        while (cursor >= 0) {
+          const c = card_text[cursor];
+          if (c === ')' || c === '）') {
+            let depth = 1;
+            cursor--;
+            while (cursor >= 0 && depth > 0) {
+              const cc = card_text[cursor];
+              if (cc === ')' || cc === '）') depth++;
+              else if (cc === '(' || cc === '（') depth--;
+              cursor--;
+            }
+            continue;
+          }
+          break;
+        }
+        const rootChar = cursor >= 0 ? card_text[cursor] : '';
+        if (rootChar && /[\p{Script=Han}]/u.test(rootChar)) continue;
       }
       // Skip compound-suffix fragments — `<Han>-<phrase>` means the
       // phrase is a sub-component of a Chinese compound, not a standalone

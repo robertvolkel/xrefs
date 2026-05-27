@@ -4,6 +4,42 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Domain Card audit: context-aware short-ASCII MFR matcher
+**Status:** Not started
+**Priority:** P3 (quality of life)
+**Cost:** ~3 hours
+**Trigger:** Decision #204 added TC/BC/RS/CS to `MFR_NAME_BLOCKLIST` for engineering-abbreviation collisions. The pattern keeps recurring as more cards are reviewed — every new 2-letter MFR code in `atlas_manufacturers` is a potential false-positive landmine.
+
+**Build:** Replace the bare exact-case word-boundary regex for short-ASCII MFR names with a context-aware matcher. Signals to require BEFORE accepting "TC" as a MFR mention: (a) preceded by a known MFR-list separator (`,`, `;`, `(`, or list intro like "MFRs include"); (b) followed by a quoted descriptor like `(W-prefix)` or by `ships` / `MPNs`; (c) appears in a Markdown bullet list of MFRs. Reject if surrounded by parametric prose ("vh", "@Tc=80°C", "RS-485", "CS latch").
+
+**Why deferred:** Blocklist approach is working at ~10 entries; cost-benefit doesn't justify the lift until the list grows past ~20-30 entries OR an audit collision causes a real card-content miss (currently zero — the trade is documented and intentional).
+
+## C7 Interface ICs: promote remaining deprioritized aliases
+**Status:** Not started
+**Priority:** P3
+**Cost:** 1 hour
+**Trigger:** Decision #204 cleanup promoted 3 of ~10 deprioritized aliases in the C7 dict. Remaining `_*` entries (atlasMapper.ts:1383-1429): `_common_mode_range`, `_remote_wakeup`, `_supply_voltage`, `_low_power_current`, `_isolation_rating`, `_integrated_power`, `_supply_voltage_range`, `_output_mode`, `_channels`, `_reverse_channels`, `_default_output`, `_cmti`, `_surge_rating`, `_cmti_dynamic`, `_drivers`, `_receivers`.
+
+**Build:** For each entry, check whether a real canonical exists in logic table or other family dicts. Where one exists (e.g. `cmti_kv_us` exists at ICs level, `_cmti` should promote), update mapping. Where no canonical exists yet, leave deprioritized but document.
+
+## length_mm / width_mm canonicals for power inductors
+**Status:** Not started
+**Priority:** P3
+**Cost:** 1 hour if just adding rules; 2 hours including update to powerInductors.ts logic table
+**Trigger:** Decision #204 family 71 dict cleanup added `_length_mm` / `_width_mm` deprioritized aliases for `长(公釐)` / `宽(公釐)` because no real canonical exists. Card claims these are "separate canonicals from package_case" but only `height` actually scores.
+
+**Build:** If power inductors should match on length/width separately (e.g. for non-standard packages where the package_case string doesn't carry dimensions), add rules to [lib/logicTables/powerInductors.ts](../lib/logicTables/powerInductors.ts) and promote the dict entries. Otherwise, slightly rewrite the family-71 domain card to honestly say "height is a separate canonical; length/width preserved as data only."
+
+## Atlas C7 ESD remap verification: HBM vs bus-pin semantic check
+**Status:** Not started
+**Priority:** P3 (data quality)
+**Cost:** ~30 min spot-check + corrective fix if needed
+**Trigger:** Decision #204 C7 dict cleanup remapped all 4 ESD entries (including `esd hbm(kv)`) to `esd_bus_pins`. HBM (Human Body Model) is typically a chip-level pin spec, NOT specifically bus-pin. For transceivers the bus-pin rating dominates so it's likely a safe move, but worth verifying a few products post-backfill to confirm no values look wrong (e.g. a 2kV HBM value showing as `esd_bus_pins` when the bus pins are actually rated higher).
+
+**Build:** After running `npm run atlas:backfill`, pick 5 C7 products that have both `esd hbm(kv)` and another bus-pin ESD field in their JSONB, verify the final `esd_bus_pins` value is the bus-pin rating not the HBM value. If wrong, split `esd hbm(kv)` back to `esd_rating` or a new `_esd_hbm_kv` deprioritized canonical.
+
+
+
 ## P0 — High Priority
 
 ### ~~Digikey parameter maps incomplete for most families~~ COMPLETED
@@ -1743,3 +1779,40 @@ Decision #200 shipped a manual "Refresh from accepts" button. Two upgrades to ev
 Either covers the "I forgot to click the button" failure mode. Both are cheap to add — the script + status row + invalidation hook are all in place from Decision #200; only the trigger surface is new.
 
 **Why deferred from #200 ship:** wanted to see how often the manual button actually gets used before optimising. If usage is daily, cron is the right answer. If usage is weekly, threshold-based-banner is better signal-to-noise. If usage is monthly, neither — manual stays.
+
+## MFR profile spreadsheet ingest — REJECTED (2026-05-26)
+**Status:** Rejected. Do not build unless trigger conditions met.
+**Priority:** N/A
+**Cost:** ~36 engineer-hours if revisited
+
+Engineer asked whether to extend `/admin/atlas/ingest` with a spreadsheet upload path for MFR profile data (team sends recurring spreadsheets with profile fields). Plan agent produced a detailed design (parallel snapshot table, per-field provenance JSONB, column mapping dialog, row-by-row diff UI, conflict resolution, atlas-api-sync update for provenance respect).
+
+**Why rejected:** Atlas API (`https://cn-api.datasheet5.com`, consumed via [scripts/atlas-api-sync-profiles.mjs](../scripts/atlas-api-sync-profiles.mjs), Decision #139) is the single source of truth for MFR profile data. Adding a spreadsheet pipeline would create a second source, route around an upstream data-quality problem, and force ongoing provenance + conflict-resolution maintenance. Correct path: team-supplied spreadsheets become input artifacts for IT to update the upstream API; subsequent atlas-api-sync runs propagate the improvements automatically. One source of truth, all consumers benefit.
+
+**Revisit trigger:** Only build if BOTH of the following become true:
+
+(a) Team data is structurally unsuitable for the upstream API (e.g., it's customer-specific, proprietary, or NDA-protected and cannot live in a shared external system); AND
+(b) The IT/upstream-API path is permanently blocked (not just slow).
+
+**If revisited, the full design is preserved at:**
+`/Users/robvolkel/.claude/plans/golden-dreaming-fairy-agent-a10ab613ff79e84bf.md`
+(plan-agent output, May 26 2026 — covers schema, components, API contracts, provenance model, cache invalidation, 36h effort breakdown.)
+
+## Triage Investigator: multi-MFR sampling (avoid sample-size-of-5 trap)
+**Status:** Not started
+**Priority:** P2 (correctness — current behavior produces overconfident wrong verdicts on cross-MFR semantic collisions)
+**Cost:** ~3 hours
+**Trigger:** Caught in real Triage walkthrough on 2026-05-26: the "ESD" param on B5 MOSFETs (1066 products across 3 MFRs) — Investigator returned high-confidence `new_canonical: esd_protection` after sampling 5 LRC L2N7002* products where the literal value was the string `"ESD"`. The other 2 MFRs were carrying numeric ratings (`1`, `4`, `6`, `8`, `30` — likely HBM kV) which would have been corrupted by the boolean-flag mapping. The /suggest pass actually caught this ("sample values have no discernible unit") but the Investigator's higher confidence overrode the suggest hedge.
+
+**Root cause:** `fetchSampleProducts` in [/api/admin/atlas/dictionaries/investigate](../app/api/admin/atlas/dictionaries/investigate/route.ts) grabs the first N products from `affectedProducts` without stratifying by MFR. When all 5 happen to come from one MFR (very likely when one MFR dominates the product count for a paramName), the cross-MFR semantic split is invisible to Sonnet.
+
+**Build:**
+
+1. **MFR-stratified sampling** in `fetchSampleProducts`: when `affectedManufacturers.length > 1`, fetch at minimum one product per MFR (up to 5 MFRs), padding the remainder from the dominant MFR. For >5 MFRs, take one from each of the top 5 by product count.
+2. **Value-distribution summary** in the prompt: before the per-product samples, include a compact table `{ mfrSlug → distinct value count → sample values }`. Cheap to compute (group by `manufacturer` in the existing query) and makes cross-MFR encoding splits visible to Sonnet without forcing it to infer them from 5 raw products.
+3. **New verdict bucket** `multi_meaning_collision`: when value patterns differ across MFRs (e.g., one MFR has numeric values, another has categorical), Sonnet should be able to flag this explicitly rather than picking one MFR's semantics. UI action: opens a defer/note workflow pre-filled with the collision description; future per-MFR override scope (separate BACKLOG item) would close the loop.
+4. **/suggest deference policy** (optional, lower priority): when /suggest verdict is `defer` AND /investigate verdict is `accept` with high confidence, surface BOTH in the UI rather than letting /investigate silently override — flag the disagreement for the engineer instead of presenting one false-confident path.
+
+**Why this matters:** the Investigator is now load-bearing for one-click reclassify (Decision #188) and unmappable-marking workflows. An overconfident verdict on a multi-MFR collision corrupts real data (LRC's flag values turn into `'1'`/`'30'` garbage strings if the wrong mapping fires). The fix is structural — the model needs to SEE the cross-MFR variance, not infer it from a one-MFR sample.
+
+**Workaround until built:** when the row's `affectedManufacturers.length > 1` AND the row-level sample values look numerically heterogeneous OR mix string/numeric, treat any Investigator verdict as advisory and verify by spot-checking one product from each MFR via the Atlas Explorer before clicking the action button.
