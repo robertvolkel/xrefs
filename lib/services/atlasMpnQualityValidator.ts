@@ -29,7 +29,8 @@ export type MpnQualityIssueKind =
   | 'range_series'
   | 'placeholder_x'
   | 'placeholder_xx_midword'
-  | 'slash_variant';
+  | 'slash_variant'
+  | 'description_as_mpn';
 
 export interface MpnQualityIssue {
   /** The original raw MPN as it appeared in the source data. */
@@ -94,6 +95,22 @@ export function detectMpnQualityIssue(rawMpn: string | null | undefined): MpnQua
     return { originalMpn: rawMpn, kind: 'slash_variant', reason: 'Slash-delimited row — two related MPNs collapsed into one. Split on slash and ingest as separate rows.' };
   }
 
+  // (5) Description-as-MPN. WAY-ON shipped 5 B5 rows where the MPN field
+  // contained marketing prose ("Fast Turn-Off Synchronous Rectifier (100V
+  // MOS inside)") instead of a part number. Heuristic: ≥3 space-separated
+  // tokens AND ≥2 of those tokens are pure-alphabetic 4+ chars (likely
+  // English words, not part-number codes). Real MPNs rarely have 3+ spaces;
+  // when they do (e.g. "AMS1117 Series") the alpha-word count stays at 1
+  // and the existing range_series rule catches them. Conservative — runs
+  // last so all more-specific patterns win.
+  const tokens = mpn.split(/\s+/);
+  if (tokens.length >= 3) {
+    const englishWords = tokens.filter((t) => /^[A-Za-z]{4,}$/.test(t));
+    if (englishWords.length >= 2) {
+      return { originalMpn: rawMpn, kind: 'description_as_mpn', reason: 'Looks like a product description, not an MPN — vendor JSON encoded a marketing/series summary entry where a part number should be. Remove from atlas_products or flag for upstream cleanup.' };
+    }
+  }
+
   return null;
 }
 
@@ -118,6 +135,7 @@ export function summarizeMpnQualityIssues(
     placeholder_x: 0,
     placeholder_xx_midword: 0,
     slash_variant: 0,
+    description_as_mpn: 0,
   };
   const all: MpnQualityIssue[] = [];
   for (const i of issues) {
@@ -125,7 +143,7 @@ export function summarizeMpnQualityIssues(
     all.push(i);
   }
   // Sort samples by kind (stable ordering) so the UI is predictable.
-  const KIND_ORDER: MpnQualityIssueKind[] = ['range_thru', 'range_series', 'placeholder_x', 'placeholder_xx_midword', 'slash_variant'];
+  const KIND_ORDER: MpnQualityIssueKind[] = ['range_thru', 'range_series', 'placeholder_x', 'placeholder_xx_midword', 'slash_variant', 'description_as_mpn'];
   all.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
   return {
     totalIssues: all.length,

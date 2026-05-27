@@ -35,6 +35,7 @@ AS $$
     WHERE atlas_products.family_id = p_family_id
       AND atlas_products.manufacturer IS NOT NULL
       AND atlas_products.manufacturer <> ''
+      AND atlas_products.status <> 'discontinued'  -- Decision #204: honor soft-deletes
     GROUP BY atlas_products.manufacturer
     ORDER BY pc DESC
     LIMIT p_mfr_limit
@@ -51,6 +52,7 @@ AS $$
           WHERE atlas_products.family_id = p_family_id
             AND atlas_products.manufacturer = r.mfr
             AND atlas_products.mpn IS NOT NULL
+            AND atlas_products.status <> 'discontinued'  -- Decision #204
           ORDER BY atlas_products.mpn
           LIMIT p_sample_limit
         ) s
@@ -86,7 +88,8 @@ AS $$
     COUNT(*) AS product_count,
     COUNT(DISTINCT manufacturer) FILTER (WHERE manufacturer IS NOT NULL AND manufacturer <> '') AS mfr_count
   FROM atlas_products
-  WHERE family_id = p_family_id;
+  WHERE family_id = p_family_id
+    AND status <> 'discontinued';  -- Decision #204: honor soft-deletes
 $$;
 
 GRANT EXECUTE ON FUNCTION get_atlas_family_grounding_counts(TEXT) TO authenticated, service_role;
@@ -118,6 +121,7 @@ AS $$
     ) AS mfr_count
   FROM atlas_products
   WHERE atlas_products.family_id IS NOT NULL
+    AND atlas_products.status <> 'discontinued'  -- Decision #204: honor soft-deletes
   GROUP BY atlas_products.family_id;
 $$;
 

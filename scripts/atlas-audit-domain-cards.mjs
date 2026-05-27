@@ -103,6 +103,7 @@ const MFR_NAME_BLOCKLIST = new Set([
   'IC',         // integrated circuit
   'VIBRATION',  // a real Chinese MFR (振浩微); collides with prose "vibration"
   'CTR',        // "Current Transfer Ratio" — central optocoupler spec; collides with MFR 长泰尔电子
+  'FTR',        // tolerance/packaging letter-code suffix on resistor MPNs (e.g. AMF03FTTR001, MRF6432(2512)LR001FTR); collides with MFR "FTR 乔光电子"
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,

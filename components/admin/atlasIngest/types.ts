@@ -57,10 +57,11 @@ export type IngestDiffReport = {
       placeholder_x: number;
       placeholder_xx_midword: number;
       slash_variant: number;
+      description_as_mpn: number;
     };
     samples: Array<{
       originalMpn: string;
-      kind: 'range_thru' | 'range_series' | 'placeholder_x' | 'placeholder_xx_midword' | 'slash_variant';
+      kind: 'range_thru' | 'range_series' | 'placeholder_x' | 'placeholder_xx_midword' | 'slash_variant' | 'description_as_mpn';
       reason: string;
     }>;
   };

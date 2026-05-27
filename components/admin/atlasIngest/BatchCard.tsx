@@ -334,6 +334,7 @@ export default function BatchCard({
                   r.mpnQuality.byKind.placeholder_x > 0 && `${r.mpnQuality.byKind.placeholder_x} placeholder (x/X trailing)`,
                   r.mpnQuality.byKind.placeholder_xx_midword > 0 && `${r.mpnQuality.byKind.placeholder_xx_midword} placeholder (xx mid-word)`,
                   r.mpnQuality.byKind.slash_variant > 0 && `${r.mpnQuality.byKind.slash_variant} slash-delimited`,
+                  r.mpnQuality.byKind.description_as_mpn > 0 && `${r.mpnQuality.byKind.description_as_mpn} description-as-MPN`,
                 ].filter(Boolean).join(' · ')}
               </Typography>
               <Typography variant="caption" sx={{ display: 'block', mt: 0.75, fontSize: '0.65rem', fontStyle: 'italic' }}>

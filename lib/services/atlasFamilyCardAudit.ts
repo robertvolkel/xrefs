@@ -49,6 +49,11 @@ const MFR_NAME_BLOCKLIST = new Set([
   // (output current ÷ input current). Every E1 card mentions it many
   // times. Collides with minor Chinese MFR "CTR 长泰尔电子".
   'CTR',
+  // FTR — tolerance/packaging letter-code suffix on resistor MPNs
+  // (e.g. AMF03FTTR001, RAS12FTN1000, MRF6432(2512)LR001FTR). Cards for
+  // resistor families 52/53/54/55 routinely cite these suffixes in their
+  // NAMING sections. Collides with minor Chinese MFR "FTR 乔光电子".
+  'FTR',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean

@@ -6422,9 +6422,16 @@ Five surgical changes — none of them rewrites; each is a localized hardening t
 
 - [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) — `MFR_NAME_BLOCKLIST` grew by 4 entries (TC, BC, RS, CS); FABRICATED_DICT parenthetical walk-back replaces single-char lookup.
 - [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) — mirror of both changes.
-- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — `applyBatch()` deduplicates `mappedProducts` by MPN at entry, logs collapsed-dupe count; C7 / family-71 / B4 dict entries promoted/added.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — `applyBatch()` deduplicates `mappedProducts` by MPN at entry, logs collapsed-dupe count; C7 / family-71 / B4 dict entries promoted/added; `detectMpnQualityIssue` gains `description_as_mpn` kind.
 - [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — same dict edits as the .mjs mirror.
-- [components/admin/atlasIngest/BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — native `confirm()` → MUI Dialog with sessionStorage-backed "don't ask again" checkbox.
+- [lib/services/atlasMpnQualityValidator.ts](../lib/services/atlasMpnQualityValidator.ts) — added `description_as_mpn` detection kind (heuristic: ≥3 space-separated tokens AND ≥2 are pure-alphabetic 4+ chars; conservative, runs last so more-specific patterns win).
+- [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) + [BatchCard.tsx](../components/admin/atlasIngest/BatchCard.tsx) — `byKind` extended for the new kind; BatchCard renders "N description-as-MPN" in the per-batch warning summary. Same file also: native `confirm()` → MUI Dialog with sessionStorage-backed "don't ask again" checkbox.
+- [scripts/supabase-atlas-family-mfr-grounding-rpc.sql](../scripts/supabase-atlas-family-mfr-grounding-rpc.sql) — added `AND status <> 'discontinued'` to all three grounding RPCs (`get_atlas_family_mfr_grounding`, `get_atlas_family_grounding_counts`, `get_atlas_all_family_grounding_counts`). The Decision #174 soft-delete convention was silently broken for grounding-driven flows (domain card generation, audit, MFR cohort verification counted all atlas_products regardless of status). **Requires manual deploy to live Supabase via dashboard SQL editor** (no service-role JS client path to execute arbitrary SQL).
+
+### One-time data cleanup applied
+
+- WAY-ON family B5: 5 description-as-MPN rows hard-deleted (`Fast Turn-Off Synchronous Rectifier (100V MOS inside)` and 4 siblings — marketing-summary entries from the vendor JSON that were misclassified into B5 because "MOS inside" caught the classifier). Verified B5 grounding now shows real WAY-ON MPNs (`WM03N58M2`, `WM05N02M`, etc.).
+- Cross-MFR survey using the new validator heuristic found 7 additional active garbage rows (LRC datasheet section headers stored as MPNs, SHOU HAN's "MICRO 7.2 JBWZ" duplicates, XTX "Power Tool-Electric Wrench"). All hard-deleted in the same pass. Total: 12 rows cleaned across 3 MFRs.
 
 ### Why not the alternatives
 

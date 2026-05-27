@@ -2618,17 +2618,24 @@ function detectMpnQualityIssue(rawMpn) {
   if (/[A-Za-z0-9]\/[A-Za-z0-9]/.test(mpn)) {
     return { originalMpn: rawMpn, kind: 'slash_variant', reason: 'Slash-delimited row — two related MPNs collapsed into one. Split on slash and ingest as separate rows.' };
   }
+  const tokens = mpn.split(/\s+/);
+  if (tokens.length >= 3) {
+    const englishWords = tokens.filter((t) => /^[A-Za-z]{4,}$/.test(t));
+    if (englishWords.length >= 2) {
+      return { originalMpn: rawMpn, kind: 'description_as_mpn', reason: 'Looks like a product description, not an MPN — vendor JSON encoded a marketing/series summary entry where a part number should be. Remove from atlas_products or flag for upstream cleanup.' };
+    }
+  }
   return null;
 }
 
 function summarizeMpnQualityIssues(issues, maxSamples = 25) {
-  const byKind = { range_thru: 0, range_series: 0, placeholder_x: 0, placeholder_xx_midword: 0, slash_variant: 0 };
+  const byKind = { range_thru: 0, range_series: 0, placeholder_x: 0, placeholder_xx_midword: 0, slash_variant: 0, description_as_mpn: 0 };
   const all = [];
   for (const i of issues) {
     byKind[i.kind]++;
     all.push(i);
   }
-  const KIND_ORDER = ['range_thru', 'range_series', 'placeholder_x', 'placeholder_xx_midword', 'slash_variant'];
+  const KIND_ORDER = ['range_thru', 'range_series', 'placeholder_x', 'placeholder_xx_midword', 'slash_variant', 'description_as_mpn'];
   all.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
   return { totalIssues: all.length, byKind, samples: all.slice(0, maxSamples) };
 }
