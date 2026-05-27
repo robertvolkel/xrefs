@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
+import { readCachedTriageData } from '@/lib/services/triageQueueCache';
 import { invalidateAtlasCache } from '../atlas/route';
 
 // ── Hot in-memory cache (60s) ─────────────────────────────────
@@ -12,7 +13,9 @@ let memCache: { body: string; cachedAt: string } | null = null;
 let memCacheTimestamp = 0;
 const MEM_CACHE_TTL_MS = 60_000;
 
-const CACHE_KEY = 'manufacturers-list';
+// Bumping the suffix forces persisted rows from the previous schema to be
+// recomputed so they pick up the new improvementPotentialPpt field.
+const CACHE_KEY = 'manufacturers-list-v2';
 
 export function invalidateManufacturersListCache() {
   memCache = null;
@@ -58,16 +61,65 @@ function maxIso(a: string | null, b: string | null): string | null {
   return a > b ? a : b;
 }
 
+/** Sum of rule weights per family — memoised at module scope. The matching
+ *  engine's denominator for weighted coverage is Σ rule.weight across the
+ *  family's logic table. Same shape as familyRuleAttrs but weight-aware. */
+const familyWeightSumCache = new Map<string, number>();
+function getFamilyWeightSum(familyId: string): number {
+  const hit = familyWeightSumCache.get(familyId);
+  if (hit !== undefined) return hit;
+  const table = getLogicTable(familyId);
+  const sum = table ? table.rules.reduce((acc, r) => acc + (r.weight ?? 0), 0) : 0;
+  familyWeightSumCache.set(familyId, sum);
+  return sum;
+}
+
+/** Shape of a Classified row inside the cached triage payload. Mirrors the
+ *  fields the batches route writes — we only read the few we need for the
+ *  per-MFR weighted-impact rollup, so a partial type is safe. */
+interface TriageRowForRollup {
+  productCount: number;
+  dominantFamily: string | null;
+  affectedManufacturers: Array<{ slug: string; name: string; productCount: number }>;
+  acceptedOverride?: { attributeId: string; isActive: boolean };
+  noteStatus?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+}
+
+/** Estimated rule weight contributed by mapping a single unmapped paramName.
+ *  Mirrors the heuristic used by computeMatchingImpact() in the batches route
+ *  so the "Improvement Potential" column ranks rows the same way the Triage
+ *  table does:
+ *    - acceptedOverride → exact lookup against the destination family's logic
+ *      table (returns the actual rule.weight, 0 if not a rule attribute).
+ *    - L3 family with no override → default 7 (medium-high; most unmapped
+ *      params currently in triage end up mapping to matching-relevant attrs).
+ *    - L2-only / no family → 2 (display-only weight). */
+function estimateUnmappedParamWeight(row: TriageRowForRollup): number {
+  const family = row.dominantFamily;
+  const accepted = row.acceptedOverride;
+  if (accepted && family) {
+    if (accepted.attributeId.startsWith('_')) return 0;
+    const table = getLogicTable(family);
+    return table?.rules.find((r) => r.attributeId === accepted.attributeId)?.weight ?? 0;
+  }
+  if (family && getLogicTable(family)) return 7;
+  return 2;
+}
+
 async function computeStats(): Promise<object> {
   const supabase = await createClient();
 
-  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }] = await Promise.all([
+  // The triage cache may be cold (returns null). When that happens we still
+  // render the manufacturers list without the improvement column — the column
+  // shows "—" rather than blocking the whole page on a multi-second compute.
+  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }, triageResult] = await Promise.all([
     supabase
       .from('atlas_manufacturers')
       .select('name_display, name_en, name_zh, aliases, slug, id, enabled, website_url, updated_at')
       .order('name_en'),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
+    readCachedTriageData(false).catch(() => null),
   ]);
   const statsRows = rpcResult.data as StatsRow[] | null;
   const statsErr = rpcResult.error;
@@ -103,7 +155,15 @@ async function computeStats(): Promise<object> {
   const allFamilies = new Set<string>();
 
   const familyRuleAttrs = new Map<string, Set<string>>();
-  const mfrCoverage = new Map<string, { totalCovered: number; totalRules: number }>();
+  // weightedTotalRules accumulates Σ (Σ rule.weight in family × productCount)
+  // for every (MFR, family) bucket. It's the denominator for improvement
+  // potential — independent of coverage % so we don't change the existing
+  // count-based coverage metric users are already calibrated to.
+  const mfrCoverage = new Map<string, {
+    totalCovered: number;
+    totalRules: number;
+    weightedTotalRules: number;
+  }>();
 
   let totalProducts = 0;
   let totalScorable = 0;
@@ -126,25 +186,64 @@ async function computeStats(): Promise<object> {
       agg.families.add(row.family_id);
       allFamilies.add(row.family_id);
 
-      if (row.param_keys && row.param_keys.length > 0) {
-        if (!familyRuleAttrs.has(row.family_id)) {
-          const table = getLogicTable(row.family_id);
-          if (table) {
-            familyRuleAttrs.set(row.family_id, new Set(table.rules.map(r => r.attributeId)));
-          }
+      if (!familyRuleAttrs.has(row.family_id)) {
+        const table = getLogicTable(row.family_id);
+        if (table) {
+          familyRuleAttrs.set(row.family_id, new Set(table.rules.map(r => r.attributeId)));
         }
-        const ruleAttrs = familyRuleAttrs.get(row.family_id);
-        if (ruleAttrs && ruleAttrs.size > 0) {
-          let covered = 0;
+      }
+      const ruleAttrs = familyRuleAttrs.get(row.family_id);
+      if (ruleAttrs && ruleAttrs.size > 0) {
+        let covered = 0;
+        if (row.param_keys && row.param_keys.length > 0) {
           for (const key of row.param_keys) {
             if (ruleAttrs.has(key)) covered++;
           }
-
-          let mc = mfrCoverage.get(row.manufacturer);
-          if (!mc) { mc = { totalCovered: 0, totalRules: 0 }; mfrCoverage.set(row.manufacturer, mc); }
-          mc.totalCovered += covered * count;
-          mc.totalRules += ruleAttrs.size * count;
         }
+
+        let mc = mfrCoverage.get(row.manufacturer);
+        if (!mc) {
+          mc = { totalCovered: 0, totalRules: 0, weightedTotalRules: 0 };
+          mfrCoverage.set(row.manufacturer, mc);
+        }
+        mc.totalCovered += covered * count;
+        mc.totalRules += ruleAttrs.size * count;
+        // Weighted denominator: every product in this (MFR, family) bucket
+        // contributes the family's full Σ rule-weight to the matching budget.
+        mc.weightedTotalRules += getFamilyWeightSum(row.family_id) * count;
+      }
+    }
+  }
+
+  // ── Per-MFR weighted improvement potential ─────────────────────────────
+  // Re-invert the triage queue's affectedManufacturers index: for each
+  // unmapped paramName, distribute (perMfrProductCount × estimatedWeight) to
+  // each affected MFR. Rows the engineer has marked "unmappable" are skipped
+  // (they explicitly cannot contribute to improvement); rows accepted with an
+  // attributeId that doesn't resolve to a family rule contribute weight 0.
+  //
+  // Keyed by MFR display name (matches affectedManufacturers[i].name and the
+  // statsRow.manufacturer keys above). When the result loop folds across MFR
+  // aliases, it sums across every variant.
+  const mfrWeightedImpact = new Map<string, { addressableSlots: number; unmappedParams: number }>();
+  if (triageResult?.data?.classified) {
+    const rows = triageResult.data.classified as TriageRowForRollup[];
+    for (const r of rows) {
+      if (r.noteStatus === 'unmappable') continue;
+      const weight = estimateUnmappedParamWeight(r);
+      if (weight <= 0) continue;
+      const affected = r.affectedManufacturers ?? [];
+      if (affected.length === 0) continue;
+      for (const m of affected) {
+        const mfrName = m.name;
+        if (!mfrName) continue;
+        let bucket = mfrWeightedImpact.get(mfrName);
+        if (!bucket) {
+          bucket = { addressableSlots: 0, unmappedParams: 0 };
+          mfrWeightedImpact.set(mfrName, bucket);
+        }
+        bucket.addressableSlots += (m.productCount ?? 0) * weight;
+        bucket.unmappedParams += 1;
       }
     }
   }
@@ -163,6 +262,9 @@ async function computeStats(): Promise<object> {
     let lastProductUpdate: string | null = null;
     let totalCovered = 0;
     let totalRules = 0;
+    let weightedTotalRules = 0;
+    let addressableSlots = 0;
+    let unmappedParams = 0;
     for (const v of variants) {
       const agg = productAgg.get(v);
       if (agg) {
@@ -175,10 +277,31 @@ async function computeStats(): Promise<object> {
       if (cov) {
         totalCovered += cov.totalCovered;
         totalRules += cov.totalRules;
+        weightedTotalRules += cov.weightedTotalRules;
+      }
+      const impact = mfrWeightedImpact.get(v);
+      if (impact) {
+        addressableSlots += impact.addressableSlots;
+        unmappedParams += impact.unmappedParams;
       }
     }
 
     const xrefTs = crossRefLastUpload.get(m.slug) ?? null;
+    // Improvement potential = % of the weighted matching budget this MFR
+    // would unlock if every currently-unmapped param affecting its products
+    // were mapped. Null when the triage cache was cold (UI renders "—") OR
+    // when this MFR has no scorable products (no denominator). Capped at
+    // 100 so an over-estimate from the default-weight heuristic can't claim
+    // physically-impossible improvement.
+    const triageAvailable = !!triageResult?.data?.classified;
+    let improvementPotentialPpt: number | null = null;
+    if (triageAvailable && weightedTotalRules > 0) {
+      const raw = (addressableSlots / weightedTotalRules) * 100;
+      improvementPotentialPpt = Math.min(100, Math.round(raw * 10) / 10);
+    } else if (triageAvailable) {
+      improvementPotentialPpt = 0;
+    }
+
     return {
       id: m.id,
       slug: m.slug,
@@ -191,6 +314,10 @@ async function computeStats(): Promise<object> {
       scorableCount,
       families: [...families].sort(),
       coveragePct: totalRules > 0 ? Math.round((totalCovered / totalRules) * 100) : 0,
+      improvementPotentialPpt,
+      improvementPotentialDetail: triageAvailable
+        ? { unmappedParams, addressableSlots }
+        : null,
       crossRefCount: crossRefCounts.get(m.slug) || 0,
       lastProductUpdate,
       lastProfileUpdate: m.updated_at,

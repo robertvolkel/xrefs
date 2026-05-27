@@ -36,48 +36,97 @@ interface MessageBubbleProps {
    *  + recommendations + selected source part. Empty/unset = no linkification. */
   knownMpns?: Set<string>;
   onMpnClick?: (mpn: string) => void;
+  /** Atlas-MFR names to surface as clickable links → opens the side profile
+   *  panel via the same callback used by recommendation-card MFR clicks. */
+  knownAtlasManufacturers?: ReadonlySet<string>;
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Walk markdown text-bearing children and replace any known-MPN substring
- *  with a clickable span. Non-string children (nested elements) pass through
- *  untouched, so markdown links / code / etc. survive. */
+interface LinkifyPattern {
+  regex: RegExp;
+  mpnGroup: number | null;
+  mfrGroup: number | null;
+}
+
+/** Build a single combined regex with capture groups for MPNs + Atlas MFRs.
+ *  One linear scan keeps document order and prevents one pass wrapping a span
+ *  the other pass already wrapped. Longest-first inside each alternation so a
+ *  longer name that contains a shorter one wins. */
+function buildLinkPattern(
+  knownMpns: Set<string> | undefined,
+  knownMfrs: ReadonlySet<string> | undefined,
+): LinkifyPattern | null {
+  const mpnNames = knownMpns && knownMpns.size > 0
+    ? [...knownMpns].sort((a, b) => b.length - a.length)
+    : [];
+  const mfrNames = knownMfrs && knownMfrs.size > 0
+    ? [...knownMfrs].sort((a, b) => b.length - a.length)
+    : [];
+  if (mpnNames.length === 0 && mfrNames.length === 0) return null;
+
+  const parts: string[] = [];
+  let mpnGroup: number | null = null;
+  let mfrGroup: number | null = null;
+  let nextGroup = 1;
+  if (mpnNames.length > 0) {
+    mpnGroup = nextGroup++;
+    parts.push(`\\b(${mpnNames.map(escapeRegex).join('|')})\\b`);
+  }
+  if (mfrNames.length > 0) {
+    mfrGroup = nextGroup++;
+    parts.push(`\\b(${mfrNames.map(escapeRegex).join('|')})\\b`);
+  }
+  return { regex: new RegExp(parts.join('|'), 'gi'), mpnGroup, mfrGroup };
+}
+
+/** Walk markdown text-bearing children and replace any known MPN or MFR
+ *  substring with a clickable span. Non-string children (nested elements) pass
+ *  through untouched, so markdown links / code / etc. survive. */
 function linkifyChildren(
   children: React.ReactNode,
   knownMpns: Set<string> | undefined,
-  onClick: ((mpn: string) => void) | undefined,
-  pattern: RegExp | null,
+  onMpnClick: ((mpn: string) => void) | undefined,
+  knownMfrs: ReadonlySet<string> | undefined,
+  onMfrClick: ((mfr: string) => void) | undefined,
+  pattern: LinkifyPattern | null,
 ): React.ReactNode {
-  if (!pattern || !knownMpns || knownMpns.size === 0 || !onClick) return children;
+  if (!pattern) return children;
   const transform = (child: React.ReactNode, idx: number): React.ReactNode => {
     if (typeof child !== 'string') return child;
     const parts: React.ReactNode[] = [];
     let lastIdx = 0;
     let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(child)) !== null) {
-      const mpn = match[0];
-      // Confirm canonical case-preserved MPN is in the known set (the regex
-      // already enforces this, but a Set lookup is the source of truth).
-      const canonical = [...knownMpns].find(m => m.toLowerCase() === mpn.toLowerCase()) ?? mpn;
+    pattern.regex.lastIndex = 0;
+    while ((match = pattern.regex.exec(child)) !== null) {
+      const matched = match[0];
+      const isMpn = pattern.mpnGroup !== null && match[pattern.mpnGroup] !== undefined;
+      const isMfr = pattern.mfrGroup !== null && match[pattern.mfrGroup] !== undefined;
+      const click = isMpn ? onMpnClick : isMfr ? onMfrClick : undefined;
+      const knownSet: Iterable<string> | undefined = isMpn ? knownMpns : isMfr ? knownMfrs : undefined;
+      if (!click || !knownSet) {
+        lastIdx = match.index + matched.length;
+        continue;
+      }
+      const canonical = [...knownSet].find(m => m.toLowerCase() === matched.toLowerCase()) ?? matched;
       if (match.index > lastIdx) parts.push(child.slice(lastIdx, match.index));
       parts.push(
         <Box
           component="span"
           key={`${idx}-${match.index}-${canonical}`}
-          onClick={() => onClick(canonical)}
+          onClick={() => click(canonical)}
           sx={{
             color: 'primary.main',
             cursor: 'pointer',
-            fontFamily: '"Roboto Mono", monospace',
+            ...(isMpn ? { fontFamily: '"Roboto Mono", monospace' } : null),
             '&:hover': { textDecoration: 'underline' },
           }}
         >
-          {mpn}
+          {matched}
         </Box>
       );
-      lastIdx = match.index + mpn.length;
+      lastIdx = match.index + matched.length;
     }
     if (lastIdx === 0) return child;
     if (lastIdx < child.length) parts.push(child.slice(lastIdx));
@@ -105,25 +154,26 @@ export default function MessageBubble({
   sourceManufacturer,
   knownMpns,
   onMpnClick,
+  knownAtlasManufacturers,
+  onManufacturerClick,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
 
-  // Compile the regex once per known-MPN-set change. Sort longest first so
-  // a longer MPN that contains a shorter one wins. Word-boundary anchors keep
-  // matches conservative and avoid biting into surrounding tokens.
-  const mpnPattern = useMemo(() => {
-    if (!knownMpns || knownMpns.size === 0) return null;
-    const sorted = [...knownMpns].sort((a, b) => b.length - a.length);
-    return new RegExp(`\\b(?:${sorted.map(escapeRegex).join('|')})\\b`, 'gi');
-  }, [knownMpns]);
+  // Single combined MPN+MFR pattern. Recompiled only when either set changes.
+  const linkPattern = useMemo(
+    () => buildLinkPattern(knownMpns, knownAtlasManufacturers),
+    [knownMpns, knownAtlasManufacturers],
+  );
 
   // Don't linkify the user's own messages — only the assistant might mention
-  // MPNs we want to surface as clickable. Avoids re-coloring an MPN the user
-  // just typed back into the input.
+  // identifiers we want to surface as clickable. Avoids re-coloring an MPN /
+  // MFR the user just typed back into the input.
   const shouldLinkify = !isUser;
   const linkify = (children: React.ReactNode) =>
-    shouldLinkify ? linkifyChildren(children, knownMpns, onMpnClick, mpnPattern) : children;
+    shouldLinkify
+      ? linkifyChildren(children, knownMpns, onMpnClick, knownAtlasManufacturers, onManufacturerClick, linkPattern)
+      : children;
 
   return (
     <Box sx={{ display: 'flex', gap: { xs: 1, sm: 1.5 }, mb: 2.5, alignItems: 'flex-start' }}>

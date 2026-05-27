@@ -46,6 +46,12 @@ interface MfrListItem {
   scorableCount: number;
   families: string[];
   coveragePct: number;
+  // Weighted uplift to matching coverage if every currently-unmapped param
+  // affecting this MFR's products were mapped. Null when the triage cache
+  // was cold at compute time (UI renders "—" so the engineer knows the
+  // signal hasn't loaded yet, not that the MFR is fully mapped).
+  improvementPotentialPpt: number | null;
+  improvementPotentialDetail: { unmappedParams: number; addressableSlots: number } | null;
   crossRefCount: number;
   lastProductUpdate: string | null;
   lastProfileUpdate: string | null;
@@ -67,7 +73,7 @@ interface MfrListData {
   };
 }
 
-type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'crossRefCount' | 'families' | 'lastModified';
+type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'improvementPotentialPpt' | 'crossRefCount' | 'families' | 'lastModified';
 type SortDir = 'asc' | 'desc';
 
 export default function ManufacturersPanel() {
@@ -289,6 +295,19 @@ export default function ManufacturersPanel() {
         case 'productCount': return dir * (a.productCount - b.productCount);
         case 'scorableCount': return dir * (a.scorableCount - b.scorableCount);
         case 'coveragePct': return dir * (a.coveragePct - b.coveragePct);
+        case 'improvementPotentialPpt': {
+          // Sort order on DESC: real values > 0 first (engineer's queue),
+          // then real zeros (in queue but fully mapped), then non-scorable
+          // and cache-cold MFRs (which render "—" — least informative).
+          // Use widely-spaced sentinels so equal-zero MFRs stay grouped
+          // together and don't accidentally tie-break against "—".
+          const score = (m: MfrListItem): number => {
+            if (m.scorableCount === 0) return -2;
+            if (m.improvementPotentialPpt === null || m.improvementPotentialPpt === undefined) return -1;
+            return m.improvementPotentialPpt;
+          };
+          return dir * (score(a) - score(b));
+        }
         case 'crossRefCount': return dir * (a.crossRefCount - b.crossRefCount);
         case 'families': return dir * (a.families.length - b.families.length);
         case 'lastModified': {
@@ -482,6 +501,20 @@ export default function ManufacturersPanel() {
                             {t('admin.atlasCoverageCol')}
                           </TableSortLabel>
                         </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'improvementPotentialPpt' ? sortDir : false}>
+                          <Tooltip
+                            arrow
+                            title="Weighted uplift to matching coverage if every currently-unmapped param affecting this MFR's products were mapped. Heavier rules (blocking gates) count more than display-only rules. Sort DESC to find the highest-leverage MFRs for your engineer to work on next."
+                          >
+                            <TableSortLabel
+                              active={sortKey === 'improvementPotentialPpt'}
+                              direction={sortKey === 'improvementPotentialPpt' ? sortDir : 'desc'}
+                              onClick={() => handleSort('improvementPotentialPpt')}
+                            >
+                              Improvement Potential
+                            </TableSortLabel>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell align="right" sortDirection={sortKey === 'crossRefCount' ? sortDir : false}>
                           <TableSortLabel active={sortKey === 'crossRefCount'} direction={sortKey === 'crossRefCount' ? sortDir : 'desc'} onClick={() => handleSort('crossRefCount')}>
                             MFR Crosses
@@ -563,6 +596,53 @@ export default function ManufacturersPanel() {
                             </Box>
                           </TableCell>
                           <TableCell align="right">
+                            {(() => {
+                              const ppt = mfr.improvementPotentialPpt;
+                              // No scorable products \u2192 no matching budget, so
+                              // improvement potential is meaningless. Show "\u2014"
+                              // with explanation instead of "0.0 ppt" which
+                              // would conflate "nothing to fix" with "nothing
+                              // to fix BECAUSE nothing exists".
+                              if (mfr.scorableCount === 0) {
+                                return (
+                                  <Tooltip arrow title="No scorable products for this manufacturer \u2014 no matching budget to improve.">
+                                    <Typography variant="body2" sx={{ opacity: 0.3 }}>{'\u2014'}</Typography>
+                                  </Tooltip>
+                                );
+                              }
+                              if (ppt === null || ppt === undefined) {
+                                return (
+                                  <Tooltip arrow title="Improvement potential is still loading \u2014 refresh in a few seconds to see this manufacturer's uplift estimate.">
+                                    <Typography variant="body2" sx={{ opacity: 0.3 }}>{'\u2014'}</Typography>
+                                  </Tooltip>
+                                );
+                              }
+                              // Tier-color the chip so the engineer can scan
+                              // the column without sorting: green \u22655 ppt big
+                              // wins, amber 1\u20135 ppt moderate, grey <1 ppt
+                              // essentially fully-mapped.
+                              const color = ppt >= 5 ? '#66BB6A' : ppt >= 1 ? '#FFB74D' : undefined;
+                              const detail = mfr.improvementPotentialDetail;
+                              if (ppt === 0) {
+                                return (
+                                  <Tooltip arrow title="No currently-unmapped params in the Triage queue affect this manufacturer. Either its products are fully mapped, or it hasn't been ingested recently. New uploads will populate this once they appear in the queue.">
+                                    <Typography variant="body2" sx={{ opacity: 0.3 }}>0.0 ppt</Typography>
+                                  </Tooltip>
+                                );
+                              }
+                              const tooltip = detail && detail.unmappedParams > 0
+                                ? `${detail.unmappedParams.toLocaleString()} unmapped params \u00b7 ${detail.addressableSlots.toLocaleString()} weighted product-rule slots addressable`
+                                : 'No unmapped params currently affect this manufacturer.';
+                              return (
+                                <Tooltip arrow title={tooltip}>
+                                  <Typography variant="body2" sx={{ color }}>
+                                    {`+${ppt.toFixed(1)} ppt`}
+                                  </Typography>
+                                </Tooltip>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell align="right">
                             <Typography variant="body2" sx={{ opacity: mfr.crossRefCount > 0 ? 1 : 0.3, color: mfr.crossRefCount > 0 ? '#66BB6A' : undefined }}>
                               {mfr.crossRefCount > 0 ? mfr.crossRefCount.toLocaleString() : '\u2014'}
                             </Typography>
@@ -632,12 +712,12 @@ function ManufacturersPanelSkeleton() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              {['Manufacturer', 'Products', 'Scorable', 'Coverage', 'MFR Crosses', 'Families', 'Last Modified', 'Enabled'].map((col) => (
+              {['Manufacturer', 'Products', 'Scorable', 'Coverage', 'Improvement Potential', 'MFR Crosses', 'Families', 'Last Modified', 'Enabled'].map((col) => (
                 <TableCell
                   key={col}
-                  align={['Products', 'Scorable', 'Coverage', 'MFR Crosses'].includes(col) ? 'right' : col === 'Enabled' ? 'center' : 'left'}
+                  align={['Products', 'Scorable', 'Coverage', 'Improvement Potential', 'MFR Crosses'].includes(col) ? 'right' : col === 'Enabled' ? 'center' : 'left'}
                 >
-                  <Skeleton variant="text" width={col === 'Manufacturer' || col === 'Last Modified' ? 100 : 70} height={18} />
+                  <Skeleton variant="text" width={col === 'Manufacturer' || col === 'Last Modified' || col === 'Improvement Potential' ? 100 : 70} height={18} />
                 </TableCell>
               ))}
             </TableRow>
@@ -652,6 +732,7 @@ function ManufacturersPanelSkeleton() {
                 <TableCell align="right"><Skeleton variant="text" width={50} sx={{ ml: 'auto' }} /></TableCell>
                 <TableCell align="right"><Skeleton variant="text" width={50} sx={{ ml: 'auto' }} /></TableCell>
                 <TableCell align="right"><Skeleton variant="text" width={40} sx={{ ml: 'auto' }} /></TableCell>
+                <TableCell align="right"><Skeleton variant="text" width={60} sx={{ ml: 'auto' }} /></TableCell>
                 <TableCell align="right"><Skeleton variant="text" width={40} sx={{ ml: 'auto' }} /></TableCell>
                 <TableCell>
                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>

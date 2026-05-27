@@ -84,6 +84,7 @@ interface MobileAppLayoutProps {
   onCloseMfrProfile: () => void;
   knownMpns?: Set<string>;
   onMpnClick?: (mpn: string) => void;
+  knownAtlasManufacturers?: ReadonlySet<string>;
 }
 
 export default function MobileAppLayout({
@@ -117,6 +118,7 @@ export default function MobileAppLayout({
   onCloseMfrProfile,
   knownMpns,
   onMpnClick,
+  knownAtlasManufacturers,
 }: MobileAppLayoutProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [badges, setBadges] = useState<Record<number, boolean>>({});
@@ -251,6 +253,8 @@ export default function MobileAppLayout({
             sourceManufacturer={sourceAttributes?.part.manufacturer}
             knownMpns={knownMpns}
             onMpnClick={onMpnClick}
+            knownAtlasManufacturers={knownAtlasManufacturers}
+            onManufacturerClick={onManufacturerClick}
           />
         </Box>
 

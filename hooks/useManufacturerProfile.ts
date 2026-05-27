@@ -13,6 +13,8 @@ interface ManufacturerProfileResult {
   chatManuallyCollapsed: boolean;
   chatCollapsed: boolean;
   mfrOpen: boolean;
+  /** Canonical names of MFRs the user has opened in the panel this session that resolved to Atlas. Used to linkify MFR mentions in chat prose. */
+  atlasNamesQueried: ReadonlySet<string>;
   handleManufacturerClick: (manufacturer: string) => void;
   handleExpandChat: () => void;
   clearManualCollapse: () => void;
@@ -49,6 +51,8 @@ export function useManufacturerProfile(): ManufacturerProfileResult {
   const [mfrSource, setMfrSource] = useState<MfrProfileSource>('unknown');
   const [mfrLoading, setMfrLoading] = useState(false);
   const [chatManuallyCollapsed, setChatManuallyCollapsed] = useState(false);
+  // Canonical names of opened MFRs that resolved to Atlas — drives chat linkification.
+  const [atlasNamesQueried, setAtlasNamesQueried] = useState<ReadonlySet<string>>(() => new Set());
   const requestIdRef = useRef(0);
   // Session-scoped cache: lowercased trimmed MFR name → resolved entry or in-flight Promise.
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
@@ -64,6 +68,10 @@ export function useManufacturerProfile(): ManufacturerProfileResult {
     if (result) {
       setMfrProfile(result.profile);
       setMfrSource(result.source);
+      if (result.source === 'atlas' && result.profile.name) {
+        const canonical = result.profile.name;
+        setAtlasNamesQueried(prev => (prev.has(canonical) ? prev : new Set([...prev, canonical])));
+      }
     } else {
       setMfrSource('unknown');
     }
@@ -129,6 +137,7 @@ export function useManufacturerProfile(): ManufacturerProfileResult {
     chatManuallyCollapsed,
     chatCollapsed,
     mfrOpen,
+    atlasNamesQueried,
     handleManufacturerClick,
     handleExpandChat,
     clearManualCollapse,

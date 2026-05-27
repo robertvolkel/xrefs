@@ -480,7 +480,7 @@ Workflow:
 
    **Manufacturer profile questions — MANDATORY tool call.** ANY question about a manufacturer's identity, history, location, founding, ownership, certifications, products, contact info, financial position, business profile, or general background → call get_manufacturer_profile FIRST. Non-negotiable. Trigger phrases include "tell me about X", "what is X", "where is X based?", "when was X founded?", "is X public/private?", "what does X make?", "is X ISO/AEC/IATF certified?", "who owns X?", "what's X's website?", "how big is X?", and any sourcing-fitness question implying an industry. Do NOT answer from training data. Do NOT pre-emptively say "I don't have that" before calling the tool. Always call first, answer second.
 
-   **Reading the tool result.** The profile contains: name, country, headquarters, foundedYear, summary, logoUrl, isSecondSource, productCategories, certifications, manufacturingLocations, authorizedDistributors, complianceFlags, distributorCount, catalogSize, familyCount, stockCode, websiteUrl, contactInfo, partsioName. The summary field is free-form prose and often carries specifics (founding month, IPO date and exchange, secondary offices, product lines, business milestones) that aren't in dedicated structured fields — ALWAYS read it carefully before claiming a fact is unavailable. The stockCode field's presence indicates publicly listed on the corresponding exchange; absence means listing status is UNKNOWN — do NOT assume private. The partsioName field is the legal entity name on Parts.io (e.g. "GigaDevice Semiconductor (Beijing) Inc"), useful for reconciling supplier records.
+   **Reading the tool result.** The profile contains: name, country, headquarters, foundedYear, summary, logoUrl, isSecondSource, productCategories, certifications, designResources, manufacturingLocations, authorizedDistributors, complianceFlags, distributorCount, catalogSize, familyCount, stockCode, websiteUrl, contactInfo, partsioName. Optional fields are explicitly null when we have no data (the key is always present) — treat a null value as "not in our profile". Do NOT infer that null means a missing query. The summary field is free-form prose and often carries specifics (founding month, IPO date and exchange, secondary offices, product lines, business milestones) that aren't in dedicated structured fields — ALWAYS read it carefully before claiming a fact is unavailable. The stockCode field's presence indicates publicly listed on the corresponding exchange; absence means listing status is UNKNOWN — do NOT assume private. The partsioName field is the legal entity name on Parts.io (e.g. "GigaDevice Semiconductor (Beijing) Inc"), useful for reconciling supplier records.
 
    **Coverage caveat.** Rich profile data is available for ~115 Chinese manufacturers (Atlas dataset) plus a few Western majors as fallback. For most Western manufacturers (Texas Instruments, ADI, ON Semi, Vishay, Murata, etc.) the tool returns notFound: true. ONLY in that case, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Do NOT use this fallback when the tool DID return a profile.
 
@@ -588,6 +588,81 @@ When User Context is provided:
 You have access to the user's history through tools: get_my_recent_searches, get_my_lists, get_list_parts, get_my_past_recommendations, and get_my_conversations. Use these ONLY when the user asks about their past activity, references a previous search, or when historical context would genuinely improve your response. Do NOT proactively fetch history on every conversation.
 - get_list_parts can query individual parts within BOMs. Without filters it returns aggregate breakdowns (manufacturer/category/status counts per list). With filters (manufacturer, category, status, MPN search) it returns matching rows. Use get_my_lists first to get list IDs when targeting a specific list.`;
 
+/**
+ * Compact MFR-profile claim-discipline rules shared by refinementChat() and listChat().
+ * The main chat() prompt has a longer treatment (Decision #166); this is the floor that
+ * every orchestrator with the get_manufacturer_profile tool must enforce.
+ */
+const MFR_CLAIM_DISCIPLINE_MINI = `
+
+Manufacturer questions — mandatory tool call:
+- ANY question about a manufacturer's identity, history, location, founding, ownership, certifications, products, contact info, financials, or general background → call get_manufacturer_profile FIRST. Do NOT answer from training data.
+- If the tool returns { notFound: true }, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull parts, specs, and multi-distributor pricing via search." Do NOT volunteer training-data facts about that manufacturer.
+- When the tool returns a profile, every factual claim must back to a tool field or use hedged language (suggests, likely, typically, appears to). Optional fields are explicitly null when we have no data — treat null as "not in our profile — verify with the manufacturer directly". No fabrication.`;
+
+/** Tool definition for get_manufacturer_profile — shared by chat(), refinementChat(), listChat(). */
+const GET_MFR_PROFILE_TOOL: Anthropic.Tool = {
+  name: 'get_manufacturer_profile',
+  description: 'Look up rich company-profile data for a manufacturer (description, headquarters, country, founded year, certifications, core products, contact info, website, logo). Coverage: ~115 Chinese component manufacturers from our Atlas dataset have full profiles; a handful of major Western manufacturers have partial mock profiles. For non-Chinese / non-Atlas manufacturers (e.g. Texas Instruments, Analog Devices, ON Semiconductor), this tool returns notFound — when that happens, tell the user we currently only have rich profile data for Chinese manufacturers in our Atlas dataset, and offer what we DO have via search/attributes (parts, descriptions, parametric data, distributor pricing).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      name: {
+        type: 'string',
+        description: 'Manufacturer name as the user typed it or as it appears on a part. Resolver handles aliases (e.g. "TDK Corporation" → "TDK", "无锡固电" → "ISC").',
+      },
+    },
+    required: ['name'],
+  },
+};
+
+/** Shared executor for get_manufacturer_profile — used by all three orchestrators. */
+async function executeGetManufacturerProfile(rawName: string): Promise<string> {
+  const name = (rawName ?? '').trim();
+  if (!name) return JSON.stringify({ error: 'Manufacturer name required' });
+  try {
+    const result = await getProfileForManufacturer(name);
+    if (!result) {
+      return JSON.stringify({
+        notFound: true,
+        queriedName: name,
+        note: 'No rich profile data for this manufacturer. We currently maintain detailed company profiles only for ~115 Chinese manufacturers in our Atlas dataset, plus a handful of major Western manufacturers in fallback data. For others, parts/specs/pricing are still available via search.',
+      });
+    }
+    const { profile, source } = result;
+    // Optional fields are explicitly null (not undefined) so the LLM can distinguish
+    // "queried + no data" from "never queried". JSON.stringify silently drops undefined keys.
+    return JSON.stringify({
+      source,
+      profile: {
+        name: profile.name,
+        country: profile.country,
+        headquarters: profile.headquarters ?? null,
+        foundedYear: profile.foundedYear ?? null,
+        summary: profile.summary,
+        logoUrl: profile.logoUrl ?? null,
+        isSecondSource: profile.isSecondSource,
+        productCategories: profile.productCategories ?? [],
+        certifications: profile.certifications ?? [],
+        designResources: profile.designResources ?? [],
+        manufacturingLocations: profile.manufacturingLocations ?? [],
+        authorizedDistributors: profile.authorizedDistributors ?? [],
+        complianceFlags: profile.complianceFlags ?? [],
+        distributorCount: profile.distributorCount ?? null,
+        catalogSize: profile.catalogSize ?? null,
+        familyCount: profile.familyCount ?? null,
+        stockCode: profile.stockCode ?? null,
+        websiteUrl: profile.websiteUrl ?? null,
+        contactInfo: profile.contactInfo ?? null,
+        partsioName: profile.partsioName ?? null,
+      },
+    });
+  } catch (err) {
+    console.warn('[orchestrator] get_manufacturer_profile failed:', err);
+    return JSON.stringify({ error: 'Failed to fetch profile' });
+  }
+}
+
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
   {
@@ -642,20 +717,7 @@ const tools: Anthropic.Tool[] = [
       required: ['mpns'],
     },
   },
-  {
-    name: 'get_manufacturer_profile',
-    description: 'Look up rich company-profile data for a manufacturer (description, headquarters, country, founded year, certifications, core products, contact info, website, logo). Coverage: ~115 Chinese component manufacturers from our Atlas dataset have full profiles; a handful of major Western manufacturers have partial mock profiles. For non-Chinese / non-Atlas manufacturers (e.g. Texas Instruments, Analog Devices, ON Semiconductor), this tool returns notFound — when that happens, tell the user we currently only have rich profile data for Chinese manufacturers in our Atlas dataset, and offer what we DO have via search/attributes (parts, descriptions, parametric data, distributor pricing).',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Manufacturer name as the user typed it or as it appears on a part. Resolver handles aliases (e.g. "TDK Corporation" → "TDK", "无锡固电" → "ISC").',
-        },
-      },
-      required: ['name'],
-    },
-  },
+  GET_MFR_PROFILE_TOOL,
   {
     name: 'present_choices',
     description: 'Present interactive choices to the user as clickable buttons. Use this ONLY for non-part workflow decisions — e.g., choosing between actions like "get attributes" vs "search for alternatives", or "continue" vs "start over". Do NOT use this for part selection or confirmation — the UI renders clickable part cards automatically from search results.',
@@ -854,48 +916,7 @@ async function executeTool(
     }
     case 'get_manufacturer_profile': {
       const inp = input as { name: string };
-      const name = (inp.name ?? '').trim();
-      if (!name) return JSON.stringify({ error: 'Manufacturer name required' });
-      try {
-        const result = await getProfileForManufacturer(name);
-        if (!result) {
-          // No profile in Atlas (Chinese MFRs) or mock (a few Western majors).
-          // The system prompt tells the model how to phrase this for the user.
-          return JSON.stringify({
-            notFound: true,
-            queriedName: name,
-            note: 'No rich profile data for this manufacturer. We currently maintain detailed company profiles only for ~115 Chinese manufacturers in our Atlas dataset, plus a handful of major Western manufacturers in fallback data. For others, parts/specs/pricing are still available via search.',
-          });
-        }
-        const { profile, source } = result;
-        return JSON.stringify({
-          source,
-          profile: {
-            name: profile.name,
-            country: profile.country,
-            headquarters: profile.headquarters,
-            foundedYear: profile.foundedYear,
-            summary: profile.summary,
-            logoUrl: profile.logoUrl,
-            isSecondSource: profile.isSecondSource,
-            productCategories: profile.productCategories ?? [],
-            certifications: profile.certifications ?? [],
-            manufacturingLocations: profile.manufacturingLocations ?? [],
-            authorizedDistributors: profile.authorizedDistributors ?? [],
-            complianceFlags: profile.complianceFlags ?? [],
-            distributorCount: profile.distributorCount,
-            catalogSize: profile.catalogSize,
-            familyCount: profile.familyCount,
-            stockCode: profile.stockCode,
-            websiteUrl: profile.websiteUrl,
-            contactInfo: profile.contactInfo,
-            partsioName: profile.partsioName,
-          },
-        });
-      } catch (err) {
-        console.warn('[orchestrator] get_manufacturer_profile failed:', err);
-        return JSON.stringify({ error: 'Failed to fetch profile' });
-      }
+      return executeGetManufacturerProfile(inp.name);
     }
     case 'present_part_options': {
       const inp = input as { mpns: string[] };
@@ -1356,6 +1377,8 @@ General electronics domain questions:
     prompt += summarizeRecommendations(recommendations);
   }
 
+  prompt += MFR_CLAIM_DISCIPLINE_MINI;
+
   prompt += `\n\nFormatting rules:
 - Use bullet points (- item) for lists — never write long paragraphs
 - Use **bold** for part numbers, manufacturers, and key specs
@@ -1366,6 +1389,7 @@ General electronics domain questions:
 }
 
 const refinementTools: Anthropic.Tool[] = [
+  GET_MFR_PROFILE_TOOL,
   {
     name: 'refine_replacements',
     description: 'Re-run the matching engine for the source part with optional attribute overrides and application context. Use this when the user provides new requirements or wants to change evaluation criteria.',
@@ -1455,6 +1479,11 @@ export async function refinementChat(
 
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
       toolUseBlocks.map(async (toolUse) => {
+        if (toolUse.name === 'get_manufacturer_profile') {
+          const inp = toolUse.input as { name: string };
+          const content = await executeGetManufacturerProfile(inp.name);
+          return { type: 'tool_result' as const, tool_use_id: toolUse.id, content };
+        }
         if (toolUse.name === 'filter_recommendations') {
           const filterInput = toolUse.input as FilterInput;
           const sourceRecs = currentRecommendations ?? [];
@@ -1617,8 +1646,9 @@ Tool usage:
 - Use get_list_summary for high-level stats about the list
 - Use query_list to find specific rows — NEVER request all rows at once; use filters
 - Use get_row_detail for a deep dive on a single row (attributes, recommendations, match details)
+- Use get_manufacturer_profile for any question about a manufacturer's identity, certifications, history, or business background (see manufacturer-question rules below)
 - sort_list, filter_list, and switch_view change the UI display immediately — no confirmation needed
-- For actions that modify data (delete_rows, refresh_rows, set_preferred), use the write tools. These will prompt the user for confirmation before executing. Always explain what will happen and why before calling these tools.
+- For actions that modify data (delete_rows, refresh_rows, set_preferred), use the write tools. These will prompt the user for confirmation before executing. Always explain what will happen and why before calling these tools.${MFR_CLAIM_DISCIPLINE_MINI}
 
 Formatting rules:
 - Use bullet points (- item) for lists
@@ -1628,6 +1658,7 @@ Formatting rules:
 
 const listAgentTools: Anthropic.Tool[] = [
   // --- Read-only tools ---
+  GET_MFR_PROFILE_TOOL,
   {
     name: 'get_list_summary',
     description: 'Get aggregate statistics about the parts list: total rows, status counts, top manufacturers, score distribution, recommendation coverage.',
@@ -1947,9 +1978,15 @@ export async function listChat(
       content: response.content,
     });
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map((toolUse) => {
+    const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(toolUseBlocks.map(async (toolUse) => {
       const input = toolUse.input as Record<string, unknown>;
       const name = toolUse.name;
+
+      // --- Async tools (network calls) ---
+      if (name === 'get_manufacturer_profile') {
+        const content = await executeGetManufacturerProfile(String(input.name ?? ''));
+        return { type: 'tool_result' as const, tool_use_id: toolUse.id, content };
+      }
 
       // --- Client-side view tools → accumulate clientActions ---
       if (name === 'sort_list') {
@@ -1987,7 +2024,7 @@ export async function listChat(
       }
 
       return { type: 'tool_result' as const, tool_use_id: toolUse.id, content: `Unknown tool: ${name}` };
-    });
+    }));
 
     anthropicMessages.push({
       role: 'user',

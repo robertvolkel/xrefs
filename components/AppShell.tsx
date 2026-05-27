@@ -60,6 +60,27 @@ export default function AppShell() {
     return set;
   }, [appState.searchResult, appState.allRecommendations, appState.sourcePart]);
 
+  // Atlas-MFR names the assistant might mention in prose that should auto-link
+  // in chat → opens the side profile panel. Scope is intentionally Atlas-only
+  // (Decision: linkify only the data we have rich profiles for). Sources:
+  // recs flagged mfrOrigin='atlas' (canonical signal per Decision #161),
+  // search/source parts with dataSource='atlas', plus any MFR the user has
+  // already opened this session that resolved to Atlas.
+  const knownAtlasManufacturers = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of appState.allRecommendations ?? []) {
+      if (r.part.mfrOrigin === 'atlas' && r.part.manufacturer) set.add(r.part.manufacturer);
+    }
+    for (const m of appState.searchResult?.matches ?? []) {
+      if (m.dataSource === 'atlas' && m.manufacturer) set.add(m.manufacturer);
+    }
+    if (appState.sourcePart?.dataSource === 'atlas' && appState.sourcePart.manufacturer) {
+      set.add(appState.sourcePart.manufacturer);
+    }
+    for (const name of mfr.atlasNamesQueried) set.add(name);
+    return set;
+  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart, mfr.atlasNamesQueried]);
+
   // Auto-collapse chat only when MFR profile + recs are both visible — that's
   // the 4-panel crowding scenario. With MFR + attrs only (3 panels) chat fits
   // comfortably and shouldn't auto-collapse.
@@ -114,6 +135,7 @@ export default function AppShell() {
         onCloseMfrProfile={mfr.handleExpandChat}
         knownMpns={knownMpns}
         onMpnClick={appState.handleMpnClick}
+        knownAtlasManufacturers={knownAtlasManufacturers}
       />
     );
   }
@@ -167,6 +189,7 @@ export default function AppShell() {
         onClearAllConversations={persistence.handleClearAllConversations}
         knownMpns={knownMpns}
         onMpnClick={appState.handleMpnClick}
+        knownAtlasManufacturers={knownAtlasManufacturers}
       />
       <NewListDialog
         open={newList.newListDialogOpen}

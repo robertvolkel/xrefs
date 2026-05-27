@@ -154,6 +154,8 @@ export interface DesktopLayoutProps {
   // Inline MPN linkification for assistant messages.
   knownMpns?: Set<string>;
   onMpnClick?: (mpn: string) => void;
+  // Atlas-MFR linkification for assistant messages (opens the side profile panel).
+  knownAtlasManufacturers?: ReadonlySet<string>;
 }
 
 export default function DesktopLayout(props: DesktopLayoutProps) {
@@ -172,6 +174,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onToggleHistory, onCloseHistory,
     onSelectConversation, onNewChat, onDeleteConversation, onClearAllConversations,
     knownMpns, onMpnClick,
+    knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
   } = props;
 
@@ -281,6 +284,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               sourceManufacturer={sourceAttributes?.part.manufacturer}
               knownMpns={knownMpns}
               onMpnClick={onMpnClick}
+              knownAtlasManufacturers={knownAtlasManufacturers}
+              onManufacturerClick={onManufacturerClick}
             />
           </Box>
         </Box>

@@ -26,6 +26,9 @@ interface ChatInterfaceProps {
    *  links (search-result cards + recommendations + selected source). */
   knownMpns?: Set<string>;
   onMpnClick?: (mpn: string) => void;
+  /** Atlas-MFR names to render as clickable links → opens side profile panel. */
+  knownAtlasManufacturers?: ReadonlySet<string>;
+  onManufacturerClick?: (manufacturer: string) => void;
 }
 
 export default function ChatInterface({
@@ -46,6 +49,8 @@ export default function ChatInterface({
   sourceManufacturer,
   knownMpns,
   onMpnClick,
+  knownAtlasManufacturers,
+  onManufacturerClick,
 }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isIdle = phase === 'idle';
@@ -142,6 +147,8 @@ export default function ChatInterface({
               sourceManufacturer={sourceManufacturer}
               knownMpns={knownMpns}
               onMpnClick={onMpnClick}
+              knownAtlasManufacturers={knownAtlasManufacturers}
+              onManufacturerClick={onManufacturerClick}
             />
           ))}
           {showSpinner && (
