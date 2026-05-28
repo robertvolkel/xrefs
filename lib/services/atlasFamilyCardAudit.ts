@@ -72,6 +72,17 @@ const MFR_NAME_BLOCKLIST = new Set([
   // second-source clone anchor in C9 (HGSEMI clones) and likely future
   // C1/C4/C8 cards. Collides with minor Chinese MFR "TLC 竞沃".
   'TLC',
+  // TR — UNIVERSAL packaging suffix for Tape-and-Reel (M/TR, /TR, -TR,
+  // etc.) on virtually every SMD IC and discrete. Cards across all IC
+  // families cite this in NAMING / vendor-suffix prose. Collides with
+  // minor Chinese MFR "TR 湖北天瑞" (0 products in C4, near-zero elsewhere).
+  'TR',
+  // SST — SMC's actual TRIAC MPN prefix (SST04K-800SW, SST06A-800BW,
+  // SST138C-600E, etc.) cited in B8 Thyristors card as "SST (SMC)".
+  // Collides with minor Chinese MFR "SST 索斯特" which ships zero
+  // products in any family — yet its registration alone trips the
+  // word-boundary regex on standalone "SST" tokens in prefix prose.
+  'SST',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean
