@@ -83,6 +83,12 @@ const MFR_NAME_BLOCKLIST = new Set([
   // products in any family — yet its registration alone trips the
   // word-boundary regex on standalone "SST" tokens in prefix prose.
   'SST',
+  // HR — Hanrun's actual MPN prefix on family-69 CM chokes (HR01XXXX,
+  // HR110XXX, HR34XXXX, HR630201/501/602/610-XXX). Card 69 cites it as
+  // "Hanrun (HR)". Collides with minor Chinese MFR "HR 灿达" (slug 'hr',
+  // 0 family-69 products) — auditor's alias resolver picks the wrong row
+  // and false-flags the legitimate prefix annotation as a bogus MFR.
+  'HR',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean

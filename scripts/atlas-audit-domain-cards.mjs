@@ -111,6 +111,7 @@ const MFR_NAME_BLOCKLIST = new Set([
   'TLC',        // TI MPN prefix (TLC1543, TLC555); cited as second-source clone anchor on C9 (HGSEMI); collides with MFR "TLC 竞沃"
   'TR',         // universal Tape-and-Reel packaging suffix (M/TR, /TR, -TR) on virtually every SMD IC; collides with MFR "TR 湖北天瑞" (0 C4 products)
   'SST',        // SMC's actual B8 TRIAC MPN prefix (SST04K-800SW, SST138C-600E, etc.); collides with MFR "SST 索斯特" (0 products in any family)
+  'HR',         // Hanrun's actual family-69 CM-choke MPN prefix (HR01XXXX, HR110XXX, HR34XXXX, HR630*-XXX); cited as "Hanrun (HR)" on card 69; collides with MFR "HR 灿达" (slug 'hr', 0 family-69 products)
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,
