@@ -4,6 +4,116 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Admin "disable MFR" toggle writes to wrong table — KPI doesn't reflect disables
+**Status:** Not started
+**Priority:** P2 (silently-broken admin feature; no impact today because no MFRs are disabled)
+**Cost:** ~1-2 hours (decide canonical home + migrate writes/reads + drop the loser)
+**Trigger:** Surfaced May 27, 2026 while debugging the coverage RPC truncation (Decision #206). The admin UI writes enable/disable to `atlas_manufacturer_settings` (Decision #107). The KPI route at [app/api/admin/atlas/route.ts:121–131](../app/api/admin/atlas/route.ts#L121) prefers `atlas_manufacturers.enabled` and only falls back to `atlas_manufacturer_settings` when `atlas_manufacturers` is empty — which it never is (1,018 rows). Net: the toggle has been a no-op for the KPI display since Decision #161 added `atlas_manufacturers`.
+
+**Fix:** pick one canonical home for the enabled flag.
+- **Option A (recommended):** Migrate the toggle UI's PATCH endpoint to write `atlas_manufacturers.enabled` instead of `atlas_manufacturer_settings`. Drop the legacy `atlas_manufacturer_settings` table. One source of truth, no fallback chain.
+- **Option B:** Reverse the route's priority — read settings first, atlas_manufacturers as fallback. Less change but keeps the dual-table confusion.
+
+Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As soon as someone disables their first, they'll see the count not change and file a bug.
+
+**Trigger to flip:** when the first MFR disable is needed for real, OR during a periodic admin-UI audit, OR as part of a broader "canonical-source consolidation" sweep.
+
+## Audit other TABLE-returning RPCs for PostgREST 1000-row cap
+**Status:** Not started
+**Priority:** P3 (preventive; no known caller is currently affected)
+**Cost:** ~30 min (grep + audit)
+**Trigger:** Decision #206 found `get_atlas_coverage_aggregates` was silently truncated by PostgREST's `max-rows=1000` cap once it grew past ~1000 group tuples. The growth, triage, and explorer RPCs already use `RETURNS jsonb` (Decisions #179, #180, #183, #189) and are immune. The coverage RPC was the last holdout, but the codebase may have other table-returning RPCs that haven't crossed the 1000-row threshold yet.
+
+**Build:** `grep -rn "RETURNS TABLE\b" scripts/*.sql` to enumerate. For each, check whether the consuming TS route either (a) paginates explicitly or (b) is bounded to ≤1000 tuples by design. Convert any unprotected aggregator to `RETURNS jsonb` proactively.
+
+**Why deferred:** No known caller affected today; the coverage RPC was the lone surfaced victim. Worth doing as a preventive sweep before the next aggregation RPC silently truncates.
+
+## CT MICRO opto-SCRs misclassified as B8 (~89 products) — pre-existing data drift
+**Status:** Not started
+**Priority:** P3 (data quality, low blast radius)
+**Cost:** ~30 min (re-ingest CT MICRO via standard --report flow)
+**Trigger:** Surfaced May 27, 2026 by Check A of `scripts/atlas-family-signatures-validate.mjs` during the BJT-misclass cleanup session — 89 CT MICRO products (CT3082-4L, CT3053-4L, etc.) sit in B8 (SCR) but their JSON has `c3="Triac, SCR Output Optoisolators"`, which the current `classifyAtlasCategory` routes to E1. The DB classification is stale — likely from an ingest predating the E1 c3-check at [atlasMapper.ts:190](../lib/services/atlasMapper.ts#L190).
+
+**Why deferred:** Not in the 13-MFR BJT-fix scope. The standard re-ingest (`--report` → batch-apply) would correctly flip them to E1 in one pass. The viso signature would also confirm via Check A, but c3 routing alone is sufficient.
+
+**Trigger to flip:** when scoping a CT MICRO-specific re-ingest, or as part of a broader pre-existing-misclass cleanup sweep.
+
+## Triage UI: surface "requires product-context" marker for cooccurrence sigs
+**Status:** Not started
+**Priority:** P3 (UX polish)
+**Cost:** ~1 hour
+**Trigger:** Code review (May 27, 2026) flagged that `detectForeignFamilyWithList` silently skips cooccurrence-required signatures (Ic, fT, Vgs(th), Qg, Vce(sat)) — engineers reviewing Triage rows for those paramNames will never see an auto-flag suggestion even when one would be correct at product level.
+
+**Build:** Add a `coverage: 'partial'` marker to `detectForeignFamilyWithList` results when it skips a cooccurrence-required match. Triage UI renders the matched paramName + a tooltip ("This signature requires product-context evaluation — check the affected products manually"). Or: pass the batch's full unmapped paramName list into the detector and evaluate cooccurrence at batch level.
+
+**Why deferred:** Engineer review is the gate; false negatives at Triage don't cause data corruption, just slightly more manual investigation.
+
+## ~~FAMILY_PARAM_SIGNATURES regex bug — `\b` doesn't match underscore boundaries (B7 BJT misclass cleanup)~~ COMPLETED May 27, 2026
+**Status:** Done — see [Decision #207](DECISIONS.md#decision-207--family_param_signatures-regex-bug-fix--cooccurrence-layer-may-27-2026)
+**Result:** B7 family dropped from 4,317 → 1,302 (~70% reduction, 3,015 misclassified products fixed across 13 MFRs). Cooccurrence layer added for 5 shared-across-families signatures (Ic, fT, Vgs(th), Qg, Vce(sat)). 1,733 tests pass. Validation harness at [scripts/atlas-family-signatures-validate.mjs](../scripts/atlas-family-signatures-validate.mjs). Follow-ups: B7 cohort domain card regen, B6 domain card refresh.
+
+**Priority:** ~~P1~~ (resolved)
+**Cost:** ~3-4 hours (signature audit + co-occurrence design + re-ingest 13 MFRs + spot-check)
+**Trigger:** B7 IGBT domain card audit (May 27, 2026) — card prose honestly noted "many B7 MPNs here (2N3904, 2N3906, 2SA1015, BC807, 13001, 2SC945) are actually BJTs misclassified into this family — flag it when vce_sat/eoff absent and only hFE/Vceo present." Followup parameter-signature scan revealed the scope is far larger than the 6 cited MPN families.
+
+**The bug:** [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) signatures use `\b` (word boundary) in their regex patterns:
+
+```js
+{ pattern: /^b?(vcbo|vceo|vebo)\b/i, target: B6 }
+{ pattern: /^@?ic\b/i,                target: B6 }
+{ pattern: /^hfe\b/i,                 target: B6 }
+{ pattern: /^ft\b/i,                  target: B6 }
+```
+
+In JS regex, `\b` matches between `\w` and non-`\w`. Underscore (`_`) IS a `\w` character, so `\b` does NOT match between `e` and `_`. Result: only the bare forms (`hfe`, `vceo`) match. The real-world Atlas param keys (`hfe_min`, `hfe_max`, `vceo_v`, `bvceo_v`, `v_br_ceo_v`, `vebo_v`, etc.) do NOT match. Signatures effectively never fire on this data.
+
+**Impact at survey time (May 27, 2026):**
+- **2,774 of 4,317 B7 products (~64%) are misclassified BJTs** — carrying hFE/Vceo/Vebo/Vcbo/fT (BJT-only datasheet params) but sitting in B7
+- Only ~244 B7 products carry IGBT-only keys (vces_max=144, eoff=27, igbt_technology=73)
+- B7 family stats, domain card cohort numbers, and matching-engine recommendations are all inflated by the misclassification
+- B6 BJTs is correspondingly under-counted
+
+**Affected MFRs (B7 BJT-misclass count):** KEXIN (970), SWST (863), LRC (484), SALLTECH (128), Slkor (86), Jingheng (86), WAY-ON (49), Prisemi (35), MDD (31), Comchip (18), YANGJIE (13), BORN (6), WPMSEMI (5).
+
+**Cross-contamination check passed:** 0 of 244 legitimate B7 IGBTs (with vces_max/eoff/igbt_technology) carry any BJT-unique key. Schema-level BJT/IGBT distinction is clean in the data — only the classifier signatures fail to enforce it.
+
+**Additional finding — overly broad existing signatures:** Beyond the regex bug, two of the four signatures have a separate false-positive risk:
+- `/^@?ic\b/i → B6`: reasoning says "Ic is BJT-specific — diodes carry If not Ic." But **IGBTs also have Ic** (collector current is a legitimate IGBT spec — see `ic_max` rule in [lib/logicTables/igbts.ts:119](../lib/logicTables/igbts.ts) and `ic nom(a)` / `ic(a) 100℃` / `ica` in B7 dict at [atlasMapper.ts:1126-1129](../lib/services/atlasMapper.ts#L1126)). Broadening this pattern naively would route legitimate IGBTs to B6.
+- `/^ft\b/i → B6`: source code reasoning already acknowledges "high-frequency RF MOSFETs may also spec fT — if a future MOSFET ingest gets misrouted to B6 by this pattern, refine to require a BJT-co-occurring param." The fix here may need to be tied to the co-occurrence work below.
+
+**What this would build:**
+
+1. **Pattern fix** — replace `\b` with `(?:[_\W]|$)` (matches underscore, non-word char, or end-of-string). Catches `hfe_min`, `hfe_max`, `vceo_v`, `bvceo_v`, etc. Still doesn't catch SWST's concatenated forms (`hfehfe`, `hfemax`, `hfeic_ma`) — those would need separate explicit alternation OR a more permissive `/^hfe/i` (with care for false positives).
+2. **Signature scope refinement** — for signatures that aren't strictly target-family-unique (Ic, fT), require co-occurrence of at least one strictly-unique BJT signal (e.g., hFE OR Vebo OR Vcbo). This addresses the existing in-source TODO and prevents IGBT/MOSFET false positives.
+3. **Mirror to scripts/atlas-ingest.mjs** per Decision #176 mirror convention.
+4. **Cross-family validation** — before shipping, query every distinct param key across atlas_products and verify the new patterns only match keys present in B6/B7 (not in B5, C, D, E, F, or passive families).
+5. **Re-ingest the 13 affected MFR source files** via the normal `--report` → batch-approval pipeline (Decision #174). With fixed signatures, batches will correctly stage family_id changes B7 → B6. Engineer approves via admin UI; 30-day snapshot revert available.
+
+**Verification plan before shipping:**
+- Test new patterns against all current param keys across B5/B6/B7 — should NOT match any non-BJT keys
+- Test against the 244 legitimate B7 IGBTs identified — should NOT route any of them to B6
+- Dry-run `--report` on WPMSEMI first (smallest at 5 misclass rows) — verify batch shows correct family_id flip
+- Scale up to all 13 MFRs after WPMSEMI validates
+
+**Why deferred (May 27, 2026):**
+
+- Discovered during a card audit (B7) that's still Approve-able as-is — the card prose honestly describes the misclassification
+- The fix is a multi-step engineering task (signature audit + co-occurrence logic + cross-family validation + 13-MFR re-ingest), not a quick regex tweak
+- Bundling it into a card audit session would have crossed two unrelated concerns and exceeded scope
+- The data is wrong but stable — fixing it is a focused project, not an emergency
+
+**Trigger to flip from defer to ship:** when scoping a multi-MFR data quality sprint OR when a domain card audit for B6 BJTs needs to start (the inflated B7 cohort + under-counted B6 cohort would force this same diagnosis).
+
+**Cross-reference patterns:**
+- Decision #177 (foreign-family auto-flag registry) — this IS that registry; the bug is in the regex patterns it ships with
+- Decision #188 (engineer-driven FAMILY_PARAM_SIGNATURES via DB + one-click reclassify) — the DB-layer add-ons work the same way and may have the same `\b` issue if engineers wrote patterns following the existing examples
+- "Ingest-time Schottky / small-signal diode auto-routing (B1 misclassification cleanup)" entry below — similar shape (MPN-prefix-driven misclassification cleanup) for a different family pair (B1↔B2)
+
+**Files involved:**
+- [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) — fix patterns + add co-occurrence logic
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror per Decision #176
+- 13 source files under `data/atlas/` for re-ingest
+
 ## Domain Card audit: context-aware short-ASCII MFR matcher
 **Status:** Not started
 **Priority:** P3 (quality of life)
@@ -37,6 +147,16 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 **Trigger:** Decision #204 C7 dict cleanup remapped all 4 ESD entries (including `esd hbm(kv)`) to `esd_bus_pins`. HBM (Human Body Model) is typically a chip-level pin spec, NOT specifically bus-pin. For transceivers the bus-pin rating dominates so it's likely a safe move, but worth verifying a few products post-backfill to confirm no values look wrong (e.g. a 2kV HBM value showing as `esd_bus_pins` when the bus pins are actually rated higher).
 
 **Build:** After running `npm run atlas:backfill`, pick 5 C7 products that have both `esd hbm(kv)` and another bus-pin ESD field in their JSONB, verify the final `esd_bus_pins` value is the bus-pin rating not the HBM value. If wrong, split `esd hbm(kv)` back to `esd_rating` or a new `_esd_hbm_kv` deprioritized canonical.
+
+## Domain Card audit: section-aware Chinese-label verification
+**Status:** Not started
+**Priority:** P3 (quality of life — defer until real catch surfaces)
+**Cost:** ~3-4 hours (survey + regex + implementation + .mjs mirror + UI + tests)
+**Trigger:** May 27, 2026 family 58 review — operator pasted card text after a screenshot misread suggested a hallucinated Chinese term (`漏理电流` instead of dict's `漏泄电流`). Misread, not a real hallucination, but exposes a real gap: cards have explicit `CHINESE LABELS:` / `CHINESE CONVENTIONS:` sections listing Chinese param names that are implicit claims they're in the dict, and the existing FABRICATED_DICT check only fires near explicit `→` / `'identifier'` mapping syntax. Section-listed terms in plain prose are not currently verified.
+
+**Build:** New CHECK 5 `UNVERIFIED_CHINESE_LABELS` in both `lib/services/atlasFamilyCardAudit.ts` + `scripts/atlas-audit-domain-cards.mjs`. Detect known section headers (CHINESE LABELS, CHINESE CONVENTIONS, CHINESE PARAM DICTIONARY, CHINESE TERMS, etc.), extract each Han phrase from the section body, verify each against atlasMapper.ts + accepted overrides + traditional→simplified + slash compounds (reuse existing logic in a new `isChinesePhraseInDict()` helper). Add `unverifiedChineseLabels: UnverifiedChineseLabel[]` field on `CardAuditResult`. WARN-level initially (matches FABRICATED_DICT pattern); promote to BLOCK after validation against existing cards.
+
+**Why deferred:** Section-header detection across cards is more variable than expected (saw 3 different shapes in 20-card review: `CHINESE LABELS:`, `CHINESE CONVENTIONS (use verbatim...):`, `CHINESE — use dictionary verbatim;`). Implementing without first surveying every existing card's text risks shipping a regex that over- or under-extracts. AND no real hallucination of this class has actually been observed across ~20 reviewed cards — the signal is hypothetical. Revisit when (a) a real Chinese-label hallucination surfaces on a future card OR (b) we're already in the audit code for another reason.
 
 
 

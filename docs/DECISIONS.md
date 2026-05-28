@@ -6447,3 +6447,224 @@ Five surgical changes — none of them rewrites; each is a localized hardening t
 3. **`MFR_NAME_BLOCKLIST` is a working idiom for the ambiguous-2-letter-code problem.** Pattern: when a 2-letter MFR name exists AND that 2-letter token has a standard engineering meaning, the blocklist entry is the safe move. The cost — small blind spot if a card legitimately mentions one of those MFRs by name — is acceptable because (a) the MFRs in question are tiny in volume (zero products in most families) and (b) the engineering term usage vastly outweighs the MFR usage in card prose.
 4. **Vendor data quality assumptions belong in the script, not the route handler.** The ON CONFLICT error came back as an opaque 500 in the UI. Defensive normalization in the script (dedup, sanitize, log) catches data issues at the boundary where context is best for both detection and recovery, rather than turning each new vendor quirk into a route-handler firefight.
 5. **sessionStorage is the right scope for "I've acknowledged this warning."** Not localStorage (too permanent — a new operator on the same browser shouldn't inherit the suppression), not in-memory (loses scope across React unmounts). Tab lifetime matches the engineer's review session.
+
+---
+
+## Decision #205 — Atlas Dict-Canonical Drift Repair: C4 Op-Amps Migration to Logic-Table IDs (May 27, 2026)
+
+### Context
+
+C4 (Op-Amps / Comparators / Instrumentation Amplifiers) family domain card audit surfaced that the C4 `atlasParamDictionaries` block in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) was using attributeIds that didn't match the logic-table canonicals in [lib/logicTables/opampComparator.ts](../lib/logicTables/opampComparator.ts):
+
+| atlasMapper C4 dict | Logic-table rule |
+|---|---|
+| `vos` | `input_offset_voltage` |
+| `ibias` | `input_bias_current` |
+| `supply_current` | `iq` |
+
+C4 atlasMapper was the **sole outlier**. Every other data source already used the logic-table IDs:
+- Digikey ([digikeyParamMap.ts:2827](../lib/services/digikeyParamMap.ts))
+- Parts.io ([partsioParamMap.ts:349](../lib/services/partsioParamMap.ts))
+- Atlas gaia datasheet extraction ([atlas-gaia-dicts.json:316](../lib/services/atlas-gaia-dicts.json))
+- C4 context questions ([opampComparator.ts:136](../lib/contextQuestions/opampComparator.ts))
+
+Spot-checked B5/B6/C1/C2 atlasMapper dicts — no equivalent drift. The matching engine has VALUE aliasing (per-rule synonyms) but **no attributeId aliasing**, so atlas-sourced C4 products were silently scoring as "missing data" against the offset/bias/iq rules.
+
+The C4 card itself had a paragraph instructing the Triage AI to "preserve dictionary mapping" — documenting the drift as if it were a feature. It wasn't; it was a coverage bug encoded into the AI's context.
+
+### Investigation findings (load-bearing for the migration plan)
+
+Before migrating, three things were verified to bound the blast radius:
+
+1. **Populations are mostly mutually exclusive.** Of 1,972 C4 products, 248 carry one of the outlier keys, ~2,175 carry logic-table-ID keys (input_offset_voltage 613 + input_bias_current 461 + iq 497 + multi-key overlap). Only **14 products** carry both keys (5 vos/iov, 1 ibias/ibc, 8 sc/iq). Random intersection would predict ~75; the actual count is much smaller because each product's param-name form matched EITHER a static-dict-only key (→ outlier ID) OR an override-covered key (→ logic-table ID), rarely both.
+
+2. **Conflict values mostly AGREE.** Of the 14 dual-key products, 12 show numerically-identical values across the two keys (different units/notation, same magnitude). Only 2 vos cases show real divergence (DIOO DIO2331B / DIO2333B at 2-3× ratios), consistent with **Max vs Typ** semantic differences at different operating points — both values "correct" for different purposes.
+
+3. **Extraction-source values are rare in logic-table-ID keys.** Only 44 of ~2,175 logic-table-ID entries are `source: 'extraction'` (the rest are `source: 'atlas'` — written by override-covered ingests). The merge-on-collision concern (atlas would overwrite extraction on re-ingest after rename) affects fewer than 50 products; sample shows values agree at extraction-vs-atlas boundaries.
+
+Net: low-risk migration. The "preserve dictionary mapping" card instruction was reading the architecture as deliberate when it was just unfinished drift.
+
+### Decision
+
+Migrate the C4 atlasMapper block to use logic-table canonicals. Three coordinated changes:
+
+1. **In-file scoped rename** (atlasMapper.ts + atlas-ingest.mjs C4 blocks only). 26 attributeId references per file. **Critical: scoped to C4 brace boundaries.** `attributeId: 'supply_current'` also appears at line 1948 of atlasMapper.ts in the Sensors L2 block (optical motion sensors) — a naive `replace_all` would have corrupted unrelated data. Used a node script that walks brace depth from the `  C4: {` opener to identify the block, then only edits inside.
+
+2. **Idempotent backfill** via new [scripts/atlas-c4-rename-outlier-attrs.mjs](../scripts/atlas-c4-rename-outlier-attrs.mjs) — walks `atlas_products` C4 rows, renames keys in `parameters` JSONB, preserves `source`/`ingested_at` provenance. **Conflict policy** on the 14 dual-key products: keep the existing logic-table-ID value, drop the outlier — backed by the sample analysis showing values agree in 12/14 cases. Backfill applied: 604 clean renames + 14 conflict-drops = 618 attribute renames across 248 products.
+
+3. **L2 cache invalidation** post-backfill: `triage-queue`, `atlas-coverage`, `manufacturers-list` rows in `admin_stats_cache` deleted (per Decision #198 L2-as-source-of-truth pattern).
+
+Plus opportunistic cleanup of 5 wrong overrides surfaced during the audit pass (sequential bulk-Accept misclicks, same admin user, ~175ms apart in the C1 cluster):
+- **C1**: `噪声 → iout_max`, `待机电流 → iout_max`, `输出极性 → iout_max`. Soft-deleted.
+- **C4**: `工作电压 → channels`, `线性输入范围(mv) → input_offset_voltage`. Soft-deleted.
+
+And 2 blocklist additions to [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) + .mjs mirror:
+- **FTR**: tolerance/packaging letter-code suffix on resistor MPNs (AMF03FTTR001, RAS12FTN1000, MRF6432(2512)LR001FTR). Collides with minor MFR "FTR 乔光电子" (zero products).
+- **TR**: universal Tape-and-Reel packaging suffix (M/TR, /TR, -TR) on virtually every SMD IC. Collides with minor MFR "TR 湖北天瑞" (zero C4 products).
+
+Both will recur on countless future cards; blocklist is the right idiom (Decision #204 lesson #3).
+
+### What this DOES NOT cover (Phase B, deferred)
+
+The C4 `rail_to_rail` single-flag dict entries (`轨到轨`, `轨对轨`, `rail-rail`) all map to one `rail_to_rail` attributeId, but the logic table has TWO separate flags: `rail_to_rail_input` (line 120) + `rail_to_rail_output` (line 128). Values are structured strings ("In/Out", "In, Out", "轨到轨输出", "轨到轨输入", possibly ambiguous "In" or "Out" alone) that need a parser to split into the two booleans. 232 products affected. Deferred because parser edge cases need more design and the Phase A migration isn't blocked.
+
+### Verification
+
+- C4 `atlas_products` carrying outlier IDs after backfill: 0 / 0 / 0 ✓
+- Counts grew consistently: `input_offset_voltage` 613→852 (+239 renames), `input_bias_current` 461→656 (+195 renames), `iq` 497→667 (+170 renames) ✓
+- Sensors `工作电流 → supply_current` mapping at atlasMapper.ts line 1948: untouched ✓
+- Re-audit of C4 card after dict rename + TR blocklist: dropped from BOGUS_MFR-block to advisory-only-warn. Card is Approve-unblocked.
+
+### Files Touched
+
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — C4 block: 26 attributeId rename references (3 unique renames × multiple param-name forms each).
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — byte-for-byte mirror of the C4 rename (mjs-mirror convention).
+- [scripts/atlas-c4-rename-outlier-attrs.mjs](../scripts/atlas-c4-rename-outlier-attrs.mjs) — NEW one-off backfill (dry-run by default, `--apply` to commit). Idempotent. Conflict policy documented in header.
+- [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) — `MFR_NAME_BLOCKLIST` grew by `FTR` + `TR` (on top of Decision #204's TC/BC/RS/CS and subsequent HT/SY/THD/TLC).
+- [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) — mirror of the blocklist additions.
+
+### Lessons
+
+1. **An attributeId rename in atlasMapper is a content-layer schema change, not a cosmetic fix.** The matching engine has no aliasing layer; renaming the dict without backfilling existing `atlas_products` would silently break scoring for hundreds of products. Always pair dict renames with a backfill script. Don't assume "the next re-ingest will fix it" — re-ingest is operator-triggered and selective.
+
+2. **Verify `mergeAtlasParameters` semantics before assuming intent.** The actual code at [atlasMapper.ts:2699](../lib/services/atlasMapper.ts) keeps extraction entries IN STEP 1, then OVERWRITES with new atlas in STEP 2. Net behavior on key collision: **atlas wins**. The C4 outlier dict's key separation (vos vs input_offset_voltage) was inadvertently working around this — atlas wrote `vos`, extraction wrote `input_offset_voltage`, they coexisted because the keys differed. Renaming brings C4 in line with C1/B5/B6 behavior where atlas-overwrites-extraction is already the de facto policy. The sample evidence supports this trade.
+
+3. **The "are you sure?" pushback caught two real engineering errors in the unrelated B6 voltage-trio rewrite.** Draft 1 dropped useful preserved content. Draft 2 made a false physics claim ("Vceo passing implies Vcbo passing" — true for a single transistor, NOT across different transistors). Draft 3 used the wrong mechanism ("base is driven" — irrelevant; the actual reason Vcbo doesn't bind is "emitter is connected in three-terminal use"). User verification ratchets quality the prompt alone can't deliver.
+
+4. **Cross-family scope check is mandatory for `replace_all`-style schema renames.** `attributeId: 'supply_current'` appeared safe at first scan, but the Sensors L2 block uses the same attributeId for optical motion sensors. Naive global replace would have corrupted unrelated data. Always scope schema renames to the relevant block via explicit brace-boundary detection.
+
+5. **Wrong overrides clustered in time + same user + same wrong target = sequential bulk-Accept misclick pattern.** The C1 trio (噪声/待机电流/输出极性 → iout_max) was created within 175ms by the same admin. The C4 pair (工作电压 → channels, 线性输入范围 → input_offset_voltage) is the same shape. UI guard worth considering: confirm dialog when bulk-accepting ≥3 overrides with the same target attributeId in <500ms. Not blocking; just a "did you mean to?" check.
+
+6. **2-letter / 3-letter MFR collisions with engineering codes recur per family.** This session added `FTR` + `TR` to the running list (DC/AC/HC/PTC/NTC/TC/BC/RS/CS/MAX/Fast/Milliohm/TVS/LED/IC/VIBRATION/CTR/HT/SY/THD/TLC/FTR/TR). The pattern: register a MFR in atlas_manufacturers, audit substring-extracts the name, but card prose almost always means the engineering concept. Blocklist remains the right idiom.
+
+## Decision #206 — Atlas Coverage Report: weekly chart + PostgREST 1000-row cap on coverage RPC (May 27, 2026)
+
+### Context
+
+User opened `/atlas` and reported two visual problems with the growth chart, then a deeper data-correctness problem surfaced during the fix:
+
+1. **Y-axis didn't match the KPI.** Cumulative line topped at ~330k while the "Products Cataloged" tile read 184,210. Two different numbers, no explanation on screen.
+2. **X-axis spacing was uneven.** Calendar-time gaps compressed; ingest-busy days fanned out.
+3. **PDF export was missing the chart** entirely (intentional `data-no-print="true"` from an earlier session) and page 1 of the export looked half-empty.
+
+The chart was reading from `events[].partsInserted` and computing its own cumulative from per-batch gross inserts. That number has nothing to do with the live catalog — it's "how much work has the pipeline done over time," monotone-increasing forever even when products get disabled or churned. The route was already computing the right number (`series.cumulativeProducts`, bucketed by `atlas_products.created_at`) and shipping it in the response payload — the chart simply wasn't consuming it.
+
+### Decision
+
+Three coordinated changes plus a load-bearing side-fix.
+
+1. **Chart re-bucketed to ISO weeks, sourced from `series`.** [components/admin/AtlasGrowthChart.tsx](../components/admin/AtlasGrowthChart.tsx) now accepts `series: AtlasGrowthSeriesPoint[]` instead of `events`. Client-side grouping: take the last `cumulativeProducts` value seen in each ISO week (Monday-start), forward-fill weeks with no inserts, derive weekly delta as `cumulative[i] − cumulative[i-1]`. X-axis is a continuous band of week-start dates from the first observed week through today — empty weeks render as zero-height bars with a flat line segment so calendar gaps reflect honest time, not ingest cadence.
+
+2. **Growth RPC filters to enabled MFRs the same way the KPI does.** [scripts/supabase-atlas-growth-rpc.sql](../scripts/supabase-atlas-growth-rpc.sql) — both subqueries `LEFT JOIN LATERAL` against `atlas_manufacturers` on `(name_display = manufacturer OR name_en = manufacturer)`, `WHERE COALESCE(m.enabled, true) = true`. Mirrors [app/api/admin/atlas/route.ts:121–131](../app/api/admin/atlas/route.ts#L121) which prefers `atlas_manufacturers.enabled` (Decision #161) with `atlas_manufacturer_settings` as fallback.
+
+3. **PDF export polish.** [components/admin/AtlasOverviewTab.tsx](../components/admin/AtlasOverviewTab.tsx) — removed `data-no-print="true"` from the chart wrapper, added `@media print` overrides on `.MuiChartsAxis-line / -tick / -tickLabel` and `.MuiChartsLegend-label` so the dark-theme-baked SVG renders readable on white. Forced KPI grid to 4 columns at print width (responsive breakpoint falls to xs at ~720px, the Letter content area). Tightened category-card grid to 5 columns and shrunk page margins from 0.5in → 0.4in. Report compressed from ~10 pages to ~3.
+
+### The load-bearing side-fix: PostgREST max-rows cap on TABLE-returning RPCs
+
+Once the chart was switched to the correct data source, it landed at ~338k while the KPI was still showing 184k. That meant the KPI itself was wrong — and had been for some time. Investigation chain:
+
+- Direct SQL: `SELECT COUNT(*) FROM atlas_products` returned 338,491.
+- Direct SQL: `SELECT SUM(product_count) FROM get_atlas_coverage_aggregates('{}'::jsonb)` also returned 338,491.
+- Cached `admin_stats_cache` row keyed `atlas-coverage`: `totalProducts: 184210`.
+- `SELECT COUNT(*) FROM get_atlas_coverage_aggregates('{}'::jsonb)` returned **1,896**.
+
+The coverage RPC `RETURNS TABLE` (8 columns, one row per `(manufacturer, family_id, category, subcategory)` tuple). PostgREST applies a server-side **`max-rows` cap of 1000** to table-shaped RPC responses on Supabase. The route called the RPC via `supabase.rpc(...)` with no `.range()` chaining and consumed the first 1000 tuples, summing them to 184,210 instead of the true 338,491. A `.range(0, 99999)` retry confirmed the cap is enforced server-side and can't be overridden by client headers.
+
+**Fix:** converted the RPC to `RETURNS jsonb`, wrapping the SELECT in `jsonb_agg(row_to_json(t))`. JSONB is a single scalar value — the row cap doesn't apply. Mirrors the pattern already used by `get_atlas_growth_aggregates` (Decision #183), `get_triage_unmapped_aggregate` (Decision #180), and `get_atlas_coverage_aggregates` was the only aggregation RPC still using TABLE. Route's consumer code (`aggResult.data` as Array) works unchanged because PostgREST already returns the JSONB array as a JS array.
+
+### Impact
+
+After cache invalidation:
+
+| KPI | Before | After |
+|---|---|---|
+| Products Cataloged | 184,210 | 338,491 |
+| Live Manufacturers | 123 | 241 |
+| Chart cumulative right edge | ~330k (wrong source) | 338,491 (matches KPI) |
+
+Both `Products Cataloged` and `Live Manufacturers` had been silently frozen by the same truncation. The "123 live MFRs" number was the count of distinct manufacturer strings appearing in the first 1000 aggregate tuples — coincidentally readable, but wrong.
+
+### Lessons
+
+1. **TABLE-returning RPCs on Supabase carry a silent failure mode.** PostgREST's server-side `max-rows` cap (default 1000) applies to the entire response body, including aggregation RPCs that intend to return all rows. The TS client doesn't error or warn — `data` is just shorter than expected. Once `atlas_products` grew past ~120 MFRs, the cap silently kicked in and the KPI under-reported for weeks. **Default to `RETURNS jsonb` for any aggregation RPC in this codebase.** Decisions #179, #180, #183 all settled on jsonb; the coverage RPC was the holdout and the lesson cost real customer-visible numbers.
+
+2. **When two on-screen numbers disagree, both might be wrong.** The chart was reading the wrong data source (gross inserts); the KPI was reading the right data source but silently truncated. Either alone could have been "the bug." The fix only landed because we kept verifying numbers against `SELECT COUNT(*)` ground truth at each step — neither dashboard number was authoritative.
+
+3. **Mirror the KPI's filter logic exactly when correlating numbers across panels.** The growth RPC initially filtered by `atlas_manufacturer_settings.enabled` (the legacy table). The KPI prefers `atlas_manufacturers.enabled` with settings as fallback. Without matching filters, the chart's cumulative would never agree with the KPI even if both data sources were truthful. The `LEFT JOIN LATERAL (name_display OR name_en) LIMIT 1` pattern mirrors the TS `mfrIdentity` map exactly.
+
+4. **Server-rendered route responses can outlive a cache invalidation by one request.** During debugging the user ran `DELETE FROM admin_stats_cache` and reloaded — but the page had been loaded once between the DELETE and the dev-server restart, which let the OLD route code recompute and re-cache the wrong value. Subsequent refreshes appeared "broken" because they were serving the freshly-rebuilt cache. Resolution: re-DELETE after the dev restart, then reload. Worth remembering when chasing cache-related discrepancies: invalidation is a point-in-time act, and any request that hits the stale code between invalidation and code-deploy will re-poison the cache.
+
+5. **The admin toggle UI is currently a no-op for the KPI.** [Decision #107](#) describes the toggle writing to `atlas_manufacturer_settings`. [Decision #161](#) added `atlas_manufacturers.enabled` and routed the KPI to prefer it. The two were never reconciled — the toggle still writes to settings, but the KPI reads atlas_manufacturers (which is always `enabled = true` because the toggle never writes there). Tracked as a separate Backlog item; not fixed here because no MFRs are currently disabled and the chart change doesn't depend on it. But the divergence is a real bug waiting for the day someone disables their first MFR and watches nothing change in the count.
+
+## Decision #207 — FAMILY_PARAM_SIGNATURES regex bug fix + cooccurrence layer (May 27, 2026)
+
+**Status:** Implemented & deployed to atlas_products
+
+### Problem
+
+The Atlas classifier's `FAMILY_PARAM_SIGNATURES` registry in [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) used `\b` (word boundary) anchors in 9 of 12 signature patterns. JavaScript regex treats `_` as a `\w` character, so `\b` does NOT match between letters and underscores — patterns like `/^hfe\b/i` failed silently on real-world Atlas keys (`hfe_min`, `hfe_max`, `vceo_v`, `bvceo_v`, `vebo_v`, etc.).
+
+Survey (May 27, 2026) found ~64% of the B7 IGBT family (2,774 of 4,317 products) were misclassified BJTs because the signatures never fired on the data shapes our 13 affected MFRs ship.
+
+### Fix
+
+Three interlocking changes:
+
+1. **Regex pattern fix.** Replaced `\b` with `(?![A-Za-z0-9])` negative lookahead across all 9 buggy signatures (B6 vcbo/vceo/vebo, B6 ic, B6 hfe, B6 ft, B5 qg, B7 eon|eoff|ets, B9 idss, E1 ctr, E1 viso). The negative lookahead correctly handles `_`, paren, space, and end-of-string. Already-correct patterns using `[\s_(]*` (B5 rds_on, B5 vgs_th, B7 vce_sat) left as-is.
+
+2. **Cooccurrence layer.** New `requiresAlsoMatching?: RegExp[]` optional field on `ParamSignature`. The reclassifier in `atlasMapper.ts → reclassifyByParameterSignals` checks: signature only fires if at least one OTHER paramName on the same product matches one of the cooccurrence patterns. Applied to **5 signatures** for params shared across families:
+   - **B6 Ic** requires BJT-unique (hfe / vcbo|vceo|vebo) — IGBTs spec Ic too
+   - **B6 fT** requires BJT-unique — RF MOSFETs spec fT too
+   - **B5 Vgs(th)** requires MOSFET-unique (Rds(on)) — IGBTs have voltage-controlled gates too
+   - **B5 Qg/Qgs/Qgd** requires MOSFET-unique (Rds(on)) — IGBTs spec gate charge too
+   - **B7 Vce(sat)** requires IGBT-unique (Vces / Eon|Eoff|Ets) — BJTs spec switching saturation too
+
+   Rds(on) is the only truly MOSFET-unique signal (IGBTs are bipolar conduction, no channel resistance). Tightening MOSFET cooccurrence to just Rds(on) means a MOSFET that ships data with only Vgs(th)/Qg (no Rds(on)) won't auto-reclassify — rare in practice since Rds(on) is virtually always specified.
+
+3. **Triage defensive skip.** `detectForeignFamilyWithList` (the per-paramName entry point used by the Triage UI in [app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts)) cannot evaluate cooccurrence — it only has one paramName. So it defensively skips cooccurrence-required signatures (returns null). Engineers still surface auto-flags for the strictly-unique ones (hfe / vcbo|vceo|vebo / rds_on / eon|eoff|ets / idss / ctr / viso); the cooccurrence-required ones (ic / ft / vgs_th / qg / vce_sat) require manual product-context review. Tracked as a follow-up enhancement in [BACKLOG.md](BACKLOG.md) — batch-level cooccurrence is an option.
+
+### Mirror to scripts/atlas-ingest.mjs (Decision #176 convention)
+
+Both `FAMILY_PARAM_SIGNATURES` (lines 212–245) and `reclassifyByParameterSignals` (lines 247–290) in `scripts/atlas-ingest.mjs` updated to match `lib/services/`. The .mjs script is the production ingest pipeline; it duplicates TS code byte-for-byte per the no-import-path convention. The two `_COOCCURRENCE_PATTERNS` constants (BJT, MOSFET, IGBT) are mirrored.
+
+### Validation harness
+
+New script [scripts/atlas-family-signatures-validate.mjs](../scripts/atlas-family-signatures-validate.mjs) runs three Supabase-backed checks before any production-data action:
+
+- **Check A — Cross-family safety.** Pulls every distinct paramName across atlas_products per family (231,148 rows scanned). Asserts no paramName outside B5/B6/B7/B9/E1 matches any signature. Original implementation had a subtle bug (`NON_DISCRETE_FAMILIES` regex excluded E1 and F-families) — caught by code review and fixed. The corrected check surfaces 89-102 CT MICRO B8 products carrying `viso_rms_v` — pre-existing data drift (c3="Triac, SCR Output Optoisolators" in source JSON should route to E1), not a regression. Documented in [BACKLOG.md](BACKLOG.md) as separate cleanup.
+- **Check B — 244 legitimate B7 IGBTs non-touch.** Simulates the full reclassify pipeline against B7 products carrying `vces_max ∪ eoff ∪ igbt_technology`. Initial run with the BJT-only fix showed 128 CREATEK IGBTs would misroute B7→B5 via vgs_th, then 27 CRMICRO IGBTs via Qg. Each surfaced an additional cooccurrence requirement (above). Final post-fix run: 0 reclassifications.
+- **Check C — B6 dict coverage gaps.** Lists raw paramNames in the 13 affected MFR JSON files that won't translate cleanly to the B6 dict post-reclassification (123 entries). Informational only; engineers add dict entries via the normal Triage workflow.
+
+### Apply outcomes
+
+Staged smoke test on WPMSEMI (smallest, 5 products) verified the exact 5 known BJTs (HFT3837/HFT3838/HFT4083NW/HFT4083PW/HFT4083QW) flipped B7→B6. After confirmation, the remaining 12 MFRs applied via standard admin batch-apply workflow.
+
+**Aggregate impact (DB-wide):**
+- B7 family: 4,317 → 1,302 (~70% reduction, 3,015 misclassified products fixed)
+- B6 family: corresponding growth
+- Per-MFR breakdown (post-apply BJT count in B6): WPMSEMI 5, MDD 31, Prisemi flipped 65 reverse (IGBTs to B7), WAY-ON 66, BORN 85, Slkor 101, Jingheng 120 reverse, SALLTECH 132, Comchip 211, LRC 487, YANGJIE 551 mostly attr-only + 118 reverse, SWST 864, KEXIN 1,115
+
+Several MFRs (Prisemi, Jingheng, YANGJIE) surfaced **reverse-direction fixes** — products misclassified as BJTs (B6) when their source JSON `c3="IGBTs"` clearly identifies them as IGBTs (B7). These are pre-existing data drift fixed by c3 routing alone (not by my new signatures); same shape as the CT MICRO opto-SCR cleanup pattern. Net effect across the 13 MFRs: more accurate classifications in both directions.
+
+### Lessons
+
+- **JS regex `\b` is not the same as a "word boundary that respects identifier syntax".** It matches between `\w` and `\W`, and `_` is `\w`. Use `(?![A-Za-z0-9])` for an identifier-aware trailing boundary OR use `[\s_(]*`-style explicit-character-class idioms.
+- **Shared-across-families parametric signals need cooccurrence guards, not standalone matching.** A param that's "BJT-specific" by intent may actually be shared (Ic is both BJT collector current AND IGBT collector current). Without cooccurrence, signatures that fire on these false-positive across families. Discovered the pattern with Ic/fT (planned); had to extend mid-session to Vgs(th)/Qg (MOSFET-IGBT overlap) and Vce(sat) (BJT-IGBT overlap). The cleaner architectural alternative — `forbidsAlsoMatching` (negative cooccurrence) — was considered and rejected; positive cooccurrence is safer-by-default in an open-world (any unknown param becomes a "not forbidden" signal under negative cooccurrence).
+- **Validation reveals scope; validation guides patches.** The original BACKLOG diagnosis listed only the regex bug + Ic/fT guards. Three additional guards (vgs_th, Qg, vce_sat) emerged from Check B regression discovery and WPMSEMI dry-run. The validation script is the load-bearing safety net; the code change itself is mechanical once the validation is in place.
+- **Re-ingest fixes more than the targeted change.** Running --report on the 13 MFRs surfaced ~3,015 misclass fixes — well above the BACKLOG-predicted 2,774. The extras come from (a) the reverse-direction IGBT-misclass-in-B6 cases (Prisemi/Jingheng/YANGJIE) and (b) attribute key normalization (dict-canonical IDs). Decision to apply: net data quality improvement, 30-day per-batch revert window, no regressions caught by validation.
+
+### Files
+
+- [lib/services/atlasFamilyParamSignatures.ts](../lib/services/atlasFamilyParamSignatures.ts) — signature registry + cooccurrence constants + Triage detector
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) lines 86–152 — `reclassifyByParameterSignals` with cooccurrence guard in Phase 2 loop
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) lines 212–296 — mirror per Decision #176
+- [scripts/atlas-family-signatures-validate.mjs](../scripts/atlas-family-signatures-validate.mjs) — new validation harness (Checks A/B/C)
+- [__tests__/services/atlasFamilyParamSignatures.test.ts](../__tests__/services/atlasFamilyParamSignatures.test.ts) — new test file (pattern + detector coverage)
+- [__tests__/services/atlasMapper.test.ts](../__tests__/services/atlasMapper.test.ts) — extended with cooccurrence + real-MFR fixture cases (WPMSEMI/SWST/KEXIN/CREATEK/CRMICRO)
+
+### Related
+
+- Decision #175 — Phase 1 of `reclassifyByParameterSignals` (B1 Type-value signals)
+- Decision #176 — Mirror convention for atlas-ingest.mjs
+- Decision #177 — Foreign-family auto-flag registry (the registry this fix audits)
+- Decision #188 — Engineer-driven `atlas_family_param_signatures` DB table (code wins on collision; DB rows untouched by this fix)

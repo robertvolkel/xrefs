@@ -209,24 +209,48 @@ function classifyAtlasCategory(c1, c2, c3) {
 // Phase 2 (foreign-family param-name signatures) is mirrored from
 // lib/services/atlasFamilyParamSignatures.ts → FAMILY_PARAM_SIGNATURES.
 // When you add an entry to that registry, also add the equivalent here.
+//
+// Pattern idiom: use (?![A-Za-z0-9]) for the trailing boundary, NOT \b.
+// JS regex treats `_` as a `\w` character, so \b does NOT match between
+// letters and underscores (e.g. /^hfe\b/i fails on `hfe_min`). The
+// negative lookahead correctly handles `_`, paren, space, end-of-string.
+//
+// requiresAlsoMatching: optional cooccurrence guard for params shared
+// across families (Ic on BJTs + IGBTs; fT on BJTs + RF MOSFETs). The
+// signature only fires when at least one OTHER paramName on the same
+// product matches one of these patterns.
+const BJT_UNIQUE_COOCCURRENCE_PATTERNS = [
+  /^hfe(?![A-Za-z0-9])/i,
+  /^b?(?:vcbo|vceo|vebo)(?![A-Za-z0-9])/i,
+];
+
+const MOSFET_UNIQUE_COOCCURRENCE_PATTERNS = [
+  /^rds[\s_(]*on/i,
+];
+
+const IGBT_UNIQUE_COOCCURRENCE_PATTERNS = [
+  /^vces(?![A-Za-z0-9])/i,
+  /^(?:eon|eoff|ets)(?![A-Za-z0-9])/i,
+];
+
 const FAMILY_PARAM_SIGNATURES = [
   // ─── B6 BJTs ───
-  { pattern: /^b?(vcbo|vceo|vebo)\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
-  { pattern: /^@?ic\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
-  { pattern: /^hfe\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
-  { pattern: /^ft\b/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^b?(?:vcbo|vceo|vebo)(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^@?ic(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' }, requiresAlsoMatching: BJT_UNIQUE_COOCCURRENCE_PATTERNS },
+  { pattern: /^hfe(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' } },
+  { pattern: /^ft(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'BJT', familyId: 'B6' }, requiresAlsoMatching: BJT_UNIQUE_COOCCURRENCE_PATTERNS },
   // ─── B5 MOSFETs ───
   { pattern: /^rds[\s_(]*on/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
-  { pattern: /^vgs[\s_(]*(th|threshold)/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
-  { pattern: /^q(g|gs|gd)\b/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' } },
+  { pattern: /^vgs[\s_(]*(th|threshold)/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' }, requiresAlsoMatching: MOSFET_UNIQUE_COOCCURRENCE_PATTERNS },
+  { pattern: /^q(?:g|gs|gd)(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'MOSFET', familyId: 'B5' }, requiresAlsoMatching: MOSFET_UNIQUE_COOCCURRENCE_PATTERNS },
   // ─── B7 IGBTs ───
-  { pattern: /^vce[\s_(]*sat/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' } },
-  { pattern: /^(eon|eoff|ets)\b/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' } },
+  { pattern: /^vce[\s_(]*sat/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' }, requiresAlsoMatching: IGBT_UNIQUE_COOCCURRENCE_PATTERNS },
+  { pattern: /^(?:eon|eoff|ets)(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'IGBT', familyId: 'B7' } },
   // ─── B9 JFETs ───
-  { pattern: /^idss\b/i, target: { category: 'Transistors', subcategory: 'JFET', familyId: 'B9' } },
+  { pattern: /^idss(?![A-Za-z0-9])/i, target: { category: 'Transistors', subcategory: 'JFET', familyId: 'B9' } },
   // ─── E1 Optocouplers ───
-  { pattern: /^ctr\b/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
-  { pattern: /^viso\b/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
+  { pattern: /^ctr(?![A-Za-z0-9])/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
+  { pattern: /^viso(?![A-Za-z0-9])/i, target: { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' } },
 ];
 
 function reclassifyByParameterSignals(initial, parameters) {
@@ -254,13 +278,20 @@ function reclassifyByParameterSignals(initial, parameters) {
   for (const sig of FAMILY_PARAM_SIGNATURES) {
     if (sig.target.familyId === initial.familyId) continue;
     const hit = parameters.some((p) => sig.pattern.test((p.name || '').trim()));
-    if (hit) {
-      return {
-        category: sig.target.category,
-        subcategory: sig.target.subcategory,
-        familyId: sig.target.familyId,
-      };
+    if (!hit) continue;
+    // Cooccurrence guard for shared-across-families signatures.
+    if (sig.requiresAlsoMatching?.length) {
+      const coHit = parameters.some((p) => {
+        const pname = (p.name || '').trim();
+        return sig.requiresAlsoMatching.some((coPat) => coPat.test(pname));
+      });
+      if (!coHit) continue;
     }
+    return {
+      category: sig.target.category,
+      subcategory: sig.target.subcategory,
+      familyId: sig.target.familyId,
+    };
   }
 
   return initial;
@@ -1331,21 +1362,21 @@ const FAMILY_PARAMS = {
     'slew rate(v/μs)': { attributeId: 'slew_rate', attributeName: 'Slew Rate', unit: 'V/us', sortOrder: 6 },
     'slew rate(v/μs)(typ.)': { attributeId: 'slew_rate', attributeName: 'Slew Rate', unit: 'V/us', sortOrder: 6 },
     '压摆率 (典型值)(v/us)': { attributeId: 'slew_rate', attributeName: 'Slew Rate', unit: 'V/us', sortOrder: 6 },
-    'vos(max)(mv)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
-    'vos(max)(μv)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'uV', sortOrder: 7 },
-    'vos(mv,max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
-    '输入失调电压@25℃ (max)(mv)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
-    '失调电压(mv)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos(max)(mv)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos(max)(μv)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'uV', sortOrder: 7 },
+    'vos(mv,max)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    '输入失调电压@25℃ (max)(mv)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    '失调电压(mv)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
     'vos tc(µv/°c)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'uV/°C', sortOrder: 8 },
     'vos tc(μv/℃)(typ.)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'uV/°C', sortOrder: 8 },
     'vos tc(μv/℃,typ.)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'uV/°C', sortOrder: 8 },
-    'iq(typ.)(per ch)': { attributeId: 'supply_current', attributeName: 'Supply Current', sortOrder: 15 },
-    'iq(typ.)(per ch)(μa)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'uA', sortOrder: 15 },
-    'iq(max.)(per ch)': { attributeId: 'supply_current', attributeName: 'Supply Current', sortOrder: 15 },
-    '每通道静态电流(典型值)(μa)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'uA', sortOrder: 15 },
-    'ibias(pa)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
-    'ib(pa,typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
-    '偏置电流 (±)(典型值)(pa)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
+    'iq(typ.)(per ch)': { attributeId: 'iq', attributeName: 'Supply Current', sortOrder: 15 },
+    'iq(typ.)(per ch)(μa)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'uA', sortOrder: 15 },
+    'iq(max.)(per ch)': { attributeId: 'iq', attributeName: 'Supply Current', sortOrder: 15 },
+    '每通道静态电流(典型值)(μa)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'uA', sortOrder: 15 },
+    'ibias(pa)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
+    'ib(pa,typ.)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
+    '偏置电流 (±)(典型值)(pa)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
     'rail-rail': { attributeId: 'rail_to_rail', attributeName: 'Rail-to-Rail', sortOrder: 17 },
     '轨到轨': { attributeId: 'rail_to_rail', attributeName: 'Rail-to-Rail', sortOrder: 17 },
     '轨对轨': { attributeId: 'rail_to_rail', attributeName: 'Rail-to-Rail', sortOrder: 17 },
@@ -1370,21 +1401,21 @@ const FAMILY_PARAMS = {
     'en@1khz( nv/√hz )': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
     'en@1khz(nv/√hz)': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
     'en@1khz(nv/√hz)(typ.)': { attributeId: '_en', attributeName: 'Voltage Noise @1kHz', unit: 'nV/√Hz', sortOrder: 93 },
-    'vos(max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
-    'vos(mv)(max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
-    'vos  (µv, max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'µV', sortOrder: 7 },
-    'vos  (mv, max)': { attributeId: 'vos', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos(max)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos(mv)(max)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
+    'vos  (µv, max)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'µV', sortOrder: 7 },
+    'vos  (mv, max)': { attributeId: 'input_offset_voltage', attributeName: 'Input Offset Voltage', unit: 'mV', sortOrder: 7 },
     'vos tc  (µv/°c, max)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
     'vos tc  (µv/°c, typ.)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
     'vos tc (µv/°c)': { attributeId: 'vos_drift', attributeName: 'Vos Drift', unit: 'µV/°C', sortOrder: 8 },
     'gbwp': { attributeId: 'gain_bandwidth', attributeName: 'Gain Bandwidth', unit: 'MHz', sortOrder: 5 },
-    'iq(max.)(per ch)(μa)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
-    'iq(typ.)(per ch)(ma)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
-    'iq per channel(μa)(max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
-    'iq(typ.)(1 channel)(ma)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
-    'iq (µa, typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
-    'iq (ma, max)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
-    'iq(μa,typ.)': { attributeId: 'supply_current', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq(max.)(per ch)(μa)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq(typ.)(per ch)(ma)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq per channel(μa)(max)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq(typ.)(1 channel)(ma)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq (µa, typ.)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
+    'iq (ma, max)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'mA', sortOrder: 15 },
+    'iq(μa,typ.)': { attributeId: 'iq', attributeName: 'Supply Current', unit: 'µA', sortOrder: 15 },
     // ICC / total package supply current → display-only satellite (sortOrder 99).
     // Distinct from per-channel 'iq' (logic table primary, µA) and from the
     // existing 'supply_current' canonical (de-facto per-channel use). Same
@@ -1405,9 +1436,9 @@ const FAMILY_PARAMS = {
     '电源电流': { attributeId: '_icc_ma', attributeName: 'Total Supply Current (ICC)', unit: 'mA', sortOrder: 99 },
     'iout(ma)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
     'sink/source current(ma)(typ.)': { attributeId: '_iout', attributeName: 'Output Current', unit: 'mA', sortOrder: 94 },
-    'ib(pa)(typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
-    'ib (µa, typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'µA', sortOrder: 9 },
-    'ib (na, typ.)': { attributeId: 'ibias', attributeName: 'Input Bias Current', unit: 'nA', sortOrder: 9 },
+    'ib(pa)(typ.)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'pA', sortOrder: 9 },
+    'ib (µa, typ.)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'µA', sortOrder: 9 },
+    'ib (na, typ.)': { attributeId: 'input_bias_current', attributeName: 'Input Bias Current', unit: 'nA', sortOrder: 9 },
     'open loop gain(db)(typ.)': { attributeId: '_avol', attributeName: 'Open Loop Gain', unit: 'dB', sortOrder: 95 },
     'cmrr (db, min)': { attributeId: 'cmrr', attributeName: 'CMRR', unit: 'dB', sortOrder: 10 },
     'common mode voltage  (v)': { attributeId: '_vicm', attributeName: 'Common Mode Voltage Range', unit: 'V', sortOrder: 96 },
