@@ -68,6 +68,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import { isValidFamilyId } from '@/lib/services/validFamilyIds';
+import { normalizeParamKey, isFuzzyMatch } from '@/lib/services/paramNameSimilarity';
+import { ClusterPreviewModal } from './ClusterPreviewModal';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
 
@@ -114,20 +116,9 @@ function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'
   return null;
 }
 
-/** Aggressive paramName normalization — strips case + collapses every
- *  non-letter / non-digit run to a single underscore + trim. Mirrors the
- *  server-side helper in the investigate route. Two paramNames that
- *  collapse to the same string are cosmetic duplicates (whitespace /
- *  case / paren-style variants like "T(mm)" / "T (mm)" / "t(mm)").
- *  Uses Unicode property escapes (\p{L} = any letter, \p{N} = any digit)
- *  so CJK characters, Greek (Ω, μ), Cyrillic, etc. are PRESERVED — they
- *  carry meaning and stripping them caused spurious bulk-match collisions
- *  (e.g. "输入侧VCC电压(Max)(V)" and "输出侧VCC电压(Max)(V)" both collapsed
- *  to "vcc_max_v" with the prior ASCII-only regex, which incorrectly
- *  bulk-applied an output-side override to an input-side row). */
-function normalizeParamKey(s: string): string {
-  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
-}
+// `normalizeParamKey` + `isFuzzyMatch` moved to lib/services/paramNameSimilarity.ts
+// so the same helpers can be reused server-side (cluster-suggest) and unit-
+// tested in isolation. See that file's header for the ASCII-only fuzzy gate.
 
 /** Deterministic short UID for a paramName — FNV-1a 32-bit hash printed
  *  as 6 hex chars with a "TR-" prefix. Same input always yields the same
@@ -563,34 +554,75 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // "+N similar" chip to scope the accept to just the primary row.
   const [bulkOptedOut, setBulkOptedOut] = useState<Set<string>>(new Set());
 
+  /** Open paramName for the AI Cluster (Tier 2) preview modal. null = closed.
+   *  Set on "Find Similar (AI)" button click, cleared on modal close. Tier 2
+   *  catches CJK synonyms / semantic equivalents / unit-suffix variants that
+   *  the deterministic Tier 1 (`normalizedMatchesByRow` + the "+N similar"
+   *  chip) is gated against for safety reasons. */
+  const [clusterFocalParam, setClusterFocalParam] = useState<string | null>(null);
+
   /** When set, the right-side AI Investigation drawer is open showing the
    *  cached deepAnalysis for that paramName. Single-instance drawer: clicking
    *  another row's verdict chip swaps the content. Closes via ESC, backdrop
    *  click, or after the engineer commits an action (auto-close). */
   const [drawerParamName, setDrawerParamName] = useState<string | null>(null);
 
-  /** For each row, the OTHER queue rows whose paramName normalizes to the
-   *  same string AND share the same scope AND are still actionable (no
-   *  active override). Accepting any of them with the engineer's chosen
-   *  attributeId/Name/Unit is safe — they're whitespace/case/paren-style
-   *  variants of the same concept ("T(mm)" / "T (mm)" / "t(mm)"). Built
-   *  once per `rows` change; O(N) over the queue. */
+  /** For each row, the OTHER queue rows whose paramName is the same concept
+   *  AND shares the same scope AND is still actionable (no active override).
+   *  Two passes:
+   *   1. Exact-normalized-key clustering — whitespace / case / paren-style
+   *      variants like "T(mm)" / "T (mm)" / "t(mm)" all collapse to one key.
+   *   2. ASCII-only Levenshtein-1 fuzzy fallback — catches single-char typos
+   *      like "propogation_delay" vs "propagation_delay". Gated to ASCII-only
+   *      keys because CJK characters carry too much semantic weight per code
+   *      point ("电压_max" vs "电流_max" is distance 1 but means voltage vs
+   *      current — opposite concepts). The AI cluster-suggest button handles
+   *      CJK synonyms with proper semantic understanding.
+   *  Built once per `rows` change. */
   const normalizedMatchesByRow = useMemo(() => {
-    const groups = new Map<string, GlobalUnmappedParam[]>();
+    // Pass 1: exact-normalized-key groups, scoped to (kind, key).
+    type Group = { normKey: string; list: GlobalUnmappedParam[]; merged?: true };
+    const groupsByScope = new Map<string, Group[]>();
     for (const r of rows) {
       const scope = getOverrideScope(r);
       if (!scope) continue; // unscoped — bulk-accept can't write an override
       if (r.acceptedOverride?.isActive) continue; // already mapped; not actionable
-      const key = `${scope.kind}::${scope.key}::${normalizeParamKey(r.paramName)}`;
-      const list = groups.get(key) ?? [];
-      list.push(r);
-      groups.set(key, list);
+      const scopeKey = `${scope.kind}::${scope.key}`;
+      const normKey = normalizeParamKey(r.paramName);
+      const arr = groupsByScope.get(scopeKey) ?? [];
+      let group = arr.find((g) => g.normKey === normKey);
+      if (!group) {
+        group = { normKey, list: [] };
+        arr.push(group);
+      }
+      group.list.push(r);
+      groupsByScope.set(scopeKey, arr);
+    }
+    // Pass 2: within each scope, merge singleton groups into other groups when
+    // their normalized keys fuzzy-match. Leader-join (not transitive) — first
+    // viable target wins. Merged singletons are flagged and skipped later so
+    // their row doesn't appear as an orphan.
+    for (const arr of groupsByScope.values()) {
+      for (const s of arr) {
+        if (s.list.length !== 1 || s.merged) continue;
+        for (const target of arr) {
+          if (target === s || target.merged) continue;
+          if (isFuzzyMatch(s.normKey, target.normKey)) {
+            target.list.push(...s.list);
+            s.merged = true;
+            break;
+          }
+        }
+      }
     }
     const result: Record<string, GlobalUnmappedParam[]> = {};
-    for (const list of groups.values()) {
-      if (list.length < 2) continue;
-      for (const r of list) {
-        result[r.paramName] = list.filter((x) => x.paramName !== r.paramName);
+    for (const arr of groupsByScope.values()) {
+      for (const group of arr) {
+        if (group.merged) continue;
+        if (group.list.length < 2) continue;
+        for (const r of group.list) {
+          result[r.paramName] = group.list.filter((x) => x.paramName !== r.paramName);
+        }
       }
     }
     return result;
@@ -1531,6 +1563,36 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           })}
           sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-deleteIcon': { fontSize: 12 } }}
         />
+      </Tooltip>
+    );
+  };
+
+  /** Tier 2 trigger — opens the AI Cluster modal for the focal row. Enabled
+   *  iff the row has a usable override mapping (engineer-edited or AI-suggested
+   *  attributeId) AND is in a scope (family or category). Disabled state
+   *  surfaces the reason in the tooltip. */
+  const renderFindSimilarButton = (r: GlobalUnmappedParam) => {
+    const state = states[r.paramName];
+    const hasMapping = !!state?.editedAttributeId?.trim();
+    const scope = getOverrideScope(r);
+    const disabled = !hasMapping || !scope;
+    const disabledReason = !scope
+      ? 'Unscoped row — set a dominantFamily or dominantCategory before clustering.'
+      : !hasMapping
+      ? 'Generate or enter an attributeId mapping first — the modal applies it to selected matches.'
+      : '';
+    return (
+      <Tooltip title={disabled ? disabledReason : 'Use AI to find near-duplicate paramNames in scope (CJK synonyms, semantic equivalents) and bulk-apply this row’s mapping.'}>
+        <span>
+          <IconButton
+            size="small"
+            disabled={disabled}
+            onClick={() => setClusterFocalParam(r.paramName)}
+            sx={{ p: 0.5 }}
+          >
+            <AutoAwesomeIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </span>
       </Tooltip>
     );
   };
@@ -2645,6 +2707,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                             </Tooltip>
                           )}
                           {renderBulkMatchChip(r)}
+                          {renderFindSimilarButton(r)}
                         </Stack>
                       ) : flagged ? (
                         // Confirm + Revert. After Confirm the persisted status
@@ -2703,6 +2766,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                             </span>
                           </Tooltip>
                           {renderBulkMatchChip(r)}
+                          {renderFindSimilarButton(r)}
                           {/* Investigate button. Visible when the row is either
                               unscoped (Accept grayed) or the AI verdict was
                               defer (Accept would be unsafe). Fires the deeper
@@ -2845,6 +2909,89 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               />
             )}
           </DeepAnalysisDrawer>
+        );
+      })()}
+      {/* Tier 2 AI Cluster modal — opens from the "Find Similar (AI)" icon
+          button per row. Single-instance: only one focal can be open at a
+          time. Closes on engineer Cancel or after Accept N completes. */}
+      {(() => {
+        if (!clusterFocalParam) return null;
+        const focal = rows.find((r) => r.paramName === clusterFocalParam);
+        if (!focal) return null;
+        const focalState = states[clusterFocalParam];
+        const attrId = focalState?.editedAttributeId?.trim();
+        if (!attrId) return null;
+        const scope = getOverrideScope(focal);
+        if (!scope) return null;
+        const tier1Names = new Set(
+          (normalizedMatchesByRow[focal.paramName] ?? []).map((m) => m.paramName),
+        );
+        const candidates = rows.filter((r) => {
+          if (r.paramName === focal.paramName) return false;
+          if (r.acceptedOverride?.isActive) return false;
+          if (tier1Names.has(r.paramName)) return false;
+          const s = getOverrideScope(r);
+          if (!s) return false;
+          return s.kind === scope.kind && s.key === scope.key;
+        });
+        const scopeLabel = scope.kind === 'family'
+          ? (getFamilyDisplayName(scope.key)?.full ?? scope.key)
+          : scope.key;
+        const scopeKey = `${scope.kind}::${scope.key}`;
+        const focalAlreadyAccepted = focal.acceptedOverride?.isActive ?? false;
+        return (
+          <ClusterPreviewModal
+            open
+            focal={focal}
+            focalMapping={{
+              attributeId: attrId,
+              attributeName: focalState.editedAttributeName.trim(),
+              unit: focalState.editedUnit.trim(),
+            }}
+            candidates={candidates}
+            scopeLabel={scopeLabel}
+            scopeKey={scopeKey}
+            focalAlreadyAccepted={focalAlreadyAccepted}
+            onClose={() => setClusterFocalParam(null)}
+            onAcceptCluster={async (selected) => {
+              const overrideValues = {
+                attributeId: attrId,
+                attributeName: focalState.editedAttributeName.trim(),
+                unit: focalState.editedUnit.trim(),
+              };
+              // 1. Accept the focal first if it isn't already accepted. Bail
+              //    on failure — we MUST NOT propagate the focal's mapping to
+              //    matches when the focal itself didn't persist (data integrity).
+              if (!focalAlreadyAccepted) {
+                const focalResult = await acceptRow(focal);
+                if (!focalResult.ok) {
+                  throw new Error(focalResult.error ?? 'Focal Accept failed');
+                }
+              }
+              // 2. Tier 1 fanout — match the behavior of clicking Accept on
+              //    the focal row directly, so opening the modal vs clicking
+              //    Accept on the row stays consistent.
+              const tier1Matches = normalizedMatchesByRow[focal.paramName] ?? [];
+              const doTier1 = tier1Matches.length > 0 && !bulkOptedOut.has(focal.paramName);
+              // 3. Tier 1 + Tier 2 overrides fire in parallel.
+              await Promise.all([
+                ...(doTier1
+                  ? tier1Matches.map((m) =>
+                      acceptMatchWithPrimaryOverride(m, overrideValues, focal.paramName),
+                    )
+                  : []),
+                ...selected.map((m) =>
+                  acceptMatchWithPrimaryOverride(m, overrideValues, focal.paramName),
+                ),
+              ]);
+              // 4. Regenerate the union of affected batches.
+              const allBatches = new Set<string>();
+              for (const r of [focal, ...(doTier1 ? tier1Matches : []), ...selected]) {
+                for (const b of r.affectedBatchIds) allBatches.add(b);
+              }
+              await onRegenerateAffected(Array.from(allBatches));
+            }}
+          />
         );
       })()}
     </Accordion>

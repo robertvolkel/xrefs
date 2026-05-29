@@ -1344,31 +1344,45 @@ export async function getRecommendations(
       ]);
     }
 
+    // Context-driven source-attribute override (scoring-local). When the
+    // application context implies a requirement the source doesn't carry
+    // explicitly — e.g. "automotive" on a B6 BJT lacking aec_q101 — inject
+    // it here so identity_flag rules fire. The returned sourceAttributes is
+    // unmodified; only the matching engine sees the override.
+    const scoringSourceAttrs = applyContextSourceOverrides(sourceAttrs, applicationContext, familyId);
+
     // Qualification-domain classification (Decision #155, Phase 1).
     // Classify source + build a per-candidate classification map so the
     // exclusion filter + deviation flag can be applied after scoring. Both
     // steps also check for a positive `aec_q200` parametric attribute that
     // can upgrade an unknown classification to automotive_q200.
     const sourceAecQ200 = sourceAttrs.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+    const sourceAecQ101 = sourceAttrs.parameters.find(p => p.parameterId === 'aec_q101')?.value;
+    const sourceAecQ100 = sourceAttrs.parameters.find(p => p.parameterId === 'aec_q100')?.value;
     sourceAttrs.part.qualificationDomain = upgradeFromAttributes(
       classifyQualificationDomain(sourceAttrs.part),
       sourceAecQ200,
+      sourceAecQ101,
+      sourceAecQ100,
+      sourceAttrs.part.qualifications,
     );
     const candidateDomainByMpn = new Map<string, import('../types').DomainClassification>();
     for (const c of allCandidates) {
       const key = c.part.mpn.toLowerCase();
       if (candidateDomainByMpn.has(key)) continue;
-      const aecVal = c.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+      const aecQ200 = c.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+      const aecQ101 = c.parameters.find(p => p.parameterId === 'aec_q101')?.value;
+      const aecQ100 = c.parameters.find(p => p.parameterId === 'aec_q100')?.value;
       candidateDomainByMpn.set(
         key,
-        upgradeFromAttributes(classifyQualificationDomain(c.part), aecVal),
+        upgradeFromAttributes(classifyQualificationDomain(c.part), aecQ200, aecQ101, aecQ100, c.part.qualifications),
       );
     }
 
     console.time('[perf] findReplacements (scoring)');
     let recs = findReplacements(
       effectiveTable,
-      sourceAttrs,
+      scoringSourceAttrs,
       allCandidates,
       mergedPreferred.length > 0 ? mergedPreferred : undefined,
       manufacturerSlugLookup.size > 0 ? manufacturerSlugLookup : undefined,
@@ -1453,9 +1467,11 @@ export async function getRecommendations(
         if (isCertifiedCross(r)) certified.push(r);
         else uncertified.push(r);
       }
-      recs = [...certified, ...filter(uncertified, sourceAttrs)];
+      recs = [...certified, ...filter(uncertified, scoringSourceAttrs)];
     };
 
+    // Step 3a: B6 BJTs — automotive AEC-Q101 enforcement (only when context.automotive=yes)
+    if (familyId === 'B6') withCertifiedBypass((r, s) => filterBjtAutomotiveMismatches(r, s, applicationContext));
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
     // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
@@ -3814,6 +3830,83 @@ function filterOptocouplerMismatches(
     }
 
     return true;
+  });
+}
+
+// ── Context-driven source-attribute overrides ─────────────────────────
+//
+// When the user's context answer implies a stronger requirement than the
+// source part explicitly carries, inject that requirement into a scoring-local
+// copy of `sourceAttrs` so identity_flag rules fire properly. The matching
+// engine's `identity_flag` evaluator passes trivially when the source value is
+// absent (defaults to 'No'), so without this layer, "Yes — automotive" on a
+// BJT whose source doesn't list aec_q101 has no scoring effect.
+//
+// Only the scoring path sees the modified attributes — the returned
+// `sourceAttributes` (rendered in the Specs comparison panel) is unchanged so
+// the user isn't confused by a synthetic 'Yes' on a source that doesn't carry it.
+//
+// Currently scoped to B6 + automotive. Same pattern applies to other families
+// with AEC context questions (B5/B7/B8/B9, C9, C10, D1, D2, E1, F1) — add
+// entries to the switch below as those families are validated.
+function applyContextSourceOverrides(
+  sourceAttrs: PartAttributes,
+  applicationContext: ApplicationContext | undefined,
+  familyId: string,
+): PartAttributes {
+  if (!applicationContext?.answers) return sourceAttrs;
+
+  const injections: Array<{ parameterId: string; parameterName: string; value: string }> = [];
+
+  if (familyId === 'B6' && applicationContext.answers.automotive === 'yes') {
+    injections.push({
+      parameterId: 'aec_q101',
+      parameterName: 'AEC-Q101 (Automotive Qualification)',
+      value: 'Yes',
+    });
+  }
+
+  if (injections.length === 0) return sourceAttrs;
+
+  // Clone parameters so the cached/upstream sourceAttrs object stays untouched.
+  const clonedParams = sourceAttrs.parameters.map(p => ({ ...p }));
+  for (const inj of injections) {
+    const existing = clonedParams.find(p => p.parameterId === inj.parameterId);
+    if (existing) {
+      existing.value = inj.value;
+    } else {
+      clonedParams.push({
+        parameterId: inj.parameterId,
+        parameterName: inj.parameterName,
+        value: inj.value,
+        sortOrder: 999,
+      });
+    }
+  }
+  return { ...sourceAttrs, parameters: clonedParams };
+}
+
+// ── B6: BJT automotive AEC-Q101 enforcement ────────────────────────────
+//
+// When the user signals automotive intent (context Q4: "Yes — automotive"),
+// drop candidates whose `aec_q101` rule result is `fail`. The source-attribute
+// override above ensures the rule fires (source treated as requiring AEC-Q101),
+// so this filter catches:
+//   - Explicit 'No' on the candidate
+//   - Missing data (identity_flag defaults missing to 'No' → fail)
+//
+// Bypassed for certified crosses via withCertifiedBypass at the call site.
+function filterBjtAutomotiveMismatches(
+  recs: XrefRecommendation[],
+  _sourceAttrs: PartAttributes,
+  applicationContext: ApplicationContext | undefined,
+): XrefRecommendation[] {
+  if (applicationContext?.answers?.automotive !== 'yes') return recs;
+
+  return recs.filter(rec => {
+    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
+    if (!aecDetail) return true;
+    return aecDetail.ruleResult !== 'fail';
   });
 }
 

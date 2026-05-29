@@ -6668,3 +6668,51 @@ Several MFRs (Prisemi, Jingheng, YANGJIE) surfaced **reverse-direction fixes** �
 - Decision #176 — Mirror convention for atlas-ingest.mjs
 - Decision #177 — Foreign-family auto-flag registry (the registry this fix audits)
 - Decision #188 — Engineer-driven `atlas_family_param_signatures` DB table (code wins on collision; DB rows untouched by this fix)
+
+## Decision #208 — Triage Near-Duplicate Clustering: Two-Tier Hybrid (May 29, 2026)
+
+### Problem
+
+The Atlas Dictionary Triage queue's existing "+N similar" cosmetic-variant fanout (Decision #186 part f) only matched paramNames that collapsed to the same normalized key under `/[^\p{L}\p{N}]+/gu` — whitespace, case, punctuation. Engineer review throughput was the bottleneck on the 200-1000-row typical queue: every paramName that survived Tier-1 normalization was one more Accept the engineer had to issue.
+
+Categories the existing matcher missed:
+- ASCII single-char typos (`propogation_delay` vs `propagation_delay`)
+- CJK character semi-equivalents and synonyms (`工作电压` vs `操作电压`)
+- Unit-suffix presence/absence (`电压(V)` vs `电压`)
+- Abbreviation vs full form (`T` vs `thickness`)
+- Word reordering
+
+### Design — two tiers
+
+**Tier 1 (deterministic, this Decision):** Extend the existing matcher with ASCII-only Levenshtein-1 fuzzy fallback. Catches single-char typos in pure-ASCII paramNames at length ≥ 5 (e.g. `propogation_delay` ≡ `propagation_delay`). Gated against CJK and Greek/Cyrillic characters because per-character semantic weight is too high — `电压_max` vs `电流_max` is Levenshtein distance 1 but means voltage_max vs current_max, opposite concepts. Also explicitly does NOT strip unit suffixes — `电压(V)` and `电压(mV)` must stay distinct so bulk-apply can't propagate a wrong unit. Lives in new module [lib/services/paramNameSimilarity.ts](../lib/services/paramNameSimilarity.ts) with 22-test coverage. Component [GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) imports `normalizeParamKey` + `isFuzzyMatch` from there.
+
+**Tier 2 (AI, opt-in, this Decision):** New per-row "Find Similar (AI)" icon button calls `POST /api/admin/atlas/dictionaries/cluster-suggest` with the focal paramName + the open candidates in the same scope (already in client memory — no DB read). Sonnet 4.6, max_tokens 1500, single call returns `[{paramName, isMatch, confidence, reasoning}]`. Modal renders the cluster with high+medium-confidence matches pre-checked; engineer reviews per-row reasoning, ticks/unticks, clicks "Accept N matches". Each Accept fires through the existing `acceptMatchWithPrimaryOverride()` so the audit trail and `invalidateTriageQueueCacheAndAwaitFresh()` invalidation behave identically to the existing Tier 1 fanout. Cached in localStorage (7d TTL, prefix `atlas-cluster-suggest-v1:`) keyed `(scopeKind::scopeKey, focalParamName)` — verdicts are paramName-text-stable; client filters cached entries against the current candidate set on re-open.
+
+### Why scoped back from the original plan
+
+The plan committed to three Tier-1 features: parens-unit-stripping, CJK punctuation fold, ASCII Levenshtein. On second pass before implementation:
+
+- **Parens-unit-stripping was data-integrity-unsafe.** `电压(V)` and `电压(mV)` would have clustered, and a bulk-applied override would propagate the focal's unit (V) onto rows that are actually in mV. The engineer's cluster preview would catch obvious cases, but the whole point of Tier 1 is to reduce review burden — relying on engineer inspection to backstop a known-unsafe matcher defeats the point.
+- **CJK punctuation fold was redundant.** The existing `/[^\p{L}\p{N}]+/gu` regex already treats full-width and half-width punctuation as the same non-letter/non-digit run inside paramNames, so `电压（V）` and `电压(V)` already collapse to `电压_v`. A fold table would have done nothing the regex isn't already doing.
+- **CJK Levenshtein was data-integrity-unsafe.** `电压` vs `电流` is distance 1 but means voltage vs current. ASCII-only restriction keeps the fuzzy tier inside its safe envelope.
+
+Both removed features land in Tier 2 (AI) where Sonnet can reason about semantics + sample values rather than blindly trusting a distance metric.
+
+### Files
+
+- **NEW** [lib/services/paramNameSimilarity.ts](../lib/services/paramNameSimilarity.ts) — `normalizeParamKey` (lifted from component), `isAsciiOnly`, `levenshteinDistance`, `isFuzzyMatch`
+- **NEW** [__tests__/services/paramNameSimilarity.test.ts](../__tests__/services/paramNameSimilarity.test.ts) — 22 tests covering the safety envelope (CJK skip, opposite-pair rejection at Levenshtein 2, min-length-5 guard, unit-suffix retention)
+- **NEW** [app/api/admin/atlas/dictionaries/cluster-suggest/route.ts](../app/api/admin/atlas/dictionaries/cluster-suggest/route.ts) — Tier 2 Sonnet endpoint
+- **NEW** [components/admin/atlasIngest/ClusterPreviewModal.tsx](../components/admin/atlasIngest/ClusterPreviewModal.tsx) — checkbox grid + reasoning column + cache
+- [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — extended `normalizedMatchesByRow` with fuzzy-fallback merge pass; new `renderFindSimilarButton` per-row; modal mounted at component root
+
+### Deferred to BACKLOG
+
+**Tier 3** — eager batch-level clustering at ingest time so the engineer sees pre-computed clusters instead of clicking "Find Similar" per row. Wait until Tier 1+2 show whether per-row opt-in is the throughput bottleneck. If so, run `/cluster-suggest` once per batch in the background and surface ready-to-Accept clusters as a dashboard tile.
+
+### Related
+
+- Decision #181 — AI Triage Suggester (the per-row /suggest endpoint this Tier 2 mirrors structurally)
+- Decision #185 — AI Triage Investigator (six-bucket verdict + cached-analysis pattern reused for cluster cache shape)
+- Decision #186 part f — Bulk normalized-match Accept (the existing Tier 1 fanout this Decision extends)
+- Decision #187 — Proactive staleness signaling (cluster-suggest cache could later adopt the same `cardVersionAtWrite` / `schemaVersionAtWrite` pattern if cluster verdicts start depending on per-family schema state)

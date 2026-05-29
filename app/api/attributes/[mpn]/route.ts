@@ -4,6 +4,7 @@ import { getAttributes } from '@/lib/services/partDataService';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { runWithServiceTracking, getServiceWarnings } from '@/lib/services/serviceStatusTracker';
 import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolver';
+import { classifyQualificationDomain, upgradeFromAttributes } from '@/lib/services/qualificationDomain';
 
 export async function GET(
   _request: NextRequest,
@@ -34,6 +35,20 @@ export async function GET(
       } catch {
         // Ignore — mfrOrigin stays undefined.
       }
+    }
+    // Tag qualification domain so the source panel can render the AEC chip +
+    // Grade row even when the user hasn't requested cross-references yet.
+    // Same approach as Decision #161: response-time resolution, no cache bump.
+    if (!tagged.part.qualificationDomain) {
+      const q200 = tagged.parameters.find(p => p.parameterId === 'aec_q200')?.value;
+      const q101 = tagged.parameters.find(p => p.parameterId === 'aec_q101')?.value;
+      const q100 = tagged.parameters.find(p => p.parameterId === 'aec_q100')?.value;
+      const classification = upgradeFromAttributes(
+        classifyQualificationDomain(tagged.part),
+        q200, q101, q100,
+        tagged.part.qualifications,
+      );
+      tagged = { ...tagged, part: { ...tagged.part, qualificationDomain: classification } };
     }
     return NextResponse.json({
       success: true,

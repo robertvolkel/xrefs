@@ -123,18 +123,44 @@ export function classifyQualificationDomain(part: Part): DomainClassification {
 export function upgradeFromAttributes(
   base: DomainClassification,
   aecQ200Value: string | undefined,
+  aecQ101Value?: string | undefined,
+  aecQ100Value?: string | undefined,
+  qualifications?: string[],
 ): DomainClassification {
   if (base.domain !== 'unknown') return base;
-  if (!aecQ200Value) return base;
-  const normalized = aecQ200Value.trim().toLowerCase();
-  const isPositive = normalized === 'true' || normalized === 'yes' || normalized === '1';
-  if (!isPositive) return base; // asymmetry: negative/empty stays unknown
-  return {
-    domain: 'automotive_q200',
-    confidence: 'medium',
-    source: 'attribute_flag',
-    evidence: 'aec_q200 attribute = true',
+  const isPositive = (v: string | undefined): boolean => {
+    if (!v) return false;
+    const n = v.trim().toLowerCase();
+    return n === 'true' || n === 'yes' || n === '1';
   };
+  // Asymmetry preserved: negative/empty stays unknown. Order doesn't matter
+  // in practice — each AEC standard is per-component-type (Q101 discretes,
+  // Q100 ICs, Q200 passives), so a single part typically carries only one.
+  if (isPositive(aecQ101Value)) {
+    return { domain: 'automotive_q101', confidence: 'medium', source: 'attribute_flag', evidence: 'aec_q101 attribute = true' };
+  }
+  if (isPositive(aecQ100Value)) {
+    return { domain: 'automotive_q100', confidence: 'medium', source: 'attribute_flag', evidence: 'aec_q100 attribute = true' };
+  }
+  if (isPositive(aecQ200Value)) {
+    return { domain: 'automotive_q200', confidence: 'medium', source: 'attribute_flag', evidence: 'aec_q200 attribute = true' };
+  }
+  // Fallback: scan the qualifications string array (populated by
+  // extractQualifications across all Digikey categories, even those whose
+  // param map doesn't carry an aec_q* attribute — e.g. C1 LDOs).
+  if (qualifications && qualifications.length > 0) {
+    const upper = qualifications.map(q => q.trim().toUpperCase());
+    if (upper.some(q => q.startsWith('AEC-Q101'))) {
+      return { domain: 'automotive_q101', confidence: 'medium', source: 'attribute_flag', evidence: 'qualifications includes AEC-Q101' };
+    }
+    if (upper.some(q => q.startsWith('AEC-Q100'))) {
+      return { domain: 'automotive_q100', confidence: 'medium', source: 'attribute_flag', evidence: 'qualifications includes AEC-Q100' };
+    }
+    if (upper.some(q => q.startsWith('AEC-Q200'))) {
+      return { domain: 'automotive_q200', confidence: 'medium', source: 'attribute_flag', evidence: 'qualifications includes AEC-Q200' };
+    }
+  }
+  return base;
 }
 
 // ────────────────────────────────────────────────────────────────

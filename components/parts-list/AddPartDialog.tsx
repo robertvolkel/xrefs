@@ -8,6 +8,7 @@ import {
   AccordionSummary,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -15,6 +16,7 @@ import {
   DialogTitle,
   Link,
   Skeleton,
+  Stack,
   TextField,
   Typography,
 } from '@mui/material';
@@ -313,9 +315,20 @@ export default function AddPartDialog({
                         <CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'success.main', mt: 0.25, flexShrink: 0 }} />
                       )}
                       <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" fontWeight={600} sx={{ fontSize: '0.82rem' }}>
-                          {match.mpn}
-                        </Typography>
+                        <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" useFlexGap>
+                          <Typography variant="body2" fontWeight={600} sx={{ fontSize: '0.82rem' }}>
+                            {match.mpn}
+                          </Typography>
+                          {match.qualifications?.map(q => (
+                            <Chip
+                              key={q}
+                              label={q}
+                              size="small"
+                              variant="outlined"
+                              sx={{ height: 16, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }}
+                            />
+                          ))}
+                        </Stack>
                         <Typography
                           variant="caption"
                           color="text.secondary"

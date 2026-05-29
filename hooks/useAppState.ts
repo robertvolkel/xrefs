@@ -1499,17 +1499,42 @@ export function useAppState() {
       isLoadingComparison: true,
       comparisonError: false,
     }));
+    // Skip the MPN-only re-fetch for Atlas-sourced recommendations. Digikey
+    // and parts.io don't carry Chinese MFRs, so /attributes/[mpn] would either
+    // return nothing or — worse, for generic JEDEC MPNs like "2SC2873" —
+    // return a different MFR's variant (e.g. Toshiba's "2SC2873-Y(TE12L,ZC)")
+    // and the comparison panel would silently swap to that wrong part. The
+    // recommendation already carries authoritative Atlas data on rec.part.
+    if (rec.part.mfrOrigin === 'atlas') {
+      setStatus('');
+      setState((prev) => {
+        if (prev.selectedRecommendation?.part.mpn !== rec.part.mpn) return prev;
+        return { ...prev, comparisonAttributes: null, isLoadingComparison: false, comparisonError: false };
+      });
+      return;
+    }
+
     setStatus('Fetching replacement specs from Digikey...');
     try {
       const attributes = await getPartAttributes(rec.part.mpn);
       setStatus('');
+      // MPN-only lookup can return a different manufacturer for generic MPNs
+      // (multiple MFRs ship parts under the same JEDEC number). If the fetched
+      // MFR doesn't match what the user clicked, discard the result so the
+      // panel keeps using recommendation.part — preventing the silent swap.
+      const fetchedMfr = (attributes?.part.manufacturer || '').trim().toLowerCase();
+      const expectedMfr = (rec.part.manufacturer || '').trim().toLowerCase();
+      const mfrMismatch = !!fetchedMfr && !!expectedMfr && fetchedMfr !== expectedMfr;
+      if (mfrMismatch) {
+        console.warn('[handleSelectRecommendation] Discarding fetched attributes — MFR mismatch', { mpn: rec.part.mpn, expected: expectedMfr, fetched: fetchedMfr });
+      }
       setState((prev) => {
         // Guard against race: if the user already navigated away from this rec
         // (clicked Back, picked a different one), don't clobber newer state.
         if (prev.selectedRecommendation?.part.mpn !== rec.part.mpn) return prev;
         return {
           ...prev,
-          comparisonAttributes: attributes,
+          comparisonAttributes: mfrMismatch ? null : attributes,
           isLoadingComparison: false,
           comparisonError: false,
         };

@@ -240,18 +240,26 @@ export default function ComparisonView({
                 <Typography
                   variant="body2"
                   color="text.primary"
-                  sx={{
-                    fontSize: '0.78rem',
-                    ...(mfrClickable && {
+                  sx={{ fontSize: '0.78rem' }}
+                  noWrap
+                  component="div"
+                >
+                  <Box
+                    component="span"
+                    onClick={mfrClickable ? () => onManufacturerClick!(replPart.manufacturer) : undefined}
+                    sx={mfrClickable ? {
                       cursor: 'pointer',
                       '&:hover': { color: 'primary.main', textDecoration: 'underline' },
                       transition: 'color 0.15s ease',
-                    }),
-                  }}
-                  noWrap
-                  onClick={mfrClickable ? () => onManufacturerClick!(replPart.manufacturer) : undefined}
-                >
-                  {replPart.manufacturer}
+                    } : undefined}
+                  >
+                    {replPart.manufacturer}
+                  </Box>
+                  {replPart.mfrOrigin === 'atlas' && (
+                    <Tooltip title="Chinese manufacturer" arrow>
+                      <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                    </Tooltip>
+                  )}
                 </Typography>
               );
             })()}

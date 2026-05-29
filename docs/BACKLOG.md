@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Triage near-duplicate clustering Tier 3 — eager batch-level pre-cluster
+**Status:** Deferred (added May 29, 2026 — Decision #208)
+**Trigger:** Tier 1 (deterministic ASCII fuzzy) + Tier 2 (per-row AI cluster modal) shipped May 29, 2026. Tier 3 is the eager variant — run `/cluster-suggest` once per batch in the background and surface ready-to-Accept clusters at the top of the queue, so the engineer doesn't have to click "Find Similar (AI)" per row.
+
+Wait until Tier 1+2 show whether the per-row opt-in trigger is actually the throughput bottleneck. If most engineer rounds end up Find-Similar-clicking many rows, lift to eager batch-level. If they click selectively, the lazy Tier 2 is sufficient and Tier 3 just burns tokens.
+
+Implementation sketch (if/when we go there):
+- Background job on `atlas_ingest_batches` row creation: cluster the batch's unmapped paramNames + open queue rows in the same scope via the existing /cluster-suggest internals.
+- Persist clusters in a new table `atlas_triage_clusters` keyed by `(batch_id, focal_paramName)` with `verdicts JSONB` + `cached_at`.
+- Triage UI shows a "Pre-clustered groups" dashboard tile with one-click Accept per cluster, plus the existing per-row workflow as fallback.
+- Cache invalidation on dict-accept: drop clusters where any member paramName became actively-mapped.
+
 ## Admin "disable MFR" toggle writes to wrong table — KPI doesn't reflect disables
 **Status:** Not started
 **Priority:** P2 (silently-broken admin feature; no impact today because no MFRs are disabled)
@@ -122,7 +134,7 @@ In JS regex, `\b` matches between `\w` and non-`\w`. Underscore (`_`) IS a `\w` 
 
 **Build:** Replace the bare exact-case word-boundary regex for short-ASCII MFR names with a context-aware matcher. Signals to require BEFORE accepting "TC" as a MFR mention: (a) preceded by a known MFR-list separator (`,`, `;`, `(`, or list intro like "MFRs include"); (b) followed by a quoted descriptor like `(W-prefix)` or by `ships` / `MPNs`; (c) appears in a Markdown bullet list of MFRs. Reject if surrounded by parametric prose ("vh", "@Tc=80°C", "RS-485", "CS latch").
 
-**Why deferred:** Blocklist approach is working at ~10 entries; cost-benefit doesn't justify the lift until the list grows past ~20-30 entries OR an audit collision causes a real card-content miss (currently zero — the trade is documented and intentional).
+**Why deferred:** Blocklist approach is now at 25 entries (HT, SY, THD, TLC, TR, SST, HR added across recent card-audit sessions). Inside the original 20-30 trigger range — the next 2-3 additions should prompt a build decision. Still no real card-content miss (trade remains documented and intentional).
 
 ## C7 Interface ICs: promote remaining deprioritized aliases
 **Status:** Not started
@@ -159,6 +171,26 @@ In JS regex, `\b` matches between `\w` and non-`\w`. Underscore (`_`) IS a `\w` 
 **Why deferred:** Section-header detection across cards is more variable than expected (saw 3 different shapes in 20-card review: `CHINESE LABELS:`, `CHINESE CONVENTIONS (use verbatim...):`, `CHINESE — use dictionary verbatim;`). Implementing without first surveying every existing card's text risks shipping a regex that over- or under-extracts. AND no real hallucination of this class has actually been observed across ~20 reviewed cards — the signal is hypothetical. Revisit when (a) a real Chinese-label hallucination surfaces on a future card OR (b) we're already in the audit code for another reason.
 
 
+
+## Triage /suggest cache staleness: extend Decision #187 to override-revoke events
+**Status:** Not started
+**Priority:** P3 (workaround exists — manual edit + accept per row)
+**Cost:** ~2-3 hours
+**Trigger:** May 29, 2026 — three family-65 Varistor Triage rows surfaced in one session (JJW `Capacitance @ 1KHz (pF)`, Yint `cap .Ref @1kz pf`, Semiware `Capacitance (pF)`) all citing the revoked `capacitance_khz` canonical as "previously accepted." Same-day revoke of the bad override via `scripts/atlas-revoke-bad-canonical.mjs` did not invalidate `/suggest` cache because Decision #187's staleness model derives `schemaVersionAtWrite` from logic-table rules + FAMILY_PARAM_SIGNATURES — not from override DB state.
+
+**Build:** Add a parallel `overridesVersion` signal (or extend `schemaVersion` if cleaner) computed per `(family_id, category_key)` as a hash over active `atlas_dictionary_overrides` rows scoped to that family/category. Bump on every override insert/update/revoke. `/suggest` and `/investigate` return the current value; client compares against cached entry's `overridesVersionAtWrite` the same way it currently compares schema/card versions. Stale rows get the existing amber stripe + dotted-border chip + ↻ refresh icon. Cache prefix bump: `SUGGEST_CACHE_VERSION='v8'`, `INVESTIGATE_CACHE_VERSION='v10'` (or whatever the next increment is at build time).
+
+**Why deferred:** Workaround is cheap per row (engineer edits attributeId before accepting, same as Coverage Repair flow). Pattern only emerged at 3 instances within one session — needs more data before we know if it's a recurring class or a one-off byproduct of the May 11 low-confidence accept. If a fourth family-65 row OR any non-65 family shows the same cached-revoked-canonical pattern, that's the trigger to build.
+
+## Promote cross-family canonicals to SHARED_PARAMS once reused ≥3 times
+**Status:** Not started
+**Priority:** P3 (housekeeping)
+**Cost:** ~1 hour per promotion
+**Trigger:** May 29, 2026 — Triage accepted `test_current` (canonical originally introduced in the LED dict block at [lib/services/atlasMapper.ts:2023](../lib/services/atlasMapper.ts#L2023) for `Vf @ IF`) for a B4 TVS row mapping `@IT (mA)` to the same canonical for `Vbr @ IT`. Semantic meaning is generic ("test current at which a spec is reported"), so cross-family reuse is correct, but the canonical still lives only in the LED family's dict and gets duplicated each time another family adopts it.
+
+**Build:** When a canonical's dict entries exist in 3+ family blocks for the same semantic concept, lift to `SHARED_PARAMS`. First candidate: `test_current` (LED → B4 → ?). Watch list for likely future promotions: any "test current / test condition" attributes, any "at-condition" qualifiers.
+
+**Why deferred:** Only two families use `test_current` today; lifting prematurely adds churn without payoff. Re-evaluate when a third family wants it (or any other dict entry hits the same 3-family threshold).
 
 ## P0 — High Priority
 

@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -18,7 +18,7 @@ import type { TFunction } from 'i18next';
 import { Part, SupplierQuote, XrefRecommendation, deriveRecommendationCategories } from '@/lib/types';
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
-import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
+import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
 
 type T = TFunction<'translation', undefined>;
 
@@ -87,6 +87,58 @@ export function FieldRow({ label, value, source, children }: { label: string; va
         {source && <SourceBadge source={source} />}
       </Stack>
     </Stack>
+  );
+}
+
+/* Description row — clamps to 2 lines with reserved height so comparison
+   panels stay row-aligned. Tooltip + `cursor: help` activate only when the
+   text actually overflows (detected via ResizeObserver). */
+function DescriptionRow({ description }: { description?: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [description]);
+
+  return (
+    <FieldRow label="Description">
+      <Tooltip
+        title={description || ''}
+        arrow
+        placement="left"
+        disableHoverListener={!overflowing}
+        disableFocusListener={!overflowing}
+        disableTouchListener={!overflowing}
+      >
+        <Typography
+          ref={ref}
+          variant="body2"
+          component="span"
+          sx={{
+            fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
+            lineHeight: 1.4,
+            textAlign: 'right',
+            maxWidth: 420,
+            display: '-webkit-box',
+            WebkitBoxOrient: 'vertical',
+            WebkitLineClamp: 2,
+            overflow: 'hidden',
+            minHeight: '2.8em',
+            color: description ? 'text.primary' : 'text.secondary',
+            cursor: overflowing ? 'help' : 'default',
+          }}
+        >
+          {description || '—'}
+        </Typography>
+      </Tooltip>
+    </FieldRow>
   );
 }
 
@@ -184,7 +236,6 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
 
   const visibleQualifications = part.qualifications?.filter(q => !isDomainCoveredQualification(q)) ?? [];
   const hasQualifications = visibleQualifications.length > 0;
-  const hasCompliance = !!part.rohsStatus || !!part.reachCompliance || !!part.eccnCode || !!part.htsCode || (part.complianceData?.some(c => c.htsCodesByRegion || c.rohsStatus || c.eccnCode) ?? false);
 
   return (
     <Box sx={{ flex: 1, overflowY: 'auto' }}>
@@ -223,30 +274,23 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 600, mt: 0.25 }} noWrap>
             {part.mpn}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.72rem' }} noWrap>
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.72rem' }} noWrap component="div">
             {part.manufacturer}
+            {part.mfrOrigin === 'atlas' && (
+              <Tooltip title="Chinese manufacturer" arrow>
+                <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+              </Tooltip>
+            )}
           </Typography>
         </Box>
       </Box>
 
-      {/* Attributes */}
+      {/* Attributes — every row always rendered (with "—" fallback) so row
+          positions match between the source panel and the side-by-side
+          comparison panel. See parts.io rows below for the same pattern. */}
       <SectionHeader label="Attributes" />
-      {description && (
-        <FieldRow label="Description">
-          <Typography
-            variant="body2"
-            sx={{
-              fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
-              lineHeight: 1.4,
-              textAlign: 'right',
-              maxWidth: 420,
-            }}
-          >
-            {description}
-          </Typography>
-        </FieldRow>
-      )}
-      {part.datasheetUrl && (
+      <DescriptionRow description={description} />
+      {part.datasheetUrl ? (
         <FieldRow label="Datasheet">
           <Link
             href={part.datasheetUrl}
@@ -258,12 +302,28 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
             <OpenInNewIcon sx={{ fontSize: '0.8rem' }} />
           </Link>
         </FieldRow>
+      ) : (
+        <FieldRow label="Datasheet" value="—" />
       )}
-      {part.status && (
+      {part.status ? (
         <FieldRow label={t('attributes.lifecycleStatus')} source={dataSource ?? 'digikey' as DataSource}>
           <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
         </FieldRow>
+      ) : (
+        <FieldRow label={t('attributes.lifecycleStatus')} value="—" source={dataSource ?? 'digikey' as DataSource} />
       )}
+      {/* Grade — qualification tier (Automotive / Medical / Military / Commercial).
+          Always rendered for source/comparison alignment; "—" when unclassified. */}
+      <FieldRow
+        label="Grade"
+        value={
+          part.qualificationDomain && part.qualificationDomain.domain !== 'unknown'
+            ? humanReadable(part.qualificationDomain.domain)
+            : '—'
+        }
+        source={dataSource ?? 'digikey' as DataSource}
+      />
+
       {/* parts.io-sourced rows — always rendered so section heights stay aligned
           between the source and the side-by-side comparison panel. Values fall
           back to "—" when parts.io has no data for the part. */}
@@ -328,21 +388,19 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
         </>
       )}
 
-      {/* Environmental & Export */}
-      {hasCompliance && (
-        <>
-          <SectionHeader label="Environmental & Export" />
-          {part.rohsStatus && <FieldRow label={t('attributes.rohsStatus')} value={part.rohsStatus} source="mouser" />}
-          {part.reachCompliance && <FieldRow label={t('attributes.reachCompliance')} value={part.reachCompliance} source="partsio" />}
-          {part.eccnCode && <FieldRow label={t('attributes.eccnCode')} value={part.eccnCode} source="partsio" />}
-          {part.htsCode && <FieldRow label={t('attributes.htsCode')} value={part.htsCode} source="partsio" />}
-          {part.complianceData?.filter(c => c.htsCodesByRegion).map(c => (
-            Object.entries(c.htsCodesByRegion!).map(([region, code]) => (
-              <FieldRow key={`${c.source}-${region}`} label={`HTS (${region.toUpperCase()})`} value={code} source={c.source as DataSource} />
-            ))
-          ))}
-        </>
-      )}
+      {/* Environmental & Export — section header + 4 fixed rows always rendered
+          (with "—" fallback) so row positions align with the comparison panel.
+          Dynamic per-region HTS rows append after the fixed rows when present. */}
+      <SectionHeader label="Environmental & Export" />
+      <FieldRow label={t('attributes.rohsStatus')} value={part.rohsStatus || '—'} source="mouser" />
+      <FieldRow label={t('attributes.reachCompliance')} value={part.reachCompliance || '—'} source="partsio" />
+      <FieldRow label={t('attributes.eccnCode')} value={part.eccnCode || '—'} source="partsio" />
+      <FieldRow label={t('attributes.htsCode')} value={part.htsCode || '—'} source="partsio" />
+      {part.complianceData?.filter(c => c.htsCodesByRegion).map(c => (
+        Object.entries(c.htsCodesByRegion!).map(([region, code]) => (
+          <FieldRow key={`${c.source}-${region}`} label={`HTS (${region.toUpperCase()})`} value={code} source={c.source as DataSource} />
+        ))
+      ))}
 
       {/* Cross References (source-side only) — last so it doesn't fight for
           alignment with the comparison panel's Environmental & Export. */}
