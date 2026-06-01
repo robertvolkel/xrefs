@@ -685,7 +685,14 @@ const FAMILY_PARAMS = {
     '饱和电流': { attributeId: '_saturation_current', attributeName: 'Saturation Current', unit: 'A', sortOrder: 91 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 6 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 6 },
+    '外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 6 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 10 },
+    // Traditional-Chinese bare synonyms — defensive coverage for vendors
+    // that ship the bare form without unit qualifier. The compound forms
+    // 耐電壓(v) / 絕緣阻抗(mω) already exist as accepted overrides; these
+    // bare entries catch the same physical specs when the qualifier is absent.
+    '耐電壓': { attributeId: 'insulation_voltage', attributeName: 'Insulation Voltage', unit: 'V', sortOrder: 11 },
+    '絕緣阻抗': { attributeId: 'insulation_resistance', attributeName: 'Insulation Resistance', unit: 'MOhm', sortOrder: 12 },
   },
 
   // ─── 70 Ferrite Beads ──────────────────────────────────

@@ -41,6 +41,7 @@ import {
   ToggleButtonGroup,
   ToggleButton,
 } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
@@ -55,6 +56,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import ArchiveOutlinedIcon from '@mui/icons-material/ArchiveOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 
 interface DataSnapshot {
   ruleCount?: number;
@@ -97,6 +99,12 @@ interface CardEntry {
   /** Decision #195 Phase 2 — persisted output of atlasFamilyCardAudit.ts.
    *  Null when never audited (TS-fallback / pre-Phase-2 / no card). */
   auditResults: CardAuditResult | null;
+  /** Snapshot of card_text BEFORE the current version was written.
+   *  Populated on each Regenerate / cardText-PATCH. Null on first generation
+   *  or TS-fallback. Powers the "Diff vs prior" view. */
+  previousCardText: string | null;
+  previousUpdatedAt: string | null;
+  previousAuditResults: CardAuditResult | null;
 }
 
 /** Color + label config for the stoplight chip rendered in the Health
@@ -446,8 +454,11 @@ function renderAuditChip(audit: CardAuditResult | null) {
     const breakdown: string[] = [];
     if (audit.bogusMfrs.length) breakdown.push(`${audit.bogusMfrs.length} bogus MFR`);
     if (audit.wrongPrefixes.length) breakdown.push(`${audit.wrongPrefixes.length} wrong prefix`);
+    if (audit.criticalOmittedMfrs?.length) breakdown.push(`${audit.criticalOmittedMfrs.length} critical MFR omission(s)`);
+    if (audit.wrongRuleClaims?.length) breakdown.push(`${audit.wrongRuleClaims.length} wrong rule claim(s)`);
+    if (audit.wrongDictArrows?.length) breakdown.push(`${audit.wrongDictArrows.length} wrong dict arrow(s)`);
     return (
-      <Tooltip title={breakdown.join(', ') || 'Hallucination issues found'}>
+      <Tooltip title={breakdown.join(', ') || 'Block-level issues found'}>
         <Chip size="small" label={`❌ ${audit.issueCount}`} color="error" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
       </Tooltip>
     );
@@ -455,7 +466,9 @@ function renderAuditChip(audit: CardAuditResult | null) {
   if (audit.severity === 'warn') {
     const breakdown: string[] = [];
     if (audit.fabricatedDict.length) breakdown.push(`${audit.fabricatedDict.length} dict coverage gap(s)`);
-    if (audit.omittedMfrs.length) breakdown.push(`${audit.omittedMfrs.length} top-MFR omission(s)`);
+    // At warn-level, all omittedMfrs are editorial (criticals would have
+    // promoted severity to block).
+    if (audit.omittedMfrs.length) breakdown.push(`${audit.omittedMfrs.length} editorial MFR omission(s)`);
     return (
       <Tooltip title={`${breakdown.join(', ')} — advisory, doesn't block Approve`}>
         <Chip size="small" label={`⚠ ${advisoryCount(audit)}`} color="warning" variant="outlined" sx={{ fontSize: '0.7rem', cursor: 'help' }} />
@@ -490,15 +503,26 @@ function AuditDetailPanel({ audit }: { audit: CardAuditResult | null }) {
   const auditedAt = new Date(audit.auditedAt).toLocaleString();
   const severityColor: 'success' | 'warning' | 'error' =
     audit.severity === 'clean' ? 'success' : audit.severity === 'warn' ? 'warning' : 'error';
+  const criticalOmissions = audit.criticalOmittedMfrs ?? [];
+  const criticalNameSet = new Set(criticalOmissions.map((o) => o.name));
+  const editorialOmissions = audit.omittedMfrs.filter((o) => !criticalNameSet.has(o.name));
   const warnBreakdown: string[] = [];
   if (audit.fabricatedDict.length) warnBreakdown.push(`${audit.fabricatedDict.length} dictionary coverage gap(s)`);
-  if (audit.omittedMfrs.length) warnBreakdown.push(`${audit.omittedMfrs.length} top-MFR omission(s)`);
+  if (editorialOmissions.length) warnBreakdown.push(`${editorialOmissions.length} editorial MFR omission(s)`);
+  const blockBreakdown: string[] = [];
+  const hallucinations = audit.bogusMfrs.length + audit.wrongPrefixes.length;
+  const wrongRuleClaims = audit.wrongRuleClaims ?? [];
+  const wrongDictArrows = audit.wrongDictArrows ?? [];
+  if (hallucinations) blockBreakdown.push(`${hallucinations} hallucination(s)`);
+  if (criticalOmissions.length) blockBreakdown.push(`${criticalOmissions.length} critical MFR omission(s)`);
+  if (wrongRuleClaims.length) blockBreakdown.push(`${wrongRuleClaims.length} wrong rule claim(s)`);
+  if (wrongDictArrows.length) blockBreakdown.push(`${wrongDictArrows.length} wrong dict arrow(s)`);
   const headline =
     audit.severity === 'clean'
       ? '✓ Audit clean'
       : audit.severity === 'warn'
         ? `⚠ ${warnBreakdown.join(' + ')} — advisory only`
-        : `❌ ${audit.issueCount} hallucination issue(s) — blocks Approve`;
+        : `❌ ${blockBreakdown.join(' + ')} — blocks Approve`;
 
   return (
     <Alert
@@ -554,14 +578,66 @@ function AuditDetailPanel({ audit }: { audit: CardAuditResult | null }) {
             </Typography>
           </Box>
         )}
-        {audit.omittedMfrs.length > 0 && (
+        {criticalOmissions.length > 0 && (
           <Box>
-            <Typography variant="caption" sx={{ fontWeight: 600, color: 'warning.main' }}>
-              Omitted top MFRs ({audit.omittedMfrs.length}) — editorial, doesn&apos;t block
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'error.main' }}>
+              Critical MFR omissions ({criticalOmissions.length}) — top-share MFRs missing from cohort, blocks Approve
             </Typography>
             <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
-              {audit.omittedMfrs.map((o) => (
+              {criticalOmissions.map((o) => (
+                <li key={o.name}><strong>{o.name}</strong> — {o.productCount.toLocaleString()} products ({o.share}% of family)</li>
+              ))}
+            </Box>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic' }}>
+              Fix with AI will add these as bare cohort mentions. For prefix-level enrichment, use Regenerate from the table.
+            </Typography>
+          </Box>
+        )}
+        {editorialOmissions.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'warning.main' }}>
+              Editorial MFR omissions ({editorialOmissions.length}) — minor share, doesn&apos;t block
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {editorialOmissions.map((o) => (
                 <li key={o.name}>{o.name} — {o.productCount.toLocaleString()} products ({o.share}% of family)</li>
+              ))}
+            </Box>
+          </Box>
+        )}
+        {wrongRuleClaims.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'error.main' }}>
+              Wrong rule claims ({wrongRuleClaims.length}) — card cites rule type/weight that doesn&apos;t match this family&apos;s logic table
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {wrongRuleClaims.map((w, i) => {
+                const parts: string[] = [];
+                if (w.claimedType && w.actualType) {
+                  parts.push(`type "${w.claimedType}" → actual "${w.actualType}"`);
+                }
+                if (w.claimedWeight !== undefined && w.actualWeight !== undefined) {
+                  parts.push(`weight ${w.claimedWeight} → actual ${w.actualWeight}`);
+                }
+                return (
+                  <li key={`${w.attributeId}-${i}`}>
+                    <strong>{w.attributeId}</strong>: {parts.join('; ')}
+                  </li>
+                );
+              })}
+            </Box>
+          </Box>
+        )}
+        {wrongDictArrows.length > 0 && (
+          <Box>
+            <Typography variant="caption" sx={{ fontWeight: 600, color: 'error.main' }}>
+              Wrong dict arrows ({wrongDictArrows.length}) — card claims a Chinese→canonical mapping that points at the wrong target
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5, fontSize: '0.75rem' }}>
+              {wrongDictArrows.map((w, i) => (
+                <li key={`${w.phrase}-${i}`}>
+                  <code>{w.phrase}</code> → claimed <code>{w.claimedTarget}</code>, actual <code>{w.actualTarget}</code>
+                </li>
               ))}
             </Box>
           </Box>
@@ -576,60 +652,141 @@ function AuditDetailPanel({ audit }: { audit: CardAuditResult | null }) {
  *  line-level) is critical for prose where a single-token swap inside a
  *  sentence ("CJ005" → "CJO") would otherwise mark the whole line as
  *  changed. */
+/** Heuristic threshold: when more than 30% of the text changed, inline
+ *  word-diff becomes unreadable (interleaved red/green tokens) so we
+ *  default to a stacked Before/After view. Engineer can toggle back
+ *  manually for either mode. */
+const DENSE_DIFF_THRESHOLD = 0.3;
+
 function CardDiffView({ before, after }: { before: string; after: string }) {
   const parts = useMemo(() => diffWordsWithSpace(before, after), [before, after]);
+  const changeRatio = useMemo(() => {
+    let changed = 0;
+    let total = 0;
+    for (const p of parts) {
+      total += p.value.length;
+      if (p.added || p.removed) changed += p.value.length;
+    }
+    return total > 0 ? changed / total : 0;
+  }, [parts]);
+  // Default to stacked when the diff is dense — inline word-diff is
+  // unreadable past ~30% change ratio.
+  const [mode, setMode] = useState<'inline' | 'stacked'>(
+    changeRatio > DENSE_DIFF_THRESHOLD ? 'stacked' : 'inline',
+  );
+
+  const panelSx = {
+    fontFamily: 'monospace',
+    fontSize: '0.78rem',
+    lineHeight: 1.5,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    p: 1.5,
+    border: 1,
+    borderColor: 'divider',
+    borderRadius: 1,
+    bgcolor: (t: Theme) =>
+      t.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+    maxHeight: 480,
+    overflowY: 'auto',
+  } as const;
+
   return (
-    <Box
-      sx={{
-        fontFamily: 'monospace',
-        fontSize: '0.78rem',
-        lineHeight: 1.5,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
-        p: 1.5,
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
-        maxHeight: 480,
-        overflowY: 'auto',
-      }}
-    >
-      {parts.map((part, i) => {
-        if (part.added) {
-          return (
+    <Stack spacing={1}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography variant="caption" color="text.secondary">
+          {Math.round(changeRatio * 100)}% of text changed
+          {changeRatio > DENSE_DIFF_THRESHOLD && mode === 'stacked' ? ' — using stacked view for readability' : ''}
+        </Typography>
+        <ToggleButtonGroup
+          size="small"
+          value={mode}
+          exclusive
+          onChange={(_, v) => v && setMode(v)}
+          sx={{ '& .MuiToggleButton-root': { fontSize: '0.7rem', py: 0.25, px: 1 } }}
+        >
+          <ToggleButton value="inline">Inline</ToggleButton>
+          <ToggleButton value="stacked">Stacked</ToggleButton>
+        </ToggleButtonGroup>
+      </Stack>
+      {mode === 'inline' ? (
+        <Box sx={panelSx}>
+          {parts.map((part, i) => {
+            if (part.added) {
+              return (
+                <Box
+                  key={i}
+                  component="span"
+                  sx={{
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? 'rgba(46, 160, 67, 0.25)' : 'rgba(46, 160, 67, 0.18)',
+                    color: 'success.main',
+                    textDecoration: 'underline',
+                    textDecorationStyle: 'dotted',
+                  }}
+                >
+                  {part.value}
+                </Box>
+              );
+            }
+            if (part.removed) {
+              return (
+                <Box
+                  key={i}
+                  component="span"
+                  sx={{
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? 'rgba(248, 81, 73, 0.25)' : 'rgba(248, 81, 73, 0.18)',
+                    color: 'error.main',
+                    textDecoration: 'line-through',
+                  }}
+                >
+                  {part.value}
+                </Box>
+              );
+            }
+            return <Box key={i} component="span">{part.value}</Box>;
+          })}
+        </Box>
+      ) : (
+        <Stack spacing={1.5}>
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{ fontWeight: 600, color: 'error.main', display: 'block', mb: 0.5 }}
+            >
+              ◀ Prior version
+            </Typography>
             <Box
-              key={i}
-              component="span"
               sx={{
-                bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(46, 160, 67, 0.25)' : 'rgba(46, 160, 67, 0.18)',
-                color: 'success.main',
-                textDecoration: 'underline',
-                textDecorationStyle: 'dotted',
+                ...panelSx,
+                borderLeft: 3,
+                borderLeftColor: 'error.main',
               }}
             >
-              {part.value}
+              {before}
             </Box>
-          );
-        }
-        if (part.removed) {
-          return (
+          </Box>
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{ fontWeight: 600, color: 'success.main', display: 'block', mb: 0.5 }}
+            >
+              ▶ Current version
+            </Typography>
             <Box
-              key={i}
-              component="span"
               sx={{
-                bgcolor: (t) => t.palette.mode === 'dark' ? 'rgba(248, 81, 73, 0.25)' : 'rgba(248, 81, 73, 0.18)',
-                color: 'error.main',
-                textDecoration: 'line-through',
+                ...panelSx,
+                borderLeft: 3,
+                borderLeftColor: 'success.main',
               }}
             >
-              {part.value}
+              {after}
             </Box>
-          );
-        }
-        return <Box key={i} component="span">{part.value}</Box>;
-      })}
-    </Box>
+          </Box>
+        </Stack>
+      )}
+    </Stack>
   );
 }
 
@@ -656,10 +813,16 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
   // textarea and Accept/Discard buttons appear. Accept now saves + auto-
   // re-audits in one click (collapsed from prior 2-step flow).
   const [proposedFix, setProposedFix] = useState<{ before: string; after: string } | null>(null);
+  // Diff vs prior version — when true, replaces the textarea with a
+  // word-level diff between previous_card_text and the current card_text
+  // so the engineer can see what the most recent Regenerate (or manual
+  // edit) added / removed / changed. Disabled when no prior version exists.
+  const [showingPriorDiff, setShowingPriorDiff] = useState(false);
 
   useEffect(() => {
     setLocalAudit(entry.auditResults);
     setProposedFix(null);
+    setShowingPriorDiff(false);
   }, [entry.familyId, entry.auditResults]);
 
   const handleReAudit = async () => {
@@ -899,36 +1062,54 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
                   for BLOCK-level issues (bogus MFRs, wrong prefixes). Not
                   offered for warn-level dict gaps — those are usually real
                   synonyms to ADD to the dict, not card errors to remove
-                  (Decision #197). Disabled while a proposal is on screen. */}
-              <Tooltip title={
-                !localAudit
+                  (Decision #197). Disabled while a proposal is on screen.
+
+                  Visual contract (operator fool-proofing): when the button is
+                  actionable it becomes a filled `contained` variant with a
+                  dynamic "Fix N issue(s) with AI" label so the button itself
+                  is the signal — operators shouldn't have to read the audit
+                  header to know whether to click. Disabled state stays as a
+                  ghost outlined button so it's unmistakably inert. */}
+              {(() => {
+                const fixable = !!localAudit && localAudit.issueCount > 0 && !isBuiltIn;
+                const tooltipTitle = !localAudit
                   ? 'Run audit first'
                   : localAudit.issueCount === 0
-                    ? 'No blocking issues to fix (dict coverage gaps are advisory — resolve by adding terms to the dictionary, not by editing the card)'
+                    ? 'No blocking issues to fix (advisory-only flags are dictionary coverage gaps — resolve by adding terms to the dictionary, not by editing the card)'
                     : isBuiltIn
                       ? 'Customize the card first to enable AI fixes'
-                      : 'Sonnet 4.6 produces a minimal-edit correction. Review diff before accepting.'
-              }>
-                <span>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="warning"
-                    startIcon={fixing ? <CircularProgress size={12} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 14 }} />}
-                    onClick={() => void handleFixWithAI()}
-                    disabled={
-                      fixing ||
-                      isBuiltIn ||
-                      !localAudit ||
-                      localAudit.issueCount === 0 ||
-                      proposedFix !== null
-                    }
-                    sx={{ fontSize: '0.7rem' }}
-                  >
-                    Fix with AI
-                  </Button>
-                </span>
-              </Tooltip>
+                      : 'Sonnet 4.6 produces a minimal-edit correction. Review diff before accepting.';
+                const label = fixable
+                  ? `Fix ${localAudit!.issueCount} issue${localAudit!.issueCount === 1 ? '' : 's'} with AI`
+                  : !localAudit
+                    ? 'Fix with AI'
+                    : localAudit.issueCount === 0
+                      ? 'No issues to fix'
+                      : 'Fix with AI';
+                return (
+                  <Tooltip title={tooltipTitle}>
+                    <span>
+                      <Button
+                        size="small"
+                        variant={fixable ? 'contained' : 'outlined'}
+                        color="warning"
+                        startIcon={fixing ? <CircularProgress size={12} color="inherit" /> : <AutoFixHighIcon sx={{ fontSize: 14 }} />}
+                        onClick={() => void handleFixWithAI()}
+                        disabled={
+                          fixing ||
+                          isBuiltIn ||
+                          !localAudit ||
+                          localAudit.issueCount === 0 ||
+                          proposedFix !== null
+                        }
+                        sx={{ fontSize: '0.7rem' }}
+                      >
+                        {label}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                );
+              })()}
               <Button
                 size="small"
                 variant="outlined"
@@ -939,6 +1120,29 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
               >
                 Re-run audit
               </Button>
+              {/* Diff vs prior — toggles a word-level diff between the saved
+                  previous_card_text and the current card_text. Lets the
+                  engineer see what the most recent Regenerate (or manual edit)
+                  changed. Disabled when no prior version exists (first
+                  generation, TS-fallback, or pre-migration row). */}
+              <Tooltip title={
+                entry.previousCardText
+                  ? `Compare current text against the version saved before this regeneration${entry.previousUpdatedAt ? ` (prior version: ${new Date(entry.previousUpdatedAt).toLocaleString()})` : ''}`
+                  : 'No prior version yet — this is the first time this card has been written, or the migration that captures prior versions hasn’t run yet.'
+              }>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<CompareArrowsIcon sx={{ fontSize: 14 }} />}
+                    onClick={() => setShowingPriorDiff((v) => !v)}
+                    disabled={!entry.previousCardText || proposedFix !== null}
+                    sx={{ fontSize: '0.7rem' }}
+                  >
+                    {showingPriorDiff ? 'Hide diff' : 'Diff vs prior'}
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
           </Stack>
           <AuditDetailPanel audit={localAudit} />
@@ -969,7 +1173,19 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
             </Alert>
           )}
 
-          {proposedFix ? (
+          {showingPriorDiff && entry.previousCardText ? (
+            <Stack spacing={1}>
+              <Alert severity="info" icon={false} sx={{ fontSize: '0.78rem' }}>
+                <strong>Diff vs prior version</strong>
+                {entry.previousUpdatedAt && (
+                  <> (saved {new Date(entry.previousUpdatedAt).toLocaleString()})</>
+                )}
+                {' — '}<span style={{ color: 'var(--mui-palette-error-main)' }}>red strikethrough</span> = removed,{' '}
+                <span style={{ color: 'var(--mui-palette-success-main)' }}>green underline</span> = added. Read-only view; click <em>Hide diff</em> above to edit the current text.
+              </Alert>
+              <CardDiffView before={entry.previousCardText} after={entry.cardText ?? ''} />
+            </Stack>
+          ) : proposedFix ? (
             <Stack spacing={1}>
               <Alert severity="info" icon={false} sx={{ fontSize: '0.78rem' }}>
                 <strong>Proposed AI fix</strong> — review the diff below. <span style={{ color: 'var(--mui-palette-error-main)' }}>red strikethrough</span> = removed,{' '}

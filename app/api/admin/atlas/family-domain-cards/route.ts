@@ -73,6 +73,9 @@ export async function GET(): Promise<NextResponse> {
           dataSnapshot: dbRow.dataSnapshot,
           health,
           auditResults: dbRow.auditResults,
+          previousCardText: dbRow.previousCardText,
+          previousUpdatedAt: dbRow.previousUpdatedAt,
+          previousAuditResults: dbRow.previousAuditResults,
         };
       }
 
@@ -102,6 +105,9 @@ export async function GET(): Promise<NextResponse> {
           // audit re-run endpoint returns the result without persisting
           // (engineer must Customize first to get a writable row).
           auditResults: null,
+          previousCardText: null,
+          previousUpdatedAt: null,
+          previousAuditResults: null,
         };
       }
 
@@ -124,6 +130,9 @@ export async function GET(): Promise<NextResponse> {
         dataSnapshot: null,
         health,
         auditResults: null,
+        previousCardText: null,
+        previousUpdatedAt: null,
+        previousAuditResults: null,
       };
     });
 

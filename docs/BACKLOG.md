@@ -4,6 +4,37 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families
+**Status:** Not started (added May 31, 2026 — Decision #211)
+**Priority:** P1 (B6 is shipping but other automotive contexts go silent in the same way)
+**Cost:** ~30 min per family (one-liner in `applyContextSourceOverrides` switch + one per-family `filterXxxAutomotiveMismatches` modeled on `filterBjtAutomotiveMismatches` + family-id register line)
+
+Decision #211 fixed automotive enforcement for B6 BJTs only. The same shape applies to every family with an automotive context question that escalates `aec_q100`/`aec_q101`/`aec_q200`:
+
+| Family | Standard | Context Q | Notes |
+|---|---|---|---|
+| B5 MOSFETs | AEC-Q101 | Q4 automotive | Standalone base family |
+| B7 IGBTs | AEC-Q101 | Q4 automotive | |
+| B8 Thyristors | AEC-Q101 | Q4 automotive | Context Q1 suppresses per sub-type — check that aec_q101 stays active for all three |
+| B9 JFETs | AEC-Q101 | Q4 automotive | |
+| C9 ADCs | AEC-Q100 | Q4 automotive | |
+| C10 DACs | AEC-Q100 | Q4 automotive | |
+| D1 Crystals | AEC-Q200 | Q3 extended temp/automotive | Passive |
+| D2 Fuses | AEC-Q200 | Q3 automotive | Passive |
+| E1 Optocouplers | AEC-Q101 | Q4 automotive | Already has E1 post-scoring filter — extend or chain |
+| F1 EMRs | AEC-Q200 | Q4 automotive | Already has F1 post-scoring filter — extend or chain |
+
+Per-family steps:
+1. Add `familyId === 'XX' && applicationContext.answers.automotive === 'yes'` branch to `applyContextSourceOverrides` switch in [lib/services/partDataService.ts](../lib/services/partDataService.ts) injecting the right `aec_q*` attribute.
+2. Add `filterXxxAutomotiveMismatches` function near `filterBjtAutomotiveMismatches`.
+3. Register in the family-id switch around line 1459.
+
+If this expands past ~5 families it's worth lifting to a generic table-driven mechanism: a `Record<FamilyId, { contextKey, contextValue, attributeId }>` consumed by both the source-override helper and a single generic filter. Defer the abstraction until then to keep the per-family logic auditable.
+
+**Also worth generalizing beyond `automotive`:** the source-override mechanism currently keys on `applicationContext.answers.automotive === 'yes'`. If/when medical / military / aerospace context questions land in family files, the switch should be table-driven on `(familyId, questionId, answerValue) → injectedAttribute`.
+
+---
+
 ## Triage near-duplicate clustering Tier 3 — eager batch-level pre-cluster
 **Status:** Deferred (added May 29, 2026 — Decision #208)
 **Trigger:** Tier 1 (deterministic ASCII fuzzy) + Tier 2 (per-row AI cluster modal) shipped May 29, 2026. Tier 3 is the eager variant — run `/cluster-suggest` once per batch in the background and surface ready-to-Accept clusters at the top of the queue, so the engineer doesn't have to click "Find Similar (AI)" per row.
@@ -171,6 +202,22 @@ In JS regex, `\b` matches between `\w` and non-`\w`. Underscore (`_`) IS a `\w` 
 **Why deferred:** Section-header detection across cards is more variable than expected (saw 3 different shapes in 20-card review: `CHINESE LABELS:`, `CHINESE CONVENTIONS (use verbatim...):`, `CHINESE — use dictionary verbatim;`). Implementing without first surveying every existing card's text risks shipping a regex that over- or under-extracts. AND no real hallucination of this class has actually been observed across ~20 reviewed cards — the signal is hypothetical. Revisit when (a) a real Chinese-label hallucination surfaces on a future card OR (b) we're already in the audit code for another reason.
 
 
+
+## Triage "needs regen" banner is client-only state — lost on navigation
+**Status:** Not started
+**Priority:** P3 (workaround exists — per-batch Regen on Atlas Ingest page)
+**Cost:** ~1-2 hours (localStorage interim) or ~3-4 hours (derived from server signal)
+**Trigger:** May 29, 2026 — operator working through Triage accepted ~30 overrides across multiple batches, then navigated to Atlas Ingest tab to check Proceed All Clean status. On return to Triage the "16 batches need regen" pill + "Regen affected batches" button were gone, but the underlying batches' displayed risk classifications were still stale (accepted overrides are live in DB, but per-batch IngestDiffReports hadn't been re-run, so dashboard `risk` chips and `Proceed All Clean (N)` count don't reflect the new override-resolved state). `pendingRegenIds` is `useState<Set<string>>` in [AtlasDictTriagePanel.tsx:116](../components/admin/AtlasDictTriagePanel.tsx#L116) — resets on component unmount.
+
+**Build (two options):**
+
+*Interim — localStorage persistence* (~1-2h): Mirror the `Set<batchId>` to localStorage on every `setPendingRegenIds` call; rehydrate from localStorage in the `useState` initializer. Per-browser, per-machine. Survives tab close + navigation. Doesn't help cross-device. Cache prefix `atlas-triage-pending-regens:`.
+
+*Structural — derived from server signal* (~3-4h): Add `overridesAcceptedAt` column to `atlas_ingest_batches` set at batch upload time (or last regen time). On every triage queue render, compare against per-family `MAX(updated_at) FROM atlas_dictionary_overrides WHERE family_id IN (batch_family_ids) AND is_active`. If MAX > batch.overridesAcceptedAt, batch needs regen. Compute in the triage queue RPC, return boolean per row, aggregate to the banner. Cross-session, cross-device, can't be lost. Mirrors Decision #187's `schemaVersionAtWrite` pattern (same "compare stored hash against current state" shape).
+
+**Recommendation:** ship interim (localStorage) first if banner-loss repeats; promote to structural if the related Decision #187 override-revoke staleness work (separate backlog entry above) is also being scoped — both can share an `overridesVersion` signal infrastructure.
+
+**Why deferred:** Workaround is cheap (operator clicks per-batch Regen on Atlas Ingest page before clicking per-batch Proceed, as confirmed in the session that triggered this entry). Accepted overrides themselves are live regardless — semantically correct, just dashboard metrics are stale. Not a data-correctness bug. Re-evaluate if (a) banner loss repeats in a future operator session OR (b) the Decision #187 override-version signal lands first (then this becomes a ~30-min UI consumer of that signal).
 
 ## Triage /suggest cache staleness: extend Decision #187 to override-revoke events
 **Status:** Not started

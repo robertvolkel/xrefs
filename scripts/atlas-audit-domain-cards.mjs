@@ -112,6 +112,8 @@ const MFR_NAME_BLOCKLIST = new Set([
   'TR',         // universal Tape-and-Reel packaging suffix (M/TR, /TR, -TR) on virtually every SMD IC; collides with MFR "TR 湖北天瑞" (0 C4 products)
   'SST',        // SMC's actual B8 TRIAC MPN prefix (SST04K-800SW, SST138C-600E, etc.); collides with MFR "SST 索斯特" (0 products in any family)
   'HR',         // Hanrun's actual family-69 CM-choke MPN prefix (HR01XXXX, HR110XXX, HR34XXXX, HR630*-XXX); cited as "Hanrun (HR)" on card 69; collides with MFR "HR 灿达" (slug 'hr', 0 family-69 products)
+  'CW',         // YMIN's aluminum-electrolytic MPN series prefix (CW32G221MNNZS04S2, CW62G101MNNZS02S2) cited on card 58; collides with MFR "CW 武汉芯源" (0 F58 products)
+  'AM',         // INPAQ's bidirectional packaging suffix on the 5.0SMDJ TVS series (5.0SMDJxxxA-A / -AM) cited on card 70 B4 TVS Diodes; collides with MFR "AM 安美" (0 B4 products); also caused "Fix with AI" no-op loop
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,
@@ -244,6 +246,44 @@ function getSlashCompoundCandidates(text, mentionIndex, phrase) {
     for (let j = phraseIdx; j < parts.length; j++) {
       if (i === j) continue;
       candidates.push(parts.slice(i, j + 1).join('/'));
+    }
+  }
+  return candidates;
+}
+
+// Mirror of getParenQualifierCandidates from lib/services/atlasFamilyCardAudit.ts.
+// Handles `<phrase>(<qualifier>)` compounds like 耐電壓(v) / 共模抑制比(cmrr).
+function getParenQualifierCandidates(text, mentionIndex, phrase) {
+  const afterStart = mentionIndex + phrase.length;
+  const open = text[afterStart];
+  if (open !== '(' && open !== '（') return [];
+  const close = open === '(' ? ')' : '）';
+  const closeIdx = text.indexOf(close, afterStart + 1);
+  if (closeIdx === -1) return [];
+  if (closeIdx - afterStart > 40) return [];
+  return [text.slice(mentionIndex, closeIdx + 1)];
+}
+
+// Mirror of getMaximalHanRunCandidates from lib/services/atlasFamilyCardAudit.ts.
+// Handles long Han runs the 8-char extractor truncates (e.g. `不同温度时的使用寿命`).
+function getMaximalHanRunCandidates(text, mentionIndex, phrase) {
+  const isHan = (c) => /[\p{Script=Han}]/u.test(c);
+  let start = mentionIndex;
+  let end = mentionIndex + phrase.length;
+  while (start > 0 && isHan(text[start - 1] ?? '')) start--;
+  while (end < text.length && isHan(text[end] ?? '')) end++;
+  const fullRun = text.slice(start, end);
+  if (fullRun === phrase) return [];
+  if (fullRun.length > 40) return [fullRun];
+  const phraseOffset = mentionIndex - start;
+  const phraseEnd = phraseOffset + phrase.length;
+  const candidates = [fullRun];
+  for (let i = 0; i <= phraseOffset; i++) {
+    for (let j = phraseEnd; j <= fullRun.length; j++) {
+      const span = fullRun.slice(i, j);
+      if (span === phrase || span === fullRun) continue;
+      if (span.length < 2) continue;
+      candidates.push(span);
     }
   }
   return candidates;
@@ -434,6 +474,11 @@ for (const card of cards) {
   const totalFamilyProducts = rankedMfrs.reduce((acc, [, c]) => acc + c, 0);
   const OMIT_MIN_PRODUCTS = 100;
   const OMIT_MIN_SHARE = 0.03;
+  // Share threshold at which an OMITTED_MFR is "critical" (block-level
+  // in the runtime audit). 15% is below typical top-2/top-3 cohort share
+  // — any MFR ≥15% is large enough that omitting it silently breaks a
+  // cohort claim. Mirror of TS OMIT_BLOCK_SHARE.
+  const OMIT_BLOCK_SHARE = 0.15;
   for (const [mfrName, count] of rankedMfrs.slice(0, PREFIX_OMISSION_MFR_COUNT)) {
     if (count < OMIT_MIN_PRODUCTS) continue;
     if (totalFamilyProducts > 0 && count / totalFamilyProducts < OMIT_MIN_SHARE) continue;
@@ -562,7 +607,11 @@ for (const card of cards) {
       }
       // Slash-compound reconstruction — `封装/外壳`-style combined keys,
       // checking every sub-span containing the phrase.
-      const compoundCandidates = getSlashCompoundCandidates(card_text, m.index, phrase);
+      const compoundCandidates = [
+        ...getSlashCompoundCandidates(card_text, m.index, phrase),
+        ...getParenQualifierCandidates(card_text, m.index, phrase),
+        ...getMaximalHanRunCandidates(card_text, m.index, phrase),
+      ];
       let compoundResolved = false;
       for (const candidate of compoundCandidates) {
         const candSimplified = toSimplified(candidate);

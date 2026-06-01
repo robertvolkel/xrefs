@@ -71,6 +71,38 @@ export function levenshteinDistance(a: string, b: string): number {
   return prev[n];
 }
 
+/** Generic English/Chinese paramName stems that mean DIFFERENT concepts in
+ *  different families (e.g. "Frequency" in C8 oscillators means nominal
+ *  output Hz; in MLCC it's the impedance measurement test frequency). The
+ *  Triage Find Similar (AI) modal surfaces a warning banner when the focal
+ *  matches one of these — engineer should review per-candidate reasoning
+ *  carefully before bulk-applying across scopes. Standardized industry
+ *  terms (AEC-Q###, RoHS, MSL, package codes) are NOT here — those mean
+ *  the same thing across every family. */
+export const GENERIC_TERM_PARAMS: ReadonlyArray<string> = [
+  'frequency',
+  'voltage',
+  'current',
+  'capacitance',
+  'inductance',
+  'resistance',
+  'power',
+  'tolerance',
+  'type',
+  'style',
+  'size',
+  'level',
+  'time',
+  'rate',
+];
+
+/** True if the normalized paramName is one of the known context-dependent
+ *  generic terms. Drives the cross-scope warning banner + prompt hardening. */
+export function isGenericTerm(paramName: string): boolean {
+  const key = normalizeParamKey(paramName);
+  return GENERIC_TERM_PARAMS.includes(key);
+}
+
 /** Decide whether two NORMALIZED keys (output of `normalizeParamKey`) are
  *  close enough to be treated as the same param for bulk-Accept purposes.
  *

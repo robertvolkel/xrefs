@@ -61,8 +61,9 @@ type Props = {
     attributeName: string;
     unit: string;
   };
-  /** Open in-scope candidates (caller has already filtered to same scope +
-   *  excluded the focal + excluded actively-mapped rows). */
+  /** Candidates to evaluate (caller filters out focal + already-mapped +
+   *  Tier 1 cosmetic siblings). When `crossScope` is true these can come
+   *  from any scope; when false they are same-scope-only. */
   candidates: GlobalUnmappedParam[];
   scopeLabel: string;
   scopeKey: string; // e.g. "family::B5" — used for the localStorage cache key
@@ -71,6 +72,19 @@ type Props = {
    *  reads "Accept N matches"; when false, it reads "Accept focal + N
    *  matches" because the parent will Accept the focal in the same flow. */
   focalAlreadyAccepted: boolean;
+  /** True when `candidates` span multiple scopes. Triggers per-row scope
+   *  chip rendering + conservative default-check (only `high` confidence
+   *  pre-checked) + generic-term warning banner when applicable. */
+  crossScope?: boolean;
+  /** Per-candidate human-readable scope label. Only consulted when
+   *  `crossScope` is true. Keyed by paramName. */
+  candidateScopeLabels?: Record<string, string>;
+  /** True when the focal paramName is a known context-dependent generic
+   *  term (Voltage / Frequency / Type / etc). Surfaces a warning banner
+   *  to remind the engineer that cross-scope matches may differ in
+   *  meaning. Caller computes via `isGenericTerm()` from
+   *  paramNameSimilarity.ts. */
+  isGenericFocal?: boolean;
   onClose: () => void;
   /** Engineer confirmed — accept the focal (if not already accepted) AND
    *  apply focal's mapping to these candidate rows. Caller wires through
@@ -78,7 +92,9 @@ type Props = {
   onAcceptCluster: (selected: GlobalUnmappedParam[]) => Promise<void>;
 };
 
-const CACHE_PREFIX = 'atlas-cluster-suggest-v1:';
+// v2 = cross-scope mode shipped; verdicts now carry per-candidate scope
+// reasoning so v1 in-scope-only entries shouldn't bleed through.
+const CACHE_PREFIX = 'atlas-cluster-suggest-v2:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 type CacheEntry = {
@@ -125,6 +141,9 @@ export function ClusterPreviewModal({
   scopeLabel,
   scopeKey,
   focalAlreadyAccepted,
+  crossScope = false,
+  candidateScopeLabels,
+  isGenericFocal = false,
   onClose,
   onAcceptCluster,
 }: Props) {
@@ -147,13 +166,21 @@ export function ClusterPreviewModal({
     setShowRejected(false);
 
     const cached = readCache(scopeKey, focal.paramName);
+    // Conservative pre-check policy: cross-scope clusters have a wider blast
+    // radius if the AI is wrong, so only `high` confidence is pre-checked
+    // there. Same-scope retains the original `high + medium` default — the
+    // matches were already bounded to one scope by the candidate filter.
+    const autoCheckLevels: ReadonlyArray<ClusterVerdict['confidence']> = crossScope
+      ? ['high']
+      : ['high', 'medium'];
+
     if (cached) {
       // Filter cached verdicts to currently-visible candidates — a cached row
       // that's since been Accepted won't be in `candidates` anymore.
       const candidateNames = new Set(candidates.map((c) => c.paramName));
       const fresh = cached.filter((v) => candidateNames.has(v.paramName));
       setVerdicts(fresh);
-      setSelected(new Set(fresh.filter((v) => v.isMatch && v.confidence !== 'low').map((v) => v.paramName)));
+      setSelected(new Set(fresh.filter((v) => v.isMatch && autoCheckLevels.includes(v.confidence)).map((v) => v.paramName)));
       setLoading(false);
       return;
     }
@@ -178,8 +205,10 @@ export function ClusterPreviewModal({
             candidates: candidates.map((c) => ({
               paramName: c.paramName,
               samples: c.sampleValues,
+              scopeLabel: candidateScopeLabels?.[c.paramName],
             })),
             scopeLabel,
+            crossScope,
           }),
         });
         const json = await resp.json();
@@ -190,9 +219,8 @@ export function ClusterPreviewModal({
         } else {
           const clusters = (json.clusters || []) as ClusterVerdict[];
           setVerdicts(clusters);
-          // Default-check high + medium confidence matches; low requires
-          // explicit engineer opt-in (the false-positive risk is real).
-          setSelected(new Set(clusters.filter((v) => v.isMatch && v.confidence !== 'low').map((v) => v.paramName)));
+          // See `autoCheckLevels` above — cross-scope only pre-checks high.
+          setSelected(new Set(clusters.filter((v) => v.isMatch && autoCheckLevels.includes(v.confidence)).map((v) => v.paramName)));
           writeCache(scopeKey, focal.paramName, clusters);
         }
       } catch (e) {
@@ -207,7 +235,7 @@ export function ClusterPreviewModal({
     return () => {
       cancelled = true;
     };
-  }, [open, focal.paramName, focal.sampleValues, candidates, scopeKey, scopeLabel]);
+  }, [open, focal.paramName, focal.sampleValues, candidates, scopeKey, scopeLabel, crossScope, candidateScopeLabels]);
 
   const candidateByName = useMemo(() => {
     const m = new Map<string, GlobalUnmappedParam>();
@@ -301,6 +329,19 @@ export function ClusterPreviewModal({
 
           <Divider />
 
+          {/* Generic-term warning — applies only in cross-scope mode where the
+              same paramName text can legitimately map to different canonical
+              attributes in different scopes (e.g. "Frequency" in oscillators
+              vs MLCC). Engineer should review per-row reasoning instead of
+              trusting the pre-checked defaults. */}
+          {crossScope && isGenericFocal && (
+            <Alert severity="warning" sx={{ '& .MuiAlert-message': { fontSize: '0.8rem' } }}>
+              <strong>&ldquo;{focal.paramName}&rdquo;</strong> is a generic term that often means different things in different scopes
+              (e.g. <em>Frequency</em> in oscillators = nominal output Hz; in MLCC = impedance measurement frequency).
+              Only <strong>high-confidence</strong> matches are pre-checked here; review each row&apos;s reasoning + scope before confirming.
+            </Alert>
+          )}
+
           {loading && (
             <Stack direction="row" alignItems="center" spacing={1.5} sx={{ py: 2, justifyContent: 'center' }}>
               <CircularProgress size={18} />
@@ -331,7 +372,9 @@ export function ClusterPreviewModal({
             <Box>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
                 AI flagged {matchCount} near-duplicate{matchCount === 1 ? '' : 's'} of &ldquo;{focal.paramName}&rdquo;.
-                High + medium confidence are pre-checked; low confidence requires explicit selection.
+                {crossScope
+                  ? ' Cross-scope mode — only high confidence is pre-checked; medium and low require explicit selection.'
+                  : ' High + medium confidence are pre-checked; low confidence requires explicit selection.'}
               </Typography>
               <TableContainer sx={{ maxHeight: 380, border: 1, borderColor: 'divider', borderRadius: 1 }}>
                 <Table size="small" stickyHeader>
@@ -339,6 +382,7 @@ export function ClusterPreviewModal({
                     <TableRow>
                       <TableCell padding="checkbox" />
                       <TableCell>Candidate paramName</TableCell>
+                      {crossScope && <TableCell>Scope</TableCell>}
                       <TableCell>Samples</TableCell>
                       <TableCell>Confidence</TableCell>
                       <TableCell>Reasoning</TableCell>
@@ -348,6 +392,7 @@ export function ClusterPreviewModal({
                     {matchVerdicts.map((v) => {
                       const cand = candidateByName.get(v.paramName);
                       const checked = selected.has(v.paramName);
+                      const rowScope = candidateScopeLabels?.[v.paramName];
                       return (
                         <TableRow
                           key={v.paramName}
@@ -366,6 +411,15 @@ export function ClusterPreviewModal({
                           <TableCell>
                             <Typography variant="body2">{v.paramName}</Typography>
                           </TableCell>
+                          {crossScope && (
+                            <TableCell>
+                              {rowScope ? (
+                                <Chip size="small" label={rowScope} variant="outlined" sx={{ fontSize: '0.65rem' }} />
+                              ) : (
+                                <Typography variant="caption" color="text.disabled">—</Typography>
+                              )}
+                            </TableCell>
+                          )}
                           <TableCell>
                             <Typography variant="caption" color="text.secondary">
                               {(cand?.sampleValues || []).slice(0, 3).join(', ') || '—'}
@@ -415,6 +469,7 @@ export function ClusterPreviewModal({
                     <TableHead>
                       <TableRow>
                         <TableCell>Rejected paramName</TableCell>
+                        {crossScope && <TableCell>Scope</TableCell>}
                         <TableCell>Samples</TableCell>
                         <TableCell>Confidence</TableCell>
                         <TableCell>Why distinct</TableCell>
@@ -423,11 +478,21 @@ export function ClusterPreviewModal({
                     <TableBody>
                       {rejectedVerdicts.map((v) => {
                         const cand = candidateByName.get(v.paramName);
+                        const rowScope = candidateScopeLabels?.[v.paramName];
                         return (
                           <TableRow key={v.paramName}>
                             <TableCell>
                               <Typography variant="body2">{v.paramName}</Typography>
                             </TableCell>
+                            {crossScope && (
+                              <TableCell>
+                                {rowScope ? (
+                                  <Chip size="small" label={rowScope} variant="outlined" sx={{ fontSize: '0.65rem' }} />
+                                ) : (
+                                  <Typography variant="caption" color="text.disabled">—</Typography>
+                                )}
+                              </TableCell>
+                            )}
                             <TableCell>
                               <Typography variant="caption" color="text.secondary">
                                 {(cand?.sampleValues || []).slice(0, 3).join(', ') || '—'}

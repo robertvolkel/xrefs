@@ -97,6 +97,24 @@ export async function PATCH(
     }
 
     const supabase = createServiceClient();
+
+    // If cardText is being modified, snapshot the prior row into
+    // previous_* columns first — same pattern as the generate endpoint.
+    // Status-only changes do NOT snapshot (an Approve click shouldn't
+    // wipe the diff history that the engineer is approving against).
+    if (typeof body.cardText === 'string') {
+      const { data: priorRow } = await supabase
+        .from('atlas_family_domain_cards')
+        .select('card_text, updated_at, audit_results')
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (priorRow && priorRow.card_text !== body.cardText) {
+        updates.previous_card_text = priorRow.card_text;
+        updates.previous_updated_at = priorRow.updated_at;
+        updates.previous_audit_results = priorRow.audit_results;
+      }
+    }
+
     const { data, error } = await supabase
       .from('atlas_family_domain_cards')
       .update(updates)

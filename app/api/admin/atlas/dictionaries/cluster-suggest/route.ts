@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { withAnthropicRetry } from '@/lib/services/anthropicRetry';
+import { isGenericTerm } from '@/lib/services/paramNameSimilarity';
 
 /**
  * POST /api/admin/atlas/dictionaries/cluster-suggest
@@ -41,6 +42,12 @@ const MAX_CANDIDATES = 50;
 interface ClusterCandidate {
   paramName: string;
   samples?: string[];
+  /** Human-readable scope of this candidate (e.g. "B5 MOSFETs", "MLCC
+   *  Capacitors", "Microcontrollers"). Populated when the caller is doing
+   *  cross-scope clustering — the AI uses it to reason about context-
+   *  dependent meanings of the same paramName. Omitted when the candidate
+   *  lives in the same scope as the focal (in-scope-only mode). */
+  scopeLabel?: string;
 }
 
 interface ClusterVerdict {
@@ -67,6 +74,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const focal = body.focal as ClusterCandidate | undefined;
     const rawCandidates = body.candidates as ClusterCandidate[] | undefined;
     const scopeLabel = (body.scopeLabel as string | undefined) ?? '(unscoped)';
+    // crossScope=true: candidates span multiple scopes; prompt picks up
+    // hardened conservatism + per-candidate scope context. False (default)
+    // preserves the original same-scope behavior for any legacy callers.
+    const crossScope = body.crossScope === true;
 
     if (!focal?.paramName) {
       return NextResponse.json(
@@ -91,13 +102,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const s = c.samples && c.samples.length > 0
           ? ` (sample values: ${c.samples.slice(0, 3).join(', ')})`
           : '';
-        return `${i + 1}. "${c.paramName}"${s}`;
+        // In cross-scope mode each candidate carries its own scope; in same-
+        // scope mode we omit the redundant per-row label (all candidates
+        // share the focal's scope by construction).
+        const scopeBit = crossScope && c.scopeLabel ? ` [scope: ${c.scopeLabel}]` : '';
+        return `${i + 1}. "${c.paramName}"${scopeBit}${s}`;
       })
       .join('\n');
 
+    const focalIsGeneric = isGenericTerm(focal.paramName);
+
+    const scopeContextSection = crossScope
+      ? `These candidates span MULTIPLE component scopes (the focal lives in "${scopeLabel}"; each candidate's scope is shown in [scope: ...]). The same paramName text can mean DIFFERENT concepts in different scopes — your job is to identify which candidates would genuinely map to the SAME canonical attribute as the focal.`
+      : `These candidates are all from the same component scope: ${scopeLabel}. They came from different manufacturers writing the same spec differently — synonyms, abbreviations, word reordering, character variants. Your job is to identify which candidates would map to the same canonical attribute as the focal.`;
+
+    const genericTermHardening = crossScope && focalIsGeneric
+      ? `\n\nCRITICAL — GENERIC TERM HARDENING: the focal "${focal.paramName}" is a CONTEXT-DEPENDENT generic term (Frequency / Voltage / Current / Power / Capacitance / Tolerance / Type / etc). The same text means DIFFERENT canonical attributes in different scopes:\n- "Frequency" in oscillators (C8) = nominal output Hz; in MLCC = impedance test frequency; in inductors = self-resonant frequency — three different canonicals.\n- "Capacitance" in MLCC = rated cap; in MOSFETs = Coss/Ciss/Crss; in oscillators = load capacitance — different canonicals.\n- "Power" in resistors = power rating; in LEDs = forward power dissipation — different canonicals.\nDEFAULT to isMatch=false for cross-scope candidates with generic-term focals. Only return isMatch=true when the candidate is clearly the same canonical concept (e.g. same scope as focal, or sample-value scale + reasoning unambiguously align).`
+      : '';
+
     const prompt = `You are an electronics-component parameter triage assistant. The engineer has selected one FOCAL parameter from a component-datasheet ingest queue and wants to know which of the listed CANDIDATE parameters represent the SAME attribute concept as the focal.
 
-These candidates are all from the same component scope: ${scopeLabel}. They came from different manufacturers writing the same spec differently — synonyms, abbreviations, word reordering, character variants. Your job is to identify which candidates would map to the same canonical attribute as the focal.
+${scopeContextSection}${genericTermHardening}
 
 DECISION RULES:
 - "isMatch: true" iff the candidate represents the same physical/electrical attribute as the focal AND its sample values would be in the same unit and same scale (e.g. both in V, both in mV — not mixed). The two paramName strings can differ arbitrarily in vocabulary, character variants, or word order; what matters is the concept.

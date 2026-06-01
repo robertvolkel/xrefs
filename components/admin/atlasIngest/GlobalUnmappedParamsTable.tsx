@@ -68,7 +68,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import { isValidFamilyId } from '@/lib/services/validFamilyIds';
-import { normalizeParamKey, isFuzzyMatch } from '@/lib/services/paramNameSimilarity';
+import { normalizeParamKey, isFuzzyMatch, isGenericTerm } from '@/lib/services/paramNameSimilarity';
 import { ClusterPreviewModal } from './ClusterPreviewModal';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
@@ -2926,19 +2926,45 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         const tier1Names = new Set(
           (normalizedMatchesByRow[focal.paramName] ?? []).map((m) => m.paramName),
         );
-        const candidates = rows.filter((r) => {
+        // Cross-scope candidates: every open unmapped row in the queue except
+        // the focal, Tier 1 cosmetic siblings (already covered by the +N
+        // similar chip), and rows with no resolvable scope (can't write an
+        // override without a scope). Per-row scope chips + AI verdict in the
+        // modal handle the safety; engineer reviews per match before Accept.
+        const rawCandidates = rows.filter((r) => {
           if (r.paramName === focal.paramName) return false;
           if (r.acceptedOverride?.isActive) return false;
           if (tier1Names.has(r.paramName)) return false;
-          const s = getOverrideScope(r);
-          if (!s) return false;
-          return s.kind === scope.kind && s.key === scope.key;
+          return getOverrideScope(r) !== null;
         });
+        // Sort: exact-normalized-key matches first (e.g. every other row
+        // whose paramName collapses to the same key as the focal — these are
+        // almost certainly cross-scope hits like AEC-Q101 across families),
+        // then everything else in insertion order. The route caps at
+        // MAX_CANDIDATES=50, so this prioritization ensures the AI sees the
+        // high-likelihood matches first.
+        const focalNormKey = normalizeParamKey(focal.paramName);
+        const candidates = [...rawCandidates].sort((a, b) => {
+          const aExact = normalizeParamKey(a.paramName) === focalNormKey;
+          const bExact = normalizeParamKey(b.paramName) === focalNormKey;
+          if (aExact === bExact) return 0;
+          return aExact ? -1 : 1;
+        });
+        // Per-candidate scope label for the modal's Scope column chips.
+        const candidateScopeLabels: Record<string, string> = {};
+        for (const c of candidates) {
+          const s = getOverrideScope(c);
+          if (!s) continue;
+          candidateScopeLabels[c.paramName] = s.kind === 'family'
+            ? (getFamilyDisplayName(s.key)?.short ?? s.key)
+            : s.key;
+        }
         const scopeLabel = scope.kind === 'family'
           ? (getFamilyDisplayName(scope.key)?.full ?? scope.key)
           : scope.key;
         const scopeKey = `${scope.kind}::${scope.key}`;
         const focalAlreadyAccepted = focal.acceptedOverride?.isActive ?? false;
+        const isGenericFocal = isGenericTerm(focal.paramName);
         return (
           <ClusterPreviewModal
             open
@@ -2952,6 +2978,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             scopeLabel={scopeLabel}
             scopeKey={scopeKey}
             focalAlreadyAccepted={focalAlreadyAccepted}
+            crossScope
+            candidateScopeLabels={candidateScopeLabels}
+            isGenericFocal={isGenericFocal}
             onClose={() => setClusterFocalParam(null)}
             onAcceptCluster={async (selected) => {
               const overrideValues = {

@@ -352,6 +352,12 @@ export interface DomainCardListEntry {
    *  Null for never-audited rows (no DB row, or row pre-dates audit_results
    *  column, or row from a Generate that ran before the column was added). */
   auditResults: CardAuditResult | null;
+  /** Snapshot of card_text BEFORE the current version was written.
+   *  Populated on each Regenerate / cardText-PATCH. Null on first generation.
+   *  Powers the "Diff vs prior" view in the admin UI. */
+  previousCardText: string | null;
+  previousUpdatedAt: string | null;
+  previousAuditResults: CardAuditResult | null;
 }
 
 /** Read every DB row (any status) keyed by family_id. Bypasses the
@@ -364,6 +370,9 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
   updatedAt: string;
   dataSnapshot: DomainCardDataSnapshot | null;
   auditResults: CardAuditResult | null;
+  previousCardText: string | null;
+  previousUpdatedAt: string | null;
+  previousAuditResults: CardAuditResult | null;
 }>> {
   const out = new Map<string, {
     status: 'draft' | 'active' | 'archived';
@@ -372,12 +381,15 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
     updatedAt: string;
     dataSnapshot: DomainCardDataSnapshot | null;
     auditResults: CardAuditResult | null;
+    previousCardText: string | null;
+    previousUpdatedAt: string | null;
+    previousAuditResults: CardAuditResult | null;
   }>();
   try {
     const supabase = createServiceClient();
     const { data, error } = await supabase
       .from('atlas_family_domain_cards')
-      .select('family_id, card_text, status, model_used, updated_at, data_snapshot, audit_results');
+      .select('family_id, card_text, status, model_used, updated_at, data_snapshot, audit_results, previous_card_text, previous_updated_at, previous_audit_results');
     if (error || !data) return out;
     for (const row of data) {
       const fam = row.family_id as string;
@@ -389,6 +401,9 @@ export async function listAllDomainCardRows(): Promise<Map<string, {
         updatedAt: row.updated_at as string,
         dataSnapshot: (row.data_snapshot as DomainCardDataSnapshot | null) ?? null,
         auditResults: (row.audit_results as CardAuditResult | null) ?? null,
+        previousCardText: (row.previous_card_text as string | null) ?? null,
+        previousUpdatedAt: (row.previous_updated_at as string | null) ?? null,
+        previousAuditResults: (row.previous_audit_results as CardAuditResult | null) ?? null,
       });
     }
   } catch {

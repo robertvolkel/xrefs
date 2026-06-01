@@ -62,10 +62,54 @@ function summarizeAuditForPrompt(audit: CardAuditResult): string {
         audit.fabricatedDict.map((f) => `  - "${f.phrase}"`).join('\n'),
     );
   }
-  if (audit.omittedMfrs.length) {
+  // Critical omissions are mandatory adds — a top-share MFR is missing
+  // from a cohort claim. Bare mention in the cohort line is acceptable
+  // (no prefix info needed). Older audit results may not have
+  // criticalOmittedMfrs populated — fall back to share-threshold split.
+  const criticalOmitted = audit.criticalOmittedMfrs?.length
+    ? audit.criticalOmittedMfrs
+    : audit.omittedMfrs.filter((o) => o.share >= 15);
+  const criticalNameSet = new Set(criticalOmitted.map((o) => o.name));
+  const editorialOmitted = audit.omittedMfrs.filter((o) => !criticalNameSet.has(o.name));
+
+  if (criticalOmitted.length) {
     sections.push(
-      `OMITTED MFRs (${audit.omittedMfrs.length}) — top-volume MFRs in this family not mentioned in card. Editorial only — do NOT add them unless they fit naturally into an existing MFR-cohort sentence. If you can't slot them in without inventing claims about their MPN prefixes, leave them out:\n` +
-        audit.omittedMfrs.map((o) => `  - ${o.name} (${o.productCount} products, ${o.share}% of family)`).join('\n'),
+      `CRITICAL MFR OMISSIONS (${criticalOmitted.length}) — top-volume MFRs in this family that the card MUST acknowledge. Each ships ≥15% of family products, so omitting them silently makes the cohort claim materially false. Required fix: add each as a BARE MENTION to the MFR COHORT sentence (e.g. ", and SWST" appended to the list). Do NOT invent MPN prefix patterns, product-line claims, or technical specs for them — bare-name addition is sufficient. If the card has no clear cohort sentence, append a short line like "Also in cohort: <name1>, <name2>.":\n` +
+        criticalOmitted.map((o) => `  - ${o.name} (${o.productCount} products, ${o.share}% of family)`).join('\n'),
+    );
+  }
+  if (editorialOmitted.length) {
+    sections.push(
+      `EDITORIAL OMISSIONS (${editorialOmitted.length}) — minor top-volume MFRs not mentioned. Each ships 3–14% of family. ADVISORY ONLY — do NOT add them unless they fit naturally into an existing MFR-cohort sentence. If you can't slot them in without inventing prefix claims, leave them out:\n` +
+        editorialOmitted.map((o) => `  - ${o.name} (${o.productCount} products, ${o.share}% of family)`).join('\n'),
+    );
+  }
+  if (audit.wrongRuleClaims?.length) {
+    sections.push(
+      `WRONG RULE CLAIMS (${audit.wrongRuleClaims.length}) — card claims a rule type or weight that doesn't match the family's logic table. Replace ONLY the wrong token. Keep the surrounding sentence intact. Do NOT delete the rule mention — just correct the type/weight token in place:\n` +
+        audit.wrongRuleClaims
+          .map((w) => {
+            const parts: string[] = [];
+            if (w.claimedType && w.actualType) {
+              parts.push(`claimed type "${w.claimedType}" → actual type "${w.actualType}"`);
+            }
+            if (w.claimedWeight !== undefined && w.actualWeight !== undefined) {
+              parts.push(`claimed weight ${w.claimedWeight} → actual weight ${w.actualWeight}`);
+            }
+            return `  - ${w.attributeId}: ${parts.join('; ')}`;
+          })
+          .join('\n'),
+    );
+  }
+  if (audit.wrongDictArrows?.length) {
+    sections.push(
+      `WRONG DICT ARROWS (${audit.wrongDictArrows.length}) — card asserts a Chinese phrase maps to canonical X but the dictionary actually maps it to canonical Y. Swap ONLY the canonical token after the arrow. Keep the Chinese phrase and surrounding sentence intact:\n` +
+        audit.wrongDictArrows
+          .map(
+            (w) =>
+              `  - "${w.phrase}" → claimed "${w.claimedTarget}", actual dictionary target "${w.actualTarget}"`,
+          )
+          .join('\n'),
     );
   }
   return sections.join('\n\n');

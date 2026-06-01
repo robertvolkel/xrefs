@@ -35,6 +35,13 @@ const PREFIX_OMISSION_MFR_COUNT = 10;
 const SAMPLE_MPN_LIMIT = 20;
 const OMIT_MIN_PRODUCTS = 100;
 const OMIT_MIN_SHARE = 0.03;
+// Share threshold at which an OMITTED_MFR escalates from editorial advisory
+// to block-level. 15% is below the typical top-2 / top-3 cohort share —
+// any MFR shipping ≥15% of a family is large enough that omitting it
+// silently means the card asserts a cohort that doesn't match the data.
+// Below this threshold (e.g. 5%), the omission stays advisory — minor
+// editorial trim that doesn't justify blocking Approve.
+const OMIT_BLOCK_SHARE = 0.15;
 
 // MFRs whose names collide with common technical abbreviations used in
 // datasheet prose. Mirror of .mjs blocklist — see notes there.
@@ -89,6 +96,19 @@ const MFR_NAME_BLOCKLIST = new Set([
   // 0 family-69 products) — auditor's alias resolver picks the wrong row
   // and false-flags the legitimate prefix annotation as a bogus MFR.
   'HR',
+  // CW — YMIN's aluminum-electrolytic MPN series prefix (CW32G221MNNZS04S2,
+  // CW62G101MNNZS02S2) cited in Family 58 card as a YMIN series anchor.
+  // Collides with minor Chinese MFR "CW 武汉芯源" which ships zero F58
+  // products. Same trade as TR/SST/HR.
+  'CW',
+  // AM — INPAQ's bidirectional-variant packaging suffix on the 5.0SMDJ TVS
+  // series (5.0SMDJxxxA-A / -AM). Family 70 TVS Diodes card cites it in
+  // MPN-prefix prose as "5.0SMDJxxxA-A / -AM (INPAQ)". Collides with minor
+  // Chinese MFR "AM 安美" which ships zero B4 products. Same trade as
+  // TR/SST/HR/CW. Also produces a "Fix with AI" no-op loop: the AI can't
+  // find anything to fix in the legitimate -AM suffix annotation, returns
+  // a near-no-op proposal, audit re-fires the same false positive on accept.
+  'AM',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean
@@ -225,9 +245,16 @@ export type {
   OmittedMfr,
   WrongPrefix,
   FabricatedDictEntry,
+  WrongRuleClaim,
+  WrongDictArrow,
   CardAuditResult,
 } from './atlasFamilyCardAuditTypes';
-import type { CardAuditResult } from './atlasFamilyCardAuditTypes';
+import type { CardAuditResult, WrongRuleClaim, WrongDictArrow } from './atlasFamilyCardAuditTypes';
+import { getLogicTable } from '@/lib/logicTables';
+import {
+  getAtlasParamDictionary,
+  getSharedParamDictionary,
+} from './atlasMapper';
 
 // ── helpers ──
 
@@ -269,6 +296,60 @@ function getSlashCompoundCandidates(text: string, mentionIndex: number, phrase: 
     for (let j = phraseIdx; j < parts.length; j++) {
       if (i === j) continue; // bare phrase — already checked standalone
       candidates.push(parts.slice(i, j + 1).join('/'));
+    }
+  }
+  return candidates;
+}
+
+/** If the Han phrase at `mentionIndex` is immediately followed by a
+ *  parenthesized qualifier (e.g. `耐電壓(v)` / `共模抑制比(cmrr)` /
+ *  `絕緣阻抗(mΩ)`), return the full `<phrase>(<qualifier>)` compound.
+ *  Atlas dict / overrides commonly hold the compound key — the bare phrase
+ *  alone is what the extraction regex grabs, leading to false positives.
+ *  Handles both ASCII `(...)` and full-width `（...）` paren pairs. Returns
+ *  [] when no following paren-qualifier exists. */
+function getParenQualifierCandidates(text: string, mentionIndex: number, phrase: string): string[] {
+  const afterStart = mentionIndex + phrase.length;
+  const open = text[afterStart];
+  if (open !== '(' && open !== '（') return [];
+  const close = open === '(' ? ')' : '）';
+  const closeIdx = text.indexOf(close, afterStart + 1);
+  if (closeIdx === -1) return [];
+  // Sanity-bound the qualifier — anything past ~40 chars is unlikely to be
+  // a unit qualifier and more likely a misparse.
+  if (closeIdx - afterStart > 40) return [];
+  return [text.slice(mentionIndex, closeIdx + 1)];
+}
+
+/** If the Han phrase at `mentionIndex` is part of a longer contiguous Han
+ *  run (e.g. `不同温度时的使用寿命` — 10 chars, exceeds the extractor's 8-char
+ *  max so `寿命` gets matched separately as the tail), return the maximal
+ *  Han run plus every contiguous sub-span containing the phrase. Atlas dict
+ *  may hold the FULL run as a single key — the bare-phrase regex extraction
+ *  alone misses it. Returns [] when the phrase is the entire Han run. */
+function getMaximalHanRunCandidates(text: string, mentionIndex: number, phrase: string): string[] {
+  const isHan = (c: string) => /[\p{Script=Han}]/u.test(c);
+  let start = mentionIndex;
+  let end = mentionIndex + phrase.length;
+  while (start > 0 && isHan(text[start - 1] ?? '')) start--;
+  while (end < text.length && isHan(text[end] ?? '')) end++;
+  const fullRun = text.slice(start, end);
+  if (fullRun === phrase) return [];
+  // Cap the maximal run to avoid pathological lookups on giant Han blobs.
+  if (fullRun.length > 40) return [fullRun];
+  // Phrase position within the full run.
+  const phraseOffset = mentionIndex - start;
+  const phraseEnd = phraseOffset + phrase.length;
+  const candidates: string[] = [fullRun];
+  // Also try sub-spans that CONTAIN the phrase but are shorter than the
+  // maximal run — covers cases where dict has e.g. `使用寿命` (4 chars)
+  // even though card writes `不同温度时的使用寿命`.
+  for (let i = 0; i <= phraseOffset; i++) {
+    for (let j = phraseEnd; j <= fullRun.length; j++) {
+      const span = fullRun.slice(i, j);
+      if (span === phrase || span === fullRun) continue;
+      if (span.length < 2) continue;
+      candidates.push(span);
     }
   }
   return candidates;
@@ -442,8 +523,11 @@ export async function auditFamilyDomainCard(
     auditedAt: new Date().toISOString(),
     bogusMfrs: [],
     omittedMfrs: [],
+    criticalOmittedMfrs: [],
     wrongPrefixes: [],
     fabricatedDict: [],
+    wrongRuleClaims: [],
+    wrongDictArrows: [],
     issueCount: 0,
     severity: 'clean',
   };
@@ -612,7 +696,11 @@ export async function auditFamilyDomainCard(
       // ANY sub-span, e.g. `技术/工艺` even when the card writes
       // `电阻类型/技术/工艺`), check every sub-span containing the phrase
       // — each plus its simplified form — against the dict + overrides.
-      const compoundCandidates = getSlashCompoundCandidates(cardText, m.index, phrase);
+      const compoundCandidates = [
+        ...getSlashCompoundCandidates(cardText, m.index, phrase),
+        ...getParenQualifierCandidates(cardText, m.index, phrase),
+        ...getMaximalHanRunCandidates(cardText, m.index, phrase),
+      ];
       let compoundResolved = false;
       for (const candidate of compoundCandidates) {
         const candSimplified = toSimplified(candidate);
@@ -692,19 +780,167 @@ export async function auditFamilyDomainCard(
     }
   }
 
-  // ── severity (Decision #197) ──
-  // BLOCK-level: BOGUS_MFR + WRONG_PREFIX only. Both are grounded in
-  // atlas_products (real data) — reliable, dangerous-if-wrong.
-  // WARN-level: FABRICATED_DICT + OMITTED_MFR. FABRICATED_DICT was
-  // downgraded block→warn — it substring-matches atlasMapper.ts source,
+  // ── CHECK 5: WRONG_RULE_CLAIM ──
+  // Card cites rule types/weights that don't match this family's logic
+  // table. Cards routinely use the shape `attributeId (type, w=N)` or
+  // `attributeId (weight=N, type)`. We only inspect attributeIds that
+  // EXIST in the logic table (false-positive guard) and only flag the
+  // claims that were ACTUALLY made (a card asserting type-only is
+  // checked for type only). Engineering errors here silently misinform
+  // downstream consumers — engineers reading the card, the Triage AI
+  // — so they're block-level.
+  const logicTable = getLogicTable(familyId);
+  if (logicTable) {
+    const ruleByAttr = new Map<string, { logicType: string; weight: number }>();
+    for (const r of logicTable.rules) {
+      ruleByAttr.set(r.attributeId.toLowerCase(), {
+        logicType: r.logicType,
+        weight: r.weight,
+      });
+    }
+    // Longer type tokens first so 'identity_upgrade' wins over 'identity'.
+    const TYPE_TOKENS = [
+      'identity_upgrade',
+      'identity_range',
+      'identity_flag',
+      'application_review',
+      'vref_check',
+      'threshold',
+      'operational',
+      'identity',
+      'fit',
+    ];
+    const claimSeen = new Set<string>();
+    // Attribute followed (within ≤3 chars of whitespace) by `(...)`.
+    // Conservative: only look inside the parens — covers ~95% of the
+    // claim shape used in cards and avoids prose false positives.
+    const claimPat = /\b([a-z][a-z_0-9]{2,})\s{0,3}\(([^)]{1,120})\)/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = claimPat.exec(cardText)) !== null) {
+      const attr = cm[1].toLowerCase();
+      const actual = ruleByAttr.get(attr);
+      if (!actual) continue;
+      const inside = cm[2];
+      // Type claim: first TYPE_TOKEN matched (with word-boundary guard).
+      let claimedType: string | undefined;
+      for (const t of TYPE_TOKENS) {
+        const re = new RegExp(`(?:^|[^a-z_0-9])${t}(?:[^a-z_0-9]|$)`, 'i');
+        if (re.test(inside)) {
+          claimedType = t;
+          break;
+        }
+      }
+      // Weight claim: `w=10`, `weight=10`, `weight 10`, or `w10` (bare).
+      // Bare `w10` is bounded by non-alnum on both sides to avoid matching
+      // suffixes inside identifiers like `aec_q200`.
+      let claimedWeight: number | undefined;
+      const wMatch =
+        inside.match(/(?:^|[^a-z_0-9])w(?:eight)?\s*=?\s*(\d+)(?:[^a-z_0-9]|$)/i) ||
+        inside.match(/(?:^|[^a-z_0-9])weight\s+(\d+)(?:[^a-z_0-9]|$)/i);
+      if (wMatch) {
+        const n = parseInt(wMatch[1], 10);
+        if (!Number.isNaN(n) && n >= 0 && n <= 10) claimedWeight = n;
+      }
+      if (claimedType === undefined && claimedWeight === undefined) continue;
+      const typeWrong = claimedType !== undefined && claimedType !== actual.logicType;
+      const weightWrong = claimedWeight !== undefined && claimedWeight !== actual.weight;
+      if (!typeWrong && !weightWrong) continue;
+      const key = `${attr}|${claimedType ?? ''}|${claimedWeight ?? ''}`;
+      if (claimSeen.has(key)) continue;
+      claimSeen.add(key);
+      result.wrongRuleClaims.push({
+        attributeId: attr,
+        claimedType: typeWrong ? claimedType : undefined,
+        actualType: typeWrong ? actual.logicType : undefined,
+        claimedWeight: weightWrong ? claimedWeight : undefined,
+        actualWeight: weightWrong ? actual.weight : undefined,
+      });
+    }
+  }
+
+  // ── CHECK 6: WRONG_DICT_ARROW ──
+  // Card asserts `<Chinese>→<canonical>` mappings — these are the
+  // dictionary direction claims that feed downstream Atlas extraction.
+  // FABRICATED_DICT catches phrases the dict doesn't carry at all.
+  // This check catches phrases the dict DOES carry but the card
+  // points at the wrong canonical. The dict lookup pulls from BOTH
+  // the family-specific dictionary and the shared/L2 fallback so
+  // legitimate cross-family canonicals don't false-flag.
+  try {
+    const familyDict = getAtlasParamDictionary(familyId);
+    const sharedDict = getSharedParamDictionary();
+    // Walk Chinese-phrase followed by → and a lowercase canonical.
+    const arrowPat = /([\p{Script=Han}（）()/、,，·\-+\s]{2,40}?)\s*[→]\s*([a-z][a-z_0-9]{2,})/gu;
+    const seenArrow = new Set<string>();
+    let am: RegExpExecArray | null;
+    while ((am = arrowPat.exec(cardText)) !== null) {
+      const leftRaw = am[1];
+      const claimedTarget = am[2].toLowerCase();
+      // Split on slash/comma to handle `感值/电感值/电感(μh)→inductance`
+      // — each subterm should resolve to the same canonical.
+      const subterms = leftRaw
+        .split(/[/、,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const subterm of subterms) {
+        // Strip leading/trailing parens and whitespace. Keep inner Han.
+        const cleaned = subterm.replace(/^[\s()（）]+|[\s()（）]+$/g, '');
+        if (!cleaned) continue;
+        if (!/[\p{Script=Han}]/u.test(cleaned)) continue;
+        const lookups = [cleaned];
+        const simp = toSimplified(cleaned);
+        if (simp !== cleaned) lookups.push(simp);
+        // Try the family dict first, then the shared dict.
+        let dictTarget: string | undefined;
+        for (const key of lookups) {
+          const fam = familyDict?.[key];
+          if (fam) { dictTarget = fam.attributeId.toLowerCase(); break; }
+          const sh = sharedDict[key];
+          if (sh) { dictTarget = sh.attributeId.toLowerCase(); break; }
+        }
+        // Phrase not in dict at all → already handled by FABRICATED_DICT.
+        if (!dictTarget) continue;
+        if (dictTarget === claimedTarget) continue;
+        const key = `${cleaned}|${claimedTarget}`;
+        if (seenArrow.has(key)) continue;
+        seenArrow.add(key);
+        result.wrongDictArrows.push({
+          phrase: cleaned,
+          claimedTarget,
+          actualTarget: dictTarget,
+        });
+      }
+    }
+  } catch {
+    // Defensive — dict lookups should never throw, but if they do
+    // skip the check rather than failing the whole audit.
+  }
+
+  // ── severity (Decision #197, extended for critical omissions) ──
+  // BLOCK-level: BOGUS_MFR + WRONG_PREFIX + critical OMITTED_MFR. The
+  // first two are grounded in atlas_products (real data — reliable,
+  // dangerous-if-wrong). Critical omissions are top-volume MFRs missing
+  // from a cohort claim — large enough share (≥OMIT_BLOCK_SHARE) that
+  // the card's "ships from X, Y, Z" assertion is materially false. The
+  // editorial threshold (3–14% share) stays advisory.
+  //
+  // WARN-level: FABRICATED_DICT + editorial OMITTED_MFR. FABRICATED_DICT
+  // was downgraded block→warn — it substring-matches atlasMapper.ts source,
   // can't cleanly verify rich param-name forms (compounds, parentheticals,
   // synonym groups, traditional chars), and in practice surfaces dict
-  // COVERAGE GAPS, not hallucinations (5 consecutive cards: 0 real catches
-  // / 5 false positives). OMITTED_MFR is editorial. Neither gates Approve.
+  // COVERAGE GAPS, not hallucinations.
+  result.criticalOmittedMfrs = result.omittedMfrs.filter(
+    (o) => o.share >= OMIT_BLOCK_SHARE * 100,
+  );
   const hallucinationCount = result.bogusMfrs.length + result.wrongPrefixes.length;
-  const advisoryCount = result.fabricatedDict.length + result.omittedMfrs.length;
-  result.issueCount = hallucinationCount;
-  if (hallucinationCount >= 1) result.severity = 'block';
+  const criticalOmissionCount = result.criticalOmittedMfrs.length;
+  const editorialOmissionCount = result.omittedMfrs.length - criticalOmissionCount;
+  const engineeringClaimCount =
+    result.wrongRuleClaims.length + result.wrongDictArrows.length;
+  const advisoryCount = result.fabricatedDict.length + editorialOmissionCount;
+  result.issueCount =
+    hallucinationCount + criticalOmissionCount + engineeringClaimCount;
+  if (result.issueCount >= 1) result.severity = 'block';
   else if (advisoryCount >= 1) result.severity = 'warn';
   else result.severity = 'clean';
 

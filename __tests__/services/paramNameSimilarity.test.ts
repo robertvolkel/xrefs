@@ -3,6 +3,8 @@ import {
   levenshteinDistance,
   isAsciiOnly,
   isFuzzyMatch,
+  isGenericTerm,
+  GENERIC_TERM_PARAMS,
 } from '@/lib/services/paramNameSimilarity';
 
 describe('normalizeParamKey', () => {
@@ -103,5 +105,43 @@ describe('isFuzzyMatch', () => {
   });
   it('refuses when length diff exceeds 1', () => {
     expect(isFuzzyMatch('propagation', 'propa')).toBe(false);
+  });
+});
+
+describe('isGenericTerm', () => {
+  it('true for known context-dependent words', () => {
+    expect(isGenericTerm('Frequency')).toBe(true);
+    expect(isGenericTerm('voltage')).toBe(true);
+    expect(isGenericTerm('CURRENT')).toBe(true);
+    expect(isGenericTerm('Tolerance')).toBe(true);
+  });
+  it('matches across case + leading/trailing whitespace', () => {
+    expect(isGenericTerm('voltage   ')).toBe(true);
+    expect(isGenericTerm('   Voltage')).toBe(true);
+  });
+  it('does NOT match when a unit suffix narrows the meaning', () => {
+    // "Voltage (V)" normalizes to "voltage_v" — the unit retention is by
+    // design (Tier 1 safety rule: unit suffixes stay in the key so V vs mV
+    // never collide on bulk-apply). The narrower form is no longer generic
+    // because the unit pins down the concept.
+    expect(isGenericTerm('Voltage (V)')).toBe(false);
+    expect(isGenericTerm('Frequency (Hz)')).toBe(false);
+  });
+  it('false for standardized industry terms', () => {
+    expect(isGenericTerm('AEC-Q101')).toBe(false);
+    expect(isGenericTerm('RoHS')).toBe(false);
+    expect(isGenericTerm('SOT-23')).toBe(false);
+    expect(isGenericTerm('MSL')).toBe(false);
+  });
+  it('false for specific compound terms', () => {
+    expect(isGenericTerm('forward_voltage')).toBe(false);
+    expect(isGenericTerm('switching_frequency')).toBe(false);
+    expect(isGenericTerm('clamping voltage')).toBe(false);
+  });
+  it('GENERIC_TERM_PARAMS is non-empty and all-lowercase', () => {
+    expect(GENERIC_TERM_PARAMS.length).toBeGreaterThan(0);
+    for (const t of GENERIC_TERM_PARAMS) {
+      expect(t).toBe(t.toLowerCase());
+    }
   });
 });

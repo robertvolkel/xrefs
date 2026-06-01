@@ -6706,6 +6706,25 @@ Both removed features land in Tier 2 (AI) where Sonnet can reason about semantic
 - **NEW** [components/admin/atlasIngest/ClusterPreviewModal.tsx](../components/admin/atlasIngest/ClusterPreviewModal.tsx) — checkbox grid + reasoning column + cache
 - [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx) — extended `normalizedMatchesByRow` with fuzzy-fallback merge pass; new `renderFindSimilarButton` per-row; modal mounted at component root
 
+### Amendment — Cross-scope mode (May 31, 2026)
+
+Triggered by recurring "I keep accepting AEC-Q101 across every family" pain. Same-scope-only Tier 2 forced an engineer to open Find Similar 20+ times for one canonical (AEC-Q101 / AEC-Q100 spans B1–B9, C1–C10, E1, F1–F2). The fix: Find Similar (AI) is now **cross-scope by default**. Candidates = every open unmapped row in the queue (minus focal + Tier 1 cosmetic siblings + actively-mapped + unscoped). Per-row scope chip + AI verdict + engineer review per match is the safety machinery.
+
+**Four guardrails ship alongside the wider candidate net:**
+
+1. **Per-row scope chip.** Engineer sees "B5 MOSFETs" / "MLCC Capacitors" / "Microcontrollers" next to every candidate. Context is never hidden — clicking through a wide cluster without realizing you're crossing scopes is impossible.
+2. **Conservative defaults on cross-scope.** Only `high` confidence pre-checked. `medium` and `low` require explicit tick. Same-scope retains `high + medium` default (smaller blast radius).
+3. **Generic-term warning banner.** Focal paramName normalized to one of [`frequency`, `voltage`, `current`, `capacitance`, `inductance`, `resistance`, `power`, `tolerance`, `type`, `style`, `size`, `level`, `time`, `rate`] surfaces a yellow Alert at modal top — *"Frequency / Voltage / etc. often means different things in different scopes."* These are the canonicals where cross-scope clustering most risks data-integrity bugs. Unit-suffixed forms (`Voltage (V)`, `Frequency (Hz)`) explicitly do NOT trigger the warning — the unit pins down the concept.
+4. **Prompt hardening for cross-scope generic terms.** Sonnet receives an extra block when both `crossScope=true` AND focal is a generic term: explicit instruction to default `isMatch=false` and only return `true` when sample-value scale + reasoning unambiguously align. Three worked examples in-prompt (Frequency, Capacitance, Power) to anchor the conservatism.
+
+**Parent sorts candidates exact-normalized-key-first.** `MAX_CANDIDATES=50` caps the prompt; without prioritization, a focal in a large-queue scope could push the obvious matches (e.g. every other `AEC-Q101` row) below the cap. Now any row whose `normalizeParamKey` collapses to the same key as the focal ranks first.
+
+**Cache prefix bumped `v1` → `v2`.** v1 verdicts were generated under same-scope-only context; reusing them as cross-scope verdicts would surface stale reasoning. v2 forces a re-evaluation under the new prompt.
+
+**What did NOT change:** the Tier 1 cosmetic-variant fanout (whitespace/case/punctuation + ASCII Levenshtein-1) is still scope-local — it composes cleanly with cross-scope Tier 2. Tier 1 fanout still fires when accepting a focal from inside the modal (matches the row-Accept-button behavior).
+
+**Tests:** added `isGenericTerm` coverage (5 new tests, 27 total in `paramNameSimilarity.test.ts`, 1761 total).
+
 ### Deferred to BACKLOG
 
 **Tier 3** — eager batch-level clustering at ingest time so the engineer sees pre-computed clusters instead of clicking "Find Similar" per row. Wait until Tier 1+2 show whether per-row opt-in is the throughput bottleneck. If so, run `/cluster-suggest` once per batch in the background and surface ready-to-Accept clusters as a dashboard tile.
@@ -6716,3 +6735,113 @@ Both removed features land in Tier 2 (AI) where Sonnet can reason about semantic
 - Decision #185 — AI Triage Investigator (six-bucket verdict + cached-analysis pattern reused for cluster cache shape)
 - Decision #186 part f — Bulk normalized-match Accept (the existing Tier 1 fanout this Decision extends)
 - Decision #187 — Proactive staleness signaling (cluster-suggest cache could later adopt the same `cardVersionAtWrite` / `schemaVersionAtWrite` pattern if cluster verdicts start depending on per-family schema state)
+- BACKLOG line 185 — "Promote cross-family canonicals to SHARED_PARAMS once reused ≥3 times" (related but different fix: that one lifts canonicals into the codebase shared dict; this amendment lets engineers fan out overrides across scopes in one click without lifting to shared)
+- BACKLOG line 1087 — "Multi-category override fan-out in inline Accept" (the L2-category analog of this cross-scope flow; multi-category fan-out still tracked separately since it doesn't pass through Find Similar)
+
+---
+
+## Decision #209 — Side-by-side comparison panel row alignment + flag/clamp polish (May 31, 2026)
+
+### Problem
+
+When a user opened the side-by-side comparison view, sparse-data replacements broke vertical row alignment with the source panel: `OverviewContent` conditionally dropped the entire Description / Datasheet / Lifecycle Status rows and the whole Environmental & Export section when those fields were absent on a candidate, pushing all subsequent rows up on the right side. Long descriptions also pushed rows asymmetrically (3-line vs 2-line). Separately, the Chinese-MFR flag (🇨🇳) rendered on the recommendation card but disappeared from both the comparison-view sticky header and the Overview hero, so Atlas-sourced parts looked like Western parts the moment the user clicked into them.
+
+### Design
+
+1. **Always-render rows with `—` fallback.** In [components/AttributesTabContent.tsx](../components/AttributesTabContent.tsx) `OverviewContent`, Description / Datasheet / Lifecycle Status and the four fixed Environmental & Export rows (RoHS, REACH, ECCN, HTS Code) now always render — sparse data shows `—` instead of dropping the row. Mirrors the existing parts.io row pattern already there (Years to EOL / Risk Rank / Country of Origin). Cross References stays source-side-only (final section, no alignment cost). Dynamic per-region HTS rows still conditional since their count is data-dependent.
+
+2. **Description clamp + tooltip + overflow-only affordance.** Extracted `DescriptionRow` subcomponent with `-webkit-line-clamp: 2` and `minHeight: '2.8em'` so every Description cell reserves the same 2-line vertical space regardless of content length. `ResizeObserver` measures `scrollHeight > clientHeight` to detect actual overflow; only then does the MUI Tooltip + `cursor: 'help'` activate.
+
+3. **CN flag everywhere a MFR name renders.** Added the existing 🇨🇳 + "Chinese manufacturer" Tooltip pattern to [ComparisonView.tsx](../components/ComparisonView.tsx) sticky header (restructured the click-to-open-profile handler onto an inner Box so the flag sits outside it but inside the same Typography line) and to `OverviewContent` hero. AttributesPanel's sticky header already had it.
+
+### Files
+
+- [components/AttributesTabContent.tsx](../components/AttributesTabContent.tsx) — `OverviewContent` row pattern, `DescriptionRow` subcomponent, hero flag.
+- [components/ComparisonView.tsx](../components/ComparisonView.tsx) — sticky-header flag.
+
+### Related
+
+- Decision #161 — `mfrOrigin` resolution at response time (this flag work consumes the same field).
+
+---
+
+## Decision #210 — Comparison-view part-swap prevention: skip Atlas re-fetch + MFR-match validation (May 31, 2026)
+
+### Problem
+
+Clicking a recommendation card opened the comparison view correctly with the picked part (e.g. AK's `2SC2873`), but ~5 seconds later the right panel silently swapped to a different part with a different MFR (Toshiba's `2SC2873-Y(TE12L,ZC)`). Root cause: `handleSelectRecommendation` in [hooks/useAppState.ts:1486](../hooks/useAppState.ts#L1486) fires `getPartAttributes(rec.part.mpn)` to enrich the panel — but `/api/attributes/[mpn]` resolves MPN-only against Digikey. For Chinese parts (Atlas), Digikey returns whatever it ranks highest for that MPN under any MFR. For generic JEDEC MPNs (`2SC2873`, `2N3904`), even Western parts can return a different MFR's packaging variant.
+
+### Design — two guards
+
+1. **Skip re-fetch entirely for Atlas-sourced recs.** When `rec.part.mfrOrigin === 'atlas'`, set `isLoadingComparison: false` immediately and leave `comparisonAttributes: null`. `ComparisonView`'s existing fallback at [line 182](../components/ComparisonView.tsx#L182) — `(replacementAttributes ?? recommendation).part` — uses the recommendation's authoritative Atlas data for Overview/Commercial, and Specs falls back to `matchDetails.replacementValue`. No enrichment to gain since Digikey doesn't carry Chinese MFRs.
+
+2. **Validate MFR match on non-Atlas re-fetches.** After the fetch returns, compare `attributes.part.manufacturer` to `rec.part.manufacturer` case-insensitively. If they differ, log the mismatch and set `comparisonAttributes: null` so the fallback path takes over. Catches generic-MPN cases (BJT base numbers, JEDEC standards) where Digikey legitimately returned a different MFR's variant.
+
+### Why not server-side filtering
+
+`getAttributes()` could be extended to accept a manufacturer hint and filter Digikey results, but Digikey's Product Details API takes only MPN — filtering would require a keyword-search detour. Client-side discard is simpler, gives the user a visibly-correct panel immediately, and doesn't waste downstream enrichment work on a known-wrong fetch.
+
+### Files
+
+- [hooks/useAppState.ts](../hooks/useAppState.ts) — `handleSelectRecommendation` skip-Atlas branch + MFR-mismatch guard.
+
+### Related
+
+- Decision #161 — `mfrOrigin` field this branch keys off.
+- Decision #133 — certified-cross bypass (similar "trust the input, override our automation" pattern).
+
+---
+
+## Decision #211 — Automotive qualification: rule-level enforcement (B6 PoC), classifier broadening, cross-surface AEC chip visibility, Grade row (May 31, 2026)
+
+### Problem
+
+Selecting "Yes — automotive (AEC-Q101 required)" on a BJT context question had no effect on recommendation ordering: a non-AEC-Q101 part (FMMT495TA) ranked at the top. Two stacked gaps:
+
+1. The B6 context effect `escalate_to_mandatory` on `aec_q101` ([contextModifier.ts:58-60](../lib/services/contextModifier.ts#L58-L60)) only bumped weight to 10 — it didn't set `blockOnMissing` and didn't change rule type. The underlying `identity_flag` evaluator at [matchingEngine.ts:404-452](../lib/services/matchingEngine.ts#L404-L452) defaults missing source value to `'No'`, so `sourceRequired = false` and the rule trivially passed for every candidate regardless of automotive intent.
+2. No post-scoring filter existed for B6 (only C2, C4–C10, D1–D2, E1, F1–F2 were filtered at [partDataService.ts:1459-1484](../lib/services/partDataService.ts#L1459-L1484)).
+
+Stacked second-order problem: AEC qualification chips were ALSO invisible across the app even when the underlying data was correct. `upgradeFromAttributes` ([qualificationDomain.ts:123](../lib/services/qualificationDomain.ts#L123)) only checked `aec_q200`, so BJTs/MOSFETs/IGBTs/ICs with `aec_q101`/`aec_q100` classified as `unknown` → `DomainChip` rendered nothing → `isDomainCoveredQualification('AEC-Q101')` stripped the plain-chip fallback too → silent.
+
+### Audit: Path A (rule-level fail + post-scoring drop) vs. Path B (qualification-domain hard-exclude)
+
+Path B (extend the Decision #155/#196 qualification-domain classifier registry to B6 BJTs) was the original instinct — it's the intended general mechanism. **Rejected on audit:** it hard-excludes cross-domain candidates entirely (silently hidden), which conflicts with the user UX intent of keeping cards visible with an explicit `aec_q101` rule-fail row in the Specs comparison so engineers can see WHY a non-Q101 card was rejected and override if justified. Path A also avoids per-MFR classifier scaffolding (Path B needs an MPN-prefix table per manufacturer per family, like the existing Murata MLCC classifier).
+
+### Design — engine
+
+1. **Context-driven source-attribute injection (scoring-local, B6 + automotive).** New helper `applyContextSourceOverrides(sourceAttrs, applicationContext, familyId)` in [partDataService.ts](../lib/services/partDataService.ts) clones `sourceAttrs` and injects `aec_q101: 'Yes'` when `familyId === 'B6' && applicationContext.answers.automotive === 'yes'`. The matching engine sees the override (`scoringSourceAttrs`); the returned `sourceAttributes` (rendered in the user's Specs panel) is untouched so the user isn't confused by a synthetic 'Yes' on a source part that doesn't carry it. Pattern designed for one-line extension to other family/context combos.
+
+2. **B6 post-scoring filter.** New `filterBjtAutomotiveMismatches` drops candidates whose `matchDetails` entry for `aec_q101` has `ruleResult === 'fail'`. With the source override, `evaluateIdentityFlag`'s default-to-`'No'` behavior on missing candidate data falls through to the fail branch, so the filter catches both explicit `'No'` AND missing-data candidates. Registered as Step 3a in the family-id switch, wrapped with the existing `withCertifiedBypass` so MFR-certified and Accuris-certified crosses still surface (Decision #133).
+
+### Design — classification broadening
+
+3. **`upgradeFromAttributes` extended.** Now accepts `aecQ101Value`, `aecQ100Value`, and a `qualifications?: string[]` array. Q101/Q100/Q200 attribute values are checked in turn; if none fire, the `qualifications` array is scanned for `AEC-Q101`/`Q100`/`Q200` prefixes (case-insensitive). This was the load-bearing fix: per-category param maps don't always include AEC fields (e.g. C1 LDOs map none of `aec_q*`), but `extractQualifications` populates `part.qualifications` from Digikey's "Ratings"/"Features"/"Qualification" text fields uniformly across all categories.
+
+4. **Attributes route classifies at response time.** [/api/attributes/[mpn]/route.ts](../app/api/attributes/[mpn]/route.ts) now runs `classifyQualificationDomain` + `upgradeFromAttributes` and writes `qualificationDomain` onto the response. Same pattern as the Decision #161 `mfrOrigin` tagging — resolved at response time so L2-cached `PartAttributes` don't need a schema bump. Previously the classification step only ran inside `getRecommendations()`, so source-only views (attributes panel before user clicked "Find Replacements") had no domain → no chip.
+
+### Design — UI surfaces
+
+5. **Grade row in Overview Attributes.** New `FieldRow label="Grade"` between Lifecycle Status and Years to EOL in `OverviewContent`. Reads `part.qualificationDomain.domain` and renders via existing `humanReadable()` helper ("AEC-Q100 Automotive" / "Medical — implantable (GHTF D)" / "MIL-spec" / etc). Always rendered (`—` when unknown) for the row-alignment pattern from Decision #209.
+
+6. **AEC chips on chat search-result + Add Part picker.** [PartOptionsSelector.tsx](../components/PartOptionsSelector.tsx) and [AddPartDialog.tsx](../components/parts-list/AddPartDialog.tsx) previously filtered AEC labels through `isDomainCoveredQualification` (which strips them on the assumption `DomainChip` will render them instead). But those surfaces don't render `DomainChip` — `PartSummary` carries no `qualificationDomain`. Dropped the filter on those two surfaces only; the chips now render directly from `PartSummary.qualifications`. RecommendationCard's filter stays (it does render DomainChip alongside).
+
+### Out of scope (BACKLOG)
+
+- Replicating the automotive enforcement pattern to B5/B7/B8/B9/C9/C10/D1/D2/E1/F1. Same shape applies but B6 is the proof of concept.
+- Generalizing the source-attribute override switch beyond `automotive`. Medical / military / aerospace contexts could ride the same mechanism if/when those context questions land in family files.
+
+### Files
+
+- [lib/services/qualificationDomain.ts](../lib/services/qualificationDomain.ts) — `upgradeFromAttributes` accepts Q101, Q100, and `qualifications[]`.
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — `applyContextSourceOverrides`, `filterBjtAutomotiveMismatches`, B6 registered in family-id switch, both classification call sites pass new args.
+- [app/api/attributes/[mpn]/route.ts](../app/api/attributes/[mpn]/route.ts) — response-time domain classification.
+- [components/AttributesTabContent.tsx](../components/AttributesTabContent.tsx) — Grade row.
+- [components/PartOptionsSelector.tsx](../components/PartOptionsSelector.tsx) — chip filter removed.
+- [components/parts-list/AddPartDialog.tsx](../components/parts-list/AddPartDialog.tsx) — chip filter removed + chips rendered.
+
+### Related
+
+- Decision #133 — certified-cross bypass (reused by `withCertifiedBypass` wrap).
+- Decision #155 / #196 — qualification-domain filter (the rejected Path B; classifier registry remains Phase 1 / Murata MLCC).
+- Decision #161 — response-time tagging pattern (mfrOrigin → qualificationDomain).
+- Decision #209 — row-alignment fallback pattern (Grade row inherits it).

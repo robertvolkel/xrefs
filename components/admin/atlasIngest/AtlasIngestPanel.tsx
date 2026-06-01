@@ -31,9 +31,11 @@ import {
   Typography,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import IngestUploader from './IngestUploader';
 import NewManufacturerPanel from './NewManufacturerPanel';
 import BatchCard from './BatchCard';
+import IngestHowToDrawer from './IngestHowToDrawer';
 import { useRouter } from 'next/navigation';
 import type { BatchListResponse, IngestBatch, StagedFile } from './types';
 
@@ -62,6 +64,7 @@ export default function AtlasIngestPanel() {
   });
 
   const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' | 'info' } | null>(null);
+  const [howToOpen, setHowToOpen] = useState(false);
 
   const refreshBatches = useCallback(async () => {
     setLoadingBatches(true);
@@ -250,15 +253,27 @@ export default function AtlasIngestPanel() {
         <Typography variant="body2" color="text.secondary">
           Upload Atlas manufacturer JSON files, review per-MFR diff reports, then apply with full revert support.
         </Typography>
-        <Button
-          startIcon={<RefreshIcon />}
-          onClick={refreshBatches}
-          disabled={loadingBatches}
-          size="small"
-        >
-          Refresh
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            startIcon={<HelpOutlineIcon />}
+            onClick={() => setHowToOpen(true)}
+            size="small"
+            variant="outlined"
+          >
+            How to
+          </Button>
+          <Button
+            startIcon={<RefreshIcon />}
+            onClick={refreshBatches}
+            disabled={loadingBatches}
+            size="small"
+          >
+            Refresh
+          </Button>
+        </Stack>
       </Stack>
+
+      <IngestHowToDrawer open={howToOpen} onClose={() => setHowToOpen(false)} />
 
       <Tabs value={tab} onChange={(_e, v) => setTab(v)} sx={{ mb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
         <Tab value="pending" label={`Pending (${batchData?.aggregate.counts.total ?? 0})`} />

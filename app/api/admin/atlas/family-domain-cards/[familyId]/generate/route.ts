@@ -202,10 +202,17 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
       return NextResponse.json({ success: false, error: 'Empty card text from Opus' }, { status: 500 });
     }
 
-    // Upsert as draft. Existing rows get overwritten with the new draft;
-    // the engineer's review/approve flow is the same regardless of whether
-    // this is the first generation or a re-generation.
+    // Snapshot the prior row (if any) BEFORE overwriting so the engineer
+    // can see what changed in this regeneration via "Diff vs prior" in the
+    // admin UI. Reads current card_text / updated_at / audit_results and
+    // moves them into the previous_* columns on the upsert.
     const supabase = createServiceClient();
+    const { data: priorRow } = await supabase
+      .from('atlas_family_domain_cards')
+      .select('card_text, updated_at, audit_results')
+      .eq('family_id', familyId)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from('atlas_family_domain_cards')
       .upsert({
@@ -213,6 +220,9 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
         card_text: cardText,
         status: 'draft',
         model_used: 'claude-opus-4-7',
+        previous_card_text: priorRow?.card_text ?? null,
+        previous_updated_at: priorRow?.updated_at ?? null,
+        previous_audit_results: priorRow?.audit_results ?? null,
         data_snapshot: {
           ruleCount: table.rules.length,
           acceptedCount: acceptedCanonicals.length,
