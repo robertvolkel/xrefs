@@ -32,7 +32,7 @@ import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSug
 import { mapMouserLifecycle } from './mouserMapper';
 import { isFindchipsConfigured, getFindchipsResults, getFindchipsResultsBatch, hasFindchipsBudget, getCachedDistributorCounts } from './findchipsClient';
 import { mapFCToQuotes, mapFCLifecycle, mapFCCompliance } from './findchipsMapper';
-import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION } from './partDataCache';
+import { getCachedResponse, setCachedResponse, TTL_SEARCH_MS, TTL_RECOMMENDATIONS_MS, RECS_CACHE_SCHEMA_VERSION, SEARCH_CACHE_SCHEMA_VERSION } from './partDataCache';
 import { createHash } from 'crypto';
 import { fetchManufacturerCrossRefs } from './manufacturerCrossRefService';
 import { getProfileForManufacturer, hasEnrichedProfileContent } from './manufacturerProfileService';
@@ -388,14 +388,19 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipFindchips?: boolean },
+  options?: { skipFindchips?: boolean; manufacturer?: string },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
   const longEnough = trimmed.length >= 3;
+  const mfrHint = options?.manufacturer?.trim() || undefined;
 
   // ── Search cache: L1 in-memory ──
-  const cacheKey = `${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}`;
+  // MFR hint participates in the cache key so "1.5KE10" and "1.5KE10 from
+  // Galaxy" don't poison each other's results. SEARCH_CACHE_SCHEMA_VERSION
+  // is a prefix so old-shape entries are unreachable when merge semantics
+  // change (bump it in partDataCache.ts, not here).
+  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     if (!shouldBypassSearchCache(cached.data)) {
@@ -438,7 +443,7 @@ export async function searchParts(
     // Atlas
     {
       source: 'atlas',
-      promise: searchAtlasProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+      promise: searchAtlasProducts(trimmed, mfrHint).catch(() => ({ type: 'none' as const, matches: [] })),
     },
   ];
 
@@ -458,6 +463,27 @@ export async function searchParts(
   // to have no data for this MPN.
   const sourcesContributed: SearchDataSource[] = [];
 
+  // When the user named a manufacturer, resolve it ONCE and filter every
+  // source's rows BEFORE the priority dedup. Without this, an off-MFR row
+  // from a higher-priority source can claim the MPN slot — e.g. Digikey's
+  // Littelfuse "1.5KE10" beats Atlas's Galaxy "1.5KE10" at dedup, then the
+  // downstream MFR filter drops the Littelfuse row, and "1.5KE10" disappears
+  // entirely. Filtering pre-merge keeps Galaxy's row alive.
+  const mfrAliasMatch = mfrHint ? await resolveManufacturerAlias(mfrHint) : null;
+  const mfrVariantsLower = mfrAliasMatch
+    ? new Set(mfrAliasMatch.variants.map(v => v.toLowerCase()))
+    : null;
+  const mfrHintLower = mfrHint?.toLowerCase();
+  const matchesMfrHint = (candidateMfr: string | undefined): boolean => {
+    if (!mfrHintLower) return true;
+    const c = candidateMfr?.toLowerCase() ?? '';
+    if (!c) return false;
+    if (mfrVariantsLower?.has(c)) return true;
+    // Substring fallback for unindexed MFR strings (e.g. distributor returns
+    // "Galaxy Microelectronics Co., Ltd." but alias index only has "Galaxy").
+    return c.includes(mfrHintLower) || mfrHintLower.includes(c);
+  };
+
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
@@ -468,6 +494,7 @@ export async function searchParts(
     sourcesContributed.push(searches[i].source);
     const matches = result.value.matches ?? [];
     for (const part of matches) {
+      if (!matchesMfrHint(part.manufacturer)) continue;
       const key = part.mpn.toLowerCase();
       if (!seenMpns.has(key) && mergedMatches.length < SEARCH_RESULT_CAP) {
         seenMpns.add(key);
@@ -717,7 +744,7 @@ async function enrichSourceInParallel(attrs: PartAttributes, userId?: string, sk
 
 export async function getAttributes(
   mpn: string, currency?: string, userId?: string,
-  options?: { skipFindchips?: boolean },
+  options?: { skipFindchips?: boolean; preferredSource?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string },
 ): Promise<PartAttributes | null> {
   const raw = await getAttributesRaw(mpn, currency, userId, options);
   if (!raw) return null;
@@ -726,8 +753,25 @@ export async function getAttributes(
 
 async function getAttributesRaw(
   mpn: string, currency?: string, userId?: string,
-  options?: { skipFindchips?: boolean },
+  options?: { skipFindchips?: boolean; preferredSource?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string },
 ): Promise<PartAttributes | null> {
+  // When the user explicitly clicked an Atlas card, fetch from Atlas FIRST.
+  // The Digikey keyword-search fallback (further down) does a startsWith()
+  // prefix match — so a click on Galaxy's "1.5KE100" would otherwise resolve
+  // to Littelfuse's "1.5KE100A" via prefix match against Digikey. The
+  // PartSummary carries dataSource + manufacturer; we honor both here.
+  if (options?.preferredSource === 'atlas') {
+    try {
+      const atlasAttrs = await getAtlasAttributes(mpn, options?.manufacturer);
+      if (atlasAttrs) {
+        return await enrichSourceInParallel(atlasAttrs, userId, options?.skipFindchips);
+      }
+    } catch {
+      console.warn('Atlas preferred-source lookup failed for', mpn, '— falling through');
+    }
+    // Fall through if Atlas misses (row deleted, MFR disabled, etc.)
+  }
+
   if (isDigikeyConfigured()) {
     try {
       const response = await getProductDetails(mpn, currency, userId);

@@ -78,8 +78,9 @@ export default function AppShell() {
       set.add(appState.sourcePart.manufacturer);
     }
     for (const name of mfr.atlasNamesQueried) set.add(name);
+    for (const name of appState.chatAtlasMfrs) set.add(name);
     return set;
-  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart, mfr.atlasNamesQueried]);
+  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart, mfr.atlasNamesQueried, appState.chatAtlasMfrs]);
 
   // Auto-collapse chat only when MFR profile + recs are both visible — that's
   // the 4-panel crowding scenario. With MFR + attrs only (3 panels) chat fits

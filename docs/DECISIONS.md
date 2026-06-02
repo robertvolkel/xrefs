@@ -6845,3 +6845,207 @@ Path B (extend the Decision #155/#196 qualification-domain classifier registry t
 - Decision #155 / #196 — qualification-domain filter (the rejected Path B; classifier registry remains Phase 1 / Murata MLCC).
 - Decision #161 — response-time tagging pattern (mfrOrigin → qualificationDomain).
 - Decision #209 — row-alignment fallback pattern (Grade row inherits it).
+
+---
+
+## Decision #212 — Audit-check expansion + Fix-with-AI button UX: make the panel the answer (June 1, 2026)
+
+### Context
+
+Pre-Decision #195 the auto-audit caught four hallucination classes (BOGUS_MFR, OMITTED_MFR, WRONG_PREFIX, FABRICATED_DICT) and produced an advisory panel. In practice the operator still had to decide on every card whether to click **Fix with AI**, whether to **Approve** despite an amber Health chip, and whether a given flag was actually actionable. Each ambiguous card became a "can you sanity-check this for me?" round with engineering — not scalable for an operator-trained workflow.
+
+Three concrete failure modes surfaced in a one-session card-audit sprint:
+
+1. **Fix-with-AI loops on advisory-only cards** — operator clicked the button on cards with no block-level flags, AI returned a no-op proposal, accept fired with no change, audit re-fired same advisory → endless loop. Button gave no visual signal that there was nothing to fix.
+2. **High-share MFR omissions silently passed approve** — SWST at 25% of family B3 was a top-share MFR missing from the cohort claim, classified as advisory like a 6% editorial trim. Card claimed "cohort is X, Y, Z" and was materially wrong.
+3. **Engineering claims (rule type, weight, dict arrow direction) entirely unverified** — audit only checked MFR/prefix data claims. A card asserting `output_voltage (identity_upgrade, w=8)` for a rule that's actually `identity, w=10` shipped clean. Even worse: Chinese→canonical dict arrows pointing at wrong targets shipped clean — silently misinforming downstream Atlas extraction.
+
+Also: the Health chip ("Consider refresh" / "Refresh recommended") had three independent drivers (`flagCount`, `ruleDrift`, `groundingDrift`) but the chip looked identical regardless. Operator regenerated C1 three times trying to clear an amber chip — couldn't, because the driver was `flagCount` which clears only on **Approve**, not Regenerate. The chip didn't tell them which lever to pull.
+
+### Design
+
+**Button traffic-light** ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)) — Fix-with-AI button visual state IS the answer:
+- Load-bearing flags ≥1 → `variant="contained"` amber, label `"Fix N issue(s) with AI"`. Click it.
+- No load-bearing flags → `variant="outlined"` grey, label `"No issues to fix"`. Don't.
+- Audit not yet run → outlined grey, label `"Fix with AI"`, disabled.
+- Built-in card → outlined grey, label `"Fix with AI"`, disabled, tooltip directs to customize.
+
+The operator-facing rule shrinks to one sentence: **if the button is filled, click it; if ghost, don't.**
+
+**OMITTED_MFR escalation** ([lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts)) — new `OMIT_BLOCK_SHARE = 0.15` constant. Omissions whose share ≥15% move from advisory to block-level (`criticalOmittedMfrs` field on `CardAuditResult`). Block headline now reads `X hallucination(s) + Y critical MFR omission(s) — blocks Approve`. Fix-with-AI prompting handles critical omissions: instructs Sonnet to add a **bare cohort mention** (`"and SWST"`) — no prefix invention, since Fix doesn't have the grounding RPC. For prefix-level enrichment, the inline hint directs to Regenerate.
+
+**WRONG_RULE_CLAIM check** — parses card text for `attributeId (type, w=N)` and `attributeId (weight=N, type)` shapes, validates against the family's logic-table rules. Flags type-only mismatches and weight-only mismatches separately. Conservative regex: only inspects attributeIds present in the logic table (no prose false-positives), only flags claims actually asserted (a card claiming type-only is checked for type only).
+
+**WRONG_DICT_ARROW check** — two parallel paths:
+- Chinese-source: `<Han>→<canonical>` walked, looked up in family + shared dicts, flagged when source-in-dict but target-mismatched.
+- English-quoted-source: `"<english>"→<canonical>` walked, same lookup. Quoting is the high-confidence dict-claim signal — bare-id arrows (`vref_typ → output_voltage` without quotes) intentionally skipped because they're indistinguishable from prose arrows like `tc → BLOCKING`.
+- Both paths consult `atlas_dictionary_overrides` (the engineer-accepted DB layer) before flagging — initially missed on the English path, fixed when C6 `"reference voltage" → adjustability` surfaced as a false positive that should have cleared via DB-override lookup.
+
+**Health chip driver hint** ([AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)) — under each amber/red chip, a `Typography.caption` lists the active driver(s) with the action that clears each: `+2 MFRs (regen) · 5 flags (approve)`. The operator can read at a glance whether Regenerate will help. Plus a **stale-flags downgrade**: when flagCount is the ONLY driver (no ruleDrift, no groundingDrift), the chip drops to `⚪ Stale flags (N)` outlined-grey — visually conveying that this is informational, not structurally urgent.
+
+**Diff-vs-prior stacked mode** — word-level diff (`diffWordsWithSpace`) is unreadable past ~30% change ratio (regenerations interleave red/green tokens until both sides are illegible). Auto-switches to a stacked Prior/Current view at `DENSE_DIFF_THRESHOLD = 0.3`, with a manual Inline/Stacked toggle. Inline stays the default for small Fix-with-AI swaps where token-level deltas are the signal.
+
+### Audit (deliberate non-additions)
+
+- **Engineering-reason quote verification** considered — would parse `"<quoted phrase>"` in card and check against logic-table `engineeringReason` strings. **Skipped:** cards quote many things (Chinese phrases, MPN suffixes, marketing slogans). False-positive rate too high. Engineering reasons are paraphrased prose where exact-quote match doesn't apply.
+- **English bare-id dict arrows** intentionally not flagged. The regex would catch `vref_typ → output_voltage` (a legitimate dict-claim shape) but also `tc → BLOCKING when ...` (prose). The canonical-pattern guard (`[a-z]` start required) eliminates the `BLOCKING` case but not all prose. Tradeoff: narrower coverage > noise.
+- **Approve-gating on severity** — currently the Approve button isn't disabled when severity is `'block'`. The audit banner says "blocks Approve" but doesn't enforce. Intentional: the audit can have false positives; operator judgment is the final gate. Banner copy is aspirational.
+
+### Files
+
+- [lib/services/atlasFamilyCardAuditTypes.ts](../lib/services/atlasFamilyCardAuditTypes.ts) — added `criticalOmittedMfrs`, `wrongRuleClaims`, `wrongDictArrows` fields.
+- [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) — CHECK 5 (rule claims), CHECK 6 (dict arrows Chinese + English-quoted + DB-override consult), OMIT_BLOCK_SHARE escalation.
+- [app/api/admin/atlas/family-domain-cards/[familyId]/fix-issues/route.ts](../app/api/admin/atlas/family-domain-cards/[familyId]/fix-issues/route.ts) — prompts for critical omissions, wrong rule claims, wrong dict arrows.
+- [components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx) — button traffic-light, audit detail rendering (split critical/editorial omissions, rule-claim + dict-arrow sections), Health chip driver hint + stale-flags downgrade, `CardDiffView` stacked mode.
+
+### Related
+
+- Decision #195 — Phase 1 of the auto-audit pattern (4 base checks). This is Phase 2.
+- Decision #197 — original severity semantics (FABRICATED_DICT downgraded to warn). Extended here, not replaced.
+- Decision #213 — auto-derived exemption helpers (sibling decision, replaces blocklist whack-a-mole).
+
+---
+
+## Decision #213 — Auto-derive exemptions to replace MFR blocklist whack-a-mole (June 1, 2026)
+
+### Context
+
+The audit's MFR-alias resolver matches every known MFR name (~1,000 entries) against card text using word-boundary regex. Many 2–3 character Chinese MFR names collide with technical tokens that cards legitimately use as MPN-prefix or packaging-suffix annotations: `"-TD" (TDSEMIC)`, `"HX..." (HGC)`, `Hanrun (HR)`, `(FS/HS/SS)` for USB speed grades.
+
+The accumulated workaround was `MFR_NAME_BLOCKLIST` — a manual set in `atlasFamilyCardAudit.ts` listing tokens to ignore. Each one-off blocklist entry required: notice a false positive on a card → diagnose the colliding minor MFR → write a comment with the technical token context → add to both TS and `.mjs` mirror → bounce dev server → re-audit.
+
+By the end of one audit session the blocklist had grown to 8 entries (TR, SST, HR, CW, AM, HT, HX, TD) over a few hours. Each entry was correct individually but each represented the same architectural pattern: a card was annotating an MPN-affix relationship and pointing it at a real MFR via parens. The blocklist was a symptom of the audit not understanding the shape.
+
+### Audit — pattern recognition
+
+Looking at the 8 entries side by side:
+- TR: `Tape-and-Reel ("-TR" or "/TR" suffix)` — appears in suffix-annotation prose
+- SST: `"SST (SMC)"` — quoted-prefix attribution to MFR in parens
+- HR: `"Hanrun (HR)"` — MFR-paren-prefix inverse attribution
+- CW: `YMIN series anchor` — prefix-paren-MFR forward attribution
+- AM: `"5.0SMDJxxxA-A / -AM" (INPAQ)` — quoted-suffix-paren-MFR
+- HT: `"SiC HT 175°C"` — descriptive prose context (different shape — temperature anchor, not MFR attribution)
+- HX: `"HX... (HGC)"` — quoted-prefix-paren-MFR
+- TD: `"-TD" (TDSEMIC)` — quoted-suffix-paren-MFR
+
+Seven of eight fit ONE of two canonical shapes:
+1. **Forward MFR attribution**: `<token>... (<REAL_MFR>)` — a token annotated as belonging to a real MFR
+2. **Inverse MFR attribution**: `<REAL_MFR> (<token>...)` — a MFR's known prefix/suffix listed in parens
+
+Then C7 (Interface ICs) surfaced a third shape:
+3. **Acronym list**: `(FS/HS/SS)` — short-token slash-separated peer list inside parens, prose (not a MFR) preceding the open paren
+
+### Design
+
+Three exemption helpers added to [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts), each precise about its shape:
+
+1. **`isMfrAttributionContext(text, mentionIndex, name, knownMfrNames)`** — covers shapes 1 + 2. Forward pattern: regex `^[.…"'`\-\s/]{0,20}\(([^)]{1,80})\)` against the after-window. Inverse pattern: walks back to the nearest unclosed `(` and checks if the trailing word before paren is in `knownMfrNames`. The known-MFR guard is the safety lever — generic English words like `(clones)` won't false-exempt; `(TDSEMIC)` will.
+
+2. **`isAcronymListContext(text, mentionIndex, name)`** — covers shape 3. Finds the enclosing parens, splits inner on `[/,]`, requires ≥2 chunks all matching `/^[A-Za-z0-9]{1,6}$/`. Catches `(FS/HS/SS)`, `(HBM/MM/CDM)`, `(LV/HV)`. Single-token parens (handled by `isMfrAttributionContext`) and multi-word names won't match.
+
+Both register in the BOGUS_MFR check loop alongside the existing 4 exemption helpers (`isNegativeListContext`, `isQuotedDescriptorContext`, `isProtocolNumberContext`, `isDashDescriptorContext`, `isMpnSuffixContext`). Six-layer exemption architecture, each layer with a precise pattern signature.
+
+The blocklist isn't removed — the 8 historical entries stay as belt-and-suspenders and as documentation of the original incidents. But it should stop growing.
+
+### Heuristic / decision rule
+
+The rhythm that emerged for handling MFR-alias-resolver false positives:
+
+| Frequency | Response |
+|---|---|
+| 1–2 instances of same token | Blocklist it. Document the trigger context in the comment. |
+| 3+ instances fitting a recognizable shape | Lift to a pattern-detection helper. |
+| New shape that the current 6 helpers don't cover | Add a 7th helper. Don't grow the blocklist past pattern-evident. |
+
+The lesson: a blocklist is a tactical patch; an exemption helper is an architectural fix. Once the blocklist reveals a pattern, lift it.
+
+### Files
+
+- [lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts) — `isMfrAttributionContext`, `isAcronymListContext`, registered in the BOGUS_MFR loop.
+- [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) — byte-for-byte mirror of the TS helpers per the standing convention (CLAUDE.md / Decision #174).
+
+### Related
+
+- Decision #195 — Phase 1 of the audit (introduced `MFR_NAME_BLOCKLIST`).
+- Decision #212 — sibling decision: audit-check expansion + button UX.
+
+## Decision #214 — In-app Atlas Ingest "How To" drawer + operator runbook (June 1, 2026)
+
+**Context.** Operator workflow for Atlas MFR ingest has accumulated subtle ordering rules (Triage-before-Proceed avoids backfill; per-batch Regen unlocks Proceed All Clean; cached `/suggest` results survive override revocation, etc.). Mid-session questions kept surfacing — "what does Regen actually do?", "is the disappearing banner a bug?", "do I need backfill?". Up to now, the only documentation was scattered across DECISIONS.md (#174, #176, #180, #186, #187, #199, #200) and CLAUDE.md, which is great for architectural archaeology but terrible for an operator on a deadline.
+
+**Decision.** Two-part docs lift, with the runbook as source-of-truth and the drawer as in-context rendering:
+
+1. **[docs/RUNBOOK_INGESTION.md](RUNBOOK_INGESTION.md)** — four-phase operator workflow (Upload+Triage → Apply → Domain Cards → Optional Cleanup) with explicit "why this position" column on every step, key principles section, and a gotchas table for the failure modes operators actually hit. Source of truth — edit this when the workflow changes.
+
+2. **[components/admin/atlasIngest/IngestHowToDrawer.tsx](../components/admin/atlasIngest/IngestHowToDrawer.tsx)** — right-anchored MUI Drawer triggered by a "How to" button in the Atlas Ingest page header. Renders the runbook content with proper MUI components (Table, Chip, Paper, Typography, Divider) for visual hierarchy — explicitly NOT raw markdown via `react-markdown` (user requested proper formatting). Same content as the .md, hand-laid for visual punch.
+
+**Sync convention:** the .md is canonical; the .tsx mirrors it. When the workflow changes, edit BOTH. Footer caption on the drawer points editors at the .md so the relationship is visible. If divergence becomes a real maintenance burden (3+ instances of "I updated the .md but forgot the .tsx"), refactor to render the .md via `react-markdown` with a custom MUI theme — but ship the cleaner-looking version first.
+
+**Core principle the runbook drives home:** *Triage BEFORE Proceed.* Mapping unmapped params while batches are still Pending means `loadAndApplyDictOverrides()` writes already-correctly-translated values to `atlas_products` at proceed time. No backfill round-trip needed. The reverse order (Proceed first → Triage → backfill) works but creates retroactive cleanup work that scales poorly.
+
+**Why not just point operators at DECISIONS.md.** Decisions are written for future-Claude doing archaeology, not for someone with 40 pending batches who needs to know what button to click next. The runbook reorders the same information by task flow rather than chronology; the drawer puts it one click away from the work. Different audience, same source material.
+
+### Files
+
+- [docs/RUNBOOK_INGESTION.md](RUNBOOK_INGESTION.md) — new operator runbook.
+- [components/admin/atlasIngest/IngestHowToDrawer.tsx](../components/admin/atlasIngest/IngestHowToDrawer.tsx) — new drawer component (~280 lines, MUI Drawer + Table).
+- [components/admin/atlasIngest/AtlasIngestPanel.tsx](../components/admin/atlasIngest/AtlasIngestPanel.tsx) — added `HelpOutlineIcon` "How to" button next to Refresh, `howToOpen` state, drawer mount.
+
+### Related
+
+- Decision #174 — atlas re-ingest pipeline (the workflow being documented).
+- Decision #199 — backfill semantics (why the order matters).
+- Decision #200 — Coverage Repair workflow (companion operator surface).
+
+## Decision #215 — Galaxy MFR coverage repair: vendor-spelling aliases + post-mapping derivation framework (June 1, 2026)
+
+**Context.** User asked why Galaxy (银河微) MFR showed "Missing" on virtually every attribute in the Coverage drawer for a B4 TVS product (1.5KE10), even though Galaxy's source JSON publishes complete parametric data. Investigation revealed Galaxy uses a uniform vendor-specific column-naming convention across all 6 families it ships into Atlas — `VRRM (V) max`, `IF (A) max`, `VBR (V) min.` (trailing period), `Condition1_IPP (A)`, `RDS(on)(mΩ) @ 25℃ 10V Typ` (Greek omega + degrees-celsius + multi-condition Rds(on) columns), `最高工作温度` / `最低工作温度` (Chinese for max/min operating temp split into separate columns), etc. None of these spellings matched existing dict aliases in the B1/B3/B4/B5/B6 blocks of `atlasMapper.ts`. Net effect: 7,650 Galaxy products (B1 + B3 + B4) effectively invisible to the matching engine on most rule weights.
+
+The pattern was missed for ~30+ sessions because three independent surfacing mechanisms had aligned blind spots: (a) the Triage queue aggregates by paramName across MFRs, so Galaxy's unique spellings ranked low despite high per-MFR impact; (b) the Coverage drawer renders "Missing" identically whether the spec is unpublished OR mis-keyed (no visual distinction); (c) the dict was built incrementally as new MFRs were added without a systematic per-MFR vendor-spelling audit. The day this surfaced, Galaxy was at ~32% coverage for a typical B4 product (7 of 22 logic-table attributes).
+
+**Decision (three layers).**
+
+**Layer 1: Vendor-spelling dict aliases.** Added ~50 Galaxy-specific aliases across B1/B3/B4/B5/B6 dict blocks in both `atlasMapper.ts` AND `scripts/atlas-ingest.mjs` (mirror per CLAUDE.md convention). Each block tagged with a comment block identifying it as Galaxy-specific so future engineers see the provenance. Covers Galaxy's three patterns: trailing-` max`/` max.` suffix on most numeric specs; Chinese `最高/最低工作温度` for operating-temp split; multi-Vgs Rds(on) test conditions (10V/4.5V/2.5V/1.8V × Typ/Max = 8 satellite canonicals).
+
+**Layer 2: Post-mapping derivation step in `mapModel`.** Three derivations injected after the dict-mapping loop but before `return`:
+
+1. **B4 polarity from MPN suffix** — Galaxy doesn't ship a Polarity column; standard TVS naming convention (base or `A` suffix = unidirectional; `CA`/`CB` suffix = bidirectional) is encoded in the MPN itself. Set `parameters.polarity` from MPN regex when not already mapped.
+2. **`operating_temp` range synthesis** — when 最高 and 最低 are both present (read directly from `model.parameters` to bypass the satellite-drop at line 2211), synthesize the canonical `operating_temp` range field as `"<min>°C to <max>°C"`. Works for any family that splits temp into max/min columns.
+3. **`mounting_style` + `height` from `package_case`** — new `PACKAGE_TRAITS` lookup table (~30 entries covering DO-15/27/35/41/204/220, SMA/SMB/SMC, SOT-23/89/223/etc., TO-220/247/252/263) maps package_case codes to `{ mounting: 'Through Hole' | 'Surface Mount', height_mm: <number> }`. Derives both attributes when not already set. New packages surface via the Triage workflow; keep the table focused (not a dumping ground).
+
+**Layer 3: Backfill to apply retroactively.** Multiple `npm run atlas:backfill` runs to retranslate `atlas_products` — first run scanned all 408K rows, then subsequent runs scoped via `--mfr Galaxy` (~30 sec vs 30+ min for full scan). The full backfill triggered Supabase rate-limiting after 4 runs in one session, reinforcing that scoped backfills are the right default once you know which MFR(s) you fixed.
+
+**Result.** 1.5KE10 went from 7/22 (32%) → 13/22 (59%) — the realistic ceiling given what Galaxy actually publishes. The remaining 41% is genuinely missing source data (Galaxy's JSON catalog doesn't ship `num_channels`, `configuration`, `pin_configuration`, `surge_standard`, `esd_rating`, `response_time`, `rth_ja`, `pd` steady-state, etc. — those are datasheet-only specs requiring PDF extraction). 8,539 Galaxy products updated across the full catalog.
+
+**Two architectural lessons captured as BACKLOG entries:**
+
+- **Per-MFR coverage audit** (P2) — `scripts/atlas-audit-mfr-paramname-coverage.mjs` walks every MFR's products, compares raw paramNames against the merged dict + overrides, flags any MFR where >50% of paramNames are unmapped. Plus optional Manufacturers admin-panel chip (🔴<20% / 🟡20-50% / 🟢>50%) drilldown. Would have caught Galaxy on ingest day instead of 6 weeks later.
+- **Promote cross-family canonicals to `SHARED_PARAMS`** (P3) — when a canonical reaches 3+ family blocks for the same semantic concept, lift to shared. Galaxy reuse of `tj_max`/`operating_temp` derivation patterns hit this threshold this session.
+
+**Bugs surfaced and fixed:**
+
+- `extractNumeric(undefined)` crashed via `isMissing(value).trim()` — caught when my synthesis code passed `tMaxObj?.value` which could be undefined when only `numericValue` was set. Fixed at the call site with `typeof === 'string'` guards rather than the broader fix in `isMissing` itself (lower blast radius).
+- Line 2211 in `atlas-ingest.mjs` (`if (mapping.attributeId.startsWith('_')) continue;`) silently drops all satellite-mapped values — discovered when synthesis couldn't find `_operating_temp_min`. Worked around by reading directly from `model.parameters` rather than relying on satellites for cross-derivation reads. The architectural question of "should satellites store values at all" is deferred — current behavior is intentional per the display-only satellite convention.
+- Galaxy variant data: 19 of 322 B5 products use TAB character + no-space-before-Typ/Max in Rds(on) column names (vs the 303-product majority that uses space). Caught when sampling BL1012BV first; 2N5003 (303-set) verified the alias for the common case. Added 8 additional aliases for the 19-set TAB variants.
+
+**Why not Triage UI for these 50 accepts.** Volume + uniformity. Operator clicking through 50 vendor-specific accepts in Triage is repetitive and would have taken ~hour. Direct dict additions (with comment-tagged provenance for each Galaxy block) shipped in ~10 min of editing. The Triage workflow is the right surface for one-off accepts and the audited path for ambiguous cases — for systematic same-vendor patterns, the dict file is faster and equivalently audited via git blame on the comment block.
+
+**Capacitance_khz revoke (sibling cleanup, same session).** Earlier in the session a Triage row surfaced citing the previously-accepted `capacitance_khz` canonical for varistor capacitance. Investigation: `capacitance_khz` was hallucinated (low-confidence May 11 accept) and exists nowhere in the codebase — only in `atlas_dictionary_overrides`. The existing family 65 satellite `_static_capacitance` was the correct canonical. Wrote `scripts/atlas-revoke-bad-canonical.mjs` to dry-run + soft-revoke any override by attribute_id. Revoked the override; subsequent Triage rows still surfaced cached `capacitance_khz` suggestions (the existing Decision #187 staleness signal doesn't track override-revoke events — backlogged separately). After 3 instances surfaced in one session, that triggered the "extend Decision #187 to override-revoke" BACKLOG entry. Also wrote `scripts/atlas-migrate-orphan-canonical.mjs` for JSONB-key cleanup but decided not to run it (see tooling lesson below).
+
+### Files
+
+- [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) — Galaxy alias blocks in B1, B3, B4, B5, B6 dicts (~50 aliases total); B4 `'最高工作温度' → tj_max` re-route; B4 `'condition1_ipp (a)' → ipp` re-route.
+- [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror of all dict additions; new post-mapping derivation block in `mapModel` (polarity-from-MPN for B4, `operating_temp` range synthesis, `mounting_style`+`height` from `package_case`); `PACKAGE_TRAITS` lookup table.
+- [scripts/atlas-revoke-bad-canonical.mjs](../scripts/atlas-revoke-bad-canonical.mjs) — new audit/revoke utility (used earlier this session for the `capacitance_khz` cleanup).
+- [scripts/atlas-migrate-orphan-canonical.mjs](../scripts/atlas-migrate-orphan-canonical.mjs) — new orphan-key migration utility (written but not run — see lesson below).
+
+**Tooling lesson.** Wrote `atlas-migrate-orphan-canonical.mjs` to rename orphan JSONB keys after revoking a bad canonical, but the user pushed back ("are you sure this is the right thing to do?") and that prompted re-examination. Concluded: don't migrate dead bytes. Bad override revoked + future ingests routed correctly is enough; the 387 orphan rows in JSONB are inert (no code reads them) and a direct mutation would bypass the dict-override audit trail. The script stays as standby tooling but should rarely be needed. Two-part lesson: (a) momentum-driven cleanup is a real failure mode; (b) "are you sure?" is a healthy interrupt and I should treat it as a real prompt to reconsider rather than a confirmation prompt.
+
+### Related
+
+- Decision #174 — atlas re-ingest pipeline (the override layer this builds on).
+- Decision #199 — backfill semantics (the cleanup tool this session leaned on).
+- Decision #200 — Coverage Repair workflow (the surface where Galaxy's gap was eventually noticed — should have been noticed sooner).
+- Decision #201 — vendor-name hygiene (similar "Atlas-internal naming hits end users" pattern, GAIA prefix variant).
+- BACKLOG — per-MFR paramName-coverage audit (the prevention tool this incident motivates).
+

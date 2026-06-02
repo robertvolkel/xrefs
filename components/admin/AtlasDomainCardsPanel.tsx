@@ -368,15 +368,68 @@ export default function AtlasDomainCardsPanel() {
                   <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{e.familyId}</TableCell>
                   <TableCell>{e.familyName}</TableCell>
                   <TableCell>
-                    <Tooltip title={e.health.reason} placement="right">
-                      <Chip
-                        size="small"
-                        label={`${healthMeta.emoji} ${healthMeta.label}`}
-                        color={healthMeta.color}
-                        variant={e.health.level === 'ok' ? 'outlined' : 'filled'}
-                        sx={{ cursor: 'help', fontSize: '0.7rem' }}
-                      />
-                    </Tooltip>
+                    <Stack spacing={0.25} alignItems="flex-start">
+                      {(() => {
+                        // Flags-only urgency downgrade: when the ONLY driver
+                        // is flagCount (no ruleDrift, no groundingDrift),
+                        // visually mute the chip — flags age out over 30d
+                        // automatically and are materially less urgent than
+                        // structural drift. Show as gray outlined ⚪ instead
+                        // of filled 🟡/🔴. Label downgrades to "Stale flags"
+                        // so the action signal (approve/wait) is unambiguous.
+                        const isAmberOrRed =
+                          e.health.level === 'consider-refresh' ||
+                          e.health.level === 'refresh-recommended';
+                        const flagsOnly =
+                          isAmberOrRed &&
+                          e.health.flagCount >= 3 &&
+                          e.health.ruleDrift === 0 &&
+                          e.health.groundingMfrDrift === 0 &&
+                          e.health.groundingProductDrift < 100;
+                        const chipLabel = flagsOnly
+                          ? `⚪ Stale flags (${e.health.flagCount})`
+                          : `${healthMeta.emoji} ${healthMeta.label}`;
+                        const chipColor = flagsOnly ? 'default' : healthMeta.color;
+                        const chipVariant: 'outlined' | 'filled' =
+                          flagsOnly || e.health.level === 'ok' ? 'outlined' : 'filled';
+                        return (
+                          <Tooltip title={e.health.reason} placement="right">
+                            <Chip
+                              size="small"
+                              label={chipLabel}
+                              color={chipColor}
+                              variant={chipVariant}
+                              sx={{ cursor: 'help', fontSize: '0.7rem' }}
+                            />
+                          </Tooltip>
+                        );
+                      })()}
+                      {/* Driver hint — surfaces WHICH of the three drivers
+                          fired and which action clears it. Critical for the
+                          flag-driven case: regen alone doesn't clear flags
+                          (they age out over 30d OR drop on Approve via the
+                          fire-and-forget delete in the PATCH handler). Without
+                          this caption, operators regenerate repeatedly and
+                          watch the chip stay amber. Only rendered for non-OK,
+                          non-no-card states. */}
+                      {(e.health.level === 'consider-refresh' || e.health.level === 'refresh-recommended') && (() => {
+                        const drivers: string[] = [];
+                        if (e.health.ruleDrift >= 1) drivers.push(`+${e.health.ruleDrift} rule${e.health.ruleDrift === 1 ? '' : 's'} (regen)`);
+                        if (e.health.groundingMfrDrift >= 1 || e.health.groundingProductDrift >= 100) {
+                          const parts: string[] = [];
+                          if (e.health.groundingMfrDrift >= 1) parts.push(`+${e.health.groundingMfrDrift} MFR${e.health.groundingMfrDrift === 1 ? '' : 's'}`);
+                          if (e.health.groundingProductDrift >= 100) parts.push(`+${e.health.groundingProductDrift.toLocaleString()} products`);
+                          drivers.push(`${parts.join('/')} (regen)`);
+                        }
+                        if (e.health.flagCount >= 3) drivers.push(`${e.health.flagCount} flag${e.health.flagCount === 1 ? '' : 's'} (approve)`);
+                        if (!drivers.length) return null;
+                        return (
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.2 }}>
+                            {drivers.join(' · ')}
+                          </Typography>
+                        );
+                      })()}
+                    </Stack>
                   </TableCell>
                   <TableCell>{sourceChip}</TableCell>
                   <TableCell>{statusChip}</TableCell>

@@ -12,6 +12,7 @@ import {
   Paper,
   IconButton,
   InputAdornment,
+  CircularProgress,
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SendIcon from '@mui/icons-material/Send';
@@ -162,6 +163,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
   }, []);
   const [chatInput, setChatInput] = useState('');
   const [typing, setTyping] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
 
   // Multi-select pending selections (before user clicks Continue/Done)
   const [pendingIndustries, setPendingIndustries] = useState<IndustryVertical[]>([]);
@@ -207,6 +209,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
   }, []);
 
   const goToDashboard = useCallback(async () => {
+    setIsNavigating(true);
     const a = answersRef.current;
     const parts: string[] = [];
 
@@ -254,6 +257,7 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
   }, [router]);
 
   const skipToApp = useCallback(async () => {
+    setIsNavigating(true);
     try {
       await updateUserPreferences({ onboardingComplete: true });
     } catch { /* best-effort */ }
@@ -602,11 +606,18 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
 
         {!typing && step === 'intro' && (
           <Box sx={{ display: 'flex', gap: 1.5, mt: 1, ml: 5.5 }}>
-            <Button variant="contained" size="small" onClick={() => advanceTo('q1_role')}>
+            <Button variant="contained" size="small" onClick={() => advanceTo('q1_role')} disabled={isNavigating}>
               Let&apos;s go
             </Button>
-            <Button variant="text" size="small" onClick={skipToApp} sx={{ color: 'text.secondary' }}>
-              Skip for now &rarr;
+            <Button
+              variant="text"
+              size="small"
+              onClick={skipToApp}
+              disabled={isNavigating}
+              startIcon={isNavigating ? <CircularProgress size={14} color="inherit" /> : undefined}
+              sx={{ color: 'text.secondary' }}
+            >
+              {isNavigating ? 'Loading…' : <>Skip for now &rarr;</>}
             </Button>
           </Box>
         )}
@@ -705,8 +716,13 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
 
         {step === 'closing' && (
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-            <Button variant="contained" onClick={goToDashboard}>
-              Go to Dashboard &rarr;
+            <Button
+              variant="contained"
+              onClick={goToDashboard}
+              disabled={isNavigating}
+              startIcon={isNavigating ? <CircularProgress size={16} color="inherit" /> : undefined}
+            >
+              {isNavigating ? 'Setting up your dashboard…' : <>Go to Dashboard &rarr;</>}
             </Button>
           </Box>
         )}
@@ -818,9 +834,20 @@ export default function OnboardingAgent({ firstName, embedded }: OnboardingAgent
         <MuiLink
           component="button"
           onClick={skipToApp}
-          sx={{ fontSize: '0.85rem', color: 'text.secondary', textDecoration: 'none', '&:hover': { color: 'text.primary' } }}
+          disabled={isNavigating}
+          sx={{
+            fontSize: '0.85rem',
+            color: 'text.secondary',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.75,
+            '&:hover': { color: 'text.primary' },
+            '&:disabled': { opacity: 0.6, cursor: 'default' },
+          }}
         >
-          Skip and go to app &rarr;
+          {isNavigating && <CircularProgress size={12} color="inherit" />}
+          {isNavigating ? 'Loading…' : <>Skip and go to app &rarr;</>}
         </MuiLink>
       </Box>
       {messagesArea}

@@ -157,6 +157,29 @@ In JS regex, `\b` matches between `\w` and non-`\w`. Underscore (`_`) IS a `\w` 
 - [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) — mirror per Decision #176
 - 13 source files under `data/atlas/` for re-ingest
 
+## Per-MFR coverage audit — surface vendor-specific paramName spellings that miss dict
+**Status:** Not started
+**Priority:** P2 (recurring pattern — Galaxy was 7,500 products of broken translation)
+**Cost:** ~2 hours standalone script; ~4-6 hours with UI integration
+**Trigger:** June 1, 2026 — Galaxy MFR coverage drawer showed `Missing` on ~every B1 attribute despite Galaxy publishing complete parametric data. Root cause: Galaxy uses a uniform vendor-specific column-naming convention (`VRRM (V) max`, `IF (A) max`, `IFSM (A) max`, etc. with trailing ` max` suffix) that no other MFR uses. The aliases never reached the B1/B3/B4/B5/B6 dict blocks. Three existing surfacing mechanisms — Triage queue, Coverage drawer, per-MFR drilldown — all have blind spots that aligned: Triage aggregates by paramName across MFRs so Galaxy's unique spellings ranked low despite high per-MFR impact; Coverage drawer renders "Missing" identically whether the spec is unpublished OR mis-keyed; the dict was built incrementally as new MFRs were added without a systematic per-MFR vendor-spelling audit.
+
+**Build (option A — standalone script):** `scripts/atlas-audit-mfr-paramname-coverage.mjs` — given `--mfr <name>` or `--all`, walk every MFR's products in `atlas_products`, extract the set of unique raw paramNames per family per MFR (or read from `data/atlas/mfr_*_params.json` if pre-ingest), check each against the merged dict (atlasMapper.ts + active dict overrides), output a per-MFR-per-family table:
+```
+Galaxy (B1 Rectifiers — 2,659 products):
+  ✓ Configuration (2,547 / 2,659)  → configuration
+  ✗ VRRM (V) max (2,659)           → unmapped, suggest: vrrm
+  ✗ IF (A) max (2,659)             → unmapped, suggest: io_avg
+  ...
+  Coverage: 1 / 20 paramNames mapped (5%)
+```
+Flag any MFR-family combo where >50% of high-volume paramNames are unmapped. Include AI-assisted suggestion column (Sonnet 4.6 with same prompt as Triage `/suggest`) so engineer review is fast. Read-only — operator runs separately, decides which suggestions to promote to dict overrides.
+
+**Build (option B — admin UI integration):** Add a "Vendor-spellings audit" column to the existing Manufacturers admin panel ([components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx)). For each MFR row, run option A's audit on-demand or as a background job, render a coverage-style chip (🔴 <20% / 🟡 20-50% / 🟢 >50% paramName→canonical). Click chip to open a drawer with the unmapped paramNames + AI suggestions + per-row "Add to dict override" button. Mirrors Decision #200's Coverage Repair workflow but for paramName-coverage instead of attribute-coverage.
+
+**Recommendation:** Ship A first (cheap, immediate value — operator runs `npm run atlas:audit-paramnames -- --mfr <name>` whenever a new MFR is added, OR scheduled monthly across all MFRs). Promote to B if A surfaces 3+ MFRs with the same systematic gap as Galaxy (then UI integration earns its keep).
+
+**Why this matters:** Galaxy is unlikely to be unique. Any MFR with strongly-templated catalog metadata (auto-generated from a single internal schema) will have uniform vendor-specific column naming. Without this audit, each MFR's gap stays hidden until someone manually opens the Coverage drawer for that specific MFR. The cost of one Galaxy-class miss is ~50 alias additions + 5-10 min backfill — small per incident, but compounds across MFRs and erodes trust in coverage metrics that drive Decision #200 prioritization.
+
 ## Domain Card audit: context-aware short-ASCII MFR matcher
 **Status:** Not started
 **Priority:** P3 (quality of life)

@@ -76,6 +76,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  unreachable automatically — no need for manual purges. */
 export const RECS_CACHE_SCHEMA_VERSION = 'v10';
 
+/** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
+ *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
+ *  let off-MFR rows claim MPN dedup slots (e.g. Galaxy "1.5KE10" was lost
+ *  because Digikey's Littelfuse "1.5KE10" beat it at dedup, then got
+ *  post-filtered out). */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v2';
+
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
 

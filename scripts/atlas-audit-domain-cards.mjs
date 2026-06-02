@@ -114,6 +114,8 @@ const MFR_NAME_BLOCKLIST = new Set([
   'HR',         // Hanrun's actual family-69 CM-choke MPN prefix (HR01XXXX, HR110XXX, HR34XXXX, HR630*-XXX); cited as "Hanrun (HR)" on card 69; collides with MFR "HR 灿达" (slug 'hr', 0 family-69 products)
   'CW',         // YMIN's aluminum-electrolytic MPN series prefix (CW32G221MNNZS04S2, CW62G101MNNZS02S2) cited on card 58; collides with MFR "CW 武汉芯源" (0 F58 products)
   'AM',         // INPAQ's bidirectional packaging suffix on the 5.0SMDJ TVS series (5.0SMDJxxxA-A / -AM) cited on card 70 B4 TVS Diodes; collides with MFR "AM 安美" (0 B4 products); also caused "Fix with AI" no-op loop
+  'HX',         // HGC's actual C4 op-amp MPN prefix (HX358, HX324) cited on C4 card as "HX... (HGC)"; collides with two minor MFRs "HX 红星" and "HX 恒生兴" (both 0 C4 products); same trade as TR/SST/HR/CW/AM; also caused Fix-with-AI no-op loop
+  'TD',         // TDSEMIC's clone-suffix annotation on C9 ADCs card ("-TD" (TDSEMIC)); collides with minor MFR "TD 钍地半导体" (0 C9 products); same trade as TR/SST/HR/CW/AM/HX; also caused Fix-with-AI no-op loop
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,
@@ -212,6 +214,52 @@ function isMpnSuffixContext(text, mentionIndex) {
   const mpnCandidate = text.slice(cursor + 1, mentionIndex - 1);
   if (mpnCandidate.length < 4) return false;
   return /[0-9]/.test(mpnCandidate);
+}
+
+// Mirror of TS isMfrAttributionContext — exempts tokens that sit in an
+// MFR-attribution shape (`"-TD" (TDSEMIC)`, `"HX..." (HGC)`, `Hanrun (HR)`).
+// Replaces the manual blocklist additions for TR/SST/HR/CW/AM/HT/HX/TD.
+function isMfrAttributionContext(text, mentionIndex, name, knownMfrNames) {
+  const afterStart = mentionIndex + name.length;
+  const fwdWindow = text.slice(afterStart, afterStart + 60);
+  const fwdMatch = fwdWindow.match(/^[.…"'`\-\s/]{0,20}\(([^)]{1,80})\)/);
+  if (fwdMatch) {
+    const inner = fwdMatch[1].split(/[,;]/)[0].trim().toLowerCase();
+    if (inner && knownMfrNames.has(inner)) return true;
+  }
+  const beforeWindow = text.slice(Math.max(0, mentionIndex - 80), mentionIndex);
+  const lastOpen = beforeWindow.lastIndexOf('(');
+  if (lastOpen !== -1) {
+    const inBeforeParens = beforeWindow.slice(lastOpen + 1);
+    if (!inBeforeParens.includes(')')) {
+      const preParen = beforeWindow.slice(0, lastOpen).replace(/\s+$/, '');
+      const tail = preParen.match(/([A-Z][A-Za-z0-9./\- ]{1,40})$/);
+      if (tail) {
+        const candidate = tail[1].trim().toLowerCase();
+        if (knownMfrNames.has(candidate)) return true;
+        const lastWord = candidate.split(/\s+/).pop();
+        if (lastWord && knownMfrNames.has(lastWord)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Mirror of TS isAcronymListContext — exempts tokens inside slash- or
+// comma-separated short-acronym enumerations in parens (e.g. (FS/HS/SS)).
+function isAcronymListContext(text, mentionIndex, name) {
+  const before = text.slice(Math.max(0, mentionIndex - 60), mentionIndex);
+  const after = text.slice(mentionIndex + name.length, mentionIndex + name.length + 60);
+  const lastOpen = before.lastIndexOf('(');
+  if (lastOpen === -1) return false;
+  if (before.slice(lastOpen + 1).includes(')')) return false;
+  const firstClose = after.indexOf(')');
+  if (firstClose === -1) return false;
+  const inner = before.slice(lastOpen + 1) + name + after.slice(0, firstClose);
+  if (!/[/,]/.test(inner)) return false;
+  const chunks = inner.split(/[/,]/).map((s) => s.trim()).filter(Boolean);
+  if (chunks.length < 2) return false;
+  return chunks.every((c) => /^[A-Za-z0-9]{1,6}$/.test(c));
 }
 
 function chip(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
@@ -432,6 +480,12 @@ for (const card of cards) {
   const acceptedOverrideParams = await fetchAcceptedOverrideParamNames(family_id);
 
   // ── CHECK 1: BOGUS MFRs — MFRs named in card text that don't ship this family ──
+  // Pre-build a flat lowercase set of every known MFR name; used by
+  // isMfrAttributionContext to confirm a parenthetical names a REAL MFR.
+  const knownMfrNames = new Set();
+  for (const mfr of allMfrIdentities) {
+    for (const n of mfr.names) knownMfrNames.add(n.toLowerCase());
+  }
   for (const mfr of allMfrIdentities) {
     // Skip MFRs whose primary names are technical-term collisions.
     const primaryNames = mfr.names.filter((n) => !/[\p{Script=Han}]/u.test(n));
@@ -452,6 +506,8 @@ for (const card of cards) {
       if (isShortAscii && isProtocolNumberContext(card_text, idx, n)) continue;
       if (isShortAscii && isDashDescriptorContext(card_text, idx, n)) continue;
       if (isShortAscii && isMpnSuffixContext(card_text, idx)) continue;
+      if (isShortAscii && isMfrAttributionContext(card_text, idx, n, knownMfrNames)) continue;
+      if (isShortAscii && isAcronymListContext(card_text, idx, n)) continue;
       positiveMention = true;
       break;
     }

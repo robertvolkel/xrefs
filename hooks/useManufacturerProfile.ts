@@ -13,9 +13,16 @@ interface ManufacturerProfileResult {
   chatManuallyCollapsed: boolean;
   chatCollapsed: boolean;
   mfrOpen: boolean;
-  /** Canonical names of MFRs the user has opened in the panel this session that resolved to Atlas. Used to linkify MFR mentions in chat prose. */
+  /** Canonical names of MFRs that have been resolved as Atlas this session
+   *  — either by the user opening the panel, or by the LLM looking them up
+   *  via get_manufacturer_profile (Decision #203). Used to linkify MFR
+   *  mentions in chat prose. */
   atlasNamesQueried: ReadonlySet<string>;
   handleManufacturerClick: (manufacturer: string) => void;
+  /** Bulk-register canonical Atlas-MFR names. Used by chat callers to
+   *  surface MFRs the LLM looked up via tool — so the chat UI can linkify
+   *  the names without the user having to click first. */
+  registerAtlasMfrs: (names: readonly string[]) => void;
   handleExpandChat: () => void;
   clearManualCollapse: () => void;
   reset: () => void;
@@ -118,6 +125,21 @@ export function useManufacturerProfile(): ManufacturerProfileResult {
     requestIdRef.current++;
   }, []);
 
+  const registerAtlasMfrs = useCallback((names: readonly string[]) => {
+    if (!names || names.length === 0) return;
+    setAtlasNamesQueried(prev => {
+      let next: Set<string> | null = null;
+      for (const raw of names) {
+        const name = raw?.trim();
+        if (!name) continue;
+        if (prev.has(name)) continue;
+        if (!next) next = new Set(prev);
+        next.add(name);
+      }
+      return next ?? prev;
+    });
+  }, []);
+
   const clearManualCollapse = useCallback(() => {
     setChatManuallyCollapsed(false);
   }, []);
@@ -139,6 +161,7 @@ export function useManufacturerProfile(): ManufacturerProfileResult {
     mfrOpen,
     atlasNamesQueried,
     handleManufacturerClick,
+    registerAtlasMfrs,
     handleExpandChat,
     clearManualCollapse,
     reset,

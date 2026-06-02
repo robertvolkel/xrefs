@@ -447,6 +447,9 @@ export interface ListAgentResponse {
   message: string;
   pendingAction?: PendingListAction;
   clientActions?: ListClientAction[];
+  /** Canonical names of Atlas manufacturers the LLM looked up via
+   *  get_manufacturer_profile during this turn — Decision #203 linkification. */
+  mentionedAtlasManufacturers?: string[];
 }
 
 export interface MissingAttributeInfo {
@@ -743,6 +746,11 @@ export interface OrchestratorResponse {
   attributes?: Record<string, PartAttributes>;
   recommendations?: Record<string, XrefRecommendation[]>;
   choices?: ChoiceOption[];
+  /** Canonical names of Atlas manufacturers the LLM looked up via
+   *  get_manufacturer_profile during this response. Surfaced so the chat UI
+   *  can linkify those names in the assistant's prose without waiting for the
+   *  user to click anything. Decision #203 (clickable Atlas-MFR mentions). */
+  mentionedAtlasManufacturers?: string[];
 }
 
 // ============================================================

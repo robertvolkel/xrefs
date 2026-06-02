@@ -73,6 +73,11 @@ interface AppState {
    *  when parts.io / FC enrichment completes and replaces allRecommendations. */
   currentFilter: import('@/lib/services/recommendationFilter').FilterInput | null;
   currentFilterLabel: string | null;
+  /** Canonical names of Atlas MFRs the LLM has looked up via
+   *  get_manufacturer_profile across the current session. Accumulated so the
+   *  chat UI can linkify mentions of those MFRs in assistant prose without
+   *  the user having to first click anything. Decision #203. */
+  chatAtlasMfrs: ReadonlySet<string>;
 }
 
 const initialState: AppState = {
@@ -97,6 +102,7 @@ const initialState: AppState = {
   comparisonError: false,
   currentFilter: null,
   currentFilterLabel: null,
+  chatAtlasMfrs: new Set<string>(),
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -978,6 +984,23 @@ export function useAppState() {
         // Track assistant response in conversation history
         conversationRef.current.push({ role: 'assistant', content: response.message });
 
+        // Accumulate Atlas MFRs the LLM looked up via get_manufacturer_profile
+        // this turn so the chat UI can linkify those names in the assistant's
+        // prose. Stable Set identity preserved when nothing new arrived.
+        if (response.mentionedAtlasManufacturers && response.mentionedAtlasManufacturers.length > 0) {
+          setState((prev) => {
+            const incoming = response.mentionedAtlasManufacturers ?? [];
+            let next: Set<string> | null = null;
+            for (const raw of incoming) {
+              const name = raw?.trim();
+              if (!name || prev.chatAtlasMfrs.has(name)) continue;
+              if (!next) next = new Set(prev.chatAtlasMfrs);
+              next.add(name);
+            }
+            return next ? { ...prev, chatAtlasMfrs: next } : prev;
+          });
+        }
+
         // Mark LLM as available
         setState((prev) => ({ ...prev, llmAvailable: true }));
         setStatus('');
@@ -1064,8 +1087,16 @@ export function useAppState() {
         content: `Yes, that's the part: ${part.mpn} from ${part.manufacturer}. Please get its attributes and find replacements.`,
       });
 
-      // Step 1: Fetch attributes (fast, direct API)
-      const sourceAttrs = await getPartAttributes(part.mpn, signal).catch(() => null);
+      // Step 1: Fetch attributes (fast, direct API). Pass source + MFR so
+      // an Atlas-card click resolves to the right Atlas row, not a Digikey
+      // prefix-match shadow (see comment in loadAttributesAndRecommendations).
+      const cardSource = part.dataSource === 'digikey' || part.dataSource === 'atlas' || part.dataSource === 'partsio'
+        ? part.dataSource
+        : undefined;
+      const sourceAttrs = await getPartAttributes(part.mpn, signal, {
+        source: cardSource,
+        manufacturer: part.manufacturer,
+      }).catch(() => null);
       stopRotation();
       if (signal.aborted) return; // conversation switched mid-flight
 
@@ -1150,7 +1181,17 @@ export function useAppState() {
           { text: 'Checking price and availability...', delayMs: 2800 },
           { text: 'Analyzing supply risk...', delayMs: 4500 },
         ]);
-        const attributes = await getPartAttributes(part.mpn);
+        // Pass the source-card's dataSource + manufacturer so the attribute
+        // lookup can prefer the right source. Without this, the Digikey
+        // prefix-match fallback could shadow an Atlas-card click (e.g.
+        // Galaxy 1.5KE100 → Littelfuse 1.5KE100A).
+        const cardSource = part.dataSource === 'digikey' || part.dataSource === 'atlas' || part.dataSource === 'partsio'
+          ? part.dataSource
+          : undefined;
+        const attributes = await getPartAttributes(part.mpn, undefined, {
+          source: cardSource,
+          manufacturer: part.manufacturer,
+        });
         stopRotation();
 
         // Mirror the LLM-flow shortcut — if pendingIntent is set, skip the
@@ -1832,6 +1873,7 @@ export function useAppState() {
       comparisonError: false,
       currentFilter: null,
       currentFilterLabel: null,
+      chatAtlasMfrs: new Set<string>(),
     });
   }, []);
 

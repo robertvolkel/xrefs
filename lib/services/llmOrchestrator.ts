@@ -817,6 +817,8 @@ interface ToolResultData {
   attributes: Record<string, PartAttributes>;
   recommendations: Record<string, XrefRecommendation[]>;
   choices?: ChoiceOption[];
+  /** Atlas-MFR canonical names looked up via get_manufacturer_profile this turn. */
+  mentionedAtlasManufacturers?: Set<string>;
 }
 
 /** Execute a tool call and return the result + parsed data */
@@ -832,7 +834,13 @@ async function executeTool(
   switch (name) {
     case 'search_parts': {
       const args = input as { query: string; manufacturer?: string };
-      const result = await searchParts(args.query, undefined, userId);
+      // Pass manufacturer through to the Atlas-side filter so generic MPNs
+      // (LM358, 555, 1.5KE10) shared across many MFRs don't silently lose the
+      // target MFR's rows at the per-source trim boundary. The post-filter
+      // below still runs for Digikey/Parts.io results.
+      const result = await searchParts(args.query, undefined, userId, {
+        manufacturer: args.manufacturer,
+      });
 
       // MFR filter: when the user named a manufacturer, narrow results to
       // matching candidates. Critical for generic MPNs (LM358, 555, 2N2222)
@@ -916,7 +924,17 @@ async function executeTool(
     }
     case 'get_manufacturer_profile': {
       const inp = input as { name: string };
-      return executeGetManufacturerProfile(inp.name);
+      const content = await executeGetManufacturerProfile(inp.name);
+      // If the lookup resolved to an Atlas profile, register the canonical name
+      // so the chat UI can linkify it in the assistant's prose (Decision #203).
+      try {
+        const parsed = JSON.parse(content) as { source?: string; profile?: { name?: string } };
+        if (parsed.source === 'atlas' && parsed.profile?.name) {
+          data.mentionedAtlasManufacturers ??= new Set<string>();
+          data.mentionedAtlasManufacturers.add(parsed.profile.name);
+        }
+      } catch { /* projection always emits valid JSON */ }
+      return content;
     }
     case 'present_part_options': {
       const inp = input as { mpns: string[] };
@@ -1332,6 +1350,9 @@ export async function chat(
   if (toolData.choices && toolData.choices.length > 0) {
     result.choices = toolData.choices;
   }
+  if (toolData.mentionedAtlasManufacturers && toolData.mentionedAtlasManufacturers.size > 0) {
+    result.mentionedAtlasManufacturers = [...toolData.mentionedAtlasManufacturers];
+  }
 
   return result;
 }
@@ -1482,6 +1503,13 @@ export async function refinementChat(
         if (toolUse.name === 'get_manufacturer_profile') {
           const inp = toolUse.input as { name: string };
           const content = await executeGetManufacturerProfile(inp.name);
+          try {
+            const parsed = JSON.parse(content) as { source?: string; profile?: { name?: string } };
+            if (parsed.source === 'atlas' && parsed.profile?.name) {
+              toolData.mentionedAtlasManufacturers ??= new Set<string>();
+              toolData.mentionedAtlasManufacturers.add(parsed.profile.name);
+            }
+          } catch { /* projection always emits valid JSON */ }
           return { type: 'tool_result' as const, tool_use_id: toolUse.id, content };
         }
         if (toolUse.name === 'filter_recommendations') {
@@ -1603,6 +1631,9 @@ export async function refinementChat(
   const result: OrchestratorResponse = { message };
   if (Object.keys(toolData.recommendations).length > 0) {
     result.recommendations = toolData.recommendations;
+  }
+  if (toolData.mentionedAtlasManufacturers && toolData.mentionedAtlasManufacturers.size > 0) {
+    result.mentionedAtlasManufacturers = [...toolData.mentionedAtlasManufacturers];
   }
 
   return result;
@@ -1955,6 +1986,7 @@ export async function listChat(
 
   let pendingAction: PendingListAction | undefined;
   const clientActions: ListClientAction[] = [];
+  const mentionedAtlasManufacturers = new Set<string>();
 
   llmCallCount++;
   let response = await client.messages.create({
@@ -1985,6 +2017,12 @@ export async function listChat(
       // --- Async tools (network calls) ---
       if (name === 'get_manufacturer_profile') {
         const content = await executeGetManufacturerProfile(String(input.name ?? ''));
+        try {
+          const parsed = JSON.parse(content) as { source?: string; profile?: { name?: string } };
+          if (parsed.source === 'atlas' && parsed.profile?.name) {
+            mentionedAtlasManufacturers.add(parsed.profile.name);
+          }
+        } catch { /* projection always emits valid JSON */ }
         return { type: 'tool_result' as const, tool_use_id: toolUse.id, content };
       }
 
@@ -2075,5 +2113,8 @@ export async function listChat(
     message,
     pendingAction,
     clientActions: clientActions.length > 0 ? clientActions : undefined,
+    mentionedAtlasManufacturers: mentionedAtlasManufacturers.size > 0
+      ? [...mentionedAtlasManufacturers]
+      : undefined,
   };
 }

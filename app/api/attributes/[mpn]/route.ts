@@ -7,7 +7,7 @@ import { resolveManufacturerAlias } from '@/lib/services/manufacturerAliasResolv
 import { classifyQualificationDomain, upgradeFromAttributes } from '@/lib/services/qualificationDomain';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ mpn: string }> }
 ): Promise<NextResponse<ApiResponse<PartAttributes>>> {
   return runWithServiceTracking(async () => {
@@ -16,7 +16,20 @@ export async function GET(
 
     const { mpn } = await params;
 
-    const attributes = await getAttributes(decodeURIComponent(mpn), undefined, user?.id);
+    // When the user click came from a search-result card, the PartSummary's
+    // dataSource + manufacturer travel along as query params. This stops the
+    // Digikey prefix-match fallback from silently shadowing the actual Atlas
+    // row the user clicked (e.g. Galaxy 1.5KE100 → Littelfuse 1.5KE100A).
+    const sourceParam = request.nextUrl.searchParams.get('source');
+    const manufacturerParam = request.nextUrl.searchParams.get('manufacturer') || undefined;
+    const preferredSource = sourceParam === 'digikey' || sourceParam === 'atlas' || sourceParam === 'partsio'
+      ? sourceParam
+      : undefined;
+
+    const attributes = await getAttributes(decodeURIComponent(mpn), undefined, user?.id, {
+      preferredSource,
+      manufacturer: manufacturerParam,
+    });
     const warnings = getServiceWarnings();
     if (!attributes) {
       return NextResponse.json({

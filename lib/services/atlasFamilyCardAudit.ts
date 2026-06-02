@@ -109,6 +109,20 @@ const MFR_NAME_BLOCKLIST = new Set([
   // find anything to fix in the legitimate -AM suffix annotation, returns
   // a near-no-op proposal, audit re-fires the same false positive on accept.
   'AM',
+  // HX — HGC's actual op-amp MPN prefix (HX358, HX324, etc.) cited on
+  // card C4 Op-Amps in the house-prefixes line as "HX... (HGC)". Collides
+  // with TWO minor Chinese MFRs sharing the bare ASCII name "HX" ("HX 红星"
+  // and "HX 恒生兴") that ship zero C4 products. Both rows trip the same
+  // false flag. Also produced the Fix-with-AI no-op loop. Same trade as
+  // TR/SST/HR/CW/AM.
+  'HX',
+  // TD — TDSEMIC's clone-suffix annotation on C9 ADC card ("-TD" (TDSEMIC)
+  // alongside "-HXY" (HXYMOS) in the MFR COHORT clone-suffix list).
+  // Collides with minor Chinese MFR "TD 钍地半导体" which ships zero C9
+  // products. TD is also a common suffix shape in MPN naming conventions
+  // generally. Same trade as TR/SST/HR/CW/AM/HX. Also caused Fix-with-AI
+  // no-op loop.
+  'TD',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean
@@ -235,6 +249,98 @@ function isMpnSuffixContext(text: string, mentionIndex: number): boolean {
   // Must contain at least one digit — bare alpha prefixes like "ABC-XYZ"
   // shouldn't be treated as MPNs.
   return /[0-9]/.test(mpnCandidate);
+}
+
+/** True if the short-ASCII token sits inside a slash- or comma-separated
+ *  acronym enumeration in parens — e.g. `(FS/HS/SS)`, `(HBM/MM/CDM)`,
+ *  `(LV/HV)`. The token is one item in a list of technical acronyms
+ *  (USB speed grades, ESD model classes, voltage tech families, etc.),
+ *  not a MFR claim.
+ *
+ *  Safety: requires ≥2 chunks AND every chunk to be ≤6 chars of pure
+ *  alphanumerics. Single-token parens (`(LX)`) are handled by
+ *  isMfrAttributionContext; longer/multi-word names won't match.
+ *
+ *  Replaces the manual blocklist for HS (USB High-Speed) and pre-empts
+ *  the same shape in future cards. */
+function isAcronymListContext(
+  text: string,
+  mentionIndex: number,
+  name: string,
+): boolean {
+  const before = text.slice(Math.max(0, mentionIndex - 60), mentionIndex);
+  const after = text.slice(mentionIndex + name.length, mentionIndex + name.length + 60);
+  const lastOpen = before.lastIndexOf('(');
+  if (lastOpen === -1) return false;
+  // Bail if a close-paren appears between open and mention (we'd be outside).
+  if (before.slice(lastOpen + 1).includes(')')) return false;
+  const firstClose = after.indexOf(')');
+  if (firstClose === -1) return false;
+  const inner = before.slice(lastOpen + 1) + name + after.slice(0, firstClose);
+  if (!/[/,]/.test(inner)) return false;
+  const chunks = inner.split(/[/,]/).map((s) => s.trim()).filter(Boolean);
+  if (chunks.length < 2) return false;
+  return chunks.every((c) => /^[A-Za-z0-9]{1,6}$/.test(c));
+}
+
+/** True if the short-ASCII token sits in an MFR-attribution shape — the
+ *  card is annotating an MPN prefix / suffix and pointing it AT another
+ *  real MFR, rather than asserting this token itself ships parts.
+ *
+ *  Two shapes catch ~all observed cases:
+ *    1. Forward attribution:  `<X>...  (<REAL_MFR>)`
+ *       e.g. `"-TD" (TDSEMIC)`, `"HX..." (HGC)`, `"-AM" (INPAQ)`,
+ *            `SM/SY (SILERGY)`, `CY... (Sunlord)`
+ *    2. Inverse attribution:  `<REAL_MFR> (<X>...)`
+ *       e.g. `Hanrun (HR)`, `Linear Tech (LT)`
+ *
+ *  Safety: only exempts when the parenthetical (or pre-paren) word is a
+ *  KNOWN MFR in the alias resolver. Generic English words in parens
+ *  ("clones", "suffix") won't false-exempt — those are already covered
+ *  by isDashDescriptorContext / isQuotedDescriptorContext.
+ *
+ *  Replaces ~8 manual blocklist additions (TR/SST/HR/CW/AM/HT/HX/TD) and
+ *  pre-empts future ones — every one of those tokens fits one of these
+ *  two shapes in the card that triggered the false positive. */
+function isMfrAttributionContext(
+  text: string,
+  mentionIndex: number,
+  name: string,
+  knownMfrNames: Set<string>,
+): boolean {
+  // Forward: `<X>...  (<MFR>)` — mention followed (within ~20 chars of
+  // wrapping punctuation/whitespace) by a parenthetical that names a real
+  // MFR. Accept comma-separated first chunk so `(YANGJIE, dual common-anode)`
+  // resolves on YANGJIE.
+  const afterStart = mentionIndex + name.length;
+  const fwdWindow = text.slice(afterStart, afterStart + 60);
+  const fwdMatch = fwdWindow.match(/^[.…"'`\-\s/]{0,20}\(([^)]{1,80})\)/);
+  if (fwdMatch) {
+    const inner = fwdMatch[1].split(/[,;]/)[0].trim().toLowerCase();
+    if (inner && knownMfrNames.has(inner)) return true;
+  }
+  // Inverse: `<MFR> (<X>...)` — mention is inside an unclosed paren whose
+  // preceding token (right up to the open-paren) is a real MFR.
+  const beforeWindow = text.slice(Math.max(0, mentionIndex - 80), mentionIndex);
+  const lastOpen = beforeWindow.lastIndexOf('(');
+  if (lastOpen !== -1) {
+    const inBeforeParens = beforeWindow.slice(lastOpen + 1);
+    // Only "inside parens" if no close-paren appeared between open and mention.
+    if (!inBeforeParens.includes(')')) {
+      const preParen = beforeWindow.slice(0, lastOpen).replace(/\s+$/, '');
+      // Trailing MFR-shaped word: capital-led, ≤30 chars, may have space/dash/dot.
+      // Walk back through up to ~3 words to handle "Linear Tech (LT)".
+      const tail = preParen.match(/([A-Z][A-Za-z0-9./\- ]{1,40})$/);
+      if (tail) {
+        const candidate = tail[1].trim().toLowerCase();
+        if (knownMfrNames.has(candidate)) return true;
+        // Try last single word too (handles "the Hanrun (HR)" → "Hanrun")
+        const lastWord = candidate.split(/\s+/).pop();
+        if (lastWord && knownMfrNames.has(lastWord)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ── public types ──
@@ -539,6 +645,16 @@ export async function auditFamilyDomainCard(
   ]);
 
   // ── CHECK 1: BOGUS_MFR ──
+  // Pre-build a flat lowercase set of every known MFR name (across all
+  // identities). Used by isMfrAttributionContext to confirm a parenthetical
+  // is a REAL MFR — generic English words won't match, so the exemption
+  // is precise.
+  const knownMfrNames = new Set<string>();
+  for (const mfr of mfrIdentities) {
+    for (const n of mfr.names) {
+      knownMfrNames.add(n.toLowerCase());
+    }
+  }
   for (const mfr of mfrIdentities) {
     const asciiNames = mfr.names.filter((n) => !/[\p{Script=Han}]/u.test(n));
     if (asciiNames.some((n) => MFR_NAME_BLOCKLIST.has(n))) continue;
@@ -568,6 +684,18 @@ export async function auditFamilyDomainCard(
       // as the quoted-descriptor exemption but for unquoted suffix
       // tokens on real MPNs.
       if (isShortAscii && isMpnSuffixContext(cardText, idx)) continue;
+      // Skip MFR-attribution mentions — `"-TD" (TDSEMIC)`, `"HX..." (HGC)`,
+      // `Hanrun (HR)` shapes. Token is annotating an MPN affix and pointing
+      // it at a real MFR; not a standalone MFR claim. Replaces the manual
+      // blocklist additions for TR/SST/HR/CW/AM/HT/HX/TD; pre-empts the
+      // same pattern for future cards.
+      if (isShortAscii && isMfrAttributionContext(cardText, idx, n, knownMfrNames)) continue;
+      // Skip slash-list acronym enumerations — `(FS/HS/SS)`, `(HBM/MM/CDM)`,
+      // `(LV/HV)`. Token is one item in a technical-acronym list, not a
+      // MFR claim. Replaces blocklisting HS (USB High-Speed). Distinct
+      // shape from isMfrAttributionContext: prose (not a MFR) precedes
+      // the open paren, and the paren contents are slash-separated peers.
+      if (isShortAscii && isAcronymListContext(cardText, idx, n)) continue;
       positiveMention = true;
       break;
     }
@@ -908,6 +1036,61 @@ export async function auditFamilyDomainCard(
           phrase: cleaned,
           claimedTarget,
           actualTarget: dictTarget,
+        });
+      }
+    }
+
+    // ── CHECK 6b: ENGLISH-QUOTED DICT ARROWS ──
+    // Cards also assert mappings with English-quoted sources:
+    //   '"reference voltage" → adjustability'
+    //   '"vref_typ" → output_voltage'
+    // These bypassed the Han-only regex above. Quoting is a strong
+    // dict-claim signal (prose doesn't quote attribute names), so
+    // this branch flags BOTH directional errors (source in dict, wrong
+    // target) AND fabrications (source not in dict). We do NOT extend
+    // FABRICATED_DICT to bare snake_case sources (`vref_typ → x` without
+    // quotes) — that's too easy to confuse with descriptive prose like
+    // `tc → BLOCKING` (and our canonical regex already filters caps).
+    const enQuotedPat = /["'`]([a-zA-Z][a-zA-Z_0-9 ()/.\-]{1,40})["'`]\s*[→]\s*([a-z][a-z_0-9]{2,})/g;
+    while ((am = enQuotedPat.exec(cardText)) !== null) {
+      const phrase = am[1].trim().toLowerCase();
+      const claimedTarget = am[2].toLowerCase();
+      if (!phrase) continue;
+      // Skip if phrase contains Han chars (handled by the Chinese path above).
+      if (/[\p{Script=Han}]/u.test(phrase)) continue;
+      const fam = familyDict?.[phrase];
+      const sh = sharedDict[phrase];
+      const dictTarget = fam?.attributeId.toLowerCase() ?? sh?.attributeId.toLowerCase();
+      if (dictTarget) {
+        // Source in dict — check direction.
+        if (dictTarget === claimedTarget) continue;
+        const key = `en|${phrase}|${claimedTarget}`;
+        if (seenArrow.has(key)) continue;
+        seenArrow.add(key);
+        result.wrongDictArrows.push({
+          phrase,
+          claimedTarget,
+          actualTarget: dictTarget,
+        });
+      } else {
+        // Source not in TS dict — consult engineer-accepted DB overrides
+        // before flagging. atlas_dictionary_overrides stores accepted
+        // mappings keyed by normalized param name (.normalize('NFC')
+        // .toLowerCase().trim()). Mirror that normalization here so an
+        // accepted override silently suppresses the flag, parallel to
+        // the Chinese FABRICATED_DICT path above. If the phrase IS in
+        // the overrides set, the engineer has explicitly blessed the
+        // mapping — we can't verify the target from the override set
+        // (which only stores keys), but presence is enough to demote
+        // from "fabricated" to "trusted."
+        const canonOverride = phrase.normalize('NFC').toLowerCase().trim();
+        if (acceptedOverrideParams.has(canonOverride)) continue;
+        const fabKey = `en-fab|${phrase}`;
+        if (seenArrow.has(fabKey)) continue;
+        seenArrow.add(fabKey);
+        result.fabricatedDict.push({
+          phrase,
+          claimedTarget: `claimed → ${claimedTarget} (English phrase not in dictionary)`,
         });
       }
     }

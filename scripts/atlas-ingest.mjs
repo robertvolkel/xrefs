@@ -312,6 +312,38 @@ const SHARED_PARAMS = {
   '电压': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 17 },
 };
 
+// Metadata params — compliance / export-control / regulatory.
+// Mirrors metadataParamDictionary in lib/services/atlasMapper.ts per Decision #174.
+// Resolved as a third dict fallback so these stop surfacing in Triage; values
+// land in JSONB under canonical attributeIds. The read-time lift in
+// atlasClient.rowToPartAttributes reads raw JSONB by canonical key to
+// populate Part.rohsStatus / eccnCode / etc. — they don't appear as
+// ParametricAttribute rows (fromParametersJsonb excludes them).
+const METADATA_PARAMS = {
+  // RoHS — EU restriction of hazardous substances
+  'rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs status': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  // REACH — EU chemical registration
+  'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
+  'reach status': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
+  'reach符合性': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
+  'reach合规': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
+  // ECCN — US export control classification
+  'eccn': { attributeId: 'eccn_code', attributeName: 'ECCN Code', sortOrder: 902 },
+  'eccn code': { attributeId: 'eccn_code', attributeName: 'ECCN Code', sortOrder: 902 },
+  'eccn代码': { attributeId: 'eccn_code', attributeName: 'ECCN Code', sortOrder: 902 },
+  // HTS — Harmonized Tariff Schedule
+  'hts': { attributeId: 'hts_code', attributeName: 'HTS Code', sortOrder: 903 },
+  'hts code': { attributeId: 'hts_code', attributeName: 'HTS Code', sortOrder: 903 },
+  'hts代码': { attributeId: 'hts_code', attributeName: 'HTS Code', sortOrder: 903 },
+  // MSL — moisture sensitivity level
+  'msl': { attributeId: 'msl', attributeName: 'Moisture Sensitivity Level', sortOrder: 904 },
+  'moisture sensitivity level': { attributeId: 'msl', attributeName: 'Moisture Sensitivity Level', sortOrder: 904 },
+  '湿敏等级': { attributeId: 'msl', attributeName: 'Moisture Sensitivity Level', sortOrder: 904 },
+};
+
 const FAMILY_PARAMS = {
   C6: {
     'output voltage (v)': { attributeId: 'output_voltage', attributeName: 'Output Voltage', unit: 'V', sortOrder: 2 },
@@ -892,6 +924,20 @@ const FAMILY_PARAMS = {
     // shouldn't see under recovery_category.
     'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
     '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    // Galaxy (银河微) vendor-specific spellings — 2,823 B1 products. Mirror
+    // of atlasMapper.ts B1 dict block. See that file for full notes.
+    'vrrm (v) max': { attributeId: 'vrrm', attributeName: 'Reverse Voltage (Vrrm)', unit: 'V', sortOrder: 2 },
+    'if (a) max': { attributeId: 'io_avg', attributeName: 'Forward Current (Io)', unit: 'A', sortOrder: 4 },
+    'vf (v) max': { attributeId: 'vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 5 },
+    'ifsm (a) max': { attributeId: 'ifsm', attributeName: 'Surge Current (Ifsm)', unit: 'A', sortOrder: 6 },
+    'ir (ua) max': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'trr (ns) max': { attributeId: 'trr', attributeName: 'Reverse Recovery Time (trr)', unit: 'ns', sortOrder: 7 },
+    'condition1_if (a)': { attributeId: '_if_test_a', attributeName: 'IF Test Current', unit: 'A', sortOrder: 94 },
+    'condition2_vr (v)': { attributeId: '_vr_test_v', attributeName: 'VR Test Voltage', unit: 'V', sortOrder: 95 },
+    'aec qualified': { attributeId: 'aec_q101', attributeName: 'AEC-Q101 Qualified', sortOrder: 13 },
+    'package outlines': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
+    '最高工作温度': { attributeId: '_operating_temp_max', attributeName: 'Max Operating Temp', unit: '°C', sortOrder: 96 },
+    '最低工作温度': { attributeId: '_operating_temp_min', attributeName: 'Min Operating Temp', unit: '°C', sortOrder: 97 },
   },
 
   // ─── B3 Zener Diodes ───────────────────────────────────
@@ -971,6 +1017,16 @@ const FAMILY_PARAMS = {
     // implies regulator behavior) — _type, deprioritized.
     'type': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
     '类型': { attributeId: '_type', attributeName: 'Type', sortOrder: 90 },
+    // Galaxy (银河微) vendor-specific spellings — 2,468 B3 products. Mirror
+    // of atlasMapper.ts B3 dict block.
+    'vz (v) nom.': { attributeId: 'vz', attributeName: 'Zener Voltage', unit: 'V', sortOrder: 1 },
+    'pd (mw) max': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 3 },
+    'condition1_it (ma)': { attributeId: 'izt', attributeName: 'Zener Test Current (Izt)', unit: 'mA', sortOrder: 7 },
+    'tolerance': { attributeId: 'vz_tolerance', attributeName: 'Vz Tolerance', sortOrder: 2 },
+    'aec qualified': { attributeId: 'aec_q101', attributeName: 'AEC-Q101 Qualified', sortOrder: 12 },
+    'package outlines': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 8 },
+    '最高工作温度': { attributeId: '_operating_temp_max', attributeName: 'Max Operating Temp', unit: '°C', sortOrder: 96 },
+    '最低工作温度': { attributeId: '_operating_temp_min', attributeName: 'Min Operating Temp', unit: '°C', sortOrder: 97 },
   },
 
   // ─── B4 TVS Diodes ─────────────────────────────────────
@@ -1065,6 +1121,21 @@ const FAMILY_PARAMS = {
     // polarity values, route to the polarity attribute so they feed matching.
     'type': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
     '类型': { attributeId: 'polarity', attributeName: 'Polarity', sortOrder: 1 },
+    // Galaxy (银河微) vendor-specific spellings — 2,359 B4 products. Mirror
+    // of atlasMapper.ts B4 dict block.
+    'vrwm (v) max.': { attributeId: 'vrwm', attributeName: 'Standoff Voltage (Vrwm)', unit: 'V', sortOrder: 2 },
+    'vbr (v) min.': { attributeId: 'vbr', attributeName: 'Breakdown Voltage (Vbr)', unit: 'V', sortOrder: 3 },
+    'vbr (v) max.': { attributeId: '_vbr_max', attributeName: 'Breakdown Voltage Max', unit: 'V', sortOrder: 90 },
+    'ir (ua) max.': { attributeId: 'ir_leakage', attributeName: 'Reverse Leakage (Ir)', unit: 'µA', sortOrder: 8 },
+    'vc (v) max.': { attributeId: 'vc', attributeName: 'Clamping Voltage (Vc)', unit: 'V', sortOrder: 4 },
+    'ppk (w)': { attributeId: 'ppk', attributeName: 'Peak Pulse Power', unit: 'W', sortOrder: 5 },
+    'c (pf) max.': { attributeId: 'cj', attributeName: 'Junction Capacitance', unit: 'pF', sortOrder: 7 },
+    'condition1_ipp (a)': { attributeId: 'ipp', attributeName: 'Peak Pulse Current', unit: 'A', sortOrder: 6 },
+    'condition': { attributeId: '_test_condition', attributeName: 'Test Condition', sortOrder: 95 },
+    'aec qualified': { attributeId: 'aec_q101', attributeName: 'AEC-Q101 Qualified', sortOrder: 12 },
+    'package outlines': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 11 },
+    '最高工作温度': { attributeId: 'tj_max', attributeName: 'Max Junction Temperature (Tj_max)', unit: '°C', sortOrder: 17 },
+    '最低工作温度': { attributeId: '_operating_temp_min', attributeName: 'Min Operating Temp', unit: '°C', sortOrder: 97 },
   },
 
   // ─── B5 MOSFETs ────────────────────────────────────────
@@ -1179,6 +1250,43 @@ const FAMILY_PARAMS = {
     // "Type" on B5 MOSFETs carries channel type (N / P / N+P).
     'type': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
     '类型': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
+    // Galaxy (银河微) vendor-specific spellings — 322 B5 products. Mirror
+    // of atlasMapper.ts B5 dict block.
+    'channel polarity': { attributeId: 'channel_type', attributeName: 'Channel Type', sortOrder: 1 },
+    'max vgs (v)': { attributeId: 'vgs_max', attributeName: 'Max Vgs', unit: 'V', sortOrder: 7 },
+    'vgs (v)max': { attributeId: 'vgs_max', attributeName: 'Max Vgs', unit: 'V', sortOrder: 7 },
+    'max id(a)': { attributeId: 'id_max', attributeName: 'Max Id', unit: 'A', sortOrder: 6 },
+    'id(a)max': { attributeId: 'id_max', attributeName: 'Max Id', unit: 'A', sortOrder: 6 },
+    'max igss(ua)': { attributeId: 'igss', attributeName: 'Igss', unit: 'µA', sortOrder: 8 },
+    'igss(ua)max': { attributeId: 'igss', attributeName: 'Igss', unit: 'µA', sortOrder: 8 },
+    'max vgs(th) (v)': { attributeId: 'vgs_th', attributeName: 'Vgs(th)', unit: 'V', sortOrder: 9 },
+    'vgs(th) (v)max': { attributeId: 'vgs_th', attributeName: 'Vgs(th)', unit: 'V', sortOrder: 9 },
+    'max pd(w)': { attributeId: 'pd_max', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 10 },
+    'pd(w)max': { attributeId: 'pd_max', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 10 },
+    'min pd(w)': { attributeId: '_pd_min', attributeName: 'Power Dissipation Min', unit: 'W', sortOrder: 96 },
+    'v(br)dss (v)min': { attributeId: 'vds_max', attributeName: 'Vds Max', unit: 'V', sortOrder: 5 },
+    'rds(on)(mω) @ 25℃ 10v typ': { attributeId: '_rds_on_typ', attributeName: 'Rds(on) @10V Typ', unit: 'mΩ', sortOrder: 93 },
+    'rds(on)(mω) @ 25℃ 10v max': { attributeId: 'rds_on', attributeName: 'Rds(on) @10V Max', unit: 'mΩ', sortOrder: 11 },
+    'rds(on)(mω) @ 25℃ 4.5v typ': { attributeId: '_rds_on_4v5_typ', attributeName: 'Rds(on) @4.5V Typ', unit: 'mΩ', sortOrder: 95 },
+    'rds(on)(mω) @ 25℃ 4.5v max': { attributeId: '_rds_on_4v5', attributeName: 'Rds(on) @4.5V Max', unit: 'mΩ', sortOrder: 94 },
+    'rds(on)(mω) @ 25℃ 2.5v typ': { attributeId: '_rds_on_2v5_typ', attributeName: 'Rds(on) @2.5V Typ', unit: 'mΩ', sortOrder: 97 },
+    'rds(on)(mω) @ 25℃ 2.5v max': { attributeId: '_rds_on_2v5_max', attributeName: 'Rds(on) @2.5V Max', unit: 'mΩ', sortOrder: 98 },
+    'rds(on)(mω) @ 25℃ 1.8v typ': { attributeId: '_rds_on_1v8_typ', attributeName: 'Rds(on) @1.8V Typ', unit: 'mΩ', sortOrder: 99 },
+    'rds(on)(mω) @ 25℃ 1.8v max': { attributeId: '_rds_on_1v8_max', attributeName: 'Rds(on) @1.8V Max', unit: 'mΩ', sortOrder: 100 },
+    // Galaxy 19-product variant: 10V has NO space, 4.5V/2.5V/1.8V use TAB.
+    'rds(on)(mω) @ 25℃ 10vtyp': { attributeId: '_rds_on_typ', attributeName: 'Rds(on) @10V Typ', unit: 'mΩ', sortOrder: 93 },
+    'rds(on)(mω) @ 25℃ 10vmax': { attributeId: 'rds_on', attributeName: 'Rds(on) @10V Max', unit: 'mΩ', sortOrder: 11 },
+    'rds(on)(mω) @ 25℃ 4.5v\ttyp': { attributeId: '_rds_on_4v5_typ', attributeName: 'Rds(on) @4.5V Typ', unit: 'mΩ', sortOrder: 95 },
+    'rds(on)(mω) @ 25℃ 4.5v\tmax': { attributeId: '_rds_on_4v5', attributeName: 'Rds(on) @4.5V Max', unit: 'mΩ', sortOrder: 94 },
+    'rds(on)(mω) @ 25℃ 2.5v\ttyp': { attributeId: '_rds_on_2v5_typ', attributeName: 'Rds(on) @2.5V Typ', unit: 'mΩ', sortOrder: 97 },
+    'rds(on)(mω) @ 25℃ 2.5v\tmax': { attributeId: '_rds_on_2v5_max', attributeName: 'Rds(on) @2.5V Max', unit: 'mΩ', sortOrder: 98 },
+    'rds(on)(mω) @ 25℃ 1.8v\ttyp': { attributeId: '_rds_on_1v8_typ', attributeName: 'Rds(on) @1.8V Typ', unit: 'mΩ', sortOrder: 99 },
+    'rds(on)(mω) @ 25℃ 1.8v\tmax': { attributeId: '_rds_on_1v8_max', attributeName: 'Rds(on) @1.8V Max', unit: 'mΩ', sortOrder: 100 },
+    'esd': { attributeId: '_esd_rating', attributeName: 'ESD Rating', sortOrder: 101 },
+    'aec qualified': { attributeId: 'aec_q101', attributeName: 'AEC-Q101 Qualified', sortOrder: 12 },
+    'package outlines': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 4 },
+    '最高工作温度': { attributeId: '_operating_temp_max', attributeName: 'Max Operating Temp', unit: '°C', sortOrder: 102 },
+    '最低工作温度': { attributeId: '_operating_temp_min', attributeName: 'Min Operating Temp', unit: '°C', sortOrder: 103 },
   },
 
   // ─── B6 BJTs ───────────────────────────────────────────
@@ -1217,6 +1325,27 @@ const FAMILY_PARAMS = {
     // "Type" on B6 BJTs carries polarity (NPN / PNP / NPN+PNP).
     'type': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
     '类型': { attributeId: 'polarity', attributeName: 'Polarity (NPN/PNP)', sortOrder: 1 },
+    // Galaxy (银河微) vendor-specific spellings — 475 B6 products. Mirror
+    // of atlasMapper.ts B6 dict block. Digital-transistor specifics
+    // (R1/R2/Vi(on)/Vi(off)/Gi/VO(ON)) intentionally skipped.
+    // Note: 'polarity' alone already covered above.
+    'v(br)ceo (v) min.': { attributeId: 'vceo_max', attributeName: 'Vceo', unit: 'V', sortOrder: 3 },
+    'ic (a)': { attributeId: 'ic_max', attributeName: 'Max Ic', unit: 'A', sortOrder: 4 },
+    'ic continuous (ma)': { attributeId: 'ic_max', attributeName: 'Max Ic', unit: 'mA', sortOrder: 4 },
+    'hfe  min': { attributeId: '_hfe_min', attributeName: 'hFE Min', sortOrder: 92 },
+    'hfe  max': { attributeId: '_hfe_max', attributeName: 'hFE Max', sortOrder: 93 },
+    'condition1_vce (v)': { attributeId: '_vce_test_v', attributeName: 'VCE Test Voltage', unit: 'V', sortOrder: 94 },
+    'condition1_ic (ma)': { attributeId: '_ic_test_ma', attributeName: 'IC Test Current', unit: 'mA', sortOrder: 95 },
+    'condition2_ic (ma)': { attributeId: '_ic_test_ma_2', attributeName: 'IC Test Current (2)', unit: 'mA', sortOrder: 96 },
+    'condition2_ib (ma)': { attributeId: '_ib_test_ma', attributeName: 'IB Test Current', unit: 'mA', sortOrder: 97 },
+    'vce (sat) (v)': { attributeId: 'vce_sat', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 6 },
+    'ft (mhz) min.': { attributeId: 'ft', attributeName: 'Transition Frequency', unit: 'MHz', sortOrder: 7 },
+    'pd (w) max.': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 8 },
+    'pd (mw)': { attributeId: 'pd', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 8 },
+    'aec qualified': { attributeId: 'aec_q101', attributeName: 'AEC-Q101 Qualified', sortOrder: 11 },
+    'package outlines': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 2 },
+    '最高工作温度': { attributeId: '_operating_temp_max', attributeName: 'Max Operating Temp', unit: '°C', sortOrder: 98 },
+    '最低工作温度': { attributeId: '_operating_temp_min', attributeName: 'Min Operating Temp', unit: '°C', sortOrder: 99 },
   },
 
   // ─── B7 IGBTs ──────────────────────────────────────────
@@ -1563,6 +1692,9 @@ const FAMILY_PARAMS = {
     '控脚功能': { attributeId: '_enable_function', attributeName: 'Enable Function', sortOrder: 93 },
     '封装/外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
+    // Bare-form synonym — defensive coverage for vendors that ship the term
+    // as a single Han run without the slash. Mirror of TS atlasMapper.ts C8 dict.
+    '封装外壳': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 3 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
   },
 
@@ -2053,8 +2185,8 @@ function mapModel(model, manufacturerName, sourceFile) {
     if (isMissing(p.value)) continue;
 
     const lowerName = p.name.toLowerCase().trim();
-    // Dictionary entries take priority over skip list
-    const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName]);
+    // Dictionary entries take priority over skip list (metadata included)
+    const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName]);
     if (!hasDictMapping && (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName))) continue;
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
@@ -2094,7 +2226,11 @@ function mapModel(model, manufacturerName, sourceFile) {
     }
 
     // ── Standard dictionary lookup (Chinese + English) ───────
-    const mapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName];
+    // Metadata dict is the third fallback: compliance/export-control fields
+    // get canonical attributeIds, stored in JSONB, and DON'T surface in
+    // unmappedParams (so Triage stops flagging them). Read-time
+    // fromParametersJsonb excludes them from the Specs panel.
+    const mapping = familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName];
     if (!mapping) {
       // Store with raw param name (nothing thrown away)
       const rawId = lowerName.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
@@ -2146,8 +2282,120 @@ function mapModel(model, manufacturerName, sourceFile) {
     }
   }
 
+  // ── B4 TVS polarity from MPN suffix ─────────────────────
+  // TVS naming convention: base MPN (e.g. 1.5KE10) or 'A' suffix
+  // (1.5KE10A) = unidirectional; 'CA'/'CB' suffix = bidirectional.
+  // Galaxy doesn't ship a Polarity column, so derive from MPN.
+  if (classification.familyId === 'B4' && !parameters.polarity) {
+    const mpnUpper = (model.componentName || '').toUpperCase();
+    if (/[A-Z][CG]A?$/.test(mpnUpper) || mpnUpper.endsWith('CA') || mpnUpper.endsWith('CB')) {
+      parameters.polarity = { value: 'Bidirectional', source: 'inferred-mpn-suffix' };
+    } else if (/[A-Z]$/.test(mpnUpper) || /\d$/.test(mpnUpper)) {
+      // Plain numeric or single trailing letter (A/B) → unidirectional
+      parameters.polarity = { value: 'Unidirectional', source: 'inferred-mpn-suffix' };
+    }
+  }
+
+  // ── operating_temp range synthesis ──────────────────────
+  // Some MFRs (Galaxy specifically) split operating temp into max/min
+  // separate columns. Synthesize the canonical `operating_temp` range
+  // field when both bounds are present and the canonical isn't already
+  // set. We read max from parameters.tj_max if dict routed it there,
+  // and min from the raw model.parameters (since satellite mappings
+  // like _operating_temp_min are dropped at line 2211).
+  if (!parameters.operating_temp) {
+    const tMaxFromTj = parameters.tj_max?.numericValue;
+    const minRaw = model.parameters.find(p => {
+      const n = (p.name || '').toLowerCase();
+      return n === '最低工作温度' || n.includes('min operating temp') || n.includes('min. operating temp');
+    })?.value;
+    const tMaxRaw = tMaxFromTj === undefined ? model.parameters.find(p => {
+      const n = (p.name || '').toLowerCase();
+      return n === '最高工作温度' || n.includes('max operating temp') || n.includes('max. operating temp');
+    })?.value : undefined;
+    const tMax = tMaxFromTj ?? (typeof tMaxRaw === 'string' && !isMissing(tMaxRaw) ? extractNumeric(tMaxRaw) : undefined);
+    const tMin = (typeof minRaw === 'string' && !isMissing(minRaw)) ? extractNumeric(minRaw) : undefined;
+    if (tMax !== undefined && tMin !== undefined) {
+      parameters.operating_temp = {
+        value: `${tMin}°C to ${tMax}°C`,
+        unit: '°C',
+        source: 'synthesized-from-min-max',
+      };
+    }
+  }
+
+  // ── mounting_style + height from package_case ───────────
+  // Common discrete-semi packages (TVS, rectifier, Zener, MOSFET).
+  // Derivation only — operator can override via dict for new packages.
+  const pkg = parameters.package_case?.value;
+  if (pkg) {
+    const pkgUp = String(pkg).toUpperCase().trim();
+    const traits = PACKAGE_TRAITS[pkgUp];
+    if (traits) {
+      if (!parameters.mounting_style) {
+        parameters.mounting_style = { value: traits.mounting, source: 'inferred-from-package' };
+      }
+      if (!parameters.height && traits.height_mm !== undefined) {
+        parameters.height = {
+          value: `${traits.height_mm} mm`,
+          numericValue: traits.height_mm,
+          unit: 'mm',
+          source: 'inferred-from-package',
+        };
+      }
+    }
+  }
+
   return { part, parameters, packageValue, classification, warnings, unmappedParams };
 }
+
+// ─── Package traits lookup ────────────────────────────────
+// Maps package_case codes to {mounting, height_mm}. Keep entries focused
+// on common Galaxy/Atlas packages — surface unknown packages via the
+// Triage workflow rather than letting this table become a dumping ground.
+// mounting values match the canonical convention: 'Through Hole' / 'Surface Mount'.
+const PACKAGE_TRAITS = {
+  // Through-hole TVS / rectifier / Zener
+  'DO-15':    { mounting: 'Through Hole', height_mm: 4.6 },
+  'DO-27':    { mounting: 'Through Hole', height_mm: 7.6 },
+  'DO-27S':   { mounting: 'Through Hole', height_mm: 8.3 },
+  'DO-35':    { mounting: 'Through Hole', height_mm: 1.6 },
+  'DO-41':    { mounting: 'Through Hole', height_mm: 4.7 },
+  'DO-201':   { mounting: 'Through Hole', height_mm: 7.6 },
+  'DO-201AD': { mounting: 'Through Hole', height_mm: 7.6 },
+  'DO-204':   { mounting: 'Through Hole', height_mm: 4.7 },
+  'DO-220':   { mounting: 'Through Hole', height_mm: 9.6 },
+  'DO-220A':  { mounting: 'Through Hole', height_mm: 9.6 },
+  // Surface-mount TVS / rectifier / Zener
+  'SOD-123':   { mounting: 'Surface Mount', height_mm: 1.1 },
+  'SOD-323':   { mounting: 'Surface Mount', height_mm: 1.0 },
+  'SOD-523':   { mounting: 'Surface Mount', height_mm: 0.6 },
+  'SOD-723':   { mounting: 'Surface Mount', height_mm: 0.5 },
+  'SMA':       { mounting: 'Surface Mount', height_mm: 2.4 },
+  'SMB':       { mounting: 'Surface Mount', height_mm: 2.3 },
+  'SMC':       { mounting: 'Surface Mount', height_mm: 2.4 },
+  'DO-214AC':  { mounting: 'Surface Mount', height_mm: 2.4 }, // SMA
+  'DO-214AA':  { mounting: 'Surface Mount', height_mm: 2.3 }, // SMB
+  'DO-214AB':  { mounting: 'Surface Mount', height_mm: 2.4 }, // SMC
+  // Common SMD packages (MOSFETs, BJTs)
+  'SOT-23':    { mounting: 'Surface Mount', height_mm: 1.1 },
+  'SOT-23-3':  { mounting: 'Surface Mount', height_mm: 1.1 },
+  'SOT-23-5':  { mounting: 'Surface Mount', height_mm: 1.1 },
+  'SOT-23-6':  { mounting: 'Surface Mount', height_mm: 1.1 },
+  'SOT-89':    { mounting: 'Surface Mount', height_mm: 1.5 },
+  'SOT-223':   { mounting: 'Surface Mount', height_mm: 1.6 },
+  'SOT-353':   { mounting: 'Surface Mount', height_mm: 1.0 },
+  'SOT-363':   { mounting: 'Surface Mount', height_mm: 1.0 },
+  'SOT-523':   { mounting: 'Surface Mount', height_mm: 0.7 },
+  'SOT-553':   { mounting: 'Surface Mount', height_mm: 0.6 },
+  'TO-220':    { mounting: 'Through Hole', height_mm: 4.5 },
+  'TO-220AB':  { mounting: 'Through Hole', height_mm: 4.5 },
+  'TO-247':    { mounting: 'Through Hole', height_mm: 4.8 },
+  'TO-252':    { mounting: 'Surface Mount', height_mm: 2.3 }, // DPAK
+  'DPAK':      { mounting: 'Surface Mount', height_mm: 2.3 },
+  'TO-263':    { mounting: 'Surface Mount', height_mm: 4.5 }, // D2PAK
+  'D2PAK':     { mounting: 'Surface Mount', height_mm: 4.5 },
+};
 
 // ─── Provenance-preserving merge ──────────────────────────
 // Mirrors mergeAtlasParameters() in lib/services/atlasMapper.ts.

@@ -98,8 +98,17 @@ export async function searchParts(query: string, signal?: AbortSignal): Promise<
   });
 }
 
-export async function getPartAttributes(mpn: string, signal?: AbortSignal): Promise<PartAttributes> {
-  return fetchApi<PartAttributes>(`${BASE}/attributes/${encodeURIComponent(mpn)}`, { signal });
+export async function getPartAttributes(
+  mpn: string,
+  signal?: AbortSignal,
+  opts?: { source?: 'digikey' | 'atlas' | 'partsio'; manufacturer?: string },
+): Promise<PartAttributes> {
+  const qs = new URLSearchParams();
+  if (opts?.source) qs.set('source', opts.source);
+  if (opts?.manufacturer) qs.set('manufacturer', opts.manufacturer);
+  const query = qs.toString();
+  const url = `${BASE}/attributes/${encodeURIComponent(mpn)}${query ? `?${query}` : ''}`;
+  return fetchApi<PartAttributes>(url, { signal });
 }
 
 export async function getRecommendations(
