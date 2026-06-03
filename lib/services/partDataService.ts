@@ -3918,6 +3918,7 @@ const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
   { familyId: 'B8', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'B9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'C9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
+  { familyId: 'C10', questionId: 'automotive',               answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
 ] as const;
 
 /** Exported for tests + Decision #220 introspection. */

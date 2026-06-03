@@ -431,3 +431,9 @@ describe('B9 JFETs — table wiring (AEC-Q101)', () => {
     expectFamilyWiring('B9', 'automotive', 'aec_q101');
   });
 });
+
+describe('C10 DACs — table wiring (AEC-Q100 — automotive IC standard)', () => {
+  it('is enrolled with questionId=automotive and attributeId=aec_q100', () => {
+    expectFamilyWiring('C10', 'automotive', 'aec_q100');
+  });
+});
