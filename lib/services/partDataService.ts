@@ -3923,6 +3923,14 @@ const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
   // conditions land on the same answer ('yes') and both require AEC-Q200.
   { familyId: 'D1', questionId: 'extended_temp_automotive',  answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
   { familyId: 'D2', questionId: 'automotive_aec_q200',       answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
+  // E1 Optocouplers — AEC-Q101 (LED + phototransistor pair = discrete semis).
+  // The AEC wrap runs ALONGSIDE the existing filterOptocouplerMismatches
+  // (output_transistor_type + channel_count gates) — independent, both
+  // bypass for certified crosses.
+  { familyId: 'E1', questionId: 'automotive_aec_q101',       answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  // F1 EMRs — AEC-Q200 (electromechanical/passive). Same alongside relationship
+  // with the existing filterRelayMismatches (contact_form + coil_voltage gates).
+  { familyId: 'F1', questionId: 'automotive_aec_q200',       answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
 ] as const;
 
 /** Exported for tests + Decision #220 introspection. */

@@ -459,3 +459,32 @@ describe('D2 Fuses — table wiring (AEC-Q200, questionId=automotive_aec_q200)',
     expectFamilyWiring('D2', 'automotive_aec_q200', 'aec_q200');
   });
 });
+
+describe('E1 Optocouplers — table wiring (AEC-Q101, questionId=automotive_aec_q101)', () => {
+  // E1 already has filterOptocouplerMismatches in the family-id switch for
+  // output_transistor_type / channel_count. The AEC wrap runs alongside —
+  // they're independent filters on the same recs array.
+  it('is enrolled with questionId=automotive_aec_q101 and attributeId=aec_q101', () => {
+    expectFamilyWiring('E1', 'automotive_aec_q101', 'aec_q101');
+  });
+});
+
+describe('F1 EMRs — table wiring (AEC-Q200, questionId=automotive_aec_q200)', () => {
+  // F1 already has filterRelayMismatches for contact_form / coil_voltage_vdc /
+  // contact_count. The AEC wrap runs alongside.
+  it('is enrolled with questionId=automotive_aec_q200 and attributeId=aec_q200', () => {
+    expectFamilyWiring('F1', 'automotive_aec_q200', 'aec_q200');
+  });
+});
+
+// ============================================================
+// Final coverage check — every family from the BACKLOG punch list is enrolled
+// ============================================================
+
+describe('AUTOMOTIVE_AEC_ENFORCEMENT — full coverage of the BACKLOG punch list', () => {
+  it('enrolls every family flagged in the BACKLOG (B5/B6/B7/B8/B9/C9/C10/D1/D2/E1/F1)', () => {
+    const expected = ['B5', 'B6', 'B7', 'B8', 'B9', 'C9', 'C10', 'D1', 'D2', 'E1', 'F1'].sort();
+    const actual = getAutomotiveAecEnforcementTable().map(e => e.familyId).sort();
+    expect(actual).toEqual(expected);
+  });
+});
