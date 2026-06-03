@@ -3912,6 +3912,11 @@ const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
   { familyId: 'B5', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'B6', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'B7', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  // B8 Thyristors: sub-type context Q1 (SCR/TRIAC/DIAC) suppresses sub-type-
+  // specific rules via `not_applicable` effects but does NOT touch aec_q101 —
+  // automotive qualification applies uniformly across all three sub-types.
+  { familyId: 'B8', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  { familyId: 'B9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'C9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
 ] as const;
 

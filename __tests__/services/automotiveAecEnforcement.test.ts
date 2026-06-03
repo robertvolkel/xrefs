@@ -390,3 +390,44 @@ describe('AUTOMOTIVE_AEC_ENFORCEMENT — table invariants', () => {
     expect(hasAutomotiveAecEnforcement('XX')).toBe(false);
   });
 });
+
+// ============================================================
+// Per-family wiring tests — verify each newly-added table row
+// ============================================================
+
+/** Compact "wiring" test: confirm a family is enrolled and uses the expected attribute. */
+function expectFamilyWiring(familyId: string, questionId: string, attributeId: string) {
+  // Source-override injects the right attribute when the right context answer is set.
+  const src = makeSourceAttrs([]);
+  const injected = applyContextSourceOverrides(src, makeContext('yes', questionId), familyId);
+  const inj = injected.parameters.find(p => p.parameterId === attributeId);
+  expect(inj).toBeDefined();
+  expect(inj!.value).toBe('Yes');
+
+  // And the source-override does NOT fire on the wrong questionId.
+  const wrongCtx = makeContext('yes', 'some_other_question');
+  const noInject = applyContextSourceOverrides(src, wrongCtx, familyId);
+  expect(noInject.parameters.find(p => p.parameterId === attributeId)).toBeUndefined();
+
+  // Filter drops a fail rec keyed on the right attribute when the right
+  // context is set, and is a no-op on the wrong context.
+  const failRec = makeRec('FAIL', [makeMatchDetail(attributeId, 'fail' as RuleResult)]);
+  const passRec = makeRec('PASS', [makeMatchDetail(attributeId, 'pass' as RuleResult)]);
+  const filtered = filterAutomotiveAecMismatches([failRec, passRec], src, makeContext('yes', questionId), familyId);
+  expect(filtered.map(r => r.part.mpn)).toEqual(['PASS']);
+
+  const unfiltered = filterAutomotiveAecMismatches([failRec, passRec], src, makeContext('yes', 'wrong_qid'), familyId);
+  expect(unfiltered.length).toBe(2);
+}
+
+describe('B8 Thyristors — table wiring (AEC-Q101 across SCR/TRIAC/DIAC sub-types)', () => {
+  it('is enrolled with questionId=automotive and attributeId=aec_q101', () => {
+    expectFamilyWiring('B8', 'automotive', 'aec_q101');
+  });
+});
+
+describe('B9 JFETs — table wiring (AEC-Q101)', () => {
+  it('is enrolled with questionId=automotive and attributeId=aec_q101', () => {
+    expectFamilyWiring('B9', 'automotive', 'aec_q101');
+  });
+});
