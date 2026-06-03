@@ -3919,6 +3919,10 @@ const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
   { familyId: 'B9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
   { familyId: 'C9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
   { familyId: 'C10', questionId: 'automotive',               answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
+  // D1 Crystals use a combined "extended temp / automotive" question — both
+  // conditions land on the same answer ('yes') and both require AEC-Q200.
+  { familyId: 'D1', questionId: 'extended_temp_automotive',  answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
+  { familyId: 'D2', questionId: 'automotive_aec_q200',       answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
 ] as const;
 
 /** Exported for tests + Decision #220 introspection. */

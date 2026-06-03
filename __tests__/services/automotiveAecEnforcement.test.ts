@@ -437,3 +437,25 @@ describe('C10 DACs — table wiring (AEC-Q100 — automotive IC standard)', () =
     expectFamilyWiring('C10', 'automotive', 'aec_q100');
   });
 });
+
+describe('D1 Crystals — table wiring (AEC-Q200, questionId=extended_temp_automotive)', () => {
+  // D1 uses a non-standard questionId — it's the "extended temp / automotive"
+  // combined question, so the answer is keyed differently than B-block.
+  it('is enrolled with questionId=extended_temp_automotive and attributeId=aec_q200', () => {
+    expectFamilyWiring('D1', 'extended_temp_automotive', 'aec_q200');
+  });
+
+  it('does NOT fire when the user answers the generic "automotive" question (wrong qid)', () => {
+    // Important: D1 has no entry keyed on questionId='automotive'. A user
+    // signal on the wrong question must not inject.
+    const src = makeSourceAttrs([]);
+    const result = applyContextSourceOverrides(src, makeContext('yes', 'automotive'), 'D1');
+    expect(result.parameters.find(p => p.parameterId === 'aec_q200')).toBeUndefined();
+  });
+});
+
+describe('D2 Fuses — table wiring (AEC-Q200, questionId=automotive_aec_q200)', () => {
+  it('is enrolled with questionId=automotive_aec_q200 and attributeId=aec_q200', () => {
+    expectFamilyWiring('D2', 'automotive_aec_q200', 'aec_q200');
+  });
+});
