@@ -1946,6 +1946,149 @@ const statusMap: Record<string, PartStatus> = {
 };
 
 /**
+ * Kill switch for unit-prefix conversion at storage time. When ON, every
+ * Atlas numeric push site multiplies `numericValue` by the SI prefix
+ * implied by `unit` so the stored number is base SI — matching Digikey's
+ * existing convention (extractNumericValue in digikeyMapper.ts:362-378).
+ *
+ * When OFF (current default), Atlas continues storing raw display-unit
+ * numbers and cross-source matching silently mis-compares any time
+ * Atlas's unit differs from Digikey's base-SI numericValue (e.g. Atlas
+ * fsw stored as 150 kHz with numericValue=150 vs. Digikey 1.5 MHz with
+ * numericValue=1500000 — 1500x off, false fail in every threshold rule).
+ *
+ * Ship dark first; flip ON only after `scripts/atlas-audit-unit-mismatches.mjs`
+ * confirms the (attributeId, unit) combos currently in atlas_dictionary_overrides
+ * + in-code dicts truly capture SOURCE units (engineer claims about what the
+ * incoming values are), not aspirational target/display units.
+ */
+export const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
+
+/**
+ * Multiplies `numericValue` by the SI prefix implied by `unit` so the
+ * stored number is base SI. Lifted from digikeyMapper.ts:362-378 so Atlas
+ * and Digikey share one prefix-application convention.
+ *
+ * Guards against non-prefix unit tokens that share leading characters with
+ * SI prefixes: 'mm' (millimeters, not milli-units), 'MSL' (moisture sensitivity
+ * level, not mega-units), 'no' (count, not nano).
+ *
+ * No-op when `unit` is undefined/empty or starts with a non-prefix character
+ * (V, A, Ω, °C, %, ppm/°C, nV/√Hz, etc.).
+ */
+/**
+ * Pure SI-prefix conversion — no flag check. Exported for unit testing
+ * so the prefix logic stays covered regardless of kill-switch state.
+ * Production code should call `applyUnitPrefix` (the gated wrapper) instead.
+ */
+export function _applyUnitPrefixCore(numericValue: number | undefined, unit: string | undefined): number | undefined {
+  if (numericValue === undefined || isNaN(numericValue)) return numericValue;
+  if (!unit) return numericValue;
+  if (unit.startsWith('p')) return numericValue * 1e-12;
+  if (unit.startsWith('n') && !unit.startsWith('no')) return numericValue * 1e-9;
+  if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) return numericValue * 1e-6;  // µ = U+00B5 (micro sign), μ = U+03BC (Greek small mu)
+  if (unit.startsWith('m') && !unit.startsWith('mm') && !unit.startsWith('M')) return numericValue * 1e-3;
+  if (unit.startsWith('k') || unit.startsWith('K')) return numericValue * 1e3;
+  if (unit.startsWith('M') && !unit.startsWith('MSL')) return numericValue * 1e6;
+  if (unit.startsWith('G')) return numericValue * 1e9;
+  if (unit.startsWith('T')) return numericValue * 1e12;
+  return numericValue;
+}
+
+export function applyUnitPrefix(numericValue: number | undefined, unit: string | undefined): number | undefined {
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return numericValue;
+  return _applyUnitPrefixCore(numericValue, unit);
+}
+
+/**
+ * Parses a value string and extracts BOTH the leading number AND any
+ * unit suffix that follows. Mirrors Digikey's extractNumericValue
+ * (digikeyMapper.ts:362-378) so Atlas and Digikey converge on the same
+ * "value string is source of truth" convention.
+ *
+ * Examples:
+ *   "400kHz"  → { numericValue: 400, parsedUnit: 'kHz' }
+ *   "5.8 mΩ"  → { numericValue: 5.8, parsedUnit: 'mΩ' }
+ *   "100mA"   → { numericValue: 100, parsedUnit: 'mA' }
+ *   "8"       → { numericValue: 8,   parsedUnit: undefined }  ← caller falls back to dict unit
+ *   "≤150ns"  → { numericValue: 150, parsedUnit: 'ns' }
+ *   "2.7~18V" → { numericValue: 2.7, parsedUnit: undefined }  ← range, only first num used; unit ambiguous, fall back
+ *
+ * Critical: the parsed unit drives prefix application in
+ * applyUnitPrefix, so callers should prefer parsedUnit over dict's
+ * declared unit. Dict unit is only the fallback for unit-less values.
+ */
+export function extractNumericWithPrefix(value: string): { numericValue?: number; parsedUnit?: string } {
+  if (isMissingValue(value)) return {};
+  const trimmed = value.trim();
+
+  // Range values like "2.7~18V" — unit applies to both sides, but ambiguous which side
+  // each part of the range belongs to. Return first number, no parsed unit (caller falls back).
+  const rangeMatch = trimmed.match(/^([+-]?\d+\.?\d*)\s*[~–]\s*([+-]?\d+\.?\d*)/);
+  if (rangeMatch) return { numericValue: parseFloat(rangeMatch[1]) };
+
+  // ± prefix: "±10V" or "+/-10V"
+  const pmMatch = trimmed.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (pmMatch) {
+    const num = parseFloat(pmMatch[1]);
+    const unit = pmMatch[2]?.trim() || undefined;
+    return { numericValue: num, parsedUnit: unit };
+  }
+  const altPmMatch = trimmed.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (altPmMatch) {
+    const num = parseFloat(altPmMatch[1]);
+    const unit = altPmMatch[2]?.trim() || undefined;
+    return { numericValue: num, parsedUnit: unit };
+  }
+
+  // Comparison prefix: "≤150ns", "<100", ">50mA" — number + unit
+  const cmpMatch = trimmed.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (cmpMatch) {
+    const num = parseFloat(cmpMatch[1]);
+    const unit = cmpMatch[2]?.trim() || undefined;
+    return { numericValue: num, parsedUnit: unit };
+  }
+
+  // Standard: leading number + optional unit suffix
+  // Matches "400kHz", "5.8 mΩ", "8.3 mm", "100mA", and "8" (no unit)
+  const stdMatch = trimmed.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (stdMatch && stdMatch[1] !== '') {
+    const num = parseFloat(stdMatch[1]);
+    const unit = stdMatch[2]?.trim() || undefined;
+    return { numericValue: num, parsedUnit: unit };
+  }
+
+  // Loose fallback — preserves extractNumeric's behavior for values
+  // with prefix junk like "@25°C 100mA" or "Typ: 1.5MHz". Returns the
+  // first number found but NO parsed unit (caller falls back to dict).
+  // Without this, the new pipeline would be stricter than the old
+  // extractNumeric and silently drop numericValue for these cases.
+  const looseMatch = trimmed.match(/([+-]?\d+\.?\d*)/);
+  if (looseMatch) {
+    return { numericValue: parseFloat(looseMatch[1]) };
+  }
+
+  return {};
+}
+
+/**
+ * Computes the effective unit for prefix application using the
+ * value-string-parsed unit FIRST, dict-declared unit as fallback.
+ *
+ * This is the safety hinge of the entire unit-conversion design.
+ * The dict's `unit` field is the engineer's GUESS about source units;
+ * the value string is the GROUND TRUTH from the vendor. When they
+ * disagree (e.g. EVISUN ships "400kHz" but dict declares unit='MHz'),
+ * the value string wins.
+ *
+ * Returns undefined only when neither source provides a unit (e.g.
+ * pure number with no dict mapping — extractNumeric fallback path).
+ */
+export function effectiveUnit(parsedUnit: string | undefined, dictUnit: string | undefined): string | undefined {
+  return parsedUnit || dictUnit;
+}
+
+/**
  * Checks if a raw value is a "missing" placeholder.
  */
 function isMissingValue(value: string): boolean {
@@ -2650,11 +2793,12 @@ export function mapAtlasModel(
         if (!seenAttributeIds.has(gaia.stem)) {
           seenAttributeIds.add(gaia.stem);
           const parsed = parseGaiaValue(p.value);
+          // parseGaiaValue parses unit from value string ("5.8 mΩ" → unit='mΩ'); no dict fallback exists here.
           parameters.push({
             parameterId: gaia.stem,
             parameterName: humanizeStem(gaia.stem),
             value: parsed.displayValue,
-            numericValue: parsed.numericValue,
+            numericValue: applyUnitPrefix(parsed.numericValue, parsed.unit),
             unit: parsed.unit,
             sortOrder: 200 + parameters.length,
           });
@@ -2688,11 +2832,13 @@ export function mapAtlasModel(
         packageValue = displayValue;
       }
 
+      // Hybrid: parsed.unit (from value string) wins over gaiaMapping.unit (dict guess).
+      const gaiaEffUnit = effectiveUnit(parsed.unit, gaiaMapping.unit);
       parameters.push({
         parameterId: gaiaMapping.attributeId,
         parameterName: gaiaMapping.attributeName,
         value: displayValue,
-        numericValue,
+        numericValue: applyUnitPrefix(numericValue, gaiaEffUnit),
         unit,
         sortOrder: gaiaMapping.sortOrder,
       });
@@ -2733,8 +2879,11 @@ export function mapAtlasModel(
 
     // Normalize value based on attributeId
     let displayValue = p.value.trim();
-    let numericValue = extractNumeric(displayValue);
+    // Parse number AND unit from value string first (ground truth from vendor).
+    // Fall back to dict-declared unit only when value string is unit-less.
+    const { numericValue, parsedUnit } = extractNumericWithPrefix(displayValue);
     const unit = mapping.unit;
+    const effUnit = effectiveUnit(parsedUnit, unit);
 
     if (mapping.attributeId === 'operating_temp') {
       displayValue = normalizeTemperatureRange(displayValue);
@@ -2751,7 +2900,7 @@ export function mapAtlasModel(
       parameterId: mapping.attributeId,
       parameterName: mapping.attributeName,
       value: displayValue,
-      numericValue,
+      numericValue: applyUnitPrefix(numericValue, effUnit),
       unit,
       sortOrder: mapping.sortOrder,
     });

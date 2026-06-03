@@ -6343,7 +6343,7 @@ Cache key bumped from `manufacturers-list` → `manufacturers-list-v2` so persis
 
 ---
 
-## Decision #203 — Clickable Atlas-MFR Mentions in Chat + Hardening Decision #166 (May 26, 2026)
+## Decision #203 — Clickable Atlas-MFR Mentions in Chat + Hardening Decision #166 (May 26, 2026; amended Jun 1, 2026)
 
 ### Context
 
@@ -6389,6 +6389,20 @@ Audit + linkification ship together. Audit closes three concrete gaps; linkifica
 2. **Null-vs-omitted is the same failure shape as not-projected.** Decision #166 was about a field that existed in the DB but never reached the LLM. Two years later, the same shape recurs at a finer grain: a field that's projected but only when populated. `JSON.stringify` dropping `undefined` is a silent-failure pattern that's easy to write past during review. The fix (`?? null`) is small; the discipline is to apply it to every optional field uniformly, not just the ones that have caused a reported bug.
 3. **Extract the shared helper at the moment of the second copy.** Three orchestrators now need the same tool definition + handler. Extracting `GET_MFR_PROFILE_TOOL` + `executeGetManufacturerProfile()` at the time of the change costs ~10 minutes and prevents the now-classic drift pattern where one of three copies grows a fix the others don't get. The async-Promise-all switch in `listChat`'s tool mapper is the visible second-order cost of this move — acceptable.
 4. **`Part.mfrOrigin` lives on `Part`, not `XrefRecommendation`.** Caught by `tsc` immediately. Worth recording because it's a common cross-cutting concern — `XrefRecommendation.part.mfrOrigin` looks identical to `r.part.dataSource` and `r.dataSource` (the rec has its own `dataSource` distinct from the candidate part's). When the type system gives you the answer for free, lean on it.
+
+### Amendment (Jun 1, 2026) — Cold-ask round-trip wire
+
+Initial ship covered the four sources that populated `knownAtlasManufacturers` from data the *client* already had: recs with `part.mfrOrigin === 'atlas'`, search matches with `dataSource === 'atlas'`, source part, plus MFRs already opened in the side panel (`atlasNamesQueried`). What it missed: the most common cold-ask path. User asks "tell me about 3PEAK" in chat — the LLM calls `get_manufacturer_profile` server-side, Atlas returns a profile, the LLM writes a reply mentioning **3PEAK** — but the client never learned that 3PEAK resolved to Atlas because that lookup happened entirely server-side. So the name stayed un-linkified in the assistant's prose.
+
+Fix wires the tool-call result back to the client:
+
+- Every `get_manufacturer_profile` dispatch in `chat()`, `refinementChat()`, `listChat()` now parses the tool result; if `source === 'atlas'`, accumulates `profile.name` into a per-turn Set on `ToolResultData` (or a local Set in `listChat`).
+- New `mentionedAtlasManufacturers?: string[]` on `OrchestratorResponse` + `ListAgentResponse` ([lib/types.ts](../lib/types.ts)) surfaces the per-turn set.
+- New `chatAtlasMfrs: ReadonlySet<string>` on `AppState` ([hooks/useAppState.ts](../hooks/useAppState.ts)) accumulates across turns; merged in the chat-response handler with stable-Set-identity preservation when nothing new arrived (avoids spurious re-renders).
+- `AppShell.knownAtlasManufacturers` memo now also unions in `appState.chatAtlasMfrs`. Same MessageBubble combined regex picks up the name immediately on the same assistant message that mentions it.
+- Symmetry: added `registerAtlasMfrs(names)` to `useManufacturerProfile` for future callers; current code path uses the `appState` union instead, but the helper is the right shape for any future flow that learns about Atlas MFRs outside the chat response cycle.
+
+**Lesson 5.** Linkification scoped to "MFRs the client already knows about" is the wrong scope when the most common ask path resolves the MFR server-side. The data the user is asking about IS the data that needs to be linkified, but the client only has it AFTER the response arrives — so the response itself has to carry the provenance. Mirror of Decision #163's deferred-enrichment shape (server returns the enrichment alongside the data, client merges into state).
 
 ## Decision #204 — Domain Card Approval Workflow Hardening (May 27, 2026)
 
@@ -7049,3 +7063,168 @@ The pattern was missed for ~30+ sessions because three independent surfacing mec
 - Decision #201 — vendor-name hygiene (similar "Atlas-internal naming hits end users" pattern, GAIA prefix variant).
 - BACKLOG — per-MFR paramName-coverage audit (the prevention tool this incident motivates).
 
+
+## Decision #216 — Metadata param dictionary: a third dict tier for compliance/export-control (June 2, 2026)
+
+**Context:**
+- User noticed Atlas products had `rohs: YES` / `reach: YES` / `eccn: EAR99` in `atlas_products.parameters` JSONB, but the front-end Overview's "Environmental & Export" section rendered blank.
+- Two layers were broken: (1) `atlasClient.rowToPartAttributes` wasn't lifting these JSONB keys onto `Part.rohsStatus` / `eccnCode` / etc. (top-level fields the Overview reads); (2) `mapManufacturerProducts` in `atlas-ingest.mjs` had no dict entry for `eccn`/`rohs`/etc., so they landed in `unmappedParams` and surfaced in Triage as if they needed human mapping decisions.
+- Fix shipped earlier in session: read-time lift in `rowToPartAttributes` (got Overview rendering for existing rows). Triage noise remained.
+- User asked: what's the right structural home for compliance fields so Triage stops flagging them?
+
+**Decision:** Introduce a third parameter-dictionary tier — `metadataParamDictionary` in `atlasMapper.ts` (mirrored as `METADATA_PARAMS` in `scripts/atlas-ingest.mjs` per Decision #174). Distinct from both `sharedParamDictionary` (cross-family parametric) and `skipParams` (silenced metadata). Resolves as the 3rd fallback in dict lookups: `familyDict ?? sharedParamDictionary ?? metadataParamDictionary`.
+
+Behavior:
+- **Ingest:** dict resolution recognizes raw keys (e.g., `ECCN代码`, `rohs status`, `湿敏等级`) and normalizes to canonical attributeIds (`eccn_code`, `rohs`, `msl`). Stored in JSONB. NOT added to `unmappedParams` → Triage stops flagging.
+- **Read (`fromParametersJsonb`):** consults metadata dict for canonical display names AND checks `METADATA_ATTRIBUTE_IDS` set to EXCLUDE these from the ParametricAttribute output. Specs panel stays clean (no `ECCN: EAR99` row sitting alongside `Standoff Voltage: 85.5V`).
+- **Overview surface:** `atlasClient.rowToPartAttributes` (the earlier read-time lift) continues to read raw JSONB by canonical key and populate `Part.rohsStatus` / `eccnCode` / etc. This is the sole display path for metadata.
+
+Initial 17 entries cover RoHS, REACH, ECCN, HTS, MSL with English + Chinese + spaced variants. Each canonical attributeId maps 1:1 to an existing `Part.xxx` field that already has UI in `AttributesTabContent.tsx`. SortOrder 900–904 so if they ever DO slip into a ParametricAttribute output (shouldn't, but defense-in-depth), they sink to the bottom.
+
+**Why not the alternatives:**
+
+| Alt | Why rejected |
+|---|---|
+| **SKIP list** | `continue`'s during ingest → JSONB purge. Would erase the very data the Overview lift depends on, regressing the just-shipped fix. |
+| **Add to SHARED dict** | SHARED is for cross-family PARAMETRIC attributes (package, operating_temp, supply_voltage — things scored against in logic tables). Compliance isn't scored. Treating it as parametric would surface ECCN/RoHS as rows in the user-facing Specs panel and in cross-ref candidate comparisons — semantic clutter everywhere Atlas data flows. |
+| **Tag on existing SHARED entries** (`isMetadata: true`) | Mixes parametric + metadata in one container. Search-readability cost; future contributors would have to know about the tag to reason about SHARED. |
+| **Top-level DB columns on `atlas_products`** | Schema migration + backfill on 408K rows. Only justified if we plan to filter SQL-side on compliance — we don't today. JSONB stays sufficient. |
+| **Read-time-only lift (no ingest change)** | Doesn't stop Triage flagging — leaves the operator-facing noise that motivated this work. |
+
+**Why this slot is right:**
+- Parallel to how AEC qualifications (Q200/Q101/Q100) are handled — they're in per-family dicts (because they ARE scored), lifted at read-time to a special `Part.qualifications` field, rendered as chips not Specs rows. Metadata dict generalizes the same pattern for non-scoreable cross-family metadata.
+- Slot is durable: future cross-family metadata (lifecycle markers, marking codes, custom IDs) can land here without polluting SHARED or SKIP.
+- Self-contained: one new dict + one read-time exclude check + one ingest dict-fallback line. ~45 LOC across both files.
+
+**Process lesson — re-examine before committing:**
+
+Initially proposed SHARED dict (wrong slot). User pushed back: "Are you sure?" Switched to SKIP (wrong — would purge JSONB). User pushed back again. Only on the third pass did I actually read both `fromParametersJsonb` (read-time skip) and `mapManufacturerProducts` (ingest-time skip) to confirm what SKIP actually does. Should have read first, proposed once. Lesson: when a fix touches a system whose semantics are encoded across TS + .mjs mirror + frozen batch reports + L1/L2 caches, the cost of guessing the slot wrong is real architectural debt. Read the code before proposing the structural answer, not after.
+
+Net change: 17 dict entries × 2 files + 3 resolver lines + 1 exclude check + `npm run atlas:backfill` for 408K rows (58K updated, 0 errors, coverage cache invalidated).
+
+**Caveat — pending batches retain stale Triage entries:**
+
+Frozen batch reports in `atlas_ingest_batches` are computed at upload-time using whatever dict was active then. Today's metadata dict change doesn't retroactively rewrite those reports — pending batches uploaded before today still surface ECCN/RoHS as "unmapped" in Triage. Three handling paths:
+1. Discard old pending batches and re-upload (cleanest)
+2. Per-batch Regenerate button in admin UI (tedious at scale)
+3. Just ignore the metadata rows in Triage (recommended default — they're functionally resolved; new uploads use new dict natively so noise won't accumulate)
+
+If pending-batch staleness becomes a recurring friction across future dict changes, lift to: bulk-regenerate endpoint OR auto-regenerate on dict change. Don't build either until the friction is real.
+
+### Related
+
+- Decision #174 — TS + .mjs mirror convention (this decision adds another item to the mirror discipline).
+- Decision #176 — Triage Workspace + override-active filtering (defines why pending-batch reports go stale on dict changes — they're frozen, only override rows filter post-hoc).
+- Decision #199 — atlas backfill workflow (the cleanup tool this decision leans on for existing rows).
+- Decision #201 — vendor-name hygiene (same "internal data structure leaks into user-facing surface" pattern, different leak vector).
+- Earlier this session — read-time lift in `atlasClient.rowToPartAttributes` (the prerequisite fix; metadata dict builds on it).
+
+## Decision #217 — Atlas unit-prefix conversion: value-string-first hybrid (June 2, 2026)
+
+**Context:**
+- User reviewing Triage rows noticed AI suggestions repeatedly claimed "150 kHz → 0.15 MHz conversion happens when the dictionary override is applied." User asked: is the conversion real, or is AI hallucinating a feature?
+- Investigation confirmed: **the conversion does not exist.** Atlas storage at `atlasMapper.ts:2750` (mirror in `atlas-ingest.mjs`) stored `numericValue` as raw digits from the source string, while Digikey's `extractNumericValue` ([digikeyMapper.ts:362-378](lib/services/digikeyMapper.ts#L362-L378)) applied SI prefix to base SI. Cross-source matching (Atlas vs Digikey) for any prefix-bearing unit silently false-failed every comparison.
+- Real-world example: EVISUN K7812-2000R3 has display `"400kHz"` for fsw. Atlas stored `numericValue: 400, unit: 'MHz'` (dict declared MHz). Digikey stores 400 kHz fsw as `numericValue: 400000`. Matching engine compared 400 vs 400000 → false fail. The bug touched every Atlas product with a unit-prefixed numeric value.
+
+**Initial design (rejected after spot-check):** "Trust the dict's `unit:` field — apply SI prefix from the dict declaration to the raw numericValue." Built helper `applyUnitPrefix(numericValue, mapping.unit)`. Wired to all 4 push sites in atlasMapper.ts (standard dict, gaia-with-mapping, gaia-no-mapping). Audit script enumerated 389 distinct attributeIds with units across in-code dicts + DB overrides. Looked clean — 46 multi-unit attributes (vendor variance, conversion would normalize), 115 single-unit prefix-triggering (audit-pass).
+
+**Why it was wrong:** spot-check against real data revealed the dict's `unit:` field is often an engineer's GUESS about source units, not vendor truth. EVISUN ships `"400kHz"` for fsw but the Chinese label `'开关频率'` was mapped with `unit: 'MHz'` (the dict author's display preference, applied to all vendors using that label). Applying MHz prefix to 400 → 400,000,000 Hz = 400 MHz, which is 1000× worse than the original wrong behavior. The dict-unit-trust design would have shipped a bigger bug.
+
+**Pivot (the right design):** **Value-string-first hybrid.** Mirror Digikey's `extractNumericValue` pattern — parse SI prefix from the VALUE STRING (the vendor's ground truth), fall back to the dict's `unit:` field only for unit-less values like `"8"` or `"100"`.
+
+```ts
+const { numericValue, parsedUnit } = extractNumericWithPrefix(displayValue);
+const effUnit = effectiveUnit(parsedUnit, mapping.unit);  // value string wins
+const finalNumeric = applyUnitPrefix(numericValue, effUnit);
+```
+
+**Architecture:**
+- **`_applyUnitPrefixCore(num, unit)`** — pure SI prefix math. Mirrors Digikey's logic byte-for-byte (`p/n/µ/u/m/k/K/M/G/T` with `mm`/`MSL`/`no` guards). Exported for testing.
+- **`applyUnitPrefix(num, unit)`** — gated wrapper that checks `APPLY_UNIT_PREFIX_TO_NUMERIC` kill switch before delegating to core.
+- **`extractNumericWithPrefix(value)`** — parses leading number + optional unit suffix from value strings. Returns `{ numericValue?, parsedUnit? }`. Handles range, ±, comparison-prefix, standard, and loose-fallback (preserves `extractNumeric` behavior for prefix-junk like `"@25°C 100mA"`).
+- **`effectiveUnit(parsedUnit, dictUnit)`** — `parsedUnit || dictUnit`. Safety hinge: value-string truth wins over dict guess.
+- **`APPLY_UNIT_PREFIX_TO_NUMERIC`** kill switch — boolean constant. Started `false` (dark code) for audit + spot-check, flipped `true` after pivot + 1804/1804 test pass.
+- **Mirror discipline (Decision #174):** every change above duplicated byte-for-byte in `scripts/atlas-ingest.mjs`. Both files MUST move together.
+
+**Hooks applied at 3 push sites in atlasMapper.ts (+ .mjs mirror):**
+1. Standard dict mapping (`mapModel`, line ~2750)
+2. Gaia-with-mapping (line ~2691)
+3. Gaia-no-mapping (line ~2653)
+
+Skipped: raw-fallback site (no unit), LDO synthesis (hard-coded 'V'), PACKAGE_TRAITS height (mm guarded), `tagAtlasParameters` + `fromParametersJsonb` (passthrough reads — wrapping would double-apply).
+
+**Cache versions bumped:**
+- `RECS_CACHE_SCHEMA_VERSION`: v10 → v11
+- `BASE_RECS_SCHEMA_VERSION`: v1 → v2
+
+Both invalidate prior cached recs since Atlas-source candidate scoring shifts under post-flip math.
+
+**Audit + Discovery tools (read-only, both ship with this decision):**
+- `scripts/atlas-audit-unit-mismatches.mjs` — enumerates every `(attributeId, unit)` combo in DB overrides + in-code dicts. Outputs 3-tier report (HIGH-RISK multi-unit / ATTENTION single-unit prefix-triggering / SAFE no-op).
+- `scripts/atlas-find-mfrs-needing-backfill.mjs` — scans `atlas_products` for rows with prefix-triggering units, aggregates per-MFR affected counts, outputs priority-ordered punch list.
+
+**Spot-check results (post-pivot, against real data):**
+
+| Attr | Display | Dict unit | Parsed unit | Effective | numericValue (base SI) | Sanity |
+|---|---|---|---|---|---|---|
+| fsw | "300KHz" | MHz | KHz | KHz | 300,000 Hz | ✓ 300 kHz |
+| fsw | "1.5MHz" | MHz | MHz | MHz | 1,500,000 Hz | ✓ 1.5 MHz |
+| trr | "35" | ns | (none) | ns | 3.5e-8 s | ✓ 35 ns (fallback) |
+| trr | "80ns" | (none) | ns | ns | 8e-8 s | ✓ 80 ns |
+| wavelength_peak | "940nm" | nm | nm | nm | 9.4e-7 m | ✓ 940 nm |
+| output_current | "400mA" | A | mA | mA | 0.4 A | ✓ 400 mA |
+| output_current | "1.2A" | A | A | A | 1.2 A | ✓ 1.2 A |
+| ft | "8" | MHz | (none) | MHz | 8e6 Hz | ✓ 8 MHz (fallback) |
+
+The fsw row is the proof — dict said MHz but vendor shipped kHz; value string wins, correct base SI emerges.
+
+**Discovery output (June 2, 2026):** 389,253 atlas_products scanned; 137,518 affected across 169 MFRs. Top 10 MFRs cover 59%; top 20 cover 80% (Pareto). Sunlord (16,794), XKB Connectivity (9,960), ISC (8,777), YANGJIE (8,695), YFW (7,191), Jingheng (6,547), JJW (6,542), Comchip (6,044), Galaxy (5,168), KEXIN (4,887) are the top 10.
+
+**Backfill workflow (operator-controlled):** Each MFR ~30 sec via `npm run atlas:backfill -- --mfr <name>` (uses Decision #199 plumbing; mapper re-runs against current dict overrides AND the new conversion). Sequential batches of 3-4 MFRs avoid Supabase rate limits. Verify via `npm run atlas:backfill:dry -- --mfr <name> --verbose`.
+
+**Top-20 backfill execution (this session, June 2, 2026):** Ran the top 20 MFRs in batches of 4-in-parallel. **100,948 products updated across 22 MFRs** (AK substring bonus matched 3PEAK + AMPAK for free). Coverage cache invalidated each run. ~73% of all 137K affected products covered; remaining 149 MFRs tracked in BACKLOG as P2 follow-up.
+
+**Diff-fix found mid-execution:** First Sunlord backfill returned "0 changed / 16,756 same" — the conversion was running but writes were skipped. Root cause: `compareParamsIgnoringIngestedAt` in `scripts/atlas-ingest.mjs` originally compared only `value`/`unit`/`source` and IGNORED `numericValue`. Fix added `numericValuesEqual()` helper with relative-tolerance float comparison and extended the diff to include it. After fix, Sunlord re-ran and showed 15,584 changed. **Architecture lesson:** any change to atlas storage semantics needs the diff function audited too — provenance-only diffs are blind to value-only mutations. This is now baked into the helper docblock so future engineers don't hit the same trap.
+
+**Top-20 changed counts (for posterity):** Sunlord 15584 / XKB 2544 / ISC 5013 / YANGJIE 11653 / YFW 4623 / Jingheng 5321 / JJW 7067 / Comchip 8028 / Galaxy 8435 / KEXIN 3781 / SWST 3577 / TA-I 3273 / LGE 3697 / AK+3PEAK+AMPAK 3746 / Everlight 2012 / FOSAN 2022 / Good-Ark 3449 / Viking 1753 / JSCJ 3256 / JCET 2111. **Long-tail (149 MFRs):** 45,840 additional. **Grand total: 147,301 products updated.**
+
+**Greek-mu vs Latin-µ bug (discovered post-backfill via numeric-outlier audit):** `applyUnitPrefix` originally checked `unit.startsWith('µ') || unit.startsWith('u')` — where µ is U+00B5 (micro sign). But Atlas data carries both U+00B5 AND U+03BC (Greek small mu) interchangeably; they render identically. Helper now checks for both. ~6,300 products across 29 MFRs (Prisemi 1657, LGE 1262, YANGJIE 826, KEXIN 740, YFW 372, etc.) had unit='μA'/'μF'/'μV' that were silently NOT being converted; numericValue stayed raw (e.g. `100` for "100 μA" instead of `1e-4` A). Fixed across atlasMapper.ts + atlas-ingest.mjs + audit-unit-mismatches + find-mfrs-needing-backfill + tests. Targeted re-backfill ran on the 29 affected MFRs after fix. **Architecture lesson:** Unicode look-alikes are silent bugs — when the spec calls for "micro," accept all Unicode codepoints that mean "micro" (U+00B5 micro sign, U+03BC Greek small mu), not just the canonical one. Future SI prefix additions should audit for similar variants (Ω U+03A9 vs Ohm sign U+2126 is the next known one).
+
+**Operational follow-ups (same-day, post-backfill):**
+1. **`/suggest` prompt updated to drop "canonical unit X" framing.** The C2 fsw row that triggered this work surfaced that the AI was still generating prose like "fsw is canonically stored in MHz, raw values must be converted on ingest" — describing the OLD broken design. New UNIT FIELD GUIDANCE section in the prompt teaches Sonnet that the dict's `unit:` field is now load-bearing for unit-less value strings, and tells it to read the paramName (e.g. "FSW(kHz)") and sample values for unit hints rather than defaulting to any "canonical unit."
+2. **Cache version bump REVERTED (v7→v8→v7).** Bumping `SUGGEST_CACHE_VERSION` invalidated every cached AI suggestion across the queue, forcing engineers to regenerate hundreds of rows just to see the prose change. Most cached suggestions had unchanged mappings — only prose was suboptimal for unit-bearing rows. Sledgehammer for a cosmetic fix. Reverted both server-side (atlasSuggestCache.ts) and client-side (GlobalUnmappedParamsTable.tsx localStorage prefix). Engineers refresh suspect rows individually via the ↻ refresh icon (see #3 below). **Lesson:** bump prompt-cache versions only when the cached mappings themselves would change, not when only prose improves.
+3. **Per-row refresh ↻ icon made always-visible.** Previously only rendered when system independently detected staleness (Decision #187 — card/schema version drift). Now renders on every cached suggestion: muted gray for normal rows ("Refresh AI suggestion for this row"), amber + ⚠ for stale rows. Engineer-driven on-demand regen for the FSW(kHz)-style cases where the prose looks suspect but no auto-staleness signal fires. One-line UI tweak in `GlobalUnmappedParamsTable`.
+4. **UI safety net: inline conversion preview** below the unit field in `GlobalUnmappedParamsTable`. New `previewConversion(sampleValue, unit)` helper shows what numericValue would land in atlas_products with the proposed mapping — e.g., "120 → 1.20e+5" appears below the unit field. Tooltip explains the math. Suspicious case (sample value embeds a unit different from the dict unit) renders amber with ⚠ prefix. **This is the real safety net** — even when AI prose is wrong, the engineer's eyeball on the preview catches actual magnitude errors. Subsequent /suggest hallucinations ("AMP will be normalized to A during ingest") didn't matter to correctness because the engineer-set unit + preview verification handle it.
+5. **`/suggest` prompt refactored: lexical bans → one principled rule.** After watching the AI hallucinate "MHz canonical conversion" (round 1) then "AMP-to-A normalization at ingest" (round 2) — both about system behavior the AI doesn't actually know — replaced piecemeal phrase-bans with one upstream SCOPE OF YOUR ROLE rule: *"You recommend attributeId + unit + verdict and justify the match. You do NOT know what the ingest pipeline, runtime, or matching engine do with the data — do not describe, predict, or assert system behavior."* Plus a redirect: data-quality observations get framed as recommendations to the engineer ("set unit to 'A'") not predictions about system behavior ("system will normalize"). One rule kills the whole class of hallucinations including future ones we haven't seen yet. **Lesson:** when an AI prompt is whack-a-mole'd with 2+ specific phrase-bans for the same underlying pattern, lift to a principled rule that bans the pattern.
+
+**Numeric-outlier audit (`scripts/atlas-audit-numeric-outliers.mjs`):** Post-backfill sanity check. Looks for products whose post-conversion numericValue deviates >1e4× from per-attribute median — symptom of dict entries whose `unit:` field is wrong for vendors that ship unit-less value strings. June 2, 2026 run found 44 suspect attributes but ALL with outlier counts of 1-2 products each (no systematic vendor patterns suggesting bulk dict errors). Most "outliers" turned out to be (a) the Greek-mu bug above, OR (b) pre-existing data-quality issues unrelated to Decision #217 (dict author typos like `unit:'k/w'` lowercase k spuriously applying kilo to thermal resistance K/W; ad-hoc unit strings like `'TO +85 ℃'` or `'(none)'` that bypass prefix handling). Categorized as P3 BACKLOG follow-up, not regression.
+
+**Why this is "done right" rather than "shipped":**
+- Kill switch retained — flip back to `false` if regression discovered, no data damage.
+- 43 unit tests cover the helpers + edge cases (mm/MSL/no guards, ranges, ±, comparison prefix, prefix-junk loose fallback, value-string-wins-over-dict).
+- 1804/1804 existing tests pass — no fixture regressions despite flag flip.
+- Audit script captures every (attribute, unit) combo for future engineers.
+- Discovery script outputs priority-ordered MFR backfill list with copy-paste commands.
+
+**Why not the alternatives:**
+
+| Alt | Why rejected |
+|---|---|
+| **Trust dict's `unit:` field only** | Initial design. Spot-check on EVISUN fsw proved dict often LIES about source unit. Would have multiplied wrong direction (1000× worse than current bug). |
+| **Build canonical-units lookup per attributeId** | What I initially proposed. ~60-80 manual entries. Replaced by hybrid since Digikey's pattern (value-string SI prefix) already gives canonical-by-construction. Less code, fewer guesses. |
+| **Server-side migration script that rewrites all 137K rows once** | Backfill via existing atlas-ingest pipeline is cleaner (mapper re-runs entire family-dict logic, picks up any other concurrent dict changes too, provenance-preserving per Decision #199). Migration script would have to duplicate the mapper. |
+| **Defer the bug to BACKLOG** | User judged bug urgent (every Triage accept session was potentially adding new mis-stored mappings). Same-session fix avoided the can-kick. |
+
+**Lessons:**
+- **Spot-check against real data is non-negotiable** when changing storage semantics. Static audit on dict declarations missed the EVISUN-style aspirational-unit problem entirely. ~5 minutes of spot-checking saved shipping a worse bug.
+- **AI-suggestion prose is unreliable about code behavior.** The /suggest endpoint confidently asserted "conversion happens when override is applied" — there was no such code. Pattern: trust AI for translation (paramName → canonical attributeId, value semantics), distrust for system-behavior claims.
+- **Dark-launch + kill switch + audit-first** is the right shape for any change that mutates how stored data is interpreted. Three-stage (build dark / audit / flip+verify) gave us reversibility at every step.
+- **Pivot decisions are cheap when foundations are solid.** Switching from dict-trust to value-string-first reused 100% of the kill-switch + audit infrastructure. Only the inner math changed.
+- **"Done right" includes the backfill punch list, not just the code.** Without `atlas-find-mfrs-needing-backfill.mjs`, this would have been a dead-code ship — flag flipped but old data never re-translated, so cross-source matching stayed broken for the 169 affected MFRs.
+
+### Related
+- Decision #174 — atlas re-ingest pipeline (provides the backfill plumbing this decision leans on)
+- Decision #199 — atlas backfill translations (the existing operator workflow this work plugs into)
+- Decision #201 — vendor-name hygiene (sibling "internal artifact leaks into stored data" pattern)
+- Decision #215 — Galaxy coverage repair (proved scoped per-MFR backfill is the right tool for vendor-specific data fixes)
+- digikeyMapper.ts:362-378 — `extractNumericValue` (the reference implementation Atlas now mirrors)

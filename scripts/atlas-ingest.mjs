@@ -2093,6 +2093,63 @@ const STATUS_MAP = {
 
 // ─── Value helpers ────────────────────────────────────────
 
+// Kill switch for unit-prefix conversion at storage time. Mirror of
+// APPLY_UNIT_PREFIX_TO_NUMERIC in lib/services/atlasMapper.ts. See that
+// file's docblock for full context. Keep flipped values in sync — both
+// files must move together (per the no-import-path mirror convention).
+const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
+
+// Multiplies numericValue by the SI prefix implied by unit so stored
+// number is base SI. Mirror of applyUnitPrefix in atlasMapper.ts.
+// Guards against 'mm' (length), 'MSL' (moisture sensitivity), 'no' (count).
+function applyUnitPrefix(numericValue, unit) {
+  if (numericValue === undefined || isNaN(numericValue)) return numericValue;
+  if (!unit) return numericValue;
+  if (unit.startsWith('p')) return numericValue * 1e-12;
+  if (unit.startsWith('n') && !unit.startsWith('no')) return numericValue * 1e-9;
+  if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) return numericValue * 1e-6;  // µ U+00B5 vs μ U+03BC — both used in Atlas data
+  if (unit.startsWith('m') && !unit.startsWith('mm') && !unit.startsWith('M')) return numericValue * 1e-3;
+  if (unit.startsWith('k') || unit.startsWith('K')) return numericValue * 1e3;
+  if (unit.startsWith('M') && !unit.startsWith('MSL')) return numericValue * 1e6;
+  if (unit.startsWith('G')) return numericValue * 1e9;
+  if (unit.startsWith('T')) return numericValue * 1e12;
+  return numericValue;
+}
+
+// Hybrid SI prefix parser — mirror of extractNumericWithPrefix in
+// lib/services/atlasMapper.ts. Value string is ground truth; dict
+// declared unit is fallback for unit-less values.
+function extractNumericWithPrefix(value) {
+  if (isMissing(value)) return {};
+  const t = value.trim();
+
+  const rangeMatch = t.match(/^([+-]?\d+\.?\d*)\s*[~–]\s*([+-]?\d+\.?\d*)/);
+  if (rangeMatch) return { numericValue: parseFloat(rangeMatch[1]) };
+
+  const pmMatch = t.match(/^[±]\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (pmMatch) return { numericValue: parseFloat(pmMatch[1]), parsedUnit: pmMatch[2]?.trim() || undefined };
+  const altPmMatch = t.match(/^\+\/-\s*(\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (altPmMatch) return { numericValue: parseFloat(altPmMatch[1]), parsedUnit: altPmMatch[2]?.trim() || undefined };
+
+  const cmpMatch = t.match(/^[≤≥<>=]\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (cmpMatch) return { numericValue: parseFloat(cmpMatch[1]), parsedUnit: cmpMatch[2]?.trim() || undefined };
+
+  const stdMatch = t.match(/^([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (stdMatch && stdMatch[1] !== '') return { numericValue: parseFloat(stdMatch[1]), parsedUnit: stdMatch[2]?.trim() || undefined };
+
+  // Loose fallback — preserves extractNumeric's behavior for prefix-junk values.
+  const looseMatch = t.match(/([+-]?\d+\.?\d*)/);
+  if (looseMatch) return { numericValue: parseFloat(looseMatch[1]) };
+
+  return {};
+}
+
+// Value-string unit WINS over dict-declared unit. Mirror of
+// effectiveUnit in atlasMapper.ts.
+function effectiveUnit(parsedUnit, dictUnit) {
+  return parsedUnit || dictUnit;
+}
+
 function isMissing(value) {
   const t = value.trim();
   return t === '-' || t === '/' || t === '' || t === 'N/A' || t === 'n/a';
@@ -2199,9 +2256,10 @@ function mapModel(model, manufacturerName, sourceFile) {
         // Store with auto-humanized name (nothing thrown away)
         if (!parameters[gaia.stem]) {
           const parsed = parseGaiaValue(p.value);
+          const numConverted = applyUnitPrefix(parsed.numericValue, parsed.unit);
           parameters[gaia.stem] = {
             value: parsed.displayValue,
-            ...(parsed.numericValue !== undefined && { numericValue: parsed.numericValue }),
+            ...(numConverted !== undefined && { numericValue: numConverted }),
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
         }
@@ -2217,9 +2275,12 @@ function mapModel(model, manufacturerName, sourceFile) {
       if (gaiaMapping.attributeId === 'operating_temp') displayValue = normalizeTemp(p.value);
       if (gaiaMapping.attributeId === 'package_case') packageValue = displayValue;
 
+      // Hybrid: parsed.unit (from value string) wins over gaiaMapping.unit (dict guess).
+      const gaiaEffUnit = effectiveUnit(parsed.unit, gaiaMapping.unit);
+      const gaiaNumConverted = applyUnitPrefix(parsed.numericValue, gaiaEffUnit);
       parameters[gaiaMapping.attributeId] = {
         value: displayValue,
-        ...(parsed.numericValue !== undefined && { numericValue: parsed.numericValue }),
+        ...(gaiaNumConverted !== undefined && { numericValue: gaiaNumConverted }),
         ...(gaiaMapping.unit ? { unit: gaiaMapping.unit } : parsed.unit ? { unit: parsed.unit } : {}),
       };
       continue;
@@ -2248,16 +2309,19 @@ function mapModel(model, manufacturerName, sourceFile) {
     if (parameters[mapping.attributeId]) continue; // dedup
 
     let displayValue = p.value.trim();
-    const numericValue = extractNumeric(displayValue);
+    // Hybrid: parse number AND unit from value string; dict unit is fallback.
+    const { numericValue, parsedUnit } = extractNumericWithPrefix(displayValue);
+    const stdEffUnit = effectiveUnit(parsedUnit, mapping.unit);
 
     if (mapping.attributeId === 'operating_temp') displayValue = normalizeTemp(displayValue);
     if (mapping.attributeId === 'input_voltage_range') displayValue = normalizeVoltageRange(displayValue);
 
     if (mapping.attributeId === 'package_case') packageValue = displayValue;
 
+    const stdNumConverted = applyUnitPrefix(numericValue, stdEffUnit);
     parameters[mapping.attributeId] = {
       value: displayValue,
-      ...(numericValue !== undefined && { numericValue }),
+      ...(stdNumConverted !== undefined && { numericValue: stdNumConverted }),
       ...(mapping.unit && { unit: mapping.unit }),
     };
   }
@@ -3913,12 +3977,28 @@ function compareParamsIgnoringIngestedAt(a, b) {
     const ae = a[aKeys[i]];
     const be = b[bKeys[i]];
     if (!ae || !be) return ae === be;
-    // Compare value + unit + source. Skip ingested_at.
+    // Compare value + unit + numericValue + source. Skip ingested_at.
+    // numericValue is load-bearing for matching engine; if conversion
+    // changes it (e.g., Decision #217 unit-prefix flip), the diff MUST
+    // detect that or the backfill is a silent no-op.
     if (ae.value !== be.value) return false;
     if (ae.unit !== be.unit) return false;
+    if (!numericValuesEqual(ae.numericValue, be.numericValue)) return false;
     if ((ae.source ?? 'atlas') !== (be.source ?? 'atlas')) return false;
   }
   return true;
+}
+
+// Treats undefined === undefined, NaN === NaN, and applies tiny relative
+// tolerance for float-rounding drift in SI prefix multiplication.
+function numericValuesEqual(a, b) {
+  if (a === b) return true;
+  if (a === undefined || a === null) return b === undefined || b === null;
+  if (b === undefined || b === null) return false;
+  if (typeof a !== 'number' || typeof b !== 'number') return false;
+  if (Number.isNaN(a) && Number.isNaN(b)) return true;
+  const denom = Math.max(Math.abs(a), Math.abs(b), 1e-30);
+  return Math.abs(a - b) / denom < 1e-9;
 }
 
 // ─── Dispatcher ───────────────────────────────────────────

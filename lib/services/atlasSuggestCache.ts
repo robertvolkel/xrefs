@@ -23,7 +23,15 @@ export const SUGGEST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** Bump when prompt or post-validation logic changes — invalidates all
  *  previously-cached suggestions so the new context (cross-family canonicals,
  *  foreign-family signatures, domain cards) and guardrails (collision
- *  detection) reach the engineer on next /suggest call. */
+ *  detection) reach the engineer on next /suggest call.
+ *
+ *  Note: Decision #217 added new unit-field guidance to the prompt on
+ *  June 2, 2026 — initially bumped v7→v8 but reverted same day. The cosmetic
+ *  prose improvement on unit-bearing rows didn't justify forcing regeneration
+ *  of hundreds of cached suggestions whose mappings were unchanged. Engineers
+ *  refresh suspect rows individually via the ↻ stale-refresh icon
+ *  (Decision #187 mechanism) and rely on the inline conversion preview in
+ *  GlobalUnmappedParamsTable for unit sanity checks. */
 export const SUGGEST_CACHE_VERSION = 'v7';
 
 export function buildSuggestCacheKey(familyId: string | null, paramName: string): string {

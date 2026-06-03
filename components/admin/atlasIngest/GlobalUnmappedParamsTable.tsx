@@ -328,6 +328,71 @@ function suggestLsKey(familyId: string | null, paramName: string): string {
   return SUGGEST_LS_PREFIX + (familyId ?? '') + '::' + paramName;
 }
 
+/**
+ * Compute the post-conversion preview for a sample value, given the unit
+ * the engineer is about to commit. Mirrors `extractNumericWithPrefix` +
+ * `applyUnitPrefix` in atlasMapper.ts so engineers can see what numericValue
+ * will land in atlas_products BEFORE clicking Accept.
+ *
+ * Returns null when:
+ *   - unit is empty (no conversion will happen)
+ *   - unit doesn't trigger SI prefix (V/A/Ω/°C/% etc. — no-op)
+ *   - sample value can't be parsed as numeric
+ *
+ * Returns a short caption like "120 → 1.20e+5" when the unit triggers
+ * conversion. The numeric prefix indicates the multiplier (k=×1000,
+ * M=×1e6, m=×0.001, µ=×1e-6, etc.).
+ */
+function previewConversion(sampleValue: string, unit: string): { display: string; numericValue: number; suspicious: boolean } | null {
+  if (!unit || !sampleValue) return null;
+
+  // SI prefix detection — must match atlasMapper.ts _applyUnitPrefixCore guards
+  let multiplier = 1;
+  if (unit.startsWith('p')) multiplier = 1e-12;
+  else if (unit.startsWith('n') && !unit.startsWith('no')) multiplier = 1e-9;
+  else if (unit.startsWith('µ') || unit.startsWith('μ') || unit.startsWith('u')) multiplier = 1e-6;
+  else if (unit.startsWith('m') && !unit.startsWith('mm') && !unit.startsWith('M')) multiplier = 1e-3;
+  else if (unit.startsWith('k') || unit.startsWith('K')) multiplier = 1e3;
+  else if (unit.startsWith('M') && !unit.startsWith('MSL')) multiplier = 1e6;
+  else if (unit.startsWith('G')) multiplier = 1e9;
+  else if (unit.startsWith('T')) multiplier = 1e12;
+
+  if (multiplier === 1) return null; // no-op unit
+
+  // Parse the sample's leading number — handle "400kHz" (value-string parsing wins),
+  // bare digits like "120", comparison prefixes like "≤150".
+  const valueMatch = sampleValue.match(/^[≤≥<>=±]?\s*([+-]?\d+\.?\d*)\s*([a-zA-ZµΩ°%/√]*)/);
+  if (!valueMatch) return null;
+
+  const rawNum = parseFloat(valueMatch[1]);
+  const valueStringUnit = valueMatch[2]?.trim() || undefined;
+
+  // Value-string unit WINS over dict unit (Decision #217 hybrid).
+  // If the sample already has an embedded unit, that's what gets applied;
+  // dict unit only matters for unit-less values. Preview reflects this.
+  const effectiveUnitForPreview = valueStringUnit || unit;
+  let effectiveMultiplier = 1;
+  if (effectiveUnitForPreview.startsWith('p')) effectiveMultiplier = 1e-12;
+  else if (effectiveUnitForPreview.startsWith('n') && !effectiveUnitForPreview.startsWith('no')) effectiveMultiplier = 1e-9;
+  else if (effectiveUnitForPreview.startsWith('µ') || effectiveUnitForPreview.startsWith('μ') || effectiveUnitForPreview.startsWith('u')) effectiveMultiplier = 1e-6;
+  else if (effectiveUnitForPreview.startsWith('m') && !effectiveUnitForPreview.startsWith('mm') && !effectiveUnitForPreview.startsWith('M')) effectiveMultiplier = 1e-3;
+  else if (effectiveUnitForPreview.startsWith('k') || effectiveUnitForPreview.startsWith('K')) effectiveMultiplier = 1e3;
+  else if (effectiveUnitForPreview.startsWith('M') && !effectiveUnitForPreview.startsWith('MSL')) effectiveMultiplier = 1e6;
+  else if (effectiveUnitForPreview.startsWith('G')) effectiveMultiplier = 1e9;
+  else if (effectiveUnitForPreview.startsWith('T')) effectiveMultiplier = 1e12;
+
+  const numericValue = rawNum * effectiveMultiplier;
+  const display = `${rawNum} → ${numericValue.toExponential(2)}`;
+
+  // "Suspicious" heuristic: if value-string unit DIFFERS from dict unit,
+  // flag amber — that's the EVISUN-style case where dict says MHz but value
+  // says kHz. Not necessarily wrong (value-string wins, math is right) but
+  // worth surfacing so engineer notices the conflict.
+  const suspicious = !!(valueStringUnit && valueStringUnit !== unit && multiplier !== effectiveMultiplier);
+
+  return { display, numericValue, suspicious };
+}
+
 /** Read a cached suggestion. Returns the full record (suggestion + at-write
  *  versions) so the caller can compare against current versions and decide
  *  staleness. Returns null on missing / expired entries. */
@@ -2359,22 +2424,31 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                                 {state.suggestion.translation}
                               </Typography>
                             </Tooltip>
-                            {/* Per-row refresh ↻ — appears ONLY when the cached
-                                suggestion is stale against current card / schema
-                                versions. Click re-fires /suggest with force=true
-                                so the server skips its cache too. */}
-                            {suggestionStaleReason && (
-                              <Tooltip title={`⚠ Stale — ${suggestionStaleReason}. Click to refresh this row's AI suggestion.`}>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => generateSuggestionsForRows([r], { force: true })}
-                                  sx={{ p: 0.25, color: 'warning.main' }}
-                                  aria-label="Refresh stale AI suggestion"
-                                >
-                                  <RefreshIcon sx={{ fontSize: 14 }} />
-                                </IconButton>
-                              </Tooltip>
-                            )}
+                            {/* Per-row refresh ↻ — always rendered when a cached
+                                suggestion exists. Stale rows (Decision #187 — card
+                                or schema version drift) render the icon in warning
+                                color with prepended ⚠; non-stale rows render it
+                                muted as a manual on-demand refresh affordance.
+                                Click re-fires /suggest with force=true so the
+                                server skips its cache too. */}
+                            <Tooltip title={
+                              suggestionStaleReason
+                                ? `⚠ Stale — ${suggestionStaleReason}. Click to refresh this row's AI suggestion.`
+                                : `Refresh AI suggestion for this row (re-runs /suggest with the latest prompt).`
+                            }>
+                              <IconButton
+                                size="small"
+                                onClick={() => generateSuggestionsForRows([r], { force: true })}
+                                sx={{
+                                  p: 0.25,
+                                  color: suggestionStaleReason ? 'warning.main' : 'text.disabled',
+                                  '&:hover': { color: suggestionStaleReason ? 'warning.dark' : 'text.secondary' },
+                                }}
+                                aria-label={suggestionStaleReason ? 'Refresh stale AI suggestion' : 'Refresh AI suggestion'}
+                              >
+                                <RefreshIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Tooltip>
                           </Stack>
                           {state.suggestion.explanation && (
                             // Symmetric in-cell explanation — visible by default
@@ -2493,18 +2567,51 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                       {flagged ? (
                         <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
                       ) : (
-                        <TextField
-                          size="small"
-                          fullWidth
-                          value={state?.editedUnit ?? ''}
-                          onChange={(e) => setStates((prev) => ({
-                            ...prev,
-                            [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
-                          }))}
-                          disabled={state?.accepted || state?.accepting}
-                          placeholder="—"
-                          sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
-                        />
+                        <>
+                          <TextField
+                            size="small"
+                            fullWidth
+                            value={state?.editedUnit ?? ''}
+                            onChange={(e) => setStates((prev) => ({
+                              ...prev,
+                              [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
+                            }))}
+                            disabled={state?.accepted || state?.accepting}
+                            placeholder="—"
+                            sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
+                          />
+                          {(() => {
+                            const sample = r.sampleValues?.[0];
+                            const preview = previewConversion(sample ?? '', state?.editedUnit ?? '');
+                            if (!preview) return null;
+                            return (
+                              <Tooltip
+                                title={
+                                  preview.suspicious
+                                    ? `Sample value embeds a unit that differs from the dict unit above. Value-string parsing wins at ingest, so math will be correct — but double-check the dict unit captures the typical vendor convention.`
+                                    : `At ingest, sample "${sample}" with unit "${state?.editedUnit}" becomes numericValue ${preview.numericValue} (base SI). Verify this magnitude is physically plausible for ${r.paramName}.`
+                                }
+                                placement="top"
+                                arrow
+                              >
+                                <Box
+                                  sx={{
+                                    fontSize: '0.62rem',
+                                    color: preview.suspicious ? 'warning.main' : 'text.secondary',
+                                    fontFamily: 'monospace',
+                                    mt: 0.3,
+                                    cursor: 'help',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                  }}
+                                >
+                                  {preview.suspicious ? '⚠ ' : ''}{preview.display}
+                                </Box>
+                              </Tooltip>
+                            );
+                          })()}
+                        </>
                       )}
                     </TableCell>
                     <TableCell>

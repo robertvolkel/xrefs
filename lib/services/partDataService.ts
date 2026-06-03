@@ -312,7 +312,11 @@ function buildRecommendationsVariant(
 // a pure in-memory rescore (~100ms) instead of a 3-8s pipeline rerun.
 //
 // Bump BASE_RECS_SCHEMA_VERSION when the payload shape changes.
-const BASE_RECS_SCHEMA_VERSION = 'v1';
+// v2: APPLY_UNIT_PREFIX_TO_NUMERIC enabled — base-payload sourceAttrs +
+//     allCandidates carry post-conversion numericValues for Atlas-source
+//     parts. Cached v1 base payloads contain pre-conversion values that
+//     would mis-score on rescore.
+const BASE_RECS_SCHEMA_VERSION = 'v2';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;

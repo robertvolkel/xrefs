@@ -4,6 +4,61 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Atlas unit-prefix backfill — remaining ~149 MFRs (top 20 done June 2, 2026)
+**Status:** PARTIAL — top 20 MFRs completed in Decision #217 session (100,948 products updated across 22 MFRs including 2 substring bonuses from AK matching 3PEAK + AMPAK)
+**Priority:** P2 — top 20 covered ~73% of affected products. Long tail of 149 MFRs (~36K products) remains. Each is small (<1K products each typically), so the per-MFR business impact is lower than the top 20.
+
+**Completed in Decision #217 session (June 2, 2026):**
+Sunlord (15,584) / XKB Connectivity (2,544) / ISC (5,013) / YANGJIE (11,653) / YFW (4,623) / Jingheng (5,321) / JJW (7,067) / Comchip (8,028) / Galaxy (8,435) / KEXIN (3,781) / SWST (3,577) / TA-I (3,273) / LGE (3,697) / AK+3PEAK+AMPAK (3,746) / Everlight (2,012) / FOSAN (2,022) / Good-Ark (3,449) / Viking (1,753) / JSCJ (3,256) / JCET (2,111).
+
+**Diff-fix discovery during execution:** `compareParamsIgnoringIngestedAt` in `scripts/atlas-ingest.mjs` originally compared only `value`/`unit`/`source` and IGNORED `numericValue`. First Sunlord backfill returned "0 changed" — backfill was a silent no-op because the only field that changed was the one the diff didn't look at. Fixed by adding `numericValuesEqual` helper with relative-tolerance float comparison. **Lesson:** any change to atlas storage semantics needs the diff function audited too — provenance-only diffs are blind to value-only mutations.
+
+**Remaining execution:**
+1. Re-run discovery for fresh prioritized list: `node scripts/atlas-find-mfrs-needing-backfill.mjs --top 50`
+2. Sequential batches of 4 MFRs in parallel (proven safe at this load in Decision #217 session)
+3. Use bare-substring MFR names where possible — multi-word names get truncated by npm (use "XKB" not "XKB Connectivity")
+4. Watch for accidental substring bonuses (AK matched 3PEAK + AMPAK — net positive, but verify)
+
+**Effort:** ~30 sec per MFR. 149 MFRs ≈ ~75 min if sequential; ~20 min if 4-at-a-time parallel.
+
+**Lower priority because:** these MFRs were not in the top 20 by affected count, and per-MFR product counts are small. The biggest cross-source matching wins from Decision #217 are already shipped.
+
+**UPDATE June 2, 2026:** Long-tail backfill EXECUTED in same Decision #217 session. 143/149 succeeded via orchestrator script; 6 multi-word MFRs (JNJ OPTOELECTRONICS / Tonyu Photoelectric / BLUE ROCKET / TECH PUBLIC / Signal Micro / Fortior Tech) needed underscore-name retry. All 149 done. **Total backfill across session: 147,301 products updated.** Then Greek-mu helper bug discovered post-audit → 29 affected MFRs re-backfilled. This BACKLOG entry can be CLOSED.
+
+---
+
+## Atlas value-string normalization at ingest (vendor unit-suffix display ugliness)
+**Status:** Not started (added June 2, 2026)
+**Priority:** P3 — single-vendor quirk today; would matter if multiple vendors start shipping non-standard unit suffixes in value strings.
+
+**Problem:** Atlas ingest preserves vendor value strings as-is. When a vendor ships parametric values with non-standard unit suffixes (e.g. Connectors family vendor ships current rating as `"1.0AMP"`, `"2.0AMP"`, `"3.00AMP"` instead of `"1.0 A"`, `"2.0 A"`, `"3.00 A"`), the raw strings land in `atlas_products.parameters.<attr>.value` and surface unchanged in the Specs panel, Comparison view, and admin Atlas Explorer. Functional but ugly — engineer can normalize the `unit:` field on the dict mapping (to `'A'`) for clean column-header metadata, but the displayed VALUE string stays raw.
+
+**Why not fix now:** Single Connectors vendor; minor cosmetic issue; would require a `valueNormalizationRules` table at ingest (per unit class, per family, edge cases like ranges and ±-prefixed values) — real scope for low payoff. Ugly-but-unambiguous beats absent.
+
+**When to revisit:**
+- ≥3 vendors discovered shipping non-standard unit-suffix value strings, OR
+- Customer-facing complaint about Specs panel readability of Atlas-sourced parts, OR
+- We add a "Compare with Digikey side-by-side" UX where the visual inconsistency becomes prominent
+
+**If/when implemented:** add `lib/services/atlasValueNormalizer.ts` keyed by (attributeId or unit class) → regex-replacement rules. Hook into atlasMapper.ts mapModel after extractNumericWithPrefix; mirror into atlas-ingest.mjs (per Decision #174 convention). Test for ranges (`"-40°C ~ 85°C"`), ± values (`"±10%"`), comparison-prefix values (`"≤150ns"`), and ASCII-vs-Unicode-look-alike units. Backfill affected MFRs via existing `npm run atlas:backfill` plumbing.
+
+---
+
+## Atlas dict-author-typo cleanup (Decision #217 audit byproduct)
+**Status:** Not started (added June 2, 2026)
+**Priority:** P3 — Decision #217's numeric-outlier audit (`scripts/atlas-audit-numeric-outliers.mjs`) surfaced ~40 individual dict entries with unit-field typos or non-standard unit strings that produce wrong post-conversion numericValues. None are systematic (1-2 products each), so user-visible impact is small.
+
+**Categories of issues to fix:**
+1. **Case typos** that spuriously trigger SI prefix: `unit: 'k/w'` (lowercase k) on thermal resistance → applies kilo. Should be `'K/W'`. ISC thermal_resistance affected (2 products).
+2. **Ad-hoc unit strings** that bypass prefix handling but pollute display: XKB Connectivity has units like `'TO +85 ℃'`, `'U"'`, `'n'`, `',±5 ppm/y'` — these came from dict authors copy-pasting source labels rather than declaring canonical units.
+3. **Pre-existing missing-unit cases**: many products have `unit: '(none)'` or no unit field at all, so values stored as raw numbers. Decision #217 doesn't make these worse; they were already pre-existing data quality issues. Examples: shutdown_supply_current_at_vin median 0.5 (most products unconverted), noise median 45 (most products unconverted).
+
+**Approach:** Run `node scripts/atlas-audit-numeric-outliers.mjs` periodically (after big ingest sessions). For each suspect (attribute, MFR, dict-entry) triplet, fix the dict entry (atlasMapper.ts in-code OR atlas_dictionary_overrides admin panel) + scoped backfill that MFR. ~5-10 min per cleanup batch.
+
+**Lower priority because:** None of the issues are systematic enough to affect matching scores for the typical part lookup. The audit baseline is now captured; future re-runs will show whether new issues creep in.
+
+---
+
 ## Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families
 **Status:** Not started (added May 31, 2026 — Decision #211)
 **Priority:** P1 (B6 is shipping but other automotive contexts go silent in the same way)
@@ -80,6 +135,26 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 **Why deferred:** Not in the 13-MFR BJT-fix scope. The standard re-ingest (`--report` → batch-apply) would correctly flip them to E1 in one pass. The viso signature would also confirm via Check A, but c3 routing alone is sufficient.
 
 **Trigger to flip:** when scoping a CT MICRO-specific re-ingest, or as part of a broader pre-existing-misclass cleanup sweep.
+
+## Value-based family reclassification — extend `reclassifyByParameterSignals` to consume Chinese category values (JJW `cate3` 可控硅 → B8)
+**Status:** Not started (added June 2, 2026)
+**Priority:** P2 — single MFR surfaced (JJW, ~6,748 products misclassified B4→B8) but the pattern is reusable for any vendor whose category strings carry the family signal.
+**Cost:** ~1-2 hours (helper extension + dict coverage for B8 + mirror to atlas-ingest.mjs + scoped backfill JJW)
+
+**Trigger:** Triage AI Investigator on the JJW `cate3` paramName (June 2, 2026) correctly diagnosed that values like `三象限双向可控硅` (3-quadrant bidirectional triac), `四象限双向可控硅` (4-quadrant bidirectional triac), and `标准型单向可控硅` (standard unidirectional SCR) are unambiguously B8 Thyristor descriptors — but the products sit in B4 TVS Diodes. The AI suggested mapping `cate3 → triac_type`, which would have conflated the canonical with E1 Optocoupler output-stage `triac_type` and corrupted cross-family filtering.
+
+**The shape:** Decision #175 introduced `reclassifyByParameterSignals` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) for value-based post-correction (B1 + `Type=Bi/Uni` → B4 TVS). This entry extends the same pattern: B4 (or any starting family) + `cate3` containing `可控硅` → B8 Thyristors. Different from Decision #177's `FAMILY_PARAM_SIGNATURES` (which keys on paramName) — here the paramName (`cate3`) is too generic to flag, but the VALUE strings are diagnostic.
+
+**Build:**
+1. Extend `reclassifyByParameterSignals` (or add a sibling `reclassifyByValueSignals`) with a value-substring rule: `cate3` value contains `可控硅` → `B8`. Consider broadening to `category` / `分类` / other generic Chinese category param names since the principle is value-based.
+2. Verify B8 dictionary covers `cate3` mapping so reclassified products' values surface correctly (currently it lands in B4-flavored handling).
+3. Mirror byte-for-byte into [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) per Decision #174 convention.
+4. Scoped backfill: `npm run atlas:backfill -- --mfr JJW` to reclassify existing 6,748 rows.
+5. Test harness — add a unit test for the new value-based path in `__tests__/services/atlasMapper.test.ts` (or wherever `reclassifyByParameterSignals` lives).
+
+**Why deferred:** No urgency (single MFR, products are merely categorized in the wrong family — still searchable, still returnable). Adding the rule + reclassifying is a clean operation; just hasn't been scoped into a session yet.
+
+**Related caveat:** Galaxy `AEC Qualified` row (also surfaced June 2, 2026) is a different problem class — that's source data quality (numeric values in a Yes/No column), not a value-based family signal. Don't conflate the two.
 
 ## Triage UI: surface "requires product-context" marker for cooccurrence sigs
 **Status:** Not started
