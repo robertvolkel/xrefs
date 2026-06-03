@@ -112,6 +112,57 @@ describe('mergeAtlasParameters — provenance-preserving merge', () => {
     expect(merged.package_case.value).toBe('0603');
     expect(merged.package_case.source).toBe('atlas');
   });
+
+  it('upconverts legacy _source: desc_extract entries to source: extraction and preserves them', () => {
+    // Pre-migration shape: extraction entries used `_source: 'desc_extract'` instead of `source: 'extraction'`.
+    // The backfill SHOULD have converted these, but the merge handles it defensively in case a row escaped.
+    const existing = {
+      package_case: {
+        value: '0805',
+        _source: 'desc_extract',
+        ingested_at: '2026-01-01T00:00:00Z',
+      } as AtlasParamEntry,
+      voltage_rating: { value: '50 V', _source: 'desc_extract' } as AtlasParamEntry,
+    };
+    const newAtlas: Record<string, AtlasParamEntry> = {
+      capacitance: { value: '10 uF', source: 'atlas' },
+    };
+
+    const merged = mergeAtlasParameters(existing, newAtlas);
+
+    // Legacy entries survive
+    expect(merged.package_case.value).toBe('0805');
+    expect(merged.voltage_rating.value).toBe('50 V');
+    // Source field upconverted
+    expect(merged.package_case.source).toBe('extraction');
+    expect(merged.voltage_rating.source).toBe('extraction');
+    // Legacy field stripped
+    expect(merged.package_case._source).toBeUndefined();
+    expect(merged.voltage_rating._source).toBeUndefined();
+    // Existing ingested_at preserved
+    expect(merged.package_case.ingested_at).toBe('2026-01-01T00:00:00Z');
+    // Missing ingested_at backfilled with a timestamp
+    expect(merged.voltage_rating.ingested_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // New atlas entry merged in
+    expect(merged.capacitance.value).toBe('10 uF');
+  });
+
+  it('does not mutate the input entry when upconverting legacy desc_extract', () => {
+    const existing = {
+      package_case: {
+        value: '0805',
+        _source: 'desc_extract',
+        ingested_at: '2026-01-01T00:00:00Z',
+      } as AtlasParamEntry,
+    };
+    const originalEntry = existing.package_case;
+
+    mergeAtlasParameters(existing, {});
+
+    // Original input object should still carry the legacy field
+    expect(originalEntry._source).toBe('desc_extract');
+    expect(originalEntry.source).toBeUndefined();
+  });
 });
 
 describe('toParametersJsonb — tags entries as source: atlas', () => {

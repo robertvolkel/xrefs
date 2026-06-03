@@ -3008,6 +3008,9 @@ export type AtlasParamEntry = {
   unit?: string;
   source?: 'atlas' | 'extraction' | 'manual';
   ingested_at?: string;
+  // Legacy provenance field from pre-migration rows. New code writes `source`;
+  // this is read-only and upconverted by mergeAtlasParameters when encountered.
+  _source?: 'desc_extract';
 };
 
 /**
@@ -3036,14 +3039,15 @@ export function toParametersJsonb(parameters: ParametricAttribute[]): Record<str
  * Provenance-preserving merge for re-ingest.
  *
  * Behavior:
- *   - All 'extraction' and 'manual' entries from `existing` survive untouched.
- *   - All 'atlas' entries are replaced by `newAtlas`. Atlas keys not present in
- *     newAtlas are dropped (the source-of-truth says they no longer apply).
- *   - Legacy entries with no `source` field are treated as 'atlas' and dropped if
- *     not present in newAtlas.
+ *   - 'extraction' and 'manual' entries from `existing` survive untouched.
+ *   - Legacy entries with `_source: 'desc_extract'` (pre-migration shape) are
+ *     defensively upconverted to `source: 'extraction'` and preserved. The
+ *     backfill SHOULD have already migrated these, but we treat defensively in
+ *     case a row escaped it.
+ *   - 'atlas' entries (and legacy untagged) are replaced wholesale by `newAtlas`.
+ *     Atlas keys not present in newAtlas are dropped.
  *
- * This is the function the ingest --proceed path should use to compute the merged
- * parameters JSONB before upserting.
+ * Mirrored byte-for-byte from scripts/atlas-ingest.mjs.
  */
 export function mergeAtlasParameters(
   existing: Record<string, AtlasParamEntry> | null | undefined,
@@ -3053,10 +3057,19 @@ export function mergeAtlasParameters(
 
   if (existing) {
     for (const [key, entry] of Object.entries(existing)) {
-      const src = entry.source ?? 'atlas';
-      if (src === 'extraction' || src === 'manual') {
+      if (!entry || typeof entry !== 'object') continue;
+      if (entry.source === 'extraction' || entry.source === 'manual') {
         merged[key] = entry;
+        continue;
       }
+      if (entry._source === 'desc_extract') {
+        const upconverted: AtlasParamEntry = { ...entry, source: 'extraction' };
+        delete upconverted._source;
+        if (!upconverted.ingested_at) upconverted.ingested_at = new Date().toISOString();
+        merged[key] = upconverted;
+        continue;
+      }
+      // source: 'atlas' or legacy untagged → drop, will be replaced by newAtlas
     }
   }
 
