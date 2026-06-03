@@ -21,6 +21,7 @@ import {
   applyContextSourceOverrides,
   filterBjtAutomotiveMismatches,
   filterMosfetAutomotiveMismatches,
+  filterIgbtAutomotiveMismatches,
 } from '@/lib/services/partDataService';
 import type {
   ApplicationContext,
@@ -152,6 +153,14 @@ describe('applyContextSourceOverrides — B6 BJT + automotive', () => {
     expect(injected!.value).toBe('Yes');
   });
 
+  it('injects aec_q101: Yes when familyId=B7 and automotive=yes (IGBTs)', () => {
+    const src = makeSourceAttrs([makeParam('vces', '1200 V')]);
+    const result = applyContextSourceOverrides(src, makeContext('yes'), 'B7');
+    const injected = result.parameters.find(p => p.parameterId === 'aec_q101');
+    expect(injected).toBeDefined();
+    expect(injected!.value).toBe('Yes');
+  });
+
   it('clobbers an existing aec_q101 value when automotive=yes', () => {
     // Source explicitly says "No" but user signals automotive — the override
     // forces 'Yes' so the rule fires with sourceRequired=true and candidates
@@ -244,6 +253,39 @@ describe('filterMosfetAutomotiveMismatches — B5 MOSFET + automotive', () => {
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
     const result = filterMosfetAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    expect(result.length).toBe(2);
+  });
+});
+
+// ============================================================
+// filterIgbtAutomotiveMismatches — B7 (AEC-Q101)
+// ============================================================
+
+describe('filterIgbtAutomotiveMismatches — B7 IGBT + automotive', () => {
+  const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q101', 'pass' as RuleResult)]);
+  const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
+  const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q101', 'review' as RuleResult)]);
+  const noAecRec = makeRec('NO-AEC-1', [makeMatchDetail('vces', 'pass' as RuleResult)]);
+  const src = makeSourceAttrs([makeParam('aec_q101', 'Yes')]);
+
+  it('drops recs with aec_q101 ruleResult=fail when automotive=yes', () => {
+    const result = filterIgbtAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
+  });
+
+  it('keeps pass/review/no-aec recs when automotive=yes', () => {
+    const result = filterIgbtAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    expect(result.length).toBe(3);
+  });
+
+  it('returns all recs unchanged when automotive=no', () => {
+    const recs = [passingRec, failingRec, reviewRec, noAecRec];
+    const result = filterIgbtAutomotiveMismatches(recs, src, makeContext('no'));
+    expect(result.length).toBe(4);
+  });
+
+  it('returns all recs unchanged when applicationContext is undefined', () => {
+    const result = filterIgbtAutomotiveMismatches([passingRec, failingRec], src, undefined);
     expect(result.length).toBe(2);
   });
 });

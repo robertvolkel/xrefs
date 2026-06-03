@@ -1522,6 +1522,8 @@ export async function getRecommendations(
     if (familyId === 'B6') withCertifiedBypass((r, s) => filterBjtAutomotiveMismatches(r, s, applicationContext));
     // Step 3a': B5 MOSFETs — same shape as B6 (AEC-Q101 discrete semiconductor)
     if (familyId === 'B5') withCertifiedBypass((r, s) => filterMosfetAutomotiveMismatches(r, s, applicationContext));
+    // Step 3a'': B7 IGBTs — same shape as B6 (AEC-Q101 discrete semiconductor)
+    if (familyId === 'B7') withCertifiedBypass((r, s) => filterIgbtAutomotiveMismatches(r, s, applicationContext));
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
     // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
@@ -3924,6 +3926,14 @@ export function applyContextSourceOverrides(
     });
   }
 
+  if (familyId === 'B7' && applicationContext.answers.automotive === 'yes') {
+    injections.push({
+      parameterId: 'aec_q101',
+      parameterName: 'AEC-Q101 (Automotive Qualification)',
+      value: 'Yes',
+    });
+  }
+
   if (injections.length === 0) return sourceAttrs;
 
   // Clone parameters so the cached/upstream sourceAttrs object stays untouched.
@@ -3973,6 +3983,24 @@ export function filterBjtAutomotiveMismatches(
 // Same shape as B6 — MOSFETs use AEC-Q101 (discrete semiconductors).
 // See filterBjtAutomotiveMismatches for the rationale.
 export function filterMosfetAutomotiveMismatches(
+  recs: XrefRecommendation[],
+  _sourceAttrs: PartAttributes,
+  applicationContext: ApplicationContext | undefined,
+): XrefRecommendation[] {
+  if (applicationContext?.answers?.automotive !== 'yes') return recs;
+
+  return recs.filter(rec => {
+    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
+    if (!aecDetail) return true;
+    return aecDetail.ruleResult !== 'fail';
+  });
+}
+
+// ── B7: IGBT automotive AEC-Q101 enforcement ───────────────────────────
+//
+// Same shape as B6 — IGBTs use AEC-Q101 (discrete semiconductors).
+// Traction/EV applications make this load-bearing for B7.
+export function filterIgbtAutomotiveMismatches(
   recs: XrefRecommendation[],
   _sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
