@@ -3897,7 +3897,7 @@ function filterOptocouplerMismatches(
 // Currently scoped to B6 + automotive. Same pattern applies to other families
 // with AEC context questions (B5/B7/B8/B9, C9, C10, D1, D2, E1, F1) — add
 // entries to the switch below as those families are validated.
-function applyContextSourceOverrides(
+export function applyContextSourceOverrides(
   sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
   familyId: string,
@@ -3944,7 +3944,7 @@ function applyContextSourceOverrides(
 //   - Missing data (identity_flag defaults missing to 'No' → fail)
 //
 // Bypassed for certified crosses via withCertifiedBypass at the call site.
-function filterBjtAutomotiveMismatches(
+export function filterBjtAutomotiveMismatches(
   recs: XrefRecommendation[],
   _sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
