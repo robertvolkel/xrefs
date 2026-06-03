@@ -7228,3 +7228,51 @@ The fsw row is the proof — dict said MHz but vendor shipped kHz; value string 
 - Decision #201 — vendor-name hygiene (sibling "internal artifact leaks into stored data" pattern)
 - Decision #215 — Galaxy coverage repair (proved scoped per-MFR backfill is the right tool for vendor-specific data fixes)
 - digikeyMapper.ts:362-378 — `extractNumericValue` (the reference implementation Atlas now mirrors)
+
+---
+
+## Decision #218 — Atlas mirror drift reconciliation: three latent divergences fixed; "verbatim mirror" convention is not self-enforcing (June 2, 2026)
+
+**Context:** The no-import-path mirror convention between `lib/services/atlasMapper.ts` and `scripts/atlas-ingest.mjs` (Decisions #174, #176, #188) treats the two files as "duplicated by design." An investigation into whether the .mjs script could be consolidated under `tsx` and import directly from atlasMapper.ts surfaced three real behavioral drifts. Consolidation was deferred (real risk during pre-multi-tenant period; ~6-8h with reconciliation). Drift fixes shipped on their own merits.
+
+**The three drifts found:**
+
+1. **`classifyAtlasCategory` was missing D1 Crystal in .mjs.** The .ts version routes c3 names containing "crystal" (and not "oscillator") to family D1. The .mjs script had no such branch — any crystal MFR ingested via the script would have fallen through to the catch-all ICs bucket or generic Diodes. Latent because no crystal MFRs have been in the recent Chinese ingest stream, but real. **Fix:** Added the missing branch in the same position relative to the oscillator check (commit `bf4a845`).
+
+2. **`mergeAtlasParameters` legacy-handler asymmetry.** The .mjs version defensively upconverts pre-migration `_source: 'desc_extract'` entries to the current `source: 'extraction'` shape on the fly, in case any row escaped the original backfill. The .ts version had no such handler and would silently drop those entries. **The test suite (`__tests__/services/atlasMerge.test.ts`) exercises only the .ts version — production behavior (.mjs) was untested.** Fix: brought .ts in line with .mjs's defensive handler; extended `AtlasParamEntry` with the legacy `_source?: 'desc_extract'` field so the upconversion is type-checked; added two tests covering the upconversion and input-non-mutation guarantee (commit `335018f`).
+
+3. **`APPLY_UNIT_PREFIX_TO_NUMERIC` kill switch was wired in .ts only.** The .mjs file declared the constant (with a comment explicitly stating "both files must move together") but its `applyUnitPrefix()` function never read it — the flag was effectively dead code in the ingest path. If anyone toggled the flag to `false` (rollback / debug), .ts would correctly disable prefix conversion but .mjs would silently keep doing it — exactly the divergence the kill switch exists to prevent. **Fix:** added the early-return check that .ts already had (commit `9478d45`).
+
+**Discovered but not addressed:**
+
+- **`mapAtlasModel` (TS) is dead code.** A grep across the codebase found zero callers outside `__tests__`. The .mjs ingest uses its own `mapModel` function; the .ts version exists but isn't wired into any production path. Recorded in BACKLOG as a P3 cleanup — delete or wire up; the decision can't be made without knowing whether it was intended as a future runtime path (e.g. a query-time mapping that never landed).
+
+**Architectural meta-lesson:**
+
+The "duplicated by design, no import path" convention from Decision #174 is structurally honest about the constraint but **not self-enforcing about freshness.** Drift accumulated quietly because:
+
+- Tests cover the .ts version (the one that's easier to test). Production runs the .mjs version. **Tests can pass while production is wrong.**
+- The mirror discipline is a comment convention — engineers do it by hand, and humans miss things. Three drifts across two files in 3,200 and 4,000 lines isn't bad statistically, but each represents a latent bug.
+- The drifts were asymmetric in both directions (.mjs ahead on JFET signature, .ts ahead on Crystal classification, .mjs ahead on legacy merge handler, .ts ahead on kill switch). There's no single "source of truth" to default to.
+
+**Options considered for the structural problem:**
+
+| Option | Why deferred / not chosen now |
+|---|---|
+| **Full consolidation** — rename .mjs to .ts, import from atlasMapper, run via `tsx` (already installed) | ~6-8h real work including reconciliation; touches three `spawn('node', ...)` call sites + Turbopack argv workaround; sits on a production-critical pipeline. Investigation confirmed it's *technically* feasible but the timing is poor — multi-tenant rewrite is the next initiative and may restructure these files anyway. |
+| **Drift-detection guardrail script** (~30 min) | Considered as a band-aid. After investigation revealed drift already exists, the guardrail's value is lower — it would fire immediately on three known issues. Better to reconcile first; build a guardrail later if mirror discipline doesn't stick. |
+| **Surgical extraction** — pull truly-pure helpers (`extractNumericWithPrefix`, `extractNumeric`, `effectiveUnit`, `_applyUnitPrefixCore`) into a shared module both can import | Reasonable middle ground for a future session. These helpers are verified behaviorally equivalent. Defers the high-risk pieces (mapper, classifier) while removing ~40 lines of duplication. Not done now to keep this commit set tight. |
+
+**Lessons:**
+
+- **"Verbatim mirror" is not a verifiable claim by inspection.** Three "this is mirrored from X" comments in this codebase were wrong about behavior. The convention is honest about intent but provides no safety mechanism.
+- **Tests-as-coverage gives a false read when test target and production target differ.** The `atlasMerge.test.ts` suite had 10 tests passing against a function that *didn't reflect production*. Tests of dead-code reference implementations are worse than no tests because they create a false sense of coverage.
+- **Investigation before implementation paid for itself.** The original "2-3 hour consolidation" pitch would have erased three behavior asymmetries silently, picking one side as canonical without engineer judgment. ~45 min of read-only investigation surfaced the asymmetries and let us reconcile on our own terms.
+- **`mapAtlasModel` being dead code is a smaller version of the same problem.** A reference implementation that doesn't ship is technical debt; either delete it or wire it up. Worse, its presence implies it's the canonical mapping function, misleading future engineers — the actual canonical mapper is in the .mjs script.
+
+### Related
+- Decision #174 — atlas re-ingest pipeline (established the "duplicated by design" convention)
+- Decision #176 — Dictionary Triage workspace (also notes the mirror discipline)
+- Decision #188 — Engineer-driven FAMILY_PARAM_SIGNATURES via DB (relies on the same mirror discipline; gains a DB tier to reduce the mirror surface)
+- Decision #207 — FAMILY_PARAM_SIGNATURES regex bug (a different kind of mirror-discipline failure — pattern correctness drifted in both files together)
+- BACKLOG: `mapAtlasModel` dead-code cleanup (June 2, 2026)

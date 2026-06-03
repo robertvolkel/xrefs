@@ -44,6 +44,27 @@ Sunlord (15,584) / XKB Connectivity (2,544) / ISC (5,013) / YANGJIE (11,653) / Y
 
 ---
 
+## Atlas mapper.ts dead code: `mapAtlasModel` has no callers (Decision #218 byproduct)
+**Status:** Not started (added June 2, 2026)
+**Priority:** P3 — not user-impacting today, but misleading to future engineers.
+
+**Problem:** `mapAtlasModel` in `lib/services/atlasMapper.ts` (line 2722, returns `MappedAtlasProduct`) is dead code. A grep across the repo finds zero callers outside `__tests__`. Production ingest runs through `mapModel` in `scripts/atlas-ingest.mjs` — they overlap conceptually but the .ts version has diverged (different return shape: `parameters: ParametricAttribute[]` vs object-keyed; includes `detailedDescription` and `manufacturerCountry`; emits `familyId` at the root vs inside `part`). The presence of an exported `mapAtlasModel` in the canonical-feeling .ts file implies it's the runtime mapper, which it isn't.
+
+**Why this matters:**
+- Misleads engineers reading the codebase ("I'll just call mapAtlasModel" → nothing breaks visibly, but they're not on the ingest path)
+- Carries its own maintenance cost (the file's existing tests target the dead version, not the live `.mjs` one — see Decision #218's third lesson)
+- Sits next to the mirror-discipline drift fixed in Decision #218; cleaning it up is part of the same hygiene push
+
+**Two ways to resolve:**
+1. **Delete it** (simplest). Remove the function plus the `MappedAtlasProduct` interface and `toPartAttributes` if they become orphan. Drop or migrate tests that target it.
+2. **Wire it up** as a documented query-time mapper (e.g. for a future runtime path that reads Atlas JSONB directly), and refactor the .mjs ingest to use it via consolidation. This is the deferred Path C from the Decision #218 investigation (~6-8h with tsx).
+
+**Recommendation:** Option 1 unless someone has a near-term plan for the wire-up. Option 2 belongs inside any future "consolidate the .ts and .mjs" initiative, not on its own.
+
+**Effort:** ~30 min for delete. ~6-8h for wire-up (only as part of broader consolidation).
+
+---
+
 ## Atlas dict-author-typo cleanup (Decision #217 audit byproduct)
 **Status:** Not started (added June 2, 2026)
 **Priority:** P3 — Decision #217's numeric-outlier audit (`scripts/atlas-audit-numeric-outliers.mjs`) surfaced ~40 individual dict entries with unit-field typos or non-standard unit strings that produce wrong post-conversion numericValues. None are systematic (1-2 products each), so user-visible impact is small.
