@@ -81,24 +81,24 @@ Sunlord (15,584) / XKB Connectivity (2,544) / ISC (5,013) / YANGJIE (11,653) / Y
 ---
 
 ## Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families
-**Status:** Not started (added May 31, 2026 — Decision #211)
-**Priority:** P1 (B6 is shipping but other automotive contexts go silent in the same way)
+**Status:** PARTIAL — B5/B7/C9 shipped in Decision #219 (June 2, 2026), with B6 PoC test backfill. 7 families remaining.
+**Priority:** P1 (B6/B5/B7/C9 are shipping but other automotive contexts still go silent the same way)
 **Cost:** ~30 min per family (one-liner in `applyContextSourceOverrides` switch + one per-family `filterXxxAutomotiveMismatches` modeled on `filterBjtAutomotiveMismatches` + family-id register line)
 
-Decision #211 fixed automotive enforcement for B6 BJTs only. The same shape applies to every family with an automotive context question that escalates `aec_q100`/`aec_q101`/`aec_q200`:
+Decision #211 fixed automotive enforcement for B6 BJTs only. Decision #219 extended to B5/B7/C9 + backfilled B6 unit tests. The same shape applies to every family with an automotive context question that escalates `aec_q100`/`aec_q101`/`aec_q200`:
 
-| Family | Standard | Context Q | Notes |
-|---|---|---|---|
-| B5 MOSFETs | AEC-Q101 | Q4 automotive | Standalone base family |
-| B7 IGBTs | AEC-Q101 | Q4 automotive | |
-| B8 Thyristors | AEC-Q101 | Q4 automotive | Context Q1 suppresses per sub-type — check that aec_q101 stays active for all three |
-| B9 JFETs | AEC-Q101 | Q4 automotive | |
-| C9 ADCs | AEC-Q100 | Q4 automotive | |
-| C10 DACs | AEC-Q100 | Q4 automotive | |
-| D1 Crystals | AEC-Q200 | Q3 extended temp/automotive | Passive |
-| D2 Fuses | AEC-Q200 | Q3 automotive | Passive |
-| E1 Optocouplers | AEC-Q101 | Q4 automotive | Already has E1 post-scoring filter — extend or chain |
-| F1 EMRs | AEC-Q200 | Q4 automotive | Already has F1 post-scoring filter — extend or chain |
+| Family | Standard | Context Q | Status | Notes |
+|---|---|---|---|---|
+| B5 MOSFETs | AEC-Q101 | Q4 automotive | **DONE (#219)** | Standalone base family |
+| B7 IGBTs | AEC-Q101 | Q4 automotive | **DONE (#219)** | |
+| B8 Thyristors | AEC-Q101 | Q4 automotive | Not started | Context Q1 suppresses per sub-type — check that aec_q101 stays active for all three |
+| B9 JFETs | AEC-Q101 | Q4 automotive | Not started | |
+| C9 ADCs | AEC-Q100 | Q4 automotive | **DONE (#219)** | |
+| C10 DACs | AEC-Q100 | Q4 automotive | Not started | |
+| D1 Crystals | AEC-Q200 | Q3 extended temp/automotive | Not started | Passive |
+| D2 Fuses | AEC-Q200 | Q3 automotive | Not started | Passive |
+| E1 Optocouplers | AEC-Q101 | Q4 automotive | Not started | Already has E1 post-scoring filter — extend or chain |
+| F1 EMRs | AEC-Q200 | Q4 automotive | Not started | Already has F1 post-scoring filter — extend or chain |
 
 Per-family steps:
 1. Add `familyId === 'XX' && applicationContext.answers.automotive === 'yes'` branch to `applyContextSourceOverrides` switch in [lib/services/partDataService.ts](../lib/services/partDataService.ts) injecting the right `aec_q*` attribute.

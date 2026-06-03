@@ -7276,3 +7276,48 @@ The "duplicated by design, no import path" convention from Decision #174 is stru
 - Decision #188 — Engineer-driven FAMILY_PARAM_SIGNATURES via DB (relies on the same mirror discipline; gains a DB tier to reduce the mirror surface)
 - Decision #207 — FAMILY_PARAM_SIGNATURES regex bug (a different kind of mirror-discipline failure — pattern correctness drifted in both files together)
 - BACKLOG: `mapAtlasModel` dead-code cleanup (June 2, 2026)
+
+---
+
+## Decision #219 — Automotive AEC enforcement extended to B5/B7/C9 + B6 PoC test backfill (June 2, 2026)
+
+**Context:** Decision #211 shipped automotive AEC-Q101 enforcement as a B6 BJT proof of concept, with the explicit out-of-scope note that the same pattern needed to be replicated to B5/B7/B8/B9/C9/C10/D1/D2/E1/F1. The BACKLOG entry (`Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families`) flagged this as P1 because every other family with an automotive context question was silently no-op'ing: the user could pick "Yes — automotive" on a MOSFET search and get unfiltered results. Three families (B5 / B7 / C9 — the most user-facing of the list) shipped in this session.
+
+**Scope shipped:**
+
+| Family | Standard | parameterId | New filter |
+|---|---|---|---|
+| B5 MOSFETs | AEC-Q101 | `aec_q101` | `filterMosfetAutomotiveMismatches` |
+| B7 IGBTs | AEC-Q101 | `aec_q101` | `filterIgbtAutomotiveMismatches` |
+| C9 ADCs | **AEC-Q100** | `aec_q100` | `filterAdcAutomotiveMismatches` |
+
+**Pattern:** Identical to the B6 PoC (Decision #211).
+1. `applyContextSourceOverrides` gets a branch per family that injects the correct AEC attribute (`'Yes'`) onto the scoring-local source attrs when `applicationContext.answers.automotive === 'yes'`. Source visible in the user's Specs panel stays untouched.
+2. A per-family `filterXxxAutomotiveMismatches` function drops candidates whose AEC `matchDetails` entry has `ruleResult === 'fail'`.
+3. Registered in the family-id switch around line 1522, wrapped with `withCertifiedBypass` so MFR-certified and Accuris-certified crosses still surface (Decision #133).
+
+**Q100 vs Q101 distinction:** Block B (discrete semiconductors — MOSFETs, BJTs, IGBTs) qualifies to AEC-Q101. Block C (ICs — ADCs, DACs, op-amps, etc.) qualifies to AEC-Q100. The C9 filter explicitly keys on `aec_q100`, not `aec_q101`. A test case in `automotiveAecEnforcement.test.ts` locks this distinction by asserting a Q101-failing candidate is NOT dropped by the ADC filter (since C9 is keyed on Q100).
+
+**Test backfill:** Decision #211's B6 PoC shipped without unit tests for either `applyContextSourceOverrides` or `filterBjtAutomotiveMismatches`. Coverage was integration-only. This decision exports both helpers from `partDataService.ts` and adds 30 unit tests in `__tests__/services/automotiveAecEnforcement.test.ts` covering B6 + B5 + B7 + C9 symmetrically. The B6 PoC is now retroactively tested at the same depth as the three new families.
+
+**Why per-family functions instead of one table-driven helper:** The BACKLOG entry explicitly defers the abstraction: "If this expands past ~5 families it's worth lifting to a generic table-driven mechanism: a `Record<FamilyId, { contextKey, contextValue, attributeId }>` consumed by both the source-override helper and a single generic filter. Defer the abstraction until then to keep the per-family logic auditable." This session brings us to 4 families (B6 + B5 + B7 + C9), still under that threshold. Per-family functions remain auditable by grepping a single name (e.g. `filterIgbtAutomotiveMismatches`) and produce ~13 lines of near-clone code per family. The abstraction is the right call when the next 2 families land.
+
+**Remaining (BACKLOG-tracked):** B8 Thyristors (AEC-Q101 — note: context Q1 suppresses per sub-type so verify aec_q101 stays active for all three), B9 JFETs (AEC-Q101), C10 DACs (AEC-Q100), D1 Crystals (AEC-Q200 — passive), D2 Fuses (AEC-Q200 — passive), E1 Optocouplers (AEC-Q101 — already has E1 post-scoring filter, extend or chain), F1 EMRs (AEC-Q200 — already has F1 post-scoring filter, extend or chain). Once the remaining families are also done (or even at the next 2), lift to the table-driven abstraction the BACKLOG describes.
+
+### Lessons
+
+- **The PoC convention "ship without tests, replicate later" propagates an untested-behavior gap each round.** Closing the gap retroactively (Commit 1 in this session) was cheap and removed an asymmetry that future engineers would have noticed. When the next safety-relevant PoC ships, write the tests with the PoC — don't defer them to "the rollout commit."
+- **Q100 vs Q101 is not interchangeable.** The C9 implementation deliberately uses different test cases from B5/B7. The "lock the distinction" test guards against the copy-paste path where someone replicates the B5 filter for a future C family and forgets to swap the attribute ID.
+- **Atomic commits per family pays off when one family has structural differences.** The C9 commit is structurally different from B5/B7 (different attribute ID), and isolating it in its own commit makes that visible in `git log`. If a future regression surfaces on automotive ADCs specifically, the bisect lands on the right commit.
+
+### Files
+
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — three new branches in `applyContextSourceOverrides`, three new filter functions, three new switch entries.
+- [__tests__/services/automotiveAecEnforcement.test.ts](../__tests__/services/automotiveAecEnforcement.test.ts) — new test file, 30 tests across B6 + B5 + B7 + C9.
+
+### Related
+
+- Decision #211 — B6 BJT PoC (the pattern this session replicates).
+- Decision #133 — certified-cross bypass (`withCertifiedBypass` wrap reused).
+- Decision #109 — `blockOnMissing` controls note severity not result (relevant to C9 which had `blockOnMissing: true` on its context effect but still needed this filter).
+- BACKLOG: Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families (now partially complete: B5/B7/C9 done, B8/B9/C10/D1/D2/E1/F1 remaining).
