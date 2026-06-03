@@ -207,6 +207,14 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
           />
         )}
+        {hideHighFails && highFailHiddenCount > 0 && (
+          <Chip
+            label={`${highFailHiddenCount} hidden (>${MAX_MISMATCHES} fails)`}
+            size="small"
+            onDelete={() => setHideHighFails(false)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
+          />
+        )}
         {!hideHighFails && (
           <Chip label="Showing high-fail" size="small" onDelete={() => setHideHighFails(true)}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
