@@ -237,20 +237,25 @@ export default function QcLogsTab() {
               </Box>
 
               {/* Context answers */}
-              {selectedLog.snapshot?.contextAnswers && Object.keys(selectedLog.snapshot.contextAnswers).length > 0 && (
+              {selectedLog.snapshot?.contextAnswers?.answers && Object.keys(selectedLog.snapshot.contextAnswers.answers).length > 0 && (
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontSize: '0.78rem', fontWeight: 600, mb: 1 }}>
                     {t('adminQc.contextAnswers')}
+                    {selectedLog.snapshot.contextAnswers.familyId && (
+                      <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1, fontSize: '0.7rem' }}>
+                        ({selectedLog.snapshot.contextAnswers.familyId})
+                      </Typography>
+                    )}
                   </Typography>
                   <Card variant="outlined" sx={{ bgcolor: 'background.default' }}>
                     <CardContent sx={{ py: 1, px: 2, '&:last-child': { pb: 1 } }}>
-                      {Object.entries(selectedLog.snapshot.contextAnswers).map(([key, value]) => (
+                      {Object.entries(selectedLog.snapshot.contextAnswers.answers).map(([key, value]) => (
                         <Stack key={key} direction="row" justifyContent="space-between" sx={{ py: 0.5 }}>
                           <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
                             {key}
                           </Typography>
                           <Typography variant="body2" sx={{ fontSize: '0.78rem', fontFamily: 'monospace' }}>
-                            {value}
+                            {typeof value === 'string' ? value : JSON.stringify(value)}
                           </Typography>
                         </Stack>
                       ))}
