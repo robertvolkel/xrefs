@@ -2105,6 +2105,7 @@ const APPLY_UNIT_PREFIX_TO_NUMERIC = true;
 // number is base SI. Mirror of applyUnitPrefix in atlasMapper.ts.
 // Guards against 'mm' (length), 'MSL' (moisture sensitivity), 'no' (count).
 function applyUnitPrefix(numericValue, unit) {
+  if (!APPLY_UNIT_PREFIX_TO_NUMERIC) return numericValue;
   if (numericValue === undefined || isNaN(numericValue)) return numericValue;
   if (!unit) return numericValue;
   if (unit.startsWith('p')) return numericValue * 1e-12;
