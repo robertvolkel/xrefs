@@ -81,33 +81,27 @@ Sunlord (15,584) / XKB Connectivity (2,544) / ISC (5,013) / YANGJIE (11,653) / Y
 ---
 
 ## Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families
-**Status:** PARTIAL — B5/B7/C9 shipped in Decision #219 (June 2, 2026), with B6 PoC test backfill. 7 families remaining.
-**Priority:** P1 (B6/B5/B7/C9 are shipping but other automotive contexts still go silent the same way)
-**Cost:** ~30 min per family (one-liner in `applyContextSourceOverrides` switch + one per-family `filterXxxAutomotiveMismatches` modeled on `filterBjtAutomotiveMismatches` + family-id register line)
+**Status:** CLOSED — All 11 families enrolled via Decision #221 (June 3, 2026, table-driven mechanism). B6 shipped in #211, B5/B7/C9 in #219, B8/B9/C10/D1/D2/E1/F1 in #221 alongside the refactor.
 
-Decision #211 fixed automotive enforcement for B6 BJTs only. Decision #219 extended to B5/B7/C9 + backfilled B6 unit tests. The same shape applies to every family with an automotive context question that escalates `aec_q100`/`aec_q101`/`aec_q200`:
+| Family | Standard | questionId | Shipped In |
+|---|---|---|---|
+| B5 MOSFETs | AEC-Q101 | `automotive` | Decision #219 |
+| B6 BJTs | AEC-Q101 | `automotive` | Decision #211 (PoC) |
+| B7 IGBTs | AEC-Q101 | `automotive` | Decision #219 |
+| B8 Thyristors | AEC-Q101 | `automotive` | Decision #221 |
+| B9 JFETs | AEC-Q101 | `automotive` | Decision #221 |
+| C9 ADCs | AEC-Q100 | `automotive` | Decision #219 |
+| C10 DACs | AEC-Q100 | `automotive` | Decision #221 |
+| D1 Crystals | AEC-Q200 | `extended_temp_automotive` | Decision #221 |
+| D2 Fuses | AEC-Q200 | `automotive_aec_q200` | Decision #221 |
+| E1 Optocouplers | AEC-Q101 | `automotive_aec_q101` | Decision #221 (alongside existing filterOptocouplerMismatches) |
+| F1 EMRs | AEC-Q200 | `automotive_aec_q200` | Decision #221 (alongside existing filterRelayMismatches) |
 
-| Family | Standard | Context Q | Status | Notes |
-|---|---|---|---|---|
-| B5 MOSFETs | AEC-Q101 | Q4 automotive | **DONE (#219)** | Standalone base family |
-| B7 IGBTs | AEC-Q101 | Q4 automotive | **DONE (#219)** | |
-| B8 Thyristors | AEC-Q101 | Q4 automotive | Not started | Context Q1 suppresses per sub-type — check that aec_q101 stays active for all three |
-| B9 JFETs | AEC-Q101 | Q4 automotive | Not started | |
-| C9 ADCs | AEC-Q100 | Q4 automotive | **DONE (#219)** | |
-| C10 DACs | AEC-Q100 | Q4 automotive | Not started | |
-| D1 Crystals | AEC-Q200 | Q3 extended temp/automotive | Not started | Passive |
-| D2 Fuses | AEC-Q200 | Q3 automotive | Not started | Passive |
-| E1 Optocouplers | AEC-Q101 | Q4 automotive | Not started | Already has E1 post-scoring filter — extend or chain |
-| F1 EMRs | AEC-Q200 | Q4 automotive | Not started | Already has F1 post-scoring filter — extend or chain |
+**Mechanism:** Table-driven via `AUTOMOTIVE_AEC_ENFORCEMENT` in [partDataService.ts](../lib/services/partDataService.ts). Each row carries `{ familyId, questionId, answerValue, attributeId, attributeName }`. Per Decision #221's lessons, the original "lift past 5 families" heuristic was wrong about the trigger — the real trigger turned out to be the discovery that D1/D2/E1/F1 use per-family `questionId` strings, which forced the table mechanism regardless of family count.
 
-Per-family steps:
-1. Add `familyId === 'XX' && applicationContext.answers.automotive === 'yes'` branch to `applyContextSourceOverrides` switch in [lib/services/partDataService.ts](../lib/services/partDataService.ts) injecting the right `aec_q*` attribute.
-2. Add `filterXxxAutomotiveMismatches` function near `filterBjtAutomotiveMismatches`.
-3. Register in the family-id switch around line 1459.
+**If a future family needs automotive AEC enforcement:** Add one row to the table. That's it. The `expectFamilyWiring` helper in [automotiveAecEnforcement.test.ts](../__tests__/services/automotiveAecEnforcement.test.ts) covers it in 4 assertions per family.
 
-If this expands past ~5 families it's worth lifting to a generic table-driven mechanism: a `Record<FamilyId, { contextKey, contextValue, attributeId }>` consumed by both the source-override helper and a single generic filter. Defer the abstraction until then to keep the per-family logic auditable.
-
-**Also worth generalizing beyond `automotive`:** the source-override mechanism currently keys on `applicationContext.answers.automotive === 'yes'`. If/when medical / military / aerospace context questions land in family files, the switch should be table-driven on `(familyId, questionId, answerValue) → injectedAttribute`.
+**Generalization beyond automotive (still BACKLOG):** Medical / military / aerospace context questions, if/when they land in family files, should ride a sibling table (`MEDICAL_QUALIFICATION_ENFORCEMENT`, etc.) consumed the same way. Don't merge into one mega-table — domain-specific table names keep grep-ability high.
 
 ---
 

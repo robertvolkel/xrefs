@@ -7321,3 +7321,154 @@ The "duplicated by design, no import path" convention from Decision #174 is stru
 - Decision #133 — certified-cross bypass (`withCertifiedBypass` wrap reused).
 - Decision #109 — `blockOnMissing` controls note severity not result (relevant to C9 which had `blockOnMissing: true` on its context effect but still needed this filter).
 - BACKLOG: Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families (now partially complete: B5/B7/C9 done, B8/B9/C10/D1/D2/E1/F1 remaining).
+
+---
+
+## Decision #220 — Collaborative app-feedback threads + platform-scoped under multi-tenancy (June 3, 2026)
+
+### Context
+
+The existing `app_feedback` flow (Decision #162) was one-way: end user submits, admin (Rob) sees it in the Monitoring inbox, admin writes a private `admin_notes` field that the user never sees. No way for a user to see their own past submissions or follow up. No way for Rob to discuss an idea with the person who proposed it.
+
+Customers had started telling Rob in chat/email "did you see my feedback?" — i.e. the absence of a two-sided thread was generating out-of-band communication that defeats the point of having an in-app feedback channel.
+
+### Decision
+
+App feedback becomes a two-sided thread.
+
+**Schema** (`scripts/supabase-app-feedback-comments-schema.sql`):
+- New `app_feedback_comments` table — `id`, `feedback_id`, `author_id`, `author_role ∈ {'user','admin'}`, `body`, `created_at`. **Immutable** — no `updated_at`, no UPDATE policy, no DELETE policy. RLS gates user→own-thread reads/writes; admin gets cross-thread read/write.
+- Two new columns on `app_feedback`: `user_last_read_at`, `admin_last_read_at`. Single global admin timestamp is the correct shape today (one platform admin) — lift to a per-admin reads table only if/when tenant admins arrive.
+- `admin_notes` is migrated into a seed admin comment per row, then dropped (commented manual step in the schema file so Rob can spot-check the migration before committing).
+
+**APIs** (5 new + 2 modified):
+- `GET /api/app-feedback` — own list, enriched with `commentCount` + `hasUnread`.
+- `GET /api/app-feedback/[id]` — own thread; side-effect stamps `user_last_read_at`.
+- `POST /api/app-feedback/[id]/comments` — role resolved server-side from `profiles.role`; max 4000 chars.
+- `GET /api/app-feedback/unread-count` — lightweight count for the sidebar dot.
+- `GET /api/admin/app-feedback/[id]/thread` — admin variant; side-effect stamps `admin_last_read_at`.
+- `GET /api/admin/app-feedback` — extended to compute `commentCount` + `hasUnread` per row.
+- `PATCH /api/admin/app-feedback/[id]` — dropped `adminNotes` from payload; status is the only remaining field.
+
+**UI**:
+- New `/feedback` page ([app/feedback/page.tsx](../app/feedback/page.tsx)) with two-pane layout — left list of own submissions, right thread detail. "+ New Feedback" button opens the existing unchanged `AppFeedbackDialog`.
+- Reusable `FeedbackThread` component ([components/feedback/FeedbackThread.tsx](../components/feedback/FeedbackThread.tsx)) used by BOTH the user page and the admin detail view, parameterized by `viewerRole` — same component, mirrored bubble alignment.
+- Sidebar icon (`EditNoteOutlinedIcon`) now routes to `/feedback` instead of opening the dialog. Red dot on icon when admin has replied (user side) or when status='open' OR there's an unread user reply (admin Monitoring side).
+- Admin detail view: dropped the `admin_notes` textarea, added the same `FeedbackThread`. Status dropdown stays.
+
+**Multi-tenant posture (deliberate)**: feedback stays platform-scoped. NO `workspace_id` / `tenant_id` on `app_feedback` or `app_feedback_comments`. Even when multi-tenancy ships, every end user still communicates directly with the platform admin (Rob). The `author_role` enum is sized to grow to `'platform_admin' | 'tenant_admin'` without a schema migration if tenant admins later become a concept.
+
+### Rationale
+
+- **Comments replace admin_notes rather than coexist.** Adding a second public-vs-private toggle to the admin UI doesn't pay for the cognitive overhead. If Rob needs private notes later, lift to a separate `app_feedback_admin_internal_notes` table — but YAGNI for now.
+- **Immutable comments.** Editable comments would require: (a) versioning the body, (b) deciding whether an edit re-fires the unread dot (it should — the other party hasn't seen the edited form), (c) UI affordance for "(edited)" markers. Three lines of UX-design debt for a feature that support-style threads almost never need. Mirrors Slack DM convention (edits exist but most teams don't use them on support tickets).
+- **Side-effect read stamps on GET endpoints.** Not REST-pure, but the alternative (separate PATCH /read endpoint called from the client) doubles the round-trip count and creates a race where the user opens the thread but closes the tab before the client posts. GET-with-side-effect is fine for read tracking; we already do similar things in QC and Atlas Triage.
+- **Single `admin_last_read_at`, not per-admin.** Today there is exactly one platform admin (Rob). A per-admin reads table is the right answer if/when tenant admins arrive but it'd be over-engineered today.
+- **Unread is computed, not stored.** `hasUnread` per row is `exists(comment from other party with created_at > my_last_read_at)`. Pure derivation from the two timestamps + comments table. No materialized "unread count per row" column to keep consistent.
+
+### Lessons
+
+- The "user can't see their own submissions" gap is invisible to engineering until a user complains out-of-band. The original `app_feedback` shipped fast (one form, one inbox), but the absence of a personal history view turned every follow-up into an email to Rob.
+- Sharing `FeedbackThread` between the user page and the admin detail view pays for itself immediately — both sides got chat-bubble alignment, ⌘+Enter to send, char limit, and posting-state UX for the price of one component.
+- Keeping the existing `AppFeedbackDialog` untouched (no changes to the submission UX) meant zero risk of regressing the working submission path while shipping the threading layer on top.
+
+### Files
+
+- [scripts/supabase-app-feedback-comments-schema.sql](../scripts/supabase-app-feedback-comments-schema.sql) — new table + `admin_last_read_at`/`user_last_read_at` columns + admin_notes migration (commented manual step).
+- [lib/types.ts](../lib/types.ts) — `AppFeedbackComment`, `AppFeedbackCommentAuthorRole`, `AppFeedbackThread`; extended `AppFeedbackListItem` with `commentCount`/`hasUnread`; deprecated `adminNotes` on record.
+- [lib/feedbackChrome.tsx](../lib/feedbackChrome.tsx) — shared category icon/status chip/formatters extracted from the admin detail view so the user page can reuse them.
+- [app/api/app-feedback/route.ts](../app/api/app-feedback/route.ts) — added GET (own list); POST unchanged.
+- [app/api/app-feedback/[feedbackId]/route.ts](../app/api/app-feedback/[feedbackId]/route.ts) — new GET (own thread + read stamp).
+- [app/api/app-feedback/[feedbackId]/comments/route.ts](../app/api/app-feedback/[feedbackId]/comments/route.ts) — POST comment, role resolved server-side.
+- [app/api/app-feedback/unread-count/route.ts](../app/api/app-feedback/unread-count/route.ts) — lightweight count for sidebar dot.
+- [app/api/admin/app-feedback/[feedbackId]/thread/route.ts](../app/api/admin/app-feedback/[feedbackId]/thread/route.ts) — admin thread + read stamp.
+- [app/api/admin/app-feedback/route.ts](../app/api/admin/app-feedback/route.ts) — extended to compute `commentCount` + `hasUnread`.
+- [app/api/admin/app-feedback/[feedbackId]/route.ts](../app/api/admin/app-feedback/[feedbackId]/route.ts) — stripped `adminNotes` from PATCH.
+- [app/feedback/page.tsx](../app/feedback/page.tsx) + [components/feedback/](../components/feedback/) — new user-facing UI.
+- [components/admin/AppFeedbackDetailView.tsx](../components/admin/AppFeedbackDetailView.tsx) — replaced admin_notes textarea with shared `FeedbackThread`.
+- [components/admin/AppFeedbackTab.tsx](../components/admin/AppFeedbackTab.tsx) — unread dot on user cell + comment-count chip + listener on `feedback-unread-changed` event.
+- [components/AppSidebar.tsx](../components/AppSidebar.tsx) — feedback icon routes to `/feedback`, two new dot-badge wirings.
+
+### Related
+
+- Decision #162 — original `app_feedback` schema + attachments.
+- Multi-tenant prep memory entry — confirms feedback was always intended to stay platform-scoped under tenancy.
+
+---
+
+## Decision #221 — Automotive AEC enforcement: table-driven mechanism + completing the 11-family rollout (June 3, 2026)
+
+**Context:** Decisions #211 and #219 had shipped automotive AEC enforcement for 4 families (B6 then B5/B7/C9) via per-family copy-paste — each new family added one branch to `applyContextSourceOverrides` and one near-clone filter function (`filterXxxAutomotiveMismatches`). The BACKLOG entry (`Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families`) scoped the table-driven abstraction for "past ~5 families" — a heuristic written when only B6 existed and the pattern's generalizability was unproven. This session refactored to the table-driven mechanism and shipped the remaining 7 families in one pass.
+
+### What shipped
+
+1. **`AUTOMOTIVE_AEC_ENFORCEMENT` table** in [partDataService.ts](../lib/services/partDataService.ts): one row per family with `{ familyId, questionId, answerValue, attributeId, attributeName }`. Replaces the 4 per-family filter functions from Decisions #211 / #219.
+
+2. **Generic `applyContextSourceOverrides`** iterates the table on every call and injects when matched. No per-family branches.
+
+3. **New generic `filterAutomotiveAecMismatches(recs, src, ctx, familyId)`** looks the family up in the table to determine which `attributeId` and which `questionId` to consult.
+
+4. **Single switch entry** in the family-id switch — `if (hasAutomotiveAecEnforcement(familyId)) withCertifiedBypass(...)` — covers every enrolled family. The four old per-family switch entries are gone.
+
+5. **11 families enrolled:** B5, B6, B7, B8, B9, C9, C10, D1, D2, E1, F1. Every family from the BACKLOG punch list.
+
+### The questionId trap that made this refactor non-optional
+
+Investigation surfaced that four of the seven remaining families use **different `questionId` strings** in their context configs:
+
+| Family | questionId |
+|---|---|
+| B5–B9, C9, C10 | `automotive` |
+| D1 Crystals | `extended_temp_automotive` |
+| D2 Fuses | `automotive_aec_q200` |
+| E1 Optocouplers | `automotive_aec_q101` |
+| F1 EMRs | `automotive_aec_q200` |
+
+The old per-family approach hardcoded `applicationContext.answers.automotive === 'yes'` in every filter. Continuing per-family would have either silently failed for D1/D2/E1/F1, or required per-family branches keyed on different question strings — strictly worse than encoding the `questionId` on each table row. The "lift past 5" BACKLOG heuristic was therefore wrong about the 5-family threshold; the *real* trigger should have been "the moment we discover families that don't share the same context key." The table needed to exist to ship the four `questionId`-distinct families correctly.
+
+### AEC standard varies by component class
+
+The table makes this visible at a glance instead of buried in 11 filter functions:
+
+- **AEC-Q100 (active ICs):** C9 ADCs, C10 DACs
+- **AEC-Q101 (discrete semiconductors):** B5 MOSFETs, B6 BJTs, B7 IGBTs, B8 Thyristors, B9 JFETs, E1 Optocouplers (LED + phototransistor pair)
+- **AEC-Q200 (passives + electromechanical):** D1 Crystals, D2 Fuses, F1 EMRs
+
+### B8 sub-type suppression — checked, no special handling needed
+
+B8 Thyristors carries `not_applicable` effects on context Q1 (SCR/TRIAC/DIAC) that suppress sub-type-specific rules like `tq`, `quadrant_operation`, `gate_sensitivity`. None of those `not_applicable` effects touch `aec_q101` — automotive qualification applies uniformly across all three sub-types. Recorded as an inline comment on the B8 table row.
+
+### E1/F1 "extend or chain" — chain, not extend
+
+Both E1 and F1 already had post-scoring filters (`filterOptocouplerMismatches`, `filterRelayMismatches`) for unrelated concerns (E1: output_transistor_type + channel_count; F1: contact_form + coil_voltage_vdc + contact_count). The new AEC filter runs as a separate `withCertifiedBypass` wrap — independent, both bypass for certified crosses, order-independent. The existing filter functions are untouched.
+
+### Test coverage
+
+- All 30 behavior tests from Decisions #211/#219 still pass under the generic API — proof the refactor preserves behavior for the original 4 families (B5/B6/B7/C9).
+- 14 new tests: `expectFamilyWiring()` helper exercises each new table row's source-override + filter behavior in 4 assertions per family (B8/B9/C10/D1/D2/E1/F1).
+- Table-introspection tests: membership, unique familyIds, valid attributeIds, `hasAutomotiveAecEnforcement` reflects table state, full BACKLOG-punch-list coverage assertion.
+- D1's wiring tests include an extra guard: the source-override does NOT fire when the user answers a generic `automotive` question on D1 (since D1's entry is keyed on `extended_temp_automotive`). Locks the per-family questionId contract.
+- Total: 44 tests in `automotiveAecEnforcement.test.ts`. Full suite: 1,850 passing.
+
+### Generalization beyond `automotive`
+
+The BACKLOG note also flagged: "If/when medical / military / aerospace context questions land in family files, the switch should be table-driven on (familyId, questionId, answerValue) → injectedAttribute." That generalization is structurally already done — the current table is named for automotive AEC because that's what it covers today, but the row shape is identical to what a medical or military table would need. If/when those land, the right call is a sibling table (`MEDICAL_QUALIFICATION_ENFORCEMENT`, etc.) consumed the same way. Don't try to merge into a single mega-table prematurely — domain-specific table names keep grep-ability high.
+
+### Lessons
+
+- **Heuristic thresholds like "lift past 5" are guesses about generalizability.** The real trigger here was discovering the per-family `questionId` variance, which forced the table regardless of the family count. When you find a structural reason to abstract, lift then — don't wait for a count.
+- **Refactor proofs come from preserved behavior tests.** The 30 existing tests from the previous decisions were the safety net for the refactor — they pass unchanged under the new API, confirming the rewrite didn't move the behavior. Skipping those tests would have left this refactor much riskier.
+- **A wiring helper (`expectFamilyWiring`) makes adding the remaining 7 families nearly free.** Each new row got 4 behavior assertions for one function call. That's the multiplier the table mechanism unlocks — adding family #12 in the future is now ~5 minutes.
+- **`expectFamilyWiring` exercises both directions of the table** — fires on the right `questionId`, no-ops on the wrong one. That asymmetry test is what would catch a future engineer accidentally writing `questionId: 'automotive'` for a D-family entry that should be `automotive_aec_q200`.
+
+### Files
+
+- [lib/services/partDataService.ts](../lib/services/partDataService.ts) — AUTOMOTIVE_AEC_ENFORCEMENT table + generic helpers; replaces ~150 lines of per-family code with ~50 lines.
+- [__tests__/services/automotiveAecEnforcement.test.ts](../__tests__/services/automotiveAecEnforcement.test.ts) — refactored existing tests to use the generic API + added 14 wiring tests + table-introspection tests.
+
+### Related
+
+- Decision #211 — B6 BJT PoC (the pattern this decision lifts to a table).
+- Decision #219 — B5/B7/C9 + B6 test backfill (the per-family expansion this refactor consolidates).
+- Decision #133 — certified-cross bypass (`withCertifiedBypass` wrap reused unchanged).
+- BACKLOG: `Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families` — CLOSED. All 11 families on the punch list are now enrolled.
