@@ -22,6 +22,7 @@ import {
   filterBjtAutomotiveMismatches,
   filterMosfetAutomotiveMismatches,
   filterIgbtAutomotiveMismatches,
+  filterAdcAutomotiveMismatches,
 } from '@/lib/services/partDataService';
 import type {
   ApplicationContext,
@@ -161,6 +162,16 @@ describe('applyContextSourceOverrides — B6 BJT + automotive', () => {
     expect(injected!.value).toBe('Yes');
   });
 
+  it('injects aec_q100 (NOT q101) when familyId=C9 and automotive=yes (ADCs are ICs)', () => {
+    const src = makeSourceAttrs([makeParam('resolution_bits', '12')]);
+    const result = applyContextSourceOverrides(src, makeContext('yes'), 'C9');
+    const q100 = result.parameters.find(p => p.parameterId === 'aec_q100');
+    const q101 = result.parameters.find(p => p.parameterId === 'aec_q101');
+    expect(q100).toBeDefined();
+    expect(q100!.value).toBe('Yes');
+    expect(q101).toBeUndefined();  // ICs use Q100, not Q101
+  });
+
   it('clobbers an existing aec_q101 value when automotive=yes', () => {
     // Source explicitly says "No" but user signals automotive — the override
     // forces 'Yes' so the rule fires with sourceRequired=true and candidates
@@ -286,6 +297,49 @@ describe('filterIgbtAutomotiveMismatches — B7 IGBT + automotive', () => {
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
     const result = filterIgbtAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    expect(result.length).toBe(2);
+  });
+});
+
+// ============================================================
+// filterAdcAutomotiveMismatches — C9 (AEC-Q100 — note the difference)
+// ============================================================
+
+describe('filterAdcAutomotiveMismatches — C9 ADC + automotive (AEC-Q100)', () => {
+  // Note: parameterId is aec_q100 for ICs, not aec_q101 like the B-block.
+  const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q100', 'pass' as RuleResult)]);
+  const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q100', 'fail' as RuleResult)]);
+  const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q100', 'review' as RuleResult)]);
+  const noAecRec = makeRec('NO-AEC-1', [makeMatchDetail('resolution_bits', 'pass' as RuleResult)]);
+  const src = makeSourceAttrs([makeParam('aec_q100', 'Yes')]);
+
+  it('drops recs with aec_q100 ruleResult=fail when automotive=yes', () => {
+    const result = filterAdcAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
+  });
+
+  it('keeps pass/review/no-aec recs when automotive=yes', () => {
+    const result = filterAdcAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    expect(result.length).toBe(3);
+  });
+
+  it('does NOT key on aec_q101 (q100 is the right attribute for ICs)', () => {
+    // A C9 candidate carrying a Q101 fail should NOT be dropped by the ADC filter
+    // since the ADC rule is keyed on Q100. The filter's lookup explicitly uses
+    // 'aec_q100' — making sure no copy-paste drift slipped in.
+    const wrongAecRec = makeRec('WRONG-AEC', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
+    const result = filterAdcAutomotiveMismatches([wrongAecRec], src, makeContext('yes'));
+    expect(result.length).toBe(1);
+  });
+
+  it('returns all recs unchanged when automotive=no', () => {
+    const recs = [passingRec, failingRec, reviewRec, noAecRec];
+    const result = filterAdcAutomotiveMismatches(recs, src, makeContext('no'));
+    expect(result.length).toBe(4);
+  });
+
+  it('returns all recs unchanged when applicationContext is undefined', () => {
+    const result = filterAdcAutomotiveMismatches([passingRec, failingRec], src, undefined);
     expect(result.length).toBe(2);
   });
 });

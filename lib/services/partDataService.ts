@@ -1524,6 +1524,8 @@ export async function getRecommendations(
     if (familyId === 'B5') withCertifiedBypass((r, s) => filterMosfetAutomotiveMismatches(r, s, applicationContext));
     // Step 3a'': B7 IGBTs — same shape as B6 (AEC-Q101 discrete semiconductor)
     if (familyId === 'B7') withCertifiedBypass((r, s) => filterIgbtAutomotiveMismatches(r, s, applicationContext));
+    // Step 3a''': C9 ADCs — same shape but uses AEC-Q100 (automotive IC standard)
+    if (familyId === 'C9') withCertifiedBypass((r, s) => filterAdcAutomotiveMismatches(r, s, applicationContext));
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
     // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
@@ -3934,6 +3936,14 @@ export function applyContextSourceOverrides(
     });
   }
 
+  if (familyId === 'C9' && applicationContext.answers.automotive === 'yes') {
+    injections.push({
+      parameterId: 'aec_q100',
+      parameterName: 'AEC-Q100 (Automotive Qualification)',
+      value: 'Yes',
+    });
+  }
+
   if (injections.length === 0) return sourceAttrs;
 
   // Clone parameters so the cached/upstream sourceAttrs object stays untouched.
@@ -4009,6 +4019,24 @@ export function filterIgbtAutomotiveMismatches(
 
   return recs.filter(rec => {
     const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
+    if (!aecDetail) return true;
+    return aecDetail.ruleResult !== 'fail';
+  });
+}
+
+// ── C9: ADC automotive AEC-Q100 enforcement ────────────────────────────
+//
+// Same shape as B6 but ADCs are ICs — AEC-Q100 (not Q101). Critical for
+// ADAS, battery management, and powertrain measurement paths.
+export function filterAdcAutomotiveMismatches(
+  recs: XrefRecommendation[],
+  _sourceAttrs: PartAttributes,
+  applicationContext: ApplicationContext | undefined,
+): XrefRecommendation[] {
+  if (applicationContext?.answers?.automotive !== 'yes') return recs;
+
+  return recs.filter(rec => {
+    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q100');
     if (!aecDetail) return true;
     return aecDetail.ruleResult !== 'fail';
   });
