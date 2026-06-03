@@ -1518,14 +1518,11 @@ export async function getRecommendations(
       recs = [...certified, ...filter(uncertified, scoringSourceAttrs)];
     };
 
-    // Step 3a: B6 BJTs — automotive AEC-Q101 enforcement (only when context.automotive=yes)
-    if (familyId === 'B6') withCertifiedBypass((r, s) => filterBjtAutomotiveMismatches(r, s, applicationContext));
-    // Step 3a': B5 MOSFETs — same shape as B6 (AEC-Q101 discrete semiconductor)
-    if (familyId === 'B5') withCertifiedBypass((r, s) => filterMosfetAutomotiveMismatches(r, s, applicationContext));
-    // Step 3a'': B7 IGBTs — same shape as B6 (AEC-Q101 discrete semiconductor)
-    if (familyId === 'B7') withCertifiedBypass((r, s) => filterIgbtAutomotiveMismatches(r, s, applicationContext));
-    // Step 3a''': C9 ADCs — same shape but uses AEC-Q100 (automotive IC standard)
-    if (familyId === 'C9') withCertifiedBypass((r, s) => filterAdcAutomotiveMismatches(r, s, applicationContext));
+    // Step 3a: Automotive AEC enforcement (table-driven, see AUTOMOTIVE_AEC_ENFORCEMENT)
+    // Covers every family with an automotive context question that escalates an AEC rule.
+    if (hasAutomotiveAecEnforcement(familyId)) {
+      withCertifiedBypass((r, s) => filterAutomotiveAecMismatches(r, s, applicationContext, familyId));
+    }
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
     // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
@@ -3887,6 +3884,47 @@ function filterOptocouplerMismatches(
   });
 }
 
+// ── Automotive AEC enforcement — table-driven (Decision #220) ──────────
+//
+// One row per family that has an automotive context question escalating an
+// AEC qualification rule. Each row carries the family's own questionId since
+// family files don't agree on a single name (B-block + C-block use
+// `automotive`, D1 uses `extended_temp_automotive`, D2/F1 use
+// `automotive_aec_q200`, E1 uses `automotive_aec_q101`).
+//
+// AEC standard varies by component class:
+//   - Q100 (active ICs): C9 ADCs, C10 DACs
+//   - Q101 (discrete semiconductors): B5–B9, E1 (LED + phototransistor pair)
+//   - Q200 (passives + electromechanical): D1, D2, F1
+//
+// Replaces per-family copy-paste filters from Decisions #211 / #219.
+// To add a family: add a row here. No new code, no new switch entry.
+
+type AutomotiveAecEntry = {
+  familyId: string;
+  questionId: string;
+  answerValue: string;
+  attributeId: string;
+  attributeName: string;
+};
+
+const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
+  { familyId: 'B5', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  { familyId: 'B6', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  { familyId: 'B7', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
+  { familyId: 'C9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
+] as const;
+
+/** Exported for tests + Decision #220 introspection. */
+export function getAutomotiveAecEnforcementTable(): readonly AutomotiveAecEntry[] {
+  return AUTOMOTIVE_AEC_ENFORCEMENT;
+}
+
+/** Returns true iff at least one table entry is registered for this familyId. */
+export function hasAutomotiveAecEnforcement(familyId: string): boolean {
+  return AUTOMOTIVE_AEC_ENFORCEMENT.some(e => e.familyId === familyId);
+}
+
 // ── Context-driven source-attribute overrides ─────────────────────────
 //
 // When the user's context answer implies a stronger requirement than the
@@ -3899,10 +3937,6 @@ function filterOptocouplerMismatches(
 // Only the scoring path sees the modified attributes — the returned
 // `sourceAttributes` (rendered in the Specs comparison panel) is unchanged so
 // the user isn't confused by a synthetic 'Yes' on a source that doesn't carry it.
-//
-// Currently scoped to B6 + automotive. Same pattern applies to other families
-// with AEC context questions (B5/B7/B8/B9, C9, C10, D1, D2, E1, F1) — add
-// entries to the switch below as those families are validated.
 export function applyContextSourceOverrides(
   sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
@@ -3910,36 +3944,15 @@ export function applyContextSourceOverrides(
 ): PartAttributes {
   if (!applicationContext?.answers) return sourceAttrs;
 
+  const answers = applicationContext.answers;
   const injections: Array<{ parameterId: string; parameterName: string; value: string }> = [];
 
-  if (familyId === 'B6' && applicationContext.answers.automotive === 'yes') {
+  for (const entry of AUTOMOTIVE_AEC_ENFORCEMENT) {
+    if (entry.familyId !== familyId) continue;
+    if (answers[entry.questionId] !== entry.answerValue) continue;
     injections.push({
-      parameterId: 'aec_q101',
-      parameterName: 'AEC-Q101 (Automotive Qualification)',
-      value: 'Yes',
-    });
-  }
-
-  if (familyId === 'B5' && applicationContext.answers.automotive === 'yes') {
-    injections.push({
-      parameterId: 'aec_q101',
-      parameterName: 'AEC-Q101 (Automotive Qualification)',
-      value: 'Yes',
-    });
-  }
-
-  if (familyId === 'B7' && applicationContext.answers.automotive === 'yes') {
-    injections.push({
-      parameterId: 'aec_q101',
-      parameterName: 'AEC-Q101 (Automotive Qualification)',
-      value: 'Yes',
-    });
-  }
-
-  if (familyId === 'C9' && applicationContext.answers.automotive === 'yes') {
-    injections.push({
-      parameterId: 'aec_q100',
-      parameterName: 'AEC-Q100 (Automotive Qualification)',
+      parameterId: entry.attributeId,
+      parameterName: entry.attributeName,
       value: 'Yes',
     });
   }
@@ -3964,79 +3977,30 @@ export function applyContextSourceOverrides(
   return { ...sourceAttrs, parameters: clonedParams };
 }
 
-// ── B6: BJT automotive AEC-Q101 enforcement ────────────────────────────
+// ── Generic automotive AEC post-scoring filter ─────────────────────────
 //
-// When the user signals automotive intent (context Q4: "Yes — automotive"),
-// drop candidates whose `aec_q101` rule result is `fail`. The source-attribute
-// override above ensures the rule fires (source treated as requiring AEC-Q101),
-// so this filter catches:
+// When the user signals automotive intent (context answer matches the family
+// row's questionId+answerValue), drop candidates whose AEC rule result is
+// `fail`. The source-attribute override above ensures the rule fires (source
+// treated as requiring AEC qualification), so this filter catches:
 //   - Explicit 'No' on the candidate
 //   - Missing data (identity_flag defaults missing to 'No' → fail)
 //
 // Bypassed for certified crosses via withCertifiedBypass at the call site.
-export function filterBjtAutomotiveMismatches(
+export function filterAutomotiveAecMismatches(
   recs: XrefRecommendation[],
   _sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
+  familyId: string,
 ): XrefRecommendation[] {
-  if (applicationContext?.answers?.automotive !== 'yes') return recs;
+  if (!applicationContext?.answers) return recs;
+
+  const entry = AUTOMOTIVE_AEC_ENFORCEMENT.find(e => e.familyId === familyId);
+  if (!entry) return recs;
+  if (applicationContext.answers[entry.questionId] !== entry.answerValue) return recs;
 
   return recs.filter(rec => {
-    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
-    if (!aecDetail) return true;
-    return aecDetail.ruleResult !== 'fail';
-  });
-}
-
-// ── B5: MOSFET automotive AEC-Q101 enforcement ─────────────────────────
-//
-// Same shape as B6 — MOSFETs use AEC-Q101 (discrete semiconductors).
-// See filterBjtAutomotiveMismatches for the rationale.
-export function filterMosfetAutomotiveMismatches(
-  recs: XrefRecommendation[],
-  _sourceAttrs: PartAttributes,
-  applicationContext: ApplicationContext | undefined,
-): XrefRecommendation[] {
-  if (applicationContext?.answers?.automotive !== 'yes') return recs;
-
-  return recs.filter(rec => {
-    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
-    if (!aecDetail) return true;
-    return aecDetail.ruleResult !== 'fail';
-  });
-}
-
-// ── B7: IGBT automotive AEC-Q101 enforcement ───────────────────────────
-//
-// Same shape as B6 — IGBTs use AEC-Q101 (discrete semiconductors).
-// Traction/EV applications make this load-bearing for B7.
-export function filterIgbtAutomotiveMismatches(
-  recs: XrefRecommendation[],
-  _sourceAttrs: PartAttributes,
-  applicationContext: ApplicationContext | undefined,
-): XrefRecommendation[] {
-  if (applicationContext?.answers?.automotive !== 'yes') return recs;
-
-  return recs.filter(rec => {
-    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
-    if (!aecDetail) return true;
-    return aecDetail.ruleResult !== 'fail';
-  });
-}
-
-// ── C9: ADC automotive AEC-Q100 enforcement ────────────────────────────
-//
-// Same shape as B6 but ADCs are ICs — AEC-Q100 (not Q101). Critical for
-// ADAS, battery management, and powertrain measurement paths.
-export function filterAdcAutomotiveMismatches(
-  recs: XrefRecommendation[],
-  _sourceAttrs: PartAttributes,
-  applicationContext: ApplicationContext | undefined,
-): XrefRecommendation[] {
-  if (applicationContext?.answers?.automotive !== 'yes') return recs;
-
-  return recs.filter(rec => {
-    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q100');
+    const aecDetail = rec.matchDetails?.find(d => d.parameterId === entry.attributeId);
     if (!aecDetail) return true;
     return aecDetail.ruleResult !== 'fail';
   });

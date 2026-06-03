@@ -1,28 +1,30 @@
 /**
- * Tests for the automotive AEC enforcement helpers in partDataService.ts.
+ * Tests for the automotive AEC enforcement mechanism in partDataService.ts.
  *
- * The two helpers together implement the rule-level enforcement pattern from
- * Decision #211 (B6 BJT PoC):
+ * Decision #220 refactored the per-family filter clones (Decisions #211, #219)
+ * into a table-driven mechanism. The two exported helpers are:
  *
- *   1. `applyContextSourceOverrides` clones the scoring-local source attrs
- *      and injects an AEC attribute (`aec_q101: 'Yes'` for B6) when the
- *      user signals automotive intent. Makes the identity_flag rule fire so
+ *   1. `applyContextSourceOverrides` — clones the scoring-local source attrs
+ *      and injects an AEC attribute (Yes) when the family's context answer
+ *      matches the table. Makes the identity_flag rule fire so
  *      `sourceRequired=true` propagates into match evaluation.
  *
- *   2. `filterXxxAutomotiveMismatches` drops candidates whose AEC rule
- *      result is `fail` from the scored output. With the source override
- *      above in place, missing candidate data → fail → drop.
+ *   2. `filterAutomotiveAecMismatches(recs, src, ctx, familyId)` — drops
+ *      candidates whose AEC rule result is `fail`. With the source override
+ *      above in place, missing candidate data → fail → drop. Looks up the
+ *      family in AUTOMOTIVE_AEC_ENFORCEMENT to determine which attribute and
+ *      which questionId to consult.
  *
- * These tests exist primarily to lock the contract for the per-family filters
- * added in the B5/B7/C9 rollout following the B6 precedent.
+ * Describe blocks are organized per family. They all exercise the same
+ * generic helper — the family-specific framing documents the per-family
+ * contract that's now table-encoded.
  */
 
 import {
   applyContextSourceOverrides,
-  filterBjtAutomotiveMismatches,
-  filterMosfetAutomotiveMismatches,
-  filterIgbtAutomotiveMismatches,
-  filterAdcAutomotiveMismatches,
+  filterAutomotiveAecMismatches,
+  getAutomotiveAecEnforcementTable,
+  hasAutomotiveAecEnforcement,
 } from '@/lib/services/partDataService';
 import type {
   ApplicationContext,
@@ -61,10 +63,16 @@ function makeSourceAttrs(params: ParametricAttribute[] = []): PartAttributes {
   };
 }
 
-function makeContext(automotive: 'yes' | 'no' | undefined): ApplicationContext {
+/**
+ * Build an ApplicationContext with a single (questionId → answer) pair.
+ * Most families use questionId='automotive', but D1/D2/E1/F1 carry
+ * different ids — the helper accepts whatever the family declares so the
+ * tests reflect what the matcher actually sees.
+ */
+function makeContext(answer: 'yes' | 'no' | undefined, questionId: string = 'automotive'): ApplicationContext {
   return {
-    familyId: 'B6',
-    answers: automotive === undefined ? {} : { automotive },
+    familyId: 'TEST',
+    answers: answer === undefined ? {} : { [questionId]: answer },
   };
 }
 
@@ -185,10 +193,10 @@ describe('applyContextSourceOverrides — B6 BJT + automotive', () => {
 });
 
 // ============================================================
-// filterBjtAutomotiveMismatches — post-scoring drop
+// filterAutomotiveAecMismatches — B6 (AEC-Q101)
 // ============================================================
 
-describe('filterBjtAutomotiveMismatches — B6 BJT + automotive', () => {
+describe('filterAutomotiveAecMismatches — B6 BJT + automotive', () => {
   const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q101', 'pass' as RuleResult)]);
   const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
   const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q101', 'review' as RuleResult)]);
@@ -197,49 +205,55 @@ describe('filterBjtAutomotiveMismatches — B6 BJT + automotive', () => {
 
   it('drops recs with aec_q101 ruleResult=fail when automotive=yes', () => {
     const recs = [passingRec, failingRec];
-    const result = filterBjtAutomotiveMismatches(recs, src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('yes'), 'B6');
     expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
   });
 
   it('keeps recs with aec_q101 ruleResult=pass when automotive=yes', () => {
-    const result = filterBjtAutomotiveMismatches([passingRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec], src, makeContext('yes'), 'B6');
     expect(result.length).toBe(1);
   });
 
   it('keeps recs with aec_q101 ruleResult=review when automotive=yes (review ≠ fail)', () => {
-    const result = filterBjtAutomotiveMismatches([reviewRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([reviewRec], src, makeContext('yes'), 'B6');
     expect(result.length).toBe(1);
   });
 
   it('keeps recs that have no aec_q101 entry in matchDetails (defensive — keep when uncertain)', () => {
-    const result = filterBjtAutomotiveMismatches([noAecRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([noAecRec], src, makeContext('yes'), 'B6');
     expect(result.length).toBe(1);
   });
 
   it('returns all recs unchanged when automotive=no', () => {
     const recs = [passingRec, failingRec, reviewRec, noAecRec];
-    const result = filterBjtAutomotiveMismatches(recs, src, makeContext('no'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('no'), 'B6');
     expect(result.length).toBe(4);
   });
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
     const recs = [passingRec, failingRec];
-    const result = filterBjtAutomotiveMismatches(recs, src, undefined);
+    const result = filterAutomotiveAecMismatches(recs, src, undefined, 'B6');
     expect(result.length).toBe(2);
   });
 
   it('returns an empty array if every rec fails aec_q101 under automotive=yes', () => {
     const recs = [failingRec, failingRec];
-    const result = filterBjtAutomotiveMismatches(recs, src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('yes'), 'B6');
     expect(result).toEqual([]);
+  });
+
+  it('returns all recs unchanged when familyId is not in the table', () => {
+    // C5 Logic ICs has no automotive AEC enforcement; the filter should be a no-op.
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, makeContext('yes'), 'C5');
+    expect(result.length).toBe(2);
   });
 });
 
 // ============================================================
-// filterMosfetAutomotiveMismatches — B5 (AEC-Q101)
+// filterAutomotiveAecMismatches — B5 (AEC-Q101)
 // ============================================================
 
-describe('filterMosfetAutomotiveMismatches — B5 MOSFET + automotive', () => {
+describe('filterAutomotiveAecMismatches — B5 MOSFET + automotive', () => {
   const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q101', 'pass' as RuleResult)]);
   const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
   const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q101', 'review' as RuleResult)]);
@@ -247,32 +261,32 @@ describe('filterMosfetAutomotiveMismatches — B5 MOSFET + automotive', () => {
   const src = makeSourceAttrs([makeParam('aec_q101', 'Yes')]);
 
   it('drops recs with aec_q101 ruleResult=fail when automotive=yes', () => {
-    const result = filterMosfetAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, makeContext('yes'), 'B5');
     expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
   });
 
   it('keeps pass/review/no-aec recs when automotive=yes', () => {
-    const result = filterMosfetAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'), 'B5');
     expect(result.length).toBe(3);
   });
 
   it('returns all recs unchanged when automotive=no', () => {
     const recs = [passingRec, failingRec, reviewRec, noAecRec];
-    const result = filterMosfetAutomotiveMismatches(recs, src, makeContext('no'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('no'), 'B5');
     expect(result.length).toBe(4);
   });
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
-    const result = filterMosfetAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, undefined, 'B5');
     expect(result.length).toBe(2);
   });
 });
 
 // ============================================================
-// filterIgbtAutomotiveMismatches — B7 (AEC-Q101)
+// filterAutomotiveAecMismatches — B7 (AEC-Q101)
 // ============================================================
 
-describe('filterIgbtAutomotiveMismatches — B7 IGBT + automotive', () => {
+describe('filterAutomotiveAecMismatches — B7 IGBT + automotive', () => {
   const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q101', 'pass' as RuleResult)]);
   const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
   const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q101', 'review' as RuleResult)]);
@@ -280,32 +294,32 @@ describe('filterIgbtAutomotiveMismatches — B7 IGBT + automotive', () => {
   const src = makeSourceAttrs([makeParam('aec_q101', 'Yes')]);
 
   it('drops recs with aec_q101 ruleResult=fail when automotive=yes', () => {
-    const result = filterIgbtAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, makeContext('yes'), 'B7');
     expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
   });
 
   it('keeps pass/review/no-aec recs when automotive=yes', () => {
-    const result = filterIgbtAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'), 'B7');
     expect(result.length).toBe(3);
   });
 
   it('returns all recs unchanged when automotive=no', () => {
     const recs = [passingRec, failingRec, reviewRec, noAecRec];
-    const result = filterIgbtAutomotiveMismatches(recs, src, makeContext('no'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('no'), 'B7');
     expect(result.length).toBe(4);
   });
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
-    const result = filterIgbtAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, undefined, 'B7');
     expect(result.length).toBe(2);
   });
 });
 
 // ============================================================
-// filterAdcAutomotiveMismatches — C9 (AEC-Q100 — note the difference)
+// filterAutomotiveAecMismatches — C9 (AEC-Q100 — note the difference)
 // ============================================================
 
-describe('filterAdcAutomotiveMismatches — C9 ADC + automotive (AEC-Q100)', () => {
+describe('filterAutomotiveAecMismatches — C9 ADC + automotive (AEC-Q100)', () => {
   // Note: parameterId is aec_q100 for ICs, not aec_q101 like the B-block.
   const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q100', 'pass' as RuleResult)]);
   const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q100', 'fail' as RuleResult)]);
@@ -314,32 +328,65 @@ describe('filterAdcAutomotiveMismatches — C9 ADC + automotive (AEC-Q100)', () 
   const src = makeSourceAttrs([makeParam('aec_q100', 'Yes')]);
 
   it('drops recs with aec_q100 ruleResult=fail when automotive=yes', () => {
-    const result = filterAdcAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, makeContext('yes'), 'C9');
     expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
   });
 
   it('keeps pass/review/no-aec recs when automotive=yes', () => {
-    const result = filterAdcAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'), 'C9');
     expect(result.length).toBe(3);
   });
 
   it('does NOT key on aec_q101 (q100 is the right attribute for ICs)', () => {
     // A C9 candidate carrying a Q101 fail should NOT be dropped by the ADC filter
-    // since the ADC rule is keyed on Q100. The filter's lookup explicitly uses
-    // 'aec_q100' — making sure no copy-paste drift slipped in.
+    // since the C9 table entry is keyed on Q100. The filter consults the table
+    // to find the right attributeId — making sure no copy-paste drift slipped in.
     const wrongAecRec = makeRec('WRONG-AEC', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
-    const result = filterAdcAutomotiveMismatches([wrongAecRec], src, makeContext('yes'));
+    const result = filterAutomotiveAecMismatches([wrongAecRec], src, makeContext('yes'), 'C9');
     expect(result.length).toBe(1);
   });
 
   it('returns all recs unchanged when automotive=no', () => {
     const recs = [passingRec, failingRec, reviewRec, noAecRec];
-    const result = filterAdcAutomotiveMismatches(recs, src, makeContext('no'));
+    const result = filterAutomotiveAecMismatches(recs, src, makeContext('no'), 'C9');
     expect(result.length).toBe(4);
   });
 
   it('returns all recs unchanged when applicationContext is undefined', () => {
-    const result = filterAdcAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    const result = filterAutomotiveAecMismatches([passingRec, failingRec], src, undefined, 'C9');
     expect(result.length).toBe(2);
+  });
+});
+
+// ============================================================
+// AUTOMOTIVE_AEC_ENFORCEMENT — table-introspection invariants
+// ============================================================
+
+describe('AUTOMOTIVE_AEC_ENFORCEMENT — table invariants', () => {
+  const table = getAutomotiveAecEnforcementTable();
+
+  it('contains entries for the currently-shipping families (Decisions #211 / #219)', () => {
+    const ids = table.map(e => e.familyId).sort();
+    expect(ids).toEqual(expect.arrayContaining(['B5', 'B6', 'B7', 'C9']));
+  });
+
+  it('every entry uses a recognized AEC attribute id', () => {
+    const valid = new Set(['aec_q100', 'aec_q101', 'aec_q200']);
+    for (const e of table) {
+      expect(valid.has(e.attributeId)).toBe(true);
+    }
+  });
+
+  it('each familyId appears at most once', () => {
+    const ids = table.map(e => e.familyId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('hasAutomotiveAecEnforcement reflects table membership', () => {
+    for (const e of table) {
+      expect(hasAutomotiveAecEnforcement(e.familyId)).toBe(true);
+    }
+    expect(hasAutomotiveAecEnforcement('C5')).toBe(false);
+    expect(hasAutomotiveAecEnforcement('XX')).toBe(false);
   });
 });
