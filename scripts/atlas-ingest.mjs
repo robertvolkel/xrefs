@@ -162,6 +162,8 @@ function classifyAtlasCategory(c1, c2, c3) {
   }
   if (lower.includes('drivers, receivers, transceivers')) return { category: 'Interface ICs', subcategory: 'Interface IC', familyId: 'C7' };
   if (lower.includes('digital isolator') && !lower.includes('gate driver')) return { category: 'Interface ICs', subcategory: 'Digital Isolator', familyId: 'C7' };
+  // Crystals (D1) — MUST come BEFORE oscillator check (Digikey parent "Crystals, Oscillators, Resonators")
+  if (lower.includes('crystal') && !lower.includes('oscillator')) return { category: 'Crystals', subcategory: 'Crystal', familyId: 'D1' };
   if (lower.includes('oscillator') && !lower.includes('local oscillator')) return { category: 'Timers and Oscillators', subcategory: 'Oscillator', familyId: 'C8' };
   if (lower.includes('programmable timer') || lower.includes('555')) return { category: 'Timers and Oscillators', subcategory: '555 Timer', familyId: 'C8' };
   // Logic ICs — skip RF multiplexers
