@@ -20,6 +20,7 @@
 import {
   applyContextSourceOverrides,
   filterBjtAutomotiveMismatches,
+  filterMosfetAutomotiveMismatches,
 } from '@/lib/services/partDataService';
 import type {
   ApplicationContext,
@@ -136,8 +137,19 @@ describe('applyContextSourceOverrides — B6 BJT + automotive', () => {
 
   it('no-ops when familyId is not in the injection table', () => {
     const src = makeSourceAttrs([]);
-    const result = applyContextSourceOverrides(src, makeContext('yes'), '12');  // MLCC, not AEC-aware here
+    // C5 Logic ICs has no automotive AEC enforcement wired up here; use it as
+    // the negative case. (Picking 12/MLCC also worked, but B-block families
+    // are the natural neighbors for this test.)
+    const result = applyContextSourceOverrides(src, makeContext('yes'), 'C5');
     expect(result.parameters.find(p => p.parameterId === 'aec_q101')).toBeUndefined();
+  });
+
+  it('injects aec_q101: Yes when familyId=B5 and automotive=yes (MOSFETs)', () => {
+    const src = makeSourceAttrs([makeParam('vds_max', '60 V')]);
+    const result = applyContextSourceOverrides(src, makeContext('yes'), 'B5');
+    const injected = result.parameters.find(p => p.parameterId === 'aec_q101');
+    expect(injected).toBeDefined();
+    expect(injected!.value).toBe('Yes');
   });
 
   it('clobbers an existing aec_q101 value when automotive=yes', () => {
@@ -200,5 +212,38 @@ describe('filterBjtAutomotiveMismatches — B6 BJT + automotive', () => {
     const recs = [failingRec, failingRec];
     const result = filterBjtAutomotiveMismatches(recs, src, makeContext('yes'));
     expect(result).toEqual([]);
+  });
+});
+
+// ============================================================
+// filterMosfetAutomotiveMismatches — B5 (AEC-Q101)
+// ============================================================
+
+describe('filterMosfetAutomotiveMismatches — B5 MOSFET + automotive', () => {
+  const passingRec = makeRec('PASS-1', [makeMatchDetail('aec_q101', 'pass' as RuleResult)]);
+  const failingRec = makeRec('FAIL-1', [makeMatchDetail('aec_q101', 'fail' as RuleResult)]);
+  const reviewRec = makeRec('REVIEW-1', [makeMatchDetail('aec_q101', 'review' as RuleResult)]);
+  const noAecRec = makeRec('NO-AEC-1', [makeMatchDetail('vds_max', 'pass' as RuleResult)]);
+  const src = makeSourceAttrs([makeParam('aec_q101', 'Yes')]);
+
+  it('drops recs with aec_q101 ruleResult=fail when automotive=yes', () => {
+    const result = filterMosfetAutomotiveMismatches([passingRec, failingRec], src, makeContext('yes'));
+    expect(result.map(r => r.part.mpn)).toEqual(['PASS-1']);
+  });
+
+  it('keeps pass/review/no-aec recs when automotive=yes', () => {
+    const result = filterMosfetAutomotiveMismatches([passingRec, reviewRec, noAecRec], src, makeContext('yes'));
+    expect(result.length).toBe(3);
+  });
+
+  it('returns all recs unchanged when automotive=no', () => {
+    const recs = [passingRec, failingRec, reviewRec, noAecRec];
+    const result = filterMosfetAutomotiveMismatches(recs, src, makeContext('no'));
+    expect(result.length).toBe(4);
+  });
+
+  it('returns all recs unchanged when applicationContext is undefined', () => {
+    const result = filterMosfetAutomotiveMismatches([passingRec, failingRec], src, undefined);
+    expect(result.length).toBe(2);
   });
 });

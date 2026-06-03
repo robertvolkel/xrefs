@@ -1520,6 +1520,8 @@ export async function getRecommendations(
 
     // Step 3a: B6 BJTs — automotive AEC-Q101 enforcement (only when context.automotive=yes)
     if (familyId === 'B6') withCertifiedBypass((r, s) => filterBjtAutomotiveMismatches(r, s, applicationContext));
+    // Step 3a': B5 MOSFETs — same shape as B6 (AEC-Q101 discrete semiconductor)
+    if (familyId === 'B5') withCertifiedBypass((r, s) => filterMosfetAutomotiveMismatches(r, s, applicationContext));
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
     // Step 3c: C4 op-amps/comparators — device_type BLOCKING identity gate
@@ -3914,6 +3916,14 @@ export function applyContextSourceOverrides(
     });
   }
 
+  if (familyId === 'B5' && applicationContext.answers.automotive === 'yes') {
+    injections.push({
+      parameterId: 'aec_q101',
+      parameterName: 'AEC-Q101 (Automotive Qualification)',
+      value: 'Yes',
+    });
+  }
+
   if (injections.length === 0) return sourceAttrs;
 
   // Clone parameters so the cached/upstream sourceAttrs object stays untouched.
@@ -3945,6 +3955,24 @@ export function applyContextSourceOverrides(
 //
 // Bypassed for certified crosses via withCertifiedBypass at the call site.
 export function filterBjtAutomotiveMismatches(
+  recs: XrefRecommendation[],
+  _sourceAttrs: PartAttributes,
+  applicationContext: ApplicationContext | undefined,
+): XrefRecommendation[] {
+  if (applicationContext?.answers?.automotive !== 'yes') return recs;
+
+  return recs.filter(rec => {
+    const aecDetail = rec.matchDetails?.find(d => d.parameterId === 'aec_q101');
+    if (!aecDetail) return true;
+    return aecDetail.ruleResult !== 'fail';
+  });
+}
+
+// ── B5: MOSFET automotive AEC-Q101 enforcement ─────────────────────────
+//
+// Same shape as B6 — MOSFETs use AEC-Q101 (discrete semiconductors).
+// See filterBjtAutomotiveMismatches for the rationale.
+export function filterMosfetAutomotiveMismatches(
   recs: XrefRecommendation[],
   _sourceAttrs: PartAttributes,
   applicationContext: ApplicationContext | undefined,
