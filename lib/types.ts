@@ -1403,11 +1403,14 @@ export interface AppFeedbackRecord {
   userAgent?: string;
   viewport?: string;
   status: AppFeedbackStatus;
+  /** @deprecated replaced by AppFeedbackComment threads; kept until the DB column is dropped */
   adminNotes?: string;
   resolvedBy?: string;
   resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
+  userLastReadAt?: string;
+  adminLastReadAt?: string;
 }
 
 /** App feedback item for admin list view (enriched with user profile info) */
@@ -1416,6 +1419,8 @@ export interface AppFeedbackListItem extends AppFeedbackRecord {
   userName?: string;
   resolvedByName?: string;
   attachments: AppFeedbackAttachmentView[];
+  commentCount: number;
+  hasUnread: boolean;
 }
 
 /** Status count summary for app feedback filter badges */
@@ -1429,7 +1434,29 @@ export interface AppFeedbackStatusCounts {
 /** Admin update payload for app feedback */
 export interface AppFeedbackUpdate {
   status?: AppFeedbackStatus;
-  adminNotes?: string;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// APP FEEDBACK COMMENTS (back-and-forth thread between user and admin)
+// ───────────────────────────────────────────────────────────────────
+
+export type AppFeedbackCommentAuthorRole = 'user' | 'admin';
+
+export interface AppFeedbackComment {
+  id: string;
+  feedbackId: string;
+  authorId: string;
+  authorRole: AppFeedbackCommentAuthorRole;
+  body: string;
+  createdAt: string;
+  /** Joined from `profiles.full_name` (admin views) — undefined when not available. */
+  authorName?: string;
+}
+
+/** Full thread payload returned by /api/app-feedback/[id] and the admin equivalent. */
+export interface AppFeedbackThread {
+  feedback: AppFeedbackListItem;
+  comments: AppFeedbackComment[];
 }
 
 // ============================================================

@@ -37,12 +37,14 @@ function MonitoringShellInner() {
   const [loggingEnabled, setLoggingEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  // App feedback open count for nav badge
-  const [appFeedbackOpenCount, setAppFeedbackOpenCount] = useState(0);
+  // App feedback "needs attention" count for nav badge — same semantics as
+  // the Monitoring sidebar dot. Triggered by unread user replies and items
+  // never opened by the admin; NOT by items merely sitting in 'open' status.
+  const [appFeedbackNeedsAttention, setAppFeedbackNeedsAttention] = useState(0);
 
   const refreshAppFeedbackCount = useCallback(() => {
-    getAdminAppFeedbackList({ status: 'open', limit: 1 })
-      .then((r) => setAppFeedbackOpenCount(r.statusCounts.open))
+    getAdminAppFeedbackList({ limit: 1 })
+      .then((r) => setAppFeedbackNeedsAttention(r.needsAttentionCount))
       .catch(() => {});
   }, []);
 
@@ -133,7 +135,7 @@ function MonitoringShellInner() {
           <MonitoringSectionNav
             activeSection={activeSection}
             onSectionChange={handleSectionChange}
-            appFeedbackOpenCount={appFeedbackOpenCount}
+            appFeedbackNeedsAttentionCount={appFeedbackNeedsAttention}
           />
         </Box>
 

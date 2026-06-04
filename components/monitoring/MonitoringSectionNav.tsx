@@ -27,13 +27,13 @@ export const MONITORING_SECTION_ITEMS: SectionItem[] = monitoringSections;
 interface MonitoringSectionNavProps {
   activeSection: MonitoringSection;
   onSectionChange: (section: MonitoringSection) => void;
-  appFeedbackOpenCount?: number;
+  appFeedbackNeedsAttentionCount?: number;
 }
 
 export default function MonitoringSectionNav({
   activeSection,
   onSectionChange,
-  appFeedbackOpenCount = 0,
+  appFeedbackNeedsAttentionCount = 0,
 }: MonitoringSectionNavProps) {
   const { t } = useTranslation();
 
@@ -41,7 +41,7 @@ export default function MonitoringSectionNav({
     <List disablePadding sx={{ pt: 1 }}>
       {monitoringSections.map(({ id, icon: Icon, labelKey }) => {
         const isActive = id === activeSection;
-        const showBadge = id === 'app-feedback' && appFeedbackOpenCount > 0;
+        const showBadge = id === 'app-feedback' && appFeedbackNeedsAttentionCount > 0;
         return (
           <ListItemButton
             key={id}

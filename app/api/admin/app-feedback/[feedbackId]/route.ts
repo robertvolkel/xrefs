@@ -12,7 +12,7 @@ export async function PATCH(
 
     const { feedbackId } = await params;
     const body = await request.json();
-    const { status, adminNotes } = body;
+    const { status } = body;
 
     const supabase = await createClient();
 
@@ -26,9 +26,6 @@ export async function PATCH(
         update.resolved_by = user!.id;
         update.resolved_at = new Date().toISOString();
       }
-    }
-    if (adminNotes !== undefined) {
-      update.admin_notes = adminNotes;
     }
 
     const { error } = await supabase

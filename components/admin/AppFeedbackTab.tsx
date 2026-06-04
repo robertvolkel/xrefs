@@ -15,7 +15,6 @@ import {
   TableSortLabel,
   IconButton,
   InputAdornment,
-  Badge,
   TextField,
   Button,
 } from '@mui/material';
@@ -28,12 +27,14 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import {
   AppFeedbackListItem,
   AppFeedbackStatus,
-  AppFeedbackStatusCounts,
   AppFeedbackCategory,
 } from '@/lib/types';
 import { getAdminAppFeedbackList } from '@/lib/api';
-import AppFeedbackDetailView from './AppFeedbackDetailView';
+import FeedbackDetailModal from '@/components/feedback/FeedbackDetailModal';
+import FeedbackRowMenu from '@/components/feedback/FeedbackRowMenu';
 import PaginatedTableSkeleton from './PaginatedTableSkeleton';
+
+const POLL_INTERVAL_MS = 30_000;
 
 type StatusFilter = AppFeedbackStatus | 'all';
 type CategoryFilter = AppFeedbackCategory | 'all';
@@ -85,16 +86,13 @@ function truncate(str: string, n: number): string {
 export default function AppFeedbackTab() {
   const [items, setItems] = useState<AppFeedbackListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [statusCounts, setStatusCounts] = useState<AppFeedbackStatusCounts>({
-    open: 0, reviewed: 0, resolved: 0, dismissed: 0,
-  });
   const [loading, setLoading] = useState(true);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [sortColumn, setSortColumn] = useState('created_at');
+  const [sortColumn, setSortColumn] = useState('activity');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
 
@@ -122,7 +120,6 @@ export default function AppFeedbackTab() {
       });
       setItems(result.items);
       setTotal(result.total);
-      setStatusCounts(result.statusCounts);
     } catch {
       // silent
     } finally {
@@ -131,6 +128,31 @@ export default function AppFeedbackTab() {
   }, [statusFilter, categoryFilter, debouncedSearch, sortColumn, sortDirection, page]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Refresh when a thread read-state or status changes elsewhere (detail view
+  // stamps admin_last_read_at; FeedbackShell posts comments).
+  useEffect(() => {
+    const handler = () => { load(); };
+    window.addEventListener('feedback-unread-changed', handler);
+    return () => window.removeEventListener('feedback-unread-changed', handler);
+  }, [load]);
+
+  // 30s background poll while the tab is visible + immediate refresh on
+  // tab-visibility regain. Skipped when the tab is hidden.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    const intervalId = setInterval(tick, POLL_INTERVAL_MS);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [load]);
 
   const handleSort = (columnId: string) => {
     if (sortColumn === columnId) {
@@ -143,25 +165,20 @@ export default function AppFeedbackTab() {
   };
 
   const columns = [
+    { id: 'flag', label: '', sortable: false },
     { id: 'created_at', label: 'Submitted', sortable: true },
     { id: 'user', label: 'User', sortable: false },
     { id: 'category', label: 'Category', sortable: true },
     { id: 'comment', label: 'Comment', sortable: false },
     { id: 'status', label: 'Status', sortable: true },
+    { id: 'actions', label: '', sortable: false },
   ];
 
-  if (selected) {
-    return (
-      <AppFeedbackDetailView
-        item={selected}
-        onBack={() => setSelected(null)}
-        onUpdated={async () => {
-          await load();
-          setSelected(null);
-        }}
-      />
-    );
-  }
+  const handleRowDeleted = (deletedId: string) => {
+    setItems((prev) => prev.filter((it) => it.id !== deletedId));
+    setTotal((prev) => Math.max(0, prev - 1));
+    if (selected?.id === deletedId) setSelected(null);
+  };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -169,19 +186,17 @@ export default function AppFeedbackTab() {
       <Box sx={{ px: 3, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 1 }}>
           {(['all', 'open', 'reviewed', 'resolved', 'dismissed'] as StatusFilter[]).map((f) => {
-            const count = f === 'all' ? total : statusCounts[f as AppFeedbackStatus];
             const labelText = f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1);
             return (
-              <Badge key={f} badgeContent={count} color="primary" max={999} sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 14, minWidth: 14 } }}>
-                <Chip
-                  label={labelText}
-                  size="small"
-                  variant={statusFilter === f ? 'filled' : 'outlined'}
-                  color={statusFilter === f ? 'primary' : 'default'}
-                  onClick={() => { setStatusFilter(f); setPage(0); }}
-                  sx={{ height: 24, fontSize: '0.72rem' }}
-                />
-              </Badge>
+              <Chip
+                key={f}
+                label={labelText}
+                size="small"
+                variant={statusFilter === f ? 'filled' : 'outlined'}
+                color={statusFilter === f ? 'primary' : 'default'}
+                onClick={() => { setStatusFilter(f); setPage(0); }}
+                sx={{ height: 24, fontSize: '0.72rem' }}
+              />
             );
           })}
 
@@ -278,18 +293,38 @@ export default function AppFeedbackTab() {
                   onClick={() => setSelected(item)}
                   sx={{ cursor: 'pointer' }}
                 >
+                  <TableCell sx={{ verticalAlign: 'top', width: 54, pr: 0 }}>
+                    {!item.adminLastReadAt && item.status === 'open' && (
+                      <Chip
+                        label="NEW"
+                        size="small"
+                        color="info"
+                        sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.04em' }}
+                      />
+                    )}
+                  </TableCell>
                   <TableCell sx={{ fontSize: '0.78rem', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                     {formatTimestamp(item.createdAt)}
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.78rem', verticalAlign: 'top' }}>
-                    <Typography variant="body2" sx={{ fontSize: '0.78rem', lineHeight: 1.3 }}>
-                      {item.userName || '—'}
-                    </Typography>
-                    {item.userEmail && (
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', display: 'block', lineHeight: 1.3 }}>
-                        {item.userEmail}
-                      </Typography>
-                    )}
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      {item.hasUnread && (
+                        <Box
+                          title="Unread reply from user"
+                          sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'error.main', flexShrink: 0 }}
+                        />
+                      )}
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ fontSize: '0.78rem', lineHeight: 1.3, fontWeight: item.hasUnread ? 600 : 400 }}>
+                          {item.userName || '—'}
+                        </Typography>
+                        {item.userEmail && (
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', display: 'block', lineHeight: 1.3 }}>
+                            {item.userEmail}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Stack>
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.78rem', verticalAlign: 'top' }}>
                     <Chip
@@ -318,6 +353,20 @@ export default function AppFeedbackTab() {
                           )}
                         </Stack>
                       )}
+                      {item.commentCount > 0 && (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.25}
+                          sx={{ color: 'text.secondary', flexShrink: 0, mt: '1px' }}
+                          title={`${item.commentCount} comment${item.commentCount === 1 ? '' : 's'} in thread`}
+                        >
+                          <ChatBubbleOutlineIcon sx={{ fontSize: '0.78rem' }} />
+                          <Typography component="span" sx={{ fontSize: '0.7rem', lineHeight: 1 }}>
+                            {item.commentCount}
+                          </Typography>
+                        </Stack>
+                      )}
                       <Box component="span">{truncate(item.userComment, 140)}</Box>
                     </Stack>
                   </TableCell>
@@ -328,6 +377,13 @@ export default function AppFeedbackTab() {
                       color={statusChipColor(item.status)}
                       variant="outlined"
                       sx={{ height: 22, fontSize: '0.7rem' }}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', width: 40, pl: 0, pr: 1 }} onClick={(e) => e.stopPropagation()}>
+                    <FeedbackRowMenu
+                      feedback={item}
+                      viewerRole="admin"
+                      onDeleted={handleRowDeleted}
                     />
                   </TableCell>
                 </TableRow>
@@ -350,6 +406,17 @@ export default function AppFeedbackTab() {
             Next
           </Button>
         </Stack>
+      )}
+
+      {/* Trello-style overlay */}
+      {selected && (
+        <FeedbackDetailModal
+          open
+          onClose={() => setSelected(null)}
+          viewerRole="admin"
+          feedback={selected}
+          onUpdated={() => { load(); }}
+        />
       )}
     </Box>
   );

@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, ReplacementPriorities, ManufacturerProfile } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -424,7 +424,7 @@ export async function getAdminAppFeedbackList(params?: {
   sortDir?: 'asc' | 'desc';
   page?: number;
   limit?: number;
-}): Promise<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }> {
+}): Promise<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts; needsAttentionCount: number }> {
   const searchParams = new URLSearchParams();
   if (params?.status) searchParams.set('status', params.status);
   if (params?.category) searchParams.set('category', params.category);
@@ -434,12 +434,12 @@ export async function getAdminAppFeedbackList(params?: {
   if (params?.page !== undefined) searchParams.set('page', String(params.page));
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const qs = searchParams.toString();
-  return fetchApi<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts }>(
+  return fetchApi<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts; needsAttentionCount: number }>(
     `${BASE}/admin/app-feedback${qs ? `?${qs}` : ''}`
   );
 }
 
-/** Update app feedback status / admin notes */
+/** Update app feedback status */
 export async function updateAppFeedback(feedbackId: string, update: AppFeedbackUpdate): Promise<void> {
   const res = await fetch(`${BASE}/admin/app-feedback/${feedbackId}`, {
     method: 'PATCH',
@@ -448,6 +448,46 @@ export async function updateAppFeedback(feedbackId: string, update: AppFeedbackU
   });
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'Failed to update feedback');
+}
+
+/** List the signed-in user's own feedback submissions (newest first). */
+export async function getOwnAppFeedbackList(): Promise<{ items: AppFeedbackListItem[] }> {
+  return fetchApi<{ items: AppFeedbackListItem[] }>(`${BASE}/app-feedback`);
+}
+
+/** Get a single thread for the signed-in user. Side-effect: stamps read timestamp. */
+export async function getOwnAppFeedbackThread(feedbackId: string): Promise<AppFeedbackThread> {
+  return fetchApi<AppFeedbackThread>(`${BASE}/app-feedback/${feedbackId}`);
+}
+
+/** Admin variant: fetches full thread + stamps admin read timestamp. */
+export async function getAdminAppFeedbackThread(feedbackId: string): Promise<AppFeedbackThread> {
+  return fetchApi<AppFeedbackThread>(`${BASE}/admin/app-feedback/${feedbackId}/thread`);
+}
+
+/** Post a comment to a feedback thread. Role is resolved server-side. */
+export async function postAppFeedbackComment(feedbackId: string, body: string): Promise<AppFeedbackComment> {
+  return fetchApi<AppFeedbackComment>(`${BASE}/app-feedback/${feedbackId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+}
+
+/** Count of threads with unread admin replies for the signed-in user. */
+export async function getOwnAppFeedbackUnreadCount(): Promise<{ count: number }> {
+  return fetchApi<{ count: number }>(`${BASE}/app-feedback/unread-count`);
+}
+
+/**
+ * Permanently delete an entire feedback thread (the original submission, all
+ * comments, and attachment files in storage). Either the owning user or any
+ * admin can call this — server-side RLS enforces.
+ */
+export async function deleteAppFeedback(feedbackId: string): Promise<void> {
+  const res = await fetch(`${BASE}/app-feedback/${feedbackId}`, { method: 'DELETE' });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Failed to delete feedback');
 }
 
 /** Build export URL for direct download (window.open). */

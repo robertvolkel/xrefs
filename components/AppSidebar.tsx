@@ -14,7 +14,7 @@ import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
-import { getAdminAppFeedbackList } from '@/lib/api';
+import { getAdminAppFeedbackList, getOwnAppFeedbackUnreadCount } from '@/lib/api';
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
 import ServiceStatusIcon from '@/components/ServiceStatusIcon';
@@ -42,23 +42,77 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
   const isOrgActive = pathname === '/organization';
 
   const isSettingsActive = pathname === '/settings';
+  const isFeedbackActive = pathname === '/feedback';
 
   const [hasNewReleases, setHasNewReleases] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState(false);
-  const [hasOpenAppFeedback, setHasOpenAppFeedback] = useState(false);
+  const [adminFeedbackNeedsAttention, setAdminFeedbackNeedsAttention] = useState(false);
+  const [hasUnreadUserFeedback, setHasUnreadUserFeedback] = useState(false);
 
-  // Open app-feedback indicator (admin-only — drives the Monitoring icon dot badge)
+  // Admin indicator — Monitoring icon lights up when there's app feedback that
+  // genuinely needs attention: an unread user reply OR an item the admin has
+  // never opened. Items the admin has already read (even if status is still
+  // 'open') do NOT trigger the dot.
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
-    getAdminAppFeedbackList({ status: 'open', limit: 1 })
-      .then((r) => {
-        if (cancelled) return;
-        setHasOpenAppFeedback(r.statusCounts.open > 0);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    const refresh = () => {
+      getAdminAppFeedbackList({ limit: 1 })
+        .then((r) => {
+          if (cancelled) return;
+          setAdminFeedbackNeedsAttention(r.needsAttentionCount > 0);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const onChange = () => refresh();
+    const tick = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('feedback-unread-changed', onChange);
+    document.addEventListener('visibilitychange', onVis);
+    const intervalId = setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('feedback-unread-changed', onChange);
+      document.removeEventListener('visibilitychange', onVis);
+      clearInterval(intervalId);
+    };
+  }, [isAdmin]);
+
+  // User indicator — Feedback icon lights up when there's an unread admin reply.
+  useEffect(() => {
+    if (isAdmin) return;
+    let cancelled = false;
+    const refresh = () => {
+      getOwnAppFeedbackUnreadCount()
+        .then((r) => {
+          if (cancelled) return;
+          setHasUnreadUserFeedback(r.count > 0);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const onChange = () => refresh();
+    const tick = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('feedback-unread-changed', onChange);
+    document.addEventListener('visibilitychange', onVis);
+    const intervalId = setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('feedback-unread-changed', onChange);
+      document.removeEventListener('visibilitychange', onVis);
+      clearInterval(intervalId);
+    };
   }, [isAdmin]);
 
   useEffect(() => {
@@ -174,17 +228,20 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
         </IconButton>
 
         <IconButton
-          onClick={() => setFeedbackOpen(true)}
+          onClick={() => router.push('/feedback')}
           size="small"
-          title="Give feedback"
+          title="My feedback"
           sx={{
             mt: 1.5,
-            color: 'text.secondary',
+            color: isFeedbackActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isFeedbackActive ? 'action.selected' : 'transparent',
             borderRadius: 1,
             '&:hover': { color: 'text.primary' },
           }}
         >
-          <EditNoteOutlinedIcon fontSize="small" />
+          <Badge variant="dot" color="error" invisible={isAdmin || !hasUnreadUserFeedback}>
+            <EditNoteOutlinedIcon fontSize="small" />
+          </Badge>
         </IconButton>
       </Box>
 
@@ -217,7 +274,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
               '&:hover': { color: 'text.primary' },
             }}
           >
-            <Badge variant="dot" color="error" invisible={!hasOpenAppFeedback}>
+            <Badge variant="dot" color="error" invisible={!adminFeedbackNeedsAttention}>
               <MonitorHeartOutlinedIcon fontSize="small" />
             </Badge>
           </IconButton>

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AppFeedbackCategory, AppFeedbackAttachment } from '@/lib/types';
+import {
+  AppFeedbackCategory,
+  AppFeedbackAttachment,
+  AppFeedbackAttachmentView,
+  AppFeedbackListItem,
+  AppFeedbackStatus,
+} from '@/lib/types';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 
@@ -8,6 +14,7 @@ const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'im
 const MAX_ATTACHMENTS = 5;
 const MAX_BYTES_PER_FILE = 10 * 1024 * 1024;
 const BUCKET = 'app-feedback-attachments';
+const SIGNED_URL_TTL_SECONDS = 3600;
 
 function extFromMime(mime: string): string {
   switch (mime) {
@@ -18,6 +25,101 @@ function extFromMime(mime: string): string {
     default: return 'bin';
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// GET — list the signed-in user's own feedback submissions
+// ─────────────────────────────────────────────────────────────
+
+export async function GET(): Promise<NextResponse> {
+  try {
+    const { user, error: authError } = await requireAuth();
+    if (authError) return authError;
+
+    const supabase = await createClient();
+
+    const { data: fbRows, error } = await supabase
+      .from('app_feedback')
+      .select('*')
+      .eq('user_id', user!.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Own feedback list query error:', error.message);
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch feedback' },
+        { status: 500 },
+      );
+    }
+
+    const rows = (fbRows ?? []) as Record<string, unknown>[];
+    const feedbackIds = rows.map((r) => r.id as string);
+
+    // Comment counts + latest admin-comment timestamp per thread
+    const countByFeedback = new Map<string, number>();
+    const latestAdminAtByFeedback = new Map<string, string>();
+    if (feedbackIds.length > 0) {
+      const { data: comments } = await supabase
+        .from('app_feedback_comments')
+        .select('feedback_id, author_role, created_at')
+        .in('feedback_id', feedbackIds);
+      for (const c of (comments ?? []) as Record<string, unknown>[]) {
+        const fid = c.feedback_id as string;
+        countByFeedback.set(fid, (countByFeedback.get(fid) ?? 0) + 1);
+        if (c.author_role === 'admin') {
+          const ts = c.created_at as string;
+          const existing = latestAdminAtByFeedback.get(fid);
+          if (!existing || ts > existing) latestAdminAtByFeedback.set(fid, ts);
+        }
+      }
+    }
+
+    const items: AppFeedbackListItem[] = await Promise.all(rows.map(async (row) => {
+      const rawAttachments = (row.attachments as AppFeedbackAttachment[] | null) ?? [];
+      const attachments: AppFeedbackAttachmentView[] = await Promise.all(
+        rawAttachments.map(async (att) => {
+          const { data: signed } = await supabase.storage
+            .from(BUCKET)
+            .createSignedUrl(att.path, SIGNED_URL_TTL_SECONDS);
+          return { ...att, signedUrl: signed?.signedUrl ?? '' };
+        }),
+      );
+      const fid = row.id as string;
+      const userLastReadAt = row.user_last_read_at as string | undefined;
+      const latestAdminAt = latestAdminAtByFeedback.get(fid);
+      const hasUnread = !!latestAdminAt && (!userLastReadAt || latestAdminAt > userLastReadAt);
+      return {
+        id: fid,
+        userId: row.user_id as string,
+        category: row.category as AppFeedbackCategory,
+        userComment: row.user_comment as string,
+        userAgent: row.user_agent as string | undefined,
+        viewport: row.viewport as string | undefined,
+        status: row.status as AppFeedbackStatus,
+        resolvedBy: row.resolved_by as string | undefined,
+        resolvedAt: row.resolved_at as string | undefined,
+        createdAt: row.created_at as string,
+        updatedAt: row.updated_at as string,
+        userLastReadAt,
+        adminLastReadAt: row.admin_last_read_at as string | undefined,
+        attachments,
+        commentCount: countByFeedback.get(fid) ?? 0,
+        hasUnread,
+      };
+    }));
+
+    return NextResponse.json({ success: true, data: { items } });
+  } catch (error) {
+    console.error('Own feedback list API error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// POST — submit new feedback (existing behavior, unchanged)
+// ─────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -71,7 +173,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .from(BUCKET)
         .upload(path, buffer, { contentType: file.type, upsert: false });
       if (upErr) {
-        // Best-effort cleanup of any prior uploads
         if (uploaded.length > 0) {
           await supabase.storage.from(BUCKET).remove(uploaded.map((a) => a.path));
         }
