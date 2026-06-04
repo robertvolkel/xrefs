@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Triage /investigate mis-buckets test-condition params as `disambiguation` (P3)
+
+**Discovered June 3, 2026** while clearing the Galaxy B7 IGBT queue. The AI investigator returned `disambiguation` (map to `ic_max` / `vce_sat` / `eoff`) for `Condition1_IC (mA)` and `Condition1_VCE (V)` — both pure test-condition columns ("the current/voltage AT WHICH another spec is measured"). The map-to targets it proposed (`ic_max`, `vce_sat`) **already exist as separate, correctly-mapped attributes** on the same products (visible in the investigate diagnostic's "Actual JSONB keys seen" list). Mapping the condition column onto the existing rating would collide/corrupt (e.g. a 20–1000 mA test current overwriting a tens-to-hundreds-of-A `ic_max` rating).
+
+**Root cause:** the `/investigate` prompt doesn't use "the attribute I'd map to is already populated on these products" as a signal. When the target canonical already appears in the products' JSONB, a same-concept-named column is almost always a *test condition* for that spec → bucket should be `unmappable`, not `disambiguation`.
+
+**Fix idea:** feed the investigator the set of attributeIds already present on the affected products (it already fetches sample products — the keys are right there), and add a principled rule: *"if the canonical you would map to already exists on these products, this column is likely a test-condition qualifier for that spec — prefer `unmappable` unless the values are a distinct, substitution-relevant range."* Principled rule, not a per-paramName ban (cf. [[ai-prompt-principled-rules-not-lexical-bans]]).
+
+**Mitigated, not blocked:** the drawer now always offers a "Mark unmappable instead" escape button (June 3, 2026) so engineer judgment can override the AI's bucket regardless. This BACKLOG item is the upstream prompt fix so the AI gets it right without the override.
+
+---
+
 ## Atlas unit-prefix backfill — remaining ~149 MFRs (top 20 done June 2, 2026)
 **Status:** PARTIAL — top 20 MFRs completed in Decision #217 session (100,948 products updated across 22 MFRs including 2 substring bonuses from AK matching 3PEAK + AMPAK)
 **Priority:** P2 — top 20 covered ~73% of affected products. Long tail of 149 MFRs (~36K products) remains. Each is small (<1K products each typically), so the per-MFR business impact is lower than the top 20.
@@ -2128,3 +2140,30 @@ Engineer asked whether to extend `/admin/atlas/ingest` with a spreadsheet upload
 **Why this matters:** the Investigator is now load-bearing for one-click reclassify (Decision #188) and unmappable-marking workflows. An overconfident verdict on a multi-MFR collision corrupts real data (LRC's flag values turn into `'1'`/`'30'` garbage strings if the wrong mapping fires). The fix is structural — the model needs to SEE the cross-MFR variance, not infer it from a one-MFR sample.
 
 **Workaround until built:** when the row's `affectedManufacturers.length > 1` AND the row-level sample values look numerically heterogeneous OR mix string/numeric, treat any Investigator verdict as advisory and verify by spot-checking one product from each MFR via the Atlas Explorer before clicking the action button.
+
+---
+
+## Collaborative app feedback — deferred items (Decision #222 follow-ups)
+
+**Status:** Open. None block the released feature.
+**Priority:** P3 — quality-of-life and scale work.
+
+Deferred consciously from the Decision #220 + #222 rollout:
+
+1. **Server-side activity sort via Postgres function.** The current `sort_by=activity` path fetches the full filtered set, computes `hasUnread` in JS, sorts, then slices — fine at the current scale (~100 items). When the inbox grows past several hundred rows, push the sort into a `RETURNS jsonb` RPC per the Decision #206 pattern so the wire payload stays small. The trigger condition: route latency on the admin tab exceeds ~500ms or response body crosses ~50KB.
+
+2. **Email notifications on new reply.** Currently in-app only (red dot, "NEW REPLY" label, polling). Users won't see a reply if they don't visit the app. Wire to whatever transactional-email provider the project standardizes on. Both directions: user-replied → email Rob; admin-replied → email the user. Throttle so back-and-forth bursts don't spam.
+
+3. **Lightbox / zoom for attachment thumbnails inside the modal.** Today, clicking a thumbnail opens the signed URL in a new tab. A modal-on-modal lightbox would feel more native but introduces overlay-ordering complications (ESC closes which one?). Defer until a user complains.
+
+4. **Attachments on follow-up comments.** Currently attachments are only on the initial submission. Adding them to comments doubles the upload code path and storage policy surface. Wait for a user to explicitly request it.
+
+5. **Comment editing / deletion.** Currently immutable — clean audit trail, unambiguous unread semantics. If editing lands, the unread-dot math has to decide whether an edit re-fires the dot for the other party (it probably should, treat edit as a new event).
+
+6. **Real-time inside the open modal.** The modal does NOT poll the thread while open. If both parties are typing at once, the second party's message only appears when the first party closes + reopens, or after the next 30s list-poll completes post-close. Trade-off: avoids cursor-jump-while-typing race. Could be solved with Supabase Realtime subscriptions if needed.
+
+7. **Sort-mode reset affordance on the admin tab.** Clicking a column header (Submitted/Category/Status) currently overrides the default activity sort with no UI to flip back to activity-first without a page refresh. Either: (a) add an explicit "Sort: Latest activity" pill toggle in the toolbar, or (b) treat the activity sort as a fourth column-header click target. (a) is more discoverable.
+
+8. **Tenant-admin enum widening on `app_feedback_comments.author_role`.** Currently `('user', 'admin')`. Decision #222 says when multi-tenancy lands, widen to `('user', 'platform_admin', 'tenant_admin')` so tenant admins (when they exist) can participate in the thread without RLS or app-level role spoofing. Schema migration is just a CHECK constraint widen.
+
+9. **`(stale)` HMR auto-recovery in dev.** Twice this session, Next.js HMR went stale and surfaced hydration errors that weren't real bugs. Track whether Turbopack ships a self-healing fix; if not, consider a dev-only banner that detects the `(stale)` indicator and prompts the user to hard-refresh.

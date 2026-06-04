@@ -3552,6 +3552,30 @@ export function DeepAnalysisContent({ row, analysis, onApplyPrefill, onConfirmWr
                 {analysis.recommendation.alternativeActionLabel}
               </Button>
             )}
+            {/* Engineer escape hatch. The AI sometimes mis-buckets a pure
+                test-condition / metadata param as 'disambiguation' or
+                'new_canonical' (e.g. Galaxy 'Condition1_IC', '@Ic(mA)' —
+                the current/voltage AT WHICH another spec is measured). When
+                the engineer judges the param unmappable but the AI did not,
+                there'd otherwise be no path to status='unmappable' from this
+                drawer. Always offer it except when the AI already picked
+                'unmappable' (its primary button does this). Hidden under
+                validation errors like the other actions. */}
+            {analysis.bucket !== 'unmappable'
+              && !(analysis.validationErrors && analysis.validationErrors.length > 0) && (
+              <Tooltip title="Override the AI: record this paramName as unmappable test-condition / metadata and drop it from the queue.">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="error"
+                  startIcon={<BlockOutlinedIcon sx={{ fontSize: 14 }} />}
+                  onClick={() => { onMarkUnmappable(); onAfterAction?.(); }}
+                  sx={{ fontSize: '0.7rem' }}
+                >
+                  Mark unmappable instead
+                </Button>
+              </Tooltip>
+            )}
             {/* Acknowledge param row.paramName so unused-prop lint stays quiet
                 and the row identity is queryable from devtools. */}
             <Typography variant="caption" sx={{ color: 'text.disabled', alignSelf: 'center' }}>
