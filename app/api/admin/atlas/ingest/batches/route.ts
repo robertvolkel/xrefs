@@ -56,8 +56,8 @@ const VALID_STATUSES: IngestStatus[] = ['pending', 'applied', 'reverted', 'expir
 const VALID_RISKS: IngestRisk[] = ['clean', 'review', 'attention'];
 const VALID_INCLUDE = new Set(['synonyms', 'auto_flagged', 'all']);
 type IncludeMode = 'synonyms' | 'auto_flagged' | 'all';
-const VALID_STATUS_FILTER = new Set(['open', 'accepted', 'undone', 'all']);
-type StatusFilter = 'open' | 'accepted' | 'undone' | 'all';
+const VALID_STATUS_FILTER = new Set(['open', 'accepted', 'undone', 'deferred', 'unmappable', 'all']);
+type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
 
 /** Slugify a manufacturer display name as a fallback when we can't resolve the
  *  canonical slug from atlas_manufacturers (e.g. row never registered there). */
@@ -87,7 +87,7 @@ type AutoFlag = {
   reasoning: string;              // human-readable rationale from registry
   matchingParam: string;          // the paramName that triggered the hit
 };
-type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null;
 /** Per-row signal of how much accepting this row would improve matching
  *  quality. Used by the Triage table to sort + colour-tier rows so engineers
  *  can prioritise high-leverage accepts. See computeMatchingImpact() below. */
@@ -161,6 +161,18 @@ function isAccepted(r: Classified): boolean {
 function isUndone(r: Classified): boolean {
   return !!r.acceptedOverride && !r.acceptedOverride.isActive;
 }
+function isDeferred(r: Classified): boolean {
+  return r.noteStatus === 'deferred';
+}
+function isUnmappable(r: Classified): boolean {
+  return r.noteStatus === 'unmappable';
+}
+/** "OPEN queue" = lifecycle-open AND not parked. Drives the default
+ *  view, the OPEN status chip, and triageCounts so the synonyms /
+ *  auto-flagged tallies match what the engineer actually sees. */
+function isInOpenQueue(r: Classified): boolean {
+  return isOpen(r) && !isUnmappable(r) && !isDeferred(r);
+}
 
 /** Heavy aggregation: pulls every pending+applied batch's unmappedParams JSONB,
  *  the full overrides table, the notes table, runs cross-batch dedup +
@@ -170,7 +182,7 @@ function isUndone(r: Classified): boolean {
 async function computeTriageAggregation(): Promise<{
   classified: Classified[];
   triageCounts: { synonyms: number; autoFlagged: number; total: number };
-  statusCounts: { open: number; accepted: number; undone: number };
+  statusCounts: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
 }> {
   const t0 = Date.now();
   const supabase = createServiceClient();
@@ -499,17 +511,22 @@ async function computeTriageAggregation(): Promise<{
     };
   });
 
-  // Global counts (over the FULL classified set).
-  const openClassified = classified.filter(isOpen);
+  // Global counts (over the FULL classified set). triageCounts and the
+  // OPEN status count both use isInOpenQueue so synonyms / auto-flagged
+  // tallies match what the engineer sees once deferred + unmappable rows
+  // are hidden from the default view.
+  const openQueueClassified = classified.filter(isInOpenQueue);
   const triageCounts = {
-    synonyms: openClassified.filter((r) => r.effective === 'synonym').length,
-    autoFlagged: openClassified.filter((r) => r.effective === 'flagged').length,
-    total: openClassified.length,
+    synonyms: openQueueClassified.filter((r) => r.effective === 'synonym').length,
+    autoFlagged: openQueueClassified.filter((r) => r.effective === 'flagged').length,
+    total: openQueueClassified.length,
   };
   const statusCounts = {
-    open: openClassified.length,
+    open: openQueueClassified.length,
     accepted: classified.filter(isAccepted).length,
     undone: classified.filter(isUndone).length,
+    deferred: classified.filter(isDeferred).length,
+    unmappable: classified.filter(isUnmappable).length,
   };
 
   const tEnd = Date.now();
@@ -658,13 +675,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // ── Cached aggregation read (L1 → L2 → cold compute) ──────────────────
     let classified: Classified[];
     let cachedTriageCounts: { synonyms: number; autoFlagged: number; total: number };
-    let cachedStatusCounts: { open: number; accepted: number; undone: number };
+    let cachedStatusCounts: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
 
     const cacheResult = await readCachedTriageData(forceFresh);
     if (cacheResult) {
       classified = cacheResult.data.classified as Classified[];
       cachedTriageCounts = cacheResult.data.triageCounts;
-      cachedStatusCounts = cacheResult.data.statusCounts;
+      // L2-migration safety: pre-deploy cached entries lack deferred /
+      // unmappable. Recompute them from the cached classified set instead
+      // of waiting for SWR refresh — keeps chip counts honest immediately.
+      const rawCounts = cacheResult.data.statusCounts as Partial<typeof cachedStatusCounts>;
+      cachedStatusCounts = {
+        open: rawCounts.open ?? 0,
+        accepted: rawCounts.accepted ?? 0,
+        undone: rawCounts.undone ?? 0,
+        deferred: rawCounts.deferred ?? classified.filter(isDeferred).length,
+        unmappable: rawCounts.unmappable ?? classified.filter(isUnmappable).length,
+      };
       // SWR: serve stale L2 immediately, refresh in background. The
       // recompute upserts L2 when finished; next request gets fresh data.
       if (cacheResult.source === 'l2-stale') {
@@ -708,16 +735,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (batchFilter) {
       workingClassified = classified.filter((r) => r.affectedBatchIds.includes(batchFilter));
-      const open = workingClassified.filter(isOpen);
+      const openQueue = workingClassified.filter(isInOpenQueue);
       triageCounts = {
-        synonyms: open.filter((r) => r.effective === 'synonym').length,
-        autoFlagged: open.filter((r) => r.effective === 'flagged').length,
-        total: open.length,
+        synonyms: openQueue.filter((r) => r.effective === 'synonym').length,
+        autoFlagged: openQueue.filter((r) => r.effective === 'flagged').length,
+        total: openQueue.length,
       };
       statusCounts = {
-        open: open.length,
+        open: openQueue.length,
         accepted: workingClassified.filter(isAccepted).length,
         undone: workingClassified.filter(isUndone).length,
+        deferred: workingClassified.filter(isDeferred).length,
+        unmappable: workingClassified.filter(isUnmappable).length,
       };
     }
 
@@ -726,16 +755,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     else if (include === 'all') visible = workingClassified;
     else visible = workingClassified.filter((r) => r.effective === 'synonym');
 
-    // Unmappable rows are hidden from synonyms + auto_flagged views (the
-    // engineer has explicitly decided they can't be mapped). They reappear
-    // under include=all so the audit trail stays accessible.
+    // Parked rows (deferred + unmappable) are hidden from synonyms +
+    // auto_flagged default views. They remain visible when the engineer
+    // explicitly clicks the DEFERRED or UNMAPPABLE status chip (or under
+    // include=all so the audit trail stays accessible).
     if (include !== 'all') {
-      visible = visible.filter((r) => r.noteStatus !== 'unmappable');
+      visible = visible.filter((r) => {
+        if (isUnmappable(r) && statusFilter !== 'unmappable') return false;
+        if (isDeferred(r) && statusFilter !== 'deferred') return false;
+        return true;
+      });
     }
 
-    if (statusFilter === 'open') visible = visible.filter(isOpen);
+    if (statusFilter === 'open') visible = visible.filter(isInOpenQueue);
     else if (statusFilter === 'accepted') visible = visible.filter(isAccepted);
     else if (statusFilter === 'undone') visible = visible.filter(isUndone);
+    else if (statusFilter === 'deferred') visible = visible.filter(isDeferred);
+    else if (statusFilter === 'unmappable') visible = visible.filter(isUnmappable);
 
     const unmappedParamsGlobal: GlobalUnmapped[] = visible
       .map(({ effective: _effective, ...rest }) => rest)

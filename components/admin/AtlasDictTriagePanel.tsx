@@ -191,6 +191,8 @@ export default function AtlasDictTriagePanel() {
           open: Math.max(0, prev.statusCounts.open - 1),
           accepted: prev.statusCounts.accepted + 1,
           undone: prev.statusCounts.undone,
+          deferred: prev.statusCounts.deferred,
+          unmappable: prev.statusCounts.unmappable,
         }
         : prev.statusCounts;
       // triageCounts (synonyms / autoFlagged) is scoped to OPEN status —
@@ -216,7 +218,7 @@ export default function AtlasDictTriagePanel() {
   // labels, badge state) also responds.
   const onRowFlagged = useCallback((
     paramName: string,
-    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
+    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null,
     flaggedBy: 'auto' | 'engineer' | null,
   ) => {
     setData((prev) => {
@@ -226,36 +228,53 @@ export default function AtlasDictTriagePanel() {
       // on its way in). Mirrors the row-classification logic in
       // filteredRows: a row is "auto-flagged" iff autoFlag exists OR
       // noteStatus is 'wrong_family'; otherwise it's a "synonym" row.
+      // "Parked" means deferred OR unmappable — both hide the row from
+      // every default mode view.
       const target = prev.unmappedParamsGlobal.find((r) => r.paramName === paramName);
       const wasFlagged = target ? (!!target.autoFlag || target.noteStatus === 'wrong_family') : false;
       const nextRows = prev.unmappedParamsGlobal.map((r) =>
         r.paramName === paramName ? { ...r, noteStatus: status, flaggedBy } : r,
       );
-      // triageCounts (Open Synonyms / Auto-flagged) — adjust based on the
-      // before/after classification + whether the row drops from the open
-      // queue entirely (status='unmappable' hides it from every default
-      // mode view, so it disappears from total too).
+      const isParkedNow = status === 'unmappable' || status === 'deferred';
+      const wasParked = target?.noteStatus === 'unmappable' || target?.noteStatus === 'deferred';
       const isFlaggedNow = !!target?.autoFlag || status === 'wrong_family';
-      const isUnmappableNow = status === 'unmappable';
-      const wasUnmappable = target?.noteStatus === 'unmappable';
       let triageCounts = prev.triageCounts;
       if (triageCounts) {
         let { synonyms, autoFlagged, total } = triageCounts;
         // Remove from previous bucket
-        if (!wasUnmappable) {
+        if (!wasParked) {
           if (wasFlagged) autoFlagged = Math.max(0, autoFlagged - 1);
           else synonyms = Math.max(0, synonyms - 1);
-          if (isUnmappableNow) total = Math.max(0, total - 1);
+          if (isParkedNow) total = Math.max(0, total - 1);
         }
         // Add into new bucket
-        if (!isUnmappableNow) {
+        if (!isParkedNow) {
           if (isFlaggedNow) autoFlagged += 1;
           else synonyms += 1;
-          if (wasUnmappable) total += 1;
+          if (wasParked) total += 1;
         }
         triageCounts = { synonyms, autoFlagged, total };
       }
-      return { ...prev, unmappedParamsGlobal: nextRows, triageCounts };
+      // statusCounts — when a lifecycle-open row gets parked it leaves the
+      // OPEN count and joins DEFERRED or UNMAPPABLE; reopen reverses.
+      // Accepted/undone counts are untouched (noteStatus is independent
+      // of acceptedOverride).
+      let statusCounts = prev.statusCounts;
+      if (statusCounts && target && !target.acceptedOverride) {
+        let { open, accepted, undone, deferred, unmappable } = statusCounts;
+        const wasDeferred = target.noteStatus === 'deferred';
+        const wasUnmappable = target.noteStatus === 'unmappable';
+        const isDeferredNow = status === 'deferred';
+        const isUnmappableNow = status === 'unmappable';
+        if (wasDeferred) deferred = Math.max(0, deferred - 1);
+        if (wasUnmappable) unmappable = Math.max(0, unmappable - 1);
+        if (isDeferredNow) deferred += 1;
+        if (isUnmappableNow) unmappable += 1;
+        if (!wasParked && isParkedNow) open = Math.max(0, open - 1);
+        if (wasParked && !isParkedNow) open += 1;
+        statusCounts = { open, accepted, undone, deferred, unmappable };
+      }
+      return { ...prev, unmappedParamsGlobal: nextRows, triageCounts, statusCounts };
     });
     // Also seed notesByParam so filteredRows' liveNoteStatus lookup picks
     // up the change before the next /unmapped-param-notes refetch.
@@ -304,6 +323,8 @@ export default function AtlasDictTriagePanel() {
           open: prev.statusCounts.open,
           accepted: Math.max(0, prev.statusCounts.accepted - 1),
           undone: prev.statusCounts.undone + 1,
+          deferred: prev.statusCounts.deferred,
+          unmappable: prev.statusCounts.unmappable,
         }
         : prev.statusCounts;
       return { ...prev, unmappedParamsGlobal: nextRows, statusCounts: nextStatusCounts };
@@ -376,20 +397,29 @@ export default function AtlasDictTriagePanel() {
       // wouldn't refresh until the next queue refetch. Using the live
       // value keeps the row visibility consistent with what just happened.
       const liveNoteStatus = notesByParam[row.paramName]?.status ?? row.noteStatus ?? null;
-      // Unmappable rows drop from every default view. Only the "All" mode
-      // keeps them visible so the engineer can audit (and revert via the
-      // AI Investigation Log if needed).
-      if (mode !== 'all' && liveNoteStatus === 'unmappable') return false;
+      // Parked rows (unmappable + deferred) drop from every default view.
+      // The DEFERRED and UNMAPPABLE status chips opt them back in; the
+      // "All" mode also keeps them visible so the audit trail stays
+      // accessible.
+      if (mode !== 'all') {
+        if (liveNoteStatus === 'unmappable' && statusFilter !== 'unmappable') return false;
+        if (liveNoteStatus === 'deferred' && statusFilter !== 'deferred') return false;
+      }
       // Mode filter (Open Synonyms vs Auto-flagged vs All) — derived from
       // autoFlag + noteStatus; same logic as the route's classifier.
       const isFlagged = !!row.autoFlag || liveNoteStatus === 'wrong_family';
       if (mode === 'auto_flagged' && !isFlagged) return false;
       if (mode === 'synonyms' && isFlagged) return false;
-      // Status filter (Open / Accepted / Undone / All).
+      // Status filter (Open / Accepted / Undone / Deferred / Unmappable / All).
+      // OPEN = lifecycle-open AND not parked. Mirrors isInOpenQueue() on
+      // the server so chip counts and visible rows stay aligned.
       const ov = row.acceptedOverride;
-      if (statusFilter === 'open' && ov) return false;
+      const isParked = liveNoteStatus === 'unmappable' || liveNoteStatus === 'deferred';
+      if (statusFilter === 'open' && (ov || isParked)) return false;
       if (statusFilter === 'accepted' && (!ov || !ov.isActive)) return false;
       if (statusFilter === 'undone' && (!ov || ov.isActive)) return false;
+      if (statusFilter === 'deferred' && liveNoteStatus !== 'deferred') return false;
+      if (statusFilter === 'unmappable' && liveNoteStatus !== 'unmappable') return false;
       if (search) {
         // Match against paramName OR the row's deterministic UID so an
         // engineer can paste "TR-a8f2c1" (from a Slack thread, a ticket,

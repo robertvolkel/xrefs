@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Box, Stack, Typography, Chip, Skeleton, Paper, ButtonBase } from '@mui/material';
+import { Box, Stack, Typography, Chip, Skeleton, Paper } from '@mui/material';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import { AppFeedbackListItem } from '@/lib/types';
 import {
@@ -70,29 +70,35 @@ export default function FeedbackList({ items, selectedId, onSelect, onDeleted, l
         {ordered.map((item) => {
           const selected = item.id === selectedId;
           return (
-            <ButtonBase
+            <Paper
               key={item.id}
+              variant="outlined"
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(item)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(item);
+                }
+              }}
               sx={{
-                display: 'block',
-                textAlign: 'left',
+                px: 2.25,
+                py: 1.75,
                 borderRadius: 2,
-                width: '100%',
+                cursor: 'pointer',
+                borderColor: item.hasUnread ? 'primary.main' : 'divider',
+                borderWidth: item.hasUnread ? 1.5 : 1,
+                bgcolor: selected ? 'action.selected' : 'background.paper',
+                transition: 'background-color 120ms, border-color 120ms',
+                '&:hover': { bgcolor: 'action.hover' },
+                '&:focus-visible': {
+                  outline: 2,
+                  outlineColor: 'primary.main',
+                  outlineOffset: 2,
+                },
               }}
             >
-              <Paper
-                variant="outlined"
-                sx={{
-                  px: 2.25,
-                  py: 1.75,
-                  borderRadius: 2,
-                  borderColor: item.hasUnread ? 'primary.main' : 'divider',
-                  borderWidth: item.hasUnread ? 1.5 : 1,
-                  bgcolor: selected ? 'action.selected' : 'background.paper',
-                  transition: 'background-color 120ms, border-color 120ms',
-                  '&:hover': { bgcolor: 'action.hover' },
-                }}
-              >
                 {/* Top row: category + status + unread dot + kebab */}
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                   <Chip
@@ -165,8 +171,7 @@ export default function FeedbackList({ items, selectedId, onSelect, onDeleted, l
                     </Stack>
                   )}
                 </Stack>
-              </Paper>
-            </ButtonBase>
+            </Paper>
           );
         })}
       </Stack>

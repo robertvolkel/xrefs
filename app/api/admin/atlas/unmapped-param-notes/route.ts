@@ -43,7 +43,7 @@ export async function GET(): Promise<NextResponse> {
       // alone, with no engineer rationale). Project as empty string when
       // null so the existing UI can default-render an empty textarea.
       note: (r.note as string | null) ?? '',
-      status: (r.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null) ?? null,
+      status: (r.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null) ?? null,
       flaggedBy: (r.flagged_by as 'auto' | 'engineer' | null) ?? null,
       autoDiagnosis: (r.auto_diagnosis as Record<string, unknown> | null) ?? null,
       flagged: (r.is_flagged as boolean | null) ?? false,

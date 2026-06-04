@@ -113,7 +113,7 @@ export type AutoFlag = {
   matchingParam: string;
 };
 
-export type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+export type NoteStatus = 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null;
 
 /** Structured AI verdict from /api/admin/atlas/dictionaries/investigate.
  *  Fired on demand for rows where the per-row /suggest verdict is NOT
@@ -253,7 +253,7 @@ export type GlobalUnmappedParam = {
   };
 };
 
-export type StatusFilter = 'open' | 'accepted' | 'undone' | 'all';
+export type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
 
 // Reply shape from POST /api/admin/atlas/dictionaries/suggest
 export type DictSuggestion = {
@@ -304,5 +304,5 @@ export type BatchListResponse = {
    *  Open = no override; Accepted = active override; Undone = inactive
    *  (reverted) override. Computed across all classified rows regardless of
    *  the include filter (mode). */
-  statusCounts?: { open: number; accepted: number; undone: number };
+  statusCounts?: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
 };

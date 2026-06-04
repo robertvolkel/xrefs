@@ -82,7 +82,7 @@ interface TriageRowForRollup {
   dominantFamily: string | null;
   affectedManufacturers: Array<{ slug: string; name: string; productCount: number }>;
   acceptedOverride?: { attributeId: string; isActive: boolean };
-  noteStatus?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null;
+  noteStatus?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null;
 }
 
 /** Estimated rule weight contributed by mapping a single unmapped paramName.
@@ -229,7 +229,9 @@ async function computeStats(): Promise<object> {
   if (triageResult?.data?.classified) {
     const rows = triageResult.data.classified as TriageRowForRollup[];
     for (const r of rows) {
-      if (r.noteStatus === 'unmappable') continue;
+      // Skip parked rows — both unmappable (never) and deferred (not now)
+      // shouldn't count toward improvement potential for the MFR.
+      if (r.noteStatus === 'unmappable' || r.noteStatus === 'deferred') continue;
       const weight = estimateUnmappedParamWeight(r);
       if (weight <= 0) continue;
       const affected = r.affectedManufacturers ?? [];

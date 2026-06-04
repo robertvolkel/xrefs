@@ -38,6 +38,9 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  Menu,
+  MenuItem,
+  Popover,
   Stack,
   Table,
   TableBody,
@@ -62,6 +65,9 @@ import NoteAltOutlinedIcon from '@mui/icons-material/NoteAltOutlined';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SearchIcon from '@mui/icons-material/Search';
 import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
+import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -257,7 +263,7 @@ interface Props {
    *  motivation as onRowAccepted/onRowReverted. */
   onRowFlagged?: (
     paramName: string,
-    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
+    status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null,
     flaggedBy: 'auto' | 'engineer' | null,
   ) => void;
   /** Stable key derived from the parent's filter inputs (mode, status,
@@ -1894,11 +1900,21 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   }, [notesByParam, onNoteChange]);
 
   const markUnmappable = useCallback(async (row: GlobalUnmappedParam) => {
+    // Optimistic — chip counts (deferred / unmappable / open) in the parent's
+    // statusCounts also depend on onRowFlagged, not just notesByParam.
+    onRowFlagged?.(row.paramName, 'unmappable', 'engineer');
     try {
+      const existing = notesByParam[row.paramName];
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'unmappable', flaggedBy: 'engineer' }),
+        body: JSON.stringify({
+          status: 'unmappable',
+          flaggedBy: 'engineer',
+          note: existing?.note ?? null,
+          autoDiagnosis: existing?.autoDiagnosis ?? null,
+          flagged: existing?.flagged ?? false,
+        }),
       });
       const json = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok || !(json as { success?: boolean }).success) {
@@ -1910,6 +1926,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // Close the AI audit loop. Fire-and-forget.
       void recordInvestigationAction(row, 'marked_unmappable');
     } catch (err) {
+      // Roll back the optimistic chip-count update.
+      onRowFlagged?.(row.paramName, notesByParam[row.paramName]?.status ?? null, notesByParam[row.paramName]?.flaggedBy ?? null);
       const msg = err instanceof Error ? err.message : 'Failed to mark unmappable';
       setStates((prev) => ({
         ...prev,
@@ -1919,7 +1937,109 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         } as RowState,
       }));
     }
-  }, [onNoteChange, recordInvestigationAction, states]);
+  }, [onNoteChange, onRowFlagged, notesByParam, recordInvestigationAction]);
+
+  // ─── Defer + Reopen (per-row "park for later" workflow) ───────
+  // Defer is the engineer-side counterpart to the AI verdict 'defer':
+  // they've decided this row needs upstream work / more context before
+  // it can be mapped, so park it out of the OPEN view. Reason textarea
+  // pre-fills from the AI explanation when present so engineers don't
+  // have to retype context they already saw.
+  const [deferPopover, setDeferPopover] = useState<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>(null);
+  const [deferReason, setDeferReason] = useState('');
+  const [deferSubmitting, setDeferSubmitting] = useState(false);
+  const [parkedMenuAnchor, setParkedMenuAnchor] = useState<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>(null);
+
+  const openDeferPopover = useCallback((row: GlobalUnmappedParam, anchor: HTMLElement) => {
+    const aiExplanation = states[row.paramName]?.suggestion?.suggestion === 'defer'
+      ? (states[row.paramName]?.suggestion?.explanation ?? '')
+      : '';
+    const existingNote = notesByParam[row.paramName]?.note ?? '';
+    // Prefer the existing engineer note when present (they wrote it for a
+    // reason); otherwise seed with the AI defer explanation if it exists.
+    setDeferReason(existingNote.trim().length > 0 ? existingNote : aiExplanation);
+    setDeferPopover({ anchor, row });
+  }, [states, notesByParam]);
+
+  const closeDeferPopover = useCallback(() => {
+    setDeferPopover(null);
+    setDeferReason('');
+  }, []);
+
+  const submitDefer = useCallback(async () => {
+    if (!deferPopover) return;
+    const row = deferPopover.row;
+    const reason = deferReason.trim();
+    setDeferSubmitting(true);
+    // Optimistic — flip the row's noteStatus + parent chip counts.
+    onRowFlagged?.(row.paramName, 'deferred', 'engineer');
+    try {
+      const existing = notesByParam[row.paramName];
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'deferred',
+          flaggedBy: 'engineer',
+          note: reason.length > 0 ? reason : (existing?.note ?? null),
+          autoDiagnosis: existing?.autoDiagnosis ?? null,
+          flagged: existing?.flagged ?? false,
+        }),
+      });
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !(json as { success?: boolean }).success) {
+        throw new Error((json as { error?: string }).error || 'Failed to defer');
+      }
+      if ((json as { item?: NoteRecord }).item) {
+        onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
+      }
+      setDeferPopover(null);
+      setDeferReason('');
+    } catch {
+      // Roll back optimistic chip-count update on error.
+      const fallback = notesByParam[row.paramName];
+      onRowFlagged?.(row.paramName, fallback?.status ?? null, fallback?.flaggedBy ?? null);
+    } finally {
+      setDeferSubmitting(false);
+    }
+  }, [deferPopover, deferReason, notesByParam, onRowFlagged, onNoteChange]);
+
+  // Reopen — clears 'deferred' or 'unmappable' back to NULL so the row
+  // re-enters the OPEN queue. Preserves the engineer note (it's still
+  // useful context). If the row had no other signal (no note + no flag),
+  // the server-side PUT handler deletes the row entirely.
+  const reopenRow = useCallback(async (row: GlobalUnmappedParam) => {
+    const existing = notesByParam[row.paramName];
+    const prevStatus = existing?.status ?? row.noteStatus ?? null;
+    const prevFlaggedBy = existing?.flaggedBy ?? row.flaggedBy ?? null;
+    // Optimistic
+    onRowFlagged?.(row.paramName, null, null);
+    try {
+      const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: null,
+          flaggedBy: null,
+          note: existing?.note ?? null,
+          autoDiagnosis: existing?.autoDiagnosis ?? null,
+          flagged: existing?.flagged ?? false,
+        }),
+      });
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !(json as { success?: boolean }).success) {
+        throw new Error((json as { error?: string }).error || 'Failed to reopen');
+      }
+      if ((json as { item?: NoteRecord }).item) {
+        onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
+      } else if ((json as { deleted?: boolean }).deleted) {
+        onNoteChange(row.paramName, null);
+      }
+    } catch {
+      // Roll back
+      onRowFlagged?.(row.paramName, prevStatus, prevFlaggedBy);
+    }
+  }, [notesByParam, onRowFlagged, onNoteChange]);
 
   // Per-row Revert — soft-deletes the override (sets is_active=false).
   // The DELETE endpoint preserves the audit row so the queue can show it
@@ -2816,6 +2936,46 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                           {renderBulkMatchChip(r)}
                           {renderFindSimilarButton(r)}
                         </Stack>
+                      ) : (r.noteStatus === 'deferred' || r.noteStatus === 'unmappable') ? (
+                        // Parked row — engineer chose to defer or mark
+                        // unmappable. Show a status chip + Reopen button so
+                        // the engineer can unlock the row back to OPEN.
+                        // Reopen preserves the engineer note as context.
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={r.noteStatus === 'deferred'
+                              ? 'Parked for later — Reopen to return to the Open queue.'
+                              : 'Marked unmappable — Reopen to allow mapping again.'}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={r.noteStatus === 'deferred'
+                                ? <PauseCircleOutlineIcon sx={{ fontSize: 12 }} />
+                                : <BlockOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label={r.noteStatus === 'deferred' ? 'Deferred' : 'Unmappable'}
+                              sx={{
+                                bgcolor: r.noteStatus === 'deferred' ? 'warning.dark' : 'action.disabledBackground',
+                                color: r.noteStatus === 'deferred' ? 'warning.contrastText' : 'text.secondary',
+                                fontSize: '0.6rem', height: 18,
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip title="Reopen — returns the row to the Open queue. Engineer note is preserved.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                onClick={() => reopenRow(r)}
+                                startIcon={<PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                Reopen
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
                       ) : flagged ? (
                         // Confirm + Revert. After Confirm the persisted status
                         // is 'wrong_family' so the "Confirm" button hides; only
@@ -2871,6 +3031,29 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                                 {state?.accepting ? <CircularProgress size={12} /> : 'Accept'}
                               </Button>
                             </span>
+                          </Tooltip>
+                          <Tooltip title="Defer — park this row out of the OPEN queue for later review. Reversible via Reopen.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="text"
+                                color="warning"
+                                onClick={(e) => openDeferPopover(r, e.currentTarget)}
+                                startIcon={<PauseCircleOutlineIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
+                              >
+                                Defer
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="More actions">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => setParkedMenuAnchor({ anchor: e.currentTarget, row: r })}
+                              sx={{ p: 0.25 }}
+                            >
+                              <MoreVertIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
                           </Tooltip>
                           {renderBulkMatchChip(r)}
                           {renderFindSimilarButton(r)}
@@ -3130,6 +3313,73 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           />
         );
       })()}
+
+      {/* Defer popover — small textarea anchored to the per-row Defer button.
+          Reason is optional; pre-filled with the AI defer explanation when
+          present so engineers don't retype context they already saw. */}
+      <Popover
+        open={deferPopover !== null}
+        anchorEl={deferPopover?.anchor ?? null}
+        onClose={closeDeferPopover}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+      >
+        <Box sx={{ p: 2, width: 360 }}>
+          <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontWeight: 600 }}>
+            Defer this row
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            {deferPopover ? `“${deferPopover.row.paramName}”` : ''} will leave the OPEN queue and appear under the DEFERRED chip. Reversible via Reopen.
+          </Typography>
+          <TextField
+            value={deferReason}
+            onChange={(e) => setDeferReason(e.target.value)}
+            placeholder="Reason (optional)"
+            multiline
+            rows={3}
+            fullWidth
+            size="small"
+            autoFocus
+            sx={{ mb: 1.5 }}
+          />
+          <Stack direction="row" spacing={1} justifyContent="flex-end">
+            <Button size="small" onClick={closeDeferPopover} disabled={deferSubmitting}>Cancel</Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="warning"
+              onClick={() => void submitDefer()}
+              disabled={deferSubmitting}
+              startIcon={deferSubmitting ? <CircularProgress size={10} color="inherit" /> : <PauseCircleOutlineIcon sx={{ fontSize: 14 }} />}
+            >
+              Defer
+            </Button>
+          </Stack>
+        </Box>
+      </Popover>
+
+      {/* Overflow menu — Mark Unmappable (less common than Defer; lives
+          here to keep the per-row action column compact). */}
+      <Menu
+        open={parkedMenuAnchor !== null}
+        anchorEl={parkedMenuAnchor?.anchor ?? null}
+        onClose={() => setParkedMenuAnchor(null)}
+      >
+        <MenuItem
+          onClick={() => {
+            const row = parkedMenuAnchor?.row;
+            setParkedMenuAnchor(null);
+            if (!row) return;
+            if (confirm(`Mark "${row.paramName}" as Unmappable? The row leaves the OPEN queue. Reversible via Reopen.`)) {
+              void markUnmappable(row);
+            }
+          }}
+          sx={{ fontSize: '0.75rem' }}
+        >
+          <BlockOutlinedIcon sx={{ fontSize: 14, mr: 1, color: 'text.secondary' }} />
+          Mark Unmappable
+        </MenuItem>
+      </Menu>
     </Accordion>
   );
 }

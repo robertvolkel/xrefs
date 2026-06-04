@@ -12,6 +12,8 @@ import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
+import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
+import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
 import NoteAltIcon from '@mui/icons-material/NoteAlt';
 import FlagIcon from '@mui/icons-material/Flag';
 import type { GlobalUnmappedParam, StatusFilter } from './types';
@@ -65,9 +67,12 @@ interface Props {
   triageCounts?: { synonyms: number; autoFlagged: number; total: number };
   status: StatusFilter;
   onStatusChange: (next: StatusFilter) => void;
-  /** Open / Accepted / Undone counts. Open = working queue; Accepted = active
-   *  override; Undone = inactive (reverted) override. */
-  statusCounts?: { open: number; accepted: number; undone: number };
+  /** Lifecycle counts. Open = working queue (lifecycle-open AND not parked);
+   *  Accepted = active override; Undone = inactive (reverted) override;
+   *  Deferred = engineer-parked for later; Unmappable = engineer-parked
+   *  permanently. The OPEN count excludes deferred + unmappable so the badge
+   *  matches what the engineer actually sees in the default view. */
+  statusCounts?: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
   /** Total number of params with team notes attached. Surfaced as a chip
    *  badge on the "Has note" toggle so engineers see at a glance how many
    *  rows are pending follow-up. */
@@ -207,14 +212,32 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
               </Stack>
             </Tooltip>
           </ToggleButton>
+          <ToggleButton value="deferred" aria-label="Deferred — parked for later">
+            <Tooltip title="Rows the engineer parked for later — typically needs upstream work, more context, or a non-mapping fix. Reversible via Reopen." placement="top">
+              <Stack direction="row" spacing={0.75} alignItems="center">
+                <PauseCircleOutlineIcon fontSize="small" sx={{ color: (statusCounts?.deferred ?? 0) > 0 ? 'warning.main' : undefined }} />
+                <Box component="span" sx={{ fontSize: '0.75rem' }}>Deferred</Box>
+                <Chip size="small" label={statusCounts?.deferred ?? 0} sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
+              </Stack>
+            </Tooltip>
+          </ToggleButton>
+          <ToggleButton value="unmappable" aria-label="Unmappable — never mappable">
+            <Tooltip title="Rows the engineer marked as permanently unmappable (e.g. vendor test-condition columns). Reversible via Reopen." placement="top">
+              <Stack direction="row" spacing={0.75} alignItems="center">
+                <BlockOutlinedIcon fontSize="small" sx={{ color: (statusCounts?.unmappable ?? 0) > 0 ? 'text.disabled' : undefined }} />
+                <Box component="span" sx={{ fontSize: '0.75rem' }}>Unmappable</Box>
+                <Chip size="small" label={statusCounts?.unmappable ?? 0} sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
+              </Stack>
+            </Tooltip>
+          </ToggleButton>
           <ToggleButton value="all" aria-label="All status">
-            <Tooltip title="Open + Accepted + Undone combined." placement="top">
+            <Tooltip title="Open + Accepted + Undone + Deferred + Unmappable combined." placement="top">
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <VisibilityOutlinedIcon fontSize="small" />
                 <Box component="span" sx={{ fontSize: '0.75rem' }}>All</Box>
                 <Chip
                   size="small"
-                  label={(statusCounts?.open ?? 0) + (statusCounts?.accepted ?? 0) + (statusCounts?.undone ?? 0)}
+                  label={(statusCounts?.open ?? 0) + (statusCounts?.accepted ?? 0) + (statusCounts?.undone ?? 0) + (statusCounts?.deferred ?? 0) + (statusCounts?.unmappable ?? 0)}
                   sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }}
                 />
               </Stack>

@@ -5,7 +5,7 @@
  * Body shape (PUT):
  *   {
  *     note?: string,                                  // free-form rationale
- *     status?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null,
+ *     status?: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null,
  *     flaggedBy?: 'auto' | 'engineer' | null,         // who set the status
  *     autoDiagnosis?: { suggestedFamily, reasoning, matchingParam } | null,
  *     flagged?: boolean,                               // engineer bookmark
@@ -27,7 +27,7 @@ import { resolveAdminNames } from '@/lib/services/overrideHistoryHelper';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 const MAX_NOTE_LENGTH = 5000;
-const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family', 'unmappable']);
+const VALID_STATUS = new Set(['wrong_family', 'confirmed_in_family', 'unmappable', 'deferred']);
 const VALID_FLAGGED_BY = new Set(['auto', 'engineer']);
 
 export async function PUT(
@@ -132,7 +132,7 @@ export async function PUT(
       item: {
         paramName: data.param_name as string,
         note: (data.note as string | null) ?? '',
-        status: (data.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | null) ?? null,
+        status: (data.status as 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null) ?? null,
         flaggedBy: (data.flagged_by as 'auto' | 'engineer' | null) ?? null,
         autoDiagnosis: (data.auto_diagnosis as Record<string, unknown> | null) ?? null,
         flagged: (data.is_flagged as boolean | null) ?? false,

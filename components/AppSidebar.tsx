@@ -11,7 +11,7 @@ import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import CorporateFareOutlinedIcon from '@mui/icons-material/CorporateFareOutlined';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
-import EditNoteOutlinedIcon from '@mui/icons-material/EditNoteOutlined';
+import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined';
 import { useColorScheme } from '@mui/material/styles';
 import { createClient } from '@/lib/supabase/client';
 import { getAdminAppFeedbackList, getOwnAppFeedbackUnreadCount } from '@/lib/api';
@@ -227,22 +227,6 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
           <DescriptionOutlinedIcon fontSize="small" />
         </IconButton>
 
-        <IconButton
-          onClick={() => router.push('/feedback')}
-          size="small"
-          title="My feedback"
-          sx={{
-            mt: 1.5,
-            color: isFeedbackActive ? 'text.primary' : 'text.secondary',
-            bgcolor: isFeedbackActive ? 'action.selected' : 'transparent',
-            borderRadius: 1,
-            '&:hover': { color: 'text.primary' },
-          }}
-        >
-          <Badge variant="dot" color="error" invisible={isAdmin || !hasUnreadUserFeedback}>
-            <EditNoteOutlinedIcon fontSize="small" />
-          </Badge>
-        </IconButton>
       </Box>
 
       {/* Bottom group: Admin + Settings + Logout */}
@@ -294,6 +278,22 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             <CorporateFareOutlinedIcon fontSize="small" />
           </IconButton>
         )}
+        <IconButton
+          onClick={() => router.push('/feedback')}
+          size="small"
+          title="My feedback"
+          sx={{
+            mb: 1.5,
+            color: isFeedbackActive ? 'text.primary' : 'text.secondary',
+            bgcolor: isFeedbackActive ? 'action.selected' : 'transparent',
+            borderRadius: 1,
+            '&:hover': { color: 'text.primary' },
+          }}
+        >
+          <Badge variant="dot" color="error" invisible={isAdmin || !hasUnreadUserFeedback}>
+            <ForumOutlinedIcon fontSize="small" />
+          </Badge>
+        </IconButton>
         <IconButton
           onClick={() => router.push('/releases')}
           size="small"

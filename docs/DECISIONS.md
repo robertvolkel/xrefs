@@ -7472,3 +7472,116 @@ The BACKLOG note also flagged: "If/when medical / military / aerospace context q
 - Decision #219 — B5/B7/C9 + B6 test backfill (the per-family expansion this refactor consolidates).
 - Decision #133 — certified-cross bypass (`withCertifiedBypass` wrap reused unchanged).
 - BACKLOG: `Automotive AEC enforcement — replicate B6 pattern to remaining AEC-aware families` — CLOSED. All 11 families on the punch list are now enrolled.
+
+---
+
+## Decision #222 — Collaborative app feedback: Trello-style overlay + visual signals + delete capability (June 3, 2026, post-#220 session)
+
+### Context
+
+Decision #220 shipped the two-way thread schema, RLS, all routes, and the initial UI. Same-session testing as a real user surfaced a string of UX and correctness issues that needed back-to-back fixes, ending up as a focused follow-up cut that touches almost every surface of the feature while leaving the data model unchanged. This is that bundle, recorded as one decision so the rationale doesn't fragment across N tiny per-fix notes.
+
+### Decision
+
+**1. Trello-style overlay replaces the inline two-pane shell.**
+
+`/feedback` (user) and `/monitoring` (admin) both stopped using the "list on the left, inline detail on the right" pattern. The list is now full-width on the page; clicking a row opens a centered MUI `<Dialog maxWidth="lg" fullWidth height: 90vh>` with a 60/40 split — left column shows the original submission + attachments + status (+ admin status editor + technical-info collapse), right column is the conversation. Shared component: [components/feedback/FeedbackDetailModal.tsx](../components/feedback/FeedbackDetailModal.tsx), parameterized by `viewerRole: 'user' | 'admin'`. The old [components/admin/AppFeedbackDetailView.tsx](../components/admin/AppFeedbackDetailView.tsx) was deleted.
+
+**2. `FeedbackThread` rewritten: composer at top, newest-first, feed layout.**
+
+The original chat-bubble alignment (mine right / yours left, oldest at top, scroll-to-bottom) was wrong for support threads where the most recent message is what you came to see. Now: composer at the TOP, comments below in reverse-chronological order, no auto-scroll. Each comment is an avatar + name/timestamp header + body block — Trello/forum-style, not chat-bubble. ⌘/Ctrl+Enter still posts, 4000-char limit unchanged. Same component serves both sides (the only thing `viewerRole` drives now is the "You" label on the author's own comments).
+
+**3. User-side card layout + activity-first sort.**
+
+User list was an unstyled `<List>` with rows hugging the top of the page. Replaced with a stack of `<Paper variant="outlined">` cards (rounded, breathing room, hover/selected states). Cards with `hasUnread=true` get a 1.5px primary-color border + "NEW REPLY" label + bold preview text — all three signals clear together when the modal mounts. Sort: `hasUnread` first, then by `createdAt desc` within each group.
+
+**4. Admin-side activity-first sort via `sort_by=activity` on the list endpoint.**
+
+Default `sortColumn` on `AppFeedbackTab` changed from `'created_at'` to `'activity'`. On the server ([app/api/admin/app-feedback/route.ts](../app/api/admin/app-feedback/route.ts)), `sort_by=activity` triggers a different path: fetch the full filtered set (no DB-level `.range()`), compute `hasUnread` per row from the comments table, sort by `(hasUnread desc, created_at desc)`, then slice to the requested page in JS. Other sorts (Submitted/Category/Status column clicks) still use the original DB-ordered + ranged path.
+
+**5. Background polling on all three surfaces.**
+
+`/feedback`, `/monitoring → AppFeedbackTab`, and the AppSidebar badges (both admin and user) each got a 30-second `setInterval` poll guarded by `document.visibilityState === 'visible'` plus a `visibilitychange` listener for immediate-on-focus refresh. Tab-hidden polls are skipped entirely. No event bus needed — the 30s cadence plus the existing `feedback-unread-changed` window event covers the cross-tab / cross-page case.
+
+**6. Re-anchored badges to `needsAttentionCount` (not `status='open'`).**
+
+The Monitoring sidebar dot and the App Feedback nav-section dot used to light up while `statusCounts.open > 0`. That conflated "workflow queue" with "needs my attention" — every reviewed-but-not-resolved item kept the dot on forever. Replaced with a server-computed `needsAttentionCount`: count of items where `hasUnread=true` OR (`admin_last_read_at IS NULL AND status='open'`). Status changes don't affect the badge; only opening the thread (or a new submission landing) does. Field added to the existing admin list response shape; AppSidebar.tsx, MonitoringShell.tsx, and MonitoringSectionNav.tsx all switched.
+
+**7. "NEW" pill moved to leftmost column on admin grid.**
+
+The earlier inline-with-Status placement got moved to its own narrow column at the far left of the table (no header label). Status stays the rightmost column. The pill renders when `!adminLastReadAt && status === 'open'`.
+
+**8. Count badges stripped from filter chips.**
+
+The little numeric badges on the All / Open / Reviewed / Resolved / Dismissed and All types / Idea / Issue / Other chips read as cluttered. Plain chips now. The corresponding `statusCounts` state was dropped from `AppFeedbackTab` since nothing reads it.
+
+**9. Delete-thread capability on both sides.**
+
+Per-row kebab (`MoreVertIcon`) menu via the new shared [components/feedback/FeedbackRowMenu.tsx](../components/feedback/FeedbackRowMenu.tsx). Menu has one item ("Delete thread") that opens a confirm Dialog spelling out "this removes it for both you and {the other side}." Confirm fires `DELETE /api/app-feedback/[feedbackId]` which:
+   - Fetches the row's attachments list first (paths needed before DB delete)
+   - Best-effort `storage.from(BUCKET).remove(paths)` on the attachment objects
+   - DELETE the `app_feedback` row — `app_feedback_comments` cascades via FK
+RLS gates the DB-level delete: new policies allow user-owned-row delete and admin delete-any. Matching `storage.objects DELETE` policies for the same authority model.
+
+Admin kebab lives in a new rightmost `<TableCell>` (no header label); user-side kebab lives in the top-right of each card with `onClick={(e) => e.stopPropagation()}` on the wrapper so the modal doesn't open from the kebab click.
+
+**10. RLS fix: SECURITY DEFINER function for user read stamp.**
+
+The original schema only had a user `SELECT` policy and an admin `UPDATE` policy on `app_feedback`. So when the GET `/api/app-feedback/[id]` route fired `UPDATE app_feedback SET user_last_read_at = ...`, RLS silently blocked it — the user's read timestamp never stamped, `hasUnread` stayed true forever, and the blue "new activity" border + red dot + bold text + "NEW REPLY" label all persisted across modal opens. Fix: new `mark_app_feedback_user_read(p_feedback_id UUID) RETURNS TIMESTAMPTZ` function with `SECURITY DEFINER` + `SET search_path = public`, locked to `WHERE id = p_feedback_id AND user_id = auth.uid()`. Route changed from raw `.update()` to `.rpc()`. Same RPC used by the comment-POST route's "stamp author's own read so they don't see themselves as unread" call.
+
+This was a `silent failure` — no error surfaced, the UPDATE just affected zero rows. Improved the comments-POST route to echo Postgres error details into the JSON response so the next "Failed to post comment" surface includes the underlying cause.
+
+**11. Sidebar icon swap + position.**
+
+Feedback nav switched from `EditNoteOutlinedIcon` (pencil-on-paper, implies one-way submission) to `ForumOutlinedIcon` (two overlapping speech bubbles, conveys the back-and-forth thread). Moved from the top-group (under Lists) to the bottom-group, directly above the Releases megaphone (`CampaignOutlinedIcon`).
+
+**12. Card-as-button hydration fix.**
+
+`FeedbackList` originally wrapped each card in `<ButtonBase>` to make the whole card clickable. After the kebab landed inside the card, that became `<button>` (kebab) inside `<button>` (ButtonBase) — invalid HTML. Browsers re-parse and lift the inner button, causing a real React hydration mismatch (not the stale-HMR flavor — actual structural mismatch). Fix: `<Paper>` itself is now the clickable surface (`role="button"`, `tabIndex={0}`, `cursor: pointer`, Enter/Space keyboard handlers, `:focus-visible` outline). The kebab IconButton is now the only `<button>` in the tree.
+
+### Rationale
+
+- **Trello as the reference UX.** The user explicitly invoked it. Side-by-side comparison showed Trello-style modals match how operators actually think about a support ticket: "show me everything about this item at once" — context on the left, conversation on the right — rather than the cramped two-pane shell where everything competes for screen.
+- **Composer-at-top + newest-first inverts a chat convention because the use case is different.** Chat is "what's happening now, scroll up for history." Support threads are "what's the latest reply, scroll down for context." The compose target is the same: the next message you're about to send.
+- **Activity-first sort was the user's explicit ask, but the right way to ship it server-side meant accepting an in-memory sort + slice path.** At ~100 items this is fine. If the inbox grows past several hundred items, push the sort into a Postgres function (likely `RETURNS jsonb` per Decision #206) so the wire payload stays small.
+- **`needsAttentionCount` is the third try at badge semantics in this feature.** First was "any submission exists" (Decision #162 original), second was "open status exists" (Decision #220), this is "unread or never-opened-and-open." The user kept saying "but I've already read these." Lesson: badge math has to model "is there something for the human to do RIGHT NOW", which means anchoring on read state, not status state. Status is a workflow tag, separate concept.
+- **Mutual delete (both sides can wipe) over soft-hide.** Simpler model (one boolean less per row), simpler RLS (no "hidden_for_user_at" / "hidden_for_admin_at" columns), and matches the user's stated intent ("deletes for everyone in the thread"). If asymmetric delete-for-me-only becomes a need later, that's a separate column add, not a model change.
+- **SECURITY DEFINER over per-column UPDATE grant.** Tried to think through column-level RLS for `user_last_read_at` only and decided the function approach is much cleaner — the policy stays simple, the route's intent is explicit, and the function's body is the documentation. The auth.uid() check inside the function is the actual security boundary.
+
+### Lessons
+
+- **Silent UPDATE-zero-rows under RLS is a high-recurrence trap.** Every Supabase project hits this at least once. Pattern to watch: a route does `.update()` to a column the caller doesn't have an UPDATE policy for, gets `{ data: null, error: null, count: 0 }` back, and the UI quietly stays stale. The fix is usually a SECURITY DEFINER function, not a broader policy. The diagnostic is: when "the update isn't sticking," check RLS policies for the WRITE side specifically — `SELECT` policies don't help with `UPDATE`. The route should log `error?.code` AND `count` (zero rows affected is the smoking gun).
+- **Badge semantics rewrites cost more than building the original.** Three rewrites in this feature's life (status-of-any → open-only → needs-attention). Worth investing the time up front asking "what should the dot mean WHEN I'M DONE FOR THE DAY" — that question forces the right anchor (read state vs workflow state vs queue size).
+- **`<button>` inside `<button>` only surfaces once a real interactive child lands.** The ButtonBase wrapper was fine in #220's first cut because the card had no clickable children. Adding the kebab changed everything. Pattern: if a clickable container needs to contain ANY actionable element later, don't use `<button>` as the container — use a `<Paper>` / `<Box>` with `role="button"` and `cursor: pointer` from day one. Sub-rule: this also bites with anchor tags — `<a>` inside `<button>` is the same trap.
+- **"Hard refresh" reflexively before debugging.** Twice this session, the Next.js corner showed `(stale)` and a hydration error appeared that was actually HMR debris, not a real bug. The yellow `(stale)` badge is the tell. CMD+Shift+R should be step 0.
+- **Two-line user descriptions of layout problems compress into the right design constraints.** "60% left, 40% right, composer at top, latest at top, more padding, looks like a card not a list" — that's seven distinct directives in one paragraph that mapped cleanly to the rewrite. Trust them and don't ask for clarification on the small stuff; ask for clarification on the structural stuff (admin parity, attachment lightbox y/n).
+
+### Files
+
+**SQL** — [scripts/supabase-app-feedback-comments-schema.sql](../scripts/supabase-app-feedback-comments-schema.sql) (extended with `mark_app_feedback_user_read` function + 4 DELETE policies for `app_feedback` + storage)
+
+**Server**:
+- [app/api/app-feedback/[feedbackId]/route.ts](../app/api/app-feedback/[feedbackId]/route.ts) — switched read-stamp UPDATE to RPC; added `DELETE` handler with storage cleanup
+- [app/api/app-feedback/[feedbackId]/comments/route.ts](../app/api/app-feedback/[feedbackId]/comments/route.ts) — RPC for user-side stamp; richer error detail on insert failure
+- [app/api/admin/app-feedback/route.ts](../app/api/admin/app-feedback/route.ts) — new `sort_by=activity` mode + `needsAttentionCount` field
+
+**Components**:
+- [components/feedback/FeedbackDetailModal.tsx](../components/feedback/FeedbackDetailModal.tsx) — NEW (60/40 Dialog)
+- [components/feedback/FeedbackRowMenu.tsx](../components/feedback/FeedbackRowMenu.tsx) — NEW (kebab + confirm + delete)
+- [components/feedback/FeedbackThread.tsx](../components/feedback/FeedbackThread.tsx) — composer-top, newest-first, feed layout
+- [components/feedback/FeedbackShell.tsx](../components/feedback/FeedbackShell.tsx) — full-width list, modal trigger, polling, delete handler
+- [components/feedback/FeedbackList.tsx](../components/feedback/FeedbackList.tsx) — card layout, activity-first sort, kebab placement, button-less clickable Paper
+- [components/admin/AppFeedbackTab.tsx](../components/admin/AppFeedbackTab.tsx) — activity-default sort, NEW pill column, kebab column, modal mount, polling, stripped count badges
+- [components/admin/AppFeedbackDetailView.tsx](../components/admin/AppFeedbackDetailView.tsx) — DELETED
+- [components/AppSidebar.tsx](../components/AppSidebar.tsx) — ForumOutlinedIcon, moved to bottom group, `needsAttentionCount`-driven badges, 30s polling on both useEffects
+- [components/monitoring/MonitoringShell.tsx](../components/monitoring/MonitoringShell.tsx) + [components/monitoring/MonitoringSectionNav.tsx](../components/monitoring/MonitoringSectionNav.tsx) — switched to `appFeedbackNeedsAttentionCount`
+
+**Client**:
+- [lib/api.ts](../lib/api.ts) — `needsAttentionCount` added to response type; `deleteAppFeedback()` wrapper
+
+### Related
+
+- Decision #220 — initial collaborative feedback feature (this is the bundled follow-up).
+- Decision #162 — original `app_feedback` schema + attachments.
+- Decision #198 — "L2 as source of truth" pattern (this didn't bite here but the silent-UPDATE-under-RLS lesson is in the same family).
+- Decision #206 — `RETURNS jsonb` RPC pattern (where to go if activity-sort scale eventually demands server-side ordering).

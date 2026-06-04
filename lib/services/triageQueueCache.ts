@@ -38,7 +38,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 export type CachedTriageData = {
   classified: unknown[];
   triageCounts: { synonyms: number; autoFlagged: number; total: number };
-  statusCounts: { open: number; accepted: number; undone: number };
+  statusCounts: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
   cachedAt: number;
 };
 
