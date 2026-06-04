@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Triage queue lingers on params resolved by CODE dicts, not DB overrides (P3)
+
+**Discovered June 4, 2026.** The Triage queue (`/api/admin/atlas/ingest/batches`) decides a param is "resolved" by cross-referencing `atlas_dictionary_overrides` (DB overrides). It does NOT consult the code-level dictionaries — `metadataParamDictionary`, `sharedParamDictionary`, or the per-family dicts in `atlasMapper.ts`. So a param that's resolved purely in code, but appears in a batch report's `unmappedParams` list frozen *before* that code entry was added, lingers in the queue forever even though ingest/read already map it correctly.
+
+**Concrete case that surfaced it:** Galaxy `ECCN代码` showed as unmapped (Impact 60k) despite `metadataParamDictionary` mapping `eccn代码 → eccn_code` (Decision #216) and all 8,527 applied products already carrying `eccn_code = EAR99`. The Galaxy batch report (applied 5/26/2026) predated the dict entry. Applied batches have no Regenerate button (route rejects non-pending), so it was cleared by surgically removing the stale entry from the frozen `report.unmappedParams`.
+
+**Fix idea:** in the queue's resolved-filter, also drop any paramName whose lowercased+NFC form hits `metadataParamDictionary` / `sharedParamDictionary` / the dominant family's dict — same check ingest uses (`hasDictMapping`). That closes the staleness window without needing report regeneration. Cheap; the dicts are already importable server-side.
+
+**Watch-out:** applied-batch reports can't be regenerated through the UI (only pending). Until the filter fix lands, the only remedy for a stale applied-report entry is the surgical `unmappedParams` edit. A general cleanup script could scan all applied reports for code-dict-resolved entries if more than a handful accumulate.
+
+---
+
 ## Triage /investigate mis-buckets test-condition params as `disambiguation` (P3)
 
 **Discovered June 3, 2026** while clearing the Galaxy B7 IGBT queue. The AI investigator returned `disambiguation` (map to `ic_max` / `vce_sat` / `eoff`) for `Condition1_IC (mA)` and `Condition1_VCE (V)` — both pure test-condition columns ("the current/voltage AT WHICH another spec is measured"). The map-to targets it proposed (`ic_max`, `vce_sat`) **already exist as separate, correctly-mapped attributes** on the same products (visible in the investigate diagnostic's "Actual JSONB keys seen" list). Mapping the condition column onto the existing rating would collide/corrupt (e.g. a 20–1000 mA test current overwriting a tens-to-hundreds-of-A `ic_max` rating).
