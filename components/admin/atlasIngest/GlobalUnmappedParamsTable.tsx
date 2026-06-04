@@ -3324,7 +3324,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
       >
-        <Box sx={{ p: 2, width: 360 }}>
+        <Box sx={{ p: 2, width: 520 }}>
           <Typography variant="caption" sx={{ display: 'block', mb: 0.5, fontWeight: 600 }}>
             Defer this row
           </Typography>
@@ -3336,11 +3336,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             onChange={(e) => setDeferReason(e.target.value)}
             placeholder="Reason (optional)"
             multiline
-            rows={3}
+            minRows={6}
+            maxRows={14}
             fullWidth
             size="small"
             autoFocus
-            sx={{ mb: 1.5 }}
+            sx={{
+              mb: 1.5,
+              '& .MuiInputBase-input': { fontSize: '0.75rem', lineHeight: 1.5 },
+            }}
           />
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button size="small" onClick={closeDeferPopover} disabled={deferSubmitting}>Cancel</Button>
