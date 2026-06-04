@@ -77,8 +77,8 @@ app/                          # Next.js App Router
   api/admin/atlas/flags/      # Atlas product flags CRUD (GET/POST)
   api/admin/atlas/flags/[flagId]/ # Flag status update (PATCH)
   api/feedback/              # QC rule feedback submission (POST)
-  api/app-feedback/          # General app feedback (POST multipart, supports image attachments — Decision #162)
-  api/admin/app-feedback/    # Admin list + per-row update for general app feedback (GET, PATCH)
+  api/app-feedback/          # General app feedback — POST submit + GET own list + DELETE thread + nested GET thread/POST comments (Decisions #162/#220/#222)
+  api/admin/app-feedback/    # Admin list + per-row PATCH (status) + nested GET thread (Decisions #220/#222)
   admin/layout.tsx            # Shared admin layout (sidebar persists across routes)
   admin/manufacturers/[slug]/ # Manufacturer detail page (sub-route)
   admin/atlas/ingest/         # Atlas re-ingest UI: drag-drop, batch review, AI dict triage (Decision #174)
@@ -86,6 +86,7 @@ app/                          # Next.js App Router
   parts-list/                 # Parts list editor page
   logic/                      # Admin logic table viewer page
   releases/                   # Release notes feed page (all users)
+  feedback/                   # User feedback page — own submissions + Trello-style overlay thread (Decision #222)
   qc/                          # QC top-level page (admin-only)
 
 components/                   # React components
@@ -158,6 +159,12 @@ components/                   # React components
     AccountPanel.tsx          # General Settings — language, currency, theme
   releases/                    # Release notes feed
     ReleasesShell.tsx         # Feed UI — create/edit/delete (admin), read-only (users)
+  feedback/                    # Collaborative app feedback (Decisions #220/#222)
+    FeedbackShell.tsx         # Page orchestrator — full-width card list, modal trigger, 30s polling, delete handler
+    FeedbackList.tsx          # Card-style list — activity-first sort, hasUnread border, NEW REPLY label, kebab top-right
+    FeedbackThread.tsx        # Reused by user + admin — composer at top, comments newest-first, feed layout (avatar + name + body)
+    FeedbackDetailModal.tsx   # Trello-style overlay (60% left details, 40% right thread); viewerRole drives admin status editor
+    FeedbackRowMenu.tsx       # Kebab + Delete-thread confirm dialog (both sides; calls DELETE /api/app-feedback/[id])
   qc/                         # QC top-level shell (admin-only)
     QcShell.tsx               # QC orchestrator — settings toggle, section nav, content
     QcSectionNav.tsx          # Left nav: Feedback + Logs sections
@@ -237,6 +244,8 @@ scripts/                      # Utility scripts (Digikey param discovery, Supaba
   atlas-revoke-bad-canonical.mjs # Audit + soft-revoke a hallucinated attributeId from atlas_dictionary_overrides; dry-run by default (Decision #215)
   atlas-audit-unit-mismatches.mjs # Enumerate every (attributeId, unit) combo in dict + DB overrides; 3-tier risk report — read-only (Decision #217)
   atlas-find-mfrs-needing-backfill.mjs # Scan atlas_products for prefix-triggering units; priority-ordered per-MFR punch list with copy-paste backfill commands (Decision #217)
+  atlas-mark-condition-params-unmappable.mjs # Bulk-mark vendor test-condition columns (Galaxy ConditionN_*) unmappable in Triage; dry-run by default, --apply to write, idempotent
+  atlas-audit-b7-negative-ic.mjs # Read-only audit: B7/IGBT products carrying negative collector-current (PNP-BJT misclassification signal); rolls up by MFR
 locales/                      # i18n translations (en, de, zh-CN)
 theme/theme.ts                # MUI M3 dark theme configuration
 jest.config.ts                # Jest config (next/jest.js, SWC transforms, path aliases)
@@ -437,6 +446,42 @@ The QC page (`/qc`) is a top-level admin-only route (sidebar icon: `RateReviewOu
 - `QcLogsTab.tsx` → inline DetailView + Export/Analyze buttons (logs flow)
 - `QcAnalysisDrawer.tsx` — AI analysis right-side drawer with streaming markdown
 - Shared: `QcFeedbackCard.tsx`, `QcRecommendationSummary.tsx`, `qcConstants.ts`
+
+## App Feedback (Collaborative)
+
+Separate from QC feedback. App feedback is the general user-facing channel — bugs, ideas, anything not tied to a specific recommendation rule. Two-way thread between the submitting user and the platform admin (Rob). Decisions #162 (initial submission flow + attachments), #220 (two-way thread + comments + read state), #222 (Trello-style overlay UX + activity-first sort + delete + RLS fix).
+
+**Data model:**
+- `app_feedback` — original submission + status (`open`/`reviewed`/`resolved`/`dismissed`) + JSONB `attachments` + `user_last_read_at` + `admin_last_read_at`. RLS: users SELECT/INSERT own, admin SELECT/UPDATE all, user can delete own, admin can delete any.
+- `app_feedback_comments` — `(id, feedback_id, author_id, author_role IN ('user','admin'), body, created_at)`. Immutable (no UPDATE/DELETE-by-author policies). Cascades on parent delete.
+- `mark_app_feedback_user_read(p_feedback_id UUID) RETURNS TIMESTAMPTZ` — `SECURITY DEFINER` function. The only way a non-admin can stamp `user_last_read_at` — RLS blocks direct UPDATE for users (intentional, so they can't tamper with status/notes). Both the GET-thread route and the comment-POST route call this RPC. See [[silent-update-under-rls]] memory.
+- Storage bucket `app-feedback-attachments`: per-user folder prefix, signed-URL reads (1h TTL), user can delete own, admin can delete any.
+
+**Surfaces (user side at `/feedback`):**
+- `FeedbackShell` — full-width card list + "+ New Feedback" header button + 30s background poll (paused when tab hidden, refreshes on `visibilitychange`).
+- `FeedbackList` — `<Paper>` card per item (NOT `<ButtonBase>` — adding the kebab inside revealed that button-in-button is invalid HTML; Paper carries `role="button"` instead). Activity-first sort (`hasUnread` rows on top, then `createdAt desc`). Unread cards get primary-color border + "NEW REPLY" label + bold preview.
+- `FeedbackDetailModal` (shared admin/user) — `<Dialog maxWidth="lg" fullWidth height: 90vh>` with a 60/40 flex body. Mounts → fires GET-thread → server stamps the appropriate `*_last_read_at` → modal echoes `onUpdated({})` so the parent list can flip `hasUnread` locally and clear the visual signals immediately.
+- `FeedbackThread` (shared admin/user) — composer at top, comments below newest-first, avatar+name+timestamp+body feed layout (NOT chat bubbles). `viewerRole` prop only drives the "You" label.
+- `FeedbackRowMenu` (shared) — kebab → "Delete thread" → confirm dialog → `DELETE /api/app-feedback/[id]` (cleans storage paths first, then DB row; comments cascade). Confirm copy explicitly spells out that delete affects both sides.
+
+**Surfaces (admin side, `/monitoring → AppFeedbackTab`):**
+- Table-based list (paginated). Default `sort_by=activity` — server fetches the full filtered set, computes `hasUnread`, sorts `(hasUnread desc, created_at desc)`, slices to the page. Column-header sort overrides activity until refresh.
+- Same `FeedbackDetailModal` mounts on row-click; admin-only path shows status dropdown + technical-info collapse + resolved-by metadata on the left column.
+- Per-row "NEW" pill (leftmost column, no header) when `admin_last_read_at IS NULL AND status='open'`.
+- 30s polling + the existing `feedback-unread-changed` window-event listener cover cross-tab freshness.
+
+**Badge math (`needsAttentionCount`):** Both the Monitoring sidebar dot AND the App Feedback nav-section dot drive off a single server-computed field returned on the admin list response. Definition: count of rows where `hasUnread=true` OR (`admin_last_read_at IS NULL AND status='open'`). Status state alone does NOT light the dot — opening the modal (which stamps the read column) clears it. The user-side feedback icon (`ForumOutlinedIcon`, bottom-left of the sidebar above Releases) has its own `getOwnAppFeedbackUnreadCount` endpoint, same semantics from the user's perspective.
+
+**Endpoints** (under `app/api/`):
+- `POST /api/app-feedback` — submit (multipart, attachments)
+- `GET /api/app-feedback` — own list, includes `hasUnread`/`commentCount` per row
+- `GET /api/app-feedback/[id]` — own thread, side-effect stamps `user_last_read_at` via RPC
+- `DELETE /api/app-feedback/[id]` — wipe thread (storage + row); RLS gates user-own / admin-any
+- `POST /api/app-feedback/[id]/comments` — append comment; role inferred from `profiles.role`; stamps author's own read
+- `GET /api/app-feedback/unread-count` — sidebar dot driver for user side
+- `GET /api/admin/app-feedback` — list + `statusCounts` + `needsAttentionCount`; supports `sort_by=activity`
+- `PATCH /api/admin/app-feedback/[id]` — status only (admin_notes removed; comments replace it)
+- `GET /api/admin/app-feedback/[id]/thread` — admin variant of thread fetch; stamps `admin_last_read_at`
 
 ## Digikey Integration
 
