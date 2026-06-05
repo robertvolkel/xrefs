@@ -3,7 +3,13 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getLogicTable } from '@/lib/logicTables';
-import { readCachedTriageData } from '@/lib/services/triageQueueCache';
+import { getOrComputeTriageData } from '@/lib/services/triageQueueCache';
+// Side-effect import: registers computeTriageAggregation with the triage cache
+// so getOrComputeTriageData() can self-heal a cold cache from THIS route. Without
+// it, the Improvement Potential column went permanently "—" after any triage
+// invalidation until someone opened the Atlas Triage page (which registers the
+// compute). Do not remove — the registration is the whole point.
+import '@/lib/services/triageQueueCompute';
 import { invalidateAtlasCache } from '../atlas/route';
 
 // ── Hot in-memory cache (60s) ─────────────────────────────────
@@ -14,8 +20,12 @@ let memCacheTimestamp = 0;
 const MEM_CACHE_TTL_MS = 60_000;
 
 // Bumping the suffix forces persisted rows from the previous schema to be
-// recomputed so they pick up the new improvementPotentialPpt field.
-const CACHE_KEY = 'manufacturers-list-v2';
+// recomputed so they pick up new fields. v3: added summary.triageAvailable +
+// summary.avgCoveragePct, plus the cold-triage self-heal. v4: added per-row
+// atlasId (the source MFR identity, surfaced as the Atlas ID column). Bumping
+// discards stale rows so the first post-deploy read recomputes with the new
+// fields populated.
+const CACHE_KEY = 'manufacturers-list-v4';
 
 export function invalidateManufacturersListCache() {
   memCache = null;
@@ -42,6 +52,7 @@ interface MfrRow {
   aliases: string[] | null;
   slug: string;
   id: number;
+  atlas_id: number | null;
   enabled: boolean;
   website_url: string | null;
   updated_at: string;
@@ -109,17 +120,19 @@ function estimateUnmappedParamWeight(row: TriageRowForRollup): number {
 async function computeStats(): Promise<object> {
   const supabase = await createClient();
 
-  // The triage cache may be cold (returns null). When that happens we still
-  // render the manufacturers list without the improvement column — the column
-  // shows "—" rather than blocking the whole page on a multi-second compute.
-  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }, triageResult] = await Promise.all([
+  // The triage data powers the Improvement Potential column. getOrComputeTriageData
+  // serves the cached aggregation when warm, and SELF-HEALS a cold cache by running
+  // the registered compute (~1-3s) so the column doesn't stay blank after a triage
+  // invalidation. It returns null only if the compute is unregistered or throws —
+  // in which case the column falls back to "—" rather than blocking the page.
+  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }, triageData] = await Promise.all([
     supabase
       .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, aliases, slug, id, enabled, website_url, updated_at')
+      .select('name_display, name_en, name_zh, aliases, slug, id, atlas_id, enabled, website_url, updated_at')
       .order('name_en'),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
-    readCachedTriageData(false).catch(() => null),
+    getOrComputeTriageData().catch(() => null),
   ]);
   const statsRows = rpcResult.data as StatsRow[] | null;
   const statsErr = rpcResult.error;
@@ -226,8 +239,8 @@ async function computeStats(): Promise<object> {
   // statsRow.manufacturer keys above). When the result loop folds across MFR
   // aliases, it sums across every variant.
   const mfrWeightedImpact = new Map<string, { addressableSlots: number; unmappedParams: number }>();
-  if (triageResult?.data?.classified) {
-    const rows = triageResult.data.classified as TriageRowForRollup[];
+  if (triageData?.classified) {
+    const rows = triageData.classified as TriageRowForRollup[];
     for (const r of rows) {
       // Skip parked rows — both unmappable (never) and deferred (not now)
       // shouldn't count toward improvement potential for the MFR.
@@ -249,6 +262,13 @@ async function computeStats(): Promise<object> {
       }
     }
   }
+
+  // Single value for the whole compute: did the triage aggregation resolve?
+  // When false, EVERY MFR's improvementPotentialPpt is null and the UI renders
+  // "—" across the board. Surfaced on the summary so looksPoisoned() can reject
+  // a payload computed during a cold triage cache and force a self-healing
+  // recompute on the next read.
+  const triageAvailable = !!triageData?.classified;
 
   const result = manufacturers.map((m) => {
     // Fold product aggregation across every known spelling so products imported
@@ -295,7 +315,6 @@ async function computeStats(): Promise<object> {
     // when this MFR has no scorable products (no denominator). Capped at
     // 100 so an over-estimate from the default-weight heuristic can't claim
     // physically-impossible improvement.
-    const triageAvailable = !!triageResult?.data?.classified;
     let improvementPotentialPpt: number | null = null;
     if (triageAvailable && weightedTotalRules > 0) {
       const raw = (addressableSlots / weightedTotalRules) * 100;
@@ -306,6 +325,7 @@ async function computeStats(): Promise<object> {
 
     return {
       id: m.id,
+      atlasId: m.atlas_id ?? null,
       slug: m.slug,
       nameEn: m.name_en,
       nameZh: m.name_zh,
@@ -332,6 +352,17 @@ async function computeStats(): Promise<object> {
   const enabledMfrs = result.filter(m => m.enabled);
   const enabledWithProducts = enabledMfrs.filter(m => m.productCount > 0).length;
 
+  // Average coverage = unweighted mean of each MFR's coverage %, taken over the
+  // manufacturers that actually HAVE scorable products (coverage is undefined
+  // for non-scorable MFRs — their coveragePct is a structural 0 and would drag
+  // the average down misleadingly). Every MFR counts equally regardless of size;
+  // this is "the typical manufacturer is X% covered", not the dataset-wide
+  // weighted coverage.
+  const scorableMfrs = result.filter(m => m.scorableCount > 0);
+  const avgCoveragePct = scorableMfrs.length > 0
+    ? Math.round(scorableMfrs.reduce((s, m) => s + m.coveragePct, 0) / scorableMfrs.length)
+    : 0;
+
   return {
     manufacturers: result,
     summary: {
@@ -341,6 +372,13 @@ async function computeStats(): Promise<object> {
       totalProducts,
       scorableProducts: totalScorable,
       familiesCovered: allFamilies.size,
+      // Unweighted mean coverage % across MFRs with scorable products, plus the
+      // count it was averaged over (for the tooltip).
+      avgCoveragePct,
+      avgCoverageMfrCount: scorableMfrs.length,
+      // Whether the Improvement Potential column has real data. Drives the
+      // looksPoisoned() self-heal guard — see that function.
+      triageAvailable,
     },
   };
 }
@@ -359,11 +397,31 @@ async function computeAndPersist(): Promise<{ payload: object; computedAt: strin
   return { payload, computedAt };
 }
 
-function looksPoisoned(payload: unknown): boolean {
+/** Detect a cached payload we shouldn't trust.
+ *
+ *  Two kinds of "bad":
+ *    (1) HARD — the products RPC returned zeros despite having manufacturers.
+ *        The whole list is unusable; callers reject this even as a last-resort
+ *        fallback (better to 503 than serve synthetic zeros).
+ *    (2) SOFT (includeTriageGap) — the triage cache was cold at compute time so
+ *        the Improvement Potential column is uniformly "—", but every OTHER
+ *        column is valid. We reject this on the normal read path to force a
+ *        self-healing recompute (getOrComputeTriageData rebuilds the triage
+ *        cache and persists real values), but NOT on the compute-failed
+ *        fallback path — there, a list with one empty column beats a 503. */
+function looksPoisoned(payload: unknown, opts: { includeTriageGap?: boolean } = {}): boolean {
   if (!payload || typeof payload !== 'object') return false;
-  const summary = (payload as { summary?: { totalManufacturers?: number; totalProducts?: number } }).summary;
+  const summary = (payload as {
+    summary?: { totalManufacturers?: number; totalProducts?: number; triageAvailable?: boolean };
+  }).summary;
   if (!summary) return false;
-  return (summary.totalManufacturers ?? 0) > 0 && (summary.totalProducts ?? 0) === 0;
+  // (1) HARD poison.
+  if ((summary.totalManufacturers ?? 0) > 0 && (summary.totalProducts ?? 0) === 0) return true;
+  // (2) SOFT poison. `triageAvailable === false` is explicit; an absent field
+  //     (legacy pre-this-change rows) is treated as not-poisoned to avoid a
+  //     thundering recompute right after deploy.
+  if (opts.includeTriageGap && summary.triageAvailable === false) return true;
+  return false;
 }
 
 async function readPersistentCache(): Promise<{ payload: object; computedAt: string } | null> {
@@ -425,7 +483,7 @@ export async function GET(request: NextRequest) {
 
     if (!forceRefresh) {
       const cached = await readPersistentCache();
-      if (cached && !looksPoisoned(cached.payload)) {
+      if (cached && !looksPoisoned(cached.payload, { includeTriageGap: true })) {
         payload = cached.payload;
         computedAt = cached.computedAt;
       }

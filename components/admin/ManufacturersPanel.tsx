@@ -36,6 +36,9 @@ import { formatRelativeTime } from '@/lib/utils/dateFormatting';
 
 interface MfrListItem {
   id: number;
+  // Source MFR identity from atlas_manufacturers.atlas_id (distinct from the
+  // Supabase row PK `id`). Surfaced as the Atlas ID column. Null if unset.
+  atlasId: number | null;
   slug: string;
   nameEn: string;
   nameZh: string | null;
@@ -70,10 +73,14 @@ interface MfrListData {
     totalProducts: number;
     scorableProducts: number;
     familiesCovered: number;
+    // Unweighted mean coverage % across MFRs with scorable products, and the
+    // count it was averaged over. Optional for back-compat with pre-v3 payloads.
+    avgCoveragePct?: number;
+    avgCoverageMfrCount?: number;
   };
 }
 
-type MfrSortKey = 'manufacturer' | 'productCount' | 'scorableCount' | 'coveragePct' | 'improvementPotentialPpt' | 'crossRefCount' | 'families' | 'lastModified';
+type MfrSortKey = 'manufacturer' | 'atlasId' | 'productCount' | 'scorableCount' | 'coveragePct' | 'improvementPotentialPpt' | 'crossRefCount' | 'families' | 'lastModified';
 type SortDir = 'asc' | 'desc';
 
 export default function ManufacturersPanel() {
@@ -292,6 +299,7 @@ export default function ManufacturersPanel() {
     list.sort((a, b) => {
       switch (sortKey) {
         case 'manufacturer': return dir * a.nameEn.localeCompare(b.nameEn);
+        case 'atlasId': return dir * ((a.atlasId ?? -Infinity) - (b.atlasId ?? -Infinity));
         case 'productCount': return dir * (a.productCount - b.productCount);
         case 'scorableCount': return dir * (a.scorableCount - b.scorableCount);
         case 'coveragePct': return dir * (a.coveragePct - b.coveragePct);
@@ -376,6 +384,21 @@ export default function ManufacturersPanel() {
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, mb: 2 }}>
                 <Typography variant="body2" color="text.secondary">
                   {`${data.summary.withProducts} manufacturers with products · ${data.summary.totalProducts.toLocaleString()} products · ${data.summary.scorableProducts.toLocaleString()} scorable · ${data.summary.familiesCovered} families`}
+                  {typeof data.summary.avgCoveragePct === 'number' && (
+                    <>
+                      {' · '}
+                      <Tooltip
+                        title={`Unweighted average of each manufacturer's coverage %, across the ${(data.summary.avgCoverageMfrCount ?? 0).toLocaleString()} manufacturers with scorable products. Every manufacturer counts equally regardless of size — this is "the typical manufacturer is X% covered", not the dataset-wide weighted coverage.`}
+                      >
+                        <Box
+                          component="span"
+                          sx={{ borderBottom: '1px dotted', borderColor: 'text.disabled', cursor: 'help' }}
+                        >
+                          {`${data.summary.avgCoveragePct}% average coverage`}
+                        </Box>
+                      </Tooltip>
+                    </>
+                  )}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
                   {data.cachedAt && (
@@ -486,6 +509,13 @@ export default function ManufacturersPanel() {
                             {t('admin.atlasManufacturer')}
                           </TableSortLabel>
                         </TableCell>
+                        <TableCell align="right" sortDirection={sortKey === 'atlasId' ? sortDir : false}>
+                          <Tooltip arrow title="Atlas source manufacturer ID — the stable identity for this company. Two rows sharing a name but showing different Atlas IDs are different records (genuine collision or duplicate import).">
+                            <TableSortLabel active={sortKey === 'atlasId'} direction={sortKey === 'atlasId' ? sortDir : 'asc'} onClick={() => handleSort('atlasId')}>
+                              Atlas ID
+                            </TableSortLabel>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell align="right" sortDirection={sortKey === 'productCount' ? sortDir : false}>
                           <TableSortLabel active={sortKey === 'productCount'} direction={sortKey === 'productCount' ? sortDir : 'desc'} onClick={() => handleSort('productCount')}>
                             {t('admin.atlasProductsCol')}
@@ -557,6 +587,14 @@ export default function ManufacturersPanel() {
                                 </Typography>
                               )}
                             </Box>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography
+                              variant="body2"
+                              sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'text.secondary', opacity: mfr.atlasId != null ? 1 : 0.3 }}
+                            >
+                              {mfr.atlasId != null ? mfr.atlasId : '\u2014'}
+                            </Typography>
                           </TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" sx={{ opacity: mfr.productCount > 0 ? 1 : 0.3 }}>

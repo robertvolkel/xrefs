@@ -2188,8 +2188,23 @@ function normalizeVoltageRange(value) {
   return value;
 }
 
+// Populated once per run by loadCollidingEnNames() from atlas_manufacturers:
+// lowercased name_en values shared by >1 manufacturer row (e.g. "hx" = 红星 AND
+// 恒佳兴). Empty during --dry-run report (no DB) → behaviour unchanged.
+const collidingEnNames = new Set();
+
 function cleanManufacturerName(raw) {
   const englishPart = raw.match(/^[\x20-\x7E]+/)?.[0]?.trim();
+  // Collision guard (Decision #225): if this English code is shared by more
+  // than one manufacturer, stripping "HX 红星" → "HX" would merge two distinct
+  // companies under one ambiguous string and the admin MFRs page would credit
+  // BOTH with each other's products. Keep the FULL source name (which equals
+  // atlas_manufacturers.name_display, e.g. "HX 红星") so it attributes to
+  // exactly one company. Only triggers when there's actually a non-ASCII
+  // suffix to preserve (englishPart !== raw). See atlas-rekey-collision-products.mjs.
+  if (englishPart && englishPart !== raw.trim() && collidingEnNames.has(englishPart.toLowerCase())) {
+    return raw.trim();
+  }
   return englishPart || raw.trim();
 }
 
@@ -2815,6 +2830,37 @@ const supabase = needsSupabase ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY
 //
 // Keys are stored lowercased to match the lookup at line 1652
 // (`p.name.toLowerCase().trim()`).
+// Load the set of English manufacturer codes shared by >1 atlas_manufacturers
+// row (e.g. "HX" = 红星 + 恒佳兴). cleanManufacturerName() uses it to avoid
+// collapsing two companies under one ambiguous string. Auto-discovers new
+// collisions — no hardcoded list. Safe no-op when supabase is null (--dry-run).
+async function loadCollidingEnNames() {
+  if (!supabase) return { count: 0 };
+  try {
+    const counts = new Map(); // lower(name_en) → count
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('atlas_manufacturers')
+        .select('name_en')
+        .range(from, from + 999);
+      if (error) { console.warn(`  (colliding-name load skipped: ${error.message})`); return { count: 0 }; }
+      for (const r of data ?? []) {
+        const k = (r.name_en || '').trim().toLowerCase();
+        if (k) counts.set(k, (counts.get(k) || 0) + 1);
+      }
+      if (!data || data.length < 1000) break;
+    }
+    for (const [k, c] of counts) if (c > 1) collidingEnNames.add(k);
+    if (collidingEnNames.size > 0) {
+      console.log(`  Collision guard: ${collidingEnNames.size} shared English code(s) will keep full names — ${[...collidingEnNames].join(', ')}`);
+    }
+    return { count: collidingEnNames.size };
+  } catch (err) {
+    console.warn(`  (colliding-name load skipped: ${err.message})`);
+    return { count: 0 };
+  }
+}
+
 async function loadAndApplyDictOverrides() {
   if (!supabase) return { count: 0 };
   let rows;
@@ -4007,6 +4053,9 @@ function numericValuesEqual(a, b) {
 // ─── Dispatcher ───────────────────────────────────────────
 (async () => {
   try {
+    // Load shared English manufacturer codes so cleanManufacturerName() keeps
+    // full names for collisions (e.g. "HX 红星" not "HX"). Decision #225.
+    await loadCollidingEnNames();
     // Merge admin-curated dictionary overrides into FAMILY_PARAMS / L2_PARAMS
     // before any mapping runs. Safe no-op when supabase is null (--dry-run).
     await loadAndApplyDictOverrides();

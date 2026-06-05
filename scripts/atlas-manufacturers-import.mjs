@@ -148,6 +148,12 @@ console.log(`Found ${rows.length} rows in sheet "${sheetName}"\n`);
 
 const manufacturers = [];
 const slugsSeen = new Map(); // slug → nameDisplay, for dedup
+// normalized (name_en|name_zh) → atlas_id, to catch the SAME company listed
+// twice in one file under different atlas_ids (the "shadow row" cause —
+// see scripts/atlas-dedupe-manufacturers.mjs). Upsert keys on atlas_id, so
+// without this a second atlas_id for an existing name inserts a duplicate row.
+const nameSeen = new Map();
+let skippedDupNames = 0;
 
 for (const row of rows) {
   const nameDisplay = (row['Atlas Manufacturer Name'] || '').trim();
@@ -165,6 +171,17 @@ for (const row of rows) {
   const partsioId = partsioIdRaw ? parseInt(String(partsioIdRaw), 10) : null;
   const { en, zh } = parseAtlasName(nameDisplay);
   const aliases = parseAliases(aliasesRaw);
+
+  // Intra-file duplicate-name guard: same name_en + name_zh under a different
+  // atlas_id is the same company listed twice — skip the later one rather than
+  // create a shadow row. (Same atlas_id is a normal in-file repeat; harmless.)
+  const nameKey = `${en.toLowerCase().trim()}|${(zh || '').trim()}`;
+  if (nameSeen.has(nameKey) && nameSeen.get(nameKey) !== atlasId) {
+    console.warn(`  SKIP duplicate name in file: "${nameDisplay}" atlas_id=${atlasId} — already seen as atlas_id=${nameSeen.get(nameKey)}`);
+    skippedDupNames++;
+    continue;
+  }
+  nameSeen.set(nameKey, atlasId);
 
   // Generate slug with dedup
   let slug = slugify(en);
@@ -204,6 +221,7 @@ for (const row of rows) {
 console.log(`Parsed ${manufacturers.length} manufacturers`);
 console.log(`  With aliases: ${manufacturers.filter(m => (m.aliases ?? []).length > 0).length}`);
 console.log(`  With parts.io: ${manufacturers.filter(m => m.partsio_id).length}`);
+if (skippedDupNames > 0) console.log(`  Skipped (duplicate name in file): ${skippedDupNames}`);
 
 // ─── Dry run exit ────────────────────────────────────────
 
@@ -227,6 +245,44 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+// ─── Dedup guard against EXISTING rows ───────────────────
+// The upsert keys on atlas_id, so a company already in the table under one
+// atlas_id, re-listed in a later import under a DIFFERENT atlas_id, would
+// insert a second ("shadow") row. This guard skips those inserts: if an
+// incoming record's (name_en|name_zh) already exists under a different
+// atlas_id, we leave the existing row alone and log it for manual review.
+// (Matching atlas_id is a normal update and passes through untouched.)
+async function fetchAllExistingMfrs() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('atlas_manufacturers')
+      .select('atlas_id, name_en, name_zh, slug')
+      .range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+const existingMfrs = await fetchAllExistingMfrs();
+const existingByName = new Map();
+for (const r of existingMfrs) {
+  existingByName.set(`${(r.name_en || '').toLowerCase().trim()}|${(r.name_zh || '').trim()}`, r);
+}
+const toUpsert = manufacturers.filter((m) => {
+  const key = `${(m.name_en || '').toLowerCase().trim()}|${(m.name_zh || '').trim()}`;
+  const existing = existingByName.get(key);
+  if (existing && existing.atlas_id !== m.atlas_id) {
+    console.warn(`  SKIP would-be duplicate: "${m.name_display}" atlas_id=${m.atlas_id} — already exists as atlas_id=${existing.atlas_id} (slug=${existing.slug})`);
+    return false;
+  }
+  return true;
+});
+const guardSkipped = manufacturers.length - toUpsert.length;
+if (guardSkipped > 0) console.log(`Dedup guard: skipped ${guardSkipped} record(s) that already exist under a different atlas_id.`);
+
 // ─── Upsert manufacturers ───────────────────────────────
 
 console.log('\nUpserting to atlas_manufacturers...');
@@ -236,8 +292,8 @@ const BATCH_SIZE = 100;
 let inserted = 0;
 let errors = 0;
 
-for (let i = 0; i < manufacturers.length; i += BATCH_SIZE) {
-  const batch = manufacturers.slice(i, i + BATCH_SIZE);
+for (let i = 0; i < toUpsert.length; i += BATCH_SIZE) {
+  const batch = toUpsert.slice(i, i + BATCH_SIZE);
 
   const { error, count } = await supabase
     .from('atlas_manufacturers')
@@ -248,7 +304,7 @@ for (let i = 0; i < manufacturers.length; i += BATCH_SIZE) {
     errors += batch.length;
   } else {
     inserted += count || batch.length;
-    process.stdout.write(`  ${Math.min(i + BATCH_SIZE, manufacturers.length)}/${manufacturers.length}\r`);
+    process.stdout.write(`  ${Math.min(i + BATCH_SIZE, toUpsert.length)}/${toUpsert.length}\r`);
   }
 }
 

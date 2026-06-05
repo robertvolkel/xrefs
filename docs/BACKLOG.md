@@ -4,6 +4,20 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Peg `atlas_products` to `atlas_id` instead of manufacturer name string (Steps 2–3 of Decision #225) (P2)
+
+Decision #225 deduped the 9 true-duplicate MFR rows and added a name-based import guard, but `atlas_products` still links to manufacturers by **name string** (upsert key `(mpn, manufacturer)`, no manufacturer ID column). That's the root cause of the English-code collisions (HX = 红星 / 恒佳兴): products keyed under the bare code `"HX"` get attributed to *both* companies by the per-row `name_en` fold in `app/api/admin/manufacturers/route.ts`.
+
+The fix is the rest of the "unique ID spine" model:
+- **Step 2:** add a `manufacturer_atlas_id` (FK → `atlas_manufacturers.atlas_id`) column to `atlas_products` + backfill. ~99% of products map unambiguously by name → atlas_id. The bounded tail (ambiguous shared codes like the "HX" 1,642) can't be auto-assigned — the source never disambiguated them; surface those as "owner unresolved" for a manual/source call rather than silently double-counting.
+- **Step 3:** switch the admin aggregation (and ideally the alias resolver everywhere) to join products → manufacturer on the ID, retiring the `name_en` fold. Collisions become impossible by construction.
+
+Align with the `companyUid` cross-source concept (Decision #148) — decide whether `atlas_id` *is* the universal key or maps *under* a `companyUid` that also covers Western MFRs (which have no atlas_id). Note: the 9 English-code collision pairs (HX/LX/HUAWEI/etc.) remain as legitimate distinct rows; this work is what finally attributes their products correctly. See Decision #225.
+
+**Bridge already shipped (Decision #225 same-day update):** existing HX/LX products re-keyed to full unique names + `cleanManufacturerName` made collision-aware, so the page is correct *today* and re-ingest won't re-merge. Steps 2–3 remain the durable fix (makes the manufacturer string irrelevant). The bridge is forward-compatible.
+
+**Sub-item — recover clobbered 连欣科技 (LX) products — ✅ DONE (June 4, 2026):** 连欣科技's LX batch (`mfr_574_LX_连欣科技`) had been applied but showed 0 products — clobbered by 灵星芯微's same-"LX" upsert (overlapping `(mpn, manufacturer)` key, last-write-wins, both applied June 1). Re-ran report + proceed under the collision-aware script → keyed to "LX 连欣科技", **680 products recovered** as clean inserts (0 clobber of 灵星芯微's 634). Final verified state: 灵星芯微=634, 连欣科技=680, ambiguous "LX"=0. 连欣科技 is a connector/switch maker (SIM sockets, USB) so it carries ~58 unmapped L2 Chinese params now visible in Triage — normal for a new connector MFR, separate follow-up.
+
 ## Triage queue lingers on params resolved by CODE dicts, not DB overrides (P3)
 
 **Discovered June 4, 2026.** The Triage queue (`/api/admin/atlas/ingest/batches`) decides a param is "resolved" by cross-referencing `atlas_dictionary_overrides` (DB overrides). It does NOT consult the code-level dictionaries — `metadataParamDictionary`, `sharedParamDictionary`, or the per-family dicts in `atlasMapper.ts`. So a param that's resolved purely in code, but appears in a batch report's `unmappedParams` list frozen *before* that code entry was added, lingers in the queue forever even though ingest/read already map it correctly.

@@ -45,3 +45,7 @@ scripts/mine-identity-fails-output.*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Atlas dedupe recovery snapshots (local reversibility artifacts)
+atlas-dedupe-snapshot-*.json
+atlas-rekey-snapshot-*.json

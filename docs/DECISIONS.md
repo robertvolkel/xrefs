@@ -7585,3 +7585,186 @@ Feedback nav switched from `EditNoteOutlinedIcon` (pencil-on-paper, implies one-
 - Decision #162 — original `app_feedback` schema + attachments.
 - Decision #198 — "L2 as source of truth" pattern (this didn't bite here but the silent-UPDATE-under-RLS lesson is in the same family).
 - Decision #206 — `RETURNS jsonb` RPC pattern (where to go if activity-sort scale eventually demands server-side ordering).
+
+---
+
+## Decision #223 — Persisted Defer + Unmappable lifecycle states in Triage (June 4, 2026)
+
+### Problem
+
+The Atlas Dictionary Triage queue accumulated 765 OPEN rows with ~82 of them noting "can't accept this right now — needs upstream work / more context." Notes didn't filter out of OPEN, so the queue kept growing. The schema actually allowed `status='unmappable'` already (per Decision #185) and the queue route already excluded unmappable rows from the default OPEN view — but `unmappable` was reachable **only** through the AI Investigator's `unmappable` bucket action. An engineer who wanted to manually mark "vendor test-condition column" or "park this for engineering reclassification" had no UI button. Two real-world examples from yesterday's session made the gap concrete:
+
+- **Galaxy `AEC Qualified`** — engineer should accept, bad numeric values are upstream's problem. (Accept already works.)
+- **JJW `cate3 → 可控硅`** — engineer needs to defer because the right fix is value-based reclassification of misclassified products (BACKLOG entry already filed), not a dict mapping. Today, the only way to take action is to write a team-note that doesn't move the row anywhere.
+
+### Decision
+
+Add two parked lifecycle states with first-class chips, per-row actions, and reversibility:
+
+- **DEFERRED** — new persisted status (`atlas_unmapped_param_notes.status='deferred'`). "Park for later, may revisit." Reversible via Reopen.
+- **UNMAPPABLE** — surface the *existing* status as a manual action (was AI-only). "Will never be mappable." Also reversible.
+
+Both:
+
+- Excluded from the default OPEN view (mirrors the existing unmappable exclusion).
+- Surfaced as dedicated chips in the lifecycle row of `TriageFilterBar` (between UNDONE and ALL). Lifecycle row goes 4 chips → 6.
+- Excluded from `triageCounts` (Open Synonyms / Auto-flagged) so badges match what the engineer actually sees in the default view.
+- Excluded from the `manufacturers/route.ts` "Improvement Potential" rollup — parked rows shouldn't keep boosting a MFR's upside score (parallel to the pre-existing `unmappable` skip).
+
+Per-row UI:
+
+- New **Defer** button (warning color, `PauseCircleOutline` icon) next to Accept. Opens a popover with optional reason textarea pre-filled from the AI defer explanation when present (engineer doesn't retype context).
+- New `MoreVert` overflow icon next to Defer → Menu with **Mark Unmappable** (less common — confirm dialog, no popover).
+- For deferred / unmappable rows: new branch BEFORE the flagged branch renders a status chip + **Reopen** button (clears `status` back to NULL, preserves any engineer note).
+
+### Implementation
+
+**Schema** ([scripts/supabase-atlas-unmapped-param-notes-schema.sql](../scripts/supabase-atlas-unmapped-param-notes-schema.sql)) — CHECK constraint extended to allow `'deferred'`. Idempotent DROP-then-add migration (same pattern already used for prior status growth). Doc-comment block updated.
+
+**Type unions** — `NoteStatus` and `StatusFilter` in [components/admin/atlasIngest/types.ts](../components/admin/atlasIngest/types.ts) are the canonical homes; inline duplicates in `UnmappedParamNoteCell.tsx`, `GlobalUnmappedParamsTable.tsx`, `AtlasDictTriagePanel.tsx`, `unmapped-param-notes/[paramName]/route.ts`, `unmapped-param-notes/route.ts`, `app/api/admin/manufacturers/route.ts`, `app/api/admin/atlas/ingest/batches/route.ts`, and `lib/services/triageQueueCache.ts` synced. `StatusFilter` grew from 4 to 6 values (`open / accepted / undone / deferred / unmappable / all`).
+
+**Queue route** ([app/api/admin/atlas/ingest/batches/route.ts](../app/api/admin/atlas/ingest/batches/route.ts)) — three structural additions:
+
+1. New predicates: `isDeferred`, `isUnmappable`, and crucially **`isInOpenQueue(r) = isOpen(r) && !isUnmappable(r) && !isDeferred(r)`**. The OPEN count + triage counts now derive from `isInOpenQueue` instead of `isOpen`, so chip badges and visible rows stay aligned.
+2. `statusCounts` shape grows: `{ open, accepted, undone, deferred, unmappable }`.
+3. View-filter logic changes: parked rows are now excluded conditionally — only when the engineer hasn't explicitly clicked the matching status chip:
+
+```ts
+if (include !== 'all') {
+  visible = visible.filter((r) => {
+    if (isUnmappable(r) && statusFilter !== 'unmappable') return false;
+    if (isDeferred(r) && statusFilter !== 'deferred') return false;
+    return true;
+  });
+}
+```
+
+This is the right shape — parked rows are *positionally* hidden from default views but *findable* by clicking their own chip. Pre-deploy L2 cache entries get a defensive backfill at read time (`rawCounts.deferred ?? classified.filter(isDeferred).length`) so chip counts are honest immediately on the first post-deploy load, not "wait for SWR refresh."
+
+**Notes endpoint** ([app/api/admin/atlas/unmapped-param-notes/[paramName]/route.ts](../app/api/admin/atlas/unmapped-param-notes/[paramName]/route.ts)) — `VALID_STATUS` Set + JSDoc + response cast all accept `'deferred'`. Cache invalidation already there (single-flight `invalidateTriageQueueCache()`) — correct for per-row mutations since the acting user gets optimistic UI and other tabs pick up on next refetch (per the wait-then-restart distinction from Decision #180).
+
+**`onRowFlagged` extended (not new callbacks)** — the plan called for new named callbacks (`onRowDeferred` / `onRowMarkedUnmappable` / `onRowReopened`) but during implementation I extended the existing `onRowFlagged` to accept the wider status union instead. Reasoning: the callback's machinery (optimistic row mutation + triage/status count adjustment + notesByParam seed) is identical regardless of which status is being written, and the alternative was three thin wrappers over the same function. Treating `deferred` + `unmappable` as a single "parked" concept inside the function made the count-math cleaner too (`wasParked`/`isParkedNow` flags). The table calls `onRowFlagged(paramName, 'deferred', 'engineer')` directly — the status arg is the disambiguator.
+
+**Defer popover UX** — `Popover` anchored to the per-row Defer button. Width 520px, textarea `minRows=6 maxRows=14` (grows with content, capped so buttons stay on screen), font size matched to surrounding caption text (`0.75rem` with `lineHeight: 1.5` on `.MuiInputBase-input`). Reason is optional; pre-fill priority: existing engineer note > AI defer explanation > empty.
+
+**Optimistic update fix to `markUnmappable`** — the pre-existing `markUnmappable` only called `onNoteChange` (which updates `notesByParam`). Visibility worked because `filteredRows` reads `liveNoteStatus` from `notesByParam`, but chip count badges (which read from `data.statusCounts`) wouldn't update until next refetch. Extended `markUnmappable` to also call `onRowFlagged` so chip counts update optimistically. Same pattern adopted for `deferRow` + `reopenRow`. Rollback path on PUT failure restores the prior state via the same callback.
+
+### Why DEFERRED and UNMAPPABLE stay separate (not collapsed into one PARKED)
+
+Considered collapsing them into a single `PARKED` chip with sub-filters but rejected. The semantic difference is load-bearing: "come back later" vs "never mappable" inform different downstream behaviors:
+
+- **Improvement Potential math** (today) — both skip, but if we ever want "potential we *could* unlock" vs "potential we *won't* unlock," we need them separate.
+- **Bulk operations** (future) — bulk-reopen-deferred makes sense; bulk-reopen-unmappable doesn't.
+- **Engineer cognitive load** — these are different decisions; chip labels should reflect that.
+
+### Why AI: DEFER chip and Status: DEFERRED chip both exist
+
+Same word, intentionally orthogonal concepts:
+
+- **AI: DEFER** (Row 3) = filter on the AI's suggestion (transient, client-cached `DictSuggestion.suggestion`).
+- **Status: DEFERRED** (Row 2) = filter on the engineer's persisted decision (`atlas_unmapped_param_notes.status`).
+
+A row can sit in `AI:defer + Status:open` (the AI suggested defer, the engineer hasn't acted yet — surfaces in the queue) or `AI:defer + Status:deferred` (engineer agreed and parked it). Don't merge them.
+
+### What this explicitly does NOT do
+
+- No bulk-defer fan-out for "+N similar" cosmetic variants. Per-row only in v1; gauge bulk need from real usage.
+- No expiry / reminder on deferred rows. Manual Reopen is the only path back. (If DEFERRED count grows past ~500 over months → BACKLOG item to add "Bulk reopen by MFR" sweep.)
+- No new `wrong_family` / `confirmed_in_family` chips on Row 2 — they already have a contextual home under the AUTO-FLAGGED MISCLASSIFICATIONS view in Row 1.
+
+### Process note
+
+The plan said "new callbacks `onRowDeferred` / `onRowMarkedUnmappable` / `onRowReopened`" — I extended `onRowFlagged` instead. This was a deliberate deviation made during implementation when I realized the named wrappers would all delegate to the same machinery. Captured in a memory entry so the deviation is visible in future planning: when an existing general callback covers a new case cleanly, prefer extending over wrapping. The cost of named callbacks is type-discrimination work at every call site for a function that already discriminates internally.
+
+### Verification
+
+All 1,850 existing tests pass. TypeScript clean across the change set. Manual smoke test against the dev DB after applying the schema migration:
+
+1. Pick any OPEN row → Defer → row leaves OPEN view, appears under DEFERRED chip, OPEN count -1, DEFERRED +1.
+2. Reopen → row returns to OPEN, counts reverse.
+3. MoreVert → Mark Unmappable → row leaves OPEN, appears under UNMAPPABLE chip.
+4. AI: DEFER filter still surfaces rows whose engineer hasn't acted (Status:open) — independent of Status: DEFERRED.
+
+### Related
+
+- Decision #176 — Triage workspace origin + persistent queue.
+- Decision #177 — `atlas_unmapped_param_notes` schema introduction + `wrong_family` / `confirmed_in_family` statuses.
+- Decision #181 — AI Suggester `'accept' | 'defer'` verdict (the AI-side of "defer" the engineer-side now mirrors).
+- Decision #185 — AI Investigator's `unmappable` bucket (this work surfaces that status as a manual action).
+- Decision #186 — `is_flagged` column + Phase 3 hardening (sibling concept to the new statuses; both add per-row engineer signal).
+- Decision #180 — wait-then-restart vs single-flight cache invalidation (per-row defer = single-flight is correct).
+- Decision #182 — optimistic row-mutation pattern via `onRowAccepted` / `onRowReverted` (extended by `onRowFlagged`'s wider status union).
+
+## Decision #224 — Self-healing triage cache for the Improvement Potential column (June 4, 2026)
+
+### Problem
+
+The `/admin/manufacturers` "Improvement Potential" column went uniformly blank ("—" on every row) sometime around the Decision #223 deploy. Root cause was an architectural gap, not a calculation bug:
+
+- The column is computed in `app/api/admin/manufacturers/route.ts` from the Triage queue aggregation (`classified` rows × per-row weight), read from the `triage-queue` L2 cache row in `admin_stats_cache`.
+- The route only **read** that cache (`readCachedTriageData(false)`). It never registered or invoked the compute.
+- The compute fn (`computeTriageAggregation`) and its `registerTriageCompute(...)` call were **module-private to the batches route** (`app/api/admin/atlas/ingest/batches/route.ts`). The compute is therefore only registered in a process/worker that has loaded the batches route module.
+- The `triage-queue` row is **DELETEd** on every triage mutation (Accept/Revert/note edit) and effectively reset by the #223 deploy (which reshaped `CachedTriageData`). Once cold, the manufacturers route got `null` → `triageAvailable=false` → `improvementPotentialPpt=null` for **every** MFR → all "—", and it could not self-heal until someone opened the Atlas Ingest/Triage page (which loads the batches module, registers the compute, and repopulates the cache).
+
+### Decision
+
+Make the manufacturers route rebuild the triage cache itself rather than depending on another route's module load.
+
+1. **Extract** `computeTriageAggregation` + its shared types (`AutoFlag`, `NoteStatus`, `MatchingImpact`, `GlobalUnmapped`, `Classified`, `OverrideMeta`) + status predicates (`isOpen/isAccepted/isUndone/isDeferred/isUnmappable/isInOpenQueue`) out of the batches route into a new shared module `lib/services/triageQueueCompute.ts`. The module calls `registerTriageCompute(computeTriageAggregation)` at its own scope, so **any importer registers the compute**. Compute fn is a closure with no per-request deps, so the move is behavior-preserving. The batches route imports these back; no logic change to its GET handler.
+2. **Add** `getOrComputeTriageData()` to `lib/services/triageQueueCache.ts`: read L1→L2; on a cold cache, run the registered compute synchronously (~1–3s post-#194), write L1+L2, return fresh data; on stale L2, serve + background-refresh (SWR). Returns null only if no compute is registered or it throws.
+3. **Switch** the manufacturers route from `readCachedTriageData` to `getOrComputeTriageData`, plus a bare side-effect import of `triageQueueCompute` so the compute is registered in this route's process.
+4. **Close the persisted-payload loop.** The manufacturers route caches its own computed payload (60s mem + persistent `manufacturers-list-*` row) and serves it indefinitely until invalidated — so an all-"—" payload computed during a cold cache would survive. Added `summary.triageAvailable` to the payload and extended `looksPoisoned(payload, { includeTriageGap })`: the normal read path rejects a `triageAvailable === false` payload (forces a self-healing recompute), the compute-failed fallback path does NOT (a list with one empty column beats a 503). Absent field (legacy rows) is treated as not-poisoned to avoid a deploy thundering-herd. Bumped `CACHE_KEY` `manufacturers-list-v2` → `v3` so the existing cold-triage row is discarded on first post-deploy read.
+
+### Result
+
+The column self-heals on the next request after any triage invalidation — no manual "open the Triage page" step. Net behavior for the user: open `/admin/manufacturers`, the first load recomputes (a couple seconds), the column is populated, and it stays correct across subsequent triage mutations. 1850 tests pass; tsc clean on touched files.
+
+### Related
+
+- Decision #202 — the Improvement Potential column itself (weight heuristic, three-state display).
+- Decision #180 — triage cache L1+L2+SWR + the two invalidate variants this builds on.
+- Decision #198 — L2-as-source-of-truth cache invalidation pattern.
+- Decision #223 — the deploy that reset `CachedTriageData` and surfaced this gap.
+
+## Decision #225 — MFR identity: dedupe shadow rows, expose Atlas ID, guard the import (June 4, 2026)
+
+### Problem
+
+The admin MFRs list showed visually duplicated manufacturer rows. Investigation split them into two distinct phenomena:
+
+- **True duplicates (9 pairs):** same `name_en` AND `name_zh` — one real company imported twice. Fingerprint: a richer "original" (descriptive slug like `jdt-fuse`, `700xxx` atlas_id, aliases/partsio) plus a bare "shadow" (`jdt`, small atlas_id `251`, no aliases). Root cause: `scripts/atlas-manufacturers-import.mjs` upserts with `onConflict: 'atlas_id'`, so the same company re-listed under a *different* atlas_id inserts a second row.
+- **English-code collisions (9 pairs):** same `name_en`, *different* `name_zh` — genuinely different companies sharing a 2–3 char abbreviation (HX = 红星 / 恒佳兴; HUAWEI = 华威集团 / 华为). Legitimate separate rows.
+
+A compounding display bug: `app/api/admin/manufacturers/route.ts` computes per-row product counts by folding across `[name_display, name_en, name_zh, ...aliases]`. When two rows share `name_en`, both match products keyed under that string — so both HX rows claimed the same 1,642 products. **Key finding:** `atlas_products` has *no* manufacturer ID — products link to manufacturers purely by **name string** (upsert key `(mpn, manufacturer)`). The headline totals are summed from raw product stats (not the MFR rows), so they were NOT inflated; only the per-row display and "MFRs with products" count were.
+
+### Decision
+
+Three things, scoped to what's safe now; the deeper ID-on-products migration deferred to BACKLOG.
+
+1. **Expose `atlas_id` as an "Atlas ID" column** on the MFRs page. Verified unique: 1,023 rows, 0 null, 1,023 distinct, none shared — a clean row-level key (just not yet unique *per company*, which is what the dedupe fixes). Makes both phenomena legible: true dupes show two different Atlas IDs for one name; collisions show different IDs + different Chinese names.
+
+2. **Dedupe the 9 true-duplicate pairs.** New `scripts/atlas-dedupe-manufacturers.mjs` (dry-run default, `--apply`, snapshot-before-delete). Groups by `(name_en|name_zh)`; keeper = richer row (aliases·100 + partsio·50 + slug length); ties abort for manual review. Safe because no table FKs `atlas_manufacturers`, and the only slug-keyed dependent (`manufacturer_cross_references`) is migrated first (0 needed this run). Applied: 1,023 → 1,014 rows, 0 dupes remaining. Snapshot gitignored for reversibility.
+
+3. **Guard the import against recurrence.** `atlas-manufacturers-import.mjs` now skips any incoming record whose `(name_en|name_zh)` already exists under a *different* atlas_id (DB guard), plus an intra-file guard for the same within one sheet. Matching atlas_id still updates normally. Without this, the next master-list import would recreate the shadows.
+
+### Direction (the "unique ID" model)
+
+`atlas_id` is the intended per-company spine. Getting there is staged: (1) dedupe so it's unique *per company* (done); (2) add an `atlas_id` FK to `atlas_products` + backfill so products peg to it instead of a name string; (3) switch aggregation to join on ID, killing collisions by construction. Note: a related `companyUid` concept (Decision #148) is the cross-source key that also covers Western MFRs — atlas_id is the Atlas-specific identity that would map under it. Steps 2–3 tracked in BACKLOG.
+
+### Update (same day) — collision root cause found + bridge fix shipped
+
+Investigating why two different "HX" companies (红星 / 恒佳兴) each showed the same 1,642 products revealed the exact mechanism — and corrected an earlier wrong assumption:
+
+- **Root cause:** ingest's `cleanManufacturerName()` (`scripts/atlas-ingest.mjs`) strips the Chinese half of the source's `manufacturer.name` (`"HX 红星"` → `"HX"`). Fine for unique English names; for shared codes it merges two companies under one string, and the admin page's `name_en` fold credits both with each other's products.
+- **The "unresolvable tail" fear was WRONG.** The source files are per-company (`mfr_207_HX_红星` vs `mfr_731_HX_恒佳兴`), each carries the full unique name, AND every product stores `atlas_source_file`. So the correct owner is 100% deterministic — no guessing. (Verified: all 1,642 "HX" products trace to 红星's file; all 634 "LX" to 灵星芯微's. The other 7 collisions have zero ingested products.)
+- **Bridge fix (shipped today):** `scripts/atlas-rekey-collision-products.mjs` (dry-run/`--apply`/snapshot) re-keys colliding products' `manufacturer` from the bare code to the full source name via `atlas_source_file`. Applied: 1,642 → "HX 红星", 634 → "LX 灵星芯微". Page now attributes correctly (红星 1642 / 恒佳兴 0; 灵星芯微 634 / 连欣科技 0). Safe — verified zero flag/settings/xref references to the bare strings.
+- **Recurrence prevented:** `cleanManufacturerName()` is now collision-aware — `loadCollidingEnNames()` pulls `name_en` values shared by >1 manufacturer at ingest start (auto-discovers, no hardcoded list) and keeps the full name for those. Because `runProceed` re-maps from source ("we don't trust report content for the DB write"), this applies on UI Proceed too — so the **pending 恒佳兴 batch is now safe to apply** (keys to "HX 恒佳兴").
+- The bridge is forward-compatible with Steps 2–3 (the atlas_id backfill keys off `atlas_source_file`, not the manufacturer string).
+
+Separate item surfaced (BACKLOG): 连欣科技's LX batch was applied but shows 0 products — likely clobbered by 灵星芯微's same-"LX" upsert (overlapping `(mpn, manufacturer)` key, last-write-wins). Re-ingesting its file under the collision-aware script recovers it as "LX 连欣科技".
+
+### Related
+
+- Decision #148 — manufacturer alias resolver + `companyUid` stable-FK concept.
+- Decision #202 — Improvement Potential column (consumes the same per-MFR fold).
+- Decision #174 — ingest pipeline (report/proceed re-map from source; proceed route spawns the .mjs).

@@ -136,7 +136,7 @@ export async function writeCachedTriageData(data: Omit<CachedTriageData, 'cached
   }
 }
 
-function startRecompute(reason: 'invalidate' | 'swr'): void {
+function startRecompute(reason: 'invalidate' | 'swr' | 'cold'): void {
   if (!registeredCompute || backgroundRecomputePromise) return;
   const fn = registeredCompute;
   backgroundRecomputePromise = (async () => {
@@ -253,4 +253,45 @@ export async function invalidateTriageQueueCacheAndAwaitFresh(): Promise<void> {
  *  in-flight recompute. */
 export function triggerBackgroundRecompute(): void {
   startRecompute('swr');
+}
+
+/** Read the triage data, computing SYNCHRONOUSLY on a cold cache.
+ *
+ *  Unlike readCachedTriageData() — which returns null on cold cache and leaves
+ *  the caller to decide — this guarantees a value whenever a compute is
+ *  registered: cold cache → run the registered compute, write L1+L2, return
+ *  the fresh data. (A registered compute is bound by importing
+ *  lib/services/triageQueueCompute, which runs registerTriageCompute() at
+ *  module scope.)
+ *
+ *  This is what lets the /admin/manufacturers "Improvement Potential" column
+ *  self-heal: that route only READS the triage cache, so after any triage
+ *  invalidation (Accept/Revert, batch apply, deploy) the cache could be cold
+ *  and the column went permanently "—" until someone opened the Triage page
+ *  to repopulate it. With this helper, the manufacturers route rebuilds the
+ *  cache itself on the next request.
+ *
+ *  Returns null only when (a) the cache is cold AND no compute is registered
+ *  in this process, or (b) the compute throws. Callers treat null the same as
+ *  before — render the column as "—" rather than block the page. */
+export async function getOrComputeTriageData(): Promise<CachedTriageData | null> {
+  const cached = await readCachedTriageData(false);
+  if (cached) {
+    // Serve immediately; refresh in the background if past the SWR threshold.
+    if (cached.source === 'l2-stale') triggerBackgroundRecompute();
+    return cached.data;
+  }
+  // Cold cache. If a recompute is already in flight (e.g. from a concurrent
+  // invalidation), await that one rather than starting a redundant second.
+  if (backgroundRecomputePromise) {
+    try { return await backgroundRecomputePromise; } catch { return null; }
+  }
+  // Start a fresh compute and await it. startRecompute is a no-op (leaves
+  // backgroundRecomputePromise null) when nothing is registered — then we
+  // return null and the caller falls back to the "—" no-data rendering.
+  startRecompute('cold');
+  if (backgroundRecomputePromise) {
+    try { return await backgroundRecomputePromise; } catch { return null; }
+  }
+  return null;
 }
