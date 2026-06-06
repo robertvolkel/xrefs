@@ -905,7 +905,7 @@
         "opt": {
           "automotive": {
             "label": "Automotive",
-            "desc": "AEC-Q200 qualification becomes mandatory"
+            "desc": "AEC-Q200 qualification required"
           },
           "industrial": {
             "label": "Industrial / harsh",
@@ -1246,7 +1246,7 @@
     },
     "64": {
       "application_type": {
-        "text": "What is the circuit",
+        "text": "What is the primary application of this film capacitor?",
         "opt": {
           "emi": {
             "label": "AC mains filtering / EMI suppression",
@@ -1288,7 +1288,7 @@
         }
       },
       "dvdt_requirement": {
-        "text": "What is the circuit",
+        "text": "What is the circuit's dV/dt requirement?",
         "opt": {
           "unknown": {
             "label": "Unknown",
@@ -1299,7 +1299,7 @@
     },
     "65": {
       "application_type": {
-        "text": "Is this in an automotive application?",
+        "text": "What is the transient source / application type?",
         "opt": {
           "mains": {
             "label": "AC mains surge protection (lightning, switching)",
@@ -1397,7 +1397,7 @@
     },
     "67": {
       "function": {
-        "text": "Is the R-T curve encoded in firmware?",
+        "text": "What is this thermistor's function?",
         "opt": {
           "sensing": {
             "label": "NTC — Temperature sensing",
@@ -1442,7 +1442,7 @@
     },
     "68": {
       "function": {
-        "text": "What is this PTC thermistor",
+        "text": "What is this PTC thermistor's function?",
         "opt": {
           "overcurrent": {
             "label": "Overcurrent protection (resettable fuse)",
@@ -1457,7 +1457,7 @@
     },
     "69": {
       "application_type": {
-        "text": "Is this mains-connected?",
+        "text": "Is this a signal-line or power-line application?",
         "opt": {
           "signal": {
             "label": "Signal-line",
@@ -1612,7 +1612,7 @@
             "desc": "Standard Q matching — verify at operating frequency"
           },
           "low_q": {
-            "label": "Low Q / don\\",
+            "label": "Low Q / don't care",
             "desc": "Q is not a primary selection criterion"
           }
         }
@@ -1625,7 +1625,7 @@
             "desc": "Shielded inductor required; verify Q impact"
           },
           "no": {
-            "label": "No / don\\",
+            "label": "No / don't know",
             "desc": "Unshielded may offer higher Q; shielded can always replace unshielded (upgrade)"
           }
         }
@@ -1707,7 +1707,7 @@
     },
     "B6": {
       "operating_mode": {
-        "text": "Is this an automotive application?",
+        "text": "What is the operating mode of this BJT?",
         "opt": {
           "saturated_switching": {
             "label": "Saturated switching (digital logic driver, relay driver, solenoid driver, LED driver)",
@@ -1914,19 +1914,19 @@
         "opt": {
           "consumer": {
             "label": "Consumer / general purpose",
-            "desc": "Standard clock applications. Frequency tolerance ≤ 50 ppm acceptable. Temperature stability ≤ 100 ppm acceptable. Aging rate is informational."
+            "desc": "Standard clock applications with relaxed accuracy requirements — microcontroller clock, general-purpose timers, non-protocol-critical interfaces. Frequency tolerance ≤ 50 ppm is acceptable. Temperature stability ≤ 100 ppm is acceptable. Aging rate is informational (Application Review)."
           },
           "comms": {
             "label": "Communications / protocol timing (USB, Bluetooth, Ethernet, UART)",
-            "desc": "Frequency tolerance and stability escalated to mandatory + blockOnMissing. USB HS requires ±50 ppm total. Bluetooth requires ±20 ppm. Cut type and aging rate escalated to primary."
+            "desc": "Protocol-critical timing applications where frequency accuracy directly affects communication reliability. USB HS requires ±50 ppm total. Bluetooth requires ±20 ppm. GPS/TCXO applications need ±2.5 ppm. Frequency tolerance and stability become mandatory — protocol frames will fail if total frequency error exceeds the protocol budget."
           },
           "precision": {
             "label": "Precision / instrumentation (measurement, calibration, reference clock)",
-            "desc": "Tolerance ≤ 10 ppm, stability ≤ 20 ppm required — both mandatory + blockOnMissing. Aging rate and cut type escalated to mandatory. ESR and TC curve escalated to primary."
+            "desc": "High-accuracy applications where every ppm counts — frequency counters, test equipment, precision oscillator references, scientific instruments. Tolerance ≤ 10 ppm, stability ≤ 20 ppm required. Aging rate becomes a primary specification. Cut type and TC curve shape affect measurement accuracy at temperature extremes."
           },
           "rtc": {
             "label": "RTC / watch (32.768 kHz timekeeping)",
-            "desc": "Confirm Tuning Fork cut type. Tolerance, stability, aging, and ESR all escalated to primary. RTC oscillators have limited drive current — high ESR causes startup failure."
+            "desc": "Real-time clock applications using 32.768 kHz (2^15 Hz) Tuning Fork crystals. RTC oscillators have very limited drive current (typically <1 µA) — high ESR causes startup failure at this drive level. Aging rate determines long-term timekeeping drift: ±3 ppm/year = ~95 seconds/year, over 10-year battery = >15 minutes cumulative."
           }
         }
       },
@@ -1935,11 +1935,11 @@
         "opt": {
           "yes": {
             "label": "Yes — VCXO circuit (voltage-controlled frequency pulling)",
-            "desc": "Shunt capacitance (C0) escalated to mandatory + blockOnMissing — C0 directly controls pullability range, must be within ±0.5 pF. TC curve escalated to primary. ESR escalated to primary."
+            "desc": "The crystal is used in a VCXO circuit where a varactor diode or voltage-controlled capacitor adjusts the oscillation frequency via a control voltage. Shunt capacitance (C0) directly determines the crystal's pullability range — the ppm range over which frequency can be varied. Replacement C0 must be within ±0.5 pF to maintain tuning range and loop gain. TC curve shape affects compensation accuracy."
           },
           "no": {
             "label": "No — standard fixed-frequency oscillator",
-            "desc": "Default matching. Shunt capacitance evaluated at default weight — ±1 pF mismatch typically acceptable."
+            "desc": "Standard Pierce, Colpitts, or other fixed-frequency oscillator circuit. Shunt capacitance (C0) is evaluated at default weight — ±1 pF mismatch is typically acceptable."
           }
         }
       },
@@ -1948,11 +1948,11 @@
         "opt": {
           "yes": {
             "label": "Yes — extended temperature / automotive (−40°C or beyond)",
-            "desc": "Operating temp range and ESR escalated to mandatory. AEC-Q200 escalated to mandatory + blockOnMissing. Note: crystals use AEC-Q200 (passive), NOT AEC-Q100 (active ICs). Frequency stability escalated to mandatory over extended range."
+            "desc": "Extended temperature or automotive applications where the crystal must operate reliably at −40°C or colder. ESR increases 30–50% from room temperature to −40°C, reducing oscillator startup margin. AEC-Q200 (passive component qualification) is required for automotive. Note: crystals use AEC-Q200, NOT AEC-Q100 (which is for active ICs). Tuning Fork 32.768 kHz candidates may exceed their standard 0°C to +70°C range — flag as Application Review."
           },
           "no": {
             "label": "No — commercial temperature (0°C to +70°C)",
-            "desc": "Default weights apply for all temperature-related attributes."
+            "desc": "Standard commercial temperature range. Default weights apply for all temperature-related attributes."
           }
         }
       }
@@ -2410,7 +2410,7 @@
     },
     "C4": {
       "device_function": {
-        "text": "Is this an automotive application?",
+        "text": "What is the primary device function in your circuit?",
         "opt": {
           "op_amp": {
             "label": "Op-Amp (closed-loop feedback)",
@@ -2617,7 +2617,7 @@
             "desc": "Different product category. 600–1700V. Higher Vf (1.2–1.7V) but zero recovery + high voltage + temperature stability."
           },
           "unknown": {
-            "label": "Don\\",
+            "label": "Don't know",
             "desc": "Determine from voltage: Vrrm ≥300V is almost certainly SiC. Below 200V is almost certainly silicon."
           }
         }
@@ -2672,11 +2672,11 @@
         "opt": {
           "can_redesign": {
             "label": "Compensation can be redesigned",
-            "desc": "The COMP pin components (Type II/III network) can be changed. A control mode mismatch is still a significant concern (loop stability must be re-verified), but is not an automatic rejection — the compensation can be recalculated for the new IC\\"
+            "desc": "The COMP pin components (Type II/III network) can be changed. A control mode mismatch is still a significant concern (loop stability must be re-verified), but is not an automatic rejection — the compensation can be recalculated for the new IC's transconductance (gm)."
           },
           "cannot_change": {
             "label": "Components must stay unchanged (drop-in only)",
-            "desc": "No BOM changes allowed beyond the IC itself. Control mode must match exactly — the existing compensation network is tuned for the original IC\\"
+            "desc": "No BOM changes allowed beyond the IC itself. Control mode must match exactly — the existing compensation network is tuned for the original IC's gm and control architecture. Any mismatch results in wrong crossover frequency, inadequate phase margin, or outright oscillation."
           },
           "unknown": {
             "label": "Unknown",
@@ -2719,7 +2719,7 @@
         "opt": {
           "yes": {
             "label": "Yes — high step-down or step-up ratio",
-            "desc": "BLOCKING: High conversion ratios push duty cycle to extremes. In a 12V→1V buck at 1MHz: D = 8.3%, ton = 83ns. If the replacement\\"
+            "desc": "BLOCKING: High conversion ratios push duty cycle to extremes. In a 12V→1V buck at 1MHz: D = 8.3%, ton = 83ns. If the replacement's ton_min > 83ns, the converter cannot regulate — output collapses. Minimum on-time/off-time becomes the binding specification."
           },
           "no": {
             "label": "No — moderate ratio (e.g., 5V→3.3V)",
@@ -2878,11 +2878,11 @@
     },
     "B4": {
       "tvs_application": {
-        "text": "Is this an automotive application?",
+        "text": "What is this TVS diode protecting?",
         "opt": {
           "power_rail": {
             "label": "Power rail protection",
-            "desc": "Ppk and Ipp are PRIMARY. Clamping voltage must be below protected circuit\\"
+            "desc": "Ppk and Ipp are PRIMARY. Clamping voltage must be below protected circuit's absolute max. Junction capacitance is IRRELEVANT — power rails tolerate hundreds of pF. Package is typically discrete SMA/SMB/SMC or DO-201."
           },
           "signal_line": {
             "label": "Signal-line protection (USB, HDMI, Ethernet, SPI, I2C)",
@@ -2969,7 +2969,7 @@
           },
           "adjustable": {
             "label": "Adjustable — resistor-programmable (TL431 type) or trim-pin adjustable",
-            "desc": "Adjustable references use external resistors or a trim pin to set the output voltage. For TL431-type resistor-programmable references, the replacement\\"
+            "desc": "Adjustable references use external resistors or a trim pin to set the output voltage. For TL431-type resistor-programmable references, the replacement's internal reference voltage (Vref) and adjustment range must cover the required output voltage. For trim-pin references, verify trim range covers the required calibration offset."
           }
         }
       },
@@ -3006,7 +3006,7 @@
     },
     "B3": {
       "zener_function": {
-        "text": "Is this an automotive application?",
+        "text": "What is the primary function of this Zener diode?",
         "opt": {
           "clamping": {
             "label": "Voltage clamping / overvoltage protection",

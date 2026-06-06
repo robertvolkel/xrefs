@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory, isDefaultDisplayed, countRealMismatches } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
@@ -61,6 +61,14 @@ function summarizeRecommendations(recs: XrefRecommendation[]): string {
   const counts = { accuris: 0, manufacturer: 0, logic: 0 };
   for (const r of recs) counts[deriveRecommendationBucket(r)]++;
 
+  // The panel hides obsolete + high-fail candidates by default. Report the SHOWN
+  // count as the headline number so the agent never contradicts the cards, but
+  // keep the full list available (with hidden entries tagged) so the model can
+  // still surface a hidden match — e.g. the only Chinese option — when asked,
+  // rather than flatly denying it exists.
+  const shownCount = recs.filter(isDefaultDisplayed).length;
+  const hiddenCount = recs.length - shownCount;
+
   const describe = (r: XrefRecommendation) => {
     const certs: string[] = [];
     const bucket = deriveRecommendationBucket(r);
@@ -68,7 +76,12 @@ function summarizeRecommendations(recs: XrefRecommendation[]): string {
     if (bucket === 'manufacturer') certs.push('MFR Certified');
     if (r.certifiedBy?.includes('mouser')) certs.push('Mouser suggested');
     const certStr = certs.length > 0 ? `, ${certs.join(', ')}` : '';
-    return `${r.part.mpn} (${r.part.manufacturer}, ${r.matchPercentage}%${certStr})`;
+    const hiddenStr = isDefaultDisplayed(r)
+      ? ''
+      : r.part.status !== 'Active'
+        ? ` [hidden by default — ${r.part.status}]`
+        : ` [hidden by default — ${countRealMismatches(r)} failing parameters]`;
+    return `${r.part.mpn} (${r.part.manufacturer}, ${r.matchPercentage}%${certStr})${hiddenStr}`;
   };
   const top5 = recs.slice(0, 5).map(describe).join(', ');
 
@@ -105,9 +118,13 @@ function summarizeRecommendations(recs: XrefRecommendation[]): string {
     ? `\nAutomotive qualification for this family: "${aecRule}". Use exclude_failing_parameters: ["${aecRule}"] when the user asks for automotive-qualified parts.`
     : '';
 
-  return `\n\n[Context: ${recs.length} replacement candidates found, ${passed} passed.
-Categories: ${counts.accuris} Accuris Certified (parts.io FFF/functional equivalents), ${counts.manufacturer} Manufacturer Certified (MFR-uploaded cross-refs), ${counts.logic} Logic Driven (matched by rule engine only).
-Top 5: ${top5}.${paramCatalog}${aecHint}
+  const hiddenLine = hiddenCount > 0
+    ? `\n${hiddenCount} of these are HIDDEN from the panel by default (obsolete/discontinued, or 3+ failing parameters) and are tagged "[hidden by default …]" in the list above. When you tell the user how many replacements there are, use the SHOWN count (${shownCount}), not the total. Only mention a hidden candidate when it is directly relevant to the user's question (e.g. the only match for a constraint they asked about) — and when you do, say it exists but is hidden by default and the user can say "show all" to see it. Never claim a part doesn't exist when it is merely hidden.`
+    : '';
+
+  return `\n\n[Context: ${shownCount} replacement candidate${shownCount === 1 ? '' : 's'} shown to the user (${recs.length} total, ${passed} passed).
+Categories (across all ${recs.length}): ${counts.accuris} Accuris Certified (parts.io FFF/functional equivalents), ${counts.manufacturer} Manufacturer Certified (MFR-uploaded cross-refs), ${counts.logic} Logic Driven (matched by rule engine only).
+Top 5: ${top5}.${hiddenLine}${paramCatalog}${aecHint}
 Compound queries are supported — e.g. "parts ≥10V, auto-qualified, Accuris certified" → one filter_recommendations call with attribute_filters + exclude_failing_parameters + category_filter together.
 Use category_filter to narrow by certification (Accuris → "third_party_certified", MFR → "manufacturer_certified", rule-engine-only → "logic_driven").]`;
 }

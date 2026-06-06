@@ -977,7 +977,7 @@
     },
     "64": {
       "application_type": {
-        "text": "What is the circuit",
+        "text": "Was ist die primäre Anwendung dieses Folienkondensators?",
         "opt": {
           "emi": {
             "label": "AC mains filtering / EMI suppression",
@@ -1019,7 +1019,7 @@
         }
       },
       "dvdt_requirement": {
-        "text": "What is the circuit",
+        "text": "Welche dV/dt-Anforderung hat die Schaltung?",
         "opt": {
           "unknown": {
             "label": "Unbekannt",
@@ -1030,7 +1030,7 @@
     },
     "65": {
       "application_type": {
-        "text": "Is this in an automotive application?",
+        "text": "Was ist die Transientenquelle / der Anwendungstyp?",
         "opt": {
           "mains": {
             "label": "AC mains surge protection (lightning, switching)",
@@ -1128,7 +1128,7 @@
     },
     "67": {
       "function": {
-        "text": "Is the R-T curve encoded in firmware?",
+        "text": "Welche Funktion hat dieser Thermistor?",
         "opt": {
           "sensing": {
             "label": "NTC — Temperature sensing",
@@ -1173,7 +1173,7 @@
     },
     "68": {
       "function": {
-        "text": "What is this PTC thermistor",
+        "text": "Welche Funktion hat dieser PTC-Thermistor?",
         "opt": {
           "overcurrent": {
             "label": "Overcurrent protection (resettable fuse)",
@@ -1188,7 +1188,7 @@
     },
     "69": {
       "application_type": {
-        "text": "Is this mains-connected?",
+        "text": "Handelt es sich um eine Signalleitungs- oder Netzleitungsanwendung?",
         "opt": {
           "signal": {
             "label": "Signal-line",
@@ -1343,7 +1343,7 @@
             "desc": "Standard Q matching — verify at operating frequency"
           },
           "low_q": {
-            "label": "Low Q / don\\",
+            "label": "Low Q / don't care",
             "desc": "Q is not a primary selection criterion"
           }
         }
@@ -1356,7 +1356,7 @@
             "desc": "Shielded inductor required; verify Q impact"
           },
           "no": {
-            "label": "No / don\\",
+            "label": "No / don't know",
             "desc": "Unshielded may offer higher Q; shielded can always replace unshielded (upgrade)"
           }
         }
@@ -1438,7 +1438,7 @@
     },
     "B6": {
       "operating_mode": {
-        "text": "Handelt es sich um eine Automobilanwendung?",
+        "text": "Was ist der Betriebsmodus dieses BJT?",
         "opt": {
           "saturated_switching": {
             "label": "Saturated switching (digital logic driver, relay driver, solenoid driver, LED driver)",
@@ -2092,7 +2092,7 @@
     },
     "C4": {
       "device_function": {
-        "text": "Handelt es sich um eine Automobilanwendung?",
+        "text": "Was ist die primäre Funktion des Bauteils in Ihrer Schaltung?",
         "opt": {
           "op_amp": {
             "label": "Op-Amp (closed-loop feedback)",
@@ -2299,7 +2299,7 @@
             "desc": "Different product category. 600–1700V. Higher Vf (1.2–1.7V) but zero recovery + high voltage + temperature stability."
           },
           "unknown": {
-            "label": "Don\\",
+            "label": "Don't know",
             "desc": "Determine from voltage: Vrrm ≥300V is almost certainly SiC. Below 200V is almost certainly silicon."
           }
         }
@@ -2354,11 +2354,11 @@
         "opt": {
           "can_redesign": {
             "label": "Compensation can be redesigned",
-            "desc": "The COMP pin components (Type II/III network) can be changed. A control mode mismatch is still a significant concern (loop stability must be re-verified), but is not an automatic rejection — the compensation can be recalculated for the new IC\\"
+            "desc": "The COMP pin components (Type II/III network) can be changed. A control mode mismatch is still a significant concern (loop stability must be re-verified), but is not an automatic rejection — the compensation can be recalculated for the new IC's transconductance (gm)."
           },
           "cannot_change": {
             "label": "Components must stay unchanged (drop-in only)",
-            "desc": "No BOM changes allowed beyond the IC itself. Control mode must match exactly — the existing compensation network is tuned for the original IC\\"
+            "desc": "No BOM changes allowed beyond the IC itself. Control mode must match exactly — the existing compensation network is tuned for the original IC's gm and control architecture. Any mismatch results in wrong crossover frequency, inadequate phase margin, or outright oscillation."
           },
           "unknown": {
             "label": "Unbekannt",
@@ -2401,7 +2401,7 @@
         "opt": {
           "yes": {
             "label": "Yes — high step-down or step-up ratio",
-            "desc": "BLOCKING: High conversion ratios push duty cycle to extremes. In a 12V→1V buck at 1MHz: D = 8.3%, ton = 83ns. If the replacement\\"
+            "desc": "BLOCKING: High conversion ratios push duty cycle to extremes. In a 12V→1V buck at 1MHz: D = 8.3%, ton = 83ns. If the replacement's ton_min > 83ns, the converter cannot regulate — output collapses. Minimum on-time/off-time becomes the binding specification."
           },
           "no": {
             "label": "No — moderate ratio (e.g., 5V→3.3V)",
@@ -2560,11 +2560,11 @@
     },
     "B4": {
       "tvs_application": {
-        "text": "Handelt es sich um eine Automobilanwendung?",
+        "text": "Was schützt diese TVS-Diode?",
         "opt": {
           "power_rail": {
             "label": "Power rail protection",
-            "desc": "Ppk and Ipp are PRIMARY. Clamping voltage must be below protected circuit\\"
+            "desc": "Ppk and Ipp are PRIMARY. Clamping voltage must be below protected circuit's absolute max. Junction capacitance is IRRELEVANT — power rails tolerate hundreds of pF. Package is typically discrete SMA/SMB/SMC or DO-201."
           },
           "signal_line": {
             "label": "Signal-line protection (USB, HDMI, Ethernet, SPI, I2C)",
@@ -2651,7 +2651,7 @@
           },
           "adjustable": {
             "label": "Adjustable — resistor-programmable (TL431 type) or trim-pin adjustable",
-            "desc": "Adjustable references use external resistors or a trim pin to set the output voltage. For TL431-type resistor-programmable references, the replacement\\"
+            "desc": "Adjustable references use external resistors or a trim pin to set the output voltage. For TL431-type resistor-programmable references, the replacement's internal reference voltage (Vref) and adjustment range must cover the required output voltage. For trim-pin references, verify trim range covers the required calibration offset."
           }
         }
       },
@@ -2688,7 +2688,7 @@
     },
     "B3": {
       "zener_function": {
-        "text": "Handelt es sich um eine Automobilanwendung?",
+        "text": "Was ist die primäre Funktion dieser Zener-Diode?",
         "opt": {
           "clamping": {
             "label": "Voltage clamping / overvoltage protection",

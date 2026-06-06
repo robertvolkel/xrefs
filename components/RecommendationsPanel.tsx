@@ -5,7 +5,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches, DEFAULT_MAX_MISMATCHES } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
@@ -42,10 +42,12 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const [selectedCategory, setSelectedCategory] = useState<RecommendationCategory | 'all'>('all');
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
   // Hide candidates with >2 real mismatches by default. Certified crosses bypass.
-  const MAX_MISMATCHES = 2;
+  // The threshold is shared with the chat-side count summaries via
+  // DEFAULT_MAX_MISMATCHES (lib/types.ts) so the agent's reported count can't
+  // drift from these cards.
   const [hideHighFails, setHideHighFails] = useState(true);
   const highFailHiddenCount = useMemo(
-    () => sorted.filter(r => !isCertifiedCross(r) && countRealMismatches(r) > MAX_MISMATCHES).length,
+    () => sorted.filter(r => !isCertifiedCross(r) && countRealMismatches(r) > DEFAULT_MAX_MISMATCHES).length,
     [sorted],
   );
 
@@ -110,7 +112,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory))
     // Mismatch-count filter (toggleable via "Show all" in the filter popover).
     // Certified crosses always bypass — explicit human verification overrides.
-    .filter(r => !hideHighFails || isCertifiedCross(r) || countRealMismatches(r) <= MAX_MISMATCHES);
+    .filter(r => !hideHighFails || isCertifiedCross(r) || countRealMismatches(r) <= DEFAULT_MAX_MISMATCHES);
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -209,7 +211,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         )}
         {hideHighFails && highFailHiddenCount > 0 && (
           <Chip
-            label={`${highFailHiddenCount} hidden (>${MAX_MISMATCHES} fails)`}
+            label={`${highFailHiddenCount} hidden (>${DEFAULT_MAX_MISMATCHES} fails)`}
             size="small"
             onDelete={() => setHideHighFails(false)}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
@@ -275,7 +277,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           control={
             <Checkbox checked={hideHighFails} onChange={(e) => setHideHighFails(e.target.checked)} size="small" sx={{ p: 0.5 }} />
           }
-          label={`Hide >${MAX_MISMATCHES} failed parameters${highFailHiddenCount > 0 ? ` (${highFailHiddenCount} hidden)` : ''}`}
+          label={`Hide >${DEFAULT_MAX_MISMATCHES} failed parameters${highFailHiddenCount > 0 ? ` (${highFailHiddenCount} hidden)` : ''}`}
           sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
         />
 

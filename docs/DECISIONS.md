@@ -7768,3 +7768,26 @@ Separate item surfaced (BACKLOG): 连欣科技's LX batch was applied but shows 
 - Decision #148 — manufacturer alias resolver + `companyUid` stable-FK concept.
 - Decision #202 — Improvement Potential column (consumes the same per-MFR fold).
 - Decision #174 — ingest pipeline (report/proceed re-map from source; proceed route spawns the .mjs).
+
+## Decision #226 — Sync the chat agent's recommendation count with the panel's displayed set (June 4, 2026)
+
+**Problem.** The chat agent reported "Found 13 replacement candidates" while the right-most recommendations panel showed only 1 card. Both numbers were technically correct but measured different things, so the contradiction read as a bug:
+
+- The agent's count came from `recs.length` — the **full** candidate set the server returns — in two deterministic summaries: `buildRecsSummary()` ([lib/services/recommendationSummary.ts](../lib/services/recommendationSummary.ts)) and the LLM context block `summarizeRecommendations()` ([lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts)).
+- The panel's count came from two **default-ON** display filters in `RecommendationsPanel` — `activeOnly` (hides non-`Active`: Obsolete/Discontinued/NRND/LastTimeBuy) and `hideHighFails` (hides non-certified candidates with >2 real failing parameters). The chat-driven `dispatchFilterIntent()` path ("Chinese only", "≥80%") had the same drift — it counted the `applyRecommendationFilter` result, which omits the panel's default quality/active filter.
+
+**Decision.** Route every count the agent states through **one shared predicate** equal to the panel's default-visible set, and report it "lead-with-shown, note-hidden."
+
+- **Single source of truth** in [lib/types.ts](../lib/types.ts): `DEFAULT_MAX_MISMATCHES = 2`, `isDefaultDisplayed(rec)` = `status === 'Active' && (isCertifiedCross(rec) || countRealMismatches(rec) <= DEFAULT_MAX_MISMATCHES)`, and `getDefaultDisplayedRecs(recs)`. Sits next to the existing `countRealMismatches`/`isCertifiedCross`/`filterRecsByMismatchCount` helpers (client-importable).
+- **Panel** now references `DEFAULT_MAX_MISMATCHES` instead of an inline `const MAX_MISMATCHES = 2`, so when both default toggles are on, the visible set provably equals `getDefaultDisplayedRecs(...)`. The user toggles are unchanged — turning one off intentionally widens the set beyond the predicate.
+- **`buildRecsSummary`** leads with `getDefaultDisplayedRecs(recs).length`, appends "N others hidden (obsolete or 3+ failing parameters) — say 'show all' to review them", and has an all-hidden branch that says the candidates exist + how to reveal them (never "none found").
+- **`summarizeRecommendations`** quotes the shown count as the headline number but keeps the **full** list available to the LLM with hidden entries tagged `[hidden by default — …]`, plus an instruction line: report the shown count, surface a hidden candidate only when directly relevant (e.g. the only match for a constraint), and when you do, say it's hidden + how to reveal it. This is what lets the agent answer "any Chinese replacements?" truthfully when the only Chinese option is quality-hidden, instead of flatly denying it.
+- **`dispatchFilterIntent`** reports `getDefaultDisplayedRecs(filtered).length` for the headline + top picks (panel still receives the full `filtered` set so its own "show all" reveals the rest), with the same hidden note and an all-hidden branch.
+
+**Scope note.** Display/summary only — **no `RECS_CACHE_SCHEMA_VERSION` bump** (scoring is untouched). Chat messages remain a static log: the shared predicate matches the panel's *default* state at the moment the agent speaks; if the user later manually toggles "show all", an older chat line doesn't retro-update (expected for a transcript), but any new statement still computes from the same predicate.
+
+### Related
+
+- Decision #173 — deterministic post-recs summary (`buildRecsSummary`) replacing LLM-driven assessment; this extends it to reconcile counts.
+- Decision #109 / #159 — `countRealMismatches` / `isCertifiedCross` / `filterRecsByMismatchCount` pure helpers (the new predicate joins them).
+- Decision #131 / #171 — filter pipeline + origin filter (the chat-driven path that also drifted).

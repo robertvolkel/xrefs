@@ -247,6 +247,31 @@ export function filterRecsByMismatchCount(
   });
 }
 
+/** Mismatch threshold for the single-part xref panel's default `hideHighFails`
+ *  filter. Lives here so the panel AND the chat summaries reference one value —
+ *  if it changes, both move together and can't report contradictory counts. */
+export const DEFAULT_MAX_MISMATCHES = 2;
+
+/** The single-part recommendations panel's *default* visible predicate, i.e.
+ *  the set a user sees before touching any filter toggle: the `activeOnly`
+ *  filter requires `status === 'Active'`, and `hideHighFails` drops non-certified
+ *  candidates with more than DEFAULT_MAX_MISMATCHES real mismatches. Certified
+ *  crosses always show. This is the single source of truth shared by
+ *  RecommendationsPanel and every chat-side count summary so the number the
+ *  agent states always equals the cards the panel displays by default. */
+export function isDefaultDisplayed(rec: XrefRecommendation): boolean {
+  if (rec.part.status !== 'Active') return false;
+  if (isCertifiedCross(rec)) return true;
+  return countRealMismatches(rec) <= DEFAULT_MAX_MISMATCHES;
+}
+
+/** The recs a user sees by default in the single-part panel — `isDefaultDisplayed`
+ *  applied across a set. Use `recs.length - getDefaultDisplayedRecs(recs).length`
+ *  for the "N hidden" count. */
+export function getDefaultDisplayedRecs(recs: XrefRecommendation[]): XrefRecommendation[] {
+  return recs.filter(isDefaultDisplayed);
+}
+
 /** A cross-reference recommendation */
 export interface XrefRecommendation {
   part: Part;

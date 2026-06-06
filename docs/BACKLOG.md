@@ -169,6 +169,24 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Trigger to flip:** when the first MFR disable is needed for real, OR during a periodic admin-UI audit, OR as part of a broader "canonical-source consolidation" sweep.
 
+## FindChips enrichment degrades silently under rate-limit contention
+**Status:** Not started
+**Priority:** P2 (no impact at current single-user load; becomes real as concurrent users grow)
+**Cost:** ~2-4 hours (retry-on-empty + optional UI signal)
+**Trigger:** Surfaced June 4, 2026 while debugging "distributor counts missing on search-result cards." Reproduced as two browser tabs sharing one dev-server process. The FC rate limiter is **module-level state** in [lib/services/findchipsClient.ts:255-260](../lib/services/findchipsClient.ts#L255-L260) (`PER_MINUTE_CAP = 60`, shared counter + `minuteResetAt`), so all requests in a process draw from one 60/min budget. A single search fans out to multiple FC calls (source-part commercial + recommendation pricing in 30-50 MPN chunks + card distributor-count batch), so concurrent activity can exceed 60/min. When `acquireRateSlot()` returns `false`, `getSiteResults` returns `null` → empty quotes → `distributorCount`/pricing stay unset.
+
+**The real problem is the *silent* degradation, not the cap itself:**
+- `triggerSearchDistributorEnrichment` ([hooks/useAppState.ts:345](../hooks/useAppState.ts#L345)) is fire-and-forget with no retry — a rate-limited empty result is indistinguishable from "FC genuinely has no data," so cards just render un-badged.
+- `/api/fc/enrich` still returns **200** when the underlying FC calls were rate-limited (empty `quotes` arrays), so there's no error signal anywhere.
+- Same pattern affects deferred recommendation-pricing enrichment (`triggerFCEnrichment`) and source-part commercial enrichment — pricing/stock can silently drop under load with no user-visible cue.
+
+**Fix options:**
+- **Retry-on-empty (recommended):** when FC returns empty for an MPN that wasn't a confirmed not-found, retry once after a short backoff (the per-minute window resets in ≤60s). Distinguish "rate-limited" from "genuinely not found" by threading a reason through `getSiteResults` → `/api/fc/enrich` so the client can decide whether to retry.
+- **Soft UI signal:** show a faint "pricing unavailable — retrying…" hint on cards whose enrichment came back empty-due-to-throttle, instead of a blank card (avoids the "looks broken" perception this bug created).
+- **Raise/parallelize the cap** only after checking the real FC plan limits — the 60/min was a guess (`// adjust based on FC API docs`).
+
+**Trigger to flip:** when concurrent user load grows enough that throttle contention becomes routine (multi-user sessions, large BOM validations), OR the first user report of "prices/distributors randomly missing."
+
 ## Audit other TABLE-returning RPCs for PostgREST 1000-row cap
 **Status:** Not started
 **Priority:** P3 (preventive; no known caller is currently affected)

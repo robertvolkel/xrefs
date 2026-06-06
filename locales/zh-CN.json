@@ -1482,7 +1482,7 @@
     },
     "64": {
       "application_type": {
-        "text": "该电路的应用类型是什么？",
+        "text": "这个薄膜电容器的主要应用是什么？",
         "opt": {
           "emi": {
             "label": "交流电源滤波/EMI抑制",
@@ -2379,7 +2379,7 @@
     },
     "B6": {
       "operating_mode": {
-        "text": "这是汽车应用吗？",
+        "text": "此 BJT 的工作模式是什么？",
         "opt": {
           "saturated_switching": {
             "label": "饱和开关（数字逻辑驱动、继电器驱动、螺线管驱动、LED驱动）",
@@ -3574,7 +3574,7 @@
     },
     "C4": {
       "device_function": {
-        "text": "这是汽车应用吗？",
+        "text": "该器件在您电路中的主要功能是什么？",
         "opt": {
           "op_amp": {
             "label": "运算放大器（闭环反馈）",
@@ -4408,7 +4408,7 @@
     },
     "B4": {
       "tvs_application": {
-        "text": "这是汽车应用吗？",
+        "text": "这个 TVS 二极管保护的是什么？",
         "opt": {
           "power_rail": {
             "label": "电源轨保护",
@@ -4665,7 +4665,7 @@
     },
     "B3": {
       "zener_function": {
-        "text": "这是汽车应用吗？",
+        "text": "该齐纳二极管的主要功能是什么？",
         "opt": {
           "clamping": {
             "label": "电压钳位/过压保护",
