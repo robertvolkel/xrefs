@@ -461,6 +461,44 @@ function getMaximalHanRunCandidates(text: string, mentionIndex: number, phrase: 
   return candidates;
 }
 
+/** If the Han phrase at `mentionIndex` carries a LEADING ASCII prefix that
+ *  abuts the Han run (e.g. `dc电流增益(hfe)(min&range)` — the `dc` breaks the
+ *  Han run so the extractor only grabs `电流增益`) and/or one-or-more trailing
+ *  parenthesized qualifier groups, reconstruct the full vendor param token
+ *  from the card and return it plus shorter prefixed sub-forms. atlasMapper.ts
+ *  stores such keys verbatim and lowercased (`'dc电流增益(hfe)(min&range)'`),
+ *  so without this the bare-Han-run check at CHECK 4 false-flags the mapping
+ *  as fabricated. Forms are lowercased to match the dict's lowercase-key
+ *  convention. Returns [] when there's neither an ASCII prefix nor a trailing
+ *  paren (the other builders already cover the bare/Han-only cases). */
+function getAsciiPrefixedParamCandidates(text: string, mentionIndex: number, phrase: string): string[] {
+  const isHan = (c: string) => /[\p{Script=Han}]/u.test(c);
+  const isAsciiAlnum = (c: string) => /[A-Za-z0-9]/.test(c);
+  // Extend left over an ASCII alphanumeric prefix abutting the Han run.
+  let start = mentionIndex;
+  while (start > 0 && isAsciiAlnum(text[start - 1] ?? '')) start--;
+  const hasPrefix = start < mentionIndex;
+  // Extend right over the rest of the Han run, then consecutive paren groups.
+  let hanEnd = mentionIndex + phrase.length;
+  while (hanEnd < text.length && isHan(text[hanEnd] ?? '')) hanEnd++;
+  const parenEnds: number[] = [];
+  let scan = hanEnd;
+  while (scan < text.length && (text[scan] === '(' || text[scan] === '（')) {
+    const close = text[scan] === '(' ? ')' : '）';
+    const closeIdx = text.indexOf(close, scan + 1);
+    if (closeIdx === -1 || closeIdx - scan > 40) break;
+    scan = closeIdx + 1;
+    parenEnds.push(scan);
+  }
+  if (!hasPrefix && parenEnds.length === 0) return [];
+  const forms = new Set<string>();
+  if (hasPrefix) forms.add(text.slice(start, hanEnd)); // prefix + Han run
+  for (const e of parenEnds) forms.add(text.slice(start, e)); // + cumulative parens
+  return [...forms]
+    .filter((f) => f.length >= 2 && f.length <= 60)
+    .map((f) => f.toLowerCase());
+}
+
 function mentionsName(text: string, name: string): boolean {
   return findMentionIndex(text, name) !== -1;
 }
@@ -828,6 +866,7 @@ export async function auditFamilyDomainCard(
         ...getSlashCompoundCandidates(cardText, m.index, phrase),
         ...getParenQualifierCandidates(cardText, m.index, phrase),
         ...getMaximalHanRunCandidates(cardText, m.index, phrase),
+        ...getAsciiPrefixedParamCandidates(cardText, m.index, phrase),
       ];
       let compoundResolved = false;
       for (const candidate of compoundCandidates) {

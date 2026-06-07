@@ -1204,6 +1204,13 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '集射极击穿电压(vceo)': { attributeId: 'vceo_max', attributeName: 'Vceo', unit: 'V', sortOrder: 3 },
     '集电极-发射极饱和电压(vce(sat)@ic,ib)': { attributeId: 'vce_sat', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 6 },
     '直流电流增益(hfe@ic,vce)': { attributeId: '_hfe', attributeName: 'DC Current Gain (hFE)', sortOrder: 7 },
+    // hFE variants surfaced by the B6 domain-card audit (June 2026): plain
+    // form (~615 prod), DC-prefixed single-column Min&Range (~140), and the
+    // reversed @Vce,Ic test-condition order (~3). All the same hFE spec → _hfe
+    // (deprioritized; values are binned ranges, preserved per the card).
+    '直流电流增益(hfe)': { attributeId: '_hfe', attributeName: 'DC Current Gain (hFE)', sortOrder: 7 },
+    'dc电流增益(hfe)(min&range)': { attributeId: '_hfe', attributeName: 'DC Current Gain (hFE)', sortOrder: 7 },
+    '直流电流增益(hfe@vce,ic)': { attributeId: '_hfe', attributeName: 'DC Current Gain (hFE)', sortOrder: 7 },
     '集电极截止电流(icbo)': { attributeId: '_icbo', attributeName: 'Collector Cutoff Current', sortOrder: 91 },
     '功率(pd)': { attributeId: '_pd', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 8 },
     '特征频率(ft)': { attributeId: 'ft', attributeName: 'Transition Frequency (ft)', unit: 'MHz', sortOrder: 9 },
