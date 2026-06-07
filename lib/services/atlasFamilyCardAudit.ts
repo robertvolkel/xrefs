@@ -1007,7 +1007,15 @@ export async function auditFamilyDomainCard(
       // Bare `w10` is bounded by non-alnum on both sides to avoid matching
       // suffixes inside identifiers like `aec_q200`.
       let claimedWeight: number | undefined;
+      // Self-referential weight wins. Cards use the idiom
+      // `attr (all weight=10 identity except attr=9)` where the parenthetical
+      // describes a GROUP and names this attribute as the exception. Prefer a
+      // `<attr>=<n>` claim inside the parens over the first generic weight —
+      // otherwise the leading `weight=10` is mis-attributed to the very
+      // attribute the card just called out as different.
+      const selfRefWeight = inside.match(new RegExp(`${escapeRe(attr)}\\s*=?\\s*(\\d+)`, 'i'));
       const wMatch =
+        selfRefWeight ||
         inside.match(/(?:^|[^a-z_0-9])w(?:eight)?\s*=?\s*(\d+)(?:[^a-z_0-9]|$)/i) ||
         inside.match(/(?:^|[^a-z_0-9])weight\s+(\d+)(?:[^a-z_0-9]|$)/i);
       if (wMatch) {
