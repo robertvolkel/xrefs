@@ -123,6 +123,12 @@ const MFR_NAME_BLOCKLIST = new Set([
   // generally. Same trade as TR/SST/HR/CW/AM/HX. Also caused Fix-with-AI
   // no-op loop.
   'TD',
+  // JK — JKSEMI's MPN prefix (JK-D/JK-M/JK16-/JK250-, e.g. JK-SMD020SF) cited
+  // on the F66 PTC Resettable Fuses card; JKSEMI legitimately ships 113 F66
+  // products. The bare "JK" in "JK-D" word-boundary-matches minor Chinese MFR
+  // "JK 金科" (name_en "JK") which ships ZERO products in ANY family. Same
+  // trade as SY/TLC/TR/HT — empty-MFR name collides with a real prefix.
+  'JK',
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention, mean

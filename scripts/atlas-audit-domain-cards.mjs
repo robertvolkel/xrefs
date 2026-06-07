@@ -116,6 +116,7 @@ const MFR_NAME_BLOCKLIST = new Set([
   'AM',         // INPAQ's bidirectional packaging suffix on the 5.0SMDJ TVS series (5.0SMDJxxxA-A / -AM) cited on card 70 B4 TVS Diodes; collides with MFR "AM 安美" (0 B4 products); also caused "Fix with AI" no-op loop
   'HX',         // HGC's actual C4 op-amp MPN prefix (HX358, HX324) cited on C4 card as "HX... (HGC)"; collides with two minor MFRs "HX 红星" and "HX 恒生兴" (both 0 C4 products); same trade as TR/SST/HR/CW/AM; also caused Fix-with-AI no-op loop
   'TD',         // TDSEMIC's clone-suffix annotation on C9 ADCs card ("-TD" (TDSEMIC)); collides with minor MFR "TD 钍地半导体" (0 C9 products); same trade as TR/SST/HR/CW/AM/HX; also caused Fix-with-AI no-op loop
+  'JK',         // JKSEMI's MPN prefix (JK-D/JK-M/JK16-/JK250-, e.g. JK-SMD020SF) on F66 PTC card; JKSEMI ships 113 F66 products; bare "JK" in "JK-D" collides with MFR "JK 金科" (name_en "JK", 0 products in any family); same trade as SY/TLC/TR/HT
 ]);
 
 // Trigger phrases that, when they appear shortly BEFORE a MFR mention,
