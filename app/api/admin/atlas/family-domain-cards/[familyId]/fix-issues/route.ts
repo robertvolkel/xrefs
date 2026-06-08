@@ -29,6 +29,7 @@ import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { logicTableRegistry, getLogicTable } from '@/lib/logicTables';
 import type { CardAuditResult } from '@/lib/services/atlasFamilyCardAuditTypes';
 import { withAnthropicRetry } from '@/lib/services/anthropicRetry';
+import { splitCardText, composeCardText } from '@/lib/services/atlasFamilyCardComposite';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -153,6 +154,15 @@ export async function POST(
       );
     }
 
+    // Composite cards (v2): the audit only flags issues in the narrative
+    // region (the facts are deterministic + never audited). So we send ONLY
+    // the narrative to Sonnet for the minimal edit, then recompose the facts
+    // back before returning — the stored card_text stays composite. Legacy
+    // v1 cards (no facts sentinel) → edit the whole card as before.
+    const { factsRegion, narrativeRegion } = splitCardText(cardText);
+    const isV2 = factsRegion !== null;
+    const editSurface = isV2 ? narrativeRegion : cardText;
+
     const table = getLogicTable(familyId);
     const familyName = table?.familyName ?? familyId;
     const issuesSection = summarizeAuditForPrompt(audit);
@@ -174,7 +184,7 @@ ${issuesSection}
 
 CURRENT CARD TEXT:
 
-${cardText}
+${editSurface}
 
 Output the corrected card text below. No preamble, no closing remarks — just the corrected card text:`;
 
@@ -196,13 +206,20 @@ Output the corrected card text below. No preamble, no closing remarks — just t
         { status: 500 },
       );
     }
-    const proposedText = textBlock.text.trim();
-    if (!proposedText) {
+    const editedSurface = textBlock.text.trim();
+    if (!editedSurface) {
       return NextResponse.json(
         { success: false, error: 'Empty proposed text from Sonnet' },
         { status: 500 },
       );
     }
+
+    // For v2, recompose the deterministic facts back around the edited
+    // narrative so the proposal the engineer sees (and saves) is a full
+    // composite card. For v1 the edited surface IS the whole card.
+    const proposedText = isV2
+      ? composeCardText(factsRegion as string, editedSurface)
+      : editedSurface;
 
     return NextResponse.json({ success: true, proposedText });
   } catch (err) {

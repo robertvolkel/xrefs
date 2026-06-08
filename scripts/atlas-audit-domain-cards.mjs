@@ -268,6 +268,33 @@ function chip(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 // Escape regex special chars in a string for use in `new RegExp`.
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+// ── composite-card split (mirror of lib/services/atlasFamilyCardFacts.ts) ──
+// Sentinels MUST stay byte-identical to the TS source of truth. v2 composite
+// cards carry a deterministic FACTS region (rules/dict/MFR cohort, correct by
+// construction) + an AI NARRATIVE region. The fact-shaped checks run ONLY on
+// the narrative; CHECK 2 (OMITTED_MFR) is skipped for v2 (renderer includes
+// the top-15 cohort by construction). Legacy v1 prose cards (no sentinel) →
+// factsRegion=null → whole card audited as before.
+const FACTS_START_SENTINEL = '===FAMILY FACTS (source-of-truth, auto-generated — do not edit)===';
+const FACTS_END_SENTINEL = '===END FAMILY FACTS===';
+const NARRATIVE_SENTINEL = '===ENGINEERING NOTES===';
+
+function splitCardText(cardText) {
+  if (!cardText) return { factsRegion: null, narrativeRegion: cardText ?? '' };
+  const startIdx = cardText.indexOf(FACTS_START_SENTINEL);
+  if (startIdx === -1) return { factsRegion: null, narrativeRegion: cardText };
+  const factsBodyStart = startIdx + FACTS_START_SENTINEL.length;
+  const endIdx = cardText.indexOf(FACTS_END_SENTINEL, factsBodyStart);
+  if (endIdx === -1) return { factsRegion: null, narrativeRegion: cardText };
+  const factsRegion = cardText.slice(factsBodyStart, endIdx).trim();
+  const afterFacts = endIdx + FACTS_END_SENTINEL.length;
+  const narrIdx = cardText.indexOf(NARRATIVE_SENTINEL, afterFacts);
+  const narrativeRegion = narrIdx === -1
+    ? cardText.slice(afterFacts).trim()
+    : cardText.slice(narrIdx + NARRATIVE_SENTINEL.length).trim();
+  return { factsRegion, narrativeRegion };
+}
+
 // Mirrored from lib/services/atlasFamilyCardAudit.ts — every contiguous
 // `/`-joined sub-span containing a captured phrase (e.g. for
 // `电阻类型/技术/工艺` → ['技术/工艺', '电阻类型/技术/工艺']).
@@ -456,6 +483,11 @@ const summary = [];
 
 for (const card of cards) {
   const { family_id, status, card_text } = card;
+  // Composite-card scoping — see splitCardText note above. For v2 cards the
+  // fact-shaped checks operate on the narrative; CHECK 2 is skipped.
+  const { factsRegion, narrativeRegion } = splitCardText(card_text);
+  const isV2 = factsRegion !== null;
+  const auditText = isV2 ? narrativeRegion : card_text;
   const result = {
     family_id,
     status,
@@ -499,16 +531,16 @@ for (const card of cards) {
     // not claiming X ships.
     let positiveMention = false;
     for (const n of mfr.names) {
-      const idx = findMentionIndex(card_text, n);
+      const idx = findMentionIndex(auditText, n);
       if (idx === -1) continue;
-      if (isNegativeListContext(card_text, idx)) continue;
+      if (isNegativeListContext(auditText, idx)) continue;
       const isShortAscii = !/[\p{Script=Han}]/u.test(n) && n.length < 8 && !n.includes(' ');
-      if (isShortAscii && isQuotedDescriptorContext(card_text, idx, n)) continue;
-      if (isShortAscii && isProtocolNumberContext(card_text, idx, n)) continue;
-      if (isShortAscii && isDashDescriptorContext(card_text, idx, n)) continue;
-      if (isShortAscii && isMpnSuffixContext(card_text, idx)) continue;
-      if (isShortAscii && isMfrAttributionContext(card_text, idx, n, knownMfrNames)) continue;
-      if (isShortAscii && isAcronymListContext(card_text, idx, n)) continue;
+      if (isShortAscii && isQuotedDescriptorContext(auditText, idx, n)) continue;
+      if (isShortAscii && isProtocolNumberContext(auditText, idx, n)) continue;
+      if (isShortAscii && isDashDescriptorContext(auditText, idx, n)) continue;
+      if (isShortAscii && isMpnSuffixContext(auditText, idx)) continue;
+      if (isShortAscii && isMfrAttributionContext(auditText, idx, n, knownMfrNames)) continue;
+      if (isShortAscii && isAcronymListContext(auditText, idx, n)) continue;
       positiveMention = true;
       break;
     }
@@ -528,22 +560,22 @@ for (const card of cards) {
   // Skipping <100-product MFRs cuts noise from editorial choices (a card
   // legitimately omitting a tiny long-tail MFR like Fortior Tech with 3
   // products in C3 isn't a hallucination, it's a focus decision).
-  const totalFamilyProducts = rankedMfrs.reduce((acc, [, c]) => acc + c, 0);
-  const OMIT_MIN_PRODUCTS = 100;
-  const OMIT_MIN_SHARE = 0.03;
-  // Share threshold at which an OMITTED_MFR is "critical" (block-level
-  // in the runtime audit). 15% is below typical top-2/top-3 cohort share
-  // — any MFR ≥15% is large enough that omitting it silently breaks a
-  // cohort claim. Mirror of TS OMIT_BLOCK_SHARE.
-  const OMIT_BLOCK_SHARE = 0.15;
-  for (const [mfrName, count] of rankedMfrs.slice(0, PREFIX_OMISSION_MFR_COUNT)) {
-    if (count < OMIT_MIN_PRODUCTS) continue;
-    if (totalFamilyProducts > 0 && count / totalFamilyProducts < OMIT_MIN_SHARE) continue;
-    const identity = allMfrIdentities.find((i) => i.names.some((n) => n.toLowerCase() === mfrName.toLowerCase()));
-    const names = identity ? identity.names : [mfrName];
-    const mentioned = names.some((n) => mentionsName(card_text, n));
-    if (!mentioned) {
-      result.omittedMfrs.push({ name: mfrName, productCount: count, share: Math.round((count / totalFamilyProducts) * 100) });
+  //
+  // Skipped entirely for v2 composite cards — the facts region renders the
+  // top-15 cohort by construction, so omission is impossible.
+  if (!isV2) {
+    const totalFamilyProducts = rankedMfrs.reduce((acc, [, c]) => acc + c, 0);
+    const OMIT_MIN_PRODUCTS = 100;
+    const OMIT_MIN_SHARE = 0.03;
+    for (const [mfrName, count] of rankedMfrs.slice(0, PREFIX_OMISSION_MFR_COUNT)) {
+      if (count < OMIT_MIN_PRODUCTS) continue;
+      if (totalFamilyProducts > 0 && count / totalFamilyProducts < OMIT_MIN_SHARE) continue;
+      const identity = allMfrIdentities.find((i) => i.names.some((n) => n.toLowerCase() === mfrName.toLowerCase()));
+      const names = identity ? identity.names : [mfrName];
+      const mentioned = names.some((n) => mentionsName(auditText, n));
+      if (!mentioned) {
+        result.omittedMfrs.push({ name: mfrName, productCount: count, share: Math.round((count / totalFamilyProducts) * 100) });
+      }
     }
   }
 
@@ -559,10 +591,10 @@ for (const card of cards) {
 
   const prefixClaims = [];
   let m;
-  while ((m = patA.exec(card_text)) !== null) {
+  while ((m = patA.exec(auditText)) !== null) {
     prefixClaims.push({ prefix: m[1], mfr: m[2].trim(), source: 'patA' });
   }
-  while ((m = patB.exec(card_text)) !== null) {
+  while ((m = patB.exec(auditText)) !== null) {
     prefixClaims.push({ mfr: m[1].trim(), prefix: m[2], source: 'patB' });
   }
 
@@ -637,7 +669,7 @@ for (const card of cards) {
   if (atlasMapperSrc) {
     const phrasesSeen = new Set();
     const allChinesePhrasesPat = /[\p{Script=Han}]{2,8}/gu;
-    while ((m = allChinesePhrasesPat.exec(card_text)) !== null) {
+    while ((m = allChinesePhrasesPat.exec(auditText)) !== null) {
       const phrase = m[0];
       if (phrasesSeen.has(phrase)) continue;
       phrasesSeen.add(phrase);
@@ -665,9 +697,9 @@ for (const card of cards) {
       // Slash-compound reconstruction — `封装/外壳`-style combined keys,
       // checking every sub-span containing the phrase.
       const compoundCandidates = [
-        ...getSlashCompoundCandidates(card_text, m.index, phrase),
-        ...getParenQualifierCandidates(card_text, m.index, phrase),
-        ...getMaximalHanRunCandidates(card_text, m.index, phrase),
+        ...getSlashCompoundCandidates(auditText, m.index, phrase),
+        ...getParenQualifierCandidates(auditText, m.index, phrase),
+        ...getMaximalHanRunCandidates(auditText, m.index, phrase),
       ];
       let compoundResolved = false;
       for (const candidate of compoundCandidates) {
@@ -690,8 +722,8 @@ for (const card of cards) {
       // Skip parenthetical clarifiers — `<Chinese>(<phrase>) → ...` is a
       // disambiguation note on the preceding Chinese term, not a standalone
       // mapping subject. Real example: `稳压值(范围) → _vz_range`.
-      const before = m.index > 0 ? card_text[m.index - 1] : '';
-      const after = card_text[m.index + phrase.length] ?? '';
+      const before = m.index > 0 ? auditText[m.index - 1] : '';
+      const after = auditText[m.index + phrase.length] ?? '';
       const isParenthetical = (before === '(' || before === '（') && (after === ')' || after === '）');
       if (isParenthetical) {
         // Walk back through any chain of preceding parentheticals — e.g.
@@ -700,12 +732,12 @@ for (const card of cards) {
         // each `(...)` group, then check whether the underlying root is Han.
         let cursor = m.index - 2;
         while (cursor >= 0) {
-          const c = card_text[cursor];
+          const c = auditText[cursor];
           if (c === ')' || c === '）') {
             let depth = 1;
             cursor--;
             while (cursor >= 0 && depth > 0) {
-              const cc = card_text[cursor];
+              const cc = auditText[cursor];
               if (cc === ')' || cc === '）') depth++;
               else if (cc === '(' || cc === '（') depth--;
               cursor--;
@@ -714,7 +746,7 @@ for (const card of cards) {
           }
           break;
         }
-        const rootChar = cursor >= 0 ? card_text[cursor] : '';
+        const rootChar = cursor >= 0 ? auditText[cursor] : '';
         if (rootChar && /[\p{Script=Han}]/u.test(rootChar)) continue;
       }
       // Skip compound-suffix fragments — `<Han>-<phrase>` means the
@@ -723,14 +755,14 @@ for (const card of cards) {
       // the whole compound; the regex captures 最大值 separately because
       // the dash breaks the Han run.
       if (before === '-' && m.index >= 2) {
-        const beforeDash = card_text[m.index - 2] ?? '';
+        const beforeDash = auditText[m.index - 2] ?? '';
         if (/[\p{Script=Han}]/u.test(beforeDash)) continue;
       }
 
       // Proximity check: within 50 chars AFTER the phrase, look for arrow or
       // attributeId-shaped quoted identifier.
       const afterStart = m.index + phrase.length;
-      const afterWindow = card_text.slice(afterStart, afterStart + 50);
+      const afterWindow = auditText.slice(afterStart, afterStart + 50);
       // Require explicit mapping SYNTAX — an arrow OR a quoted/backticked
       // lowercase identifier (the canonical-name shape). Bare English prose
       // words ("verify", "invent", "map") are NOT a mapping claim and were
