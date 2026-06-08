@@ -37,6 +37,7 @@
 
 import { getLogicTable } from '@/lib/logicTables';
 import type { LogicTable, MatchingRule } from '@/lib/types';
+import { createServiceClient } from '@/lib/supabase/service';
 import {
   getAtlasParamDictionary,
   getSharedParamDictionary,
@@ -93,35 +94,97 @@ export interface RenderedFacts {
 
 const CJK_RE = /[一-鿿]/;
 
+/** An engineer-accepted dictionary override (a Triage accept) for a family.
+ *  These live in atlas_dictionary_overrides (DB), NOT in the in-code dict —
+ *  so they're fetched at render time and folded into the facts so a Triage
+ *  accept shows up in the regenerated card without any code edit. */
+interface OverrideDictRow {
+  paramName: string;
+  attributeId: string;
+  attributeName: string;
+  unit?: string;
+}
+
+/** Fetch active engineer-accepted dictionary overrides for the family.
+ *  Fail-open: returns [] on any error so the facts degrade to code-dict-only
+ *  rather than failing the whole render. */
+async function fetchOverrideDictRows(familyId: string): Promise<OverrideDictRow[]> {
+  if (!familyId) return [];
+  try {
+    const sb = createServiceClient();
+    const { data, error } = await sb
+      .from('atlas_dictionary_overrides')
+      .select('param_name, attribute_id, attribute_name, unit')
+      .eq('family_id', familyId)
+      .eq('is_active', true)
+      .not('attribute_id', 'is', null);
+    if (error || !data) return [];
+    const out: OverrideDictRow[] = [];
+    for (const row of data) {
+      const paramName = (row as { param_name?: string }).param_name;
+      const attributeId = (row as { attribute_id?: string }).attribute_id;
+      if (!paramName || !attributeId) continue;
+      out.push({
+        paramName,
+        attributeId,
+        attributeName: (row as { attribute_name?: string }).attribute_name ?? attributeId,
+        unit: (row as { unit?: string | null }).unit ?? undefined,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Build the deterministic units list (canonical → standard unit) from the
- *  family dictionary's `unit` field. First non-empty unit per attributeId
- *  wins; deduped. This is the "data half" of CONVENTIONAL UNITS — the AI
- *  narrative carries the judgment half ("don't suffix the canonical"). */
-function buildUnitsFromDict(familyId: string): RenderedUnit[] {
-  const dict = getAtlasParamDictionary(familyId);
-  if (!dict) return [];
+ *  family dictionary's `unit` field plus engineer-accepted override units.
+ *  First non-empty unit per attributeId wins; deduped. This is the "data
+ *  half" of CONVENTIONAL UNITS — the AI narrative carries the judgment half
+ *  ("don't suffix the canonical"). */
+function buildUnitsFromDict(familyId: string, overrideRows: OverrideDictRow[]): RenderedUnit[] {
   const byAttr = new Map<string, string>();
-  for (const mapping of Object.values(dict)) {
-    const id = mapping.attributeId;
-    const unit = mapping.unit?.trim();
-    if (!id || !unit) continue;
+  const consider = (id: string | undefined, unit: string | undefined) => {
+    const u = unit?.trim();
     // Skip satellite/internal canonicals (leading underscore) — they're not
     // schema attributes the model should anchor on.
-    if (id.startsWith('_')) continue;
-    if (!byAttr.has(id)) byAttr.set(id, unit);
+    if (!id || !u || id.startsWith('_')) return;
+    if (!byAttr.has(id)) byAttr.set(id, u);
+  };
+  const dict = getAtlasParamDictionary(familyId);
+  if (dict) {
+    for (const mapping of Object.values(dict)) consider(mapping.attributeId, mapping.unit);
   }
+  for (const r of overrideRows) consider(r.attributeId, r.unit);
   return [...byAttr.entries()]
     .map(([attributeId, unit]) => ({ attributeId, unit }))
     .sort((a, b) => a.attributeId.localeCompare(b.attributeId));
 }
 
-/** Collect CJK→canonical dict entries: family-specific (via the shared
- *  extractChineseDictEntries helper) plus shared-dictionary CJK entries.
- *  Family entries win on key collision. */
-function collectChineseDict(familyId: string): ChineseDictEntry[] {
+/** Collect CJK→canonical dict entries: family-specific in-code dict (via the
+ *  shared extractChineseDictEntries helper), then engineer-accepted DB
+ *  overrides (Triage accepts), then shared-dictionary CJK entries. Earlier
+ *  sources win on key collision (code dict is authoritative; overrides are
+ *  the same mapping the engineer accepted). */
+function collectChineseDict(familyId: string, overrideRows: OverrideDictRow[]): ChineseDictEntry[] {
   const familyEntries = extractChineseDictEntries(familyId);
   const seen = new Set(familyEntries.map((e) => e.chinese));
   const merged: ChineseDictEntry[] = [...familyEntries];
+
+  // Engineer-accepted DB overrides — CJK paramNames only (English/numeric
+  // overrides don't help the model recognize Chinese paramNames).
+  for (const r of overrideRows) {
+    if (!CJK_RE.test(r.paramName)) continue;
+    if (seen.has(r.paramName)) continue;
+    seen.add(r.paramName);
+    merged.push({
+      chinese: r.paramName,
+      attributeId: r.attributeId,
+      attributeName: r.attributeName,
+      unit: r.unit,
+    });
+  }
+
   const shared = getSharedParamDictionary();
   for (const [key, mapping] of Object.entries(shared)) {
     if (!CJK_RE.test(key)) continue;
@@ -168,7 +231,7 @@ function renderDictSection(dict: ChineseDictEntry[]): string {
           return `- ${e.chinese} → ${e.attributeId} (${e.attributeName})${unit}`;
         })
         .join('\n');
-  return `CHINESE→CANONICAL DICTIONARY (family + shared entries, curated in atlasMapper.ts — use verbatim):\n${lines}`;
+  return `CHINESE→CANONICAL DICTIONARY (family + shared in-code entries + engineer-accepted Triage overrides — use verbatim):\n${lines}`;
 }
 
 function renderUnitsSection(units: RenderedUnit[]): string {
@@ -203,10 +266,13 @@ export async function renderCardFacts(
   opts?: { table?: LogicTable | null; groundingBlock?: GroundingBlock },
 ): Promise<RenderedFacts> {
   const table = opts?.table ?? getLogicTable(familyId);
-  const groundingBlock = opts?.groundingBlock ?? (await buildGroundingBlock(familyId));
+  const [groundingBlock, overrideRows] = await Promise.all([
+    opts?.groundingBlock ? Promise.resolve(opts.groundingBlock) : buildGroundingBlock(familyId),
+    fetchOverrideDictRows(familyId),
+  ]);
 
-  const dict = collectChineseDict(familyId);
-  const units = buildUnitsFromDict(familyId);
+  const dict = collectChineseDict(familyId, overrideRows);
+  const units = buildUnitsFromDict(familyId, overrideRows);
 
   const rulesSection = table
     ? renderRulesSection(table)
