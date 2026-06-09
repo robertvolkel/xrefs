@@ -4,6 +4,21 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Deep-linkable FACTS tables on domain cards (follow-up to Decision #228) (P3)
+
+**Context.** Decision #228 (composite domain cards) renders the factual card sections (RULES, CHINESE→CANONICAL dictionary, CONVENTIONAL UNITS, MFR cohort) deterministically into a **read-only plain-text box** in the review drawer ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)). The renderer ([lib/services/atlasFamilyCardFacts.ts](../lib/services/atlasFamilyCardFacts.ts)) already produces the structured arrays (`RenderedFacts.rules` / `.dict` / `.units` / `.mfrs`) alongside the prose — the UI just doesn't use them yet.
+
+**Gap this closes.** Today, if an engineer reads a fact in the box and disagrees with it (a weight they'd change, a dictionary mapping that's wrong/missing, an MFR cohort that looks off), there's **no routing** to where the fix lives — they navigate to the logic-table viewer / Triage dictionary / MFR data themselves. The facts are correct-by-construction relative to source, so this is the rare "I think the *source* is wrong" case — but when it happens, it's a manual hunt.
+
+**Fix idea.** Render the FACTS region as proper **tables** (reuse `LogicPanel.tsx` rule-table + `logicConstants.ts` `typeColors` for RULES; `AtlasDictionaryPanel.tsx` chip patterns for the dictionary) fed by the `RenderedFacts` structured arrays, with **deep-links per row**:
+- a RULES row → that rule in the Logic table viewer (`?section=logic&family=<id>`)
+- a DICTIONARY row → the Triage/dictionary editor for that param (`?section=atlas-dict-triage` filtered to the param, or the AtlasDictionaryPanel entry)
+- an MFR cohort row → that manufacturer's detail page (`/admin/manufacturers/<slug>`)
+
+Turns "navigate there yourself" into one click. Data is already available; this is purely a UI build. Keep the read-only plain-text fallback for any region without a structured array. Mentioned as the deferred follow-up in Decision #228's "Implementation §4 (Follow-up, not MVP)".
+
+---
+
 ## Peg `atlas_products` to `atlas_id` instead of manufacturer name string (Steps 2–3 of Decision #225) (P2)
 
 Decision #225 deduped the 9 true-duplicate MFR rows and added a name-based import guard, but `atlas_products` still links to manufacturers by **name string** (upsert key `(mpn, manufacturer)`, no manufacturer ID column). That's the root cause of the English-code collisions (HX = 红星 / 恒佳兴): products keyed under the bare code `"HX"` get attributed to *both* companies by the per-row `name_en` fold in `app/api/admin/manufacturers/route.ts`.
