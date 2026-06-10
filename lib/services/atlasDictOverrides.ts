@@ -7,6 +7,38 @@
 
 import { createClient } from '@/lib/supabase/server';
 
+// PostgREST caps a single SELECT response at 1000 rows by default, and
+// atlas_dictionary_overrides has crossed that (every accepted Triage mapping
+// adds a row). An un-paginated `.select()` therefore SILENTLY returns only the
+// first 1000 overrides, so any mapping beyond #1000 stops being applied — both
+// here (live read-path) and in the ingest/backfill mirror. Paginate with
+// `.range()` and STOP on error (never loop on a failed page — the Decision
+// #183 trap). Same 1000-row footgun class as Decision #206. See
+// scripts/atlas-ingest.mjs loadAndApplyDictOverrides() for the mirror.
+const OVERRIDE_PAGE_SIZE = 1000;
+
+type SupabaseLike = Awaited<ReturnType<typeof createClient>>;
+
+async function fetchOverridesPaginated(
+  supabase: SupabaseLike,
+  familyId?: string,
+): Promise<DictOverrideRow[]> {
+  const rows: DictOverrideRow[] = [];
+  for (let from = 0; ; from += OVERRIDE_PAGE_SIZE) {
+    let q = supabase
+      .from('atlas_dictionary_overrides')
+      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+      .eq('is_active', true);
+    if (familyId) q = q.eq('family_id', familyId);
+    const { data, error } = await q.range(from, from + OVERRIDE_PAGE_SIZE - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as DictOverrideRow[];
+    rows.push(...batch);
+    if (batch.length < OVERRIDE_PAGE_SIZE) break;
+  }
+  return rows;
+}
+
 // ── DB Row Type ──────────────────────────────────────────
 
 export interface DictOverrideRow {
@@ -54,12 +86,7 @@ export async function fetchAllDictOverrides(): Promise<DictOverrideRow[]> {
 
   try {
     const supabase = await createClient();
-    const { data } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('is_active', true);
-
-    const rows = (data ?? []) as DictOverrideRow[];
+    const rows = await fetchOverridesPaginated(supabase);
     allCache = { data: rows, fetchedAt: Date.now() };
     return rows;
   } catch {
@@ -74,13 +101,7 @@ export async function fetchDictOverrides(familyId: string): Promise<DictOverride
 
   try {
     const supabase = await createClient();
-    const { data } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('family_id', familyId)
-      .eq('is_active', true);
-
-    const rows = (data ?? []) as DictOverrideRow[];
+    const rows = await fetchOverridesPaginated(supabase, familyId);
     cache.set(familyId, { data: rows, fetchedAt: Date.now() });
     return rows;
   } catch {

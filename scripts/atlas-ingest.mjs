@@ -2902,16 +2902,29 @@ async function loadAndApplyDictOverrides() {
   if (!supabase) return { count: 0 };
   let rows;
   try {
-    const { data, error } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('is_active', true);
-    if (error) {
-      // Table missing or unauthorised — ingest still works, just without overrides.
-      console.warn(`  (dict overrides skipped: ${error.message})`);
-      return { count: 0 };
+    // Paginate — PostgREST caps a single SELECT at 1000 rows and
+    // atlas_dictionary_overrides has crossed that (every accepted Triage
+    // mapping adds a row). An un-paginated select silently dropped every
+    // override past #1000 at backfill time. STOP on error (never loop on a
+    // failed page — Decision #183 trap). Mirror of fetchOverridesPaginated in
+    // lib/services/atlasDictOverrides.ts. Same 1000-row class as Decision #206.
+    const PAGE = 1000;
+    rows = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('atlas_dictionary_overrides')
+        .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+        .eq('is_active', true)
+        .range(from, from + PAGE - 1);
+      if (error) {
+        // Table missing or unauthorised — ingest still works, just without overrides.
+        console.warn(`  (dict overrides skipped: ${error.message})`);
+        return { count: 0 };
+      }
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < PAGE) break;
     }
-    rows = data ?? [];
   } catch (err) {
     console.warn(`  (dict overrides skipped: ${err.message})`);
     return { count: 0 };

@@ -7935,3 +7935,38 @@ runs scoped/in waves, off-peak; ISC alone is the first wave.
 type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects ISC as legacy
 (883 unmapped) and the ISC backfill dry-run now shows 1,493 changes incl. `20ETF10 → trr`. SQL
 (migration + RPC re-run) must be applied manually in Supabase before discovery inserts work.
+
+## Decision #232 — Dictionary-override loaders silently capped at 1000 (June 10, 2026)
+
+**Symptom.** While adding two B1 gaia aliases (ISC's `peak_repetitive_reverse_voltage → vrrm`,
+`non_repetitive_peak_surge_current → ifsm`, the value-present-but-Missing case on `20ETF10`),
+the backfill printed `Loaded 1000 dictionary overrides (add: 1000, modify: 0, remove: 0)` — a
+suspiciously round number with the cap signature.
+
+**Root cause.** Both dictionary-override loaders fetched
+`atlas_dictionary_overrides.select().eq('is_active', true)` with **no `.range()` pagination**, so
+PostgREST's 1000-row default response cap silently truncated the result. Confirmed: after
+pagination the true count is **1034** — 34 active overrides (every accepted Triage mapping past
+#1000) were being **silently dropped**. This bit BOTH paths:
+- ingest/backfill: [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides()`
+- live read: [lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts)
+  `fetchAllDictOverrides()` + `fetchDictOverrides()` (feeds `fromParametersJsonb` recommendation scoring)
+
+So mappings beyond #1000 stopped applying **anywhere** — directly throttling the legacy-discovery
+loop (Decision #231): the more the engineer accepts in Triage, the more accepts are ignored. This
+is a **new instance** of the same 1000-row footgun class as Decision #206 (which fixed the *triage
+aggregation RPC* via `RETURNS jsonb`) — different code, different table, never touched by #206.
+
+**Fix.** Paginate both loaders with `.range(from, from+999)` loops that **STOP on error** (never
+loop on a failed page — the Decision #183 partial-result trap). Read-path uses a shared
+`fetchOverridesPaginated(supabase, familyId?)` helper; the .mjs carries the mirror inline next to
+the existing `loadCollidingEnNames()` pagination. After the fix the loader reports the true 1034.
+
+**Same-session companion (gaia aliases).** The two B1 aliases live in the shared
+[atlas-gaia-dicts.json](../lib/services/atlas-gaia-dicts.json) (loaded by both the TS read-path and
+`atlas-ingest.mjs` — no mirror needed). ISC backfill: **224 products changed, 0 errors**;
+`20ETF10` now carries `vrrm = 1000 V` / `ifsm = 300 A`. Pattern matches the Galaxy vendor-spelling
+playbook (Decision #215) — vendor word-order variants the existing dict didn't cover.
+
+**Verification.** tsc clean on changed files; 241 atlas tests pass; ISC dry-run + real backfill
+both report 224 changed / 0 errors; loader count 1000 → 1034.
