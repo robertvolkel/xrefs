@@ -979,6 +979,20 @@ export function useAppState() {
     });
   }, [addMessage]);
 
+  /** Silently clear the active recommendations filter — restores the full set
+   *  with NO chat messages. Used by the source-panel filter chips: the source
+   *  panel represents the part's full inventory, so clicking one of its chips
+   *  should filter from the full set rather than the agent's narrowed subset.
+   *  No-op (bails out of the render) when no filter is active. */
+  const clearChatFilterSilently = useCallback(() => {
+    setState((prev) => {
+      if (!prev.currentFilter) return prev;
+      const fullRecs = allRecsRef.current;
+      recsRef.current = fullRecs;
+      return { ...prev, recommendations: fullRecs, currentFilter: null, currentFilterLabel: null };
+    });
+  }, []);
+
   // ============================================================
   // LLM-POWERED SEARCH FLOW
   // ============================================================
@@ -1949,6 +1963,7 @@ export function useAppState() {
     handleContextResponse,
     handleSkipContext,
     handleMpnClick,
+    clearChatFilterSilently,
     setActiveAttributesTab,
     consumeAutoOpenMfr,
     getOrchestratorMessages,

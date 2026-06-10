@@ -322,6 +322,7 @@ export default function FeedbackDetailModal({
                       >
                         <MenuItem value="open">Open</MenuItem>
                         <MenuItem value="reviewed">Reviewed</MenuItem>
+                        <MenuItem value="wip">WIP</MenuItem>
                         <MenuItem value="resolved">Resolved</MenuItem>
                         <MenuItem value="dismissed">Dismissed</MenuItem>
                       </Select>

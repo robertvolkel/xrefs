@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
-import { Part, SupplierQuote, XrefRecommendation, deriveRecommendationCategories } from '@/lib/types';
+import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, getDefaultDisplayedRecs } from '@/lib/types';
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
@@ -179,9 +179,15 @@ export function computePriceRange(quotes: SupplierQuote[] | undefined): { min: n
   return { min: min.price, max: max.price, currency: min.currency };
 }
 
-/** Aggregate cross-reference categories + unique MFR list with China flag */
-function summarizeCrossRefs(recs: XrefRecommendation[] | undefined) {
-  if (!recs || recs.length === 0) return null;
+/** Aggregate cross-reference categories + unique MFR list with China flag.
+ *  Counts over the default-DISPLAYED set (active + ≤2 real mismatches, certified
+ *  crosses bypass) — the same `getDefaultDisplayedRecs` predicate the panel and
+ *  chat counts use (Decision #226) — so a chip's number equals what a click
+ *  surfaces in the Replacements panel rather than the full candidate count. */
+function summarizeCrossRefs(allRecs: XrefRecommendation[] | undefined) {
+  if (!allRecs || allRecs.length === 0) return null;
+  const recs = getDefaultDisplayedRecs(allRecs);
+  if (recs.length === 0) return null;
   let mfrCertified = 0;
   let thirdPartyCertified = 0;
   let logicDriven = 0;
@@ -226,7 +232,7 @@ function SectionHeader({ label }: { label: string }) {
 }
 
 /* ── Overview tab content ── */
-export function OverviewContent({ part, t, allRecommendations, dataSource }: { part: Part; t: T; allRecommendations?: XrefRecommendation[]; dataSource?: DataSource }) {
+export function OverviewContent({ part, t, allRecommendations, dataSource, xrefCategory = 'all', xrefMfr = '', onSelectXrefCategory, onSelectXrefMfr }: { part: Part; t: T; allRecommendations?: XrefRecommendation[]; dataSource?: DataSource; xrefCategory?: RecommendationCategory | 'all'; xrefMfr?: string; onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void; onSelectXrefMfr?: (mfr: string) => void }) {
   const description = part.detailedDescription || part.description;
   const distributorCount = part.supplierQuotes?.length ?? 0;
   const totalStock = part.supplierQuotes?.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0) ?? 0;
@@ -409,48 +415,34 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
           <SectionHeader label="Cross References" />
           <Box sx={{ px: 2, py: 0.75 }}>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-              {xrefSummary.mfrCertified > 0 && (
-                <Chip
-                  label={`MFR Certified (${xrefSummary.mfrCertified})`}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.62rem',
-                    bgcolor: CATEGORY_CHIP_COLORS.manufacturer_certified.bg,
-                    borderColor: CATEGORY_CHIP_COLORS.manufacturer_certified.border,
-                    color: CATEGORY_CHIP_COLORS.manufacturer_certified.fg,
-                  }}
-                />
-              )}
-              {xrefSummary.thirdPartyCertified > 0 && (
-                <Chip
-                  label={`Accuris Certified (${xrefSummary.thirdPartyCertified})`}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.62rem',
-                    bgcolor: CATEGORY_CHIP_COLORS.third_party_certified.bg,
-                    borderColor: CATEGORY_CHIP_COLORS.third_party_certified.border,
-                    color: CATEGORY_CHIP_COLORS.third_party_certified.fg,
-                  }}
-                />
-              )}
-              {xrefSummary.logicDriven > 0 && (
-                <Chip
-                  label={`Logic Driven (${xrefSummary.logicDriven})`}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    height: 20,
-                    fontSize: '0.62rem',
-                    bgcolor: CATEGORY_CHIP_COLORS.logic_driven.bg,
-                    borderColor: CATEGORY_CHIP_COLORS.logic_driven.border,
-                    color: CATEGORY_CHIP_COLORS.logic_driven.fg,
-                  }}
-                />
-              )}
+              {([
+                { key: 'manufacturer_certified' as const, label: 'MFR Certified', count: xrefSummary.mfrCertified },
+                { key: 'third_party_certified' as const, label: 'Accuris Certified', count: xrefSummary.thirdPartyCertified },
+                { key: 'logic_driven' as const, label: 'Logic Driven', count: xrefSummary.logicDriven },
+              ]).filter(c => c.count > 0).map(({ key, label, count }) => {
+                const colors = CATEGORY_CHIP_COLORS[key];
+                const active = xrefCategory === key;
+                const clickable = Boolean(onSelectXrefCategory);
+                return (
+                  <Chip
+                    key={key}
+                    label={`${label} (${count})`}
+                    size="small"
+                    variant="outlined"
+                    onClick={clickable ? () => onSelectXrefCategory!(active ? 'all' : key) : undefined}
+                    sx={{
+                      height: 20,
+                      fontSize: '0.62rem',
+                      cursor: clickable ? 'pointer' : 'default',
+                      fontWeight: active ? 700 : 400,
+                      bgcolor: active ? colors.fg : colors.bg,
+                      borderColor: colors.border,
+                      color: active ? '#0b0b0b' : colors.fg,
+                      '&:hover': clickable ? { bgcolor: active ? colors.fg : colors.border, color: '#0b0b0b' } : undefined,
+                    }}
+                  />
+                );
+              })}
             </Stack>
           </Box>
           {xrefSummary.mfrs.length > 0 && (
@@ -459,24 +451,30 @@ export function OverviewContent({ part, t, allRecommendations, dataSource }: { p
                 Manufacturers with crosses
               </Typography>
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                {xrefSummary.mfrs.map(m => (
-                  <Chip
-                    key={m.name}
-                    size="small"
-                    variant="outlined"
-                    sx={{ height: 20, fontSize: '0.62rem' }}
-                    label={
-                      <Stack direction="row" alignItems="center" spacing={0.25} component="span">
-                        <Box component="span">{m.name}</Box>
-                        {m.isChinese && (
-                          <Tooltip title="Atlas — Chinese manufacturer" arrow>
-                            <Box component="span" sx={{ fontSize: 11, lineHeight: 1 }}>&#127464;&#127475;</Box>
-                          </Tooltip>
-                        )}
-                      </Stack>
-                    }
-                  />
-                ))}
+                {xrefSummary.mfrs.map(m => {
+                  const active = xrefMfr === m.name;
+                  const clickable = Boolean(onSelectXrefMfr);
+                  return (
+                    <Chip
+                      key={m.name}
+                      size="small"
+                      variant={active ? 'filled' : 'outlined'}
+                      color={active ? 'primary' : 'default'}
+                      onClick={clickable ? () => onSelectXrefMfr!(active ? '' : m.name) : undefined}
+                      sx={{ height: 20, fontSize: '0.62rem', cursor: clickable ? 'pointer' : 'default' }}
+                      label={
+                        <Stack direction="row" alignItems="center" spacing={0.25} component="span">
+                          <Box component="span">{m.name}</Box>
+                          {m.isChinese && (
+                            <Tooltip title="Atlas — Chinese manufacturer" arrow>
+                              <Box component="span" sx={{ fontSize: 11, lineHeight: 1 }}>&#127464;&#127475;</Box>
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      }
+                    />
+                  );
+                })}
               </Stack>
             </Box>
           )}

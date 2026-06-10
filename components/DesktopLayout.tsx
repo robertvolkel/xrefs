@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
-import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, XrefRecommendation } from '@/lib/types';
+import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation } from '@/lib/types';
 
 export type { AttributesTab };
 import ChatInterface from './ChatInterface';
@@ -102,6 +102,10 @@ export interface DesktopLayoutProps {
   /** True when the replacement-attributes fetch failed. */
   comparisonError?: boolean;
   recommendations: XrefRecommendation[];
+  /** Full unfiltered recommendation set — feeds the source panel's "Cross
+   *  References" summary so it shows the part's complete inventory regardless of
+   *  any right-panel (chat/popover) filter. The right panel uses `recommendations`. */
+  allRecommendations: XrefRecommendation[];
   selectedRecommendation: XrefRecommendation | null;
   conversationId: string | null;
 
@@ -141,6 +145,10 @@ export interface DesktopLayoutProps {
 
   // Handlers — panels
   onManufacturerClick: (manufacturer: string) => void;
+  /** Silently clear any active chat-driven recommendation filter. Called when a
+   *  source-panel cross-reference chip is clicked so those chips filter from the
+   *  part's full inventory rather than the agent's narrowed subset. */
+  onClearChatFilter?: () => void;
   onExpandChat: () => void;
 
   // Handlers — history
@@ -162,7 +170,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   const {
     phase, messages, statusText, sourceAttributes, comparisonAttributes,
     isLoadingComparison = false, comparisonError = false,
-    recommendations, selectedRecommendation, conversationId,
+    recommendations, allRecommendations, selectedRecommendation, conversationId,
     showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
     chatCollapsed, mfrOpen, mfrProfile, mfrSource, mfrLoading,
     historyOpen, conversations, convoLoading,
@@ -170,7 +178,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext, onChoiceSelect,
     onQuantitySubmit,
     onSelectRecommendation, onBackToRecommendations,
-    onManufacturerClick, onExpandChat,
+    onManufacturerClick, onClearChatFilter, onExpandChat,
     onToggleHistory, onCloseHistory,
     onSelectConversation, onNewChat, onDeleteConversation, onClearAllConversations,
     knownMpns, onMpnClick,
@@ -182,9 +190,33 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   // can switch tabs). Falls back to local state for any consumer that hasn't
   // wired the props yet — preserves the prior MPN-change reset effect there.
   const [localTab, setLocalTab] = useState<AttributesTab>('overview');
-  useEffect(() => { setLocalTab('overview'); }, [sourceAttributes?.part.mpn]);
+  // Cross-reference filter shared between the source panel's clickable "Cross
+  // References" chips and the Replacements panel's popover (single source of truth).
+  const [xrefCategory, setXrefCategory] = useState<RecommendationCategory | 'all'>('all');
+  const [xrefMfr, setXrefMfr] = useState('');
+  useEffect(() => {
+    setLocalTab('overview');
+    setXrefCategory('all');
+    setXrefMfr('');
+  }, [sourceAttributes?.part.mpn]);
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
+
+  // Clicking a source-panel chip while comparing returns to the (now filtered)
+  // recommendations list so the result is actually visible.
+  const handleSelectXrefCategory = (cat: RecommendationCategory | 'all') => {
+    // Source-panel chips filter from the part's full inventory — drop any active
+    // chat filter (no-op when none) so the click isn't constrained to the agent's
+    // narrowed subset.
+    onClearChatFilter?.();
+    setXrefCategory(cat);
+    if (phase === 'comparing') onBackToRecommendations();
+  };
+  const handleSelectXrefMfr = (mfr: string) => {
+    onClearChatFilter?.();
+    setXrefMfr(mfr);
+    if (phase === 'comparing') onBackToRecommendations();
+  };
 
   return (
     <Box sx={{ display: 'flex', height: 'var(--app-height)', width: '100vw' }}>
@@ -311,8 +343,12 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             title="Source Part"
             activeTab={attributesTab}
             onTabChange={setAttributesTab}
-            allRecommendations={recommendations}
+            allRecommendations={allRecommendations}
             onManufacturerClick={onManufacturerClick}
+            xrefCategory={xrefCategory}
+            xrefMfr={xrefMfr}
+            onSelectXrefCategory={handleSelectXrefCategory}
+            onSelectXrefMfr={handleSelectXrefMfr}
           />
         </Box>
 
@@ -353,6 +389,10 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onSelect={onSelectRecommendation}
               onManufacturerClick={onManufacturerClick}
               isEnrichingFC={isEnrichingFC}
+              categoryFilter={xrefCategory}
+              onCategoryFilterChange={setXrefCategory}
+              mfrFilter={xrefMfr}
+              onMfrFilterChange={setXrefMfr}
             />
           ) : showRightPanel ? (
             <Box

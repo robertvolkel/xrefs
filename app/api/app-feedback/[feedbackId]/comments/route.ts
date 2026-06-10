@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AppFeedbackComment, AppFeedbackCommentAuthorRole } from '@/lib/types';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import {
+  createNotification,
+  createNotifications,
+  getAdminRecipientIds,
+} from '@/lib/services/notificationService';
 
 const MAX_BODY_CHARS = 4000;
 
@@ -94,6 +99,37 @@ export async function POST(
         .eq('id', feedbackId);
     } else {
       await supabase.rpc('mark_app_feedback_user_read', { p_feedback_id: feedbackId });
+    }
+
+    // Fire-and-forget notification fan-out. Never blocks/fails the response.
+    const ownerId = feedbackRow.user_id as string;
+    const commentId = inserted.id as string;
+    const preview = text.slice(0, 140);
+    if (role === 'admin' && ownerId !== user!.id) {
+      // Admin replied → notify the feedback owner.
+      void createNotification({
+        recipientId: ownerId,
+        type: 'feedback_reply',
+        title: 'New reply to your feedback',
+        body: preview,
+        link: '/feedback',
+        data: { feedbackId, commentId },
+        dedupeKey: `feedback_reply:${commentId}`,
+      }).catch(() => {});
+    } else if (role === 'user') {
+      // User replied → notify all active admins (excluding the actor).
+      void getAdminRecipientIds(user!.id)
+        .then((adminIds) =>
+          createNotifications(adminIds, {
+            type: 'feedback_new',
+            title: 'New feedback activity',
+            body: preview,
+            link: '/monitoring',
+            data: { feedbackId, commentId },
+            dedupeKey: `feedback_new:${commentId}`,
+          }),
+        )
+        .catch(() => {});
     }
 
     const comment: AppFeedbackComment = {

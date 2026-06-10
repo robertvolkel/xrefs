@@ -4,6 +4,16 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
+
+**Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:
+
+**(a) `de` translation gaps.** German context-question coverage is incomplete: ~17 `contextQ.<family>.<questionId>.text` keys are absent (D2/E1/F1/F2 + parts of 53), and the 5 long descriptions corrupted by the extractor were restored to **English** (their pre-corruption content was already untranslated English), not translated to German. At runtime these fall back to the English TS source — correct content, wrong language. zh-CN is materially more complete. Fix: a proper German translation pass over the `contextQ` subtree. Low priority — falls back gracefully, German is a minority locale.
+
+**(b) `en` `contextQ` is redundant with the TS source.** Because the UI uses the TS `questionText`/`label`/`description` as the i18n fallback (see [components/ApplicationContextForm.tsx](../components/ApplicationContextForm.tsx)), every `en` `contextQ` entry just duplicates the TypeScript source in the same language — pure liability (it's how this bug entered, and how desc "drift" crept in). The guard test now pins `en` == TS verbatim, so they can't diverge silently. Cleaner end state: **delete the entire `en.contextQ` subtree** and let it always fall back to TS. Removes ~hundreds of redundant strings and makes the en-exactness test trivially true. Deferred because it's a larger diff with no user-visible change; the guard test already neutralizes the risk.
+
+---
+
 ## Deep-linkable FACTS tables on domain cards (follow-up to Decision #228) (P3)
 
 **Context.** Decision #228 (composite domain cards) renders the factual card sections (RULES, CHINESE→CANONICAL dictionary, CONVENTIONAL UNITS, MFR cohort) deterministically into a **read-only plain-text box** in the review drawer ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)). The renderer ([lib/services/atlasFamilyCardFacts.ts](../lib/services/atlasFamilyCardFacts.ts)) already produces the structured arrays (`RenderedFacts.rules` / `.dict` / `.units` / `.mfrs`) alongside the prose — the UI just doesn't use them yet.
@@ -2226,3 +2236,21 @@ Deferred consciously from the Decision #220 + #222 rollout:
 8. **Tenant-admin enum widening on `app_feedback_comments.author_role`.** Currently `('user', 'admin')`. Decision #222 says when multi-tenancy lands, widen to `('user', 'platform_admin', 'tenant_admin')` so tenant admins (when they exist) can participate in the thread without RLS or app-level role spoofing. Schema migration is just a CHECK constraint widen.
 
 9. **`(stale)` HMR auto-recovery in dev.** Twice this session, Next.js HMR went stale and surfaced hydration errors that weren't real bugs. Track whether Turbopack ships a self-healing fix; if not, consider a dev-only banner that detects the `(stale)` indicator and prompts the user to hard-refresh.
+
+10. **Admin "file feedback on behalf of another user."** The "New feedback" button on the admin tab (added June 9, 2026 — reuses `AppFeedbackDialog`) creates the item under the admin's OWN `user_id`, so there's no "submitted for customer X" attribution and the thread lives in the admin's personal `/feedback`. To let an admin log feedback *as* another user (e.g. a phone/email report from a customer), add a user-picker to the dialog when opened from the admin surface, plus a server change so `POST /api/app-feedback` accepts an optional `onBehalfOfUserId` (admin-gated) that sets `user_id` to the target while recording the acting admin for audit (new column, e.g. `created_by_admin_id`). Touches the dialog (conditional picker), the POST route (admin auth branch + target-user validation), and the read-stamp semantics (whose `user_last_read_at` — the impersonated user's). Defer until a real "customer told me directly" workflow exists; self-authored covers the common case (admin logging a bug they found).
+
+## Notifications system follow-ups (Decision #230)
+
+The unified notification pipeline shipped with two v1 producers (feedback reply → owner, new feedback → admins). Deferred, each ~one `createNotification()`/`createNotifications()` call:
+
+1. **Release-note → all users producer + digest coexistence.** Wire `app/api/admin/releases/route.ts` POST to `createNotifications(allUserIds, { type: 'release_note', link: '/releases', ... })`. Then decide the relationship with the existing batched `release-digest` cron — recommend gating the digest behind `notificationPreferences` or retiring it once per-event is verified, so users don't get both an instant email and a later digest for the same note.
+
+2. **Weekly BOM tracking report producer.** When the scheduled BOM report is built, its (CRON_SECRET-triggered) endpoint calls `createNotification({ type: 'bom_report', link: '/<report-url>', ... })`. The notification type + inbox UI are already in place.
+
+3. **DNS / deliverability prerequisite (IT task, blocks ALL email).** Verify `xrefs.ai` as a sending domain in Resend and add SPF/DKIM/DMARC records to the `xrefs.ai` DNS zone. Set `RESEND_API_KEY`, `CRON_SECRET`, and `NEXT_PUBLIC_APP_URL=https://xrefs.ai` in production. Until done, inbox rows are created but no email is delivered (the in-app inbox still works).
+
+4. **Run the schema migration.** `scripts/supabase-notifications-schema.sql` must be run once in the Supabase SQL editor (table + RLS + the two SECURITY DEFINER mark-read RPCs) before the feature works.
+
+5. **Notification retention / cleanup.** No pruning yet — rows accumulate forever. Add a periodic delete of read notifications older than N days (or cap per user) when volume warrants.
+
+6. **Real-time inbox (optional).** The bell polls every 30s (same pattern as feedback dots). Supabase Realtime on the `notifications` table could push instantly if latency becomes a complaint.

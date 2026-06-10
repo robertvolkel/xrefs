@@ -18,7 +18,7 @@ import {
   ToggleButtonGroup,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes, XrefRecommendation } from '@/lib/types';
+import { PartAttributes, RecommendationCategory, XrefRecommendation } from '@/lib/types';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -34,6 +34,12 @@ interface AttributesPanelProps {
   onTabChange: (tab: AttributesTab) => void;
   allRecommendations?: XrefRecommendation[];
   onManufacturerClick?: (manufacturer: string) => void;
+  /** Cross-reference filter shared with the Replacements panel (single-part view).
+   *  Drives active-chip highlight in the Overview "Cross References" section. */
+  xrefCategory?: RecommendationCategory | 'all';
+  xrefMfr?: string;
+  onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void;
+  onSelectXrefMfr?: (mfr: string) => void;
 }
 
 function SkeletonSectionHeader() {
@@ -106,7 +112,7 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -324,6 +330,10 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
             t={t}
             allRecommendations={allRecommendations}
             dataSource={attributes.dataSource as 'digikey' | 'atlas' | 'partsio'}
+            xrefCategory={xrefCategory}
+            xrefMfr={xrefMfr}
+            onSelectXrefCategory={onSelectXrefCategory}
+            onSelectXrefMfr={onSelectXrefMfr}
           />
         ) : null
       )}

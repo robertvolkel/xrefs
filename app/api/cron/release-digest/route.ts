@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { createServiceClient } from '@/lib/supabase/service';
+import { getFromEmail } from '@/lib/services/emailService';
 
 interface DigestNote {
   id: string;
@@ -145,8 +146,7 @@ async function handleDigest(request: NextRequest): Promise<NextResponse> {
     const resend = new Resend(apiKey);
 
     const html = buildDigestHtml(notes);
-    const fromEmail =
-      process.env.DIGEST_FROM_EMAIL || 'XRefs <notifications@xrefs.app>';
+    const fromEmail = getFromEmail();
     const subject = `XRefs — ${notes.length} new update${notes.length > 1 ? 's' : ''}`;
 
     const { error: sendError } = await resend.emails.send({

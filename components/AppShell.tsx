@@ -152,6 +152,7 @@ export default function AppShell() {
         isLoadingComparison={appState.isLoadingComparison}
         comparisonError={appState.comparisonError}
         recommendations={appState.recommendations}
+        allRecommendations={appState.allRecommendations}
         selectedRecommendation={appState.selectedRecommendation}
         conversationId={appState.conversationId}
         showAttributesPanel={panels.showAttributesPanel}
@@ -181,6 +182,7 @@ export default function AppShell() {
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
+        onClearChatFilter={appState.clearChatFilterSilently}
         onExpandChat={mfr.handleExpandChat}
         onToggleHistory={() => persistence.setHistoryOpen(!persistence.historyOpen)}
         onCloseHistory={() => persistence.setHistoryOpen(false)}

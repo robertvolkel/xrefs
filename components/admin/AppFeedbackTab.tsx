@@ -24,12 +24,14 @@ import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import AddIcon from '@mui/icons-material/Add';
 import {
   AppFeedbackListItem,
   AppFeedbackStatus,
   AppFeedbackCategory,
 } from '@/lib/types';
 import { getAdminAppFeedbackList } from '@/lib/api';
+import AppFeedbackDialog from '@/components/AppFeedbackDialog';
 import FeedbackDetailModal from '@/components/feedback/FeedbackDetailModal';
 import FeedbackRowMenu from '@/components/feedback/FeedbackRowMenu';
 import PaginatedTableSkeleton from './PaginatedTableSkeleton';
@@ -41,10 +43,11 @@ type CategoryFilter = AppFeedbackCategory | 'all';
 
 const PAGE_SIZE = 50;
 
-function statusChipColor(status: AppFeedbackStatus): 'default' | 'warning' | 'info' | 'success' {
+function statusChipColor(status: AppFeedbackStatus): 'default' | 'warning' | 'info' | 'success' | 'secondary' {
   switch (status) {
     case 'open': return 'warning';
     case 'reviewed': return 'info';
+    case 'wip': return 'secondary';
     case 'resolved': return 'success';
     case 'dismissed': return 'default';
   }
@@ -97,6 +100,7 @@ export default function AppFeedbackTab() {
   const [page, setPage] = useState(0);
 
   const [selected, setSelected] = useState<AppFeedbackListItem | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -185,8 +189,8 @@ export default function AppFeedbackTab() {
       {/* Filters + Search */}
       <Box sx={{ px: 3, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          {(['all', 'open', 'reviewed', 'resolved', 'dismissed'] as StatusFilter[]).map((f) => {
-            const labelText = f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1);
+          {(['all', 'open', 'reviewed', 'wip', 'resolved', 'dismissed'] as StatusFilter[]).map((f) => {
+            const labelText = f === 'all' ? 'All' : f === 'wip' ? 'WIP' : f.charAt(0).toUpperCase() + f.slice(1);
             return (
               <Chip
                 key={f}
@@ -218,6 +222,16 @@ export default function AppFeedbackTab() {
           })}
 
           <Box sx={{ flex: 1 }} />
+
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<AddIcon sx={{ fontSize: '1rem' }} />}
+            onClick={() => setCreateOpen(true)}
+            sx={{ textTransform: 'none', height: 30, fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+          >
+            New feedback
+          </Button>
 
           <TextField
             size="small"
@@ -372,7 +386,7 @@ export default function AppFeedbackTab() {
                   </TableCell>
                   <TableCell sx={{ verticalAlign: 'top' }}>
                     <Chip
-                      label={item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                      label={item.status === 'wip' ? 'WIP' : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
                       size="small"
                       color={statusChipColor(item.status)}
                       variant="outlined"
@@ -418,6 +432,13 @@ export default function AppFeedbackTab() {
           onUpdated={() => { load(); }}
         />
       )}
+
+      {/* Admin-authored feedback */}
+      <AppFeedbackDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmitted={() => { setCreateOpen(false); setPage(0); load(); }}
+      />
     </Box>
   );
 }

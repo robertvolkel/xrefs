@@ -10,10 +10,11 @@ import ProfilePanel from './ProfilePanel';
 import MyProfilePanel from './MyProfilePanel';
 import CompanySettingsPanel from './CompanySettingsPanel';
 import AccountPanel from './AccountPanel';
+import NotificationsPanel from './NotificationsPanel';
 import AboutPanel from './AboutPanel';
 
 function isValidSection(s: string | null): s is SettingsSection {
-  return s === 'profile' || s === 'myProfile' || s === 'companySettings' || s === 'account' || s === 'about';
+  return s === 'profile' || s === 'myProfile' || s === 'companySettings' || s === 'account' || s === 'notifications' || s === 'about';
 }
 
 function SettingsShellInner() {
@@ -76,6 +77,7 @@ function SettingsShellInner() {
           {activeSection === 'myProfile' && <MyProfilePanel />}
           {activeSection === 'companySettings' && <CompanySettingsPanel />}
           {activeSection === 'account' && <AccountPanel />}
+          {activeSection === 'notifications' && <NotificationsPanel />}
           {activeSection === 'about' && <AboutPanel />}
         </Box>
       </Box>
