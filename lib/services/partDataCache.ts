@@ -77,8 +77,11 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  v11: APPLY_UNIT_PREFIX_TO_NUMERIC enabled — Atlas numericValues now
  *       normalized to base SI (matches Digikey convention), so threshold
  *       and identity comparisons against Atlas-source candidates produce
- *       different scores than cached v10 entries. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v11';
+ *       different scores than cached v10 entries.
+ *  v12: parts.io candidate lifecycle status normalized via mapPartsioStatus
+ *       (raw "Transferred"/"Acquired"/empty → 'Active'), changing the stored
+ *       status value + display sort (Decision #232 follow-up). */
+export const RECS_CACHE_SCHEMA_VERSION = 'v12';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

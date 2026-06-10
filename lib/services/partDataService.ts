@@ -26,7 +26,7 @@ import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
-import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
+import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
@@ -316,7 +316,10 @@ function buildRecommendationsVariant(
 //     allCandidates carry post-conversion numericValues for Atlas-source
 //     parts. Cached v1 base payloads contain pre-conversion values that
 //     would mis-score on rescore.
-const BASE_RECS_SCHEMA_VERSION = 'v2';
+// v3: parts.io candidate status normalized via mapPartsioStatus — allCandidates
+//     carry enum statuses ('Active' for Transferred/Acquired/empty) instead of
+//     raw codes, so Active-first display sort works (Decision #232 follow-up).
+const BASE_RECS_SCHEMA_VERSION = 'v3';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -834,7 +837,7 @@ async function getAttributesRaw(
             manufacturer: listing.Manufacturer || 'Unknown',
             description: listing.Description || '',
             detailedDescription: listing.Description || '',
-            status: (listing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            status: mapPartsioStatus(listing['Part Life Cycle Code']),
             category: mapCategory(rawCategory),
             subcategory,
             datasheetUrl: listing['Current Datasheet Url'],
@@ -1673,7 +1676,7 @@ async function fetchPartsioEquivalents(mpn: string, userId?: string): Promise<Pa
             manufacturer: eqListing.Manufacturer || 'Unknown',
             description: eqListing.Description || '',
             detailedDescription: eqListing.Description || '',
-            status: (eqListing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            status: mapPartsioStatus(eqListing['Part Life Cycle Code']),
             subcategory: eqListing.Category || eqListing.Class || '',
             ...extractPartsioLifecycle(eqListing),
           },
