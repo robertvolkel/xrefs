@@ -7,6 +7,8 @@ const MATCH_PERCENT_TIE_BAND = 2;
 
 /**
  * Display-priority sort for recommendations: Accuris Certified → MFR Certified → Logic Driven,
+ * then Active-first WITHIN each bucket (Decision #227 — the panel shows all
+ * lifecycle statuses; Active parts float to the top of their certification group),
  * then pin-to-pin > functional within category.
  *
  * Qualification-domain tiebreak (Decision #155): within each bucket, candidates
@@ -39,6 +41,11 @@ export function sortRecommendationsForDisplay(
     if (bucket === 'manufacturer') return 1;
     return 2;
   };
+  // Active-first within each bucket. Decision #227: nothing is filtered out by
+  // status anymore, so Active parts are surfaced by ranking rather than by hiding
+  // the rest. Only literal 'Active' is top-tier; every other lifecycle status
+  // (Obsolete, Discontinued, NRND, LastTimeBuy, Transferred, …) sinks below.
+  const statusRank = (rec: XrefRecommendation): number => (rec.part.status === 'Active' ? 0 : 1);
   const mfrEqRank = (rec: XrefRecommendation): number => {
     if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
     if (rec.mfrEquivalenceType === 'functional') return 1;
@@ -55,6 +62,8 @@ export function sortRecommendationsForDisplay(
   const byCategoryThenScore = [...recommendations].sort((a, b) => {
     const catDiff = categoryPriority(a) - categoryPriority(b);
     if (catDiff !== 0) return catDiff;
+    const statusDiff = statusRank(a) - statusRank(b);
+    if (statusDiff !== 0) return statusDiff;
     const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
     if (mfrDiff !== 0) return mfrDiff;
     const domainDiff = domainRank(a) - domainRank(b);

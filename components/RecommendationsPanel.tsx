@@ -5,7 +5,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches, DEFAULT_MAX_MISMATCHES } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
@@ -43,7 +43,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
     [recommendations, preferredMpn],
   );
-  const [activeOnly, setActiveOnly] = useState(true);
   const [showCnOnly, setShowCnOnly] = useState(false);
   const [showCommercial, setShowCommercial] = useState(true);
   // Manufacturer + cross-ref-source filters are controlled-with-fallback: when the
@@ -56,11 +55,11 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const selectedCategory = categoryFilter ?? localCategory;
   const setSelectedCategory = onCategoryFilterChange ?? setLocalCategory;
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
-  // Hide candidates with >2 real mismatches by default. Certified crosses bypass.
-  // The threshold is shared with the chat-side count summaries via
-  // DEFAULT_MAX_MISMATCHES (lib/types.ts) so the agent's reported count can't
-  // drift from these cards.
-  const [hideHighFails, setHideHighFails] = useState(true);
+  // The panel intentionally hides NOTHING by default (Decision #227): every
+  // candidate shows regardless of lifecycle status (Active, Obsolete, Transferred…)
+  // or match quality. Active parts are floated to the top of each certification
+  // bucket by sortRecommendationsForDisplay instead. The only filters are the
+  // EXPLICIT, user-initiated ones below (manufacturer / CN-only / category / stock).
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
   const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
@@ -70,20 +69,16 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (!activeOnly) count++;
     if (selectedMfr) count++;
     if (showCnOnly) count++;
     if (selectedCategory !== 'all') count++;
-    if (!hideHighFails) count++;
     return count;
-  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory, hideHighFails]);
+  }, [selectedMfr, showCnOnly, selectedCategory]);
 
   const handleClearFilters = () => {
-    setActiveOnly(true);
     setSelectedMfr('');
     setShowCnOnly(false);
     setSelectedCategory('all');
-    setHideHighFails(true);
   };
 
   const handleToggleCnOnly = (checked: boolean) => {
@@ -105,12 +100,11 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const hasMultipleCategories = Object.values(categoryCounts).filter(c => c > 0).length > 1
     || categoryCounts.manufacturer_certified > 0 || categoryCounts.third_party_certified > 0;
 
-  // `scoped` = candidate pool after the EXPLICIT user filters (manufacturer /
-  // category / CN-only / zero-stock). Every header + hidden-count number is
-  // computed over THIS scope so it reconciles with what's on screen for the
-  // current filter — e.g. after clicking a single manufacturer, "N shown ·
-  // M hidden" describes only that manufacturer's parts, not the full result set.
-  const scoped = sorted
+  // `filtered` = candidate pool after the EXPLICIT user filters (manufacturer /
+  // category / CN-only / zero-stock). Nothing is hidden by lifecycle status or
+  // match quality (Decision #227) — every card here renders. The header count is
+  // just this length.
+  const filtered = sorted
     .filter(r => !selectedMfr || r.part.manufacturer === selectedMfr)
     .filter(r => !showCnOnly || r.dataSource === 'atlas')
     .filter(r => {
@@ -123,22 +117,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       return total > 0;
     })
     .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
-
-  // Default-policy hides, counted within the current scope so the chip/popover
-  // labels reconcile with the header and with what a toggle would actually reveal.
-  const qualityHiddenCount = scoped.filter(r => !isCertifiedCross(r) && countRealMismatches(r) > DEFAULT_MAX_MISMATCHES).length;
-  const statusHiddenCount = scoped.filter(r => r.part.status !== 'Active').length;
-
-  // `filtered` reaches the card list; the active-only collapse happens at render
-  // time (non-active cards animate to height 0), so the true on-screen count also
-  // subtracts the active-hidden rows.
-  const filtered = scoped
-    // Mismatch-count filter (toggleable via "Show all" in the filter popover).
-    // Certified crosses always bypass — explicit human verification overrides.
-    .filter(r => !hideHighFails || isCertifiedCross(r) || countRealMismatches(r) <= DEFAULT_MAX_MISMATCHES);
-
-  const shownCount = filtered.filter(r => !(activeOnly && r.part.status !== 'Active')).length;
-  const hiddenInScope = scoped.length - shownCount;
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -173,9 +151,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         <Typography variant="h6" sx={{ fontSize: '0.95rem', lineHeight: 1.3 }} noWrap>
           {loading
             ? t('recommendations.loading', 'Loading recommendations…')
-            : hiddenInScope > 0
-              ? t('recommendations.headerFiltered', { shownCount, hiddenCount: hiddenInScope })
-              : t('recommendations.headerUnfiltered', { count: shownCount, matchWord: shownCount !== 1 ? t('recommendations.matches') : t('recommendations.match') })
+            : t('recommendations.headerUnfiltered', { count: filtered.length, matchWord: filtered.length !== 1 ? t('recommendations.matches') : t('recommendations.match') })
           }
         </Typography>
       </Box>
@@ -214,11 +190,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           </IconButton>
         </Tooltip>
 
-        {/* Inline dismissible chips for active filters */}
-        {!activeOnly && (
-          <Chip label="Include inactive" size="small" onDelete={() => setActiveOnly(true)}
-            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
-        )}
+        {/* Inline dismissible chips for active (user-initiated) filters */}
         {selectedMfr && (
           <Chip label={selectedMfr} size="small" onDelete={() => setSelectedMfr('')}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
@@ -234,18 +206,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             onDelete={() => setSelectedCategory('all')}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
           />
-        )}
-        {hideHighFails && qualityHiddenCount > 0 && (
-          <Chip
-            label={`Hiding >${DEFAULT_MAX_MISMATCHES} fails`}
-            size="small"
-            onDelete={() => setHideHighFails(false)}
-            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
-          />
-        )}
-        {!hideHighFails && (
-          <Chip label="Showing high-fail" size="small" onDelete={() => setHideHighFails(true)}
-            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
         )}
 
         <Box sx={{ flex: 1 }} />
@@ -282,30 +242,6 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             </Typography>
           )}
         </Box>
-
-        {/* STATUS section */}
-        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
-          Status
-        </Typography>
-        <FormControlLabel
-          control={
-            <Checkbox checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
-          }
-          label={`Active only${statusHiddenCount > 0 ? ` (${statusHiddenCount} hidden)` : ''}`}
-          sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
-        />
-
-        {/* QUALITY section */}
-        <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
-          Quality
-        </Typography>
-        <FormControlLabel
-          control={
-            <Checkbox checked={hideHighFails} onChange={(e) => setHideHighFails(e.target.checked)} size="small" sx={{ p: 0.5 }} />
-          }
-          label={`Hide >${DEFAULT_MAX_MISMATCHES} failed parameters${qualityHiddenCount > 0 ? ` (${qualityHiddenCount} hidden)` : ''}`}
-          sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
-        />
 
         {/* MANUFACTURER section */}
         <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
@@ -386,35 +322,22 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
               : {}),
           }}
         >
-        {filtered.map((rec) => {
-          const isNonActive = rec.part.status !== 'Active';
-          const shouldHide = activeOnly && isNonActive;
-          return (
-            <Box
-              key={rec.part.mpn}
-              sx={{
-                maxHeight: shouldHide ? 0 : 300,
-                opacity: shouldHide ? 0 : 1,
-                overflow: 'hidden',
-                mb: shouldHide ? 0 : 1.5,
-                transition: 'opacity 0.3s ease, max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s, margin-bottom 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s',
-              }}
-            >
-              <RecommendationCard
-                recommendation={rec}
-                onClick={() => onSelect(rec)}
-                onManufacturerClick={onManufacturerClick}
-                showCommercial={showCommercial}
-                isPreferred={rec.part.mpn === preferredMpn}
-                onTogglePreferred={onTogglePreferred ? () => {
-                  onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
-                } : undefined}
-                isEnrichingFC={isEnrichingFC}
-                contextActive={inferContextActive(recommendations)}
-              />
-            </Box>
-          );
-        })}
+        {filtered.map((rec) => (
+          <Box key={rec.part.mpn} sx={{ mb: 1.5 }}>
+            <RecommendationCard
+              recommendation={rec}
+              onClick={() => onSelect(rec)}
+              onManufacturerClick={onManufacturerClick}
+              showCommercial={showCommercial}
+              isPreferred={rec.part.mpn === preferredMpn}
+              onTogglePreferred={onTogglePreferred ? () => {
+                onTogglePreferred(rec.part.mpn === preferredMpn ? '' : rec.part.mpn);
+              } : undefined}
+              isEnrichingFC={isEnrichingFC}
+              contextActive={inferContextActive(recommendations)}
+            />
+          </Box>
+        ))}
         </Box>
 
         {/* Skeleton cards while recommendations are loading. Rendered inline

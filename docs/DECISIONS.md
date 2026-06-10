@@ -7935,3 +7935,19 @@ runs scoped/in waves, off-peak; ISC alone is the first wave.
 type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects ISC as legacy
 (883 unmapped) and the ISC backfill dry-run now shows 1,493 changes incl. `20ETF10 → trr`. SQL
 (migration + RPC re-run) must be applied manually in Supabase before discovery inserts work.
+
+## Decision #232 — Suggestions panel shows ALL candidates; Active-first within bucket; supersedes #226 (June 10, 2026)
+
+**Trigger.** For 2SC1815 the panel filter popover advertised "Accuris Certified (10)" but clicking it showed **zero** cards — even after the user unchecked "Hide >2 failed parameters". Root cause: the 10 Accuris (parts.io) crosses carry non-`'Active'` lifecycle statuses (raw codes like "Transferred"/"Unknown" from [partDataService.ts](../lib/services/partDataService.ts) `fetchPartsioEquivalents`), so they were hidden by the panel's **"Active only"** default filter — not the quality filter the user relaxed. Compounding it, the source-panel Cross References summary counted over the default-displayed set (Decision #229/#226) and so omitted Accuris, while the panel filter counted the full pool — the two surfaces disagreed (29 vs 79).
+
+**Decision (user call).** Stop hiding anything in the single-part suggestions panel. Show **all lifecycle statuses** (Active, Obsolete, Transferred, …) **and all match qualities** (no >2-fail hiding). Surface Active by **ranking, not hiding**: sort **Active-first within each existing certification bucket** (Accuris → MFR → Logic). Scope: **suggestions panel only** — the BOM parts-list keeps preferring Active for its auto-picked replacement.
+
+**This supersedes Decision #226** (chat/Overview count-sync). #226 existed only to reconcile counts with a panel that hid a subset; with the panel hiding nothing, "displayed count" == full count, so the contradiction dissolves by construction and the shared predicate is removed.
+
+**Changes.**
+- [components/RecommendationsPanel.tsx](../components/RecommendationsPanel.tsx): removed `activeOnly` + `hideHighFails` state, the STATUS/QUALITY popover sections, their dismissible chips, the render-loop CSS collapse, and all derived hidden-counts. `filtered` is now just the explicit user filters (manufacturer / CN-only / zero-stock / category); every card renders. Header shows the plain count.
+- [lib/services/recommendationSort.ts](../lib/services/recommendationSort.ts): new `statusRank` (`status === 'Active' ? 0 : 1`) applied as the second sort key — after bucket, before mfr-equivalence — so Active floats to the top of each bucket; existing match%/composite ordering applies within the Active and non-Active sub-groups.
+- Unwound #226: removed `DEFAULT_MAX_MISMATCHES`, `isDefaultDisplayed`, `getDefaultDisplayedRecs` from [lib/types.ts](../lib/types.ts); `buildRecsSummary`, `summarizeRecommendations`, and `dispatchFilterIntent` revert to full counts; [AttributesTabContent.tsx](../components/AttributesTabContent.tsx) `summarizeCrossRefs` counts over the full set (keeps Decision #229's invariant "chip count = what a click surfaces", since a click now surfaces everything). `countRealMismatches` / `isCertifiedCross` / `filterRecsByMismatchCount` kept (batch/parts-list still use them).
+- Status field: **no change** to `fetchPartsioEquivalents`. What was a "hide" bug under #226 is now the desired behavior — the raw lifecycle status surfaces as a status chip (amber for non-Active) on the card, exactly what the user wants to see, and sorts below Active via `statusRank`.
+
+**Verification:** 2035/2035 tests pass (recommendationSummary reverted to full-count expectations; new recommendationSort Active-first suite); tsc clean on changed files; no new lint warnings. Manual: clicking Accuris Certified now shows all 10 (with status chips); source-panel chip counts equal the panel; chat "Found N" equals on-screen cards; parts-list auto-pick unchanged.

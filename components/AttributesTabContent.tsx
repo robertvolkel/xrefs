@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
-import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, getDefaultDisplayedRecs } from '@/lib/types';
+import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
@@ -180,14 +180,12 @@ export function computePriceRange(quotes: SupplierQuote[] | undefined): { min: n
 }
 
 /** Aggregate cross-reference categories + unique MFR list with China flag.
- *  Counts over the default-DISPLAYED set (active + ≤2 real mismatches, certified
- *  crosses bypass) — the same `getDefaultDisplayedRecs` predicate the panel and
- *  chat counts use (Decision #226) — so a chip's number equals what a click
- *  surfaces in the Replacements panel rather than the full candidate count. */
+ *  Counts over the FULL candidate set: the Replacements panel now shows every
+ *  candidate regardless of lifecycle status or match quality (Decision #227),
+ *  so a chip's number equals what clicking it surfaces in the panel. */
 function summarizeCrossRefs(allRecs: XrefRecommendation[] | undefined) {
   if (!allRecs || allRecs.length === 0) return null;
-  const recs = getDefaultDisplayedRecs(allRecs);
-  if (recs.length === 0) return null;
+  const recs = allRecs;
   let mfrCertified = 0;
   let thirdPartyCertified = 0;
   let logicDriven = 0;
