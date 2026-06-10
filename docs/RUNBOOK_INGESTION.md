@@ -53,6 +53,23 @@ End-to-end workflow for ingesting a new manufacturer's product JSON into Atlas. 
 
 ---
 
+## Phase 5: (Occasional) Legacy MFR discovery
+
+Manufacturers loaded **before** the batch pipeline existed (Decision #174) have **no batch row**, so the Triage queue — which reads only from batch reports — can't see their unmapped params. They're invisible: no search string in Triage will surface them. This phase makes those legacy MFRs triageable, then maps + applies. Run it occasionally (e.g. after a wave of dictionary improvements, or when you notice a known-legacy MFR showing lots of "Missing" attributes in the Explorer drawer).
+
+| Step | Action | What it does |
+|------|--------|--------------|
+| 15 | On the **Atlas Ingest** page, click **"Scan legacy MFRs"** (header) — or CLI `node scripts/atlas-ingest.mjs --discover-legacy` | Re-runs the current mapper over every source file with no batch and writes a slim **`status='discovery'`** batch carrying that MFR's unmapped params. Does **not** touch `atlas_products`. The chip shows "N legacy discovered" when done. |
+| 16 | Open **Dictionary Triage** | Legacy MFRs' unmapped params now appear (with original vendor names) alongside batch-MFR rows. Triage + Accept exactly as normal — accepts write dict overrides. |
+| 17 | Run **`npm run atlas:backfill`** (or scoped `-- --mfr <slug>`) | Discovery doesn't write products, so a backfill is what actually applies the new overrides into `atlas_products`. This is the one case where the backfill round-trip is **required** (the discovery batches are never "Proceeded"). |
+
+**Notes:**
+- Discovery batches are segregated from the Pending/Applied tabs and the apply queue — they exist only to feed Triage. They're never auto-expired.
+- A later real upload of a legacy MFR automatically supersedes its discovery batch (no double-counting).
+- `--force` re-scans files whose only batch is a discovery batch (use after the mapper itself improves).
+
+---
+
 ## Key principles to teach new operators
 
 1. **Triage BEFORE Proceed.** Mapping first means the Proceed step writes correct translations directly — no backfill round-trip needed for new batches.

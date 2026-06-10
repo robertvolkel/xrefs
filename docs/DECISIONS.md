@@ -7870,3 +7870,68 @@ The app communicated through scattered, source-specific channels (feedback unrea
 **Email domain correction:** the existing `DIGEST_FROM_EMAIL` was `notifications@xrefs.app`; the real domain is **xrefs.ai**. Fixed in `.env.local` + `.env.example` and the code default. **Prerequisite for delivery (IT/DNS task):** verify `xrefs.ai` in Resend and add SPF/DKIM/DMARC records; set `NEXT_PUBLIC_APP_URL=https://xrefs.ai` so email links are absolute.
 
 **Verification:** 2040/2040 tests pass; zero new type/lint errors. SQL must be run manually in the Supabase SQL editor before the feature works.
+
+---
+
+## Decision #231 — Legacy-MFR Triage discovery pipeline + gaia preferredSuffix fix (June 10, 2026)
+
+**Trigger.** An engineer saw `vrrm` "Missing" on Atlas product `20ETF10` (mfr ISC) even though
+the raw param `gaia-peak_repetitive_reverse_voltage = 1000 V` was clearly ingested, and searching
+Triage for it returned nothing. Investigation found **two systemic gaps for legacy MFRs** (those
+bulk-loaded Mar 23 2026 via the old direct-upsert script, before the batch pipeline / Decision
+#174 shipped May 5 2026 — confirmed ~102 of 382 source files have **no** `atlas_ingest_batches`
+row; ISC is one).
+
+**Gap A — discovery blind spot.** The Triage queue reads unmapped params ONLY from
+`atlas_ingest_batches.report->'unmappedParams'` (status pending/applied). Legacy MFRs have no
+batch row, so their genuinely-unmapped params are invisible/undiscoverable in Triage — no search
+string surfaces them. Triage search is not broken; it indexes the raw vendor param name, and the
+row simply doesn't exist.
+
+**Fix A — retroactive "discovery" batches.** New `--discover-legacy` mode in
+[scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) re-runs the current mapper over every
+source file with no batch and writes a slim `status='discovery'` batch carrying that MFR's
+`unmappedParams` (original vendor names preserved). The existing Triage RPC/compute/UI surface
+them with ~zero downstream changes. Design choices:
+- New `status='discovery'` value (migration
+  [supabase-atlas-ingest-discovery-status.sql](../scripts/supabase-atlas-ingest-discovery-status.sql)
+  + one-token RPC change). NOT reused `'applied'` — the 30-day `atlas_ingest_cleanup_expired`
+  sweep would auto-delete the discovery signal, and revert/Applied-tab flows would break (no
+  snapshots). Every other status consumer filters `pending`/`applied` explicitly, so `discovery`
+  is naturally excluded from the operator apply queue.
+- Discovery skips the expensive `fetchExistingProducts`+`computeDiff` (unmapped params are
+  diff-independent) and stores a slimmed report (no per-product attrChanges) to keep the Triage
+  RPC's JSONB walk cheap as ~102 batches accumulate.
+- **Dedup guard:** a later real upload of a legacy MFR deletes its stale `discovery` row in the
+  same `reportOneFile` delete block (`.in('status', ['pending','discovery'])`) so the same params
+  aren't double-counted.
+- Admin trigger [POST /api/admin/atlas/ingest/discover-legacy](../app/api/admin/atlas/ingest/discover-legacy/route.ts)
+  (cloned from backfill-translations: detached spawn with **spread argv** for the Turbopack
+  gotcha, status-row lock, `invalidateTriageQueueCacheAndAwaitFresh()` on child exit) +
+  "Scan legacy MFRs" button/chip in [AtlasIngestPanel](../components/admin/atlasIngest/AtlasIngestPanel.tsx).
+- Loop closes via the existing global backfill (`--backfill-translations` applies the new
+  overrides into `atlas_products`). Runbook Phase 5 added.
+
+**Gap B — gaia `preferredSuffix` silent drop (separate bug, all MFRs).** When a gaia param's
+suffix didn't match the dict's `preferredSuffix` (e.g. only `-Max` present but dict prefers
+`Typ`), the mapper `continue`d — storing nothing AND not pushing to `unmappedParams`. The value
+was lost AND hidden from Triage. This is why `20ETF10.trr` (`gaia-reverse_recovery_time-Max`)
+stayed Missing.
+
+**Fix B.** `preferredSuffix` is now a preference among *available* variants, not a hard drop: a
+pre-pass records `stem → Set<suffix>` per product; a non-preferred suffix is skipped only if the
+preferred variant is actually present, else it maps. Mirrored in
+[atlasMapper.ts](../lib/services/atlasMapper.ts) (read) + [atlas-ingest.mjs](../scripts/atlas-ingest.mjs)
+(ingest). Impact: ISC backfill went from **0 → 1,493** products that would gain previously-dropped
+params (`rds_on`, `vgs_th`, `body_diode_vf`, `trr`, …) — a large coverage recovery from one fix.
+
+**Backfill hardening (audit).** `runBackfillTranslations` now also purges the recommendation
+cache (`part_data_cache` where `service='search' AND cache_tier='recommendations'`) — re-mapping
+an Atlas candidate otherwise leaves source-MPN recs scored on stale specs for up to 30 days.
+Operational note: `atlas_products` is **411K rows** (≈4× prior estimate), so the global backfill
+runs scoped/in waves, off-peak; ISC alone is the first wave.
+
+**Verification:** 2042/2042 tests pass (incl. 2 new preferredSuffix regression tests); zero new
+type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects ISC as legacy
+(883 unmapped) and the ISC backfill dry-run now shows 1,493 changes incl. `20ETF10 → trr`. SQL
+(migration + RPC re-run) must be applied manually in Supabase before discovery inserts work.

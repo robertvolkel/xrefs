@@ -2776,6 +2776,21 @@ export function mapAtlasModel(
   const seenAttributeIds = new Set<string>();
   let packageValue: string | undefined;
 
+  // Pre-scan gaia params: stem -> set of suffixes present in THIS product.
+  // Used so preferredSuffix acts as a PREFERENCE among available variants, not
+  // a hard drop. If only a non-preferred suffix exists for a stem (e.g. dict
+  // prefers 'Typ' but the product only ships '-Max'), we still map it —
+  // otherwise the value is silently lost AND never surfaced to Triage.
+  // (Mirror of scripts/atlas-ingest.mjs.)
+  const gaiaStemSuffixes = new Map<string, Set<string>>();
+  for (const p of model.parameters) {
+    if (isMissingValue(p.value)) continue;
+    const g = parseGaiaParam(p.name);
+    if (!g) continue;
+    if (!gaiaStemSuffixes.has(g.stem)) gaiaStemSuffixes.set(g.stem, new Set());
+    gaiaStemSuffixes.get(g.stem)!.add(g.suffix);
+  }
+
   for (const p of model.parameters) {
     if (isMissingValue(p.value)) continue;
 
@@ -2813,9 +2828,14 @@ export function mapAtlasModel(
         continue;
       }
 
-      // Check suffix preference — skip if this isn't the preferred suffix
+      // Suffix preference: skip a non-preferred suffix ONLY if the preferred
+      // variant is actually present for this stem; otherwise map the available
+      // one (don't silently drop the only value we have).
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
-        continue;
+        const present = gaiaStemSuffixes.get(gaia.stem);
+        if (present && present.has(gaiaMapping.preferredSuffix)) {
+          continue;
+        }
       }
 
       // Skip internal-only attributes

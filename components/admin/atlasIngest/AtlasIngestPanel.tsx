@@ -22,16 +22,19 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   LinearProgress,
   Snackbar,
   Stack,
   Tab,
   Tabs,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import TravelExploreIcon from '@mui/icons-material/TravelExplore';
 import IngestUploader from './IngestUploader';
 import NewManufacturerPanel from './NewManufacturerPanel';
 import BatchCard from './BatchCard';
@@ -40,6 +43,15 @@ import { useRouter } from 'next/navigation';
 import type { BatchListResponse, IngestBatch, StagedFile } from './types';
 
 type TabValue = 'pending' | 'applied';
+
+type DiscoverStatus = {
+  lastStartedAt: string;
+  lastFinishedAt: string | null;
+  scanned: number;
+  batchesCreated: number;
+  skipped: number;
+  errors: number;
+};
 
 interface PendingState {
   pendingMfrRegistrations: StagedFile[];   // staged files needing MFR registration first
@@ -66,6 +78,11 @@ export default function AtlasIngestPanel() {
   const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' | 'info' } | null>(null);
   const [howToOpen, setHowToOpen] = useState(false);
 
+  // Legacy-discovery scan (surfaces unmapped params from MFRs loaded before the
+  // batch pipeline existed; they have no batch row so Triage can't see them).
+  const [discoverStatus, setDiscoverStatus] = useState<DiscoverStatus | null>(null);
+  const discoverRunning = !!discoverStatus && !discoverStatus.lastFinishedAt;
+
   const refreshBatches = useCallback(async () => {
     setLoadingBatches(true);
     setLoadError(null);
@@ -88,6 +105,56 @@ export default function AtlasIngestPanel() {
   useEffect(() => {
     refreshBatches();
   }, [refreshBatches]);
+
+  const fetchDiscoverStatus = useCallback(async (): Promise<DiscoverStatus | null> => {
+    try {
+      const res = await fetch('/api/admin/atlas/ingest/discover-legacy', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const json = await res.json();
+      const status = (json?.status as DiscoverStatus | null) ?? null;
+      setDiscoverStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDiscoverStatus();
+  }, [fetchDiscoverStatus]);
+
+  const handleDiscoverLegacy = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/atlas/ingest/discover-legacy', { method: 'POST' });
+      const json = await res.json();
+      if (res.status === 409) {
+        setSnack({ msg: 'A discovery scan is already running.', severity: 'info' });
+        await fetchDiscoverStatus();
+        return;
+      }
+      if (!res.ok || !json.success) throw new Error(json.error || `Discovery failed (${res.status})`);
+      setSnack({ msg: 'Legacy discovery started — Triage updates when it finishes.', severity: 'info' });
+      await fetchDiscoverStatus();
+
+      // Poll until the run finishes (legacy scan maps ~102 MFRs; minutes).
+      const POLL_INTERVAL_MS = 10_000;
+      const POLL_BUDGET_MS = 30 * 60 * 1000;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < POLL_BUDGET_MS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        const status = await fetchDiscoverStatus();
+        if (status?.lastFinishedAt) {
+          setSnack({
+            msg: `Legacy discovery done — ${status.batchesCreated} discovery batch(es) created. Open Dictionary Triage to map.`,
+            severity: 'success',
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      setSnack({ msg: err instanceof Error ? err.message : 'Discovery failed', severity: 'error' });
+    }
+  }, [fetchDiscoverStatus]);
 
   // Upload flow handler — fed from IngestUploader.
   const handleUploadComplete = useCallback(async (staged: StagedFile[], skipped: Array<{ filename: string; reason: string }>) => {
@@ -253,7 +320,29 @@ export default function AtlasIngestPanel() {
         <Typography variant="body2" color="text.secondary">
           Upload Atlas manufacturer JSON files, review per-MFR diff reports, then apply with full revert support.
         </Typography>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {discoverStatus?.lastFinishedAt && !discoverRunning && (
+            <Tooltip title={`Last scan: ${discoverStatus.scanned} legacy MFR(s) scanned · ${discoverStatus.batchesCreated} discovery batch(es) · ${discoverStatus.skipped} skipped${discoverStatus.errors ? ` · ${discoverStatus.errors} error(s)` : ''}`}>
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`${discoverStatus.batchesCreated} legacy discovered`}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="Scan manufacturers loaded before the batch pipeline (no batch row) and surface their unmapped params into Dictionary Triage. Does not modify atlas_products.">
+            <span>
+              <Button
+                startIcon={discoverRunning ? <CircularProgress size={14} /> : <TravelExploreIcon />}
+                onClick={handleDiscoverLegacy}
+                disabled={discoverRunning}
+                size="small"
+                variant="outlined"
+              >
+                {discoverRunning ? 'Scanning…' : 'Scan legacy MFRs'}
+              </Button>
+            </span>
+          </Tooltip>
           <Button
             startIcon={<HelpOutlineIcon />}
             onClick={() => setHowToOpen(true)}

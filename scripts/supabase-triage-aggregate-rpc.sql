@@ -52,7 +52,9 @@ AS $$
       (elem->>'productCount')::INT AS pc
     FROM atlas_ingest_batches b
     CROSS JOIN LATERAL jsonb_array_elements(b.report->'unmappedParams') AS elem
-    WHERE b.status IN ('pending', 'applied')
+    -- 'discovery' = retroactive batches for legacy (pre-pipeline) MFRs; they
+    -- carry unmapped params for Triage but never enter the apply flow.
+    WHERE b.status IN ('pending', 'applied', 'discovery')
       AND jsonb_typeof(b.report->'unmappedParams') = 'array'
   ),
   -- Per-paramName base aggregates: total productCount + dedup'd batch list.

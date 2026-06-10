@@ -1,6 +1,45 @@
-import { reclassifyByParameterSignals } from '@/lib/services/atlasMapper';
+import { reclassifyByParameterSignals, mapAtlasModel, type AtlasModel } from '@/lib/services/atlasMapper';
 
 const B1 = { category: 'Diodes' as const, subcategory: 'Rectifier Diode', familyId: 'B1' };
+
+// Minimal B1-classifying model with a custom parameter set.
+function b1Model(parameters: Array<{ name: string; value: string }>): AtlasModel {
+  return {
+    componentName: 'TESTPART',
+    datasheetUrl: null,
+    description: null,
+    category: { c1: { name: 'Discrete Semiconductors' }, c2: { name: 'Diode' }, c3: { name: 'Rectifier Diode' } },
+    parameters,
+  };
+}
+
+describe('gaia preferredSuffix — preference, not hard drop', () => {
+  // B1 dict: reverse_recovery_time → trr, preferredSuffix 'Typ'.
+  it('maps a non-preferred suffix when the preferred variant is absent', () => {
+    // Only the '-Max' variant exists; dict prefers 'Typ'. It must still map
+    // (previously it was silently dropped — see atlas-ingest.mjs:2294 fix).
+    const { parameters } = mapAtlasModel(
+      b1Model([{ name: 'gaia-reverse_recovery_time-Max', value: '160 ns' }]),
+      'TESTMFR',
+    );
+    const trr = parameters.find((p) => p.parameterId === 'trr');
+    expect(trr).toBeDefined();
+    expect(trr?.value).toContain('160');
+  });
+
+  it('prefers the preferred-suffix variant when both are present', () => {
+    const { parameters } = mapAtlasModel(
+      b1Model([
+        { name: 'gaia-reverse_recovery_time-Max', value: '160 ns' },
+        { name: 'gaia-reverse_recovery_time-Typ', value: '75 ns' },
+      ]),
+      'TESTMFR',
+    );
+    const trr = parameters.filter((p) => p.parameterId === 'trr');
+    expect(trr).toHaveLength(1);
+    expect(trr[0].value).toContain('75'); // Typ wins; Max not added
+  });
+});
 
 describe('reclassifyByParameterSignals', () => {
   it('keeps B1 when no Type parameter present', () => {

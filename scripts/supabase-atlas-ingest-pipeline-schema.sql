@@ -88,8 +88,11 @@ CREATE TABLE IF NOT EXISTS atlas_ingest_batches (
   source_file TEXT NOT NULL,
   source_file_sha256 TEXT NOT NULL,
   report JSONB NOT NULL,
+  -- 'discovery' = retroactive batch for a legacy (pre-pipeline) MFR; feeds the
+  -- Triage queue but is excluded from apply/revert/cleanup. Added by migration
+  -- scripts/supabase-atlas-ingest-discovery-status.sql.
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'applied', 'reverted', 'expired')),
+    CHECK (status IN ('pending', 'applied', 'reverted', 'expired', 'discovery')),
   -- Risk classification computed at report generation time.
   -- 'clean'     → only inserts + additive attr changes, zero unmapped, zero classification flips, zero removals
   -- 'review'    → has removals or classification flips, but no unmapped + no value changes on existing keys

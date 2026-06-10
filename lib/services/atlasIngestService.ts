@@ -19,7 +19,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // ─── Types shared with the UI ────────────────────────────
 
 export type IngestRisk = 'clean' | 'review' | 'attention';
-export type IngestStatus = 'pending' | 'applied' | 'reverted' | 'expired';
+// 'discovery' = a retroactive batch generated for a legacy (pre-batch-pipeline)
+// MFR. It surfaces that MFR's unmapped params into the Triage queue but is
+// excluded from the operator pending/applied apply-and-revert flows and from
+// the 30-day cleanup sweep. See runDiscoverLegacy in scripts/atlas-ingest.mjs.
+export type IngestStatus = 'pending' | 'applied' | 'reverted' | 'expired' | 'discovery';
 
 export type IngestDiffReport = {
   manufacturer: string;
