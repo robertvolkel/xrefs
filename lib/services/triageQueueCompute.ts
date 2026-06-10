@@ -187,9 +187,13 @@ export async function computeTriageAggregation(): Promise<{
   if (aggregateRes.error) throw new Error(`get_triage_unmapped_aggregate RPC failed: ${aggregateRes.error.message}`);
   const tQueueSource = Date.now();
 
-  // RPC row shape — mirrors the SQL function's RETURNS TABLE definition.
-  // BIGINT columns come back from postgres-js as string OR number depending
-  // on driver config; we safely Number() them.
+  // RPC row shape. The function RETURNS jsonb (a single array, one object per
+  // paramName) rather than a TABLE — PostgREST hard-caps TABLE/SETOF returns at
+  // 1000 rows and the legacy-discovery batches (Decision #231) push the
+  // distinct-param count past that, so a TABLE return silently truncated the
+  // queue (Decision #206). For a jsonb return, `data` is the parsed array
+  // directly, so the `?? []` + cast below is unchanged.
+  // BIGINT values come back as number from jsonb; we still Number() defensively.
   type AggregateRow = {
     param_name: string;
     product_count: number | string;

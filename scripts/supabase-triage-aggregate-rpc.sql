@@ -20,19 +20,23 @@
 -- Mirrors the pattern from supabase-atlas-coverage-rpc.sql per
 -- Decision #179.
 --
--- Idempotent — safe to re-run via CREATE OR REPLACE.
+-- Idempotent — safe to re-run.
+--
+-- Returns a single JSONB ARRAY (one object per unique paramName), NOT a TABLE.
+-- This is deliberate (Decision #206): PostgREST hard-caps TABLE/SETOF-returning
+-- RPCs at 1000 rows server-side and `.range()` cannot override it, so a
+-- TABLE return silently truncated the Triage queue once the legacy-discovery
+-- batches (Decision #231) pushed the distinct-param count past 1000 — hiding
+-- real unmapped params (e.g. ISC's vrrm) from the UI. A scalar jsonb return is
+-- not row-capped. The route parses `data` as the array directly.
 -- ============================================================
 
-CREATE OR REPLACE FUNCTION get_triage_unmapped_aggregate()
-RETURNS TABLE (
-  param_name TEXT,
-  product_count BIGINT,
-  affected_batch_ids TEXT[],
-  affected_mfrs JSONB,
-  family_counts JSONB,
-  category_counts JSONB,
-  sample_values TEXT[]
-)
+-- Return type changed TABLE → jsonb, so the old signature must be dropped first
+-- (CREATE OR REPLACE can't change a function's return type).
+DROP FUNCTION IF EXISTS get_triage_unmapped_aggregate();
+
+CREATE FUNCTION get_triage_unmapped_aggregate()
+RETURNS jsonb
 LANGUAGE sql
 STABLE
 -- Per-function timeout override. The aggregation walks every pending+applied
@@ -136,20 +140,24 @@ AS $$
       WHERE sv.value IS NOT NULL
     ) s
     GROUP BY pname
+  ),
+  final AS (
+    SELECT
+      b.pname AS param_name,
+      b.total_pc AS product_count,
+      b.batch_ids AS affected_batch_ids,
+      COALESCE(m.affected_mfrs, '[]'::jsonb) AS affected_mfrs,
+      COALESCE(f.family_counts, '{}'::jsonb) AS family_counts,
+      COALESCE(c.category_counts, '{}'::jsonb) AS category_counts,
+      COALESCE(s.sample_values, ARRAY[]::TEXT[]) AS sample_values
+    FROM base b
+    LEFT JOIN mfr_agg m ON m.pname = b.pname
+    LEFT JOIN fam_agg f ON f.pname = b.pname
+    LEFT JOIN cat_agg c ON c.pname = b.pname
+    LEFT JOIN sv_agg s ON s.pname = b.pname
   )
-  SELECT
-    b.pname AS param_name,
-    b.total_pc AS product_count,
-    b.batch_ids AS affected_batch_ids,
-    COALESCE(m.affected_mfrs, '[]'::jsonb) AS affected_mfrs,
-    COALESCE(f.family_counts, '{}'::jsonb) AS family_counts,
-    COALESCE(c.category_counts, '{}'::jsonb) AS category_counts,
-    COALESCE(s.sample_values, ARRAY[]::TEXT[]) AS sample_values
-  FROM base b
-  LEFT JOIN mfr_agg m ON m.pname = b.pname
-  LEFT JOIN fam_agg f ON f.pname = b.pname
-  LEFT JOIN cat_agg c ON c.pname = b.pname
-  LEFT JOIN sv_agg s ON s.pname = b.pname;
+  -- Single jsonb array — NOT row-capped (see header / Decision #206).
+  SELECT COALESCE(jsonb_agg(to_jsonb(final)), '[]'::jsonb) FROM final;
 $$;
 
 -- The route uses the service-role client (bypasses RLS), so explicit GRANT
