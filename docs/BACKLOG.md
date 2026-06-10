@@ -4,6 +4,16 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Triage route doesn't scale past ~1k rows — server-side filter/pagination needed (follow-up to Decision #231) (P2, NEXT)
+
+**Context.** Decision #231's triage RPC `RETURNS jsonb` fix removed the PostgREST 1000-row cap (Decision #206) that was silently hiding ~13.7k of the true **14,413** unmapped params. Now the full classified set (**~4.25 MB**, ~13.5k OPEN) ships to the client, and `components/admin/AtlasDictTriagePanel.tsx` filters it client-side + paginates render to 100 (Decision #182). That client-everything model was fine at ~1k rows but doesn't scale to 14k — and the pending **full 102-file legacy discovery** pushes it to ~20k / ~6 MB. The user explicitly chose to harden this **before** running full discovery.
+
+**Fix.** The route (`app/api/admin/atlas/ingest/batches` GET) already calls cached `getOrComputeTriageData()`. Filter/sort/slice **server-side over the cached classified set** per request (accept `search`/`status`/`mode`/`mfr`/`family`/`flagged`/`minProds`/`sort`/`page` params), return only a page + the full counts. Client refetches on filter/page change (debounce search), keeps optimistic accept/revert on the current page. Heavy compute stays cached; only a small page crosses the wire.
+
+**Then (sequenced after the perf fix):** run full discovery for the other 101 legacy MFRs (`node scripts/atlas-ingest.mjs --discover-legacy` / "Scan legacy MFRs" button), then wider `npm run atlas:backfill -- --mfr <slug>` waves off-peak (411K rows; the preferredSuffix fix now changes many products fleet-wide — ISC alone = 1,493; Decision #193 warns against one full unfiltered run). See [memory/atlas-legacy-discovery.md] for live state.
+
+---
+
 ## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
 
 **Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:
