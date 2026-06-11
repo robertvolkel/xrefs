@@ -2915,6 +2915,12 @@ async function loadAndApplyDictOverrides() {
         .from('atlas_dictionary_overrides')
         .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
         .eq('is_active', true)
+        // STABLE total ordering is load-bearing (mirror of atlasDictOverrides.ts):
+        // without it PostgREST paginates in arbitrary order, so boundary rows past
+        // #1000 silently drop/dup across pages → non-deterministic mapping (the
+        // backfill oscillation that left 13 MFRs' B4 TVS params unconvergent). (#232)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) {
         // Table missing or unauthorised — ingest still works, just without overrides.

@@ -28,7 +28,16 @@ async function fetchOverridesPaginated(
     let q = supabase
       .from('atlas_dictionary_overrides')
       .select('id, family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      // STABLE total ordering is load-bearing, not cosmetic: without it PostgREST
+      // returns paginated rows in arbitrary, run-to-run order, so boundary rows
+      // (the ~35 overrides past #1000) get dropped or duplicated across pages —
+      // i.e. some active overrides silently fail to load on a given run. That made
+      // Atlas param mapping (and recommendation scoring) non-deterministic for the
+      // affected dictionary entries. created_at is the meaningful order (newer
+      // accepts last), id is the unique tiebreak that guarantees no skip/dup. (#232)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
     if (familyId) q = q.eq('family_id', familyId);
     const { data, error } = await q.range(from, from + OVERRIDE_PAGE_SIZE - 1);
     if (error) throw error;

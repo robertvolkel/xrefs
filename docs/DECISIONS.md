@@ -7970,3 +7970,50 @@ playbook (Decision #215) — vendor word-order variants the existing dict didn't
 
 **Verification.** tsc clean on changed files; 241 atlas tests pass; ISC dry-run + real backfill
 both report 224 changed / 0 errors; loader count 1000 → 1034.
+
+## Decision #233 — Override loader stable ordering + full-fleet legacy backfill + duplicate-MPN convergence finding (June 11, 2026)
+
+**Context.** Ran the full legacy-discovery + backfill follow-through from Decision #231. Discovery:
+`--discover-legacy` created **101 new discovery batches** (now 102 discovery / 295 applied / 0
+pending); the Triage distinct-param total rose **14,413 → 26,440** (legacy MCU/memory/processor MFRs
+carry heavy vendor-unique param sprawl). Backfill (user-approved, run-now scoped waves):
+**18,441 products** would change fleet-wide from the gaia preferredSuffix fix + the #232-uncapped
+overrides; executed as MindMotion (validate 112) → 70-MFR tail (5,570) → JJW (3,925) → SWST (8,834,
+5 transient `fetch failed`, idempotent re-run converged). ~18,197 rows backfilled clean and
+**converged** (subsequent global dry-run shows them `same`).
+
+**Bug found mid-backfill — non-deterministic override loading.** A 244-row / 13-MFR remainder would
+NOT converge: re-running reported "N changed, 0 errors" yet the next dry-run flagged the identical
+rows, and a probe showed a product's mapped key-set flipping between runs. Root cause #1: **both
+dictionary-override loaders paginated with `.range()` but no `ORDER BY`** — PostgREST returns
+paginated rows in arbitrary, run-to-run order, so the ~35 active overrides *past #1000* (exactly the
+ones #232 just un-capped) silently dropped/duplicated across the page boundary. Same 1000-row footgun
+family as Decisions #206/#232, third instance. **Fix:** added a stable total order
+`.order('created_at').order('id')` before `.range()` in BOTH
+[lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts) `fetchOverridesPaginated`
+(live recommendation-scoring read path — this was a latent **scoring-determinism** bug, not just an
+ingest one) and [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides`
+(mirror). `created_at` = meaningful order (newer accepts apply last), `id` = unique tiebreak that
+guarantees no skip/dup. Post-fix the loader loads a stable 1035 every run.
+
+**The deeper root cause #2 — duplicate-MPN dual-category source collisions (the real reason the 244
+won't converge).** The ORDER-BY fix made loading deterministic but the 244 STILL flagged. Source
+inspection: SEMBO's `SA5.0A` (and ~200 of the 244) appears **twice in one source file** under two
+different category classifications — e.g. once as **TVS Diodes** (B4, 8 params → 7 rich keys: ipp /
+vbr / vc / ir_leakage / vrwm / polarity / package) and once as **Rectifiers** (B1, 7 params → ~1 key).
+Both share `componentName`, so ingest/backfill map both and write both against the same
+`(mpn, manufacturer)` DB row — **last-write-wins** — and the dry-run *always* sees the non-winning
+occurrence as a pending diff. These rows are **irreducible via backfill**: they can never converge,
+and forcing re-runs risks landing the sparse Rectifier version over good TVS data. Confirmed by
+matching the per-MFR "would change" counts to dual-category-dup counts almost exactly (YJYCOIN 34≡34,
+INPAQ 67≡67, Hanrun 7≡7, SUMIDA 3≡3, SEMBO/LGE 1≡1, Aosong 2≡2). A residual ~43 (MXChip/UMW/Geehy/
+COSINE/ETA, 0 dups) are a smaller separate value-level matter, not investigated. These collisions
+predate this session (always in the source); backfill merely rewrote them under the same last-wins
+rule. **Decision: stop backfilling these 13; the proper fix is deterministic collision resolution
+(prefer the richer / more-specific classification, or dedup at source) — BACKLOG'd**, tied to
+Decisions #175 (B1↔B4 reclassification), #191 (MPN-quality validator), #225 (name-string identity).
+
+**Verification.** 2067/2067 tests pass; tsc clean on changed files; post-fix override load stable at
+1035 across 5 runs; SEMBO `SA5.0A` restored to its 7-key TVS mapping. Net fleet backfill ≈18,197
+rows converged, 0 net errors. NO SQL/DDL required (the #231 migration + jsonb RPC were already in
+prod). Files changed: the two override loaders only.
