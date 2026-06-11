@@ -2550,6 +2550,30 @@ function tagAtlasParameters(parameters) {
   return out;
 }
 
+// Collapse duplicate-MPN occurrences within ONE source file to ONE entry,
+// keeping the RICHEST (most mapped parameters). Vendor JSON occasionally lists
+// the same componentName twice under two different category classifications —
+// classically the same part as both a TVS Diode (B4, full electrical params)
+// and a Rectifier (B1, ~1 param). atlas_products keys on (mpn, manufacturer),
+// so naive last-write-wins would store whichever occurrence happens to be
+// processed last — often the sparse one, silently dropping the rich electrical
+// spec, AND it never converges (the non-winning occurrence is a perpetual diff).
+// Deterministic richest-wins fixes both: most mapped keys wins; ties keep the
+// first occurrence for stability. Decision #233 follow-up. Mirror-not-needed:
+// the read path (atlasMapper.ts) maps a single already-deduped DB row, so source
+// duplication is an ingest-only concern.
+function dedupRichestByMpn(products) {
+  const bestByMpn = new Map(); // mpn -> product
+  for (const p of products) {
+    const prev = bestByMpn.get(p.mpn);
+    if (!prev) { bestByMpn.set(p.mpn, p); continue; }
+    const prevKeys = Object.keys(prev.parameters || {}).length;
+    const curKeys = Object.keys(p.parameters || {}).length;
+    if (curKeys > prevKeys) bestByMpn.set(p.mpn, p); // strictly richer wins; tie → keep first
+  }
+  return Array.from(bestByMpn.values());
+}
+
 // Returns true iff every entry in `parameters` is source: 'atlas' (or legacy untagged).
 // Used to decide hard vs soft delete when an MPN disappears from the source file.
 function hasOnlyAtlasParams(parameters) {
@@ -3539,18 +3563,15 @@ async function runProceed(batchId) {
 
   const { mfrName, mappedProducts: rawMappedProducts } = mapManufacturerProducts(filePath);
   // Dedup by MPN — vendor JSON occasionally lists the same MPN twice for one
-  // MFR, which would crash the upsert with "ON CONFLICT DO UPDATE command
-  // cannot affect row a second time". Keep the LAST occurrence so the merge
-  // semantics match what a sequential apply would produce (last write wins).
-  const dedupedByMpn = new Map();
-  for (const p of rawMappedProducts) {
-    dedupedByMpn.set(p.mpn, p);
-  }
-  const dupeCount = rawMappedProducts.length - dedupedByMpn.size;
+  // MFR (would also crash the upsert with "ON CONFLICT DO UPDATE command cannot
+  // affect row a second time"). Keep the RICHEST occurrence, not last — a part
+  // listed as both TVS (full params) and Rectifier (~1 param) must store the
+  // rich electrical spec, deterministically. Decision #233 follow-up.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
+  const dupeCount = rawMappedProducts.length - mappedProducts.length;
   if (dupeCount > 0) {
-    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (last occurrence wins)`);
+    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (richest occurrence wins)`);
   }
-  const mappedProducts = Array.from(dedupedByMpn.values());
   for (const p of mappedProducts) {
     p.parameters = tagAtlasParameters(p.parameters);
   }
@@ -4030,7 +4051,11 @@ async function runBackfillTranslations(mfrFilter) {
       grandTotal.errors++;
       continue;
     }
-    const { mfrName, mappedProducts } = mapResult;
+    const { mfrName, mappedProducts: rawMappedProducts } = mapResult;
+    // Richest-wins dedup so duplicate-MPN dual-category rows land their rich
+    // mapping (not last-wins). Same collapse the dry-run sees, so these rows
+    // converge instead of perpetually re-flagging. Decision #233 follow-up.
+    const mappedProducts = dedupRichestByMpn(rawMappedProducts);
     if (mappedProducts.length === 0) {
       // Empty source file or filter-skipped — nothing to do.
       continue;

@@ -8017,3 +8017,21 @@ Decisions #175 (B1↔B4 reclassification), #191 (MPN-quality validator), #225 (n
 1035 across 5 runs; SEMBO `SA5.0A` restored to its 7-key TVS mapping. Net fleet backfill ≈18,197
 rows converged, 0 net errors. NO SQL/DDL required (the #231 migration + jsonb RPC were already in
 prod). Files changed: the two override loaders only.
+
+**Follow-up same session — duplicate-MPN collision FIXED (richest-wins dedup), not just deferred.**
+Rather than leave the 244 as BACKLOG, shipped the deterministic fix: new `dedupRichestByMpn(products)`
+helper in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) collapses same-`componentName`
+occurrences within one source file to the **richest** (most mapped keys; ties keep first for
+stability). Wired into BOTH write paths — `runBackfillTranslations` (had no dedup → last-UPDATE-wins)
+and `runProceed` (changed its existing **last**-wins Map to richest-wins). Ingest-only (the read path
+maps a single already-deduped DB row, so no atlasMapper.ts mirror needed). Because the dry-run uses
+the same `runBackfillTranslations` path, these rows now **converge** instead of perpetually
+re-flagging. Recovery run over the 13 MFRs: **162 changed, 0 errors**; global "would change" dropped
+**244 → 43**; collision rows' rich/sparse split improved **119/112 → 180/51** (61 sparse rows
+recovered to their full TVS spec). The remaining **51 "sparse"** are parts whose *richest* occurrence
+genuinely maps to ≤3 keys (real source-data limitation, now correctly + stably stored — not loss).
+**No permanent data loss occurred** — all rich versions live in the source files and are now applied.
+The residual **43** non-convergent rows (MXChip 3, Geehy 5, COSINE 14, ETA 21 — zero duplicate MPNs)
+are a SEPARATE, minor **value-level** non-convergence (same keys, a value/unit/numericValue
+representation that won't settle across map→write→re-map; NO key/data loss) — BACKLOG'd for later,
+low impact (4 small MFRs). 2067/2067 tests pass; richest-wins helper unit-checked.
