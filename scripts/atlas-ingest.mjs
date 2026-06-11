@@ -3402,7 +3402,14 @@ async function reportOneFile(filePath, opts = {}) {
   const fileSha = sha256File(filePath);
 
   const mapResult = mapManufacturerProducts(filePath);
-  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+  const { mfrName, mappedProducts: rawMappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+
+  // Richest-wins dedup BEFORE computeDiff so the batch-review preview counts
+  // (willInsert/willUpdate) match what runProceed/runBackfillTranslations
+  // actually write — they dedup the same way. Without this the preview
+  // overcounts duplicate-MPN dual-category rows (e.g. a part listed as both TVS
+  // and Rectifier shows +2 inserts but proceed writes 1). Decision #233.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
 
   // Tag new atlas params
   for (const p of mappedProducts) {

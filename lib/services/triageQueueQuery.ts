@@ -153,11 +153,18 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
   if (p.flaggedOnly) visible = visible.filter((r) => r.isFlagged === true);
   if (p.hasNoteOnly) visible = visible.filter((r) => r.hasNote === true);
 
-  // ── Sort: matchingImpact.score desc (matches the client's prior visible
-  //    order). Copy before sort so we never touch the cached array. ──
-  const sorted = [...visible].sort(
-    (a, b) => (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0),
-  );
+  // ── Sort: matchingImpact.score desc, then paramName asc as a STABLE,
+  //    deterministic tiebreak. score=0 ties are very common (unscoped rows with
+  //    no logic-table weight); without a unique secondary key their order falls
+  //    back to compute/RPC output order, which can vary across cache rebuilds —
+  //    so the same page could skip or re-show rows between refreshes. paramName
+  //    is unique per row (the queue's key). Copy before sort (never touch the
+  //    cached array). (Decision #233 review) ──
+  const sorted = [...visible].sort((a, b) => {
+    const ds = (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0);
+    if (ds !== 0) return ds;
+    return a.paramName < b.paramName ? -1 : a.paramName > b.paramName ? 1 : 0;
+  });
 
   const totalFiltered = sorted.length;
 

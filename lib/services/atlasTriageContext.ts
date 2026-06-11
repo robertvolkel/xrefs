@@ -241,7 +241,12 @@ export async function getCrossFamilyCanonicalSummary(): Promise<CrossFamilyCanon
         .select('family_id, attribute_id, attribute_name')
         .eq('is_active', true)
         .not('attribute_id', 'is', null)
+        // attribute_id is NON-unique (operating_temp/cj/ir_leakage each map in
+        // dozens of families), so it is NOT a valid pagination sort on its own —
+        // boundary rows sharing an attribute_id would skip/dup across pages. The
+        // unique `id` tiebreak makes the total order stable. (Decision #233)
         .order('attribute_id', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) break; // fail-open on any page
       const batch = data ?? [];
