@@ -8035,3 +8035,27 @@ The residual **43** non-convergent rows (MXChip 3, Geehy 5, COSINE 14, ETA 21 �
 are a SEPARATE, minor **value-level** non-convergence (same keys, a value/unit/numericValue
 representation that won't settle across map→write→re-map; NO key/data loss) — BACKLOG'd for later,
 low impact (4 small MFRs). 2067/2067 tests pass; richest-wins helper unit-checked.
+
+**Third + fourth instances of the 1000-row footgun — Triage override fetches (same session).** An
+engineer asked "am I re-mapping params I already mapped?" Investigation found TWO more uncapped
+`atlas_dictionary_overrides` SELECTs (the table is now **1319 rows: 1136 active + 183 inactive**, so
+a single SELECT silently drops 319 to the cap):
+- [lib/services/triageQueueCompute.ts](../lib/services/triageQueueCompute.ts) `getOrComputeTriageData`
+  — fetched overrides ordered `updated_at desc`, no `.range()`. The cap dropped the **253 oldest
+  active overrides** from the "already-accepted" map, so the params they map were no longer
+  recognised and **reappeared in the OPEN Triage queue** (engineer re-sees old work). This is the
+  one that drives the visible queue.
+- [lib/services/atlasTriageContext.ts](../lib/services/atlasTriageContext.ts) cross-family canonical
+  index (feeds the AI /suggest + /investigate prompts) — unscoped `is_active` fetch, no `.range()`,
+  so the AI saw an incomplete view of already-mapped canonicals and could re-suggest existing ones.
+**Both fixed** with paginated loops + stable order (`updated_at desc, id` / `attribute_id`), STOP-on-
+error. **Measured real impact**, replicating the compute's `${dominantFamily|dominantCategory}:norm(param)`
+match over the live 26,440-row queue with capped (883-active) vs full (1136-active) maps: only **8
+queue rows** were actually resurfacing (the other 245 dropped overrides map params not currently in
+the aggregate). So the bug is real but small *today* — it grows as accepts accumulate, and it
+degraded AI suggestions. The engineer's broader déjà-vu is mostly **vendor-spelling variants** (same
+concept, different Chinese/English string per MFR — Decision #215 pattern) + **cross-scope re-mapping**
+(same param under a different family/category — Decision #178), i.e. genuinely-new work that merely
+*feels* repetitive. 2067/2067 tests pass; tsc clean on both files. Atlas now has **FOUR** known
+override-fetch sites; the two display/per-family ones ([dictionaries/route.ts](../app/api/admin/atlas/dictionaries/route.ts)
+list, `fetchAcceptedCanonicals` per-family) are scope-bounded and not at practical cap risk.
