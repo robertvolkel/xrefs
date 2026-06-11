@@ -302,6 +302,12 @@ export interface DomainCardDataSnapshot {
   groundedAtMfrCount?: number;
   verifiedMfrCount?: number;
   chineseDictEntryCount?: number;
+  /** Composite-card format version. 2 = deterministic facts region +
+   *  AI narrative region (sentinel-delimited, see atlasFamilyCardFacts.ts).
+   *  Absent/undefined on legacy all-prose cards (treated as v1). */
+  cardFormatVersion?: number;
+  /** ISO timestamp of when the deterministic facts region was rendered. */
+  factsRenderedAt?: string;
 }
 
 /** Health rollup for a family card. Surfaces in the admin panel so the

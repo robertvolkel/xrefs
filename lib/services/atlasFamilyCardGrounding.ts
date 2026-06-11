@@ -112,8 +112,13 @@ export async function buildGroundingBlock(familyId: string): Promise<GroundingBl
  * dictionary. We skip English/numeric entries because they don't help the
  * model recognize CJK paramNames in unmapped data — and the prompt is
  * already long.
+ *
+ * Exported so the composite-domain-card renderer
+ * (atlasFamilyCardFacts.ts) can reuse the exact same CJK-filtering
+ * convention when it renders the CHINESE→CANONICAL facts section — single
+ * source of truth for "what counts as a Chinese dict entry."
  */
-function extractChineseDictEntries(familyId: string): ChineseDictEntry[] {
+export function extractChineseDictEntries(familyId: string): ChineseDictEntry[] {
   const dict = getAtlasParamDictionary(familyId);
   if (!dict) return [];
   const entries: ChineseDictEntry[] = [];

@@ -18,6 +18,7 @@ import { getAdminAppFeedbackList, getOwnAppFeedbackUnreadCount } from '@/lib/api
 import { SIDEBAR_WIDTH, PAGE_HEADER_HEIGHT } from '@/lib/layoutConstants';
 import { useProfile } from '@/lib/hooks/useProfile';
 import ServiceStatusIcon from '@/components/ServiceStatusIcon';
+import NotificationsBell from '@/components/notifications/NotificationsBell';
 import AppFeedbackDialog from '@/components/AppFeedbackDialog';
 import NotificationSnackbar from '@/components/NotificationSnackbar';
 
@@ -278,6 +279,7 @@ export default function AppSidebar({ onReset, onToggleHistory, historyOpen }: Ap
             <CorporateFareOutlinedIcon fontSize="small" />
           </IconButton>
         )}
+        <NotificationsBell />
         <IconButton
           onClick={() => router.push('/feedback')}
           size="small"

@@ -221,7 +221,7 @@
   },
   "recommendations": {
     "header": "Empfohlene Ersatzteile",
-    "headerFiltered": "{{activeCount}} aktive {{matchWord}} · {{hiddenCount}} ausgeblendet",
+    "headerFiltered": "{{shownCount}} angezeigt · {{hiddenCount}} ausgeblendet",
     "headerUnfiltered": "{{count}} {{matchWord}} gefunden",
     "match": "Treffer",
     "matches": "Treffer",

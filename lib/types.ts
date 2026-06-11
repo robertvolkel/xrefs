@@ -672,6 +672,69 @@ export interface UserPreferences {
 
   // General Settings
   defaultCurrency?: string;
+
+  // Notifications (email delivery prefs; the in-app inbox is always on)
+  notificationPreferences?: NotificationPreferences;
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+/** Source-agnostic notification category. */
+export type NotificationType =
+  | 'feedback_reply'  // admin replied to a user's feedback thread
+  | 'feedback_new'    // user submitted/replied to feedback (admin recipient)
+  | 'release_note'    // new release note (future producer)
+  | 'bom_report'      // scheduled BOM tracking report (future producer)
+  | 'system';         // generic platform message
+
+/** One in-app inbox row for a single recipient. */
+export interface Notification {
+  id: string;
+  recipientId: string;
+  type: NotificationType;
+  title: string;
+  body?: string | null;
+  /** In-app URL to navigate to when clicked (e.g. /feedback/<id>). */
+  link?: string | null;
+  data?: Record<string, unknown>;
+  readAt?: string | null;
+  emailSentAt?: string | null;
+  createdAt: string;
+}
+
+/**
+ * Per-user email-delivery preferences. The in-app inbox always receives
+ * every notification regardless of these settings — they only gate email.
+ */
+export interface NotificationPreferences {
+  /** Master switch — when false, no email is sent for any type. */
+  emailEnabled: boolean;
+  /** Per-type email opt-in. Unset key falls back to DEFAULT_NOTIFICATION_PREFS. */
+  byType: Partial<Record<NotificationType, boolean>>;
+}
+
+/** Applied when a user has no saved notification prefs (high-signal types on). */
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
+  emailEnabled: true,
+  byType: {
+    feedback_reply: true,
+    feedback_new: true,
+    release_note: true,
+    bom_report: true,
+    system: true,
+  },
+};
+
+/** Resolve whether an email should be sent for a given type under given prefs. */
+export function isNotificationEmailEnabled(
+  prefs: NotificationPreferences | undefined,
+  type: NotificationType,
+): boolean {
+  const p = prefs ?? DEFAULT_NOTIFICATION_PREFS;
+  if (p.emailEnabled === false) return false;
+  return p.byType?.[type] ?? DEFAULT_NOTIFICATION_PREFS.byType[type] ?? true;
 }
 
 // ============================================================
@@ -1396,7 +1459,7 @@ export interface QcFeedbackUpdate {
 // ============================================================
 
 export type AppFeedbackCategory = 'idea' | 'issue' | 'other';
-export type AppFeedbackStatus = 'open' | 'reviewed' | 'resolved' | 'dismissed';
+export type AppFeedbackStatus = 'open' | 'reviewed' | 'wip' | 'resolved' | 'dismissed';
 
 /** Image attachment stored alongside feedback in JSONB. */
 export interface AppFeedbackAttachment {
@@ -1452,6 +1515,7 @@ export interface AppFeedbackListItem extends AppFeedbackRecord {
 export interface AppFeedbackStatusCounts {
   open: number;
   reviewed: number;
+  wip: number;
   resolved: number;
   dismissed: number;
 }

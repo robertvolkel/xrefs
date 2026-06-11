@@ -144,6 +144,24 @@ const PHASE_4_ROWS: PhaseRow[] = [
   },
 ];
 
+const PHASE_5_ROWS: PhaseRow[] = [
+  {
+    step: '15',
+    action: <>Click <b>"Scan legacy MFRs"</b> (header) — or CLI <code>--discover-legacy</code></>,
+    why: 'MFRs loaded before the batch pipeline have no batch row, so Triage can\'t see their unmapped params. This writes slim status=\'discovery\' batches so they become triageable. Does NOT touch atlas_products.',
+  },
+  {
+    step: '16',
+    action: <>Open <b>Dictionary Triage</b> and Accept the now-visible legacy params</>,
+    why: 'Legacy MFRs\' unmapped params appear with original vendor names alongside batch rows. Accepts write dict overrides exactly as normal.',
+  },
+  {
+    step: '17',
+    action: <>Run <code>npm run atlas:backfill</code> (or <code>-- --mfr &lt;slug&gt;</code>)</>,
+    why: 'Discovery never writes products, so the backfill is what applies the new overrides into atlas_products. This is the one case where the backfill round-trip is required.',
+  },
+];
+
 interface GotchaRow {
   symptom: string;
   cause: string;
@@ -266,6 +284,10 @@ export default function IngestHowToDrawer({ open, onClose }: Props) {
         {/* Phase 4 */}
         <PhaseHeader num={4} label="Retroactive cleanup (optional)" intro="Only when overrides affect already-applied older batches" />
         <PhaseTable rows={PHASE_4_ROWS} />
+
+        {/* Phase 5 */}
+        <PhaseHeader num={5} label="Legacy MFR discovery (occasional)" intro="Make pre-batch-pipeline MFRs' unmapped params triageable" />
+        <PhaseTable rows={PHASE_5_ROWS} />
 
         <Divider sx={{ mb: 3 }} />
 

@@ -2263,6 +2263,20 @@ function mapModel(model, manufacturerName, sourceFile) {
   const parameters = {};
   let packageValue = null;
 
+  // Pre-scan gaia params: stem -> set of suffixes present in THIS product.
+  // Used so preferredSuffix acts as a PREFERENCE among available variants, not
+  // a hard drop. If only a non-preferred suffix exists for a stem (e.g. dict
+  // prefers 'Typ' but the product only ships '-Max'), we still map it —
+  // otherwise the value is silently lost AND never surfaced to Triage.
+  const gaiaStemSuffixes = new Map();
+  for (const p of model.parameters) {
+    if (isMissing(p.value)) continue;
+    const g = parseGaiaParam(p.name);
+    if (!g) continue;
+    if (!gaiaStemSuffixes.has(g.stem)) gaiaStemSuffixes.set(g.stem, new Set());
+    gaiaStemSuffixes.get(g.stem).add(g.suffix);
+  }
+
   for (const p of model.parameters) {
     if (isMissing(p.value)) continue;
 
@@ -2291,7 +2305,12 @@ function mapModel(model, manufacturerName, sourceFile) {
         unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
         continue;
       }
-      if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) continue;
+      if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
+        // Skip only if the preferred-suffix variant is actually present for
+        // this stem; otherwise fall through and map the available variant.
+        const present = gaiaStemSuffixes.get(gaia.stem);
+        if (present && present.has(gaiaMapping.preferredSuffix)) continue;
+      }
       if (gaiaMapping.attributeId.startsWith('_')) continue;
       if (parameters[gaiaMapping.attributeId]) continue; // dedup
 
@@ -2531,6 +2550,30 @@ function tagAtlasParameters(parameters) {
   return out;
 }
 
+// Collapse duplicate-MPN occurrences within ONE source file to ONE entry,
+// keeping the RICHEST (most mapped parameters). Vendor JSON occasionally lists
+// the same componentName twice under two different category classifications —
+// classically the same part as both a TVS Diode (B4, full electrical params)
+// and a Rectifier (B1, ~1 param). atlas_products keys on (mpn, manufacturer),
+// so naive last-write-wins would store whichever occurrence happens to be
+// processed last — often the sparse one, silently dropping the rich electrical
+// spec, AND it never converges (the non-winning occurrence is a perpetual diff).
+// Deterministic richest-wins fixes both: most mapped keys wins; ties keep the
+// first occurrence for stability. Decision #233 follow-up. Mirror-not-needed:
+// the read path (atlasMapper.ts) maps a single already-deduped DB row, so source
+// duplication is an ingest-only concern.
+function dedupRichestByMpn(products) {
+  const bestByMpn = new Map(); // mpn -> product
+  for (const p of products) {
+    const prev = bestByMpn.get(p.mpn);
+    if (!prev) { bestByMpn.set(p.mpn, p); continue; }
+    const prevKeys = Object.keys(prev.parameters || {}).length;
+    const curKeys = Object.keys(p.parameters || {}).length;
+    if (curKeys > prevKeys) bestByMpn.set(p.mpn, p); // strictly richer wins; tie → keep first
+  }
+  return Array.from(bestByMpn.values());
+}
+
 // Returns true iff every entry in `parameters` is source: 'atlas' (or legacy untagged).
 // Used to decide hard vs soft delete when an MPN disappears from the source file.
 function hasOnlyAtlasParams(parameters) {
@@ -2751,6 +2794,7 @@ let showWarnings = false;
 let summaryFlag = false;
 let concurrency = 10;
 let outDir = '/tmp';
+let forceFlag = false;
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -2762,6 +2806,8 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--list-pending')         { mode = 'list-pending'; continue; }
   if (a === '--regenerate-affected-by') { mode = 'regenerate-affected-by'; modeArg = args[++i]; continue; }
   if (a === '--backfill-translations') { mode = 'backfill-translations'; continue; }
+  if (a === '--discover-legacy')      { mode = 'discover-legacy'; continue; }
+  if (a === '--force')                { forceFlag = true; continue; }
   if (a === '--mfr')                  { modeArg = args[++i]; continue; }
   if (a === '--summary')              { summaryFlag = true; continue; }
   if (a === '--dry-run')              { dryRun = true; continue; }
@@ -2818,6 +2864,14 @@ attrs untouched). Idempotent.
   node scripts/atlas-ingest.mjs --backfill-translations [--dry-run] [--mfr <slug>] [--verbose]
   npm run atlas:backfill          (same as above without flags)
   npm run atlas:backfill:dry      (preview without writes)
+
+Discover-legacy — generate "discovery" batches for source files that have NO
+batch row (pre-batch-pipeline / legacy MFRs). These surface the MFR's
+genuinely-unmapped params into the Triage queue WITHOUT touching atlas_products
+(no diff/snapshot; status='discovery', excluded from the operator apply queue).
+Idempotent: files that already have any batch are skipped unless --force
+re-scans files whose only batch is a discovery batch.
+  node scripts/atlas-ingest.mjs --discover-legacy [--dry-run] [--mfr <filter>] [--force] [--concurrency 5]
 `);
 }
 
@@ -2872,16 +2926,35 @@ async function loadAndApplyDictOverrides() {
   if (!supabase) return { count: 0 };
   let rows;
   try {
-    const { data, error } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('is_active', true);
-    if (error) {
-      // Table missing or unauthorised — ingest still works, just without overrides.
-      console.warn(`  (dict overrides skipped: ${error.message})`);
-      return { count: 0 };
+    // Paginate — PostgREST caps a single SELECT at 1000 rows and
+    // atlas_dictionary_overrides has crossed that (every accepted Triage
+    // mapping adds a row). An un-paginated select silently dropped every
+    // override past #1000 at backfill time. STOP on error (never loop on a
+    // failed page — Decision #183 trap). Mirror of fetchOverridesPaginated in
+    // lib/services/atlasDictOverrides.ts. Same 1000-row class as Decision #206.
+    const PAGE = 1000;
+    rows = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('atlas_dictionary_overrides')
+        .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+        .eq('is_active', true)
+        // STABLE total ordering is load-bearing (mirror of atlasDictOverrides.ts):
+        // without it PostgREST paginates in arbitrary order, so boundary rows past
+        // #1000 silently drop/dup across pages → non-deterministic mapping (the
+        // backfill oscillation that left 13 MFRs' B4 TVS params unconvergent). (#232)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        // Table missing or unauthorised — ingest still works, just without overrides.
+        console.warn(`  (dict overrides skipped: ${error.message})`);
+        return { count: 0 };
+      }
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < PAGE) break;
     }
-    rows = data ?? [];
   } catch (err) {
     console.warn(`  (dict overrides skipped: ${err.message})`);
     return { count: 0 };
@@ -3313,58 +3386,107 @@ async function runReport() {
   console.log(`  node scripts/atlas-ingest.mjs --proceed <batchId>     # individual`);
 }
 
-async function reportOneFile(filePath) {
+// opts.status controls the batch status written:
+//   'pending'   (default) — normal report-and-approve flow; computes the full
+//                diff vs atlas_products and writes a reviewable batch.
+//   'discovery' — legacy-MFR discovery (see runDiscoverLegacy). Surfaces the
+//                MFR's unmapped params into the Triage queue WITHOUT writing
+//                atlas_products. Skips the (expensive) existing-products fetch +
+//                diff entirely — unmappedParams is diff-independent — and stores
+//                a slimmed report (no per-product attrChanges) to keep the
+//                Triage RPC's JSONB walk cheap as these batches accumulate.
+async function reportOneFile(filePath, opts = {}) {
+  const status = opts.status ?? 'pending';
+  const discovery = status === 'discovery';
   const fileName = basename(filePath);
   const fileSha = sha256File(filePath);
 
   const mapResult = mapManufacturerProducts(filePath);
-  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+  const { mfrName, mappedProducts: rawMappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+
+  // Richest-wins dedup BEFORE computeDiff so the batch-review preview counts
+  // (willInsert/willUpdate) match what runProceed/runBackfillTranslations
+  // actually write — they dedup the same way. Without this the preview
+  // overcounts duplicate-MPN dual-category rows (e.g. a part listed as both TVS
+  // and Rectifier shows +2 inserts but proceed writes 1). Decision #233.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
 
   // Tag new atlas params
   for (const p of mappedProducts) {
     p.parameters = tagAtlasParameters(p.parameters);
   }
 
-  let existingByMpn = new Map();
-  if (!dryRun) {
-    existingByMpn = await fetchExistingProducts(mfrName);
-  }
-
-  const diff = computeDiff(mappedProducts, existingByMpn);
   const unmappedParams = aggregateUnmappedParams(perProductUnmapped);
-  const risk = classifyRisk(diff, unmappedParams.length);
 
-  const report = {
-    manufacturer: mfrName,
-    sourceFile: fileName,
-    sourceFileSha256: fileSha,
-    productCounts: diff.productCounts,
-    attrChanges: diff.attrChanges,
-    classificationChanges: diff.classificationChanges,
-    deletes: diff.deletes,
-    attrCountStats: diff.attrCountStats,
-    unmappedParams,
-    familyCounts,
-    categoryCounts,
-    mappingStats: { total, mapped, errors },
-    // MPN-quality detection (phase 1, see Decision-pending entry in
-    // BACKLOG). Surfaces un-matchable rows so engineers see them at
-    // ingest time. Only populated when issues exist — older batches
-    // omit the field entirely (UI handles undefined gracefully).
-    ...(mpnQualityIssues && mpnQualityIssues.length > 0
-      ? { mpnQuality: summarizeMpnQualityIssues(mpnQualityIssues) }
-      : {}),
-  };
+  let diff = null;
+  let risk;
+  let report;
+  if (discovery) {
+    // No atlas_products write → no diff needed. Risk is informational only here.
+    risk = unmappedParams.length > 0 ? 'attention' : 'clean';
+    report = {
+      manufacturer: mfrName,
+      sourceFile: fileName,
+      sourceFileSha256: fileSha,
+      unmappedParams,
+      familyCounts,
+      categoryCounts,
+      mappingStats: { total, mapped, errors },
+      discovery: true,
+    };
+  } else {
+    let existingByMpn = new Map();
+    if (!dryRun) {
+      existingByMpn = await fetchExistingProducts(mfrName);
+    }
+    diff = computeDiff(mappedProducts, existingByMpn);
+    risk = classifyRisk(diff, unmappedParams.length);
+    report = {
+      manufacturer: mfrName,
+      sourceFile: fileName,
+      sourceFileSha256: fileSha,
+      productCounts: diff.productCounts,
+      attrChanges: diff.attrChanges,
+      classificationChanges: diff.classificationChanges,
+      deletes: diff.deletes,
+      attrCountStats: diff.attrCountStats,
+      unmappedParams,
+      familyCounts,
+      categoryCounts,
+      mappingStats: { total, mapped, errors },
+      // MPN-quality detection (phase 1, see Decision-pending entry in
+      // BACKLOG). Surfaces un-matchable rows so engineers see them at
+      // ingest time. Only populated when issues exist — older batches
+      // omit the field entirely (UI handles undefined gracefully).
+      ...(mpnQualityIssues && mpnQualityIssues.length > 0
+        ? { mpnQuality: summarizeMpnQualityIssues(mpnQualityIssues) }
+        : {}),
+    };
+  }
 
   let batchId = null;
   if (!dryRun) {
-    // Replace any existing pending batch with same source_file+sha256 (idempotent re-run).
-    await supabase
-      .from('atlas_ingest_batches')
-      .delete()
-      .eq('manufacturer', mfrName)
-      .eq('source_file', fileName)
-      .eq('status', 'pending');
+    if (discovery) {
+      // Idempotent regenerate: replace any existing discovery batch for this
+      // source file.
+      await supabase
+        .from('atlas_ingest_batches')
+        .delete()
+        .eq('manufacturer', mfrName)
+        .eq('source_file', fileName)
+        .eq('status', 'discovery');
+    } else {
+      // Replace any existing pending batch (idempotent re-run) AND any stale
+      // discovery batch for the same source file — a real pending batch
+      // supersedes the discovery placeholder, so the same unmapped params
+      // aren't double-counted in the Triage queue (dedup guard, plan 1d).
+      await supabase
+        .from('atlas_ingest_batches')
+        .delete()
+        .eq('manufacturer', mfrName)
+        .eq('source_file', fileName)
+        .in('status', ['pending', 'discovery']);
+    }
 
     const { data: inserted, error: insertErr } = await supabase
       .from('atlas_ingest_batches')
@@ -3373,7 +3495,7 @@ async function reportOneFile(filePath) {
         source_file: fileName,
         source_file_sha256: fileSha,
         report,
-        status: 'pending',
+        status,
         risk,
       })
       .select('batch_id')
@@ -3384,16 +3506,25 @@ async function reportOneFile(filePath) {
     batchId = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  // Discovery batches don't get a markdown diff report (no diff to render).
   let mdPath = null;
-  try {
-    mdPath = writeMarkdownReport(report, batchId, mfrName, fileName, risk);
-  } catch (err) {
-    console.error(`  ⚠ Could not write markdown for ${fileName}: ${err.message}`);
+  if (!discovery) {
+    try {
+      mdPath = writeMarkdownReport(report, batchId, mfrName, fileName, risk);
+    } catch (err) {
+      console.error(`  ⚠ Could not write markdown for ${fileName}: ${err.message}`);
+    }
   }
 
-  console.log(
-    `  [${risk.padEnd(9)}] ${mfrName.padEnd(30)} +${diff.productCounts.willInsert} ins, ${diff.productCounts.willUpdate} upd, ${diff.productCounts.willDelete} del, ${unmappedParams.length} unmapped${mdPath ? ` → ${mdPath}` : ''}`
-  );
+  if (discovery) {
+    console.log(
+      `  [discovery] ${mfrName.padEnd(30)} ${unmappedParams.length} unmapped param(s), ${mapped}/${total} products mapped`
+    );
+  } else {
+    console.log(
+      `  [${risk.padEnd(9)}] ${mfrName.padEnd(30)} +${diff.productCounts.willInsert} ins, ${diff.productCounts.willUpdate} upd, ${diff.productCounts.willDelete} del, ${unmappedParams.length} unmapped${mdPath ? ` → ${mdPath}` : ''}`
+    );
+  }
 
   return { file: fileName, mfrName, batchId, risk, diff, unmappedParams, mdPath };
 }
@@ -3439,18 +3570,15 @@ async function runProceed(batchId) {
 
   const { mfrName, mappedProducts: rawMappedProducts } = mapManufacturerProducts(filePath);
   // Dedup by MPN — vendor JSON occasionally lists the same MPN twice for one
-  // MFR, which would crash the upsert with "ON CONFLICT DO UPDATE command
-  // cannot affect row a second time". Keep the LAST occurrence so the merge
-  // semantics match what a sequential apply would produce (last write wins).
-  const dedupedByMpn = new Map();
-  for (const p of rawMappedProducts) {
-    dedupedByMpn.set(p.mpn, p);
-  }
-  const dupeCount = rawMappedProducts.length - dedupedByMpn.size;
+  // MFR (would also crash the upsert with "ON CONFLICT DO UPDATE command cannot
+  // affect row a second time"). Keep the RICHEST occurrence, not last — a part
+  // listed as both TVS (full params) and Rectifier (~1 param) must store the
+  // rich electrical spec, deterministically. Decision #233 follow-up.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
+  const dupeCount = rawMappedProducts.length - mappedProducts.length;
   if (dupeCount > 0) {
-    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (last occurrence wins)`);
+    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (richest occurrence wins)`);
   }
-  const mappedProducts = Array.from(dedupedByMpn.values());
   for (const p of mappedProducts) {
     p.parameters = tagAtlasParameters(p.parameters);
   }
@@ -3930,7 +4058,11 @@ async function runBackfillTranslations(mfrFilter) {
       grandTotal.errors++;
       continue;
     }
-    const { mfrName, mappedProducts } = mapResult;
+    const { mfrName, mappedProducts: rawMappedProducts } = mapResult;
+    // Richest-wins dedup so duplicate-MPN dual-category rows land their rich
+    // mapping (not last-wins). Same collapse the dry-run sees, so these rows
+    // converge instead of perpetually re-flagging. Decision #233 follow-up.
+    const mappedProducts = dedupRichestByMpn(rawMappedProducts);
     if (mappedProducts.length === 0) {
       // Empty source file or filter-skipped — nothing to do.
       continue;
@@ -4018,6 +4150,113 @@ async function runBackfillTranslations(mfrFilter) {
     } catch (err) {
       console.error('Cache invalidation failed (non-fatal):', err.message);
     }
+
+    // Purge the recommendation cache. Re-mapping an Atlas product changes its
+    // parametric data, but recs are cached keyed on the SOURCE mpn — a Digikey
+    // part whose Atlas *candidate* just changed would otherwise keep serving
+    // recommendations scored on stale Atlas specs until the 30-day TTL expires.
+    // Recommendation rows are part_data_cache where service='search' AND
+    // cache_tier='recommendations' (covers both rec: and rec-base: variants).
+    // Best-effort — recs rebuild on demand. (See plan Stage 0(a).)
+    try {
+      await supabase
+        .from('part_data_cache')
+        .delete()
+        .eq('service', 'search')
+        .eq('cache_tier', 'recommendations');
+      console.log('Recommendation cache purged.');
+    } catch (err) {
+      console.error('Recommendation cache purge failed (non-fatal):', err.message);
+    }
+  }
+}
+
+// ─── runDiscoverLegacy ────────────────────────────────────
+//
+// "Legacy" Atlas MFRs were loaded before the batch pipeline (Decision #174)
+// existed, so they have NO atlas_ingest_batches row — and the Triage queue
+// reads unmapped params ONLY from batch reports. Their genuinely-unmapped
+// params are therefore invisible/undiscoverable in Triage.
+//
+// This mode re-runs the CURRENT mapper over every source file that has no
+// batch and writes a slim status='discovery' batch carrying that MFR's
+// unmappedParams (with original vendor names). The existing Triage RPC/compute/
+// UI then surfaces them with ~zero downstream changes. It does NOT touch
+// atlas_products (that's what --backfill-translations / --proceed are for).
+//
+// Idempotent: a file that already has ANY batch is skipped. --force re-scans
+// files whose only batch is a discovery batch (e.g. after the mapper improved).
+async function runDiscoverLegacy(mfrFilter) {
+  if (!supabase) throw new Error('Supabase client required for discover-legacy');
+
+  // Enumerate source files (mirror runBackfillTranslations).
+  const allFiles = readdirSync('data/atlas/')
+    .filter(f => /^mfr_.+\.json$/i.test(f))
+    .map(f => `data/atlas/${f}`);
+  const filtered = mfrFilter
+    ? allFiles.filter(p => basename(p).toLowerCase().includes(mfrFilter.toLowerCase()))
+    : allFiles;
+
+  // Which source files already have a batch (any status)? Those are NOT legacy
+  // — either they went through the batch pipeline (pending/applied) or already
+  // have a discovery batch.
+  const { data: batchRows, error: bErr } = await supabase
+    .from('atlas_ingest_batches')
+    .select('source_file, status');
+  if (bErr) throw new Error(`Fetch existing batches failed: ${bErr.message}`);
+  const knownFiles = new Set();       // any status
+  const discoveryFiles = new Set();   // only discovery
+  for (const r of batchRows ?? []) {
+    if (!r.source_file) continue;
+    knownFiles.add(r.source_file);
+    if (r.status === 'discovery') discoveryFiles.add(r.source_file);
+  }
+
+  const targets = filtered.filter(p => {
+    const f = basename(p);
+    if (!knownFiles.has(f)) return true;                  // legacy: no batch at all
+    if (forceFlag && discoveryFiles.has(f)) return true;  // re-scan an existing discovery batch
+    return false;
+  });
+  const skipped = filtered.length - targets.length;
+
+  console.log(`\nDiscover-legacy — ${targets.length} legacy file(s) to scan${dryRun ? ' (DRY RUN)' : ''}` +
+    ` (${skipped} already have a batch${forceFlag ? '' : '; --force to re-scan discovery batches'})`);
+  console.log('─'.repeat(60));
+
+  let scanned = 0, created = 0, errors = 0;
+  let idx = 0;
+  async function worker() {
+    while (idx < targets.length) {
+      const filePath = targets[idx++];
+      scanned++;
+      try {
+        await reportOneFile(filePath, { status: 'discovery' });
+        created++;
+      } catch (err) {
+        console.error(`  ✗ ${basename(filePath)}: ${err.message}`);
+        errors++;
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, targets.length || 1) }, () => worker());
+  await Promise.all(workers);
+
+  console.log('─'.repeat(60));
+  console.log(`Scanned ${scanned} / BatchesCreated ${created} / Skipped ${skipped} / Errors ${errors}`);
+
+  if (!dryRun && created > 0) {
+    // Surfacing new discovery params changes the Triage queue and the per-MFR
+    // Improvement Potential rollup (Decision #202). Drop the persistent L2 rows
+    // so the next admin read recomputes. The in-process TS triage-queue cache
+    // is invalidated separately by the trigger endpoint after this spawn exits
+    // (the .mjs can only reach the persistent admin_stats_cache rows).
+    try {
+      await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue', 'manufacturers-list']);
+      console.log('Admin caches invalidated (triage-queue, manufacturers-list).');
+    } catch (err) {
+      console.error('Cache invalidation failed (non-fatal):', err.message);
+    }
   }
 }
 
@@ -4080,6 +4319,7 @@ function numericValuesEqual(a, b) {
       case 'list-pending':           await runListPending(summaryFlag); break;
       case 'regenerate-affected-by': await runRegenerateAffectedBy(modeArg); break;
       case 'backfill-translations': await runBackfillTranslations(modeArg); break;
+      case 'discover-legacy':        await runDiscoverLegacy(modeArg); break;
       default:
         printUsage();
         process.exit(1);

@@ -1,4 +1,4 @@
-import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile } from './types';
+import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile, Notification } from './types';
 import type { ServiceWarning, ServiceName, ServiceStatusInfo } from './types';
 
 // Admin types
@@ -477,6 +477,33 @@ export async function postAppFeedbackComment(feedbackId: string, body: string): 
 /** Count of threads with unread admin replies for the signed-in user. */
 export async function getOwnAppFeedbackUnreadCount(): Promise<{ count: number }> {
   return fetchApi<{ count: number }>(`${BASE}/app-feedback/unread-count`);
+}
+
+// ── Notifications ───────────────────────────────────────────
+
+/** Fetch the signed-in user's notifications (newest first, cursor-paginated). */
+export async function getNotifications(opts?: { limit?: number; before?: string }): Promise<Notification[]> {
+  const qs = new URLSearchParams();
+  if (opts?.limit) qs.set('limit', String(opts.limit));
+  if (opts?.before) qs.set('before', opts.before);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const data = await fetchApi<{ items: Notification[] }>(`${BASE}/notifications${suffix}`);
+  return data.items;
+}
+
+/** Count of unread notifications — drives the sidebar bell badge. */
+export async function getNotificationsUnreadCount(): Promise<{ count: number }> {
+  return fetchApi<{ count: number }>(`${BASE}/notifications/unread-count`);
+}
+
+/** Mark a single notification read. */
+export async function markNotificationRead(id: string): Promise<void> {
+  await fetchApi<Record<string, never>>(`${BASE}/notifications/${id}/read`, { method: 'POST' });
+}
+
+/** Mark all of the user's notifications read. */
+export async function markAllNotificationsRead(): Promise<void> {
+  await fetchApi<{ count: number }>(`${BASE}/notifications/read-all`, { method: 'POST' });
 }
 
 /**

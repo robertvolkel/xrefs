@@ -71,10 +71,11 @@ import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis } from './types';
+import type { GlobalUnmappedParam, DictSuggestion, DeepAnalysis, SimilarSibling } from './types';
 import { getLogicTable } from '@/lib/logicTables';
 import { isValidFamilyId } from '@/lib/services/validFamilyIds';
-import { normalizeParamKey, isFuzzyMatch, isGenericTerm } from '@/lib/services/paramNameSimilarity';
+import { isGenericTerm } from '@/lib/services/paramNameSimilarity';
+import { paramUid } from '@/lib/services/paramUid';
 import { ClusterPreviewModal } from './ClusterPreviewModal';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
@@ -116,7 +117,7 @@ function getFamilyDisplayName(familyId: string | null): { short: string; full: s
  *  overloaded to accept both, and the suggest/POST endpoints fall through L3
  *  → L2 internally. Returns null when neither signal is present (rare —
  *  pre-categoryCounts batches). */
-function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'; key: string } | null {
+function getOverrideScope(r: { dominantFamily: string | null; dominantCategory: string | null }): { kind: 'family' | 'category'; key: string } | null {
   if (r.dominantFamily) return { kind: 'family', key: r.dominantFamily };
   if (r.dominantCategory) return { kind: 'category', key: r.dominantCategory };
   return null;
@@ -126,22 +127,10 @@ function getOverrideScope(r: GlobalUnmappedParam): { kind: 'family' | 'category'
 // so the same helpers can be reused server-side (cluster-suggest) and unit-
 // tested in isolation. See that file's header for the ASCII-only fuzzy gate.
 
-/** Deterministic short UID for a paramName — FNV-1a 32-bit hash printed
- *  as 6 hex chars with a "TR-" prefix. Same input always yields the same
- *  UID across sessions, machines, and the server, so engineers can
- *  copy/paste "TR-a8f2c1" into a search field, a Slack message, or a
- *  ticket and the row resolves consistently. 6 hex chars = 16M slots —
- *  collision probability under our queue size (~1K paramNames) is
- *  negligible. No DB / migration needed because the input itself (the
- *  paramName string) is the canonical identity. */
-export function paramUid(paramName: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < paramName.length; i++) {
-    h ^= paramName.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return 'TR-' + (h >>> 0).toString(16).padStart(8, '0').slice(-6);
-}
+// paramUid (FNV-1a short UID) moved to lib/services/paramUid.ts so the
+// server-side Triage search uses the byte-for-byte identical implementation.
+// Re-exported here for the existing import site (AtlasDictTriagePanel).
+export { paramUid };
 
 /** Local helper — renders the matchingImpact column. Colour tiers chosen to
  *  give an at-a-glance prioritisation signal across the queue. Estimate rows
@@ -278,6 +267,16 @@ interface Props {
    *  applies in orderedRows after the row-fetch but before the stale
    *  partition + visible-count pagination. */
   aiVerdictFilter?: 'all' | 'accept' | 'defer' | 'none';
+  /** Server-side pagination (Decision #231). `rows` is the accumulated set of
+   *  pages fetched so far; `serverRemaining` is how many MORE rows match the
+   *  current filter on the server but haven't been pulled yet; `serverTotal`
+   *  is the total filtered count (for the "X of Y" footer); `onLoadMore`
+   *  fetches + appends the next server page; `loadingMore` is its in-flight
+   *  flag. Absent ⇒ no server pagination (everything is loaded). */
+  serverRemaining?: number;
+  serverTotal?: number;
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
 }
 
 interface RowState {
@@ -574,7 +573,7 @@ function writeFamilySchemaCache(
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all' }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false }: Props) {
   // Default expanded so users see the AI-triage flow without an extra click —
   // this is the most-used panel of the page when there are unmapped params.
   const [expanded, setExpanded] = useState(true);
@@ -631,6 +630,31 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  the deterministic Tier 1 (`normalizedMatchesByRow` + the "+N similar"
    *  chip) is gated against for safety reasons. */
   const [clusterFocalParam, setClusterFocalParam] = useState<string | null>(null);
+  /** Cross-scope cluster candidates for the open focal, fetched SERVER-SIDE
+   *  (Decision #231) so they cover the WHOLE queue, not just the loaded page.
+   *  null = not yet loaded (modal shows a loading state). */
+  const [clusterCandidates, setClusterCandidates] = useState<GlobalUnmappedParam[] | null>(null);
+
+  // Fetch candidates whenever a focal is opened. The endpoint excludes the
+  // focal + Tier-1 siblings + already-mapped + unscoped rows and pre-sorts
+  // exact-normalized-key-first, mirroring the prior client-side gathering but
+  // over the full classified set.
+  useEffect(() => {
+    if (!clusterFocalParam) { setClusterCandidates(null); return; }
+    let cancelled = false;
+    setClusterCandidates(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/atlas/dictionaries/cluster-candidates?focal=${encodeURIComponent(clusterFocalParam)}`);
+        const json = await res.json();
+        if (cancelled) return;
+        setClusterCandidates(json?.success && Array.isArray(json.candidates) ? (json.candidates as GlobalUnmappedParam[]) : []);
+      } catch {
+        if (!cancelled) setClusterCandidates([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clusterFocalParam]);
 
   /** When set, the right-side AI Investigation drawer is open showing the
    *  cached deepAnalysis for that paramName. Single-instance drawer: clicking
@@ -650,50 +674,19 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *      current — opposite concepts). The AI cluster-suggest button handles
    *      CJK synonyms with proper semantic understanding.
    *  Built once per `rows` change. */
+  // "+N similar" cosmetic-variant siblings. The clustering is now computed
+  // SERVER-SIDE over the FULL classified set (lib/services/triageClustering.ts)
+  // and attached per-row as `row.similarSiblings` — because under server
+  // pagination the client only holds one page, so it can no longer see every
+  // in-scope variant to cluster locally. We just index the server-attached
+  // siblings by paramName for the existing consumers (the "+N similar" chip +
+  // bulk-accept path), which read `normalizedMatchesByRow[paramName]` as a
+  // `{ paramName, sampleValues }[]`.
   const normalizedMatchesByRow = useMemo(() => {
-    // Pass 1: exact-normalized-key groups, scoped to (kind, key).
-    type Group = { normKey: string; list: GlobalUnmappedParam[]; merged?: true };
-    const groupsByScope = new Map<string, Group[]>();
+    const result: Record<string, SimilarSibling[]> = {};
     for (const r of rows) {
-      const scope = getOverrideScope(r);
-      if (!scope) continue; // unscoped — bulk-accept can't write an override
-      if (r.acceptedOverride?.isActive) continue; // already mapped; not actionable
-      const scopeKey = `${scope.kind}::${scope.key}`;
-      const normKey = normalizeParamKey(r.paramName);
-      const arr = groupsByScope.get(scopeKey) ?? [];
-      let group = arr.find((g) => g.normKey === normKey);
-      if (!group) {
-        group = { normKey, list: [] };
-        arr.push(group);
-      }
-      group.list.push(r);
-      groupsByScope.set(scopeKey, arr);
-    }
-    // Pass 2: within each scope, merge singleton groups into other groups when
-    // their normalized keys fuzzy-match. Leader-join (not transitive) — first
-    // viable target wins. Merged singletons are flagged and skipped later so
-    // their row doesn't appear as an orphan.
-    for (const arr of groupsByScope.values()) {
-      for (const s of arr) {
-        if (s.list.length !== 1 || s.merged) continue;
-        for (const target of arr) {
-          if (target === s || target.merged) continue;
-          if (isFuzzyMatch(s.normKey, target.normKey)) {
-            target.list.push(...s.list);
-            s.merged = true;
-            break;
-          }
-        }
-      }
-    }
-    const result: Record<string, GlobalUnmappedParam[]> = {};
-    for (const arr of groupsByScope.values()) {
-      for (const group of arr) {
-        if (group.merged) continue;
-        if (group.list.length < 2) continue;
-        for (const r of group.list) {
-          result[r.paramName] = group.list.filter((x) => x.paramName !== r.paramName);
-        }
+      if (r.similarSiblings && r.similarSiblings.length > 0) {
+        result[r.paramName] = r.similarSiblings;
       }
     }
     return result;
@@ -734,14 +727,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         return verdict === aiVerdictFilter;
       });
     }
-    // Default sort: matching impact desc. Engineers see the highest-leverage
-    // pending accepts at the top of every view without configuring anything.
-    // Stable-ish — ties (e.g., orphans with score=0) preserve insertion order.
-    // Server provides matchingImpact; we sort client-side so the column
-    // header can later support click-to-toggle direction without a refetch.
-    filtered = [...filtered].sort(
-      (a, b) => (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0),
-    );
+    // Default sort (matchingImpact.score desc) is now applied SERVER-SIDE
+    // (queryTriage) so the page slice is in the right order — we no longer
+    // re-sort here (re-sorting one page would only reshuffle within the page).
+    // The aiVerdict filter above + the stale-first partition below still apply
+    // client-side over the loaded rows.
     if (!staleFirstSort) return filtered;
     const isRowStale = (row: GlobalUnmappedParam): boolean => {
       const st = states[row.paramName];
@@ -765,12 +755,34 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     return [...stale, ...fresh];
   }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter]);
   const visibleRows = orderedRows.slice(0, visibleCount);
-  const hiddenCount = Math.max(0, orderedRows.length - visibleRows.length);
+  // Two-level pagination (Decision #231):
+  //   renderHidden = rows loaded but not yet rendered (the client render window
+  //     — keeps a big page from painting 500 MUI rows at once, the documented
+  //     freeze guard).
+  //   serverRemaining = rows matching the filter on the server but not yet
+  //     fetched into the accumulator.
+  // "Show more" advances the render window first; once that's exhausted it
+  // fetches the next server page (and bumps the window so the new rows show).
+  const renderHidden = Math.max(0, orderedRows.length - visibleRows.length);
+  const hasMore = renderHidden > 0 || serverRemaining > 0;
+  // Total for the "X of Y" footer — the server's filtered total when present
+  // (so it reflects rows not yet loaded), else the loaded count.
+  const displayTotal = serverTotal ?? orderedRows.length;
   // useTransition lets React keep the UI responsive while it renders the
   // additional rows. Without this, the synchronous setVisibleCount blocked
   // the main thread for several seconds on large queues, triggering "Page
   // Unresponsive" warnings.
   const [pendingShowMore, startShowMore] = useTransition();
+  const handleShowMore = () => {
+    if (renderHidden > 0) {
+      startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE));
+    } else if (serverRemaining > 0 && onLoadMore) {
+      // Fetch + append the next server page; bump the window so the incoming
+      // rows render (they're beyond the current visibleCount).
+      onLoadMore();
+      setVisibleCount((n) => n + ROW_BATCH_SIZE);
+    }
+  };
 
   // Notes (notesByParam, onNoteChange) come from the parent panel via props
   // so the filter bar can scope rows by has-note. See AtlasDictTriagePanel.
@@ -1493,7 +1505,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  match individually. Returns true on success so the caller can decide
    *  whether to optimistically flip the row to Accepted in local state. */
   const acceptMatchWithPrimaryOverride = useCallback(async (
-    match: GlobalUnmappedParam,
+    // Only needs the override target name + scope — accepts both a compact
+    // SimilarSibling and a full row.
+    match: { paramName: string; dominantFamily: string | null; dominantCategory: string | null },
     overrideValues: { attributeId: string; attributeName: string; unit: string },
     primaryParamName: string,
   ): Promise<boolean> => {
@@ -2185,7 +2199,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                     in the table component, not localStorage). */}
                 <Tooltip title={staleFirstSort
                   ? 'Restore source order'
-                  : 'Sort the table so stale rows surface to the top'}>
+                  : 'Sort the table so stale rows surface to the top. Operates on loaded rows — click Show more to extend the set.'}>
                   <Button
                     size="small"
                     variant={staleFirstSort ? 'contained' : 'outlined'}
@@ -3111,19 +3125,23 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             current visible window. Renders the first INITIAL_VISIBLE_ROWS
             up front to avoid freezing the browser on 400+ row mount;
             subsequent batches are opt-in. */}
-        {hiddenCount > 0 && (
+        {hasMore && (
           <Stack direction="row" spacing={2} alignItems="center" justifyContent="center" sx={{ mt: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
             <Typography variant="caption" color="text.secondary">
-              {pendingShowMore ? 'Loading more rows…' : `Showing ${visibleRows.length} of ${rows.length} rows`}
+              {pendingShowMore || loadingMore
+                ? 'Loading more rows…'
+                : `Showing ${visibleRows.length.toLocaleString()} of ${displayTotal.toLocaleString()} rows`}
             </Typography>
             <Button
               size="small"
               variant="outlined"
-              disabled={pendingShowMore}
-              startIcon={pendingShowMore ? <CircularProgress size={12} color="inherit" /> : undefined}
-              onClick={() => startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE))}
+              disabled={pendingShowMore || loadingMore}
+              startIcon={(pendingShowMore || loadingMore) ? <CircularProgress size={12} color="inherit" /> : undefined}
+              onClick={handleShowMore}
             >
-              Show {Math.min(ROW_BATCH_SIZE, hiddenCount)} more
+              {renderHidden > 0
+                ? `Show ${Math.min(ROW_BATCH_SIZE, renderHidden)} more`
+                : `Load ${Math.min(ROW_BATCH_SIZE, serverRemaining)} more`}
             </Button>
             {/* "Show all" intentionally removed — for queues with hundreds
                 of rows it triggered browser unresponsiveness. Use the
@@ -3213,33 +3231,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         if (!attrId) return null;
         const scope = getOverrideScope(focal);
         if (!scope) return null;
-        const tier1Names = new Set(
-          (normalizedMatchesByRow[focal.paramName] ?? []).map((m) => m.paramName),
-        );
-        // Cross-scope candidates: every open unmapped row in the queue except
-        // the focal, Tier 1 cosmetic siblings (already covered by the +N
-        // similar chip), and rows with no resolvable scope (can't write an
-        // override without a scope). Per-row scope chips + AI verdict in the
-        // modal handle the safety; engineer reviews per match before Accept.
-        const rawCandidates = rows.filter((r) => {
-          if (r.paramName === focal.paramName) return false;
-          if (r.acceptedOverride?.isActive) return false;
-          if (tier1Names.has(r.paramName)) return false;
-          return getOverrideScope(r) !== null;
-        });
-        // Sort: exact-normalized-key matches first (e.g. every other row
-        // whose paramName collapses to the same key as the focal — these are
-        // almost certainly cross-scope hits like AEC-Q101 across families),
-        // then everything else in insertion order. The route caps at
-        // MAX_CANDIDATES=50, so this prioritization ensures the AI sees the
-        // high-likelihood matches first.
-        const focalNormKey = normalizeParamKey(focal.paramName);
-        const candidates = [...rawCandidates].sort((a, b) => {
-          const aExact = normalizeParamKey(a.paramName) === focalNormKey;
-          const bExact = normalizeParamKey(b.paramName) === focalNormKey;
-          if (aExact === bExact) return 0;
-          return aExact ? -1 : 1;
-        });
+        // Candidates are gathered SERVER-SIDE (Decision #231) over the full
+        // classified set so cross-scope matches on unloaded pages are included.
+        // The endpoint already excludes the focal + Tier-1 cosmetic siblings +
+        // already-mapped + unscoped rows, and pre-sorts exact-normalized-key
+        // first (the cluster-suggest route caps at 50, so high-likelihood hits
+        // must rank first). null = still loading → show an empty list for now.
+        const candidates = clusterCandidates ?? [];
         // Per-candidate scope label for the modal's Scope column chips.
         const candidateScopeLabels: Record<string, string> = {};
         for (const c of candidates) {

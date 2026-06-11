@@ -183,7 +183,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }));
 
     // Status counts (unfiltered by status, filtered by category if set)
-    const statusCounts: AppFeedbackStatusCounts = { open: 0, reviewed: 0, resolved: 0, dismissed: 0 };
+    const statusCounts: AppFeedbackStatusCounts = { open: 0, reviewed: 0, wip: 0, resolved: 0, dismissed: 0 };
     let countQuery = supabase.from('app_feedback').select('status');
     if (category) {
       countQuery = countQuery.eq('category', category);

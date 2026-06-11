@@ -28,6 +28,7 @@ import {
 } from '@/lib/services/atlasFamilyParamSignatures';
 import { getLogicTable } from '@/lib/logicTables';
 import { registerTriageCompute } from '@/lib/services/triageQueueCache';
+import { computeSimilarSiblings, type SiblingRef } from '@/lib/services/triageClustering';
 
 /** Slugify a manufacturer display name as a fallback when we can't resolve the
  *  canonical slug from atlas_manufacturers (e.g. row never registered there). */
@@ -93,6 +94,18 @@ export type GlobalUnmapped = {
   autoFlag?: AutoFlag;
   noteStatus?: NoteStatus;
   flaggedBy?: 'auto' | 'engineer' | null;
+  /** Engineer bookmark flag (atlas_unmapped_param_notes.is_flagged). Carried
+   *  per-row so the server-side `flagged` Triage filter can run on the cached
+   *  classified set instead of the client filtering the full set. */
+  isFlagged?: boolean;
+  /** True iff a non-empty team note exists for this paramName. Powers the
+   *  server-side `has_note` Triage filter. */
+  hasNote?: boolean;
+  /** Cosmetic-variant siblings within the same override scope (Tier-1
+   *  "+N similar" clustering). Computed over the FULL classified set in
+   *  compute so it stays correct under server pagination. Carries the fields
+   *  the bulk-accept path needs (scope + affected batches). */
+  similarSiblings?: SiblingRef[];
   acceptedOverride?: {
     id: string;
     attributeId: string;
@@ -168,15 +181,42 @@ export async function computeTriageAggregation(): Promise<{
   // Mirrors the atlas-coverage RPC pattern (Decision #179).
   const aggregatePromise = supabase.rpc('get_triage_unmapped_aggregate');
 
-  const overridesPromise = supabase
-    .from('atlas_dictionary_overrides')
-    .select('id, family_id, param_name, attribute_id, attribute_name, unit, created_by, created_at, updated_at, is_active')
-    .order('updated_at', { ascending: false });
+  // Paginate — atlas_dictionary_overrides has crossed 1000 rows (1319 at last
+  // count: 1136 active + 183 inactive). A single un-paginated SELECT hits
+  // PostgREST's 1000-row cap and silently drops the OLDEST overrides (this is
+  // ordered updated_at desc), so the params they map are no longer recognised as
+  // "already accepted" and REAPPEAR in the OPEN Triage queue — the engineer
+  // re-maps work they already did. Third instance of the 1000-row footgun
+  // (Decisions #206 RPC / #232 the two dict loaders; this compute path was
+  // missed). Stable order (updated_at desc, id asc tiebreak) keeps "first-seen
+  // per key = most recent" intact AND guarantees no skip/dup across pages. STOP
+  // on error — never loop on a failed page (Decision #183 partial-result trap).
+  const overridesPromise = (async () => {
+    const PAGE = 1000;
+    const all: Array<Record<string, unknown>> = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('atlas_dictionary_overrides')
+        .select('id, family_id, param_name, attribute_id, attribute_name, unit, created_by, created_at, updated_at, is_active')
+        .order('updated_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) return { data: null, error };
+      const batch = data ?? [];
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+    }
+    return { data: all, error: null };
+  })();
 
+  // NOTE: no `.not('status','is',null)` filter — note-only and flag-only rows
+  // have status=null but still need to feed the server-side `flagged` /
+  // `has_note` Triage filters (isFlagged / hasNote below). Pulling all rows
+  // (≤ a few hundred) is cheap, and status-null rows classify identically to a
+  // missing note (noteStatus → null), so classification is unchanged.
   const notesPromise = supabase
     .from('atlas_unmapped_param_notes')
-    .select('param_name, status, flagged_by, auto_diagnosis')
-    .not('status', 'is', null);
+    .select('param_name, status, flagged_by, auto_diagnosis, is_flagged, note');
 
   const [aggregateRes, overridesRes, notesRes] = await Promise.all([
     aggregatePromise,
@@ -187,9 +227,13 @@ export async function computeTriageAggregation(): Promise<{
   if (aggregateRes.error) throw new Error(`get_triage_unmapped_aggregate RPC failed: ${aggregateRes.error.message}`);
   const tQueueSource = Date.now();
 
-  // RPC row shape — mirrors the SQL function's RETURNS TABLE definition.
-  // BIGINT columns come back from postgres-js as string OR number depending
-  // on driver config; we safely Number() them.
+  // RPC row shape. The function RETURNS jsonb (a single array, one object per
+  // paramName) rather than a TABLE — PostgREST hard-caps TABLE/SETOF returns at
+  // 1000 rows and the legacy-discovery batches (Decision #231) push the
+  // distinct-param count past that, so a TABLE return silently truncated the
+  // queue (Decision #206). For a jsonb return, `data` is the parsed array
+  // directly, so the `?? []` + cast below is unchanged.
+  // BIGINT values come back as number from jsonb; we still Number() defensively.
   type AggregateRow = {
     param_name: string;
     product_count: number | string;
@@ -233,13 +277,18 @@ export async function computeTriageAggregation(): Promise<{
     status: NoteStatus;
     flaggedBy: 'auto' | 'engineer' | null;
     autoDiagnosis: Record<string, unknown> | null;
+    isFlagged: boolean;
+    hasNote: boolean;
   }>();
   if (!notesRes.error) {
     for (const row of notesRes.data ?? []) {
+      const note = (row.note as string | null) ?? null;
       noteStatusByParam.set(row.param_name as string, {
         status: row.status as NoteStatus,
         flaggedBy: (row.flagged_by as 'auto' | 'engineer' | null) ?? null,
         autoDiagnosis: (row.auto_diagnosis as Record<string, unknown> | null) ?? null,
+        isFlagged: (row.is_flagged as boolean | null) ?? false,
+        hasNote: note !== null && note.trim() !== '',
       });
     }
   }
@@ -479,9 +528,22 @@ export async function computeTriageAggregation(): Promise<{
       autoFlag,
       noteStatus,
       flaggedBy,
+      isFlagged: noteRecord?.isFlagged ?? false,
+      hasNote: noteRecord?.hasNote ?? false,
       effective,
     };
   });
+
+  // Tier-1 "+N similar" clustering over the FULL classified set. Attached
+  // per-row so the client (which may only hold one page under server
+  // pagination) still renders accurate "+N similar" chips and can bulk-accept
+  // cosmetic variants that live on other pages. computeSimilarSiblings already
+  // excludes unscoped + active-override rows.
+  const siblingMap = computeSimilarSiblings(classified);
+  for (const row of classified) {
+    const sibs = siblingMap.get(row.paramName);
+    if (sibs && sibs.length > 0) row.similarSiblings = sibs;
+  }
 
   // Global counts (over the FULL classified set). triageCounts and the
   // OPEN status count both use isInOpenQueue so synonyms / auto-flagged

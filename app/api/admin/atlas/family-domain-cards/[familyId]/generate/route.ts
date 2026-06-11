@@ -39,8 +39,12 @@ import {
 import { invalidateDomainCardCache } from '@/lib/services/atlasFamilyDomainCards';
 import {
   buildGroundingBlock,
-  formatGroundingForPrompt,
 } from '@/lib/services/atlasFamilyCardGrounding';
+import {
+  renderCardFacts,
+  composeCardText,
+  CARD_FORMAT_VERSION,
+} from '@/lib/services/atlasFamilyCardFacts';
 import {
   auditFamilyDomainCard,
   type CardAuditResult,
@@ -129,45 +133,55 @@ export async function POST(
     // hallucinated Western MFR cohorts forward across regenerations
     // (May 2026 audit). The grounding block + hard constraints below
     // give the model the right inputs without seeded prose.
-    const groundingSection = formatGroundingForPrompt(groundingBlock, familyId);
+    //
+    // Composite domain cards: the factual sections (rules, dictionary,
+    // units, MFR cohort) are rendered DETERMINISTICALLY here and shown to
+    // the model as already-established read-only context. Opus writes ONLY
+    // the engineering narrative — it must not restate any of those facts.
+    // composeCardText() concatenates the two before persist. Reuses the
+    // already-fetched table + groundingBlock (no extra DB round-trips).
+    const facts = await renderCardFacts(familyId, { table, groundingBlock });
 
-    const prompt = `You are writing a domain knowledge card that will be injected into a triage AI prompt for electronics-component parameter mapping. The triage AI runs on Sonnet 4.6 and has the family's schema labels but lacks the deeper domain context that distinguishes look-alike canonicals, identifies foreign-family paramNames, and surfaces sub-type distinctions.
+    const prompt = `You are writing the ENGINEERING NOTES section of a domain knowledge card that will be injected into a triage AI prompt for electronics-component parameter mapping. The triage AI runs on Sonnet 4.6 and has the family's schema labels but lacks the deeper domain context that distinguishes look-alike canonicals, identifies foreign-family paramNames, and surfaces sub-type distinctions.
 
-Your card will be injected into every /suggest and /investigate call for parameters in family ${familyId} (${table.familyName}, category: ${table.category}).
+Your notes will be injected (alongside an auto-generated FACTS block) into every /suggest and /investigate call for parameters in family ${familyId} (${table.familyName}, category: ${table.category}).
 
-Your output goal: a concrete, lesson-dense card of ~200-300 words that captures the gotchas a smart-but-not-domain-expert model would miss when looking at this family's parameters. Generic "this is a family of X" framing is NOT what we want — the model already knows that. Encode the IDIOSYNCRATIC knowledge that's not derivable from the schema labels.
+The FACTS ALREADY ESTABLISHED block below is rendered deterministically from our logic tables, dictionary, and atlas_products data — it is ALREADY in the card. Your job is to write the engineering JUDGMENT and GOTCHAS the facts alone don't convey. Do NOT restate the facts.
 
-HARD ANTI-HALLUCINATION RULES (these supersede everything else — violation makes the card unusable):
-- When you describe the MFR cohort that ships under this family, list ONLY manufacturers in VERIFIED_MFRS below. Do NOT introduce Western majors (Murata / Samsung / TDK / Kemet / Yageo / Vishay / Panasonic / TI / ADI / Infineon / onsemi / Microchip / Maxim / etc.) unless they appear in VERIFIED_MFRS — they may exist in atlas_manufacturers as cross-ref targets but do NOT ship products under this family in our data.
-- When you mention MPN prefixes, cite ONLY prefixes you can observe directly in the sample MPN strings provided in VERIFIED_MFRS. Do NOT bring in prefixes from prior knowledge of typical MFR part-number conventions.
-- If VERIFIED_MFRS is empty or has fewer than 3 entries, say so explicitly in the card: e.g. "Atlas currently has only N MFR(s) shipping under family X — do not invent additional cohorts."
-- When you describe Chinese paramName conventions, cite ONLY entries from CHINESE_PARAM_DICTIONARY. Do not paraphrase, invent, or translate Chinese terms not in that list.
-- TECHNICAL CLAIMS — every assertion about how this family substitutes, what its blocking specs are, what its sub-type behaviors are, what its value ranges are, or what its unit conventions are MUST be derivable from a specific logic-table rule (cite the attributeId inline, e.g. "isolation_voltage is the safety-critical blocking spec") or from an engineer-accepted-override entry. If you cannot ground a claim in those sources, OMIT it. Do NOT paraphrase domain knowledge from training data. The logic-table rules + accepted overrides are the source of truth — anything beyond them is unverifiable noise that propagates downstream into the Triage AI.
-- VALUE RANGES — never invent a typical voltage / current / frequency / time / temperature range. Only state a range if it appears in a logic-table rule's engineering reason or in an accepted-override example value. If a sub-type's typical range matters but isn't documented, say so ("typical range not captured in our logic table") rather than fabricate one.
-- SUB-TYPE BEHAVIOR — never assert "X sub-type requires/forbids/needs Y" unless Y is a logic-table attributeId and the assertion is supported by that rule's engineering reason. If you describe a sub-type distinction, name the attributeId(s) that capture it.
+Your output goal: a concrete, lesson-dense narrative of ~150-250 words that captures the gotchas a smart-but-not-domain-expert model would miss. Generic "this is a family of X" framing is NOT what we want — the model already knows that, and the FACTS block already lists the rules/cohort/dictionary. Encode the IDIOSYNCRATIC knowledge that's not derivable from the schema labels or the facts.
 
-Content the card SHOULD include (when applicable, AFTER respecting the rules above):
-- SUB-TYPES within the family that look interchangeable but matter (e.g., isolated vs non-isolated gate drivers, fixed vs adjustable LDOs, NPN vs PNP). Call out the canonical-naming consequences.
-- NAMING confusions — labels that sound generic but mean something specific in this family (e.g., "Gate Drive Supply VDD Range" = OUTPUT side of isolated driver, NOT generic VCC).
-- CONVENTIONAL UNITS — when a unit is industry-standard and shouldn't be encoded in the canonical name (e.g., isolation_voltage is always kVrms — no need for "_kvrms" suffix).
-- FOREIGN-FAMILY PARAM NAMES — labels that belong unambiguously to this family (covered by signatures below), so the model can flag misclassified products.
-- HARD GATES — which specs are never substitutable (polarity, topology, etc.).
-- COMMON MPN PREFIXES OBSERVED IN VERIFIED_MFRS — prefixes you can SEE in the provided sample MPNs.
-- TYPICAL VALUE RANGES that anchor sanity-checking.
+HARD RULES FOR THE NARRATIVE (these supersede everything else — violation makes the card unusable):
+- DO NOT restate the FACTS. Specifically, the narrative MUST NOT:
+  (a) assert a rule's weight or type in "attributeId (type, weight=N)" form — the FACTS block already lists every rule's type and weight;
+  (b) write a "中文 → canonical" mapping arrow — the FACTS block already lists the dictionary;
+  (c) introduce a manufacturer name into the cohort — the FACTS block already lists the verified MFR cohort. (You MAY name a Western manufacturer when explaining that Chinese parts CLONE or SECOND-SOURCE it — that's interpretation, not a cohort claim — but never assert a new MFR ships under this family.);
+  (d) claim an MPN prefix — the FACTS block already lists sample MPNs. (You MAY interpret a prefix the FACTS samples show, e.g. "the -L suffix flags logic-level", but do not invent prefixes from prior knowledge.)
+- You MAY name a canonical attributeId when explaining a concept (e.g. "isolation_voltage is the safety-critical blocking spec, never downgrade it") — naming is fine; restating its type/weight is not.
+- TECHNICAL CLAIMS — every substitution rule, blocking-spec call-out, sub-type behavior, or value range MUST be derivable from a logic-table rule (cite the attributeId inline) or an engineer-accepted-override entry. If you cannot ground a claim, OMIT it. Do NOT paraphrase domain knowledge from training data as fact.
+- VALUE RANGES — never invent a typical voltage / current / frequency / time / temperature range. Only state a range if it appears in a logic-table rule's engineering reason or an accepted-override example value. Otherwise say "typical range not captured in our logic table" rather than fabricate one.
+- SUB-TYPE BEHAVIOR — never assert "X sub-type requires/forbids/needs Y" unless Y is a logic-table attributeId supported by that rule's engineering reason. Name the attributeId(s) that capture the distinction.
+
+Content the narrative SHOULD include (when applicable, AFTER respecting the rules above):
+- SUB-TYPES within the family that look interchangeable but matter (e.g., isolated vs non-isolated gate drivers, fixed vs adjustable LDOs, NPN vs PNP) — and the canonical-naming consequence.
+- NAMING confusions — labels that sound generic but mean something specific here (e.g., "Gate Drive Supply VDD Range" = OUTPUT side of an isolated driver, NOT generic VCC).
+- CONVENTIONAL-UNIT JUDGMENT — when an industry-standard unit should NOT be encoded into the canonical name (e.g., isolation_voltage is always kVrms — do not mint "_kvrms"). The FACTS block lists the units; you add the "don't suffix it" judgment.
+- FOREIGN-FAMILY interpretation — what a foreign-family paramName seen on a product means for classification.
+- HARD GATES — which specs are never substitutable (polarity, topology, etc.) and WHY.
+- The WHY behind substitution failures the facts can't convey.
 
 FORMATTING:
 - Plain text, NO markdown headers (the prompt renders verbatim, headers would clutter).
 - Use ALL-CAPS for section labels (SUB-TYPES, NAMING, etc.) — that's the convention.
-- Be CONCRETE: name specific MPN families, specific paramName patterns, specific units. Avoid abstract framing.
-- ~200-300 words total. Tight is better than complete.
-- Do NOT include disclaimers, meta-commentary, or framing like "Here is the card". Output the card text only.
+- Be CONCRETE: name specific paramName patterns, specific units, specific gotchas. Avoid abstract framing.
+- ~150-250 words total. Tight is better than complete.
+- Do NOT include disclaimers, meta-commentary, framing like "Here is the card", or the FACTS/ENGINEERING NOTES section markers (those are added automatically). Output the narrative text only.
 
 CONTEXT:
 
 Family: ${familyId} — ${table.familyName} (category: ${table.category})
 ${table.description ? `\nFamily description: ${table.description}` : ''}
 
-Logic-table rules (these are what the matching engine consumes — the model already sees these labels, but only labels):
+Logic-table rules (with engineering reasons — these are the source of truth for technical claims; the FACTS block lists their types/weights so DO NOT restate those):
 ${rulesList}
 
 Foreign-family signatures targeting THIS family (paramNames that reclassify into ${familyId}):
@@ -176,12 +190,13 @@ ${signatureSection}
 Engineer-accepted overrides for this family (real paramNames the AI has previously mapped — strongest signal of what the family's parameters look like in the wild):
 ${acceptedList}
 
-Cross-family canonicals (attributeIds that exist in OTHER families — if your card discusses spec X and there's already a canonical for it elsewhere, NOTE that the family should reuse the existing name rather than mint a variant):
+Cross-family canonicals (attributeIds that exist in OTHER families — if your notes discuss spec X and there's already a canonical for it elsewhere, NOTE that the family should reuse the existing name rather than mint a variant):
 ${crossFamilyList || '(no cross-family canonicals)'}
 
-${groundingSection}
+FACTS ALREADY ESTABLISHED (rendered deterministically and ALREADY in the card — do NOT restate any of this; write the judgment the facts don't convey):
+${facts.renderedText}
 
-Write the card now. Output the card text ONLY — no preamble, no closing remarks.`;
+Write the ENGINEERING NOTES now. Output the narrative text ONLY — no preamble, no closing remarks, no section markers.`;
 
     const client = new Anthropic({ apiKey });
     const response = await withAnthropicRetry(
@@ -197,10 +212,15 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
     if (!textBlock || textBlock.type !== 'text') {
       return NextResponse.json({ success: false, error: 'No text response from Opus' }, { status: 500 });
     }
-    const cardText = textBlock.text.trim();
-    if (!cardText) {
+    const narrative = textBlock.text.trim();
+    if (!narrative) {
       return NextResponse.json({ success: false, error: 'Empty card text from Opus' }, { status: 500 });
     }
+    // Composite card: deterministic facts region + AI narrative region,
+    // delimited by sentinels. card_text stays one coherent LLM-readable
+    // blob for the Triage hot path; the audit/UI use the sentinels to
+    // treat the two regions differently.
+    const cardText = composeCardText(facts.renderedText, narrative);
 
     // Snapshot the prior row (if any) BEFORE overwriting so the engineer
     // can see what changed in this regeneration via "Diff vs prior" in the
@@ -236,6 +256,11 @@ Write the card now. Output the card text ONLY — no preamble, no closing remark
           verifiedMfrCount: groundingBlock.verifiedMfrs.length,
           chineseDictEntryCount: groundingBlock.chineseDictEntries.length,
           generatedAt: new Date().toISOString(),
+          // Composite-card format marker — v2 = deterministic facts +
+          // AI narrative (sentinel-delimited). Absent on legacy all-prose
+          // cards. factsRenderedAt records when the facts region was built.
+          cardFormatVersion: CARD_FORMAT_VERSION,
+          factsRenderedAt: new Date().toISOString(),
         },
         created_by: user?.id ?? null,
         // Do NOT set approved_by / approved_at here — those land when the

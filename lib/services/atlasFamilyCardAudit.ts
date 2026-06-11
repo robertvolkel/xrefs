@@ -367,6 +367,7 @@ import {
   getAtlasParamDictionary,
   getSharedParamDictionary,
 } from './atlasMapper';
+import { splitCardText } from './atlasFamilyCardComposite';
 
 // ── helpers ──
 
@@ -667,8 +668,24 @@ async function fetchMfrMpnSamples(
 
 export async function auditFamilyDomainCard(
   familyId: string,
-  cardText: string,
+  cardTextRaw: string,
 ): Promise<CardAuditResult> {
+  // Composite domain cards (v2) carry a deterministically-rendered FACTS
+  // region (rules / dictionary / MFR cohort — correct by construction) plus
+  // an AI-written NARRATIVE region. The fact-shaped checks (1,3,4,5,6) must
+  // run ONLY on the narrative — running them over the facts region produces
+  // exactly the false positives this architecture exists to kill (an MFR
+  // listed in the cohort, a dictionary arrow, a rule weight). CHECK 2
+  // (OMITTED_MFR) is skipped entirely for v2: the renderer includes the
+  // top-15 MFRs by construction, so omission is impossible.
+  //
+  // Legacy v1 prose cards (no FACTS sentinel) → splitCardText returns
+  // factsRegion=null → the whole card is the audit surface and every check
+  // runs as before. Backward compatible.
+  const { factsRegion, narrativeRegion } = splitCardText(cardTextRaw);
+  const isV2 = factsRegion !== null;
+  const cardText = isV2 ? narrativeRegion : cardTextRaw;
+
   const result: CardAuditResult = {
     auditedAt: new Date().toISOString(),
     bogusMfrs: [],
@@ -752,21 +769,26 @@ export async function auditFamilyDomainCard(
   result.bogusMfrs = [...new Set(result.bogusMfrs)];
 
   // ── CHECK 2: OMITTED_MFR ──
-  const totalFamilyProducts = rankedMfrs.reduce((acc, [, c]) => acc + c, 0);
-  for (const [mfrName, count] of rankedMfrs.slice(0, PREFIX_OMISSION_MFR_COUNT)) {
-    if (count < OMIT_MIN_PRODUCTS) continue;
-    if (totalFamilyProducts > 0 && count / totalFamilyProducts < OMIT_MIN_SHARE) continue;
-    const identity = mfrIdentities.find((i) =>
-      i.names.some((n) => n.toLowerCase() === mfrName.toLowerCase()),
-    );
-    const names = identity ? identity.names : [mfrName];
-    const mentioned = names.some((n) => mentionsName(cardText, n));
-    if (!mentioned) {
-      result.omittedMfrs.push({
-        name: mfrName,
-        productCount: count,
-        share: totalFamilyProducts > 0 ? Math.round((count / totalFamilyProducts) * 100) : 0,
-      });
+  // Skipped for v2 composite cards — the deterministic facts region renders
+  // the top-15 MFR cohort by construction (MFR_LIMIT=15 ≥ the top-10
+  // omission window), so a top-volume MFR can never be omitted.
+  if (!isV2) {
+    const totalFamilyProducts = rankedMfrs.reduce((acc, [, c]) => acc + c, 0);
+    for (const [mfrName, count] of rankedMfrs.slice(0, PREFIX_OMISSION_MFR_COUNT)) {
+      if (count < OMIT_MIN_PRODUCTS) continue;
+      if (totalFamilyProducts > 0 && count / totalFamilyProducts < OMIT_MIN_SHARE) continue;
+      const identity = mfrIdentities.find((i) =>
+        i.names.some((n) => n.toLowerCase() === mfrName.toLowerCase()),
+      );
+      const names = identity ? identity.names : [mfrName];
+      const mentioned = names.some((n) => mentionsName(cardText, n));
+      if (!mentioned) {
+        result.omittedMfrs.push({
+          name: mfrName,
+          productCount: count,
+          share: totalFamilyProducts > 0 ? Math.round((count / totalFamilyProducts) * 100) : 0,
+        });
+      }
     }
   }
 

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS app_feedback (
   user_agent TEXT,
   viewport TEXT,
 
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'reviewed', 'resolved', 'dismissed')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'reviewed', 'wip', 'resolved', 'dismissed')),
 
   admin_notes TEXT,
   resolved_by UUID REFERENCES auth.users(id),

@@ -8,6 +8,7 @@ import {
 } from '@/lib/types';
 import { requireAuth } from '@/lib/supabase/auth-guard';
 import { createClient } from '@/lib/supabase/server';
+import { createNotifications, getAdminRecipientIds } from '@/lib/services/notificationService';
 
 const VALID_CATEGORIES: AppFeedbackCategory[] = ['idea', 'issue', 'other'];
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -209,6 +210,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 500 },
       );
     }
+
+    // Notify active admins about the new submission (fire-and-forget).
+    void getAdminRecipientIds(user!.id)
+      .then((adminIds) =>
+        createNotifications(adminIds, {
+          type: 'feedback_new',
+          title: 'New feedback submitted',
+          body: userComment.slice(0, 140),
+          link: '/monitoring',
+          data: { feedbackId: data.id },
+          dedupeKey: `feedback_new:submit:${data.id}`,
+        }),
+      )
+      .catch(() => {});
 
     return NextResponse.json({ success: true, data: { id: data.id } });
   } catch (error) {

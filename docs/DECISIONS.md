@@ -7791,3 +7791,271 @@ Separate item surfaced (BACKLOG): 连欣科技's LX batch was applied but shows 
 - Decision #173 — deterministic post-recs summary (`buildRecsSummary`) replacing LLM-driven assessment; this extends it to reconcile counts.
 - Decision #109 / #159 — `countRealMismatches` / `isCertifiedCross` / `filterRecsByMismatchCount` pure helpers (the new predicate joins them).
 - Decision #131 / #171 — filter pipeline + origin filter (the chat-driven path that also drifted).
+
+## Decision #227
+
+**Date:** 2026-06-07
+
+**Context.** A user asked why the recommendation context questions for `BC337-40` (a BJT, family **B6**) appeared to ask "Is this an automotive application?" **twice**. Investigation showed it wasn't a duplicate question — the **operating-mode** question (Q1) was rendering with the **automotive** question's title. The UI renders question titles/labels from the i18n locale files (`contextQ.<familyId>.<questionId>.text`), falling back to the TS source (`lib/contextQuestions/*.ts`) only when the key is absent — see [components/ApplicationContextForm.tsx](../components/ApplicationContextForm.tsx). The TS source (the single source of truth the matching engine reads) was always correct; the bug lived purely in the translation layer.
+
+**Root cause.** A broken translation-extraction step had two failure modes: (a) it **copy-pasted the automotive question's text into the first/classifying question** of several families, and (b) it **truncated strings at apostrophes**, leaving dangling escape backslashes (e.g. `"Low Q / don\\"`). Affected, across en/de/zh-CN:
+- Q1 title clobbered with automotive text: `65.application_type`, `B6.operating_mode`, `C4.device_function`, `B4.tvs_application`, `B3.zener_function`.
+- Title cross-contaminated with a sibling question / truncated: `64.application_type`, `64.dvdt_requirement`, `67.function`, `68.function`, `69.application_type`.
+- Apostrophe-truncated option labels/descriptions (8 keys, en + de identically; zh-CN clean — no apostrophes).
+
+**Scoring impact: none.** The engine keys off `questionId` + selected answer `value` + each option's `attributeEffects`; it never reads the human-readable title. Only the *displayed* labels were wrong — a user-confusion bug, not a wrong-recommendation bug.
+
+**Fix.**
+- `en` is the source language, so its `contextQ` entries are now regenerated to match the TS source byte-for-byte (text + option label + option description).
+- `de` corrupt (backslash-truncated) values restored; the 5 families' Q1 titles + the two cross-contaminated titles translated to proper German. `zh-CN` Q1 titles corrected (its option labels were already clean).
+- New guard test [__tests__/services/contextQuestionTranslations.test.ts](../__tests__/services/contextQuestionTranslations.test.ts) makes this class of error fail CI: (1) `en` must match the TS source exactly for every present text/label/desc; (2) no two questions within a family may share a title and no two options within a question may share a label (copy-paste detector — the only check that works for the translated locales); (3) no string may be empty or end in a stray backslash (truncation detector). 164 cases, all locales.
+
+**Lesson.** Display text and matching logic are intentionally decoupled (logic in TS, display in locale JSON), so a translation typo can silently misrepresent a question with zero test coverage and no effect on results to flag it. Any text rendered from a translation layer that mirrors a code-side source of truth needs a guard test asserting the source-language locale matches the source verbatim, plus structural detectors (intra-scope uniqueness, corruption) for the translated locales where verbatim comparison can't apply.
+
+## Decision #228 — Composite domain cards: deterministic facts + AI narrative (June 8, 2026)
+
+**Context.** Atlas family "domain cards" (`atlas_family_domain_cards.card_text`) were fully Opus-generated prose, injected verbatim into the Triage `/suggest` + `/investigate` Sonnet prompts. An auto-audit ([lib/services/atlasFamilyCardAudit.ts](../lib/services/atlasFamilyCardAudit.ts)) regex-parses that prose to verify facts (MFR cohort, MPN prefixes, rule weights/types, Chinese→canonical mappings) against source-of-truth and gates Approve. This failed trust two ways: (1) **false-positive blocks** — the audit misread the AI's prose idioms (three classes patched in one prior session alone: ASCII-prefixed dict keys, short-ASCII MFR-name collisions, "all weight=10 except X=9"); each erodes confidence in the red signal. (2) **unverifiable narrative** — the audit only checks data-grounding, so a human still had to skim every card. Root cause: the AI was asked to *re-state* facts already known authoritatively in code/DB, and the audit *re-extracted* them from prose to check — the round-trip through prose is the defect.
+
+**Decision.** Render the factual card sections **deterministically from source** at generation time; have Opus write only the engineering narrative; compose both into `card_text`. Scope the audit to the narrative region only.
+
+- **New pure module** [lib/services/atlasFamilyCardComposite.ts](../lib/services/atlasFamilyCardComposite.ts) — dependency-free sentinels (`===FAMILY FACTS…===` / `===END FAMILY FACTS===` / `===ENGINEERING NOTES===`), `CARD_FORMAT_VERSION=2`, `composeCardText(facts, narrative)`, `splitCardText(card) → {factsRegion, narrativeRegion}`. Kept dependency-free so the client admin panel can import compose/split without dragging the server-only renderer (Supabase service client via grounding) into the bundle — same split as `atlasFamilyCardAuditTypes.ts` vs `atlasFamilyCardAudit.ts`. `splitCardText` returns `factsRegion=null` when no sentinel is found → the legacy-prose signal.
+- **New renderer** [lib/services/atlasFamilyCardFacts.ts](../lib/services/atlasFamilyCardFacts.ts) — `renderCardFacts(familyId, {table, groundingBlock})` composes the facts prose (RULES from `getLogicTable`, CHINESE→CANONICAL dict from `getAtlasParamDictionary`+shared CJK-filtered, CONVENTIONAL UNITS from the dict `unit` field, MFR COHORT from `buildGroundingBlock`) plus structured arrays for a future UI-tables follow-up. Re-exports the composite helpers for server callers. Exported `extractChineseDictEntries` from `atlasFamilyCardGrounding.ts` for reuse.
+- **Generate route** narrows the Opus prompt to "write the ENGINEERING NOTES only" with the facts injected as read-only "FACTS ALREADY ESTABLISHED (do not restate)"; the four anti-restatement rules forbid exactly the shapes audit CHECKS 1–6 hunt — assert weight/type in `attr (…)` form, write a `中文→canonical` arrow, introduce an MFR, claim an MPN prefix (naming a canonical or interpreting a clone relationship is still allowed). After Opus returns, `composeCardText(facts.renderedText, narrative)` is persisted; `data_snapshot.cardFormatVersion=2` + `factsRenderedAt`.
+- **Audit** splits at the top: v2 → checks 1,3,4,5,6 run on the narrative; CHECK 2 (OMITTED_MFR) skipped entirely (renderer includes the top-15 cohort by construction, `MFR_LIMIT=15` ≥ the top-10 omission window). v1 (no sentinel) → full-text path unchanged. Mechanically: param renamed `cardTextRaw`, `const cardText = isV2 ? narrativeRegion : cardTextRaw` so every existing check body operates on the right surface. Legacy heuristics (`MFR_NAME_BLOCKLIST`, context-exemption helpers) stay for v1.
+- **fix-issues route** edits only the narrative for v2 and recomposes the facts back, so the proposal the engineer sees + saves is a full composite card.
+- **UI** ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)) renders the FACTS region read-only (boxed monospace + muted banner) and binds the editable textarea to the NARRATIVE only; recomposes `composeCardText(factsRegion, editedNarrative)` before every PATCH so stored `card_text` stays composite.
+- **Mirror** the split + sentinels into [scripts/atlas-audit-domain-cards.mjs](../scripts/atlas-audit-domain-cards.mjs) (byte-identical inline copies — same no-import mirror discipline as `atlas-ingest.mjs`).
+
+**Backward compatibility.** No forced migration. The 7 TS built-in cards + all existing DB active cards stay plain prose with no sentinel → `splitCardText` returns null → audit runs the legacy full-text path, UI shows the single textarea, Triage injects them verbatim. A family becomes v2 only when regenerated. `getFamilyDomainCard` is unchanged — Triage consumes both identically. Composition is at generation time (not read time) — keeps the Triage hot path fast and approve/diff semantics intact (the engineer approves the exact injected bytes).
+
+**Verification.** `renderCardFacts` against live DB for C8 (RULES 22=22, cohort 15=15) and B4 (RULES 23=23, cohort 15=15) — facts match `getLogicTable`/`buildGroundingBlock` by construction; compose/split round-trips; auditing the composite returns `clean` (issueCount=0) even though the real facts regions contain dict arrows, explicit rule weights, and AM-style MPN suffixes — because those now live in the stripped facts region. 2037 unit tests pass (new: [atlasFamilyCardComposite.test.ts](../__tests__/services/atlasFamilyCardComposite.test.ts), [atlasFamilyCardAuditScoping.test.ts](../__tests__/services/atlasFamilyCardAuditScoping.test.ts) — the latter asserts a bogus MFR in the facts region is NOT flagged while the same MFR in the narrative IS, plus v1 backward-compat). Rollout is engineer-driven family-by-family via the existing Regenerate → review → Approve flow; start with the families that suffered the most false positives (C8, C9, C4, B4, F66, B8, C2). Follow-up (BACKLOG): render FACTS as proper tables via the `RenderedFacts` structured arrays.
+
+**Lesson.** When an AI is asked to re-state facts that already exist authoritatively in code/DB, and a verifier re-extracts them from prose to check, the prose round-trip is the defect — not the AI and not the verifier. Render the facts deterministically, let the AI write only what it actually owns (judgment), and scope verification to that region. Facts become correct by construction and the human review surface shrinks from "the whole card" to "a few judgment sentences."
+
+## Decision #229 — Source-panel Cross References chips become clickable filters (June 9, 2026)
+
+**Context.** The single-part view has two cross-reference filter surfaces. The **source panel**'s "Cross References" section ([components/AttributesTabContent.tsx](../components/AttributesTabContent.tsx)) renders `MFR Certified (N)` / `Accuris Certified (N)` / `Logic Driven (N)` chips + a "Manufacturers with crosses" chip list — always visible, but presentational (no `onClick`). The **Replacements panel**'s Filters popover ([components/RecommendationsPanel.tsx](../components/RecommendationsPanel.tsx)) holds the real `CROSS REFERENCE SOURCE` + manufacturer filters in *local* state. Users instinctively clicked the always-visible source-panel chips and nothing happened. Removing the chips wasn't wanted (the summary is useful); duplicating the filter logic wasn't either.
+
+**Decision.** Wire the source-panel chips to the popover's existing filters via one shared state — the source panel becomes an always-visible overview + one-click shortcut; the popover stays the full refine surface (not redundant: one is a launchpad, the other the advanced control).
+
+- **Lift** the two filter values into `DesktopLayout` (`xrefCategory: RecommendationCategory | 'all'`, `xrefMfr: string`), reset on `sourceAttributes?.part.mpn` change — mirrors the existing `activeAttributesTab` lift. Passed to *both* panels as the single source of truth.
+- **`RecommendationsPanel`** — `selectedCategory`/`selectedMfr` converted to **controlled-with-fallback** props (`categoryFilter`/`onCategoryFilterChange`, `mfrFilter`/`onMfrFilterChange`): use the prop when provided, else local state. The modal-chat usage (`compactHeader`, unwired) keeps purely-local behavior. All existing readers/handlers (`activeFilterCount`, the filter chain, the popover chip group, `handleClearFilters`, dismissible chips) read the resolved value unchanged.
+- **Source chips** ([AttributesTabContent.tsx](../components/AttributesTabContent.tsx)) gain `onClick` + toggle (click active → clear) + active-fill styling (category: solid `CATEGORY_CHIP_COLORS.fg` bg + dark text; MFR: `color="primary"` filled) so the source panel visually matches the popover selection. Clicking a chip while `phase === 'comparing'` also calls `onBackToRecommendations()` so the filtered list is visible.
+- **Count alignment (finishes Decision #226 for this surface).** `summarizeCrossRefs` now counts over `getDefaultDisplayedRecs(allRecs)` instead of the raw set, so a chip's number equals what a click surfaces in the panel (default-hides inactive + >2-fail). #226 fixed the same count-drift for the chat↔panel surfaces but left this fourth surface counting the full candidate set.
+- **Source panel = part inventory, not view (same-session follow-up).** Testing surfaced a deeper principle: when the agent narrows the right panel via a chat filter ("show me Chinese replacements" → `mfr_origin_filter: 'atlas'`), the source panel's "Cross References" summary (category chips + "Manufacturers with crosses" row) was *also* narrowed — listing only the filtered MFRs — because [DesktopLayout.tsx](../components/DesktopLayout.tsx) fed `<AttributesPanel allRecommendations={recommendations}>` the *filtered* subset. But the source panel describes the **part**, so it should show the part's complete cross-reference inventory regardless of any right-panel filter; filters are a property of the working recommendation view, not of the part. The chat filter is already non-destructive — `dispatchFilterIntent` ([useAppState.ts](../hooks/useAppState.ts)) keeps the full set in `state.allRecommendations` and only narrows `state.recommendations` (enrichment re-applies `currentFilter` against the base, confirming the base is preserved for exactly this). Fix is two lines: AppShell passes `allRecommendations={appState.allRecommendations}` to DesktopLayout, which feeds the **base** set to `<AttributesPanel>` while the right panel keeps `recommendations` (filtered). **Scope kept the #229 quality bar** (user-confirmed): `summarizeCrossRefs` still counts over `getDefaultDisplayedRecs(...)`, so the source lists every MFR with a *solid* (non-obsolete, ≤2-fail) cross — all origins, default quality — rather than every raw cross. No change to `AttributesTabContent`. Edge resolved (same session): the source-panel filter chips are right-panel shortcuts, so clicking an MFR outside an active chat filter would yield 0 in the right panel (its data is the chat-narrowed subset). Fixed by having source-chip clicks **silently clear** any active chat filter first, so they always filter from the full inventory. New `clearChatFilterSilently()` in [useAppState.ts](../hooks/useAppState.ts) (restores `recommendations = allRecommendations`, nulls `currentFilter`/`currentFilterLabel`, NO chat messages — distinct from `dispatchClearFilter` which posts "Filter cleared…" to the transcript; bails out via `return prev` when no filter is active). Threaded AppShell → DesktopLayout → the `handleSelectXrefCategory`/`handleSelectXrefMfr` handlers, which call it before setting the panel-local filter. No UI consumes `currentFilterLabel`, so the silent clear leaves no stray indicator.
+- **Panel-header reconciliation (same-session follow-up).** Testing surfaced a second drift: the Replacements header read "69 active matches · 10 hidden" while a filter chip read "40 hidden" — three tallies (`activeCount`/`hiddenCount`/`highFailHiddenCount`) all computed over the *full* `sorted` set, none reacting to the active manufacturer/category filter, and two using the word "hidden" for different reasons (status vs quality). Fixed by introducing a `scoped` set (recs after the explicit MFR/category/CN/zero-stock filters) and computing every count from it: header now reads `{shownCount} shown · {hiddenInScope} hidden` (reconciles exactly with the rendered cards — `shownCount` accounts for the render-time active-only collapse at [RecommendationsPanel.tsx](../components/RecommendationsPanel.tsx) line ~380), and `qualityHiddenCount`/`statusHiddenCount` (the ">N fails" chip + "Active only (N hidden)" / "Hide >N failed (N hidden)" popover labels) are scoped to the same set so they read as a breakdown of the header's single hidden total rather than competing numbers. i18n `headerFiltered` reworded in en/de/zh-CN (`{{activeCount}}`→`{{shownCount}}`, drop `{{matchWord}}`) — edited surgically per the locale-clobber trap ([[translation-layer-guard]]): a full json round-trip silently collapsed en.json's duplicate keys and reindented zh-CN, both reverted and hand-edited.
+
+**Scope note.** Display/interaction only — **no `RECS_CACHE_SCHEMA_VERSION` bump** (scoring untouched, same as #226). The popover's own `categoryCounts` still count over the full `sorted` set (the "advanced" surface where showing everything is fine); routing those through the predicate too is optional future polish. Zero new type/lint errors (the 2 pre-existing React-Compiler errors in the touched files are baseline).
+
+### Related
+- Decision #226 — the count-alignment predicate (`getDefaultDisplayedRecs`) this reuses; #226 was scoped to chat↔panel, this extends it to the source-panel summary.
+- Decision #122 / #127 — recommendation categorization + sort (the `RecommendationCategory` buckets the chips filter on).
+
+## Decision #230 — Unified notifications system: in-app inbox + transactional email (June 9, 2026)
+
+The app communicated through scattered, source-specific channels (feedback unread dots, release-note badges, a release-digest email) with no single place a user could see "everything the app wants to tell me," and most events produced no email at all. This decision adds a **source-agnostic notification pipeline**: any producer calls one service that (1) drops a row into a per-user in-app **inbox** (bell icon + unread badge + popover + `/notifications` page) and (2) sends a **transactional email** gated by the user's per-type settings, with a click-through link back into the app.
+
+**Why immediate per-event email (not a digest):** confirmed with the user. It matches the "click and go read it" mental model and — critically — needs **no scheduler**, so it works on the IT-managed off-Vercel host. Per-type on/off toggles in Settings prevent overload. (The existing batched release-digest cron is left running; per-event `release_note` notifications are a future producer that will eventually supersede or gate it.)
+
+**Architecture:**
+- **Table `notifications`** ([scripts/supabase-notifications-schema.sql](../scripts/supabase-notifications-schema.sql)): `recipient_id`, `type` (CHECK enum: `feedback_reply`/`feedback_new`/`release_note`/`bom_report`/`system`), `title`, `body`, `link`, `data` JSONB (carries `dedupeKey`), `read_at`, `email_sent_at`, `created_at`. RLS: users SELECT own only; **no user INSERT/UPDATE policy** — writes go through the service-role client, mark-read through SECURITY DEFINER RPCs `mark_notification_read` / `mark_all_notifications_read` (mirrors `mark_app_feedback_user_read`).
+- **Central service** [lib/services/notificationService.ts](../lib/services/notificationService.ts) (server-only): `createNotification()` inserts the inbox row, then reads recipient `email`/`preferences`/`disabled`, and if email is enabled for the type sends via Resend and stamps `email_sent_at`. **Email is failure-isolated** — the inbox row is created first and email failure only logs. `createNotifications()` is the bulk fan-out variant (single insert, one profiles query, chunked sends). `getAdminRecipientIds()` resolves active admins. Dedup via `data->>dedupeKey`. Called fire-and-forget from producers (`void createNotification(...).catch(()=>{})`).
+- **Shared email helper** [lib/services/emailService.ts](../lib/services/emailService.ts): `getResend()`, `getFromEmail()`, `toAbsoluteUrl()`, `buildNotificationEmailHtml()` (dark-theme shell + CTA button), `sendNotificationEmail()`. The release-digest route was refactored to use `getFromEmail()` so the from-address default is consistent.
+- **API routes** under `app/api/notifications/`: GET list (cursor on `created_at`), `unread-count`, `[id]/read`, `read-all`. Client wrappers in [lib/api.ts](../lib/api.ts).
+- **Inbox UI** [components/notifications/](../components/notifications/): self-contained `NotificationsBell` (badge + 30s poll gated on tab visibility + `notifications-changed` window event, mirroring the existing feedback-dot pattern in `AppSidebar`), `NotificationsPopover` (recent 15 + mark-all-read + "View all"), shared `NotificationsList`, and a full `/notifications` page. Bell mounted in `AppSidebar` above the feedback icon.
+- **Preferences** [components/settings/NotificationsPanel.tsx](../components/settings/NotificationsPanel.tsx): new Settings → Notifications section. Master email switch + per-type checkboxes stored in `profiles.preferences.notificationPreferences` (JSONB, no migration). `NotificationPreferences` + `DEFAULT_NOTIFICATION_PREFS` + `isNotificationEmailEnabled()` in [lib/types.ts](../lib/types.ts). The in-app inbox **always** receives every notification; settings only gate email.
+
+**v1 producers wired** (per user choice): admin reply → feedback owner (`feedback_reply`); user submission/reply → active admins (`feedback_new`). Release-note-to-all-users and the weekly BOM report are deferred — they're one `createNotification()`/`createNotifications()` call away (BACKLOG).
+
+**Email domain correction:** the existing `DIGEST_FROM_EMAIL` was `notifications@xrefs.app`; the real domain is **xrefs.ai**. Fixed in `.env.local` + `.env.example` and the code default. **Prerequisite for delivery (IT/DNS task):** verify `xrefs.ai` in Resend and add SPF/DKIM/DMARC records; set `NEXT_PUBLIC_APP_URL=https://xrefs.ai` so email links are absolute.
+
+**Verification:** 2040/2040 tests pass; zero new type/lint errors. SQL must be run manually in the Supabase SQL editor before the feature works.
+
+---
+
+## Decision #231 — Legacy-MFR Triage discovery pipeline + gaia preferredSuffix fix (June 10, 2026)
+
+**Trigger.** An engineer saw `vrrm` "Missing" on Atlas product `20ETF10` (mfr ISC) even though
+the raw param `gaia-peak_repetitive_reverse_voltage = 1000 V` was clearly ingested, and searching
+Triage for it returned nothing. Investigation found **two systemic gaps for legacy MFRs** (those
+bulk-loaded Mar 23 2026 via the old direct-upsert script, before the batch pipeline / Decision
+#174 shipped May 5 2026 — confirmed ~102 of 382 source files have **no** `atlas_ingest_batches`
+row; ISC is one).
+
+**Gap A — discovery blind spot.** The Triage queue reads unmapped params ONLY from
+`atlas_ingest_batches.report->'unmappedParams'` (status pending/applied). Legacy MFRs have no
+batch row, so their genuinely-unmapped params are invisible/undiscoverable in Triage — no search
+string surfaces them. Triage search is not broken; it indexes the raw vendor param name, and the
+row simply doesn't exist.
+
+**Fix A — retroactive "discovery" batches.** New `--discover-legacy` mode in
+[scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) re-runs the current mapper over every
+source file with no batch and writes a slim `status='discovery'` batch carrying that MFR's
+`unmappedParams` (original vendor names preserved). The existing Triage RPC/compute/UI surface
+them with ~zero downstream changes. Design choices:
+- New `status='discovery'` value (migration
+  [supabase-atlas-ingest-discovery-status.sql](../scripts/supabase-atlas-ingest-discovery-status.sql)
+  + one-token RPC change). NOT reused `'applied'` — the 30-day `atlas_ingest_cleanup_expired`
+  sweep would auto-delete the discovery signal, and revert/Applied-tab flows would break (no
+  snapshots). Every other status consumer filters `pending`/`applied` explicitly, so `discovery`
+  is naturally excluded from the operator apply queue.
+- Discovery skips the expensive `fetchExistingProducts`+`computeDiff` (unmapped params are
+  diff-independent) and stores a slimmed report (no per-product attrChanges) to keep the Triage
+  RPC's JSONB walk cheap as ~102 batches accumulate.
+- **Dedup guard:** a later real upload of a legacy MFR deletes its stale `discovery` row in the
+  same `reportOneFile` delete block (`.in('status', ['pending','discovery'])`) so the same params
+  aren't double-counted.
+- Admin trigger [POST /api/admin/atlas/ingest/discover-legacy](../app/api/admin/atlas/ingest/discover-legacy/route.ts)
+  (cloned from backfill-translations: detached spawn with **spread argv** for the Turbopack
+  gotcha, status-row lock, `invalidateTriageQueueCacheAndAwaitFresh()` on child exit) +
+  "Scan legacy MFRs" button/chip in [AtlasIngestPanel](../components/admin/atlasIngest/AtlasIngestPanel.tsx).
+- Loop closes via the existing global backfill (`--backfill-translations` applies the new
+  overrides into `atlas_products`). Runbook Phase 5 added.
+
+**Gap B — gaia `preferredSuffix` silent drop (separate bug, all MFRs).** When a gaia param's
+suffix didn't match the dict's `preferredSuffix` (e.g. only `-Max` present but dict prefers
+`Typ`), the mapper `continue`d — storing nothing AND not pushing to `unmappedParams`. The value
+was lost AND hidden from Triage. This is why `20ETF10.trr` (`gaia-reverse_recovery_time-Max`)
+stayed Missing.
+
+**Fix B.** `preferredSuffix` is now a preference among *available* variants, not a hard drop: a
+pre-pass records `stem → Set<suffix>` per product; a non-preferred suffix is skipped only if the
+preferred variant is actually present, else it maps. Mirrored in
+[atlasMapper.ts](../lib/services/atlasMapper.ts) (read) + [atlas-ingest.mjs](../scripts/atlas-ingest.mjs)
+(ingest). Impact: ISC backfill went from **0 → 1,493** products that would gain previously-dropped
+params (`rds_on`, `vgs_th`, `body_diode_vf`, `trr`, …) — a large coverage recovery from one fix.
+
+**Backfill hardening (audit).** `runBackfillTranslations` now also purges the recommendation
+cache (`part_data_cache` where `service='search' AND cache_tier='recommendations'`) — re-mapping
+an Atlas candidate otherwise leaves source-MPN recs scored on stale specs for up to 30 days.
+Operational note: `atlas_products` is **411K rows** (≈4× prior estimate), so the global backfill
+runs scoped/in waves, off-peak; ISC alone is the first wave.
+
+**Verification:** 2042/2042 tests pass (incl. 2 new preferredSuffix regression tests); zero new
+type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects ISC as legacy
+(883 unmapped) and the ISC backfill dry-run now shows 1,493 changes incl. `20ETF10 → trr`. SQL
+(migration + RPC re-run) must be applied manually in Supabase before discovery inserts work.
+
+## Decision #232 — Dictionary-override loaders silently capped at 1000 (June 10, 2026)
+
+**Symptom.** While adding two B1 gaia aliases (ISC's `peak_repetitive_reverse_voltage → vrrm`,
+`non_repetitive_peak_surge_current → ifsm`, the value-present-but-Missing case on `20ETF10`),
+the backfill printed `Loaded 1000 dictionary overrides (add: 1000, modify: 0, remove: 0)` — a
+suspiciously round number with the cap signature.
+
+**Root cause.** Both dictionary-override loaders fetched
+`atlas_dictionary_overrides.select().eq('is_active', true)` with **no `.range()` pagination**, so
+PostgREST's 1000-row default response cap silently truncated the result. Confirmed: after
+pagination the true count is **1034** — 34 active overrides (every accepted Triage mapping past
+#1000) were being **silently dropped**. This bit BOTH paths:
+- ingest/backfill: [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides()`
+- live read: [lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts)
+  `fetchAllDictOverrides()` + `fetchDictOverrides()` (feeds `fromParametersJsonb` recommendation scoring)
+
+So mappings beyond #1000 stopped applying **anywhere** — directly throttling the legacy-discovery
+loop (Decision #231): the more the engineer accepts in Triage, the more accepts are ignored. This
+is a **new instance** of the same 1000-row footgun class as Decision #206 (which fixed the *triage
+aggregation RPC* via `RETURNS jsonb`) — different code, different table, never touched by #206.
+
+**Fix.** Paginate both loaders with `.range(from, from+999)` loops that **STOP on error** (never
+loop on a failed page — the Decision #183 partial-result trap). Read-path uses a shared
+`fetchOverridesPaginated(supabase, familyId?)` helper; the .mjs carries the mirror inline next to
+the existing `loadCollidingEnNames()` pagination. After the fix the loader reports the true 1034.
+
+**Same-session companion (gaia aliases).** The two B1 aliases live in the shared
+[atlas-gaia-dicts.json](../lib/services/atlas-gaia-dicts.json) (loaded by both the TS read-path and
+`atlas-ingest.mjs` — no mirror needed). ISC backfill: **224 products changed, 0 errors**;
+`20ETF10` now carries `vrrm = 1000 V` / `ifsm = 300 A`. Pattern matches the Galaxy vendor-spelling
+playbook (Decision #215) — vendor word-order variants the existing dict didn't cover.
+
+**Verification.** tsc clean on changed files; 241 atlas tests pass; ISC dry-run + real backfill
+both report 224 changed / 0 errors; loader count 1000 → 1034.
+
+## Decision #233 — Override loader stable ordering + full-fleet legacy backfill + duplicate-MPN convergence finding (June 11, 2026)
+
+**Context.** Ran the full legacy-discovery + backfill follow-through from Decision #231. Discovery:
+`--discover-legacy` created **101 new discovery batches** (now 102 discovery / 295 applied / 0
+pending); the Triage distinct-param total rose **14,413 → 26,440** (legacy MCU/memory/processor MFRs
+carry heavy vendor-unique param sprawl). Backfill (user-approved, run-now scoped waves):
+**18,441 products** would change fleet-wide from the gaia preferredSuffix fix + the #232-uncapped
+overrides; executed as MindMotion (validate 112) → 70-MFR tail (5,570) → JJW (3,925) → SWST (8,834,
+5 transient `fetch failed`, idempotent re-run converged). ~18,197 rows backfilled clean and
+**converged** (subsequent global dry-run shows them `same`).
+
+**Bug found mid-backfill — non-deterministic override loading.** A 244-row / 13-MFR remainder would
+NOT converge: re-running reported "N changed, 0 errors" yet the next dry-run flagged the identical
+rows, and a probe showed a product's mapped key-set flipping between runs. Root cause #1: **both
+dictionary-override loaders paginated with `.range()` but no `ORDER BY`** — PostgREST returns
+paginated rows in arbitrary, run-to-run order, so the ~35 active overrides *past #1000* (exactly the
+ones #232 just un-capped) silently dropped/duplicated across the page boundary. Same 1000-row footgun
+family as Decisions #206/#232, third instance. **Fix:** added a stable total order
+`.order('created_at').order('id')` before `.range()` in BOTH
+[lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts) `fetchOverridesPaginated`
+(live recommendation-scoring read path — this was a latent **scoring-determinism** bug, not just an
+ingest one) and [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides`
+(mirror). `created_at` = meaningful order (newer accepts apply last), `id` = unique tiebreak that
+guarantees no skip/dup. Post-fix the loader loads a stable 1035 every run.
+
+**The deeper root cause #2 — duplicate-MPN dual-category source collisions (the real reason the 244
+won't converge).** The ORDER-BY fix made loading deterministic but the 244 STILL flagged. Source
+inspection: SEMBO's `SA5.0A` (and ~200 of the 244) appears **twice in one source file** under two
+different category classifications — e.g. once as **TVS Diodes** (B4, 8 params → 7 rich keys: ipp /
+vbr / vc / ir_leakage / vrwm / polarity / package) and once as **Rectifiers** (B1, 7 params → ~1 key).
+Both share `componentName`, so ingest/backfill map both and write both against the same
+`(mpn, manufacturer)` DB row — **last-write-wins** — and the dry-run *always* sees the non-winning
+occurrence as a pending diff. These rows are **irreducible via backfill**: they can never converge,
+and forcing re-runs risks landing the sparse Rectifier version over good TVS data. Confirmed by
+matching the per-MFR "would change" counts to dual-category-dup counts almost exactly (YJYCOIN 34≡34,
+INPAQ 67≡67, Hanrun 7≡7, SUMIDA 3≡3, SEMBO/LGE 1≡1, Aosong 2≡2). A residual ~43 (MXChip/UMW/Geehy/
+COSINE/ETA, 0 dups) are a smaller separate value-level matter, not investigated. These collisions
+predate this session (always in the source); backfill merely rewrote them under the same last-wins
+rule. **Decision: stop backfilling these 13; the proper fix is deterministic collision resolution
+(prefer the richer / more-specific classification, or dedup at source) — BACKLOG'd**, tied to
+Decisions #175 (B1↔B4 reclassification), #191 (MPN-quality validator), #225 (name-string identity).
+
+**Verification.** 2067/2067 tests pass; tsc clean on changed files; post-fix override load stable at
+1035 across 5 runs; SEMBO `SA5.0A` restored to its 7-key TVS mapping. Net fleet backfill ≈18,197
+rows converged, 0 net errors. NO SQL/DDL required (the #231 migration + jsonb RPC were already in
+prod). Files changed: the two override loaders only.
+
+**Follow-up same session — duplicate-MPN collision FIXED (richest-wins dedup), not just deferred.**
+Rather than leave the 244 as BACKLOG, shipped the deterministic fix: new `dedupRichestByMpn(products)`
+helper in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) collapses same-`componentName`
+occurrences within one source file to the **richest** (most mapped keys; ties keep first for
+stability). Wired into BOTH write paths — `runBackfillTranslations` (had no dedup → last-UPDATE-wins)
+and `runProceed` (changed its existing **last**-wins Map to richest-wins). Ingest-only (the read path
+maps a single already-deduped DB row, so no atlasMapper.ts mirror needed). Because the dry-run uses
+the same `runBackfillTranslations` path, these rows now **converge** instead of perpetually
+re-flagging. Recovery run over the 13 MFRs: **162 changed, 0 errors**; global "would change" dropped
+**244 → 43**; collision rows' rich/sparse split improved **119/112 → 180/51** (61 sparse rows
+recovered to their full TVS spec). The remaining **51 "sparse"** are parts whose *richest* occurrence
+genuinely maps to ≤3 keys (real source-data limitation, now correctly + stably stored — not loss).
+**No permanent data loss occurred** — all rich versions live in the source files and are now applied.
+The residual **43** non-convergent rows (MXChip 3, Geehy 5, COSINE 14, ETA 21 — zero duplicate MPNs)
+are a SEPARATE, minor **value-level** non-convergence (same keys, a value/unit/numericValue
+representation that won't settle across map→write→re-map; NO key/data loss) — BACKLOG'd for later,
+low impact (4 small MFRs). 2067/2067 tests pass; richest-wins helper unit-checked.
+
+**Third + fourth instances of the 1000-row footgun — Triage override fetches (same session).** An
+engineer asked "am I re-mapping params I already mapped?" Investigation found TWO more uncapped
+`atlas_dictionary_overrides` SELECTs (the table is now **1319 rows: 1136 active + 183 inactive**, so
+a single SELECT silently drops 319 to the cap):
+- [lib/services/triageQueueCompute.ts](../lib/services/triageQueueCompute.ts) `getOrComputeTriageData`
+  — fetched overrides ordered `updated_at desc`, no `.range()`. The cap dropped the **253 oldest
+  active overrides** from the "already-accepted" map, so the params they map were no longer
+  recognised and **reappeared in the OPEN Triage queue** (engineer re-sees old work). This is the
+  one that drives the visible queue.
+- [lib/services/atlasTriageContext.ts](../lib/services/atlasTriageContext.ts) cross-family canonical
+  index (feeds the AI /suggest + /investigate prompts) — unscoped `is_active` fetch, no `.range()`,
+  so the AI saw an incomplete view of already-mapped canonicals and could re-suggest existing ones.
+**Both fixed** with paginated loops + stable order (`updated_at desc, id` / `attribute_id`), STOP-on-
+error. **Measured real impact**, replicating the compute's `${dominantFamily|dominantCategory}:norm(param)`
+match over the live 26,440-row queue with capped (883-active) vs full (1136-active) maps: only **8
+queue rows** were actually resurfacing (the other 245 dropped overrides map params not currently in
+the aggregate). So the bug is real but small *today* — it grows as accepts accumulate, and it
+degraded AI suggestions. The engineer's broader déjà-vu is mostly **vendor-spelling variants** (same
+concept, different Chinese/English string per MFR — Decision #215 pattern) + **cross-scope re-mapping**
+(same param under a different family/category — Decision #178), i.e. genuinely-new work that merely
+*feels* repetitive. 2067/2067 tests pass; tsc clean on both files. Atlas now has **FOUR** known
+override-fetch sites; the two display/per-family ones ([dictionaries/route.ts](../app/api/admin/atlas/dictionaries/route.ts)
+list, `fetchAcceptedCanonicals` per-family) are scope-bounded and not at practical cap risk.

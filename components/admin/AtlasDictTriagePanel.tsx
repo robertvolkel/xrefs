@@ -17,20 +17,28 @@
  * (instead of the global unfiltered queue).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress, Tooltip } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSearchParams, useRouter } from 'next/navigation';
-import GlobalUnmappedParamsTable, { paramUid } from './atlasIngest/GlobalUnmappedParamsTable';
+import GlobalUnmappedParamsTable from './atlasIngest/GlobalUnmappedParamsTable';
 import RecentDictAcceptsPanel from './atlasIngest/RecentDictAcceptsPanel';
 import TriageFilterBar, { EMPTY_FILTERS, type TriageFilters, type TriageMode } from './atlasIngest/TriageFilterBar';
 import type { NoteRecord } from './atlasIngest/UnmappedParamNoteCell';
-import type { BatchListResponse, StatusFilter } from './atlasIngest/types';
+import type { BatchListResponse, StatusFilter, GlobalUnmappedParam } from './atlasIngest/types';
 
 // Parallel worker count for the deferred batch-regen flush. Each regen spawns
 // a Node child process running scripts/atlas-ingest.mjs (~5–15s wall-clock per
 // batch), so 3 keeps the dev server responsive while still scaling well.
 const REGEN_CONCURRENCY = 3;
+
+// Server-side pagination (Decision #231). The route returns one page; the
+// client accumulates pages ("Show more"). Default page is small to keep the
+// payload + render cheap. When a localStorage-bound client filter is active
+// (AI verdict), we bump the page so that view — which can only be applied to
+// LOADED rows — usually covers the already-narrowed set in one shot.
+const DEFAULT_PAGE_SIZE = 100;
+const AI_FILTER_PAGE_SIZE = 500;
 
 export default function AtlasDictTriagePanel() {
   const searchParams = useSearchParams();
@@ -38,6 +46,17 @@ export default function AtlasDictTriagePanel() {
   const batchFilter = searchParams.get('batch');
 
   const [data, setData] = useState<BatchListResponse | null>(null);
+  // Accumulated rows across server pages (the "Show more" append model). `data`
+  // holds the latest response's counts / option lists / batches; `accumRows`
+  // holds every row fetched for the current filter view. Reset to page 1's
+  // rows whenever a filter/mode/status/search changes.
+  const [accumRows, setAccumRows] = useState<GlobalUnmappedParam[]>([]);
+  // Fresh mirror of accumRows for optimistic handlers that need to read a
+  // row's pre-mutation state without a stale closure.
+  const accumRowsRef = useRef<GlobalUnmappedParam[]>([]);
+  useEffect(() => { accumRowsRef.current = accumRows; }, [accumRows]);
+  const [page, setPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Bumps after every queue refresh so the Recently Accepted panel re-fetches
@@ -117,36 +136,93 @@ export default function AtlasDictTriagePanel() {
   const [regenFlushing, setRegenFlushing] = useState(false);
   const [regenProgress, setRegenProgress] = useState<{ done: number; total: number } | null>(null);
 
-  // Single fetch on mount per (batchFilter); mode + statusFilter changes are
-  // pure client-side filtering against the cached classified set, so chip
-  // clicks are instant. The server returns the FULL set unconditionally.
-  // forceFresh=true skips the L1/L2 cache (used by the Refresh button so the
-  // user can demand a fresh compute when they need to see, e.g., a row they
-  // just added in another tab).
-  const refresh = useCallback(async (forceFresh = false) => {
-    setLoading(true);
-    setError(null);
+  // Page size grows when a localStorage-bound client filter (AI verdict) is
+  // active — that filter can only be applied to LOADED rows, so we fetch a
+  // bigger page up front so the already-narrowed view is usually fully covered.
+  const pageSize = filters.aiVerdict !== 'all' ? AI_FILTER_PAGE_SIZE : DEFAULT_PAGE_SIZE;
+
+  // Build the server query for a given page. All the heavy filter axes
+  // (search/MFR/family/min-prods/flagged/has-note) + mode + status are now
+  // applied SERVER-SIDE (Decision #231) so the route can slice to one page.
+  const buildQuery = useCallback((pageNum: number, forceFresh: boolean): string => {
+    const params = new URLSearchParams();
+    if (batchFilter) params.set('batch', batchFilter);
+    if (forceFresh) params.set('refresh', '1');
+    params.set('page', String(pageNum));
+    params.set('page_size', String(pageSize));
+    params.set('include', mode);           // TriageMode === IncludeMode
+    params.set('status_filter', statusFilter);
+    const s = filters.search.trim();
+    if (s) params.set('search', s);
+    for (const slug of filters.mfrSlugs) params.append('mfr', slug);
+    for (const fam of filters.families) params.append('family', fam);
+    if (filters.minProductCount > 0) params.set('min_prods', String(filters.minProductCount));
+    if (filters.hasNote) params.set('has_note', '1');
+    if (filters.flaggedOnly) params.set('flagged', '1');
+    return params.toString();
+  }, [batchFilter, mode, statusFilter, filters, pageSize]);
+
+  // Fetch one page. append=false replaces the accumulator (page 1, full
+  // reload / filter change); append=true concatenates (the "Show more" /
+  // load-next-server-page path). cache:'no-store' so the browser doesn't
+  // reuse a previous response for the same URL; server-side L1/L2 still apply.
+  const fetchPage = useCallback(async (pageNum: number, append: boolean, forceFresh = false) => {
+    if (append) setLoadingMore(true);
+    else { setLoading(true); setError(null); }
     try {
-      const params = new URLSearchParams();
-      if (batchFilter) params.set('batch', batchFilter);
-      if (forceFresh) params.set('refresh', '1');
-      const url = `/api/admin/atlas/ingest/batches?${params.toString()}`;
-      // cache: 'no-store' so the browser doesn't reuse a previous response
-      // when the URL is the same (e.g. revisiting the page with the same
-      // batch filter). Server-side L1/L2 still apply.
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(`/api/admin/atlas/ingest/batches?${buildQuery(pageNum, forceFresh)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const json = (await res.json()) as BatchListResponse;
+      const rows = json.unmappedParamsGlobal ?? [];
       setData(json);
+      setAccumRows((prev) => (append ? [...prev, ...rows] : rows));
+      setPage(pageNum);
       setRecentRefreshSignal((n) => n + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load triage queue');
+      if (!append) setError(err instanceof Error ? err.message : 'Failed to load triage queue');
     } finally {
-      setLoading(false);
+      if (append) setLoadingMore(false);
+      else setLoading(false);
     }
-  }, [batchFilter]);
+  }, [buildQuery]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Full reload to page 1 (resets the accumulator). forceFresh bypasses the
+  // server L1/L2 cache (Refresh button). Used by the regen flush + the
+  // Recently-Accepted undo callback too.
+  const refresh = useCallback((forceFresh = false) => fetchPage(1, false, forceFresh), [fetchPage]);
+
+  // Load the next server page and append to the accumulator (the "Show more"
+  // server-fetch path, wired into the table footer).
+  const loadMore = useCallback(() => fetchPage(page + 1, true), [fetchPage, page]);
+
+  // Debounce search so each keystroke doesn't fire a server round-trip. Other
+  // filter axes (chips, dropdowns, min-prods, toggles) refetch immediately.
+  const [debouncedSearch, setDebouncedSearch] = useState(filters.search);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(filters.search), 300);
+    return () => clearTimeout(t);
+  }, [filters.search]);
+
+  // Serialized server-relevant filter inputs. A change here resets to page 1
+  // and refetches (replace). NOT keyed off `page` — that's the append path.
+  const filterKey = useMemo(() => JSON.stringify({
+    search: debouncedSearch.trim().toLowerCase(),
+    mfrSlugs: [...filters.mfrSlugs].sort(),
+    families: [...filters.families].sort(),
+    minProductCount: filters.minProductCount,
+    hasNote: filters.hasNote,
+    flaggedOnly: filters.flaggedOnly,
+    aiVerdict: filters.aiVerdict,   // changes pageSize → refetch with bigger page
+    mode,
+    statusFilter,
+    batchFilter,
+  }), [debouncedSearch, filters, mode, statusFilter, batchFilter]);
+
+  // Refetch page 1 whenever the server-relevant filter view changes. Single
+  // dependency on filterKey (not fetchPage) so we don't double-fire when
+  // fetchPage's identity churns from its own deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchPage(1, false); }, [filterKey]);
 
   const regenerateBatch = useCallback(async (batchId: string) => {
     try {
@@ -181,11 +257,12 @@ export default function AtlasDictTriagePanel() {
   // successful Accept POST. Avoids the round-trip refetch entirely.
   // Adjusts the global statusCounts so the FilterBar chips update too.
   const onRowAccepted = useCallback((paramName: string, override: NonNullable<BatchListResponse['unmappedParamsGlobal'][number]['acceptedOverride']>) => {
+    // Rows live in accumRows; counts live in data. Mutate both.
+    setAccumRows((rows) => rows.map((r) =>
+      r.paramName === paramName ? { ...r, acceptedOverride: override } : r,
+    ));
     setData((prev) => {
       if (!prev) return prev;
-      const nextRows = prev.unmappedParamsGlobal.map((r) =>
-        r.paramName === paramName ? { ...r, acceptedOverride: override } : r,
-      );
       const nextStatusCounts = prev.statusCounts
         ? {
           open: Math.max(0, prev.statusCounts.open - 1),
@@ -204,9 +281,16 @@ export default function AtlasDictTriagePanel() {
           total: Math.max(0, prev.triageCounts.total - 1),
         }
         : prev.triageCounts;
-      return { ...prev, unmappedParamsGlobal: nextRows, statusCounts: nextStatusCounts, triageCounts: nextTriageCounts };
+      // totalFiltered only drops when the accepted row actually leaves the
+      // current view. In Open view it does (accept = no longer open); in
+      // All/Accepted views it stays. Keeps "N shown of M" + Show-more honest.
+      const leavesView = statusFilter === 'open';
+      const nextTotalFiltered = leavesView && typeof prev.totalFiltered === 'number'
+        ? Math.max(0, prev.totalFiltered - 1)
+        : prev.totalFiltered;
+      return { ...prev, statusCounts: nextStatusCounts, triageCounts: nextTriageCounts, totalFiltered: nextTotalFiltered };
     });
-  }, []);
+  }, [statusFilter]);
 
   // Optimistic in-place mutation after a successful Confirm-Flag or
   // Revert-Flag PUT. Mirrors the onRowAccepted / onRowReverted pattern so
@@ -221,20 +305,20 @@ export default function AtlasDictTriagePanel() {
     status: 'wrong_family' | 'confirmed_in_family' | 'unmappable' | 'deferred' | null,
     flaggedBy: 'auto' | 'engineer' | null,
   ) => {
+    // Look up the row's pre-mutation classification (fresh, via ref) so we can
+    // decrement the right mode bucket on its way out (and increment the right
+    // one on its way in). Mirrors the row-classification logic in filteredRows:
+    // a row is "auto-flagged" iff autoFlag exists OR noteStatus is
+    // 'wrong_family'; otherwise it's a "synonym" row. "Parked" means deferred
+    // OR unmappable — both hide the row from every default mode view.
+    const target = accumRowsRef.current.find((r) => r.paramName === paramName);
+    // Mutate the row in accumRows.
+    setAccumRows((rows) => rows.map((r) =>
+      r.paramName === paramName ? { ...r, noteStatus: status, flaggedBy } : r,
+    ));
     setData((prev) => {
       if (!prev) return prev;
-      // Look up the row's pre-mutation classification so we can decrement
-      // the right mode bucket on its way out (and increment the right one
-      // on its way in). Mirrors the row-classification logic in
-      // filteredRows: a row is "auto-flagged" iff autoFlag exists OR
-      // noteStatus is 'wrong_family'; otherwise it's a "synonym" row.
-      // "Parked" means deferred OR unmappable — both hide the row from
-      // every default mode view.
-      const target = prev.unmappedParamsGlobal.find((r) => r.paramName === paramName);
       const wasFlagged = target ? (!!target.autoFlag || target.noteStatus === 'wrong_family') : false;
-      const nextRows = prev.unmappedParamsGlobal.map((r) =>
-        r.paramName === paramName ? { ...r, noteStatus: status, flaggedBy } : r,
-      );
       const isParkedNow = status === 'unmappable' || status === 'deferred';
       const wasParked = target?.noteStatus === 'unmappable' || target?.noteStatus === 'deferred';
       const isFlaggedNow = !!target?.autoFlag || status === 'wrong_family';
@@ -261,7 +345,9 @@ export default function AtlasDictTriagePanel() {
       // of acceptedOverride).
       let statusCounts = prev.statusCounts;
       if (statusCounts && target && !target.acceptedOverride) {
-        let { open, accepted, undone, deferred, unmappable } = statusCounts;
+        // accepted/undone are independent of noteStatus — never reassigned here.
+        const { accepted, undone } = statusCounts;
+        let { open, deferred, unmappable } = statusCounts;
         const wasDeferred = target.noteStatus === 'deferred';
         const wasUnmappable = target.noteStatus === 'unmappable';
         const isDeferredNow = status === 'deferred';
@@ -274,7 +360,7 @@ export default function AtlasDictTriagePanel() {
         if (wasParked && !isParkedNow) open += 1;
         statusCounts = { open, accepted, undone, deferred, unmappable };
       }
-      return { ...prev, unmappedParamsGlobal: nextRows, triageCounts, statusCounts };
+      return { ...prev, triageCounts, statusCounts };
     });
     // Also seed notesByParam so filteredRows' liveNoteStatus lookup picks
     // up the change before the next /unmapped-param-notes refetch.
@@ -312,12 +398,12 @@ export default function AtlasDictTriagePanel() {
   // resolved (just by an inactive override) until a fresh refresh recomputes
   // classification.
   const onRowReverted = useCallback((paramName: string) => {
+    setAccumRows((rows) => rows.map((r) => {
+      if (r.paramName !== paramName || !r.acceptedOverride) return r;
+      return { ...r, acceptedOverride: { ...r.acceptedOverride, isActive: false } };
+    }));
     setData((prev) => {
       if (!prev) return prev;
-      const nextRows = prev.unmappedParamsGlobal.map((r) => {
-        if (r.paramName !== paramName || !r.acceptedOverride) return r;
-        return { ...r, acceptedOverride: { ...r.acceptedOverride, isActive: false } };
-      });
       const nextStatusCounts = prev.statusCounts
         ? {
           open: prev.statusCounts.open,
@@ -327,7 +413,7 @@ export default function AtlasDictTriagePanel() {
           unmappable: prev.statusCounts.unmappable,
         }
         : prev.statusCounts;
-      return { ...prev, unmappedParamsGlobal: nextRows, statusCounts: nextStatusCounts };
+      return { ...prev, statusCounts: nextStatusCounts };
     });
   }, []);
 
@@ -377,42 +463,38 @@ export default function AtlasDictTriagePanel() {
     return filteredBatch?.manufacturer ?? null;
   }, [batchFilter, data]);
 
-  // Apply the page-level filter pipeline. Pure client-side; cheap on the
-  // hundreds-of-rows queues we expect.
+  // The heavy filter axes (search / MFR / family / min-prods / has-note /
+  // flagged) + the server page slice are now applied SERVER-SIDE (Decision
+  // #231) — accumRows is the already-filtered, already-paged set.
   //
-  // mode + statusFilter are also applied here (instead of server-side) so
-  // chip-click switches are instant — no refetch + skeleton on every toggle.
-  // The server returns the full classified set unconditionally; the client
-  // slices it by all axes (mode, status, search, MFR, family, min-prods,
-  // has-note) in this single pass.
-  const allRows = data?.unmappedParamsGlobal ?? [];
+  // We KEEP a thin client-side pass for the status / mode / parked predicates
+  // (with the notesByParam liveNoteStatus overlay). Reason: optimistic
+  // Accept / Flag / Defer must drop a row from the current view WITHOUT a
+  // refetch, which only works if these predicates re-run locally. For
+  // server-returned rows this pass is idempotent (the server already filtered
+  // by mode + status); it only changes visibility for rows the engineer just
+  // mutated this session.
+  const allRows = accumRows;
   const filteredRows = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-    const mfrSet = new Set(filters.mfrSlugs);
-    const famSet = new Set(filters.families);
     return allRows.filter((row) => {
       // Live note status takes precedence over the row's server-fetched
-      // noteStatus — after the engineer marks unmappable (or confirms a
-      // flag), notesByParam updates immediately while row.noteStatus
-      // wouldn't refresh until the next queue refetch. Using the live
-      // value keeps the row visibility consistent with what just happened.
+      // noteStatus — after the engineer marks unmappable (or confirms a flag),
+      // notesByParam updates immediately while row.noteStatus wouldn't refresh
+      // until the next queue refetch.
       const liveNoteStatus = notesByParam[row.paramName]?.status ?? row.noteStatus ?? null;
-      // Parked rows (unmappable + deferred) drop from every default view.
-      // The DEFERRED and UNMAPPABLE status chips opt them back in; the
-      // "All" mode also keeps them visible so the audit trail stays
-      // accessible.
+      // Parked rows (unmappable + deferred) drop from every default view; the
+      // DEFERRED / UNMAPPABLE status chips opt them back in; "All" mode keeps
+      // them visible so the audit trail stays accessible.
       if (mode !== 'all') {
         if (liveNoteStatus === 'unmappable' && statusFilter !== 'unmappable') return false;
         if (liveNoteStatus === 'deferred' && statusFilter !== 'deferred') return false;
       }
-      // Mode filter (Open Synonyms vs Auto-flagged vs All) — derived from
-      // autoFlag + noteStatus; same logic as the route's classifier.
+      // Mode filter (Open Synonyms vs Auto-flagged vs All).
       const isFlagged = !!row.autoFlag || liveNoteStatus === 'wrong_family';
       if (mode === 'auto_flagged' && !isFlagged) return false;
       if (mode === 'synonyms' && isFlagged) return false;
-      // Status filter (Open / Accepted / Undone / Deferred / Unmappable / All).
-      // OPEN = lifecycle-open AND not parked. Mirrors isInOpenQueue() on
-      // the server so chip counts and visible rows stay aligned.
+      // Status filter. OPEN = lifecycle-open AND not parked. Mirrors
+      // isInOpenQueue() on the server.
       const ov = row.acceptedOverride;
       const isParked = liveNoteStatus === 'unmappable' || liveNoteStatus === 'deferred';
       if (statusFilter === 'open' && (ov || isParked)) return false;
@@ -420,28 +502,9 @@ export default function AtlasDictTriagePanel() {
       if (statusFilter === 'undone' && (!ov || ov.isActive)) return false;
       if (statusFilter === 'deferred' && liveNoteStatus !== 'deferred') return false;
       if (statusFilter === 'unmappable' && liveNoteStatus !== 'unmappable') return false;
-      if (search) {
-        // Match against paramName OR the row's deterministic UID so an
-        // engineer can paste "TR-a8f2c1" (from a Slack thread, a ticket,
-        // an earlier debug session) into the search box and jump straight
-        // to the row.
-        const nameHit = row.paramName.toLowerCase().includes(search);
-        const uidHit = paramUid(row.paramName).toLowerCase().includes(search);
-        if (!nameHit && !uidHit) return false;
-      }
-      if (filters.minProductCount > 0 && row.productCount < filters.minProductCount) return false;
-      if (mfrSet.size > 0) {
-        const hit = (row.affectedManufacturers ?? []).some((m) => mfrSet.has(m.slug));
-        if (!hit) return false;
-      }
-      if (famSet.size > 0) {
-        if (!row.dominantFamily || !famSet.has(row.dominantFamily)) return false;
-      }
-      if (filters.hasNote && !notesByParam[row.paramName]) return false;
-      if (filters.flaggedOnly && !notesByParam[row.paramName]?.flagged) return false;
       return true;
     });
-  }, [allRows, filters, notesByParam, mode, statusFilter]);
+  }, [allRows, notesByParam, mode, statusFilter]);
 
   // Stable key the table uses to decide when to reset its pagination. Encodes
   // every input that should genuinely change the "view" (mode, status,
@@ -472,6 +535,22 @@ export default function AtlasDictTriagePanel() {
     [notesByParam],
   );
 
+  // grandTotal = every classified row in the working (batch-scoped or full)
+  // set, across ALL modes/statuses — independent of the active per-axis
+  // filters (statusCounts is computed pre-axis-filter server-side). 0 ⇒ the
+  // queue is genuinely empty. viewTotal = the count for the CURRENT
+  // mode/status/axes view (server's totalFiltered) — drives the bar's
+  // "N of M" + the per-view empty messages + the table's server pagination.
+  const grandTotal = useMemo(() => {
+    const sc = data?.statusCounts;
+    if (!sc) return accumRows.length;
+    return sc.open + sc.accepted + sc.undone + sc.deferred + sc.unmappable;
+  }, [data, accumRows.length]);
+  const viewTotal = data?.totalFiltered ?? accumRows.length;
+  // Rows on the server not yet pulled into the accumulator — drives the
+  // table's "Show more" server-fetch affordance.
+  const serverRemaining = Math.max(0, viewTotal - accumRows.length);
+
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
@@ -493,7 +572,7 @@ export default function AtlasDictTriagePanel() {
         )}
         {!batchFilter && data && (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            {(data.triageCounts?.total ?? data.unmappedParamsGlobal.length).toLocaleString()} unresolved param{(data.triageCounts?.total ?? data.unmappedParamsGlobal.length) === 1 ? '' : 's'} across all manufacturers
+            {(data.triageCounts?.total ?? 0).toLocaleString()} unresolved param{(data.triageCounts?.total ?? 0) === 1 ? '' : 's'} across all manufacturers
             {data.triageCounts && data.triageCounts.autoFlagged > 0 && (
               <Box component="span" sx={{ ml: 1, color: 'error.light', fontWeight: 600 }}>
                 · {data.triageCounts.autoFlagged} auto-flagged misclassification{data.triageCounts.autoFlagged === 1 ? '' : 's'}
@@ -569,9 +648,9 @@ export default function AtlasDictTriagePanel() {
         />
       )}
 
-      {/* Globally empty: 0 rows in EVERY mode. Hide the filter bar entirely
-          and surface a green success state. */}
-      {!loading && data && (data.triageCounts?.total ?? 0) === 0 && data.unmappedParamsGlobal.length === 0 && (
+      {/* Globally empty: 0 rows in EVERY mode/status (grandTotal). Hide the
+          filter bar entirely and surface a green success state. */}
+      {!loading && data && grandTotal === 0 && (
         <Alert severity="success" sx={{ my: 3 }}>
           {batchFilter
             ? 'No unresolved parameters for this batch — nothing to review.'
@@ -581,14 +660,15 @@ export default function AtlasDictTriagePanel() {
 
       {/* Otherwise: keep the filter bar (mode chips + filters) mounted so the
           engineer can switch modes even when the current mode is empty. */}
-      {!loading && data && ((data.triageCounts?.total ?? 0) > 0 || data.unmappedParamsGlobal.length > 0) && (
+      {!loading && data && grandTotal > 0 && (
         <>
           <TriageFilterBar
-            rows={allRows}
+            mfrOptions={data.mfrOptions ?? []}
+            familyOptions={data.familyOptions ?? []}
             filters={filters}
             onChange={setFilters}
             filteredCount={filteredRows.length}
-            totalCount={allRows.length}
+            totalCount={viewTotal}
             mode={mode}
             onModeChange={handleModeChange}
             triageCounts={data.triageCounts}
@@ -598,23 +678,16 @@ export default function AtlasDictTriagePanel() {
             noteCount={Object.keys(notesByParam).length}
             flaggedCount={flaggedCount}
           />
-          {data.unmappedParamsGlobal.length === 0 ? (
-            <Alert severity="info" sx={{ my: 2 }}>
-              {mode === 'auto_flagged'
-                ? 'No auto-flagged misclassifications. Switch to Open synonyms to continue mapping.'
-                : mode === 'synonyms'
-                  ? 'No open synonym rows in the queue.'
-                  : 'No rows match the current view.'}
-            </Alert>
-          ) : filteredRows.length === 0 ? (
-            // Single-MFR drilldown from the Atlas MFRs admin panel
-            // (?mfr=<slug>) needs its own success state. Otherwise an
-            // engineer who arrives via the 🔧 wrench can't tell whether
-            // the filter is broken or the MFR genuinely has nothing left
-            // to triage. Detect: exactly one mfrSlug filter active + no
-            // other restrictive filters. If so, lift the name out of any
-            // row (defensive fallback to the slug if the MFR has zero
-            // queue presence — which is exactly the case we're handling).
+          {viewTotal === 0 || filteredRows.length === 0 ? (
+            // The current view (server-filtered by mode/status/axes) is empty,
+            // OR the loaded page emptied out client-side (e.g. optimistic
+            // accept). Three messages, most-specific first:
+            //   1. Single-MFR drilldown (?mfr=<slug> from the 🔧 wrench) →
+            //      success state so the engineer knows the MFR is fully mapped,
+            //      not that the filter is broken. MFR name resolved from the
+            //      server option list (accumRows is empty here).
+            //   2. Any other active per-axis filter → generic "no match / clear".
+            //   3. No filters → mode-specific empty message.
             (() => {
               const onlyMfrFilter =
                 filters.mfrSlugs.length === 1 &&
@@ -626,10 +699,7 @@ export default function AtlasDictTriagePanel() {
                 (!filters.aiVerdict || filters.aiVerdict === 'all');
               if (onlyMfrFilter) {
                 const slug = filters.mfrSlugs[0];
-                const mfrName =
-                  allRows
-                    .flatMap((r) => r.affectedManufacturers ?? [])
-                    .find((m) => m.slug === slug)?.name ?? slug;
+                const mfrName = (data.mfrOptions ?? []).find((m) => m.slug === slug)?.name ?? slug;
                 return (
                   <Alert severity="success" sx={{ my: 2 }}>
                     No pending unmapped params for <strong>{mfrName}</strong>. With current dictionary overrides,
@@ -645,17 +715,36 @@ export default function AtlasDictTriagePanel() {
                   </Alert>
                 );
               }
+              const anyFilterActive =
+                !!filters.search.trim() ||
+                filters.mfrSlugs.length > 0 ||
+                filters.families.length > 0 ||
+                filters.minProductCount > 0 ||
+                filters.hasNote ||
+                filters.flaggedOnly ||
+                (!!filters.aiVerdict && filters.aiVerdict !== 'all');
+              if (anyFilterActive) {
+                return (
+                  <Alert severity="info" sx={{ my: 2 }}>
+                    No params match the current filters. Adjust or{' '}
+                    <Box
+                      component="span"
+                      onClick={() => setFilters(EMPTY_FILTERS)}
+                      sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
+                    >
+                      clear all filters
+                    </Box>
+                    .
+                  </Alert>
+                );
+              }
               return (
                 <Alert severity="info" sx={{ my: 2 }}>
-                  No params match the current filters. Adjust or{' '}
-                  <Box
-                    component="span"
-                    onClick={() => setFilters(EMPTY_FILTERS)}
-                    sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
-                  >
-                    clear all filters
-                  </Box>
-                  .
+                  {mode === 'auto_flagged'
+                    ? 'No auto-flagged misclassifications. Switch to Open synonyms to continue mapping.'
+                    : mode === 'synonyms'
+                      ? 'No open synonym rows in the queue.'
+                      : 'No rows match the current view.'}
                 </Alert>
               );
             })()
@@ -671,6 +760,10 @@ export default function AtlasDictTriagePanel() {
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
               aiVerdictFilter={filters.aiVerdict}
+              serverRemaining={serverRemaining}
+              serverTotal={viewTotal}
+              onLoadMore={loadMore}
+              loadingMore={loadingMore}
             />
           )}
         </>

@@ -48,6 +48,7 @@ import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { diffWordsWithSpace } from 'diff';
 import type { CardAuditResult } from '@/lib/services/atlasFamilyCardAuditTypes';
+import { splitCardText, composeCardText } from '@/lib/services/atlasFamilyCardComposite';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
@@ -852,7 +853,15 @@ interface CardReviewDrawerProps {
 }
 
 function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
-  const [text, setText] = useState(entry.cardText ?? '');
+  // Composite (v2) cards split into a deterministic FACTS region (read-only)
+  // and an AI NARRATIVE region (editable). The textarea binds to the
+  // narrative only; on save we recompose the facts back so the stored
+  // card_text stays composite. Legacy (v1) prose cards have no FACTS
+  // sentinel → splitCardText returns factsRegion=null → single textarea.
+  const split = useMemo(() => splitCardText(entry.cardText ?? ''), [entry.cardText]);
+  const isV2 = split.factsRegion !== null;
+  const editableInitial = isV2 ? split.narrativeRegion : (entry.cardText ?? '');
+  const [text, setText] = useState(editableInitial);
   const [saving, setSaving] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -905,10 +914,13 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
     setFixing(true);
     setErr(null);
     try {
+      // Send the FULL composite card — the fix-issues route splits it,
+      // edits only the narrative, and recomposes the facts back. The diff
+      // (before/after) is therefore over full composite cards.
       const res = await fetch(`/api/admin/atlas/family-domain-cards/${entry.familyId}/fix-issues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardText: text, auditResults: localAudit }),
+        body: JSON.stringify({ cardText: composedCardText, auditResults: localAudit }),
       });
       const json = await res.json();
       if (!json.success) {
@@ -916,7 +928,7 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
       } else {
         // Stash before/after for the diff view. NOT saved yet — engineer
         // reviews the diff, clicks Accept, then Save edits.
-        setProposedFix({ before: text, after: json.proposedText as string });
+        setProposedFix({ before: composedCardText, after: json.proposedText as string });
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -944,7 +956,9 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
       }
       // Order matters: write text into editable textarea BEFORE clearing
       // proposedFix, so the textarea swap-in shows the correct content.
-      setText(newText);
+      // newText is a full composite card (server recomposed) — bind the
+      // textarea to the narrative region only for v2.
+      setText(isV2 ? splitCardText(newText).narrativeRegion : newText);
       setProposedFix(null);
       await onSaved();
       // Re-audit fires the new severity into the panel without a second
@@ -965,11 +979,18 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
   // selected without closing the drawer, or a Customize call swapped
   // a built-in into a fresh DB draft).
   useEffect(() => {
-    setText(entry.cardText ?? '');
+    setText(editableInitial);
     setErr(null);
-  }, [entry.familyId, entry.cardText]);
+    // editableInitial is derived from entry.cardText; depending on it
+    // directly keeps the resync in step with the entry swap.
+  }, [entry.familyId, editableInitial]);
 
-  const dirty = text !== (entry.cardText ?? '');
+  const dirty = text !== editableInitial;
+  // The full composite card to persist — recompose the deterministic facts
+  // around the edited narrative for v2; v1 cards persist the textarea as-is.
+  const composedCardText = isV2 && split.factsRegion !== null
+    ? composeCardText(split.factsRegion, text)
+    : text;
   const isBuiltIn = entry.source === 'ts';
   const isDb = entry.source === 'db';
 
@@ -1267,17 +1288,54 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
               </Stack>
             </Stack>
           ) : (
-            <TextField
-              multiline
-              fullWidth
-              minRows={20}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              disabled={isBuiltIn}
-              sx={{
-                '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5 },
-              }}
-            />
+            <Stack spacing={1.5}>
+              {isV2 && split.factsRegion !== null && (
+                <Stack spacing={0.5}>
+                  <Alert severity="info" icon={false} sx={{ fontSize: '0.72rem', py: 0.5 }}>
+                    <strong>FAMILY FACTS</strong> — auto-generated from the logic table,
+                    dictionary, and atlas_products. Read-only; refreshes on Regenerate, and is
+                    not audited (correct by construction). Edit only the Engineering Notes below.
+                  </Alert>
+                  <Box
+                    component="pre"
+                    sx={{
+                      m: 0,
+                      p: 1.5,
+                      maxHeight: 280,
+                      overflow: 'auto',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      border: 1,
+                      borderColor: 'divider',
+                      fontFamily: 'monospace',
+                      fontSize: '0.72rem',
+                      lineHeight: 1.45,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      color: 'text.secondary',
+                    }}
+                  >
+                    {split.factsRegion}
+                  </Box>
+                </Stack>
+              )}
+              {isV2 && (
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  ENGINEERING NOTES (editable — this is the only audited region)
+                </Typography>
+              )}
+              <TextField
+                multiline
+                fullWidth
+                minRows={isV2 ? 14 : 20}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                disabled={isBuiltIn}
+                sx={{
+                  '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.5 },
+                }}
+              />
+            </Stack>
           )}
         </Box>
 
@@ -1305,7 +1363,7 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
               <Button
                 size="small"
                 variant="outlined"
-                onClick={() => void patch({ cardText: text })}
+                onClick={() => void patch({ cardText: composedCardText })}
                 disabled={saving || !dirty}
               >
                 Save edits
@@ -1316,7 +1374,7 @@ function CardReviewDrawer({ entry, onClose, onSaved }: CardReviewDrawerProps) {
                   variant="contained"
                   color="success"
                   startIcon={<CheckCircleOutlineIcon sx={{ fontSize: 14 }} />}
-                  onClick={() => void patch({ cardText: dirty ? text : undefined, status: 'active' })}
+                  onClick={() => void patch({ cardText: dirty ? composedCardText : undefined, status: 'active' })}
                   disabled={saving}
                 >
                   {dirty ? 'Save & Approve' : 'Approve'}

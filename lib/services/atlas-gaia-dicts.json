@@ -28,6 +28,7 @@
     "B1": {
       "maximum_repetitive_peak_reverse_voltage": { "attributeId": "vrrm", "attributeName": "Max Repetitive Peak Reverse Voltage (Vrrm)", "unit": "V", "sortOrder": 2 },
       "repetitive_peak_reverse_voltage":         { "attributeId": "vrrm", "attributeName": "Max Repetitive Peak Reverse Voltage (Vrrm)", "unit": "V", "sortOrder": 2 },
+      "peak_repetitive_reverse_voltage":         { "attributeId": "vrrm", "attributeName": "Max Repetitive Peak Reverse Voltage (Vrrm)", "unit": "V", "sortOrder": 2 },
       "vrwm(v)":                                 { "attributeId": "vrrm", "attributeName": "Max Repetitive Peak Reverse Voltage (Vrrm)", "unit": "V", "sortOrder": 2 },
       "maximum_dc_blocking_voltage":             { "attributeId": "vdc", "attributeName": "Max DC Blocking Voltage (Vdc)", "unit": "V", "sortOrder": 3 },
       "dc_blocking_voltage":                     { "attributeId": "vdc", "attributeName": "Max DC Blocking Voltage (Vdc)", "unit": "V", "sortOrder": 3 },
@@ -47,6 +48,7 @@
       "vf (v)":                                  { "attributeId": "vf", "attributeName": "Forward Voltage Drop (Vf)", "unit": "V", "sortOrder": 5, "preferredSuffix": "Max" },
       "vf(v)":                                   { "attributeId": "vf", "attributeName": "Forward Voltage Drop (Vf)", "unit": "V", "sortOrder": 5, "preferredSuffix": "Max" },
       "peak_forward_surge_current":              { "attributeId": "ifsm", "attributeName": "Max Surge Forward Current (Ifsm)", "unit": "A", "sortOrder": 6 },
+      "non_repetitive_peak_surge_current":       { "attributeId": "ifsm", "attributeName": "Max Surge Forward Current (Ifsm)", "unit": "A", "sortOrder": 6 },
       "if(ma)":                                  { "attributeId": "ifsm", "attributeName": "Forward Current (If)", "unit": "mA", "sortOrder": 6 },
       "if(a)":                                   { "attributeId": "ifsm", "attributeName": "Forward Current (If)", "unit": "A", "sortOrder": 6 },
       "reverse_recovery_time":                   { "attributeId": "trr", "attributeName": "Reverse Recovery Time (trr)", "unit": "ns", "sortOrder": 7, "preferredSuffix": "Typ" },

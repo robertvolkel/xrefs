@@ -4,6 +4,41 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Triage route doesn't scale past ~1k rows — server-side filter/pagination needed (follow-up to Decision #231) (P2, NEXT)
+
+**Context.** Decision #231's triage RPC `RETURNS jsonb` fix removed the PostgREST 1000-row cap (Decision #206) that was silently hiding ~13.7k of the true **14,413** unmapped params. Now the full classified set (**~4.25 MB**, ~13.5k OPEN) ships to the client, and `components/admin/AtlasDictTriagePanel.tsx` filters it client-side + paginates render to 100 (Decision #182). That client-everything model was fine at ~1k rows but doesn't scale to 14k — and the pending **full 102-file legacy discovery** pushes it to ~20k / ~6 MB. The user explicitly chose to harden this **before** running full discovery.
+
+**Fix.** The route (`app/api/admin/atlas/ingest/batches` GET) already calls cached `getOrComputeTriageData()`. Filter/sort/slice **server-side over the cached classified set** per request (accept `search`/`status`/`mode`/`mfr`/`family`/`flagged`/`minProds`/`sort`/`page` params), return only a page + the full counts. Client refetches on filter/page change (debounce search), keeps optimistic accept/revert on the current page. Heavy compute stays cached; only a small page crosses the wire.
+
+**Then (sequenced after the perf fix):** run full discovery for the other 101 legacy MFRs (`node scripts/atlas-ingest.mjs --discover-legacy` / "Scan legacy MFRs" button), then wider `npm run atlas:backfill -- --mfr <slug>` waves off-peak (411K rows; the preferredSuffix fix now changes many products fleet-wide — ISC alone = 1,493; Decision #193 warns against one full unfiltered run). See [memory/atlas-legacy-discovery.md] for live state.
+
+---
+
+## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
+
+**Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:
+
+**(a) `de` translation gaps.** German context-question coverage is incomplete: ~17 `contextQ.<family>.<questionId>.text` keys are absent (D2/E1/F1/F2 + parts of 53), and the 5 long descriptions corrupted by the extractor were restored to **English** (their pre-corruption content was already untranslated English), not translated to German. At runtime these fall back to the English TS source — correct content, wrong language. zh-CN is materially more complete. Fix: a proper German translation pass over the `contextQ` subtree. Low priority — falls back gracefully, German is a minority locale.
+
+**(b) `en` `contextQ` is redundant with the TS source.** Because the UI uses the TS `questionText`/`label`/`description` as the i18n fallback (see [components/ApplicationContextForm.tsx](../components/ApplicationContextForm.tsx)), every `en` `contextQ` entry just duplicates the TypeScript source in the same language — pure liability (it's how this bug entered, and how desc "drift" crept in). The guard test now pins `en` == TS verbatim, so they can't diverge silently. Cleaner end state: **delete the entire `en.contextQ` subtree** and let it always fall back to TS. Removes ~hundreds of redundant strings and makes the en-exactness test trivially true. Deferred because it's a larger diff with no user-visible change; the guard test already neutralizes the risk.
+
+---
+
+## Deep-linkable FACTS tables on domain cards (follow-up to Decision #228) (P3)
+
+**Context.** Decision #228 (composite domain cards) renders the factual card sections (RULES, CHINESE→CANONICAL dictionary, CONVENTIONAL UNITS, MFR cohort) deterministically into a **read-only plain-text box** in the review drawer ([components/admin/AtlasDomainCardsPanel.tsx](../components/admin/AtlasDomainCardsPanel.tsx)). The renderer ([lib/services/atlasFamilyCardFacts.ts](../lib/services/atlasFamilyCardFacts.ts)) already produces the structured arrays (`RenderedFacts.rules` / `.dict` / `.units` / `.mfrs`) alongside the prose — the UI just doesn't use them yet.
+
+**Gap this closes.** Today, if an engineer reads a fact in the box and disagrees with it (a weight they'd change, a dictionary mapping that's wrong/missing, an MFR cohort that looks off), there's **no routing** to where the fix lives — they navigate to the logic-table viewer / Triage dictionary / MFR data themselves. The facts are correct-by-construction relative to source, so this is the rare "I think the *source* is wrong" case — but when it happens, it's a manual hunt.
+
+**Fix idea.** Render the FACTS region as proper **tables** (reuse `LogicPanel.tsx` rule-table + `logicConstants.ts` `typeColors` for RULES; `AtlasDictionaryPanel.tsx` chip patterns for the dictionary) fed by the `RenderedFacts` structured arrays, with **deep-links per row**:
+- a RULES row → that rule in the Logic table viewer (`?section=logic&family=<id>`)
+- a DICTIONARY row → the Triage/dictionary editor for that param (`?section=atlas-dict-triage` filtered to the param, or the AtlasDictionaryPanel entry)
+- an MFR cohort row → that manufacturer's detail page (`/admin/manufacturers/<slug>`)
+
+Turns "navigate there yourself" into one click. Data is already available; this is purely a UI build. Keep the read-only plain-text fallback for any region without a structured array. Mentioned as the deferred follow-up in Decision #228's "Implementation §4 (Follow-up, not MVP)".
+
+---
+
 ## Peg `atlas_products` to `atlas_id` instead of manufacturer name string (Steps 2–3 of Decision #225) (P2)
 
 Decision #225 deduped the 9 true-duplicate MFR rows and added a name-based import guard, but `atlas_products` still links to manufacturers by **name string** (upsert key `(mpn, manufacturer)`, no manufacturer ID column). That's the root cause of the English-code collisions (HX = 红星 / 恒佳兴): products keyed under the bare code `"HX"` get attributed to *both* companies by the per-row `name_en` fold in `app/api/admin/manufacturers/route.ts`.
@@ -2211,3 +2246,43 @@ Deferred consciously from the Decision #220 + #222 rollout:
 8. **Tenant-admin enum widening on `app_feedback_comments.author_role`.** Currently `('user', 'admin')`. Decision #222 says when multi-tenancy lands, widen to `('user', 'platform_admin', 'tenant_admin')` so tenant admins (when they exist) can participate in the thread without RLS or app-level role spoofing. Schema migration is just a CHECK constraint widen.
 
 9. **`(stale)` HMR auto-recovery in dev.** Twice this session, Next.js HMR went stale and surfaced hydration errors that weren't real bugs. Track whether Turbopack ships a self-healing fix; if not, consider a dev-only banner that detects the `(stale)` indicator and prompts the user to hard-refresh.
+
+10. **Admin "file feedback on behalf of another user."** The "New feedback" button on the admin tab (added June 9, 2026 — reuses `AppFeedbackDialog`) creates the item under the admin's OWN `user_id`, so there's no "submitted for customer X" attribution and the thread lives in the admin's personal `/feedback`. To let an admin log feedback *as* another user (e.g. a phone/email report from a customer), add a user-picker to the dialog when opened from the admin surface, plus a server change so `POST /api/app-feedback` accepts an optional `onBehalfOfUserId` (admin-gated) that sets `user_id` to the target while recording the acting admin for audit (new column, e.g. `created_by_admin_id`). Touches the dialog (conditional picker), the POST route (admin auth branch + target-user validation), and the read-stamp semantics (whose `user_last_read_at` — the impersonated user's). Defer until a real "customer told me directly" workflow exists; self-authored covers the common case (admin logging a bug they found).
+
+## Notifications system follow-ups (Decision #230)
+
+The unified notification pipeline shipped with two v1 producers (feedback reply → owner, new feedback → admins). Deferred, each ~one `createNotification()`/`createNotifications()` call:
+
+1. **Release-note → all users producer + digest coexistence.** Wire `app/api/admin/releases/route.ts` POST to `createNotifications(allUserIds, { type: 'release_note', link: '/releases', ... })`. Then decide the relationship with the existing batched `release-digest` cron — recommend gating the digest behind `notificationPreferences` or retiring it once per-event is verified, so users don't get both an instant email and a later digest for the same note.
+
+2. **Weekly BOM tracking report producer.** When the scheduled BOM report is built, its (CRON_SECRET-triggered) endpoint calls `createNotification({ type: 'bom_report', link: '/<report-url>', ... })`. The notification type + inbox UI are already in place.
+
+3. **DNS / deliverability prerequisite (IT task, blocks ALL email).** Verify `xrefs.ai` as a sending domain in Resend and add SPF/DKIM/DMARC records to the `xrefs.ai` DNS zone. Set `RESEND_API_KEY`, `CRON_SECRET`, and `NEXT_PUBLIC_APP_URL=https://xrefs.ai` in production. Until done, inbox rows are created but no email is delivered (the in-app inbox still works).
+
+4. **Run the schema migration.** `scripts/supabase-notifications-schema.sql` must be run once in the Supabase SQL editor (table + RLS + the two SECURITY DEFINER mark-read RPCs) before the feature works.
+
+5. **Notification retention / cleanup.** No pruning yet — rows accumulate forever. Add a periodic delete of read notifications older than N days (or cap per user) when volume warrants.
+
+6. **Real-time inbox (optional).** The bell polls every 30s (same pattern as feedback dots). Supabase Realtime on the `notifications` table could push instantly if latency becomes a complaint.
+
+## Atlas backfill value-level non-convergence — residual 43 rows (Decision #233, June 11 2026)
+
+**Status:** the duplicate-MPN dual-category collision issue is **FIXED** (Decision #233 `dedupRichestByMpn` richest-wins dedup in both write paths — 61 sparse rows recovered, collisions now converge, global "would change" 244 → 43). What remains is a SEPARATE, smaller residual.
+
+**Problem.** **43 products across 4 MFRs** (MXChip 3, Geehy 5, COSINE 14, ETA 21 — all with ZERO duplicate `componentName`) won't converge on `--backfill-translations`: a live run reports "N changed, 0 errors" yet the next run reports the identical N. Verbose shows **no key add/remove** — so it's a **value-level** diff (the mapped `value` / `unit` / `numericValue` representation differs between map → write → re-map). **No key or data loss** — the params are all present and readable; the backfill just can't mark these rows "done." Low impact (4 small MFRs).
+
+**Likely cause (unconfirmed).** A value-representation round-trip mismatch — e.g. a `numericValue` or unit-prefixed `value` string that `tagAtlasParameters`/`mergeAtlasParameters` writes one way but the next map produces slightly differently, so `compareParamsIgnoringIngestedAt` always sees a diff. Candidate areas: Decision #217 unit-prefix normalization (`extractNumericWithPrefix`), or a JSONB store/read normalization the comparator doesn't account for. **First step:** dump one Geehy product's stored param entry vs a freshly-mapped one and diff field-by-field (value / unit / numericValue / source) to find which field oscillates; then either fix the mapper to be idempotent or relax the comparator for that field.
+
+**51 genuinely-sparse collision rows (NOT a bug).** Of the 231 dual-category collision parts, 51 still store ≤3 keys after the richest-wins fix — because their *richest* occurrence genuinely maps to ≤3 keys (real source-data limitation). Correctly + stably stored; nothing to recover. Listed here only so a future audit doesn't mistake them for stripped data.
+
+## Consolidate the 1000-row pagination footgun into one shared helper (Decision #233 review)
+
+**Problem.** The same `.range()` 1000-row pagination loop is now hand-rolled in **four+ places** — `lib/services/atlasDictOverrides.ts` `fetchOverridesPaginated`, `scripts/atlas-ingest.mjs` `loadAndApplyDictOverrides`, `lib/services/triageQueueCompute.ts` (the overrides IIFE), `lib/services/atlasTriageContext.ts` — all over `atlas_dictionary_overrides`, plus an existing copy in `app/api/admin/atlas/growth/route.ts`. A generic `fetchAllPages<T>(fetcher, pageSize)` **already exists** but is module-private in `lib/services/manufacturerAliasResolver.ts`. This recurring footgun has caused real incidents (Decisions #206/#231/#232/#233). Four divergent copies also drift (e.g. `atlasTriageContext`'s loop `break`s/fail-opens on a page error while the others `throw`/`return error`).
+
+**Fix.** Lift `fetchAllPages` into a shared `lib/services/supabasePagination.ts` (with a single stable-order + STOP-on-error contract and a docstring explaining the trap), and route the TS call sites through it; `scripts/atlas-ingest.mjs` keeps its own inline mirror per the #174 no-import-path convention. **Do as a separate post-merge PR** — it refactors currently-correct, tested code, so it shouldn't ride a ready-to-deploy branch. Maintainability only; nothing is broken today.
+
+## Gaia preferred-suffix fallback is source-order-dependent (Decision #231 / #233 review)
+
+**Problem.** In `atlasMapper.ts` `mapAtlasModel` (mirrored in `scripts/atlas-ingest.mjs` `mapModel`), when a gaia stem has a `preferredSuffix` set but the product ships the preferred variant *absent* and **two or more** non-preferred suffixes present (e.g. only `-Min` and `-Max`, no `-Typ`), both now pass the suffix gate and whichever appears **first in `model.parameters` order** wins the single mapped attribute slot. So two products listing the same two suffixes in opposite source order store different values (Min vs Max) for the same attribute — silent, source-order-dependent divergence, with no preference for the spec-relevant bound. Rare (requires preferred absent + 2+ alternates) and prior-session; surfaced by the PR #2 review.
+
+**Fix (needs a domain decision).** The *correct* bound is parameter-specific (a min-rating vs a max-rating), so this isn't mechanical. Minimum bar: make it **deterministic** — apply a fixed fallback priority among non-preferred suffixes (e.g. a defined Max > Typ > Min order, or per-attribute) so the stored value no longer depends on vendor array order. Decide the priority deliberately; don't rush it into a deploy.

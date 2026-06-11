@@ -3,10 +3,11 @@ import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import type { AppFeedbackCategory, AppFeedbackStatus } from './types';
 
-export function statusChipColor(status: AppFeedbackStatus): 'default' | 'warning' | 'info' | 'success' {
+export function statusChipColor(status: AppFeedbackStatus): 'default' | 'warning' | 'info' | 'success' | 'secondary' {
   switch (status) {
     case 'open': return 'warning';
     case 'reviewed': return 'info';
+    case 'wip': return 'secondary';
     case 'resolved': return 'success';
     case 'dismissed': return 'default';
   }
@@ -29,6 +30,7 @@ export function categoryLabel(category: AppFeedbackCategory): string {
 }
 
 export function statusLabel(status: AppFeedbackStatus): string {
+  if (status === 'wip') return 'WIP';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 

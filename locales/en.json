@@ -251,7 +251,7 @@
   },
   "recommendations": {
     "header": "Recommended Replacements",
-    "headerFiltered": "{{activeCount}} active {{matchWord}} · {{hiddenCount}} hidden",
+    "headerFiltered": "{{shownCount}} shown · {{hiddenCount}} hidden",
     "headerUnfiltered": "{{count}} {{matchWord}} found",
     "match": "match",
     "matches": "matches",
