@@ -204,6 +204,45 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Trigger to flip:** when the first MFR disable is needed for real, OR during a periodic admin-UI audit, OR as part of a broader "canonical-source consolidation" sweep.
 
+## Admin MFRs panel: per-MFR Coverage Δ column (since last touching backfill)
+**Status:** Not started (planned June 12, 2026)
+**Priority:** P2 (closes a real operator visibility gap — today engineers have no in-UI way to see per-MFR backfill impact)
+**Cost:** ~4-6 hours (new history table + RPC + close-handler snapshot + manufacturers route field + UI column)
+
+**Trigger:** Surfaced June 12, 2026 after a long Triage session where the global average-coverage indicator moved only 32% → 33% despite ~320 active accepts across 30+ MFRs that the backfill cleanly applied to 100% of products on KEXIN / SWST / YANGJIE / Comchip / Galaxy. A custom diagnostic script ([scripts/triage-impact-diag.mjs](../scripts/triage-impact-diag.mjs)) confirmed the work landed, but the operator had no UI surface to see per-MFR impact. The global headline is unweighted-MFR-average across 181 MFRs and dilutes focused work by 1/181 ≈ 0.55pp per MFR, so even meaningful work appears invisible at the headline. Engineer trust erodes when work shows no surfaceable signal.
+
+**Spec (user-confirmed June 12, 2026):**
+- New column in [components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx) between Coverage and Improvement Potential.
+- Shows `+X.X ppt` (or `−X.X ppt` if regressed) from the LAST backfill that actually changed this MFR's coverage. NOT "since previous backfill" — walk back through history to find the last meaningful touch, so a backfill that didn't move the MFR keeps showing the previous touch's contribution rather than blanking to 0.
+- Tooltip: `"Last meaningful change {relative time}: {prev}% → {current}%"`.
+- Sortable.
+
+**Implementation outline (see plan at `/Users/robvolkel/.claude/plans/reflective-doodling-unicorn.md` for full detail):**
+1. New table `atlas_mfr_coverage_history` (append-only): `(history_id, manufacturer, coverage_pct, scorable_count, total_covered, total_rules, backfill_run_id, snapshot_at)`. Indexes on `(manufacturer, snapshot_at DESC)` and `(backfill_run_id)`. Modeled on `atlas_products_snapshots` ([scripts/supabase-atlas-ingest-pipeline-schema.sql:139-173](../scripts/supabase-atlas-ingest-pipeline-schema.sql)).
+2. New RPC `get_mfr_coverage_delta()` returns one row per MFR via `ROW_NUMBER() OVER (PARTITION BY manufacturer ORDER BY snapshot_at DESC)` window. Shape: `(manufacturer, last_coverage_pct, prev_coverage_pct, last_snapshot_at)`. `prev_coverage_pct` is NULL when only one snapshot exists.
+3. Schema migration seeds a Day-0 baseline (one row per MFR at current coverage, idempotent via `NOT EXISTS`) so the column isn't empty for weeks while history accumulates.
+4. Backfill close handler in [app/api/admin/atlas/backfill-translations/route.ts](../app/api/admin/atlas/backfill-translations/route.ts) lines 168-187: after the existing `writeStatus`, compute fresh per-MFR coverage, compare to latest history row, batch-insert ONLY for MFRs that changed. Call `invalidateManufacturersListCache()`. Try/catch wrapped — snapshot failure must NOT roll back the backfill.
+5. Extract per-MFR coverage compute from [app/api/admin/manufacturers/route.ts](../app/api/admin/manufacturers/route.ts) into a shared `lib/services/mfrCoverageCompute.ts` helper so the close handler and the route use one compute path (no drift risk).
+6. Manufacturers route calls the new RPC in parallel with existing RPCs, includes `coverageDeltaPpt: number | null` and `lastTouchedAt: string | null` per row. Bump L2 cache version `manufacturers-list-v4` → `v5` (response shape change).
+7. Render the column in `ManufacturersPanel.tsx`: chip styling mirrors the Improvement Potential cell (`+X.X ppt` green / `−X.X ppt` red / `—` neutral when null). Extend the existing `sortKey` union with `'coverageDelta'`.
+
+**Verification flow:** apply migration → cold load shows `—` for every row → run a touching backfill → that MFR shows `+X.X ppt` while others stay `—` → run a no-op backfill → confirm idempotent (no new history rows, `+X.X ppt` persists) → run a SECOND touching backfill → delta updates to reflect new touch.
+
+**Why deferred:** the diagnostic script gives the answer on demand for one-off questions ("did my session matter?"). The UI column is quality-of-life polish for routine operator use — worth doing before Triage becomes a routine for additional operators, but not blocking solo workflow today.
+
+**Related:** [Decision #200](DECISIONS.md) Coverage Repair workflow (this column completes the loop); [Decision #202](DECISIONS.md) Improvement Potential (sibling per-MFR metric, forward-looking version of the same idea); the kept-around `scripts/triage-impact-diag.mjs` (ad-hoc analyses beyond what the column shows).
+
+## Backfill UI: stale-status-row trap (button stuck on "Backfilling" after crash)
+**Status:** Not started (surfaced June 12, 2026)
+**Priority:** P3 (workaround exists — DevTools POST one-liner — but rough edge for non-technical operators)
+**Cost:** ~1-2 hours (GET response gains `isStale` flag + UI button reflects it)
+
+**Trigger:** Surfaced June 12, 2026 after a Mac restart killed an in-flight backfill mid-run. The detached child died without writing `lastFinishedAt` to `admin_stats_cache`. GET status returned `lastFinishedAt: null`, so the UI button stayed disabled at "Backfilling" indefinitely. The route ([app/api/admin/atlas/backfill-translations/route.ts:119-134](../app/api/admin/atlas/backfill-translations/route.ts)) enforces a 10-minute stale-lock check **on POST only**, not on GET — so the UI never knows to surface a "stuck — re-trigger?" action. Catch-22: button is disabled because backfill is "in flight," but the operator can't dismiss it without calling POST, which requires the button to not be disabled. Workaround used in the June 12 session: paste `fetch('/api/admin/atlas/backfill-translations', { method: 'POST' }).then(r => r.json()).then(console.log)` into DevTools console — bypasses the disabled button, server's stale-lock check passes, fresh run starts.
+
+**Fix:** GET endpoint should compute `isStale = lastFinishedAt === null && (Date.now() - Date.parse(lastStartedAt)) > STALE_LOCK_MS` and return it alongside the status. UI button shows: `"Backfilling..."` (running, not stale) OR `"Stuck — re-trigger?"` (stale, click fires POST + replaces the stale row). Existing 10-min stale-lock check on POST already handles the takeover correctly; this just makes it discoverable through the UI instead of requiring DevTools.
+
+**Trigger to flip:** next time a non-technical operator hits this OR as part of a broader Backfill UX polish pass.
+
 ## FindChips enrichment degrades silently under rate-limit contention
 **Status:** Not started
 **Priority:** P2 (no impact at current single-user load; becomes real as concurrent users grow)
@@ -2286,3 +2325,15 @@ The unified notification pipeline shipped with two v1 producers (feedback reply 
 **Problem.** In `atlasMapper.ts` `mapAtlasModel` (mirrored in `scripts/atlas-ingest.mjs` `mapModel`), when a gaia stem has a `preferredSuffix` set but the product ships the preferred variant *absent* and **two or more** non-preferred suffixes present (e.g. only `-Min` and `-Max`, no `-Typ`), both now pass the suffix gate and whichever appears **first in `model.parameters` order** wins the single mapped attribute slot. So two products listing the same two suffixes in opposite source order store different values (Min vs Max) for the same attribute — silent, source-order-dependent divergence, with no preference for the spec-relevant bound. Rare (requires preferred absent + 2+ alternates) and prior-session; surfaced by the PR #2 review.
 
 **Fix (needs a domain decision).** The *correct* bound is parameter-specific (a min-rating vs a max-rating), so this isn't mechanical. Minimum bar: make it **deterministic** — apply a fixed fallback priority among non-preferred suffixes (e.g. a defined Max > Typ > Min order, or per-attribute) so the stored value no longer depends on vendor array order. Decide the priority deliberately; don't rush it into a deploy.
+
+## Specs panels: replace More/Less toggle with labeled sections (UX, P3)
+
+**Problem.** The source-part **Specs** tab hides non-canonical (schema-unrecognized) attributes behind a "More (N)" / "Less" toggle — an annoying extra click that also makes data/mapping gaps invisible. Separately, the right **"COMPARING WITH"** comparison panel only shows scored/canonical rows (built from `matchDetails` + source params), so a replacement's other attributes never appear — an inconsistency with the source panel.
+
+**Fix (designed, plan tabled June 11 2026).** Drop the More/Less collapse on both panels; show all attributes at once with a labeled **"Additional Attributes"** uppercase section header dividing canonical (top) from non-canonical (below, dimmed). Right panel mirrors the left: canonical rows → Additional Attributes → Issue Summary at the bottom. Display-only; no engine/cache/schema-version impact.
+- Left: `components/AttributesPanel.tsx` — keep the existing `recognized`/`extras` split useMemo; remove the toggle `<Link>` + `showExtras` state; render an "Additional Attributes" section-row before the always-shown extras.
+- Right: `components/ComparisonView.tsx` — after `rows` is built, compute `additionalRows` from `replacementAttributes?.parameters` not already shown (data already in scope, no extra fetch); render them value-only/no-dot/dimmed under an "Additional Attributes" section-row; leave the Issue Summary block where it is (already below the table).
+- Shared: add a table-row variant of the existing `SectionHeader` (`components/AttributesTabContent.tsx:211-232` is a `<Box>`, invalid as a `<TableBody>` child) with a `colSpan` prop (2 left / 3 right); add `additionalHeader` i18n key to `attributes.*` + `comparison.*` in `locales/{en,de,zh-CN}.json`.
+- The `recognized`/`extras` concept lives only in `AttributesPanel.tsx` (confirmed repo-wide) — no parts-list/column/export fallout. For non-Atlas parts the flag is undefined → no extras → section simply hidden.
+
+Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
