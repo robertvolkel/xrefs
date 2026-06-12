@@ -153,16 +153,29 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
   if (p.flaggedOnly) visible = visible.filter((r) => r.isFlagged === true);
   if (p.hasNoteOnly) visible = visible.filter((r) => r.hasNote === true);
 
-  // ── Sort: matchingImpact.score desc, then paramName asc as a STABLE,
-  //    deterministic tiebreak. score=0 ties are very common (unscoped rows with
-  //    no logic-table weight); without a unique secondary key their order falls
-  //    back to compute/RPC output order, which can vary across cache rebuilds —
-  //    so the same page could skip or re-show rows between refreshes. paramName
-  //    is unique per row (the queue's key). Copy before sort (never touch the
-  //    cached array). (Decision #233 review) ──
+  // ── Sort ──
+  //   - statusFilter='accepted': acceptedOverride.createdAt desc (most-recently-
+  //     accepted at top — engineer reviewing recent work wants a journal,
+  //     not a re-ranking by impact). Missing createdAt sorts last.
+  //   - otherwise: matchingImpact.score desc (high-impact-first for the
+  //     work-to-do queue).
+  //   Both fall back to paramName asc as a STABLE, deterministic tiebreak.
+  //   score=0 ties are common (unscoped rows with no logic-table weight);
+  //   without a unique secondary key their order falls back to compute/RPC
+  //   output order, which can vary across cache rebuilds — so the same page
+  //   could skip or re-show rows between refreshes. paramName is unique per
+  //   row (the queue's key). Copy before sort (never touch the cached array).
+  //   (Decision #233 review; Accepted sort added per engineer ask 2026-06-12.)
+  const sortByRecency = p.statusFilter === 'accepted';
   const sorted = [...visible].sort((a, b) => {
-    const ds = (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0);
-    if (ds !== 0) return ds;
+    if (sortByRecency) {
+      const at = a.acceptedOverride?.createdAt ?? '';
+      const bt = b.acceptedOverride?.createdAt ?? '';
+      if (at !== bt) return bt < at ? -1 : bt > at ? 1 : 0;
+    } else {
+      const ds = (b.matchingImpact?.score ?? 0) - (a.matchingImpact?.score ?? 0);
+      if (ds !== 0) return ds;
+    }
     return a.paramName < b.paramName ? -1 : a.paramName > b.paramName ? 1 : 0;
   });
 

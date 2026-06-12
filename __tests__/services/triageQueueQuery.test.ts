@@ -52,6 +52,46 @@ describe('queryTriage', () => {
     expect(res.rows.map((r) => r.paramName)).toEqual(['high', 'mid', 'low']);
   });
 
+  it('Accepted filter sorts by acceptedOverride.createdAt desc (most-recent-first)', () => {
+    const mkOverride = (createdAt: string) => ({
+      id: `id-${createdAt}`,
+      attributeId: 'rds_on',
+      attributeName: 'Rds(on)',
+      unit: 'Ω',
+      createdBy: 'user',
+      createdByName: 'Test',
+      createdAt,
+      updatedAt: createdAt,
+      isActive: true,
+      wasEdited: false,
+    });
+    const rows = [
+      // Low impact score but most recent — must rise to top
+      cls({
+        paramName: 'recent_low_score',
+        matchingImpact: { score: 5, weight: 1, canonical: null, isEstimate: true },
+        acceptedOverride: mkOverride('2026-06-12T10:00:00Z'),
+      }),
+      // High impact score but oldest — must sink to bottom
+      cls({
+        paramName: 'oldest_high_score',
+        matchingImpact: { score: 9999, weight: 10, canonical: null, isEstimate: true },
+        acceptedOverride: mkOverride('2026-06-10T10:00:00Z'),
+      }),
+      cls({
+        paramName: 'middle',
+        matchingImpact: { score: 100, weight: 5, canonical: null, isEstimate: true },
+        acceptedOverride: mkOverride('2026-06-11T10:00:00Z'),
+      }),
+    ];
+    const res = queryTriage(rows, { ...BASE, statusFilter: 'accepted' });
+    expect(res.rows.map((r) => r.paramName)).toEqual([
+      'recent_low_score',
+      'middle',
+      'oldest_high_score',
+    ]);
+  });
+
   it('filters by mode (include)', () => {
     const rows = [
       cls({ paramName: 'syn', effective: 'synonym' }),
