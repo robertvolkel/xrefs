@@ -232,6 +232,27 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Related:** [Decision #200](DECISIONS.md) Coverage Repair workflow (this column completes the loop); [Decision #202](DECISIONS.md) Improvement Potential (sibling per-MFR metric, forward-looking version of the same idea); the kept-around `scripts/triage-impact-diag.mjs` (ad-hoc analyses beyond what the column shows).
 
+## Triage Accept latency spikes — Supabase service-client pool contention with background recompute (follow-up to Decision #234) (P3)
+**Status:** Not started (surfaced June 12, 2026 immediately after the #234 fix landed)
+**Priority:** P3 (5x improvement already shipped; spike is bounded and rare)
+**Cost:** ~2-3 hours investigation + likely fix
+
+**Symptom.** After reverting per-row dict mutations to single-flight invalidate (Decision #234), warm Accept POSTs land in ~600ms — but rapid-fire third-in-a-row Accepts have been observed at 5.8s, with the dev-server timing breakdown showing 5.1s inside the route handler (compile + middleware look normal: 22ms + 657ms).
+
+**Hypothesis.** The background recompute spawned by Accept N's `invalidateTriageQueueCache()` holds a Supabase service-client connection for the ~20-30s the recompute runs. Accept N+1's INSERT + L2 DELETE need fresh service-client connections; if the underlying HTTP/Postgres pool has reached its concurrent-connection cap, the next Accept queues. Per-call `createServiceClient()` may not be returning a fresh pool slot the way the code assumes — needs verification.
+
+**Investigation:**
+1. Instrument the Accept POST path with `console.time` around `requireAdmin()`, the INSERT, and `invalidateTriageQueueCache()`. Identify which step accounts for the 5s.
+2. Check `lib/supabase/service.ts` — does `createServiceClient()` share an HTTP agent / connection pool, or create a fresh one each call?
+3. Check Supabase project's `max_connections` and current connection usage in the Supabase dashboard during a rapid-fire Accept sequence.
+
+**Possible fixes** (ranked by simplicity):
+- (a) Reuse a single module-scoped service client for L2 DELETE inside the cache invalidate (currently creates a fresh one on every invalidation).
+- (b) Throttle the background recompute kickoff — coalesce N back-to-back invalidates into one recompute that starts after a short debounce window. Aligns with the existing "single-flight" pattern's intent.
+- (c) If pool is the constraint, raise it (Pro plan supports more concurrent connections per Decision #193).
+
+**Not blocking.** The 30s → 600ms baseline improvement holds regardless. This is the next 10x at the tail.
+
 ## Backfill UI: stale-status-row trap (button stuck on "Backfilling" after crash)
 **Status:** Not started (surfaced June 12, 2026)
 **Priority:** P3 (workaround exists — DevTools POST one-liner — but rough edge for non-technical operators)

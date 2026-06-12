@@ -8059,3 +8059,38 @@ concept, different Chinese/English string per MFR — Decision #215 pattern) + *
 *feels* repetitive. 2067/2067 tests pass; tsc clean on both files. Atlas now has **FOUR** known
 override-fetch sites; the two display/per-family ones ([dictionaries/route.ts](../app/api/admin/atlas/dictionaries/route.ts)
 list, `fetchAcceptedCanonicals` per-family) are scope-bounded and not at practical cap risk.
+
+## Decision #234 — Reverted per-row dict mutations to single-flight invalidate (June 12, 2026)
+
+**Symptom.** Engineer reported Triage Accept clicks took 30+ seconds each, up from "a few seconds" earlier in the week. Consistent across every Accept, not intermittent.
+
+**Root cause.** Decision #186(e) had switched dict `POST` / `PATCH` / `DELETE` from `invalidateTriageQueueCache()` (single-flight, fire-and-forget after `L2 DELETE`) to `invalidateTriageQueueCacheAndAwaitFresh()` (drain in-flight + `L2 DELETE` + start fresh recompute + **await it**). At the time the swap shipped, the recompute was ~2–3s (Decision #180 had just brought it down via the JSONB RPC) and `await` semantics were cheap. Two recent changes compounded the cost:
+
+1. **Decision #231 (June 10)** moved filter/sort/clustering server-side. The compute now does per-row `isFlagged` / `hasNote` / `similarSiblings` PLUS "+N similar" siblings over the FULL queue set (~26k rows after PR #2).
+2. **Decision #233 (June 11)** paginated `atlas_dictionary_overrides` to handle the 1,319-row table. The compute now reads **all** active overrides on every recompute, not just the first 1,000.
+
+Net: the recompute grew from ~2–3s to ~20–30s. Because per-row mutations awaited it under #186(e), every Accept inherited the full cost.
+
+**Why #186(e) was the wrong fix even at the time.** The concern it addressed was "client refetch races the recompute and sees the just-overridden row as Open." That concern had already been **superseded by Decision #182** (optimistic UI): `onRowAccepted` mutates the row in place — there *is no* client refetch on Accept. The pre-existing [cache-invalidation-wait-then-restart](../.claude/projects/-Users-robvolkel-Developer-xrefs-app/memory/cache-invalidation-wait-then-restart.md) memory (2026-05-08) had already documented the convention: per-row mutations use single-flight, batch-state mutations use wait-then-restart. #186(e) silently violated that convention to satisfy a freshness guarantee that wasn't actually being used by any code path.
+
+**Fix.** Reverted three call sites back to `invalidateTriageQueueCache()`:
+- [app/api/admin/atlas/dictionaries/route.ts:237](../app/api/admin/atlas/dictionaries/route.ts) — POST = Accept
+- [app/api/admin/atlas/dictionaries/[overrideId]/route.ts:52](../app/api/admin/atlas/dictionaries/[overrideId]/route.ts) — PATCH = edit override
+- [app/api/admin/atlas/dictionaries/[overrideId]/route.ts:98](../app/api/admin/atlas/dictionaries/[overrideId]/route.ts) — DELETE = Revert
+
+The `L2 DELETE` still runs synchronously (~100–300ms — keeps concurrent readers from seeing pre-insert state). The background recompute fires async; the next Triage GET that misses L2 waits ~20–30s on cold compute, but subsequent GETs hit warm L2. Batch-state mutations (upload / proceed / revert / regenerate / batch-DELETE / proceed-all-clean) unchanged — `invalidateTriageQueueCacheAndAwaitFresh()` remains correct for those per the original Decision #180 split, since they're slow operations where the user is already in a "waiting for slow op" mental state and downstream-page freshness matters.
+
+**Verified.** Live dev-server timings on three back-to-back Accepts:
+
+| # | Total | compile | proxy.ts | render | Note |
+|---|-------|---------|----------|--------|------|
+| 1 | 1.0 s | 213 ms | 300 ms | 531 ms | Cold compile |
+| 2 | 612 ms | 4 ms | 193 ms | 415 ms | Warm — expected baseline |
+| 3 | 5.8 s | 22 ms | 657 ms | 5.1 s | Spike (see follow-up) |
+
+Net: ~30 s → ~600 ms warm = **50× improvement**. The 5.8 s spike on the third request is almost certainly the prior Accept's background recompute holding a Supabase service-client connection while this Accept's POST queues on the pool — filed as a BACKLOG follow-up; the underlying 50× win is unaffected.
+
+**Tests.** `__tests__/services/triageQueue*` (12/12) passes. TS errors in `matchingEngine.test.ts` are pre-existing and unrelated.
+
+**Lesson — recompute cost is a moving target.** A pattern that's free when the recompute is 2 s becomes a foot-gun when the recompute is 25 s. The choice between single-flight and wait-then-restart should be made based on *"does the caller actually depend on the freshness guarantee?"* — not on *"is this technically an awaited call?"* When the answer is no (because optimistic UI handles freshness for the acting user), single-flight is always the safer default: its worst case is "next cold read pays 25 s," which is bounded, rare, and amortized across all callers — vs. wait-then-restart which charges every single mutation 25 s.
+
