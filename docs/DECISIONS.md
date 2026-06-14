@@ -8094,3 +8094,51 @@ Net: ~30 s → ~600 ms warm = **50× improvement**. The 5.8 s spike on the third
 
 **Lesson — recompute cost is a moving target.** A pattern that's free when the recompute is 2 s becomes a foot-gun when the recompute is 25 s. The choice between single-flight and wait-then-restart should be made based on *"does the caller actually depend on the freshness guarantee?"* — not on *"is this technically an awaited call?"* When the answer is no (because optimistic UI handles freshness for the acting user), single-flight is always the safer default: its worst case is "next cold read pays 25 s," which is bounded, rare, and amortized across all callers — vs. wait-then-restart which charges every single mutation 25 s.
 
+
+## Decision #235 — F1/F2 Atlas classifier branch + relay MFR re-ingest (June 14, 2026)
+
+**Symptom.** User flagged a Triage row for `介质耐压` (dielectric withstanding voltage) on HONGFA showing AI verdict "wrong family" → reclassify to "Transformers" with productCount 141k. Spot-checked the row: zero affected products in HONGFA scope per the diagnostic. Same pattern repeated across 9 other clearly-relay paramNames (`线圈电压类型`, `触点形式`, `机械耐久性`, etc.), all labeled B5 MOSFETs.
+
+**Investigation.** Three rounds of progressively cheaper, more thorough diagnostics:
+
+1. **Source file pristine** — `mfr_30_HONGFA_宏发_params.json` ships c1="Relays", c2/c3="Power Relays, Over 2 Amps", 20,206 products with canonical relay parametric data (`触点形式`, `线圈工作电压`, `介质耐压`, ~34 params per product). Not an ingest input bug.
+2. **Classifier blind spot** — `classifyAtlasCategory` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) and the [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) mirror had **zero relay handling at any tier**. No L3 branch for F1/F2, no L2 fallback (Transformers / Filters / Sensors / etc all had c1/c2 catch-alls; relays did not), and no c1 catch-all for the "Relays" string. HONGFA's perfectly-tagged file fell all the way through to the final catch-all and landed as `{ category: 'ICs', subcategory: 'Power Relays, Over 2 Amps', familyId: null }`. Paginated `GROUP BY family_id` confirmed: **19,843 (98.2 %) HONGFA products sitting at `family_id = null`, 363 (1.8 %) in B5**.
+3. **Catastrophic JSONB degradation** — sampled 12 HONGFA products at random offsets across the catalog. Every one had only 7–10 parameter keys, mostly **unit-suffix stems** like `g, m, ac, dc, mm, ms, mm3, input_voltage_type`. Source ships ~34 paramNames per product; effective ingest survival rate was ~24 %. Cause: unmapped paramNames falling through to an aggressive unit-suffix fallback that collides on shared suffixes (`重量(单位：g)` and any other `(单位：g)`-suffixed param both key to `g`, last write wins). F1 and F2 dicts in `atlasParamDictionaries` were **completely empty** (grep clean), so every Chinese relay paramName hit the fallback.
+
+**The 363-in-B5 turned out to be benign.** Hypothesized to be a separate SSR/PhotoMOS line caught by a Rds(on) signature. Actually: same disease, different legacy state. The re-ingest upsert correctly flipped all 20,206 products to F1 in a single pass (none stayed in B5).
+
+**Fix — three code changes + nine data migrations.**
+
+1. **Classifier branch** in [lib/services/atlasMapper.ts:200](../lib/services/atlasMapper.ts) + mirror in [scripts/atlas-ingest.mjs:130](../scripts/atlas-ingest.mjs). SSR check first (substring subset: `'solid state relay'` / `'photo relay'` / `'photomos'`) → F2. EMR catch-all (`c3.includes('relay')` or `c1.includes('relay')`) → F1. Placed between E1 Optocouplers and the discrete-semi block, matching that block's "subset check before generic match" pattern.
+2. **F1 + F2 dicts** in [lib/services/atlasMapper.ts:1819](../lib/services/atlasMapper.ts) + mirror. F1: ~75 entries covering all 34 HONGFA paramNames + English aliases, mapped to F1 logic-table canonicals (`coil_voltage_vdc`, `contact_form`, `contact_voltage_rating_v`, `operate_time_ms`, `mechanical_life_ops`, `isolation_voltage_vrms`, etc.) with underscore-prefix catalog attrs for non-scored fields. AC/DC switching ratings split (AC → canonical, DC → catalog `_contact_voltage_dc_v`) so both can coexist in JSONB without overwriting. F2: ~30 entries seeded from F2 logic table + best-guess Chinese aliases — no ground-truth SSR vendor file yet, expect refinement via Triage when the first dedicated Chinese SSR MFR drops.
+3. **`包装形式` added to skipParams** in both files. HONGFA's only unmapped param post-fix was `包装形式` (packaging form, values "吸塑片" / "型管或吸塑盘"). The shorter `包装` was already in skipParams as a buyer-concern not a parametric; this is the same concept under the longer Chinese name. One-line addition rather than a Triage Accept since the convention already exists.
+4. **`RECS_CACHE_SCHEMA_VERSION` v11 → v12** in [lib/services/partDataCache.ts:81](../lib/services/partDataCache.ts) to invalidate any recommendation responses cached against pre-re-ingest (null-family, 8-key) HONGFA / Slkor / Everlight / etc. products. Otherwise up to 30-day staleness on any MPN that was searched before this change.
+
+**Data migrations applied.** Eight pending batches generated and applied via the Decision #174 pipeline (each writes a `atlas_products_snapshots` row first; revert window 30 days):
+
+| MFR | Products | Family after |
+|---|---|---|
+| HONGFA | 20,206 | F1 = 20,206 |
+| Everlight | 3,559 | F2 = 4 + LEDs/optos as before |
+| Slkor | 1,153 | F1 + scattered (mixed discrete-semi MFR) |
+| CT MICRO | 357 | F1 |
+| APSEMI | 349 | F2 = 393 (PhotoMOS line) |
+| CHIPANALOG | 348 | F2 = 1 |
+| AOTE | 309 | F2 |
+| KTP | 200 | F2 |
+| STEIPU | 196 | F1 = 370, F2 = 12 |
+
+Total upserts: **~26,677 products** updated. Verified post-apply scope check: of 20,708 products with subcategory containing "relay" (or 继电器) currently in the DB, **20,706 are now in F1 or F2; 0 in B5; 2 in null** (down from 19,843 in null). Average JSONB key count per HONGFA product: **7.3 → 14.6** (sample products carry 14–15 real F1 canonicals each: `coil_voltage_vdc, contact_form, contact_count, contact_material, contact_voltage_rating_v, contact_current_rating_a, isolation_voltage_vrms, operate_time_ms, release_time_ms, mechanical_life_ops, electrical_life_ops, operating_temp_range, package_footprint, coil_power_mw, mounting_type, coil_suppress_diode`).
+
+**Tests.** Full suite 2068 / 2068 passes. Atlas-specific suite 241 / 241.
+
+**Lesson — three concentric blind spots compound.** The bug surfaced because the AI Triage Investigator gave a wrong verdict (Transformers, an L2 category — Decision #190's validation would have rejected it had Confirm fired). But the AI verdict was the symptom, not the disease. Behind it sat:
+
+- **Layer 1**: classifier missing F1/F2 branches.
+- **Layer 2**: dicts missing for F1/F2.
+- **Layer 3**: ingest fallback that silently degrades unmapped params instead of preserving them under their raw paramName.
+
+Each layer alone would have been recoverable in Triage. Together they made **~26K products effectively invisible** to the recommendation engine — sitting at `family_id = null` (no logic table runs) with ~24 % of their parametric data preserved (and even that 24 % under collided unit-stem keys). The system had no signal that this was happening: every relay MFR ingested cleanly with no errors, no warnings, no Triage queue noise that pointed at the disease (the unmapped paramNames appeared in Triage but only got assigned to `dominantFamily = B5` because of the 363 stragglers, leading the AI Investigator down a wrong path).
+
+**Followup.** Step 5 of the plan — adding unambiguous-relay paramNames (e.g. `^contact_form`, `^coil_voltage`, `^mechanical_life`) to `FAMILY_PARAM_SIGNATURES` (Decision #207) — would have caught Layer 1 even without the classifier branch. Tracked in BACKLOG as the future-proofing safety net. Decision #199 retroactive backfill (`npm run atlas:backfill --mfr <slug>`) is now available for cleaning up the English-paramName variants the engineer will accept via Triage over the next few sessions (APSEMI uses "Circuit ", "Voltage - Input ", "Operating Temperature " with trailing spaces; CT MICRO ships compound forms like `集射极饱和电压(VCE(sat))`).
+

@@ -202,6 +202,19 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
     return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
   }
 
+  // ─── F1 EMR / F2 SSR Relays ───
+  // SSR checked first — c3 substrings like 'Solid State Relay' are a strict
+  // subset of the broader 'relay' match. Without this ordering, HONGFA-style
+  // EMR catches would consume SSRs too. Also MUST come BEFORE discrete-semi
+  // rules below: some SSR c3 strings contain 'Triac Output' / 'MOSFET Output'
+  // that would otherwise route them to B8 / B5.
+  if (lower.includes('solid state relay') || lower.includes('photo relay') || lower.includes('photomos')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F2' };
+  }
+  if (lower.includes('relay') || c1lower.includes('relay')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F1' };
+  }
+
   // ─── Discrete Semiconductors ───
   // Thyristors — use word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
   if (/\bscr\b/i.test(lower) && !lower.includes('module')) return { category: 'Thyristors', subcategory: 'SCR', familyId: 'B8' };
@@ -1814,6 +1827,217 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'ctr': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
     '电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
   },
+
+  // ─── F1 Electromechanical Relays ──────────────────────
+  // Seeded from HONGFA's source file (mfr_30_HONGFA_宏发_params.json) which
+  // ships ~34 paramNames per product. Most relay MFRs use overlapping
+  // Chinese terms (TE, Omron, Panasonic, Songle, Fujitsu). When a new relay
+  // MFR drops with a distinct paramName, add it via Triage Accept.
+  //
+  // AC vs DC switching ratings: HONGFA splits 最大切换电压 and 最大额定切换电流
+  // into separate (AC) and (DC) paramNames. Both can co-exist on one product.
+  // To avoid JSONB collision on canonical attribute IDs, AC variants map to
+  // the F1 logic-table canonical, DC variants map to a _-prefixed catalog
+  // attribute. Most general-purpose relays drive AC loads, so canonical
+  // values typically reflect the AC rating.
+  F1: {
+    // ── Coil (supply side) ──
+    '线圈工作电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '额定线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'rated coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    // Coil voltage type (AC/DC) — NOT in F1 logic table (no rule scores it),
+    // but a critical catalog discriminator. Underscore prefix per convention.
+    '线圈电压类型': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    'coil voltage type': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    // Coil power — HONGFA uses both 线圈功率 (categorical e.g. 标准型/standard)
+    // and 额定线圈功率 (numeric VA/W). Map both to coil_power_mw; numeric one
+    // wins because it gets processed with the unit-bearing form.
+    '额定线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    '线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    'coil power': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    // Coil resistance — F1 logic table canonical (threshold rule for GPIO drive).
+    '线圈电阻': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    'coil resistance': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    // Coil parallel component — value is typically 二极管/diode or N/A.
+    // F1 logic table has 'coil_suppress_diode' as a flag attribute.
+    '线圈并联元件': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    'coil suppression': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    // Coil characteristic (monostable/bistable) — catalog only.
+    '线圈特征': { attributeId: '_coil_characteristic', attributeName: 'Coil Characteristic', sortOrder: 6 },
+    // Must-operate / must-release voltage — F1 logic canonical.
+    '吸合电压': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    'must operate voltage': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    '释放电压': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+    'must release voltage': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+
+    // ── Contacts (load side) ──
+    '触点形式': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    'contact form': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    '触点数': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'contact count': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'number of contacts': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    '触点材料': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    'contact material': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    // AC variant maps to F1 canonical; DC variant goes to catalog to avoid collision.
+    '最大切换电压(ac)': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage (AC)', unit: 'V', sortOrder: 13 },
+    '最大切换电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '负载电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 13 },
+    'max switching voltage': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '最大切换电压(dc)': { attributeId: '_contact_voltage_dc_v', attributeName: 'Max Switching Voltage (DC)', unit: 'V', sortOrder: 14 },
+    '最大额定切换电流(ac)': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current (AC)', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '负载电流': { attributeId: 'contact_current_rating_a', attributeName: 'Load Current', unit: 'A', sortOrder: 15 },
+    'max switching current': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流(dc)': { attributeId: '_contact_current_dc_a', attributeName: 'Max Switching Current (DC)', unit: 'A', sortOrder: 16 },
+    // Contact voltage type (AC/DC) — F1 logic canonical (identity_flag rule).
+    '触点电压类型': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    'contact voltage type': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    // Max switching power — VA rating, F1 logic canonical.
+    '最大额定切换功率(va)': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    '最大切换功率': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    'max switching power': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+
+    // ── Isolation / dielectric (safety side) ──
+    // 介质耐压 = dielectric withstanding voltage (the hi-pot test). F1 logic
+    // doesn't model it explicitly, but the safety-critical concept aligns
+    // with isolation_voltage_vrms (used by F2 and E1). Mapping here makes
+    // the value scorable wherever a future rule references this attr.
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    '介质耐压(单位：vac)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    'dielectric withstanding voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+
+    // ── Timing (operate/release) ──
+    '动作时间(单位：ms)': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '动作时间': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    'operate time': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '释放时间(单位：ms)': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    '释放时间': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    'release time': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    // Contact bounce — F1 logic canonical.
+    '触点回跳时间': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+    'contact bounce': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+
+    // ── Endurance ──
+    '机械耐久性(单位：次)': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '机械寿命': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    'mechanical life': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '电耐久性(单位：次)': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    '电寿命': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    'electrical life': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+
+    // ── Environmental / mechanical ──
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    'operating temperature range': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    'package footprint': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    // Sealing type — F1 logic canonical (washable/sealed/flux-proof).
+    '密封类型': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    'sealing type': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    // AEC-Q200 qualification (automotive). F1 logic canonical (identity_flag).
+    'aec-q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+    'aec_q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+
+    // ── Catalog-only (underscore prefix; not scored by F1 rules) ──
+    '绝缘电阻(单位：mω)': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '绝缘电阻': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    'insulation resistance': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '触点间隙(单位：mm)': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '触点间隙': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '爬电距离(单位：mm)': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '爬电距离': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '电气距离(单位：mm)': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '电气间隙': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '绝缘等级': { attributeId: '_insulation_class', attributeName: 'Insulation Class', sortOrder: 94 },
+    '引出端形式': { attributeId: '_terminal_form', attributeName: 'Terminal Form', sortOrder: 95 },
+    '引出端结构形式': { attributeId: '_terminal_structure', attributeName: 'Terminal Structure', sortOrder: 96 },
+    '产品应用领域': { attributeId: '_application_field', attributeName: 'Application Field', sortOrder: 97 },
+    '产品应用场合': { attributeId: '_application_use', attributeName: 'Application Use', sortOrder: 98 },
+    '重量(单位：g)': { attributeId: '_weight_g', attributeName: 'Weight', unit: 'g', sortOrder: 99 },
+    '体积(单位：mm3)': { attributeId: '_volume_mm3', attributeName: 'Volume', unit: 'mm³', sortOrder: 100 },
+  },
+
+  // ─── F2 Solid State Relays ────────────────────────────
+  // Seeded from F2 logic-table canonicals + best-guess Chinese aliases.
+  // No HONGFA-equivalent ground-truth source yet — when the first Chinese SSR
+  // MFR (e.g. Kyotto, Carlo Gavazzi reseller, generic 国产 SSR vendor) drops,
+  // expect the engineer to add MFR-specific aliases via Triage Accept.
+  F2: {
+    // Output switch type — F2 HARD GATE (TRIAC vs SCR vs MOSFET).
+    '输出开关类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    '输出类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    'output switch type': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    // Firing mode — F2 HARD GATE (zero-crossing vs random-fire).
+    '触发模式': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    '过零控制': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'firing mode': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'zero crossing': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    // Mounting type — PCB / panel / DIN-rail.
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    // Load voltage type (AC/DC).
+    '负载电压类型': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'load voltage type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    // Load voltage max — F2 safety-critical threshold.
+    '最大负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    '负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    'max load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    'load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    // Load current max — F2 safety-critical threshold.
+    '最大负载电流': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    '负载电流': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    'max load current': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    'load current': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    // Load current min — hidden TRIAC failure mode for low-current loads.
+    '最小负载电流': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    'min load current': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    // Off-state leakage.
+    '截止漏电流': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    'off-state leakage': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    // Input voltage range — F2 control-side spec.
+    '输入电压范围': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    '控制电压': { attributeId: 'input_voltage_range_v', attributeName: 'Control Voltage', unit: 'V', sortOrder: 9 },
+    'input voltage range': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    // Input current.
+    '输入电流': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    'input current': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    // Switching times.
+    '导通时间': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    'turn-on time': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    'turn-off time': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    // dv/dt and di/dt ratings — SCR/TRIAC false-trigger immunity.
+    'dv/dt': { attributeId: 'dv_dt_rating_v_us', attributeName: 'dv/dt Rating', unit: 'V/µs', sortOrder: 13 },
+    'di/dt': { attributeId: 'di_dt_rating_a_us', attributeName: 'di/dt Rating', unit: 'A/µs', sortOrder: 14 },
+    // On-state voltage drop — SSR conduction loss.
+    '导通压降': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    'on-state voltage drop': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    // Built-in snubber / varistor (transient protection).
+    '内置缓冲电路': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    'built-in snubber': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    '内置压敏电阻': { attributeId: 'built_in_varistor', attributeName: 'Built-In Varistor', sortOrder: 17 },
+    // Isolation voltage — F2 safety canonical (shared with E1 conceptually).
+    '隔离电压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 18 },
+    'isolation voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    // Safety certification (UL/CE/VDE/TÜV).
+    '安全认证': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    'safety certification': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    // Operating temperature.
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    // Package.
+    '封装': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    // Thermal resistance.
+    '热阻': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+    'thermal resistance': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+  },
 };
 
 /**
@@ -1890,6 +2114,7 @@ const skipParams = new Set([
   '原始制造商',  // original manufacturer
   '最小包装',    // minimum order quantity
   '包装',        // packaging format
+  '包装形式',    // packaging form (longer variant — blister/tube/box buyer concern, not parametric)
   '元件生命周期', // component lifecycle
   '零件状态',    // part status (use 状态/Status instead)
   '原产国家',    // country of origin

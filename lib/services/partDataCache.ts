@@ -77,8 +77,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  v11: APPLY_UNIT_PREFIX_TO_NUMERIC enabled — Atlas numericValues now
  *       normalized to base SI (matches Digikey convention), so threshold
  *       and identity comparisons against Atlas-source candidates produce
- *       different scores than cached v10 entries. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v11';
+ *       different scores than cached v10 entries.
+ *  v12: F1 (EMR) / F2 (SSR) Atlas classifier branch + dicts shipped
+ *       (Decision TBD). HONGFA + 9 other relay MFRs re-ingested from
+ *       family_id=null to F1/F2 with full parametric data. Cached recs
+ *       computed against the old (8-key, null-family) atlas_products
+ *       rows are now stale. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v12';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
