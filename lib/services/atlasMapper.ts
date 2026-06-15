@@ -38,6 +38,34 @@ import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
 function stripGaiaPrefix(s: string): string {
   return s.replace(/^gaia[-_]/i, '');
 }
+
+/**
+ * Decode literal byte-escape text (e.g. "(\xe2\x84\x83)" → "(℃)") back to its
+ * UTF-8 character. CT MICRO's source file ships paramNames with the UTF-8
+ * bytes for special chars (°, µ, ℃, Ω, λ) encoded as LITERAL backslash-x
+ * escape-sequence text instead of the actual character. Decoding lets dict
+ * entries written with the proper char match a single time. Decision #235
+ * closeout — BACKLOG follow-up #1.
+ *
+ * Mirrored byte-for-byte in scripts/atlas-ingest.mjs.
+ */
+function decodeLiteralByteEscapes(s: string): string {
+  if (!s.includes('\\x')) return s;
+  return s.replace(/(?:\\x[0-9a-f]{2})+/gi, (run) => {
+    const bytes: number[] = [];
+    const re = /\\x([0-9a-f]{2})/gi;
+    let m;
+    while ((m = re.exec(run)) !== null) bytes.push(parseInt(m[1], 16));
+    try {
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+      // Reject invalid byte runs (U+FFFD replacement) — keep raw text so
+      // an audit can spot the bad source rather than silently substituting.
+      return decoded.includes('�') ? run : decoded;
+    } catch {
+      return run;
+    }
+  });
+}
 import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
@@ -3222,18 +3250,19 @@ export function mapAtlasModel(
   for (const p of model.parameters) {
     if (isMissingValue(p.value)) continue;
 
-    // Normalize: lowercase + trim + collapse internal whitespace runs to single
-    // space. CT MICRO ships paramNames like 'Light Current   (mA)' with multi-
-    // space padding; APSEMI ships trailing spaces ('Circuit '). Both need to
-    // match dict keys written as single-space normalized form (per the F1/F2
-    // additions in Decision #235). The .trim() handled trailing — the regex
-    // handles internal runs and lets a single dict entry cover all whitespace
-    // variants of the same paramName.
-    const lowerName = p.name.toLowerCase().trim().replace(/\s+/g, ' ');
+    // Normalize: decode literal byte-escape text (CT MICRO `(\xe2\x84\x83)` →
+    // `(℃)`), then lowercase + trim + collapse internal whitespace runs.
+    // CT MICRO ships paramNames like 'Light Current   (mA)' with multi-space
+    // padding; APSEMI ships trailing spaces ('Circuit '). Both need to match
+    // dict keys written as single-space normalized form (per the F1/F2
+    // additions in Decision #235). The decode lets the SAME dict entry cover
+    // CT MICRO's broken-encoding variant without separate registrations.
+    const decodedName = decodeLiteralByteEscapes(p.name);
+    const lowerName = decodedName.toLowerCase().trim().replace(/\s+/g, ' ');
 
     // Skip metadata fields — but dictionary entries take priority over skip list
     const hasDictMapping = !!(familyDict?.[lowerName] ?? sharedParamDictionary[lowerName] ?? metadataParamDictionary[lowerName]);
-    if (!hasDictMapping && (skipParams.has(p.name) || skipParams.has(lowerName))) continue;
+    if (!hasDictMapping && (skipParams.has(decodedName) || skipParams.has(lowerName))) continue;
     // Skip status (already extracted above)
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
@@ -3323,7 +3352,7 @@ export function mapAtlasModel(
         seenAttributeIds.add(rawId);
         parameters.push({
           parameterId: rawId,
-          parameterName: stripGaiaPrefix(p.name.trim()),
+          parameterName: stripGaiaPrefix(decodedName.trim()),
           value: p.value.trim(),
           numericValue: extractNumeric(p.value),
           sortOrder: 200 + parameters.length,

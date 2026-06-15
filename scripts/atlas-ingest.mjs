@@ -35,6 +35,25 @@ function humanizeStem(stem) {
   return stem.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Decode literal byte-escape text — CT MICRO ships "(\xe2\x84\x83)" instead
+// of "(℃)". Mirror of decodeLiteralByteEscapes in atlasMapper.ts (Decision
+// #235 closeout, BACKLOG follow-up #1).
+function decodeLiteralByteEscapes(s) {
+  if (!s.includes('\\x')) return s;
+  return s.replace(/(?:\\x[0-9a-f]{2})+/gi, (run) => {
+    const bytes = [];
+    const re = /\\x([0-9a-f]{2})/gi;
+    let m;
+    while ((m = re.exec(run)) !== null) bytes.push(parseInt(m[1], 16));
+    try {
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+      return decoded.includes('�') ? run : decoded;
+    } catch {
+      return run;
+    }
+  });
+}
+
 function parseGaiaParam(name) {
   if (!name.startsWith('gaia-')) return null;
   const rest = name.slice(5);
@@ -2562,13 +2581,16 @@ function mapModel(model, manufacturerName, sourceFile) {
   for (const p of model.parameters) {
     if (isMissing(p.value)) continue;
 
-    // Normalize: lowercase + trim + collapse internal whitespace runs (mirror
-    // of atlasMapper.ts — handles CT MICRO multi-space padding and APSEMI
-    // trailing spaces. Decision #235 follow-up.)
-    const lowerName = p.name.toLowerCase().trim().replace(/\s+/g, ' ');
+    // Normalize: decode literal byte-escape text (CT MICRO), then lowercase +
+    // trim + collapse internal whitespace runs (mirror of atlasMapper.ts —
+    // handles CT MICRO multi-space padding, APSEMI trailing spaces, and
+    // CT MICRO's `\xHH\xHH...` literal encoding for °/µ/℃/Ω/λ.
+    // Decision #235 follow-ups.)
+    const decodedName = decodeLiteralByteEscapes(p.name);
+    const lowerName = decodedName.toLowerCase().trim().replace(/\s+/g, ' ');
     // Dictionary entries take priority over skip list (metadata included)
     const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName]);
-    if (!hasDictMapping && (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName))) continue;
+    if (!hasDictMapping && (SKIP_PARAMS.has(decodedName) || SKIP_PARAMS.has(lowerName))) continue;
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
     // ── Gaia parameter handling ──────────────────────────────
@@ -2587,7 +2609,7 @@ function mapModel(model, manufacturerName, sourceFile) {
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
         }
-        unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
+        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
         continue;
       }
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
@@ -2630,7 +2652,7 @@ function mapModel(model, manufacturerName, sourceFile) {
           ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
         };
       }
-      unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
+      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
       continue;
     }
 

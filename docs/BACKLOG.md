@@ -2361,15 +2361,15 @@ Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
 
 ---
 
-## Atlas dict lookup: non-`\s+` whitespace chars in vendor paramNames (Decision #235 follow-up) (P3)
+## ~~Atlas dict lookup: non-`\s+` whitespace chars in vendor paramNames~~ (RESOLVED — different bug)
 
-**Context.** Decision #235's E1 dict expansion brought 80 E1-touching unmapped paramNames down to 39 via vendor-variant aliases + the `replace(/\s+/g, ' ')` whitespace normalization shipped alongside. The 39 stragglers are dominated by CT MICRO's `TOPR                        (℃)` and `VISO                        (rms)` patterns: 24+ spaces between the symbol and the unit suffix, current dict has `topr (℃)` / `viso (rms)` (single-space) and rescan still doesn't match.
+**Resolution (June 14, 2026).** Diagnosed mid-investigation: the padding IS plain ASCII space (0x20) — `\s+` collapse was already working. The real bug was CT MICRO encoding UTF-8 special chars (°, µ, ℃, Ω, λ) as **literal escape-sequence text** like `(\xe2\x84\x83)` instead of the actual character. 12 paramName variants across 677 occurrences, single MFR.
 
-**Hypothesis.** The padding chars are likely a non-ASCII whitespace variant — possibly NBSP (U+00A0), figure space (U+2007), or some vendor-specific char that JavaScript's `\s` doesn't match in `String.prototype.replace`. The normalization `.toLowerCase().trim().replace(/\s+/g, ' ')` at [lib/services/atlasMapper.ts:3022](../lib/services/atlasMapper.ts) and the mirror at [scripts/atlas-ingest.mjs:2440](../scripts/atlas-ingest.mjs) both rely on `\s+`.
+**Fix.** New `decodeLiteralByteEscapes()` helper in `lib/services/atlasMapper.ts` (+ mirror in `scripts/atlas-ingest.mjs`) finds runs of `\xHH` literal text and decodes the byte sequence as UTF-8. Applied in the dict-lookup normalization step so dict entries written with the proper char match the broken source form. Invalid UTF-8 byte runs fall back to keeping the raw text (so an audit can spot the bad source instead of silently substituting U+FFFD).
 
-**Fix.** Read one CT MICRO product's `parameters` JSONB raw bytes for `TOPR` to confirm the padding char. Likely options: extend the normalization to also collapse a broader Unicode whitespace class (e.g. `/[\s  -   　]+/g`) — `\s` already covers most of those per spec but real-world JS engines have historically been inconsistent. Alternative: add a single explicit `replace(/ /g, ' ')` pre-pass before the `\s+` collapse.
+**Why this unblocks Item 2 (L2 LEDs).** CT MICRO is an LED MFR. Without the decoder, the L2 LEDs dict would need duplicate entries — one for the proper char form (`'viewing angle(°)'`) and one for the literal-escape form. With the decoder, a single dict entry covers both. Sets up Item 2 as a clean dict-only edit.
 
-**Scope.** ~100 paramNames across 39 E1-touching Triage rows (mostly CT MICRO + JJW). Not blocking, but each affects 50-100 products so collectively non-trivial. ~30 min of work once the actual char is identified.
+**Carry-forward note.** CT MICRO's ~22K existing products still sit in JSONB under the corrupted catalog-fallback keys (e.g. `topr_xe2_x84_x83` instead of `topr` / `operating_temp`). They'll re-key naturally on next CT MICRO re-ingest, which happens as part of Item 2. No standalone backfill needed.
 
 ---
 
