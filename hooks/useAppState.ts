@@ -191,23 +191,6 @@ export function useAppState() {
     toleranceOverridesRef.current = state.tolerances;
   }, [state.tolerances]);
 
-  /** Set or clear a per-attribute tolerance band from the Source Specs panel.
-   *  `percent <= 0` or `null` clears it. State-only — the next replacement
-   *  search picks up the accumulated bands via toleranceOverridesRef. */
-  const handleToleranceChange = useCallback((attributeId: string, percent: number | null) => {
-    setState((prev) => {
-      const next = { ...prev.tolerances };
-      if (percent == null || !(percent > 0)) {
-        if (!(attributeId in next)) return prev; // no-op clear
-        delete next[attributeId];
-      } else {
-        if (next[attributeId] === percent) return prev; // no change
-        next[attributeId] = percent;
-      }
-      return { ...prev, tolerances: next };
-    });
-  }, []);
-
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
     if ((state.phase === 'viewing' || state.phase === 'unsupported') && !loggedRef.current) {
@@ -463,6 +446,42 @@ export function useAppState() {
     },
     [triggerFCEnrichment],
   );
+
+  /** Set or clear a per-attribute tolerance band from the Source Specs panel.
+   *  `percent <= 0` or `null` clears it. When replacements are already on
+   *  screen, silently re-scores them with the new bands (no chat message) so
+   *  the panel reflects the change immediately — reusing the same background
+   *  re-fetch path as deferred parts.io enrichment. The toleranceOverridesRef
+   *  mirror is updated synchronously here (the useEffect mirror lags one render)
+   *  so the immediate re-score reads the new bands, not the stale set. */
+  const handleToleranceChange = useCallback((attributeId: string, percent: number | null) => {
+    const next = { ...toleranceOverridesRef.current };
+    if (percent == null || !(percent > 0)) {
+      if (!(attributeId in next)) return; // no-op clear
+      delete next[attributeId];
+    } else {
+      if (next[attributeId] === percent) return; // no change
+      next[attributeId] = percent;
+    }
+    toleranceOverridesRef.current = next;
+    setState((prev) => ({ ...prev, tolerances: next }));
+
+    // Re-score the visible recommendations with the new bands, if any are shown.
+    const sourceAttrs = sourceAttributesRef.current;
+    const mpn = state.sourcePart?.mpn ?? sourceAttrs?.part.mpn;
+    if (mpn && sourceAttrs && allRecsRef.current.length > 0) {
+      triggerPartsioEnrichment(
+        {
+          mpn,
+          overrides: pendingOverridesRef.current,
+          applicationContext: state.applicationContext ?? undefined,
+          sourceAttributes: sourceAttrs,
+          toleranceOverrides: next,
+        },
+        freshAbort(),
+      );
+    }
+  }, [state.sourcePart, state.applicationContext, triggerPartsioEnrichment, freshAbort]);
 
   /**
    * Show recommendations immediately, then fire the LLM assessment in the background.
