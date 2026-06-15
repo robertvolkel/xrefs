@@ -2358,3 +2358,47 @@ The unified notification pipeline shipped with two v1 producers (feedback reply 
 - The `recognized`/`extras` concept lives only in `AttributesPanel.tsx` (confirmed repo-wide) — no parts-list/column/export fallout. For non-Atlas parts the flag is undefined → no extras → section simply hidden.
 
 Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
+
+---
+
+## Atlas dict lookup: non-`\s+` whitespace chars in vendor paramNames (Decision #235 follow-up) (P3)
+
+**Context.** Decision #235's E1 dict expansion brought 80 E1-touching unmapped paramNames down to 39 via vendor-variant aliases + the `replace(/\s+/g, ' ')` whitespace normalization shipped alongside. The 39 stragglers are dominated by CT MICRO's `TOPR                        (℃)` and `VISO                        (rms)` patterns: 24+ spaces between the symbol and the unit suffix, current dict has `topr (℃)` / `viso (rms)` (single-space) and rescan still doesn't match.
+
+**Hypothesis.** The padding chars are likely a non-ASCII whitespace variant — possibly NBSP (U+00A0), figure space (U+2007), or some vendor-specific char that JavaScript's `\s` doesn't match in `String.prototype.replace`. The normalization `.toLowerCase().trim().replace(/\s+/g, ' ')` at [lib/services/atlasMapper.ts:3022](../lib/services/atlasMapper.ts) and the mirror at [scripts/atlas-ingest.mjs:2440](../scripts/atlas-ingest.mjs) both rely on `\s+`.
+
+**Fix.** Read one CT MICRO product's `parameters` JSONB raw bytes for `TOPR` to confirm the padding char. Likely options: extend the normalization to also collapse a broader Unicode whitespace class (e.g. `/[\s  -   　]+/g`) — `\s` already covers most of those per spec but real-world JS engines have historically been inconsistent. Alternative: add a single explicit `replace(/ /g, ' ')` pre-pass before the `\s+` collapse.
+
+**Scope.** ~100 paramNames across 39 E1-touching Triage rows (mostly CT MICRO + JJW). Not blocking, but each affects 50-100 products so collectively non-trivial. ~30 min of work once the actual char is identified.
+
+---
+
+## Atlas L2 LEDs dict expansion — Sunlord + CT MICRO + Everlight LED products (Decision #235 follow-up) (P3)
+
+**Context.** Decision #235 closed out E1 (optocouplers) dict expansion. The next-highest-volume Atlas family in the Triage queue is L2 LEDs: Sunlord ships 18K+ products with paramNames like `Features` (free-form), `T(mm)`, `L×W (mm)`, `L/Q Test Freq. (MHz)`, `Series`; CT MICRO ships ~150 LED products with `Viewing Angle(°)`, `Color`, `Color Combination`, `Fire`, `Iv (mcd)/lmMin.~ Max.`, `VF(V)Min.~Max.`, `IF(mA)`, `λd(nm)Min.~Max./CIE(X,Y) Typ.`; Everlight LEDs use similar nomenclature. L2 LEDs has a display-only param dict (no logic table — these aren't matched by the recommendation engine), so the gain is purely Specs panel completeness, not match scoring.
+
+**Fix.** Run the same survey pattern used for E1: `_tmp-e1-unmapped-survey.mjs` adapted to filter `dominantFamily=null && dominantCategory='LEDs and Optoelectronics'` (since L2 has `familyId=null`). Author L2 LEDs dict entries in `L2_PARAMS.LEDs` block (atlasMapper.ts + .mjs mirror). Then backfill the LED-heavy MFRs and `--rescan-unmapped-params`.
+
+**Scope.** ~8K LED products affected, maybe ~40 new dict entries. ~1-2 hours of work. Lower urgency than E1 (no scoring impact) but high enough surface count that the Specs panel looks noticeably more complete after.
+
+---
+
+## Atlas C7 digital isolators dict expansion — CHIPANALOG + Yint signal-conditioning ICs (Decision #235 follow-up) (P3)
+
+**Context.** Same pattern, smaller scope. CHIPANALOG (348 products) ships digital isolator + signal-conditioning IC paramNames like `HBM ESD其他引脚 (±KV)`, `总线ESD等级(V)`, `隔离等级(Vrms)`, `浪涌等级 (kVpk)`, `速率(Kbps)`, `逻辑侧工作电压 (V)`, `ESD 性能 HBM/CDM(kV)`, `独立逻辑电源`, `CMTI(kV/μS)`, `集成LDO`, `差分输入电压(mV)`, `非线性度(%)`. Yint ships overlapping isolator terms. Total maybe ~500-700 products.
+
+**Fix.** Survey + author C7 dict entries in `FAMILY_PARAMS.C7` (Interface ICs already has a dict). Many of the ESD / isolation terms overlap with what could go in `SHARED_PARAMS` if a future MFR uses them across families — judgment call when authoring.
+
+**Scope.** ~500 products, ~25 new dict entries. ~45 min. Same shape as E1 expansion but smaller.
+
+---
+
+## Atlas STEIPU "Miscellaneous" + "Wire Splice Connectors" still in `family_id=null` (Decision #235 byproduct) (P4)
+
+**Context.** Decision #235's relay re-ingest correctly classified STEIPU's 196 source-file products: 118 in F1 (Power/Automotive/Signal/Reed Relays), 12 in F2 (SSRs + Contactors), 66 in null. The 66 null rows split: 32 "Miscellaneous" (c1=Hardware, Fasteners — copper bus bars, heat-sink straps), 32 "Wire Splice Connectors" (c1=Connectors, Interconnects — wire terminals), 1 "Battery Management", 1 "Photointerrupters - Slot Type". These are correctly NOT relays — they fell through to the L2 catch-all and landed at `category='ICs'` (Miscellaneous) or `category='Connectors'` (Wire Splice).
+
+**The "ICs" category landing is wrong** for the Miscellaneous group — they're hardware, not ICs. The classifier's `c1.includes('hardware')` catch-all is missing.
+
+**Fix.** Add `if (c1lower.includes('hardware') || c1lower.includes('fasteners')) return { category: 'Hardware', subcategory: c3, familyId: null };` to the L2 catch-all section in `classifyAtlasCategory` (atlasMapper.ts + .mjs mirror). Trivial 2-line fix per file. Affects ~32 STEIPU + likely a sprinkling from other MFRs.
+
+**Scope.** Low — these products aren't scored anyway (`familyId=null`), just routed to a more honest category label. Filed for cleanup completeness, not blocking.

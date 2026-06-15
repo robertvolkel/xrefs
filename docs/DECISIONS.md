@@ -8148,3 +8148,37 @@ Fix: `scripts/_tmp-clear-superseded-unmapped.mjs` identifies applied batches wit
 
 **Lesson — the .mjs `--proceed` path should clear superseded batches' unmappedParams automatically.** Re-ingest IS the supersede signal — there's no scenario where the previous batch's unmappedParams aggregate should still contribute to the queue after a newer batch is applied for the same source_file. Tracked in BACKLOG: add `clearSupersededUnmappedParams(sourceFile)` call inside the `--proceed` path so this doesn't recur. Until that lands, manually re-run `_tmp-clear-superseded-unmapped.mjs --apply` after any batch of re-ingests; idempotent (skips batches whose unmappedParams is already empty).
 
+**Closeout (June 14, 2026) — 7 follow-up commits that finished Items 1 + 2:**
+
+**A. F2 SSR dict expansion + whitespace normalization (commit `2fda2ac`).** The classifier moved 7 non-HONGFA relay MFRs into F1/F2, but my Chinese-focused dicts (seeded from HONGFA's vocabulary) didn't cover APSEMI's English vendor convention or STEIPU/AOTE/KTP's distinct Chinese variants — leaving those products classified-but-degraded with ~0 mapped F2 attributes. Added ~25 F2 entries (APSEMI English: `circuit`, `voltage - input`, `output type`, `operating temperature`, `device package`; PhotoMOS catalog: `fet type`, `rds on`, `vgs(th)`; Chinese: `隔离电压(vrms)`, `触点形式`, `最大切换电流`, `连续负载电流`, `导通时间(ton)`, `截止时间(toff)`, `导通电阻`, `过零功能`) + `rohs code` to metadata dict + `country of origin` to skipParams. Also added internal-whitespace normalization to the dict lookup (`p.name.toLowerCase().trim().replace(/\s+/g, ' ')`) so CT MICRO's multi-space padded paramNames (`Light Current   (mA)`) and APSEMI's trailing-space pattern match dict keys without per-variant entries. Backfilled APSEMI (341 changed), STEIPU (11), AOTE (33), KTP (2), HONGFA (0 — already gold standard).
+
+**B. Stale-batch cleanup (commit `2a414b1`).** Same staleness pattern as A applied to batch reports: today's dict additions made paramNames mapped, but 103 batches' frozen `unmappedParams` still listed them. Generic `_tmp-clear-now-mapped-params.mjs` cleared 185 stale entries across 19+ MFRs (many Chinese MFRs use the same paramNames I added, not just relay ones). Triage queue: 26,329 → 26,294.
+
+**C. Productized cleanup commands (commit `c0481e4`) — closes the "still open" backlog item from above.** Replaced the `_tmp` scripts with first-class ingest commands:
+
+1. **`--proceed` auto-clear (inline)**. After successful `status='applied'` mark, finds every OTHER batch for the same `source_file` and blanket-clears their `report.unmappedParams = []`. Same source_file = same paramName universe; the new batch's report is a strict subset of any older batch's (new dict entries only ever REMOVE entries). Failure is non-fatal — the apply already succeeded, idempotent on next `--proceed`.
+2. **`--rescan-unmapped-params` standalone command**. Walks every applied/pending/discovery batch's report.unmappedParams and drops entries that would now resolve against the active dict (per-family / L2-category / shared / metadata / skipParams) after `loadAndApplyDictOverrides()` merge. Handles the cross-batch dict-additions case where a paramName became mapped via a code change or a Triage Accept in `atlas_dictionary_overrides`, which `--proceed` auto-clear doesn't subsume. Supports `--dry-run`.
+
+First rescan revealed the full backlog: **334 batches across all MFRs had 3,422 stale entries** accumulated over every Triage Accept since the system started. SG-Micro 194→150, Sunlord 92→65, AnBon 64→23, SIMCOM 2163→2124, YFW 1125→1083. Triage queue: 26,294 → 24,969 (–1,325).
+
+**D. E1 optocoupler dict expansion (commit `e54c933`) — Item 1 from the post-session followups.** Survey of Triage queue scoped to `dominantFamily=E1` showed 80 unmapped paramNames affecting 2K+ optocoupler products. Most were vendor-variant forms of paramNames the existing E1 dict already handled — parenthetical-suffix variation, half-letter case in propagation-delay names, Greek μ vs Latin u in CMTI units, or English forms from MFRs using JEDEC nomenclature. Added ~80 new E1 entries: `正向电流(If)` and `forward current (if)` → `if_rated_ma`; `集射极饱和电压(VCE(sat))` → `vce_sat_v`; `电流传输比(CTR)最小值` / `最大值/饱和值` → `ctr_min_pct` / `ctr_max_pct`; `传播延迟 tpHL` / `tpLH` (with space) → `propagation_delay_us`; `cmti(kv/us)` Latin-u variant → `_cmti_kv_us`; power dissipation / data rate / input threshold current catalogs; JJW English (`VISO (Vrms)`, `TOPR (°C)`, `VR_Max (V)`); CT MICRO Static dv/dt variants; light-current / Ic output current variants; many shared opto-LED-side catalogs.
+
+Backfilled 9 opto-heavy MFRs:
+
+| MFR | Products | Changed | % |
+|---|---|---|---|
+| AOTE | 309 | 248 | 80 % |
+| Kinglight | 502 | 237 | 47 % |
+| JJW | 8,287 | 2,251 | 27 % |
+| Yint | 2,546 | 1,154 | 45 % |
+| CT MICRO | 357 | 103 | 29 % |
+| Everlight | 3,559 | 45 | 1 % (mostly LEDs) |
+| KTP | 200 | 27 | 14 % |
+| MP | 269 | 22 | 8 % |
+
+**~4,087 products newly mapped.** Then `--rescan-unmapped-params` cleared 174 more stale entries from 61 batches. E1-touching unmapped paramNames in Triage queue: **80 → 39 (–51 %)**.
+
+**Remaining stragglers filed in BACKLOG**: CT MICRO multi-space `TOPR` pattern (likely non-standard whitespace char — `\s+` collapse doesn't catch it); L2 LEDs dict expansion (Sunlord + CT MICRO + Everlight LED products, ~8K products); C7 digital isolators dict expansion (CHIPANALOG + parts of Yint, ~500 products).
+
+**Final session totals.** 7 commits, ~26,677 + ~4,087 = **~30,764 products' parametric data corrected** (relay misclassification + opto vendor-variant mapping). 519 batches' stale `unmappedParams` cleared (22 + 103 + 334 + 61). Triage queue: surfaces a ~5% smaller and meaningfully more accurate work list. F1/F2/E1 dicts grew by ~190 entries. New atlas-ingest commands prevent the staleness pattern from recurring on future re-ingests or dict additions.
+
