@@ -14,6 +14,7 @@ import {
   OrchestratorMessage,
   hasAnyReplacements,
   getDefaultDisplayedRecs,
+  ToleranceOverrides,
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
@@ -79,6 +80,12 @@ interface AppState {
    *  chat UI can linkify mentions of those MFRs in assistant prose without
    *  the user having to first click anything. Decision #203. */
   chatAtlasMfrs: ReadonlySet<string>;
+  /** Per-attribute tolerance bands the user set from the Source Part Specs
+   *  panel — attributeId → ± percent (e.g. `{ resistance: 5 }`). Loosens the
+   *  matching engine's identity rule for that attribute so candidates within
+   *  the band still match. Session-only: cleared on reset / new part, NOT on
+   *  each search (so a set band persists across re-runs). Decision: tolerance UI. */
+  tolerances: ToleranceOverrides;
 }
 
 const initialState: AppState = {
@@ -104,6 +111,7 @@ const initialState: AppState = {
   currentFilter: null,
   currentFilterLabel: null,
   chatAtlasMfrs: new Set<string>(),
+  tolerances: {},
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -143,6 +151,11 @@ export function useAppState() {
   const pendingIntentQueryRef = useRef<string | null>(null);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
+  // Mirror of state.tolerances so async callbacks (handleFindReplacements and
+  // its deferred parts.io re-fire) read the current per-attribute tolerance
+  // bands without a render-time read. Unlike pendingOverridesRef, this is NOT
+  // cleared after each search — a set band persists for the session.
+  const toleranceOverridesRef = useRef<ToleranceOverrides>({});
   // Track whether context questions have been asked (ref avoids stale closure)
   const contextAskedRef = useRef(false);
   // Track whether the missing-attributes prompt has already been shown this xref cycle
@@ -174,6 +187,26 @@ export function useAppState() {
   useEffect(() => {
     sourceAttributesRef.current = state.sourceAttributes;
   }, [state.sourceAttributes]);
+  useEffect(() => {
+    toleranceOverridesRef.current = state.tolerances;
+  }, [state.tolerances]);
+
+  /** Set or clear a per-attribute tolerance band from the Source Specs panel.
+   *  `percent <= 0` or `null` clears it. State-only — the next replacement
+   *  search picks up the accumulated bands via toleranceOverridesRef. */
+  const handleToleranceChange = useCallback((attributeId: string, percent: number | null) => {
+    setState((prev) => {
+      const next = { ...prev.tolerances };
+      if (percent == null || !(percent > 0)) {
+        if (!(attributeId in next)) return prev; // no-op clear
+        delete next[attributeId];
+      } else {
+        if (next[attributeId] === percent) return prev; // no change
+        next[attributeId] = percent;
+      }
+      return { ...prev, tolerances: next };
+    });
+  }, []);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -398,7 +431,7 @@ export function useAppState() {
    *  enrichment — its L1 cache is warm so the merge is effectively free. */
   const triggerPartsioEnrichment = useCallback(
     (
-      args: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes },
+      args: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes; toleranceOverrides?: ToleranceOverrides },
       signal: AbortSignal,
     ) => {
       getRecommendationsWithOverrides(
@@ -409,6 +442,7 @@ export function useAppState() {
         args.sourceAttributes,
         undefined,
         false /* run parts.io enrichment */,
+        args.toleranceOverrides,
       )
         .then((enrichedRecs) => {
           if (signal.aborted || enrichedRecs.length === 0) return;
@@ -441,7 +475,7 @@ export function useAppState() {
       conversationContext: string,
       signal: AbortSignal,
       opts?: {
-        deferredPartsio?: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes };
+        deferredPartsio?: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes; toleranceOverrides?: ToleranceOverrides };
       },
     ) => {
       // Show recs immediately — panels appear without waiting for LLM. The
@@ -690,10 +724,11 @@ export function useAppState() {
             try {
               const overrides = pendingOverridesRef.current;
               const hasOverrides = Object.keys(overrides).length > 0;
-              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs, undefined, true /* skipPartsioEnrichment — deferred */);
+              const tol = toleranceOverridesRef.current;
+              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs, undefined, true /* skipPartsioEnrichment — deferred */, tol);
               if (signal.aborted) return;
               showRecsAndDeferAssessment(recs, mpn, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal, {
-                deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: autoContext, sourceAttributes: sourceAttrs },
+                deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: autoContext, sourceAttributes: sourceAttrs, toleranceOverrides: tol },
               });
             } catch {
               setStatus('');
@@ -715,6 +750,7 @@ export function useAppState() {
       try {
         const overrides = pendingOverridesRef.current;
         const hasOverrides = Object.keys(overrides).length > 0;
+        const tol = toleranceOverridesRef.current;
         const recs = await getRecommendationsWithOverrides(
           mpn,
           hasOverrides ? overrides : {},
@@ -723,6 +759,7 @@ export function useAppState() {
           sourceAttrs,
           undefined,
           true /* skipPartsioEnrichment — deferred */,
+          tol,
         );
         if (signal.aborted) return;
 
@@ -730,7 +767,7 @@ export function useAppState() {
           ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
           : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
         showRecsAndDeferAssessment(recs, mpn, contextMsg, signal, {
-          deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: effectiveContext ?? undefined, sourceAttributes: sourceAttrs },
+          deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: effectiveContext ?? undefined, sourceAttributes: sourceAttrs, toleranceOverrides: tol },
         });
       } catch {
         setStatus('');
@@ -1119,7 +1156,9 @@ export function useAppState() {
         { text: 'Checking price and availability...', delayMs: 2800 },
         { text: 'Analyzing supply risk...', delayMs: 4500 },
       ]);
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
+      // New part confirmed — drop any tolerance bands set against the previous part.
+      toleranceOverridesRef.current = {};
+      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, tolerances: {} }));
 
       // Tell the LLM the user confirmed
       conversationRef.current.push({
@@ -1249,7 +1288,9 @@ export function useAppState() {
 
   const handleConfirmDeterministic = useCallback(
     async (part: PartSummary) => {
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
+      // New part confirmed — drop any tolerance bands set against the previous part.
+      toleranceOverridesRef.current = {};
+      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, tolerances: {} }));
       await loadAttributesAndRecommendations(part);
     },
     [addMessage, loadAttributesAndRecommendations]
@@ -1655,6 +1696,7 @@ export function useAppState() {
     recsRef.current = [];
     allRecsRef.current = [];
     sourceAttributesRef.current = null;
+    toleranceOverridesRef.current = {};
     setStatus('');
     setState(initialState);
   }, [setStatus]);
@@ -1891,6 +1933,7 @@ export function useAppState() {
     // Infer llmAvailable from conversation evidence
     const llmWasUsed = snapshot.orchestratorMessages.length > 0;
 
+    toleranceOverridesRef.current = {}; // tolerances are session-only, not persisted
     setState({
       conversationId: snapshot.id,
       phase,
@@ -1914,6 +1957,7 @@ export function useAppState() {
       currentFilter: null,
       currentFilterLabel: null,
       chatAtlasMfrs: new Set<string>(),
+      tolerances: {},
     });
   }, []);
 
@@ -1964,6 +2008,7 @@ export function useAppState() {
     handleSkipContext,
     handleMpnClick,
     clearChatFilterSilently,
+    handleToleranceChange,
     setActiveAttributesTab,
     consumeAutoOpenMfr,
     getOrchestratorMessages,

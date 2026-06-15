@@ -1,5 +1,5 @@
 'use client';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import {
   Box,
   Link,
@@ -14,11 +14,16 @@ import {
   Chip,
   Skeleton,
   Stack,
+  Slider,
+  TextField,
+  Collapse,
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
+import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes, RecommendationCategory, XrefRecommendation } from '@/lib/types';
+import { PartAttributes, RecommendationCategory, XrefRecommendation, ToleranceOverrides, MatchingRule, ParametricAttribute } from '@/lib/types';
+import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -40,6 +45,82 @@ interface AttributesPanelProps {
   xrefMfr?: string;
   onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void;
   onSelectXrefMfr?: (mfr: string) => void;
+  /** Per-attribute tolerance bands the user has set (attributeId → ± percent).
+   *  Presence of `onToleranceChange` enables the inline tolerance control on
+   *  eligible (numeric identity) Specs rows — only wired for the source panel. */
+  tolerances?: ToleranceOverrides;
+  onToleranceChange?: (attributeId: string, percent: number | null) => void;
+}
+
+/** Maximum ± band offered by the slider. */
+const TOLERANCE_MAX = 25;
+const TOLERANCE_MARKS = [1, 5, 10, 20].map((v) => ({ value: v, label: `${v}%` }));
+
+/** A Specs row is tolerance-eligible only when the matching engine treats it as
+ *  a numeric `identity` rule — a ±% band is meaningless for categorical identity
+ *  (e.g. package/case), thresholds, hierarchies, or operational rows. We gate on
+ *  numericValue presence so categorical identity values (e.g. "0805") don't get
+ *  a control even though they parse to a number. */
+function isToleranceEligible(param: ParametricAttribute, rule: MatchingRule | undefined): boolean {
+  return !!rule && rule.logicType === 'identity' && typeof param.numericValue === 'number';
+}
+
+/** Inline editor shown beneath an eligible Specs row. Slider + numeric input stay
+ *  in sync via local draft state; commits (slider release / input blur / Enter)
+ *  propagate to the parent. */
+function ToleranceEditor({
+  attributeName,
+  value,
+  onCommit,
+}: {
+  attributeName: string;
+  value: number;
+  onCommit: (percent: number | null) => void;
+}) {
+  // Local draft seeds from the committed value on mount. The editor is keyed by
+  // attributeId in the parent, so switching rows remounts with a fresh draft.
+  const [draft, setDraft] = useState<number>(value);
+  const clamp = (n: number) => Math.max(0, Math.min(TOLERANCE_MAX, n));
+
+  return (
+    <Box sx={{ px: 2, py: 1.25, bgcolor: 'action.hover' }}>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+        Accept candidates within ±{draft}% of the source {attributeName.toLowerCase()} when matching
+      </Typography>
+      <Stack direction="row" alignItems="center" spacing={2}>
+        <Slider
+          size="small"
+          value={draft}
+          min={0}
+          max={TOLERANCE_MAX}
+          step={0.5}
+          marks={TOLERANCE_MARKS}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => `±${v}%`}
+          onChange={(_, v) => setDraft(clamp(v as number))}
+          onChangeCommitted={(_, v) => onCommit(clamp(v as number) > 0 ? clamp(v as number) : null)}
+          sx={{ flex: 1, ml: 1 }}
+        />
+        <TextField
+          size="small"
+          type="number"
+          value={draft}
+          onChange={(e) => setDraft(clamp(parseFloat(e.target.value) || 0))}
+          onBlur={() => onCommit(draft > 0 ? draft : null)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onCommit(draft > 0 ? draft : null); }}
+          slotProps={{ htmlInput: { min: 0, max: TOLERANCE_MAX, step: 0.5, style: { width: 48 } }, input: { endAdornment: <Box component="span" sx={{ fontSize: '0.7rem', color: 'text.secondary', ml: 0.25 }}>%</Box> } }}
+        />
+        <Link
+          component="button"
+          variant="caption"
+          onClick={() => onCommit(null)}
+          sx={{ color: 'text.disabled', textDecoration: 'none', '&:hover': { color: 'text.secondary' } }}
+        >
+          Clear
+        </Link>
+      </Stack>
+    </Box>
+  );
 }
 
 function SkeletonSectionHeader() {
@@ -112,10 +193,23 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, tolerances, onToleranceChange }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
+  // Which Specs row currently has its tolerance editor expanded (attributeId | null).
+  const [expandedTolerance, setExpandedTolerance] = useState<string | null>(null);
+
+  // Resolve the family's matching rules so the Specs table knows which rows are
+  // tolerance-eligible (numeric identity). Logic tables are bundled client-side,
+  // so this needs no fetch. Only meaningful when a tolerance handler is wired.
+  const ruleByAttribute = useMemo(() => {
+    const map = new Map<string, MatchingRule>();
+    if (!attributes || !onToleranceChange) return map;
+    const table = getLogicTableForSubcategory(attributes.part.subcategory, attributes);
+    table?.rules.forEach((r) => map.set(r.attributeId, r));
+    return map;
+  }, [attributes, onToleranceChange]);
 
   // Split Atlas parameters into recognized (in schema) and extras (unrecognized)
   const { recognized, extras } = useMemo(() => {
@@ -241,29 +335,61 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                       </TableRow>
                     ))
                   : <>
-                      {recognized.map((param) => (
-                        <TableRow key={param.parameterId} hover sx={{ height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT } }}>
+                      {recognized.map((param) => {
+                        const rule = ruleByAttribute.get(param.parameterId);
+                        const eligible = !!onToleranceChange && isToleranceEligible(param, rule);
+                        const setBand = tolerances?.[param.parameterId];
+                        const isOpen = expandedTolerance === param.parameterId;
+                        return (
+                        <Fragment key={param.parameterId}>
+                        <TableRow
+                          hover
+                          onClick={eligible ? () => setExpandedTolerance(isOpen ? null : param.parameterId) : undefined}
+                          sx={{
+                            height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT },
+                            ...(eligible && { cursor: 'pointer' }),
+                            ...(isOpen && { bgcolor: 'action.hover' }),
+                          }}
+                        >
                           <TableCell
                             sx={{
                               color: 'text.secondary',
                               fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
                               borderColor: 'divider',
+                              ...(isOpen && { borderBottom: 'none' }),
                               width: '50%',
                               py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                             }}
                           >
-                            {param.parameterName}
+                            <Stack direction="row" alignItems="center" spacing={0.5}>
+                              <Box component="span">{param.parameterName}</Box>
+                              {eligible && (
+                                <Tooltip title="Set an acceptable tolerance range for matching" arrow>
+                                  <TuneOutlinedIcon sx={{ fontSize: 13, color: isOpen || setBand != null ? 'primary.main' : 'text.disabled' }} />
+                                </Tooltip>
+                              )}
+                            </Stack>
                           </TableCell>
                           <TableCell
                             sx={{
                               fontFamily: 'monospace',
                               fontSize: { xs: ROW_FONT_SIZE_MOBILE, md: ROW_FONT_SIZE },
                               borderColor: 'divider',
+                              ...(isOpen && { borderBottom: 'none' }),
                               py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                             }}
                           >
                             <Stack direction="row" alignItems="center" spacing={0.75}>
                               <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{param.value}</Box>
+                              {setBand != null && (
+                                <Chip
+                                  label={`±${setBand}%`}
+                                  size="small"
+                                  color="primary"
+                                  variant="outlined"
+                                  sx={{ height: 16, fontSize: '0.6rem', '& .MuiChip-label': { px: 0.6 } }}
+                                />
+                              )}
                               {param.source && (
                                 <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', border: '1px solid', borderColor: 'text.disabled', fontSize: '0.5rem', color: 'text.disabled', fontWeight: 600, fontFamily: 'sans-serif', flexShrink: 0 }}>
                                   {param.source === 'digikey' ? 'D' : param.source === 'partsio' ? 'P' : 'A'}
@@ -272,7 +398,25 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                             </Stack>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        {/* Tolerance editor — expands directly beneath the selected
+                            attribute. Keyed by attributeId via the Fragment so each
+                            row's editor seeds a fresh draft from its committed band. */}
+                        {isOpen && eligible && onToleranceChange && (
+                          <TableRow>
+                            <TableCell colSpan={2} sx={{ p: 0, borderColor: 'divider' }}>
+                              <Collapse in timeout="auto" unmountOnExit>
+                                <ToleranceEditor
+                                  attributeName={param.parameterName}
+                                  value={setBand ?? 0}
+                                  onCommit={(percent) => onToleranceChange(param.parameterId, percent)}
+                                />
+                              </Collapse>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        </Fragment>
+                        );
+                      })}
                       {/* Extra unrecognized attributes toggle */}
                       {extras.length > 0 && (
                         <TableRow>

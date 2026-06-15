@@ -792,6 +792,16 @@ export interface LogicTable {
   rules: MatchingRule[];
 }
 
+/**
+ * Per-search, per-attribute tolerance bands set by the user from the Source
+ * Part Specs panel. Maps an attributeId to a ± percentage that loosens the
+ * matching engine's `identity` rule for that attribute (e.g. `{ resistance: 5 }`
+ * accepts a 9.5–10.5 kΩ candidate for a 10 kΩ source). Applied as a raise-only
+ * `tolerancePercent` on identity rules — see `applyTolerancesToLogicTable`.
+ * Session-only; not persisted.
+ */
+export type ToleranceOverrides = Record<string, number>;
+
 /** Result of evaluating a single rule */
 export type RuleResult = 'pass' | 'fail' | 'upgrade' | 'review' | 'info';
 

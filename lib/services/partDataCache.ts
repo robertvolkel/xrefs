@@ -82,8 +82,12 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       (Decision TBD). HONGFA + 9 other relay MFRs re-ingested from
  *       family_id=null to F1/F2 with full parametric data. Cached recs
  *       computed against the old (8-key, null-family) atlas_products
- *       rows are now stale. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v12';
+ *       rows are now stale.
+ *  v13: Per-attribute tolerance bands (Source Specs panel) added to the
+ *       scoring pipeline (applyTolerancesToLogicTable) and to the recs
+ *       cache variant. Scoring output for no-tolerance requests is
+ *       unchanged, but bump as cheap insurance for the pipeline change. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v13';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

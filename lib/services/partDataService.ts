@@ -7,7 +7,7 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, ToleranceOverrides } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
@@ -26,6 +26,7 @@ import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
+import { applyTolerancesToLogicTable } from './toleranceModifier';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
@@ -276,6 +277,7 @@ function buildRecommendationsVariant(
   userPreferences: UserPreferences | undefined,
   options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
   replacementPriorities: ReplacementPriorities | undefined,
+  toleranceOverrides: ToleranceOverrides | undefined,
 ): string {
   const sortedPreferred = preferredManufacturers ? [...preferredManufacturers].sort() : undefined;
   // Scoring inputs only — `hideZeroStock` is a display-time filter and is intentionally
@@ -290,6 +292,9 @@ function buildRecommendationsVariant(
     pref: sortedPreferred ?? null,
     userPrefs: userPreferences ?? null,
     replPri: replPriForHash,
+    // Per-attribute tolerance bands are a scoring input (rescore only, not
+    // candidate fetch), so they belong here but NOT in buildBaseRecsVariant.
+    tol: toleranceOverrides ?? null,
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
@@ -946,10 +951,12 @@ export async function lookupCachedRecommendations(
   userPreferences?: UserPreferences,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
   replacementPriorities?: ReplacementPriorities,
+  toleranceOverrides?: ToleranceOverrides,
 ): Promise<RecommendationResult | null> {
   const variant = buildRecommendationsVariant(
     mpn, attributeOverrides, applicationContext, currency,
     preferredManufacturers, userPreferences, options, replacementPriorities,
+    toleranceOverrides,
   );
   const cached = await getCachedResponse<RecommendationResult>('search', mpn, variant);
   return cached?.data ?? null;
@@ -966,6 +973,7 @@ export async function getRecommendations(
   prefetchedAttributes?: PartAttributes,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean; forceRefresh?: boolean },
   replacementPriorities?: ReplacementPriorities,
+  toleranceOverrides?: ToleranceOverrides,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -988,6 +996,7 @@ export async function getRecommendations(
     userPreferences,
     options,
     replacementPriorities,
+    toleranceOverrides,
   );
   if (!options?.forceRefresh) {
     const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
@@ -1344,12 +1353,18 @@ export async function getRecommendations(
   // Step 2b: Apply admin rule overrides on top of TS base
   const tableWithOverrides = await applyRuleOverrides(logicTable);
 
+  // Step 2b.5: Apply user-supplied per-attribute tolerance bands (Source Specs
+  // panel). Sits after admin overrides (the baseline) and before user/context
+  // effects. Only raises tolerancePercent on identity rules — see
+  // applyTolerancesToLogicTable. No-op when no tolerances were set.
+  const tableWithTolerances = applyTolerancesToLogicTable(tableWithOverrides, toleranceOverrides);
+
   // Step 2c: Apply user-level global effects (compliance defaults, industry escalations)
-  let tableWithUserEffects = tableWithOverrides;
+  let tableWithUserEffects = tableWithTolerances;
   if (userPreferences && Object.keys(userPreferences).length > 0) {
-    const userEffects = resolveUserEffects(userPreferences, tableWithOverrides);
+    const userEffects = resolveUserEffects(userPreferences, tableWithTolerances);
     if (userEffects.length > 0) {
-      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithOverrides, userEffects);
+      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithTolerances, userEffects);
     }
   }
 
