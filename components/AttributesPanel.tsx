@@ -77,48 +77,55 @@ function ToleranceEditor({
   value: number;
   onCommit: (percent: number | null) => void;
 }) {
-  // Local draft seeds from the committed value on mount. The editor is keyed by
-  // attributeId in the parent, so switching rows remounts with a fresh draft.
+  // Local draft seeds from the committed value on mount. The editor remounts per
+  // expanded attribute (Fragment key in the parent), so the draft seeds fresh.
   const [draft, setDraft] = useState<number>(value);
   const clamp = (n: number) => Math.max(0, Math.min(TOLERANCE_MAX, n));
+  const commit = (n: number) => onCommit(n > 0 ? n : null);
 
+  // Caption + numeric input/Clear on the top line, the slider on its own
+  // full-width line below — so the slider's mark labels (1/5/10/20%) have
+  // vertical room and aren't clipped by the next table row. pb leaves space
+  // for those labels.
   return (
-    <Box sx={{ px: 2, py: 1.25, bgcolor: 'action.hover' }}>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-        Accept candidates within ±{draft}% of the source {attributeName.toLowerCase()} when matching
-      </Typography>
-      <Stack direction="row" alignItems="center" spacing={2}>
-        <Slider
-          size="small"
-          value={draft}
-          min={0}
-          max={TOLERANCE_MAX}
-          step={0.5}
-          marks={TOLERANCE_MARKS}
-          valueLabelDisplay="auto"
-          valueLabelFormat={(v) => `±${v}%`}
-          onChange={(_, v) => setDraft(clamp(v as number))}
-          onChangeCommitted={(_, v) => onCommit(clamp(v as number) > 0 ? clamp(v as number) : null)}
-          sx={{ flex: 1, ml: 1 }}
-        />
-        <TextField
-          size="small"
-          type="number"
-          value={draft}
-          onChange={(e) => setDraft(clamp(parseFloat(e.target.value) || 0))}
-          onBlur={() => onCommit(draft > 0 ? draft : null)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onCommit(draft > 0 ? draft : null); }}
-          slotProps={{ htmlInput: { min: 0, max: TOLERANCE_MAX, step: 0.5, style: { width: 48 } }, input: { endAdornment: <Box component="span" sx={{ fontSize: '0.7rem', color: 'text.secondary', ml: 0.25 }}>%</Box> } }}
-        />
-        <Link
-          component="button"
-          variant="caption"
-          onClick={() => onCommit(null)}
-          sx={{ color: 'text.disabled', textDecoration: 'none', '&:hover': { color: 'text.secondary' } }}
-        >
-          Clear
-        </Link>
+    <Box sx={{ px: 2, pt: 1.25, pb: 2.5, bgcolor: 'action.hover' }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5} sx={{ mb: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0 }}>
+          Accept candidates within ±{draft}% of the source {attributeName.toLowerCase()} when matching
+        </Typography>
+        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flexShrink: 0 }}>
+          <TextField
+            size="small"
+            type="number"
+            value={draft}
+            onChange={(e) => setDraft(clamp(parseFloat(e.target.value) || 0))}
+            onBlur={() => commit(draft)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(draft); }}
+            slotProps={{ htmlInput: { min: 0, max: TOLERANCE_MAX, step: 0.5, style: { width: 44 } }, input: { endAdornment: <Box component="span" sx={{ fontSize: '0.7rem', color: 'text.secondary', ml: 0.25 }}>%</Box> } }}
+          />
+          <Link
+            component="button"
+            variant="caption"
+            onClick={() => onCommit(null)}
+            sx={{ color: 'text.disabled', textDecoration: 'none', whiteSpace: 'nowrap', '&:hover': { color: 'text.secondary' } }}
+          >
+            Clear
+          </Link>
+        </Stack>
       </Stack>
+      <Slider
+        size="small"
+        value={draft}
+        min={0}
+        max={TOLERANCE_MAX}
+        step={0.5}
+        marks={TOLERANCE_MARKS}
+        valueLabelDisplay="auto"
+        valueLabelFormat={(v) => `±${v}%`}
+        onChange={(_, v) => setDraft(clamp(v as number))}
+        onChangeCommitted={(_, v) => commit(clamp(v as number))}
+        sx={{ display: 'block', mx: 1, width: 'auto' }}
+      />
     </Box>
   );
 }
@@ -344,11 +351,12 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                         <Fragment key={param.parameterId}>
                         <TableRow
                           hover
-                          onClick={eligible ? () => setExpandedTolerance(isOpen ? null : param.parameterId) : undefined}
                           sx={{
                             height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT },
-                            ...(eligible && { cursor: 'pointer' }),
                             ...(isOpen && { bgcolor: 'action.hover' }),
+                            // Reveal the tolerance trigger on row hover (it stays
+                            // visible when a band is set or the editor is open).
+                            '&:hover .tol-trigger': { opacity: 1 },
                           }}
                         >
                           <TableCell
@@ -361,14 +369,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                               py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                             }}
                           >
-                            <Stack direction="row" alignItems="center" spacing={0.5}>
-                              <Box component="span">{param.parameterName}</Box>
-                              {eligible && (
-                                <Tooltip title="Set an acceptable tolerance range for matching" arrow>
-                                  <TuneOutlinedIcon sx={{ fontSize: 13, color: isOpen || setBand != null ? 'primary.main' : 'text.disabled' }} />
-                                </Tooltip>
-                              )}
-                            </Stack>
+                            {param.parameterName}
                           </TableCell>
                           <TableCell
                             sx={{
@@ -390,6 +391,34 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                                   sx={{ height: 16, fontSize: '0.6rem', '& .MuiChip-label': { px: 0.6 } }}
                                 />
                               )}
+                              {/* Tolerance trigger — hover-revealed, sits to the LEFT of the
+                                  D/P/A source badge. Click opens the inline editor. Stays
+                                  visible (opacity 1) when a band is set or the editor is open. */}
+                              {eligible && (
+                                <Tooltip title="Set an acceptable tolerance range for matching" arrow>
+                                  <Box
+                                    component="span"
+                                    className="tol-trigger"
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={`Set tolerance for ${param.parameterName}`}
+                                    onClick={(e) => { e.stopPropagation(); setExpandedTolerance(isOpen ? null : param.parameterId); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedTolerance(isOpen ? null : param.parameterId); } }}
+                                    sx={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      cursor: 'pointer',
+                                      flexShrink: 0,
+                                      opacity: isOpen || setBand != null ? 1 : 0,
+                                      transition: 'opacity 0.12s ease',
+                                      color: isOpen || setBand != null ? 'primary.main' : 'text.disabled',
+                                      '&:hover': { color: 'primary.main' },
+                                    }}
+                                  >
+                                    <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                                  </Box>
+                                </Tooltip>
+                              )}
                               {param.source && (
                                 <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', border: '1px solid', borderColor: 'text.disabled', fontSize: '0.5rem', color: 'text.disabled', fontWeight: 600, fontFamily: 'sans-serif', flexShrink: 0 }}>
                                   {param.source === 'digikey' ? 'D' : param.source === 'partsio' ? 'P' : 'A'}
@@ -401,7 +430,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                         {/* Tolerance editor — expands directly beneath the selected
                             attribute. Keyed by attributeId via the Fragment so each
                             row's editor seeds a fresh draft from its committed band. */}
-                        {isOpen && eligible && onToleranceChange && (
+                        {isOpen && eligible && (
                           <TableRow>
                             <TableCell colSpan={2} sx={{ p: 0, borderColor: 'divider' }}>
                               <Collapse in timeout="auto" unmountOnExit>
