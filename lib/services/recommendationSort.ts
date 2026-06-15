@@ -1,4 +1,4 @@
-import { ApplicationContext, XrefRecommendation, deriveRecommendationBucket } from '@/lib/types';
+import { ApplicationContext, XrefRecommendation, deriveRecommendationBucket, countRealMismatches } from '@/lib/types';
 import { contextExpectedDomains } from './qualificationDomain';
 
 /** Logic-bucket recs within this match % band are considered parametrically equivalent,
@@ -6,8 +6,15 @@ import { contextExpectedDomains } from './qualificationDomain';
 const MATCH_PERCENT_TIE_BAND = 2;
 
 /**
- * Display-priority sort for recommendations: Accuris Certified → MFR Certified → Logic Driven,
- * then pin-to-pin > functional within category.
+ * Display-priority sort for recommendations. **Primary key: fewest real mismatches
+ * first** (`countRealMismatches` — fail rules where the replacement has a value that
+ * disagrees; missing-data fails don't count). A clean logic match therefore outranks
+ * a high-fail Accuris/MFR certified cross — the user-chosen "least fails first" policy.
+ * Certified status no longer floats high-fail crosses to the top; it's only a tiebreak
+ * among candidates with the same real-mismatch count.
+ *
+ * Tiebreaks (within equal real-mismatch count): Accuris Certified → MFR Certified →
+ * Logic Driven, then pin-to-pin > functional within category.
  *
  * Qualification-domain tiebreak (Decision #155): within each bucket, candidates
  * are ordered `context-matched > unknown > deviation` when the user's context
@@ -53,6 +60,10 @@ export function sortRecommendationsForDisplay(
     return 2; // deviation — known mismatch
   };
   const byCategoryThenScore = [...recommendations].sort((a, b) => {
+    // Primary key: fewest real mismatches first (least-fails-first policy).
+    const failDiff = countRealMismatches(a) - countRealMismatches(b);
+    if (failDiff !== 0) return failDiff;
+
     const catDiff = categoryPriority(a) - categoryPriority(b);
     if (catDiff !== 0) return catDiff;
     const mfrDiff = mfrEqRank(a) - mfrEqRank(b);

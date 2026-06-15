@@ -56,13 +56,42 @@ interface AttributesPanelProps {
 const TOLERANCE_MAX = 25;
 const TOLERANCE_MARKS = [1, 5, 10, 20].map((v) => ({ value: v, label: `${v}%` }));
 
+/** Identity attributeIds representing a *continuous* physical quantity, where a
+ *  ±% acceptance band is engineering-meaningful. This is an explicit allowlist
+ *  (MVP scope): many `identity` rules are categorical (package_case,
+ *  mounting_style, polarity, …) or discrete counts (resolution_bits, gate_count)
+ *  for which a tolerance band is nonsense — and nothing in the rule/attribute
+ *  data reliably distinguishes them (`numericValue`/`unit` are polluted by the
+ *  parser, e.g. "0805 (2012 Metric)" → numericValue 2012, unit "Metric"). Gating
+ *  on this set is the only robust way to keep the control off those rows. Extend
+ *  as new continuous numeric identity rules warrant a tolerance band. */
+const TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
+  // Passives — continuous values
+  'resistance', 'resistance_r25',
+  'capacitance', 'load_capacitance_pf',
+  'inductance', 'impedance_100mhz',
+  'varistor_voltage',
+  // Frequency control
+  'fsw', 'nominal_frequency_hz', 'output_frequency_hz',
+  // Discrete-semiconductor continuous values
+  'vz', 'vrwm', 'vbr', 'izt', 'trip_current', 'hold_current',
+  // ICs — continuous values
+  'output_voltage', 'input_logic_threshold',
+]);
+
 /** A Specs row is tolerance-eligible only when the matching engine treats it as
- *  a numeric `identity` rule — a ±% band is meaningless for categorical identity
- *  (e.g. package/case), thresholds, hierarchies, or operational rows. We gate on
- *  numericValue presence so categorical identity values (e.g. "0805") don't get
- *  a control even though they parse to a number. */
+ *  an `identity` rule AND the attribute is a continuous numeric quantity on the
+ *  allowlist — a ±% band is meaningless for categorical identity (e.g.
+ *  package/case), discrete counts, thresholds, hierarchies, or operational rows.
+ *  numericValue presence is required too, so a row with no parsed value is
+ *  skipped. */
 function isToleranceEligible(param: ParametricAttribute, rule: MatchingRule | undefined): boolean {
-  return !!rule && rule.logicType === 'identity' && typeof param.numericValue === 'number';
+  return (
+    !!rule &&
+    rule.logicType === 'identity' &&
+    typeof param.numericValue === 'number' &&
+    TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)
+  );
 }
 
 /** Inline editor shown beneath an eligible Specs row. Slider + numeric input stay

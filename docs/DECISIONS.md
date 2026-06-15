@@ -8182,3 +8182,38 @@ Backfilled 9 opto-heavy MFRs:
 
 **Final session totals.** 7 commits, ~26,677 + ~4,087 = **~30,764 products' parametric data corrected** (relay misclassification + opto vendor-variant mapping). 519 batches' stale `unmappedParams` cleared (22 + 103 + 334 + 61). Triage queue: surfaces a ~5% smaller and meaningfully more accurate work list. F1/F2/E1 dicts grew by ~190 entries. New atlas-ingest commands prevent the staleness pattern from recurring on future re-ingests or dict additions.
 
+
+## Decision #236 — Recommendation sort: least-fails-first (real mismatches as primary key) (June 15, 2026)
+
+**Symptom.** User observed the single-part Replacements list was non-monotonic in fail count: a few cards with many fails at the top, then clean (no-fail) cards below, then fails increasing again. The "right behavior" per the product owner: least fails first.
+
+**Cause.** `sortRecommendationsForDisplay()` in [lib/services/recommendationSort.ts](../lib/services/recommendationSort.ts) bucketed **Accuris Certified → MFR Certified → Logic Driven** as the *primary* key (Decisions #127/#133/#143), with match %/composite score only as within-bucket tiebreaks. So the certified bucket (whose cards in this case all carried "3 failed") floated to the top regardless of fails, the Logic bucket began at highest match % (fewest fails), then fails rose as match % fell. The non-monotonic pattern was the bucket boundary.
+
+**Decision (user-chosen, via two-question prompt).** *Fails win globally*, using *real mismatches*:
+- Primary sort key is now `countRealMismatches(rec)` ascending — fail rules where the replacement has a value that disagrees; missing-data fails (`replacementValue === 'N/A'`) don't count (same metric the `hideHighFails` filter already uses, [lib/types.ts:231](../lib/types.ts#L231)).
+- The former bucket order (Accuris → MFR → Logic), mfr-equivalence rank, qualification-domain rank, and match %/composite score are all **demoted to tiebreaks** among candidates with the same real-mismatch count.
+- A clean logic match therefore outranks a high-fail Accuris/MFR certified cross. Certified status no longer floats high-fail crosses to the top; it only breaks ties.
+
+**Scope / side effects.**
+- The sort is shared server-side ([partDataService.ts:1606](../lib/services/partDataService.ts#L1606), before cache write) and client-side ([RecommendationsPanel.tsx:42](../components/RecommendationsPanel.tsx#L42), re-sorted on render). So the change takes effect on display immediately with **no `RECS_CACHE_SCHEMA_VERSION` bump** (sort-order only; shape unchanged; the panel always re-sorts whatever it receives).
+- `row.replacement` (the top BOM-row pick, persisted from `recs[0]` at validation time) now also reflects fewest-fails-first. Already-validated lists keep their prior top pick until re-validated; new/re-validated rows get the new ordering.
+- The **certified-cross bypass is untouched** — high-fail certified crosses still *appear* (the `hideHighFails` filter still exempts them, Decision #133); they just no longer sit at the top.
+- Supersedes the *primary-key* ordering from Decision #143; the bucket order it defined survives as the first tiebreak.
+
+**Files.** `lib/services/recommendationSort.ts` (import `countRealMismatches`; `failDiff` as the first comparator; docstring rewritten), `lib/services/partDataService.ts` (stale comment updated). 2075 tests pass.
+
+## Decision #237 — Tolerance-band eligibility restricted to a continuous-numeric allowlist (June 15, 2026)
+
+**Symptom.** The Source Specs panel offered a ±% tolerance slider on `Package / Case` (value `0805`), where a tolerance band is meaningless. The feature is intended for numeric attributes only.
+
+**Cause.** The eligibility gate `isToleranceEligible()` in [components/AttributesPanel.tsx](../components/AttributesPanel.tsx) only checked `logicType === 'identity'` + `numericValue` present. But `package_case` is `logicType: 'identity'` — identical to `resistance`/`capacitance` ([chipResistors.ts:25](../lib/logicTables/chipResistors.ts#L25)) — so logicType can't distinguish numeric from categorical identity. And the number parser turns `"0805 (2012 Metric)"` into `numericValue: 2012, unit: "Metric"` ([digikeyMapper.ts:362](../lib/services/digikeyMapper.ts#L362)), so neither `numericValue` nor `unit` could gate it out either. Nothing in the rule or attribute data reliably separates a *continuous* numeric (resistance, capacitance, frequency) from a categorical (`package_case`, `mounting_style`, `polarity`) or a discrete count (`resolution_bits`, `gate_count`) — all of which were getting a slider.
+
+**Decision (MVP scope).** Gate on an explicit allowlist `TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS` of continuous physical quantities; require `rule.attributeId` to be on it (in addition to `identity` + `numericValue`). Built by surveying every `identity` rule across the logic tables and keeping the clearly-continuous ones:
+- **Passives:** `resistance`, `resistance_r25`, `capacitance`, `load_capacitance_pf`, `inductance`, `impedance_100mhz`, `varistor_voltage`
+- **Frequency control:** `fsw`, `nominal_frequency_hz`, `output_frequency_hz`
+- **Discrete semis:** `vz`, `vrwm`, `vbr`, `izt`, `trip_current`, `hold_current`
+- **ICs:** `output_voltage`, `input_logic_threshold`
+
+An allowlist (vs denylist) is deliberately conservative: a numeric attribute we forgot to add simply won't get a slider (acceptable, one-line fix to extend), whereas a categorical we forgot to deny would show nonsense. `Package / Case`, `mounting_style`, `polarity`, `resolution_bits`, etc. now correctly show no control; `Resistance` keeps it.
+
+**Files.** `components/AttributesPanel.tsx` (allowlist constant + `isToleranceEligible` extended; docstrings updated). 2075 tests pass.

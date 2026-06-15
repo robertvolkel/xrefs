@@ -1602,7 +1602,8 @@ export async function getRecommendations(
 
     // Apply display-priority sort server-side so `row.replacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
-    // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
+    // sortRecommendationsForDisplay (fewest real mismatches first, then
+    // Accuris → MFR → Logic → composite/score tiebreaks).
     recs = sortRecommendationsForDisplay(recs, undefined, applicationContext);
 
     // Qualification-domain telemetry (Decision #155). Only populated when
