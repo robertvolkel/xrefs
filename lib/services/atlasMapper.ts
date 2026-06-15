@@ -1805,6 +1805,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'esr (ω)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
     '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
     'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    // Slkor abbreviates "Operating Temperature" → "Operating TEMP" in their crystal source files.
+    'operating temp': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
     '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
     'package': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },

@@ -1,7 +1,7 @@
 # Atlas Dict Mirror Audit
 
 **Generated**: 2026-06-15
-**Total drift entries** (one-sided keys across all dicts): **331**
+**Total drift entries** (one-sided keys across all dicts): **301**
 
 Compares dict contents between [lib/services/atlasMapper.ts](../../lib/services/atlasMapper.ts) and [scripts/atlas-ingest.mjs](../../scripts/atlas-ingest.mjs).
 
@@ -293,40 +293,9 @@ No drift.
 - `operating temperature range`
 - `工作温度`
 
-### ⚠ D1 — TS=30, mjs=0 (NOT IN MJS)
+### ✓ D1 — TS=31, mjs=31
 
-**Only in TS (30):**
-
-- `频率`
-- `标称频率`
-- `frequency`
-- `frequency (mhz)`
-- `frequency (khz)`
-- `负载电容`
-- `load capacitance`
-- `load capacitance (pf)`
-- `频率公差`
-- `frequency tolerance`
-- `frequency tolerance (ppm)`
-- `频率稳定度`
-- `frequency stability`
-- `frequency stability (ppm)`
-- `等效串联电阻`
-- `esr`
-- `esr (ohm)`
-- `esr (ω)`
-- `工作温度`
-- `operating temperature`
-- `封装`
-- `package`
-- `安装类型`
-- `mounting type`
-- `老化率`
-- `aging`
-- `驱动电平`
-- `drive level`
-- `并联电容`
-- `shunt capacitance`
+No drift.
 
 ### ⚠ E1 — TS=135, mjs=115
 

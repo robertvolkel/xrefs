@@ -1825,6 +1825,48 @@ const FAMILY_PARAMS = {
     'inl(lsb)': { attributeId: 'inl_lsb', attributeName: 'INL', unit: 'LSB', sortOrder: 10 },
   },
 
+  // ── D1 Crystals ───────────────────────────────────────────
+  // Mirror of atlasMapper.ts D1 block (was missing entirely until June 15, 2026
+  // mirror audit; D1 classifier in mjs:196 correctly routed to family_id='D1'
+  // but had no dict to map paramNames, sending all crystal vocabulary to the
+  // catalog-fallback path under sanitized stems. Affected ~65 products today
+  // — Slkor 64, High Diode 1).
+  D1: {
+    '频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    '标称频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency (mhz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'MHz', sortOrder: 1 },
+    'frequency (khz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'kHz', sortOrder: 1 },
+    '负载电容': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance (pf)': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    '频率公差': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance (ppm)': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    '频率稳定度': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability (ppm)': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    '等效串联电阻': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr (ohm)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    // Ω→ω gotcha: JS toLowerCase() converts Ω to ω
+    'esr (ω)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    // Slkor abbreviates "Operating Temperature" → "Operating TEMP" in their crystal source files.
+    'operating temp': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    'package': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    '老化率': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    'aging': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    '驱动电平': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    'drive level': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    '并联电容': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
+    'shunt capacitance': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
+  },
+
   // ── E1 Optocouplers / Optoisolators ──────────────────────
   // Maps Chinese opto-coupler param vocabulary to canonical attributeIds
   // defined in lib/logicTables/e1Optocouplers.ts. Mirror of atlasMapper.ts —
