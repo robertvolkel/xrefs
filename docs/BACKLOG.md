@@ -2383,13 +2383,30 @@ Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
 
 ---
 
-## Atlas C7 digital isolators dict expansion — CHIPANALOG + Yint signal-conditioning ICs (Decision #235 follow-up) (P3)
+## ~~Atlas C7 digital isolators dict expansion~~ (DONE — CHIPANALOG shipped June 15, 2026)
 
-**Context.** Same pattern, smaller scope. CHIPANALOG (348 products) ships digital isolator + signal-conditioning IC paramNames like `HBM ESD其他引脚 (±KV)`, `总线ESD等级(V)`, `隔离等级(Vrms)`, `浪涌等级 (kVpk)`, `速率(Kbps)`, `逻辑侧工作电压 (V)`, `ESD 性能 HBM/CDM(kV)`, `独立逻辑电源`, `CMTI(kV/μS)`, `集成LDO`, `差分输入电压(mV)`, `非线性度(%)`. Yint ships overlapping isolator terms. Total maybe ~500-700 products.
+**Resolution.** ~40 C7 dict entries added covering CHIPANALOG's digital isolator + RS-485/CAN transceiver vocabulary + cross-MFR Chinese (TDSEMIC/HXYMOS/ElecSuper) + BORN/Union English transceiver fields + SIT bilingual compound paramNames. Re-ingested CHIPANALOG (348 products): 288 updates, +288 new attrs landed in JSONB across 9 new canonical attributeIds (`supply_current_per_channel` × 181, `esd_other_pins` × 36, `esd_hbm_cdm_kv` × 20, `logic_supply_voltage` × 20, `independent_logic_supply` × 19, `integrated_ldo` × 14, etc.). C7-touching Triage rows dropped 471 → 432 (−39); total Triage queue 24,909 → 24,870.
 
-**Fix.** Survey + author C7 dict entries in `FAMILY_PARAMS.C7` (Interface ICs already has a dict). Many of the ESD / isolation terms overlap with what could go in `SHARED_PARAMS` if a future MFR uses them across families — judgment call when authoring.
+**Scope correction.** Original BACKLOG mentioned Yint as a secondary C7 MFR — wrong. Yint's c3 distribution is 100% circuit protection (TVS / Rectifiers / PTC Fuses / Varistors / Zeners / GDTs / NTC / SPDs / Inductors / CM Chokes). Zero digital-isolator products. The ~500-product estimate was anchored on the false Yint assumption.
 
-**Scope.** ~500 products, ~25 new dict entries. ~45 min. Same shape as E1 expansion but smaller.
+**Latent bug surfaced.** Underscore-prefix attributeIds (`_*`) are SKIPPED at ingest ([atlasMapper.ts:3412](../lib/services/atlasMapper.ts) and gaia path at 3353). This means most of the EXISTING C7 dict (25+ `_*` entries) has silently dropped source data on ingest forever — only the four non-underscore canonicals (`data_rate`, `esd_bus_pins`, `package_case`, `operating_temp`) actually wrote to JSONB. My new entries use non-underscore IDs so they store properly. See the dedicated entry below for the holistic fix.
+
+---
+
+## Atlas underscore-prefix attributeIds silently drop ingest data (latent C7+others bug, surfaced June 15, 2026) (P2)
+
+**Context.** `if (mapping.attributeId.startsWith('_')) continue;` at both [atlasMapper.ts:3412](../lib/services/atlasMapper.ts) (standard path) and `:3353` (gaia path) skips any dict mapping whose attributeId starts with `_`. Mirror in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs). The intent was "internal-only, not for matching engine scoring" — but the side effect is that the SOURCE VALUE never gets written to JSONB. The read-time path (`fromParametersJsonb`) populates display NAMES for `_*` IDs in `nameLookup`, suggesting the design expected `_*` data to be in JSONB — but ingest never puts it there. The two halves contradict.
+
+**Scope.** Anywhere a family dict uses `_*` attributeIds. C7 has 25+ such entries (`_isolation_rating`, `_channels`, `_supply_voltage`, `_output_mode`, `_default_output`, `_cmti`, `_surge_rating`, `_integrated_power`, `_supply_voltage_range`, etc.). C5 has some. Probably others. Net effect: those source paramNames either land in the corrupt catalog-fallback path (under stems like `vrms`, `kvpk`) OR drop entirely after the dict matches and the underscore-skip fires. CHIPANALOG's CA-IS3760HW has 17 source params but only 5 land in JSONB — the other 12 are silently lost. Same shape across all C7 MFRs (348 CHIPANALOG products alone losing ~12 attrs each ≈ ~4K attribute occurrences globally).
+
+**Fix.** Three options:
+1. **Drop the skip entirely.** Let `_*` IDs land in JSONB. Matching engine doesn't iterate by attributeId anyway — it iterates logic-table rules — so unscored `_*` attrs don't pollute scoring. Simplest fix, biggest blast radius. Could surface formerly-invisible attrs in the Specs panel for thousands of products.
+2. **Migrate every `_*` dict entry to canonical IDs.** Manual rename across all family dicts + mjs mirror + write a backfill script that migrates existing JSONB. High effort.
+3. **Hybrid (Item 3 followed this):** keep existing `_*` entries as-is, write all NEW entries with non-underscore IDs. Slow rolling fix as families get new dict work.
+
+Option (1) is the right answer for the holistic cleanup. The "internal only" intent is what `METADATA_ATTRIBUTE_IDS` already enforces in the read path (line 3731) for genuinely-internal cases; the underscore-skip is a redundant + harmful belt. Audit needed: confirm no rules-engine path keys off `_*` prefix before the change.
+
+**Verification.** Pick CA-IS3760HW post-fix: source has 17 params, expect ~15+ to land in JSONB instead of 5. Same shape for any CHIPANALOG product. Avg attr count across CHIPANALOG should jump from ~5.8 to ~12+.
 
 ---
 
