@@ -124,7 +124,7 @@ export async function POST(
             type: 'feedback_new',
             title: 'New feedback activity',
             body: preview,
-            link: '/monitoring',
+            link: '/monitoring?section=app-feedback',
             data: { feedbackId, commentId },
             dedupeKey: `feedback_new:${commentId}`,
           }),
