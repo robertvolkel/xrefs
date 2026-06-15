@@ -2999,6 +2999,7 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--list-pending')         { mode = 'list-pending'; continue; }
   if (a === '--regenerate-affected-by') { mode = 'regenerate-affected-by'; modeArg = args[++i]; continue; }
   if (a === '--backfill-translations') { mode = 'backfill-translations'; continue; }
+  if (a === '--rescan-unmapped-params') { mode = 'rescan-unmapped-params'; continue; }
   if (a === '--discover-legacy')      { mode = 'discover-legacy'; continue; }
   if (a === '--force')                { forceFlag = true; continue; }
   if (a === '--mfr')                  { modeArg = args[++i]; continue; }
@@ -3065,6 +3066,16 @@ genuinely-unmapped params into the Triage queue WITHOUT touching atlas_products
 Idempotent: files that already have any batch are skipped unless --force
 re-scans files whose only batch is a discovery batch.
   node scripts/atlas-ingest.mjs --discover-legacy [--dry-run] [--mfr <filter>] [--force] [--concurrency 5]
+
+Rescan unmapped params — walk every applied/pending/discovery batch's frozen
+report.unmappedParams and drop entries that would now resolve against the
+active dict (per-family / L2-category / shared / metadata / skipParams).
+Run after adding dict entries to refresh the Triage queue without re-ingesting
+every MFR. The same staleness pattern that --proceed now auto-clears for
+same-source_file (Decision #235), but for the cross-batch dict-additions case
+where a paramName became mapped via a code change, not via a new apply.
+Idempotent.
+  node scripts/atlas-ingest.mjs --rescan-unmapped-params [--dry-run]
 `);
 }
 
@@ -3923,6 +3934,49 @@ async function runProceed(batchId) {
     .eq('batch_id', batchId);
   if (updErr) throw new Error(`Failed to mark batch applied: ${updErr.message}`);
 
+  // 5b. Clear superseded batches' unmappedParams.
+  // Same source_file = same MFR's source-of-truth. With this batch now
+  // applied, any OTHER batch (any status) for the same source_file holds a
+  // frozen unmappedParams snapshot that the Triage queue RPC
+  // (get_triage_unmapped_aggregate, Decision #180) keeps summing into its
+  // productCount aggregates — surfacing paramNames the new batch may have
+  // already mapped. Blanket clear because the new batch's unmappedParams
+  // (already written to its report) is a strict subset of any older
+  // batch's list (same source file means same paramName universe; new dict
+  // entries only ever REMOVE entries from that universe). Decision #235
+  // follow-up — productized from _tmp-clear-superseded-unmapped.mjs so the
+  // staleness doesn't accumulate on every re-ingest. Failure here is
+  // non-fatal: the apply already succeeded, the cleanup is idempotent on
+  // any future --proceed for the same source_file.
+  try {
+    const { data: superseded, error: sErr } = await supabase
+      .from('atlas_ingest_batches')
+      .select('batch_id, report, status')
+      .eq('source_file', batch.source_file)
+      .neq('batch_id', batchId);
+    if (sErr) {
+      console.error(`  ⚠ Supersede scan failed (non-fatal): ${sErr.message}`);
+    } else if (superseded && superseded.length) {
+      let cleared = 0;
+      for (const s of superseded) {
+        const ups = Array.isArray(s.report?.unmappedParams) ? s.report.unmappedParams : [];
+        if (ups.length === 0) continue;
+        const newReport = { ...(s.report ?? {}), unmappedParams: [] };
+        const { error: upErr } = await supabase
+          .from('atlas_ingest_batches')
+          .update({ report: newReport })
+          .eq('batch_id', s.batch_id);
+        if (upErr) console.error(`  ⚠ Could not clear ${s.batch_id.slice(0, 8)}: ${upErr.message}`);
+        else cleared++;
+      }
+      if (cleared > 0) {
+        console.log(`  ✓ Cleared unmappedParams from ${cleared} superseded batch(es) for ${batch.source_file}`);
+      }
+    }
+  } catch (e) {
+    console.error(`  ⚠ Supersede cleanup failed (non-fatal): ${e.message}`);
+  }
+
   // 6. Cache invalidation:
   //   - When run via API (the typical path): the calling route will fire its
   //     own invalidate*Cache() functions after this script returns. Those
@@ -4453,6 +4507,101 @@ async function runDiscoverLegacy(mfrFilter) {
   }
 }
 
+// ─── runRescanUnmappedParams ──────────────────────────────
+// Walk every applied/pending/discovery batch's report.unmappedParams and
+// drop entries that would now resolve against the active dict (per-family,
+// L2-category, shared, metadata, skipParams). Productizes the manual
+// cleanup pattern from _tmp-clear-now-mapped-params.mjs. Decision #235
+// follow-up — for the dict-additions case where a paramName became mapped
+// via a code change (rather than the supersede case handled inline in
+// --proceed).
+//
+// Same source_file (within-MFR) staleness is already handled by --proceed
+// auto-clear; this command handles ACROSS-MFR staleness where dict additions
+// help paramNames that appear in many MFRs' batch reports. Run after any
+// session that adds dict entries.
+async function runRescanUnmappedParams() {
+  const norm = (s) => (s ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+  // Pre-build the set of all currently-mapped keys. Dicts have already had
+  // their DB overrides merged in by loadAndApplyDictOverrides() at startup,
+  // so this reflects current state including any engineer Triage Accepts.
+  const mapped = new Set();
+  for (const fdict of Object.values(FAMILY_PARAMS ?? {})) {
+    for (const k of Object.keys(fdict)) mapped.add(norm(k));
+  }
+  for (const fdict of Object.values(L2_PARAMS ?? {})) {
+    for (const k of Object.keys(fdict)) mapped.add(norm(k));
+  }
+  for (const k of Object.keys(SHARED_PARAMS ?? {})) mapped.add(norm(k));
+  for (const k of Object.keys(METADATA_PARAMS ?? {})) mapped.add(norm(k));
+  for (const k of (SKIP_PARAMS ?? [])) mapped.add(norm(k));
+  console.log(`Loaded ${mapped.size} unique mapped-key candidates from active dicts + skipParams.`);
+
+  // Paginate every batch (applied + pending + discovery).
+  let from = 0;
+  const all = [];
+  while (true) {
+    const { data, error } = await supabase
+      .from('atlas_ingest_batches')
+      .select('batch_id, manufacturer, status, report')
+      .in('status', ['applied', 'pending', 'discovery'])
+      .range(from, from + 999);
+    if (error) { console.error(error.message); return; }
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  console.log(`Scanned ${all.length} batches.`);
+
+  // Plan per-batch updates.
+  const updates = [];
+  let totalRemoved = 0;
+  for (const b of all) {
+    const ups = Array.isArray(b.report?.unmappedParams) ? b.report.unmappedParams : [];
+    if (!ups.length) continue;
+    const kept = ups.filter((e) => !mapped.has(norm(e?.paramName)));
+    if (kept.length === ups.length) continue;
+    totalRemoved += (ups.length - kept.length);
+    updates.push({ batch: b, kept });
+  }
+  console.log(`${updates.length} batches need updating; ${totalRemoved} stale entries to remove.`);
+
+  if (dryRun) {
+    for (const u of updates.slice(0, 25)) {
+      console.log(`  ${u.batch.batch_id.slice(0, 8)}  ${(u.batch.manufacturer ?? '').padEnd(14)} [${u.batch.status}]  ${u.batch.report.unmappedParams.length} → ${u.kept.length}`);
+    }
+    if (updates.length > 25) console.log(`  ... and ${updates.length - 25} more`);
+    console.log('\n[dry-run] No writes. Re-run without --dry-run to apply.');
+    return;
+  }
+
+  if (updates.length === 0) {
+    console.log('No batches needed updating. Triage queue already reflects current dict state.');
+    return;
+  }
+
+  console.log(`Applying ${updates.length} updates...`);
+  let ok = 0;
+  for (const u of updates) {
+    const newReport = { ...u.batch.report, unmappedParams: u.kept };
+    const { error } = await supabase
+      .from('atlas_ingest_batches')
+      .update({ report: newReport })
+      .eq('batch_id', u.batch.batch_id);
+    if (error) console.error(`  ${u.batch.batch_id.slice(0, 8)}: ${error.message}`);
+    else ok++;
+  }
+  console.log(`Done. ${ok} batches updated.`);
+  try {
+    await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue', 'manufacturers-list']);
+    console.log('Admin caches invalidated (triage-queue, manufacturers-list).');
+  } catch (err) {
+    console.error('Cache invalidation failed (non-fatal):', err.message);
+  }
+}
+
 /** Compare two parameters JSONB blobs, ignoring ingested_at timestamp on
  *  atlas-tagged entries. Returns true if "effectively identical" — same
  *  keys, same source tags, same values. */
@@ -4513,6 +4662,7 @@ function numericValuesEqual(a, b) {
       case 'regenerate-affected-by': await runRegenerateAffectedBy(modeArg); break;
       case 'backfill-translations': await runBackfillTranslations(modeArg); break;
       case 'discover-legacy':        await runDiscoverLegacy(modeArg); break;
+      case 'rescan-unmapped-params': await runRescanUnmappedParams(); break;
       default:
         printUsage();
         process.exit(1);
