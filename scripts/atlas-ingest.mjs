@@ -337,6 +337,7 @@ const METADATA_PARAMS = {
   'rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs status': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs code': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   // REACH — EU chemical registration
   'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
@@ -1945,6 +1946,38 @@ const FAMILY_PARAMS = {
     'package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
     '热阻': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
     'thermal resistance': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+
+    // ── APSEMI English vendor convention (Decision #235 follow-up) ──
+    // MIRROR of atlasMapper.ts F2 — keep in lock-step per Decision #174.
+    'circuit': { attributeId: '_output_config', attributeName: 'Output Configuration', sortOrder: 90 },
+    'voltage - input': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    'output type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    'device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package / case': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'supplier device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+
+    // APSEMI PhotoMOS subset (output MOSFET catalog)
+    'fet type': { attributeId: '_fet_type', attributeName: 'FET Type', sortOrder: 91 },
+    'rds on (max) @ id, vgs': { attributeId: '_rds_on_mohm', attributeName: 'Rds(on) Max', unit: 'mΩ', sortOrder: 92 },
+    'vgs(th) (max) @ id': { attributeId: '_vgs_th_v', attributeName: 'Vgs(th) Max', unit: 'V', sortOrder: 93 },
+    'vgs (max)': { attributeId: '_vgs_max_v', attributeName: 'Vgs Max', unit: 'V', sortOrder: 94 },
+    'power dissipation (max)': { attributeId: '_power_dissipation_w', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 95 },
+    'current - continuous drain (id) @ 25°c': { attributeId: '_id_continuous_a', attributeName: 'Id Continuous @ 25°C', unit: 'A', sortOrder: 96 },
+    'drive voltage (max rds on, min rds on)': { attributeId: '_drive_voltage_v', attributeName: 'Drive Voltage', unit: 'V', sortOrder: 97 },
+
+    // STEIPU / AOTE / KTP Chinese variants
+    '隔离电压(vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '触点形式': { attributeId: '_output_config', attributeName: 'Contact Configuration', sortOrder: 90 },
+    '最大切换电流': { attributeId: 'load_current_max_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 6 },
+    '连续负载电流': { attributeId: 'load_current_max_a', attributeName: 'Continuous Load Current', unit: 'A', sortOrder: 6 },
+    '导通时间(ton)': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间(toff)': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    '导通电阻': { attributeId: '_on_resistance_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 98 },
+    '过零功能': { attributeId: 'firing_mode', attributeName: 'Zero-Cross Function', sortOrder: 2 },
+    '输入电压': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    '输入类型': { attributeId: 'load_voltage_type', attributeName: 'Input Type', sortOrder: 4 },
+    '工作电压': { attributeId: 'input_voltage_range_v', attributeName: 'Working Voltage', unit: 'V', sortOrder: 9 },
   },
 };
 
@@ -2238,7 +2271,7 @@ const L2_PARAMS = {
 // Parameters to skip (metadata, not parametric)
 const SKIP_PARAMS = new Set([
   'description', '品牌', '原始制造商', '最小包装', '包装', '包装形式', '元件生命周期',
-  '零件状态', '原产国家', '是否无铅', '安装类型', '引脚数', '卷盘尺寸',
+  '零件状态', '原产国家', 'country of origin', '是否无铅', '安装类型', '引脚数', '卷盘尺寸',
   '脚间距', '长x宽/尺寸', '高度', '存储温度', '印字代码', '成分', '认证信息',
   '商品目录', '系列', '系列名称', '等级', '特性', '应用领域', '应用', '封装技术',
   '产品状态', '序号', 'category_name', '描述', 'class', '印字类型', '无卤',
@@ -2437,7 +2470,10 @@ function mapModel(model, manufacturerName, sourceFile) {
   for (const p of model.parameters) {
     if (isMissing(p.value)) continue;
 
-    const lowerName = p.name.toLowerCase().trim();
+    // Normalize: lowercase + trim + collapse internal whitespace runs (mirror
+    // of atlasMapper.ts — handles CT MICRO multi-space padding and APSEMI
+    // trailing spaces. Decision #235 follow-up.)
+    const lowerName = p.name.toLowerCase().trim().replace(/\s+/g, ' ');
     // Dictionary entries take priority over skip list (metadata included)
     const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName]);
     if (!hasDictMapping && (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName))) continue;

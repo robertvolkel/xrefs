@@ -2037,6 +2037,53 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     // Thermal resistance.
     '热阻': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
     'thermal resistance': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+
+    // ── APSEMI English vendor convention (Decision #235 follow-up) ──
+    // APSEMI ships SSRs (304 products) with English paramNames; the trailing
+    // spaces in their source ('Circuit ', 'Voltage - Input ') get stripped by
+    // the lookup's .trim() so dict keys match the trimmed form.
+    'circuit': { attributeId: '_output_config', attributeName: 'Output Configuration', sortOrder: 90 },
+    'voltage - input': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    'output type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    'device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package / case': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'supplier device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+
+    // ── APSEMI PhotoMOS subset (37 products with output-MOSFET specs) ──
+    // F2 logic table doesn't score these (they belong to B5), but for PhotoMOS
+    // SSRs which embed a MOSFET, preserving the data as catalog (underscore
+    // prefix) lets the Specs panel show what the vendor publishes.
+    'fet type': { attributeId: '_fet_type', attributeName: 'FET Type', sortOrder: 91 },
+    'rds on (max) @ id, vgs': { attributeId: '_rds_on_mohm', attributeName: 'Rds(on) Max', unit: 'mΩ', sortOrder: 92 },
+    'vgs(th) (max) @ id': { attributeId: '_vgs_th_v', attributeName: 'Vgs(th) Max', unit: 'V', sortOrder: 93 },
+    'vgs (max)': { attributeId: '_vgs_max_v', attributeName: 'Vgs Max', unit: 'V', sortOrder: 94 },
+    'power dissipation (max)': { attributeId: '_power_dissipation_w', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 95 },
+    'current - continuous drain (id) @ 25°c': { attributeId: '_id_continuous_a', attributeName: 'Id Continuous @ 25°C', unit: 'A', sortOrder: 96 },
+    'drive voltage (max rds on, min rds on)': { attributeId: '_drive_voltage_v', attributeName: 'Drive Voltage', unit: 'V', sortOrder: 97 },
+
+    // ── STEIPU / AOTE / KTP Chinese variants ──
+    // Variant of 隔离电压 with explicit unit suffix used by several SSR/opto
+    // MFRs. Both forms map to the same canonical.
+    '隔离电压(vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    // 触点形式 in SSR scope ≠ relay contact-form. SSRs don't have mechanical
+    // contacts but vendors borrow the term to describe output config (SPST-NO
+    // = single output, normally-open behavior). Catalog-only here.
+    '触点形式': { attributeId: '_output_config', attributeName: 'Contact Configuration', sortOrder: 90 },
+    // SSR-side switching ratings
+    '最大切换电流': { attributeId: 'load_current_max_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 6 },
+    '连续负载电流': { attributeId: 'load_current_max_a', attributeName: 'Continuous Load Current', unit: 'A', sortOrder: 6 },
+    '导通时间(ton)': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间(toff)': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    '导通电阻': { attributeId: '_on_resistance_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 98 },
+    // 过零功能 = zero-cross function (yes/no). Maps to firing_mode whose values
+    // are zero-crossing / random — semantically the same discriminator.
+    '过零功能': { attributeId: 'firing_mode', attributeName: 'Zero-Cross Function', sortOrder: 2 },
+    // Input variants
+    '输入电压': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    '输入类型': { attributeId: 'load_voltage_type', attributeName: 'Input Type', sortOrder: 4 },
+    // Working voltage for SSR control side
+    '工作电压': { attributeId: 'input_voltage_range_v', attributeName: 'Working Voltage', unit: 'V', sortOrder: 9 },
   },
 };
 
@@ -2077,6 +2124,7 @@ const metadataParamDictionary: Record<string, AtlasParamMapping> = {
   'rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs status': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs code': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   // REACH — EU chemical registration
   'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
@@ -2118,6 +2166,7 @@ const skipParams = new Set([
   '元件生命周期', // component lifecycle
   '零件状态',    // part status (use 状态/Status instead)
   '原产国家',    // country of origin
+  'country of origin',    // English variant (APSEMI)
   '是否无铅',    // lead-free
   '安装类型',    // mounting type
   '引脚数',      // pin count
@@ -3019,7 +3068,14 @@ export function mapAtlasModel(
   for (const p of model.parameters) {
     if (isMissingValue(p.value)) continue;
 
-    const lowerName = p.name.toLowerCase().trim();
+    // Normalize: lowercase + trim + collapse internal whitespace runs to single
+    // space. CT MICRO ships paramNames like 'Light Current   (mA)' with multi-
+    // space padding; APSEMI ships trailing spaces ('Circuit '). Both need to
+    // match dict keys written as single-space normalized form (per the F1/F2
+    // additions in Decision #235). The .trim() handled trailing — the regex
+    // handles internal runs and lets a single dict entry cover all whitespace
+    // variants of the same paramName.
+    const lowerName = p.name.toLowerCase().trim().replace(/\s+/g, ' ');
 
     // Skip metadata fields — but dictionary entries take priority over skip list
     const hasDictMapping = !!(familyDict?.[lowerName] ?? sharedParamDictionary[lowerName] ?? metadataParamDictionary[lowerName]);
