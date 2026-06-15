@@ -2894,6 +2894,60 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     // in atlasMapper.ts.
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
     'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    // ── Decision #235 follow-up Item 2 — CT MICRO + Refond + Everlight LED vocabulary ──
+    // CONVENTION: all entries use non-underscore IDs so values land in JSONB
+    // (see C7 Item 3 lessons learned — `_*` prefix silently skips ingest).
+    // CT MICRO ships paramNames as `Field(unit)Min.~Max.` — Item 1 decoder
+    // handles the literal-escape forms (`\xc2\xb0` → `°` etc.) before lookup.
+    // CT MICRO LED-indicator variants
+    'viewing angle(°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'viewing angle (°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'topr(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'topr (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'vf(v)min.~max.': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'iv (mcd)/lmmin.~ max.': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'λd(nm)min.~max./cie(x,y) typ.': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'size l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    'color combination': { attributeId: 'color_combination', attributeName: 'Color Combination', sortOrder: 22 },
+    'fire': { attributeId: 'mounting_orientation', attributeName: 'Mounting Orientation', sortOrder: 23 },
+    // Refond LED variants — unit-suffixed forms not covered by existing entries
+    'power': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'po(w)': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'ta @25℃(typ.) if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'ta @25℃(typ.) vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'max current (ma)': { attributeId: 'max_current', attributeName: 'Max Forward Current', unit: 'mA', sortOrder: 24 },
+    '2θ1/2(°)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '50% power angle': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '2 stomach 1/2(captive)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    'if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'test condition(ma)': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'λd(nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'd (nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'iv(mcd)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'iv (rcm)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', sortOrder: 5 },
+    'angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    // Refond Color/CCT/CRI vocabulary
+    'color(k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'correlated color temperature cct (k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'ta @25℃(typ.) cct/wd': { attributeId: 'color_temperature', attributeName: 'Color Temperature (CCT)', unit: 'K', sortOrder: 14 },
+    'color rendering index ra(min)': { attributeId: 'cri_ra', attributeName: 'CRI Ra (min)', sortOrder: 26 },
+    'ta @25℃(typ.) ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ta @25℃(typ.) flux/lm @4000k ra70': { attributeId: 'luminous_flux_lm', attributeName: 'Luminous Flux', unit: 'lm', sortOrder: 27 },
+    // Refond ESD + lens + radiant power
+    'esd withstand voltage ()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'esd withstand voltage()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'φe(mw)': { attributeId: 'radiant_power_mw', attributeName: 'Radiant Power (Φe)', unit: 'mW', sortOrder: 29 },
+    'lens(mm)': { attributeId: 'lens_diameter_mm', attributeName: 'Lens Diameter', unit: 'mm', sortOrder: 30 },
+    // Everlight gaps
+    '辐射强度': { attributeId: 'radiant_intensity', attributeName: 'Radiant Intensity', unit: 'mW/sr', sortOrder: 31 },
+    '耗散功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    '直流反向耐压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage (DC)', unit: 'V', sortOrder: 19 },
+    '正向电流-dc (if)': { attributeId: 'forward_current', attributeName: 'Forward Current (If, DC)', unit: 'mA', sortOrder: 13 },
+    'led极性': { attributeId: 'led_polarity', attributeName: 'LED Polarity', sortOrder: 32 },
+    '数字/字母大小(英寸)': { attributeId: 'character_size_inches', attributeName: 'Character Size', unit: 'in', sortOrder: 33 },
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },

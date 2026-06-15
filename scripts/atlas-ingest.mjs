@@ -2267,38 +2267,52 @@ const L2_PARAMS = {
   },
   'LEDs and Optoelectronics': {
     '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    'color': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
     // Synonym used by Everlight (亿光) for color
     '发光颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    'led color': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
     '波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
     '主波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'wavelength': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
     // Peak wavelength is a distinct canonical from dominant wavelength
     '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 4 },
+    'peak wavelength': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 4 },
     '光强': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '发光强度': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'luminous intensity': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '视角': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'viewing angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
     // Synonym used by Everlight (亿光) for viewing angle
     '发光角度': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'emission angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
     '正向电压': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '正向压降': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'forward voltage': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     // Suffix-tagged variant used by Everlight ('正向电压(VF)' lowercased)
     '正向电压(vf)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '测试电流': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'test current': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
     // Lens color — distinct canonical for the LED's lens material/color
     '透镜颜色': { attributeId: 'lens_color', attributeName: 'Lens Color', sortOrder: 9 },
+    'lens color': { attributeId: 'lens_color', attributeName: 'Lens Color', sortOrder: 9 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     // Forward Current (If) — LED operating current. New canonical (no logic
     // table family models LEDs explicitly; B1's io_avg is for power rectifiers).
     '正向电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'forward current': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Synonym used by Everlight on a small subset of LED products.
     '工作电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Reverse voltage — for Photodiodes (which route to LEDs and Optoelectronics
     // via the 'photodiode' substring rule in the classifier, NOT to Sensors).
     // Photodiodes operate in reverse-bias; this is the breakdown spec.
     '反向电压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
+    'reverse voltage': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
     // Color temperature — relevant for white LEDs (warm/cool white). New canonical.
     '色温': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'color temperature': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
     // Power dissipation — already a canonical (atlasMapper.ts:584). Unit W.
     '功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
     // Lamp base type — physical socket/header (E27, GU10, T1, etc.). New canonical.
@@ -2306,9 +2320,63 @@ const L2_PARAMS = {
     // Diode configuration — array layout, common-anode vs common-cathode.
     // Reuses existing 'configuration' canonical.
     '二极管配置': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 17 },
+    'diode configuration': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 17 },
     // Operating temperature — uses established 'operating_temp' canonical
     // (NOT 'operating_temperature'), consistent with 19+ existing usages.
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    // ── Decision #235 follow-up Item 2 — CT MICRO + Refond + Everlight LED vocabulary ──
+    // Mirror of atlasMapper.ts L2 LEDs block. All non-underscore IDs (catalog-only
+    // attrs land in JSONB; underscore-prefix silently skips per Item 3 lessons).
+    // CT MICRO LED-indicator variants (literal-escape forms decoded by Item 1 helper)
+    'viewing angle(°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'viewing angle (°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'topr(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'topr (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'vf(v)min.~max.': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'iv (mcd)/lmmin.~ max.': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'λd(nm)min.~max./cie(x,y) typ.': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'size l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    'color combination': { attributeId: 'color_combination', attributeName: 'Color Combination', sortOrder: 22 },
+    'fire': { attributeId: 'mounting_orientation', attributeName: 'Mounting Orientation', sortOrder: 23 },
+    // Refond LED variants
+    'power': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'po(w)': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'ta @25℃(typ.) if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'ta @25℃(typ.) vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'max current (ma)': { attributeId: 'max_current', attributeName: 'Max Forward Current', unit: 'mA', sortOrder: 24 },
+    '2θ1/2(°)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '50% power angle': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '2 stomach 1/2(captive)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    'if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'test condition(ma)': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'λd(nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'd (nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'iv(mcd)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'iv (rcm)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', sortOrder: 5 },
+    'angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    // Refond Color/CCT/CRI
+    'color(k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'correlated color temperature cct (k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'ta @25℃(typ.) cct/wd': { attributeId: 'color_temperature', attributeName: 'Color Temperature (CCT)', unit: 'K', sortOrder: 14 },
+    'color rendering index ra(min)': { attributeId: 'cri_ra', attributeName: 'CRI Ra (min)', sortOrder: 26 },
+    'ta @25℃(typ.) ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ta @25℃(typ.) flux/lm @4000k ra70': { attributeId: 'luminous_flux_lm', attributeName: 'Luminous Flux', unit: 'lm', sortOrder: 27 },
+    // Refond ESD + lens + radiant power
+    'esd withstand voltage ()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'esd withstand voltage()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'φe(mw)': { attributeId: 'radiant_power_mw', attributeName: 'Radiant Power (Φe)', unit: 'mW', sortOrder: 29 },
+    'lens(mm)': { attributeId: 'lens_diameter_mm', attributeName: 'Lens Diameter', unit: 'mm', sortOrder: 30 },
+    // Everlight gaps
+    '辐射强度': { attributeId: 'radiant_intensity', attributeName: 'Radiant Intensity', unit: 'mW/sr', sortOrder: 31 },
+    '耗散功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    '直流反向耐压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage (DC)', unit: 'V', sortOrder: 19 },
+    '正向电流-dc (if)': { attributeId: 'forward_current', attributeName: 'Forward Current (If, DC)', unit: 'mA', sortOrder: 13 },
+    'led极性': { attributeId: 'led_polarity', attributeName: 'LED Polarity', sortOrder: 32 },
+    '数字/字母大小(英寸)': { attributeId: 'character_size_inches', attributeName: 'Character Size', unit: 'in', sortOrder: 33 },
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },

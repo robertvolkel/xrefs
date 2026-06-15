@@ -2373,13 +2373,29 @@ Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
 
 ---
 
-## Atlas L2 LEDs dict expansion — Sunlord + CT MICRO + Everlight LED products (Decision #235 follow-up) (P3)
+## ~~Atlas L2 LEDs dict expansion~~ (DONE — Refond + CT MICRO + Everlight shipped June 15, 2026)
 
-**Context.** Decision #235 closed out E1 (optocouplers) dict expansion. The next-highest-volume Atlas family in the Triage queue is L2 LEDs: Sunlord ships 18K+ products with paramNames like `Features` (free-form), `T(mm)`, `L×W (mm)`, `L/Q Test Freq. (MHz)`, `Series`; CT MICRO ships ~150 LED products with `Viewing Angle(°)`, `Color`, `Color Combination`, `Fire`, `Iv (mcd)/lmMin.~ Max.`, `VF(V)Min.~Max.`, `IF(mA)`, `λd(nm)Min.~Max./CIE(X,Y) Typ.`; Everlight LEDs use similar nomenclature. L2 LEDs has a display-only param dict (no logic table — these aren't matched by the recommendation engine), so the gain is purely Specs panel completeness, not match scoring.
+**Resolution.** ~44 new L2 LEDs dict entries covering CT MICRO LED-indicator vocabulary (`Viewing Angle(°)`, `Size L*W*H(mm)`, `Color Combination`, `Fire`, `Iv (mcd)/lmMin.~ Max.`, `VF(V)Min.~Max.`, `λd(nm)Min.~Max./CIE(X,Y) Typ.`, `TOPR (℃)`) + Refond display-LED vocabulary (`Ta @25℃(TYP.) IF(mA)`, `Ta @25℃(TYP.) vf(V)`, `Max current (mA)`, `2θ1/2(°)`, `50% power angle`, `Iv (RCM)`, `Φe(mW)`, `Lens(mm)`, `Ta @25℃(TYP.) Flux/lm @4000K Ra70`, `Color Rendering Index Ra(min)`, etc.) + Everlight Chinese gaps (`辐射强度`, `耗散功率`, `直流反向耐压`, `正向电流-DC (If)`, `LED极性`). Several new canonical attributeIds introduced: `cri_ra`, `color_temperature`, `radiant_power_mw`, `lens_diameter_mm`, `size_lwh_mm`, `viewing_angle_half_power`, `max_current`, `color_combination`, `mounting_orientation`, `radiant_intensity`, `led_polarity`, `character_size_inches`, `luminous_flux_lm`, `esd_hbm_v`.
 
-**Fix.** Run the same survey pattern used for E1: `_tmp-e1-unmapped-survey.mjs` adapted to filter `dominantFamily=null && dominantCategory='LEDs and Optoelectronics'` (since L2 has `familyId=null`). Author L2 LEDs dict entries in `L2_PARAMS.LEDs` block (atlasMapper.ts + .mjs mirror). Then backfill the LED-heavy MFRs and `--rescan-unmapped-params`.
+**Result.** Re-ingested 3 MFRs: Refond (596+3 = 599 product updates, +2155 new attrs), CT MICRO (326 updates, +1263 new attrs), Everlight (no-op — already covered). LED-touching Triage rows dropped 22 → 7 (−68%). Total Triage queue 24,909 → 24,825 (−84). Sample Refond product RF-A3E31-W60E-B1 now ships 10 canonical attrs (`color`, `max_current`, `viewing_angle`, `forward_current`, `forward_voltage`, `power_dissipation`, etc.) versus the prior 4-5.
 
-**Scope.** ~8K LED products affected, maybe ~40 new dict entries. ~1-2 hours of work. Lower urgency than E1 (no scoring impact) but high enough surface count that the Specs panel looks noticeably more complete after.
+**Scope correction.** Original BACKLOG mentioned Sunlord as the highest-volume MFR ("18K+ products"). False — Sunlord ships ZERO LED products; their 16K catalog is inductors / capacitors / filters. The real scope was Refond (789 LED products) + CT MICRO (222 LED) + Everlight (2756 LED) ≈ 3700 LED products. Survey-first decision-making would have caught this before authoring; lesson re-confirmed.
+
+**Latent mjs mirror drift surfaced and fixed.** The mjs L2 LEDs block was missing 16 English-side dict entries that existed in TS (`color`, `forward voltage`, `viewing angle`, `wavelength`, `peak wavelength`, `luminous intensity`, `emission angle`, `test current`, `lens color`, `mounting type`, `forward current`, `reverse voltage`, `color temperature`, `diode configuration`, `operating temperature`, `led color`). Refond's `Color` paramName for 481 products never matched at ingest because of this drift. Fixed inline; future ingests will work correctly. Confirms the Decision #218 pattern — mirror drift is not self-enforcing, and audit-by-grep is the durable check. Other L2 dicts (Switches, RF, Sensors, etc.) likely have similar drift — broader audit recommended but out of scope here.
+
+**Operational note.** When dict additions don't immediately drop stale Triage queue counts: re-run `--rescan-unmapped-params`. The rescan reads the mjs dict at startup, so a dict edit AFTER a rescan won't be reflected until the next rescan. The supersede-clear during `--proceed` also helps drop stale entries from prior batches sharing the same source_file.
+
+---
+
+## Atlas mjs↔TS dict mirror audit — discovered drift in L2 LEDs (Decision #235 follow-up Item 2 surfaced) (P2)
+
+**Context.** While shipping Item 2 (L2 LEDs dict expansion), discovered the mjs L2 LEDs block was missing 16 English-side entries that existed in TS — Refond's `Color` paramName for 481 products silently failed to match at ingest time because of this. Per Decision #218, mirror drift between `atlasMapper.ts` ↔ `scripts/atlas-ingest.mjs` is not self-enforcing — the "mirror of atlasMapper.ts" comments don't prevent edits to one side from being skipped on the other.
+
+**Hypothesis.** The L2 LEDs drift may not be the only one. The mjs file's `L2_PARAMS`, `FAMILY_PARAMS`, `SHARED_PARAMS`, `METADATA_PARAMS`, `SKIP_PARAMS`, dictionaries, classifier branches, and `reclassifyByParameterSignals` rules are all supposed to mirror atlasMapper.ts but each has been edited independently over time.
+
+**Fix.** Write a small diff script that parses BOTH TS dict block + .mjs dict block (per-family / per-L2 category) and reports key-set differences. Run it per dict, surface drifts, reconcile case-by-case (per the Decision #218 lesson: don't pick a canonical side — investigate WHY the drift exists; some are intentional, some aren't). Output: a per-dict drift report committed under `docs/audits/` for future-mirror-discipline reference.
+
+**Scope.** Probably 8-20 dicts to audit, ~30-60 min for the diff script, ~1-2 hours for review and reconciliation. The drift is silently dropping ingest data for unknown product volumes across multiple families; high return for the investigation cost.
 
 ---
 
