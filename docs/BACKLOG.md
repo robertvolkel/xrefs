@@ -2387,15 +2387,33 @@ Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
 
 ---
 
-## Atlas mjs↔TS dict mirror audit — discovered drift in L2 LEDs (Decision #235 follow-up Item 2 surfaced) (P2)
+## Atlas mjs↔TS dict mirror audit — discovery DONE; reconciliation PENDING (Decision #235 follow-up Item 2 surfaced) (P2)
 
-**Context.** While shipping Item 2 (L2 LEDs dict expansion), discovered the mjs L2 LEDs block was missing 16 English-side entries that existed in TS — Refond's `Color` paramName for 481 products silently failed to match at ingest time because of this. Per Decision #218, mirror drift between `atlasMapper.ts` ↔ `scripts/atlas-ingest.mjs` is not self-enforcing — the "mirror of atlasMapper.ts" comments don't prevent edits to one side from being skipped on the other.
+**Audit discovery shipped (June 15, 2026).** New `scripts/atlas-dict-mirror-audit.mjs` parses both files via brace-walking + comment-aware scanning and reports per-dict key-set drift. Full report: [docs/audits/mjs-ts-dict-drift-2026-06-15.md](audits/mjs-ts-dict-drift-2026-06-15.md). Re-run anytime with `node scripts/atlas-dict-mirror-audit.mjs --out docs/audits/mjs-ts-dict-drift-<date>.md`.
 
-**Hypothesis.** The L2 LEDs drift may not be the only one. The mjs file's `L2_PARAMS`, `FAMILY_PARAMS`, `SHARED_PARAMS`, `METADATA_PARAMS`, `SKIP_PARAMS`, dictionaries, classifier branches, and `reclassifyByParameterSignals` rules are all supposed to mirror atlasMapper.ts but each has been edited independently over time.
+**Total drift: 331 one-sided keys across 22 dicts.** Key findings:
 
-**Fix.** Write a small diff script that parses BOTH TS dict block + .mjs dict block (per-family / per-L2 category) and reports key-set differences. Run it per dict, surface drifts, reconcile case-by-case (per the Decision #218 lesson: don't pick a canonical side — investigate WHY the drift exists; some are intentional, some aren't). Output: a per-dict drift report committed under `docs/audits/` for future-mirror-discipline reference.
+- **`SHARED_PARAMS` ✓, `METADATA_PARAMS` ✓, `SKIP_PARAMS` ✓** — all clean.
+- **L3 `FAMILY_PARAMS`** — 11 clean (12 / 52 / 58 / 59 / 60 / 65 / 66 / 67 / 69 / 70 / 71), 11 with drift.
+- **L2 `L2_PARAMS`** — 2 clean (LEDs and Optoelectronics after today's fix + Microcontrollers), 12 with drift; TS systematically richer than mjs across Audio / Battery Products / Connectors / Filters / Memory / Motors and Fans / Power Supplies / Processors / RF and Wireless / Sensors / Switches / Transformers.
 
-**Scope.** Probably 8-20 dicts to audit, ~30-60 min for the diff script, ~1-2 hours for review and reconciliation. The drift is silently dropping ingest data for unknown product volumes across multiple families; high return for the investigation cost.
+**Top severity:**
+1. **`D1` Crystals dict NOT IN mjs at all** (TS=30 entries, mjs=0). Critical — D1 classifier IS in mjs (line 196), so crystal products get correctly classified at `family_id='D1'` but then have NO dict to map their paramNames. All crystal paramNames go to the catalog-fallback path under sanitized stems. Impact today is small (65 products: Slkor 64 + High Diode 1) but grows with every new crystal MFR added.
+2. **`E1` Optocouplers** — mjs has 115 entries, TS has 135 (20 TS-only). Decision #235 closeout shipped 80 new E1 entries; the mjs side may have missed some.
+3. **`B1` / `B3` / `B4` / `B5`** — reverse direction: mjs has MORE entries than TS (64 / 15 / 24 / extra on mjs side). These were ingest-time additions that didn't get back-ported to TS. For READ time (Specs panel display) this means humanized-stem fallback names instead of proper attributeNames.
+4. **`RF and Wireless` L2** — TS=35, mjs=11 (24 TS-only). Likely the next big silent ingest-data-loss case after L2 LEDs.
+5. **Most other L3 ICs (`C4`/`C5`/`C6`/`C7`/`C9`)** — 1-6 entries of drift each, mostly recent edits.
+
+**Reconciliation principle (Decision #218 lesson).** Don't pick a canonical side. Investigate WHY each drift exists. Some are intentional (e.g. ingest-only catalog enrichments that don't need display naming). Some are silent data-loss bugs (L2 LEDs `Color` case). Some are recent dict expansions on one side that just haven't propagated yet. Reconciliation needs per-drift judgment, not a blanket sweep.
+
+**Pending work.**
+- Reconcile per-dict, starting with D1 Crystals (smallest blast radius, easy fix — just port the TS D1 block to mjs).
+- Then L2 RF and Wireless (likely the biggest user-visible win after L2 LEDs).
+- Then E1 Optocouplers (closes out Decision #235 mirror gap).
+- Then case-by-case for the rest. Estimate: ~3-5 hours total reconciliation, can be split across multiple sessions.
+- Re-run audit after each reconciliation. Goal: 0 drift.
+
+**Durable guard.** Audit script can be wired into pre-commit hook (`.husky/pre-commit`) or CI to fail on any drift. Defer until reconciliation phase complete — pre-commit on a 331-entry baseline would block every commit until cleared.
 
 ---
 
