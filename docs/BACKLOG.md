@@ -2453,3 +2453,11 @@ Option (1) is the right answer for the holistic cleanup. The "internal only" int
 **Fix.** Add `if (c1lower.includes('hardware') || c1lower.includes('fasteners')) return { category: 'Hardware', subcategory: c3, familyId: null };` to the L2 catch-all section in `classifyAtlasCategory` (atlasMapper.ts + .mjs mirror). Trivial 2-line fix per file. Affects ~32 STEIPU + likely a sprinkling from other MFRs.
 
 **Scope.** Low — these products aren't scored anyway (`familyId=null`), just routed to a more honest category label. Filed for cleanup completeness, not blocking.
+
+---
+
+## Acceptance criteria — fetch-widening (step 2) + deferred review items (Decision #238)
+
+**Step 2 (the big one).** Per-attribute acceptance criteria (Decision #238) currently relax *scoring* only. For attributes that drive the candidate search keyword (`buildCandidateSearchQuery` in `partDataService.ts` — resistance/capacitance/package/voltage), near-value or alternate-value parts are never *fetched*, so `range` bands and keyword `set` criteria can't surface new candidates. Needs parametric/range queries: Digikey parametric filters + Atlas numeric-range SQL, driven by the `AcceptanceCriteria` shape. P1 to make ±% on resistance actually pull in 9k–11k parts.
+
+**Deferred review findings** (from the Decision #238 review; full detail in [acceptance-criteria-followups.md](acceptance-criteria-followups.md)): (#3) lift acceptance eligibility from the two hardcoded UI allowlists to per-rule logic-table metadata (e.g. `rule.acceptanceKind`); (#6) revisit the `numericValue==='number'` range gate that re-introduces parser dependence; (#8) add an `acceptedValues` clause to `overrideMerger` CLEANUP for defense-in-depth; (#9) scope `candidateValuesByAttribute` to set-eligible params; (#10) cosmetic — rename `TOLERANCE_MAX`/`MARKS`, extract the shared editor shell.
