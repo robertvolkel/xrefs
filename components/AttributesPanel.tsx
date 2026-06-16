@@ -27,7 +27,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
-import { normalize as normalizeMatchValue } from '@/lib/services/matchingEngine';
+import { normalize as normalizeMatchValue, parseBoolean as parseFlagValue } from '@/lib/services/matchingEngine';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -96,7 +96,14 @@ const SET_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
 function getAcceptanceKind(param: ParametricAttribute, rule: MatchingRule | undefined): 'range' | 'set' | null {
   if (!rule) return null;
   if (rule.logicType === 'identity' && typeof param.numericValue === 'number' && RANGE_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'range';
-  if (SET_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'set';
+  if (SET_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) {
+    // A `set` criterion only LOOSENS matching — it flips a failing candidate to pass. For a
+    // boolean flag rule (AEC-Q200/Q101/Q100), candidates only fail when the SOURCE requires
+    // the flag (value 'Yes'). If the source doesn't require it ('No'), the flag rule already
+    // passes every candidate, so accepting values would do nothing — hide the no-op control.
+    if (rule.logicType === 'identity_flag' && !parseFlagValue(param.value)) return null;
+    return 'set';
+  }
   return null;
 }
 

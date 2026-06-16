@@ -46,7 +46,10 @@ function parseMSL(value: string): number | null {
 }
 
 /** Normalize boolean-ish values */
-function parseBoolean(value: string): boolean {
+/** Whether a flag value means "present/required". Exported so the acceptance UI can
+ *  decide identity_flag set-eligibility exactly the way the engine evaluates the flag
+ *  (a set criterion on a flag the source does NOT require is a no-op — see AttributesPanel). */
+export function parseBoolean(value: string): boolean {
   const lower = value.toLowerCase().trim();
   return lower === 'yes' || lower === 'true' || lower === '1' || lower === 'required';
 }
