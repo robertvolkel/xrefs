@@ -859,6 +859,26 @@ function evaluateRule(
   candidateParam: ParametricAttribute | undefined,
   sourceAttrs?: PartAttributes,
 ): RuleEvaluationResult {
+  // User-defined acceptance allowlist (AcceptanceCriterion kind 'set'). If the
+  // user explicitly marked the candidate's value for this attribute as
+  // acceptable, short-circuit to a pass regardless of the rule's normal logic.
+  // Rule-type-agnostic — works for identity / identity_flag / identity_upgrade.
+  if (rule.acceptedValues && rule.acceptedValues.length > 0 && candidateParam) {
+    const cand = normalize(candidateParam.value);
+    if (rule.acceptedValues.some((v) => normalize(v) === cand)) {
+      return {
+        attributeId: rule.attributeId,
+        attributeName: rule.attributeName,
+        sourceValue: sourceParam?.value ?? 'N/A',
+        candidateValue: candidateParam.value,
+        logicType: rule.logicType,
+        result: 'pass',
+        matchStatus: 'compatible',
+        note: `Accepted by user — ${candidateParam.value} marked acceptable for ${rule.attributeName}`,
+      };
+    }
+  }
+
   switch (rule.logicType) {
     case 'identity':
       return evaluateIdentity(rule, sourceParam, candidateParam);

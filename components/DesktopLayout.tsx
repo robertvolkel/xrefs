@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
-import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation, ToleranceOverrides } from '@/lib/types';
+import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion } from '@/lib/types';
 
 export type { AttributesTab };
 import ChatInterface from './ChatInterface';
@@ -165,9 +165,9 @@ export interface DesktopLayoutProps {
   // Atlas-MFR linkification for assistant messages (opens the side profile panel).
   knownAtlasManufacturers?: ReadonlySet<string>;
 
-  /** Per-attribute tolerance bands + setter for the source Specs panel. */
-  tolerances?: ToleranceOverrides;
-  onToleranceChange?: (attributeId: string, percent: number | null) => void;
+  /** Per-attribute acceptance criteria + setter for the source Specs panel. */
+  acceptanceCriteria?: AcceptanceCriteria;
+  onAcceptanceChange?: (attributeId: string, criterion: AcceptanceCriterion | null) => void;
 }
 
 export default function DesktopLayout(props: DesktopLayoutProps) {
@@ -188,7 +188,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     knownMpns, onMpnClick,
     knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
-    tolerances, onToleranceChange,
+    acceptanceCriteria, onAcceptanceChange,
   } = props;
 
   // Tab state was lifted to useAppState (so chat handlers like Best Spot Price
@@ -354,8 +354,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             xrefMfr={xrefMfr}
             onSelectXrefCategory={handleSelectXrefCategory}
             onSelectXrefMfr={handleSelectXrefMfr}
-            tolerances={tolerances}
-            onToleranceChange={onToleranceChange}
+            acceptanceCriteria={acceptanceCriteria}
+            onAcceptanceChange={onAcceptanceChange}
           />
         </Box>
 

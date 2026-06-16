@@ -774,6 +774,14 @@ export interface MatchingRule {
   /** For identity rules: allow ±% tolerance band before failing (e.g., 10 = ±10% for fsw). */
   tolerancePercent?: number;
   /**
+   * Per-search user-accepted candidate values for this attribute (set via the
+   * Source Specs "acceptable values" checklist, an AcceptanceCriterion of kind
+   * 'set'). If a candidate's value for this attribute is in this list, the rule
+   * short-circuits to a pass regardless of its normal logic — see evaluateRule.
+   * Rule-type-agnostic (identity / identity_flag / identity_upgrade).
+   */
+  acceptedValues?: string[];
+  /**
    * Per-rule value aliases for identity / identity_upgrade comparisons.
    * Each inner array is a group of equivalent values; any value in a group
    * is treated as equal to any other value in the same group for this rule.
@@ -793,14 +801,25 @@ export interface LogicTable {
 }
 
 /**
- * Per-search, per-attribute tolerance bands set by the user from the Source
- * Part Specs panel. Maps an attributeId to a ± percentage that loosens the
- * matching engine's `identity` rule for that attribute (e.g. `{ resistance: 5 }`
- * accepts a 9.5–10.5 kΩ candidate for a 10 kΩ source). Applied as a raise-only
- * `tolerancePercent` on identity rules — see `applyTolerancesToLogicTable`.
- * Session-only; not persisted.
+ * Per-search, per-attribute acceptance criteria set by the user from the Source
+ * Part Specs panel. The unified model for "loosen matching on this attribute":
+ *
+ * - `range`  — continuous numeric: accept candidates within ±`percent` of the
+ *   source value (e.g. resistance ±5%). Applied as a raise-only `tolerancePercent`
+ *   on the identity rule.
+ * - `set`    — categorical/discrete: accept candidates whose value is in `values`
+ *   (e.g. AEC-Q200 Yes *or* No). Applied via `MatchingRule.acceptedValues`, which
+ *   the engine short-circuits to a pass for, regardless of the rule's normal logic.
+ *
+ * This is the shape a future candidate-fetch (parametric query) layer will read,
+ * so both kinds live under one structure. Session-only; not persisted.
  */
-export type ToleranceOverrides = Record<string, number>;
+export type AcceptanceCriterion =
+  | { kind: 'range'; percent: number }
+  | { kind: 'set'; values: string[] };
+
+/** Map of attributeId → the user's acceptance criterion for that attribute. */
+export type AcceptanceCriteria = Record<string, AcceptanceCriterion>;
 
 /** Result of evaluating a single rule */
 export type RuleResult = 'pass' | 'fail' | 'upgrade' | 'review' | 'info';

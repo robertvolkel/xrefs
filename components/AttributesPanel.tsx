@@ -17,12 +17,15 @@ import {
   Slider,
   TextField,
   Collapse,
+  Checkbox,
+  FormGroup,
+  FormControlLabel,
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes, RecommendationCategory, XrefRecommendation, ToleranceOverrides, MatchingRule, ParametricAttribute } from '@/lib/types';
+import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
@@ -45,27 +48,26 @@ interface AttributesPanelProps {
   xrefMfr?: string;
   onSelectXrefCategory?: (cat: RecommendationCategory | 'all') => void;
   onSelectXrefMfr?: (mfr: string) => void;
-  /** Per-attribute tolerance bands the user has set (attributeId → ± percent).
-   *  Presence of `onToleranceChange` enables the inline tolerance control on
-   *  eligible (numeric identity) Specs rows — only wired for the source panel. */
-  tolerances?: ToleranceOverrides;
-  onToleranceChange?: (attributeId: string, percent: number | null) => void;
+  /** Per-attribute acceptance criteria the user has set (attributeId → criterion).
+   *  Presence of `onAcceptanceChange` enables the inline acceptance control on
+   *  eligible Specs rows — only wired for the source panel. */
+  acceptanceCriteria?: AcceptanceCriteria;
+  onAcceptanceChange?: (attributeId: string, criterion: AcceptanceCriterion | null) => void;
 }
 
-/** Maximum ± band offered by the slider. */
+/** Maximum ± band offered by the range slider. */
 const TOLERANCE_MAX = 25;
 const TOLERANCE_MARKS = [1, 5, 10, 20].map((v) => ({ value: v, label: `${v}%` }));
 
 /** Identity attributeIds representing a *continuous* physical quantity, where a
- *  ±% acceptance band is engineering-meaningful. This is an explicit allowlist
- *  (MVP scope): many `identity` rules are categorical (package_case,
+ *  ±% acceptance band (range criterion) is engineering-meaningful. Explicit
+ *  allowlist (MVP scope): many `identity` rules are categorical (package_case,
  *  mounting_style, polarity, …) or discrete counts (resolution_bits, gate_count)
- *  for which a tolerance band is nonsense — and nothing in the rule/attribute
- *  data reliably distinguishes them (`numericValue`/`unit` are polluted by the
- *  parser, e.g. "0805 (2012 Metric)" → numericValue 2012, unit "Metric"). Gating
- *  on this set is the only robust way to keep the control off those rows. Extend
- *  as new continuous numeric identity rules warrant a tolerance band. */
-const TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
+ *  for which a band is nonsense — and nothing in the rule/attribute data reliably
+ *  distinguishes them (`numericValue`/`unit` are polluted by the parser, e.g.
+ *  "0805 (2012 Metric)" → numericValue 2012, unit "Metric"). Gating on this set
+ *  is the only robust way to keep the band off those rows. */
+const RANGE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
   // Passives — continuous values
   'resistance', 'resistance_r25',
   'capacitance', 'load_capacitance_pf',
@@ -79,43 +81,44 @@ const TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
   'output_voltage', 'input_logic_threshold',
 ]);
 
-/** A Specs row is tolerance-eligible only when the matching engine treats it as
- *  an `identity` rule AND the attribute is a continuous numeric quantity on the
- *  allowlist — a ±% band is meaningless for categorical identity (e.g.
- *  package/case), discrete counts, thresholds, hierarchies, or operational rows.
- *  numericValue presence is required too, so a row with no parsed value is
- *  skipped. */
-function isToleranceEligible(param: ParametricAttribute, rule: MatchingRule | undefined): boolean {
-  return (
-    !!rule &&
-    rule.logicType === 'identity' &&
-    typeof param.numericValue === 'number' &&
-    TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)
-  );
+/** AttributeIds whose acceptable values are a discrete *set* the user picks from
+ *  a checklist (set criterion) — categorical or flag rules where a ±% band is
+ *  meaningless. MVP scope: AEC qualification, which is non-keyword, so accepting
+ *  the non-qualified value surfaces parts already in the candidate pool without a
+ *  fetch change. Extend as the pattern is validated (composition, dielectric, …). */
+const SET_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
+  'aec_q200', 'aec_q101', 'aec_q100',
+]);
+
+/** Which acceptance control (if any) a Specs row supports: a continuous ±% band
+ *  ('range'), a discrete acceptable-values checklist ('set'), or none. */
+function getAcceptanceKind(param: ParametricAttribute, rule: MatchingRule | undefined): 'range' | 'set' | null {
+  if (!rule) return null;
+  if (rule.logicType === 'identity' && typeof param.numericValue === 'number' && RANGE_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'range';
+  if (SET_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'set';
+  return null;
 }
 
-/** Inline editor shown beneath an eligible Specs row. Slider + numeric input stay
- *  in sync via local draft state; commits (slider release / input blur / Enter)
- *  propagate to the parent. */
-function ToleranceEditor({
+/** Range editor — continuous ±% band. Slider + numeric input stay in sync via
+ *  local draft state; commits (slider release / input blur / Enter) propagate. */
+function RangeEditor({
   attributeName,
   value,
   onCommit,
 }: {
   attributeName: string;
   value: number;
-  onCommit: (percent: number | null) => void;
+  onCommit: (criterion: AcceptanceCriterion | null) => void;
 }) {
   // Local draft seeds from the committed value on mount. The editor remounts per
   // expanded attribute (Fragment key in the parent), so the draft seeds fresh.
   const [draft, setDraft] = useState<number>(value);
   const clamp = (n: number) => Math.max(0, Math.min(TOLERANCE_MAX, n));
-  const commit = (n: number) => onCommit(n > 0 ? n : null);
+  const commit = (n: number) => onCommit(n > 0 ? { kind: 'range', percent: n } : null);
 
   // Caption + numeric input/Clear on the top line, the slider on its own
   // full-width line below — so the slider's mark labels (1/5/10/20%) have
-  // vertical room and aren't clipped by the next table row. pb leaves space
-  // for those labels.
+  // vertical room and aren't clipped by the next table row.
   return (
     <Box sx={{ px: 2, pt: 1.25, pb: 2.5, bgcolor: 'action.hover' }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5} sx={{ mb: 1 }}>
@@ -155,6 +158,68 @@ function ToleranceEditor({
         onChangeCommitted={(_, v) => commit(clamp(v as number))}
         sx={{ display: 'block', mx: 1, width: 'auto' }}
       />
+    </Box>
+  );
+}
+
+/** Set editor — discrete acceptable-values checklist. The source value is always
+ *  accepted (shown locked); the user ticks which other candidate values to also
+ *  accept. `options` are the distinct values seen among current candidates. */
+function SetEditor({
+  attributeName,
+  sourceValue,
+  options,
+  accepted,
+  onCommit,
+}: {
+  attributeName: string;
+  sourceValue: string;
+  options: string[];
+  accepted: string[];
+  onCommit: (criterion: AcceptanceCriterion | null) => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(new Set(accepted));
+  const toggle = (v: string) => {
+    const next = new Set(checked);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    setChecked(next);
+    const arr = [...next];
+    onCommit(arr.length > 0 ? { kind: 'set', values: arr } : null);
+  };
+
+  return (
+    <Box sx={{ px: 2, pt: 1.25, pb: 1.5, bgcolor: 'action.hover' }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5} sx={{ mb: 0.25 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0 }}>
+          Acceptable values for {attributeName.toLowerCase()} when matching
+        </Typography>
+        <Link
+          component="button"
+          variant="caption"
+          onClick={() => onCommit(null)}
+          sx={{ color: 'text.disabled', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0, '&:hover': { color: 'text.secondary' } }}
+        >
+          Clear
+        </Link>
+      </Stack>
+      <FormGroup sx={{ pl: 0.5 }}>
+        <FormControlLabel
+          control={<Checkbox size="small" checked disabled sx={{ py: 0.25 }} />}
+          label={<Typography variant="caption" sx={{ fontFamily: 'monospace' }}>{sourceValue} <Box component="span" sx={{ color: 'text.disabled', fontFamily: 'sans-serif' }}>(source)</Box></Typography>}
+        />
+        {options.map((v) => (
+          <FormControlLabel
+            key={v}
+            control={<Checkbox size="small" checked={checked.has(v)} onChange={() => toggle(v)} sx={{ py: 0.25 }} />}
+            label={<Typography variant="caption" sx={{ fontFamily: 'monospace' }}>{v}</Typography>}
+          />
+        ))}
+      </FormGroup>
+      {options.length === 0 && (
+        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', pl: 0.5 }}>
+          No other values seen among current candidates.
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -229,23 +294,38 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, tolerances, onToleranceChange }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
-  // Which Specs row currently has its tolerance editor expanded (attributeId | null).
-  const [expandedTolerance, setExpandedTolerance] = useState<string | null>(null);
+  // Which Specs row currently has its acceptance editor expanded (attributeId | null).
+  const [expandedAcceptance, setExpandedAcceptance] = useState<string | null>(null);
 
   // Resolve the family's matching rules so the Specs table knows which rows are
-  // tolerance-eligible (numeric identity). Logic tables are bundled client-side,
-  // so this needs no fetch. Only meaningful when a tolerance handler is wired.
+  // acceptance-eligible (continuous range or discrete set). Logic tables are
+  // bundled client-side, so this needs no fetch. Only when a handler is wired.
   const ruleByAttribute = useMemo(() => {
     const map = new Map<string, MatchingRule>();
-    if (!attributes || !onToleranceChange) return map;
+    if (!attributes || !onAcceptanceChange) return map;
     const table = getLogicTableForSubcategory(attributes.part.subcategory, attributes);
     table?.rules.forEach((r) => map.set(r.attributeId, r));
     return map;
-  }, [attributes, onToleranceChange]);
+  }, [attributes, onAcceptanceChange]);
+
+  // Distinct candidate values per attribute, from the current recommendations'
+  // matchDetails — feeds the 'set' checklist's options. Excludes 'N/A'.
+  const candidateValuesByAttribute = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    if (!onAcceptanceChange) return map;
+    for (const rec of allRecommendations ?? []) {
+      for (const d of rec.matchDetails) {
+        if (!d.replacementValue || d.replacementValue === 'N/A') continue;
+        if (!map.has(d.parameterId)) map.set(d.parameterId, new Set());
+        map.get(d.parameterId)!.add(d.replacementValue);
+      }
+    }
+    return map;
+  }, [allRecommendations, onAcceptanceChange]);
 
   // Split Atlas parameters into recognized (in schema) and extras (unrecognized)
   const { recognized, extras } = useMemo(() => {
@@ -373,9 +453,21 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                   : <>
                       {recognized.map((param) => {
                         const rule = ruleByAttribute.get(param.parameterId);
-                        const eligible = !!onToleranceChange && isToleranceEligible(param, rule);
-                        const setBand = tolerances?.[param.parameterId];
-                        const isOpen = expandedTolerance === param.parameterId;
+                        const kind = onAcceptanceChange ? getAcceptanceKind(param, rule) : null;
+                        const eligible = kind !== null;
+                        const criterion = acceptanceCriteria?.[param.parameterId];
+                        const active = criterion != null;
+                        const chipLabel = criterion?.kind === 'range'
+                          ? `±${criterion.percent}%`
+                          : criterion?.kind === 'set'
+                            ? `+${criterion.values.length}`
+                            : null;
+                        const isOpen = expandedAcceptance === param.parameterId;
+                        // 'set' checklist options: distinct candidate values minus the source value.
+                        const srcNorm = param.value.trim().toLowerCase();
+                        const setOptions = kind === 'set'
+                          ? [...(candidateValuesByAttribute.get(param.parameterId) ?? [])].filter((v) => v.trim().toLowerCase() !== srcNorm)
+                          : [];
                         return (
                         <Fragment key={param.parameterId}>
                         <TableRow
@@ -383,9 +475,9 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                           sx={{
                             height: { xs: ROW_HEIGHT_MOBILE, md: ROW_HEIGHT },
                             ...(isOpen && { bgcolor: 'action.hover' }),
-                            // Reveal the tolerance trigger on row hover (it stays
-                            // visible when a band is set or the editor is open).
-                            '&:hover .tol-trigger': { opacity: 1 },
+                            // Reveal the acceptance trigger on row hover (it stays
+                            // visible when a criterion is set or the editor is open).
+                            '&:hover .acc-trigger': { opacity: 1 },
                           }}
                         >
                           <TableCell
@@ -411,36 +503,38 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                           >
                             <Stack direction="row" alignItems="center" spacing={0.75}>
                               <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{param.value}</Box>
-                              {setBand != null && (
-                                <Chip
-                                  label={`±${setBand}%`}
-                                  size="small"
-                                  color="primary"
-                                  variant="outlined"
-                                  sx={{ height: 16, fontSize: '0.6rem', '& .MuiChip-label': { px: 0.6 } }}
-                                />
+                              {chipLabel != null && (
+                                <Tooltip title={criterion?.kind === 'set' ? `${criterion.values.length} additional value(s) accepted` : 'Tolerance band applied'} arrow>
+                                  <Chip
+                                    label={chipLabel}
+                                    size="small"
+                                    color="primary"
+                                    variant="outlined"
+                                    sx={{ height: 16, fontSize: '0.6rem', '& .MuiChip-label': { px: 0.6 } }}
+                                  />
+                                </Tooltip>
                               )}
-                              {/* Tolerance trigger — hover-revealed, sits to the LEFT of the
+                              {/* Acceptance trigger — hover-revealed, sits to the LEFT of the
                                   D/P/A source badge. Click opens the inline editor. Stays
-                                  visible (opacity 1) when a band is set or the editor is open. */}
+                                  visible (opacity 1) when a criterion is set or the editor is open. */}
                               {eligible && (
-                                <Tooltip title="Set an acceptable tolerance range for matching" arrow>
+                                <Tooltip title={kind === 'set' ? 'Choose acceptable values for matching' : 'Set an acceptable tolerance range for matching'} arrow>
                                   <Box
                                     component="span"
-                                    className="tol-trigger"
+                                    className="acc-trigger"
                                     role="button"
                                     tabIndex={0}
-                                    aria-label={`Set tolerance for ${param.parameterName}`}
-                                    onClick={(e) => { e.stopPropagation(); setExpandedTolerance(isOpen ? null : param.parameterId); }}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedTolerance(isOpen ? null : param.parameterId); } }}
+                                    aria-label={`Set acceptance criteria for ${param.parameterName}`}
+                                    onClick={(e) => { e.stopPropagation(); setExpandedAcceptance(isOpen ? null : param.parameterId); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedAcceptance(isOpen ? null : param.parameterId); } }}
                                     sx={{
                                       display: 'inline-flex',
                                       alignItems: 'center',
                                       cursor: 'pointer',
                                       flexShrink: 0,
-                                      opacity: isOpen || setBand != null ? 1 : 0,
+                                      opacity: isOpen || active ? 1 : 0,
                                       transition: 'opacity 0.12s ease',
-                                      color: isOpen || setBand != null ? 'primary.main' : 'text.disabled',
+                                      color: isOpen || active ? 'primary.main' : 'text.disabled',
                                       '&:hover': { color: 'primary.main' },
                                     }}
                                   >
@@ -456,18 +550,28 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                             </Stack>
                           </TableCell>
                         </TableRow>
-                        {/* Tolerance editor — expands directly beneath the selected
-                            attribute. Keyed by attributeId via the Fragment so each
-                            row's editor seeds a fresh draft from its committed band. */}
-                        {isOpen && eligible && (
+                        {/* Acceptance editor — expands directly beneath the selected
+                            attribute. Range slider for continuous attrs, checklist for
+                            discrete sets. Remounts per attribute via the Fragment key. */}
+                        {isOpen && eligible && onAcceptanceChange && (
                           <TableRow>
                             <TableCell colSpan={2} sx={{ p: 0, borderColor: 'divider' }}>
                               <Collapse in timeout="auto" unmountOnExit>
-                                <ToleranceEditor
-                                  attributeName={param.parameterName}
-                                  value={setBand ?? 0}
-                                  onCommit={(percent) => onToleranceChange(param.parameterId, percent)}
-                                />
+                                {kind === 'set' ? (
+                                  <SetEditor
+                                    attributeName={param.parameterName}
+                                    sourceValue={param.value}
+                                    options={setOptions}
+                                    accepted={criterion?.kind === 'set' ? criterion.values : []}
+                                    onCommit={(c) => onAcceptanceChange(param.parameterId, c)}
+                                  />
+                                ) : (
+                                  <RangeEditor
+                                    attributeName={param.parameterName}
+                                    value={criterion?.kind === 'range' ? criterion.percent : 0}
+                                    onCommit={(c) => onAcceptanceChange(param.parameterId, c)}
+                                  />
+                                )}
                               </Collapse>
                             </TableCell>
                           </TableRow>

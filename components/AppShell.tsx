@@ -193,8 +193,8 @@ export default function AppShell() {
         knownMpns={knownMpns}
         onMpnClick={appState.handleMpnClick}
         knownAtlasManufacturers={knownAtlasManufacturers}
-        tolerances={appState.tolerances}
-        onToleranceChange={appState.handleToleranceChange}
+        acceptanceCriteria={appState.acceptanceCriteria}
+        onAcceptanceChange={appState.handleAcceptanceChange}
       />
       <NewListDialog
         open={newList.newListDialogOpen}

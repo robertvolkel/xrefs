@@ -1,5 +1,5 @@
 import { SearchResult, PartAttributes, XrefRecommendation, ApiResponse, OrchestratorMessage, OrchestratorResponse, ApplicationContext, QcFeedbackSubmission, PlatformSettings, RecommendationLogEntry, QcFeedbackRecord, QcFeedbackUpdate, QcFeedbackListItem, FeedbackStatusCounts, FeedbackStatus, FeedbackStage, ReleaseNote, AtlasDictOverrideRecord, UserPreferences, SupplierQuote, LifecycleInfo, ComplianceData, ListAgentContext, ListAgentResponse, PartSummary, ManufacturerCrossReference, DistributorClickEntry, AppFeedbackSubmission, AppFeedbackListItem, AppFeedbackStatusCounts, AppFeedbackStatus, AppFeedbackCategory, AppFeedbackUpdate, AppFeedbackComment, AppFeedbackThread, ReplacementPriorities, ManufacturerProfile, Notification } from './types';
-import type { ServiceWarning, ServiceName, ServiceStatusInfo, ToleranceOverrides } from './types';
+import type { ServiceWarning, ServiceName, ServiceStatusInfo, AcceptanceCriteria } from './types';
 
 // Admin types
 export interface AdminUser {
@@ -161,12 +161,12 @@ export async function getRecommendationsWithOverrides(
   sourceAttributes?: PartAttributes,
   replacementPriorities?: ReplacementPriorities,
   skipPartsioEnrichment?: boolean,
-  toleranceOverrides?: ToleranceOverrides,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment, toleranceOverrides }),
+    body: JSON.stringify({ overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment, acceptanceCriteria }),
     signal,
   });
 }
@@ -177,12 +177,12 @@ export async function getRecommendationsWithContext(
   signal?: AbortSignal,
   replacementPriorities?: ReplacementPriorities,
   skipPartsioEnrichment?: boolean,
-  toleranceOverrides?: ToleranceOverrides,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<XrefRecommendation[]> {
   return fetchApi<XrefRecommendation[]>(`${BASE}/xref/${encodeURIComponent(mpn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ applicationContext, replacementPriorities, skipPartsioEnrichment, toleranceOverrides }),
+    body: JSON.stringify({ applicationContext, replacementPriorities, skipPartsioEnrichment, acceptanceCriteria }),
     signal,
   });
 }

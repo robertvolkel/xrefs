@@ -86,8 +86,11 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  v13: Per-attribute tolerance bands (Source Specs panel) added to the
  *       scoring pipeline (applyTolerancesToLogicTable) and to the recs
  *       cache variant. Scoring output for no-tolerance requests is
- *       unchanged, but bump as cheap insurance for the pipeline change. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v13';
+ *       unchanged, but bump as cheap insurance for the pipeline change.
+ *  v14: Tolerance bands generalized into unified AcceptanceCriteria (range +
+ *       discrete-value 'set'); new acceptedValues short-circuit in the engine.
+ *       Cache variant key renamed tol→accept. Bump to invalidate v13 entries. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v14';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
