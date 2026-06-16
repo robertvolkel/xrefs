@@ -27,6 +27,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
+import { normalize as normalizeMatchValue } from '@/lib/services/matchingEngine';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -178,12 +179,15 @@ function SetEditor({
   accepted: string[];
   onCommit: (criterion: AcceptanceCriterion | null) => void;
 }) {
-  const [checked, setChecked] = useState<Set<string>>(new Set(accepted));
+  // Controlled: `checked` derives from the committed `accepted` prop each render,
+  // so the checklist can never desync from state — every toggle commits and the
+  // parent re-renders with the new accepted set (no local snapshot, no stale key).
+  // Values are sorted on commit so the stored set + cache key are order-stable.
+  const checked = new Set(accepted);
   const toggle = (v: string) => {
     const next = new Set(checked);
     if (next.has(v)) next.delete(v); else next.add(v);
-    setChecked(next);
-    const arr = [...next];
+    const arr = [...next].sort();
     onCommit(arr.length > 0 ? { kind: 'set', values: arr } : null);
   };
 
@@ -463,11 +467,21 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                             ? `+${criterion.values.length}`
                             : null;
                         const isOpen = expandedAcceptance === param.parameterId;
-                        // 'set' checklist options: distinct candidate values minus the source value.
-                        const srcNorm = param.value.trim().toLowerCase();
-                        const setOptions = kind === 'set'
-                          ? [...(candidateValuesByAttribute.get(param.parameterId) ?? [])].filter((v) => v.trim().toLowerCase() !== srcNorm)
-                          : [];
+                        // 'set' checklist options: candidate values deduped by the
+                        // engine's normalize() (so case/whitespace variants collapse to
+                        // one box that matches how scoring compares) and excluding the
+                        // source value (always accepted). First raw form shown.
+                        const setOptions: string[] = [];
+                        if (kind === 'set') {
+                          const srcNorm = normalizeMatchValue(param.value);
+                          const seen = new Set<string>([srcNorm]);
+                          for (const v of candidateValuesByAttribute.get(param.parameterId) ?? []) {
+                            const n = normalizeMatchValue(v);
+                            if (seen.has(n)) continue;
+                            seen.add(n);
+                            setOptions.push(v);
+                          }
+                        }
                         return (
                         <Fragment key={param.parameterId}>
                         <TableRow

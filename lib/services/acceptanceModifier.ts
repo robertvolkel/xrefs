@@ -37,7 +37,12 @@ export function applyAcceptanceCriteriaToLogicTable(
       if (!(criterion.percent > 0)) continue;
       rule.tolerancePercent = Math.max(rule.tolerancePercent ?? 0, criterion.percent);
     } else {
-      // kind === 'set'
+      // kind === 'set' — categorical acceptance only. Never let a user-accepted
+      // value short-circuit a numeric SAFETY gate (threshold / fit / vref_check)
+      // — e.g. accepting a voltage_rating value must not bypass the ≥ check.
+      // Restricted to identity-family rules even though the UI already gates the
+      // eligible attributes; this modifier is the safety boundary.
+      if (rule.logicType !== 'identity' && rule.logicType !== 'identity_flag' && rule.logicType !== 'identity_upgrade') continue;
       const values = criterion.values.filter(v => typeof v === 'string' && v.trim() !== '');
       if (values.length === 0) continue;
       rule.acceptedValues = values;

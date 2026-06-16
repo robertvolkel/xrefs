@@ -52,7 +52,10 @@ function parseBoolean(value: string): boolean {
 }
 
 /** Normalize string for comparison (uppercase, trim, strip whitespace) */
-function normalize(value: string): string {
+/** Canonicalize a value string for equality comparison — trim, upper-case, and
+ *  collapse internal whitespace. Exported so the acceptance UI can dedup/compare
+ *  candidate values exactly the way the engine matches them (see SetEditor). */
+export function normalize(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, ' ');
 }
 

@@ -84,6 +84,22 @@ describe('applyAcceptanceCriteriaToLogicTable — set', () => {
     expect(ruleFor(result, 'composition')?.acceptedValues).toEqual(['Thin Film', 'Metal Film']);
   });
 
+  it('refuses to set acceptedValues on numeric SAFETY rules (threshold/fit/vref_check)', () => {
+    const table = makeTable([
+      makeRule('voltage_rated', { logicType: 'threshold', thresholdDirection: 'gte' }),
+      makeRule('height', { logicType: 'fit' }),
+      makeRule('vref', { logicType: 'vref_check' }),
+    ]);
+    const result = applyAcceptanceCriteriaToLogicTable(table, {
+      voltage_rated: { kind: 'set', values: ['50V'] },
+      height: { kind: 'set', values: ['1.0mm'] },
+      vref: { kind: 'set', values: ['2.5V'] },
+    });
+    expect(ruleFor(result, 'voltage_rated')?.acceptedValues).toBeUndefined();
+    expect(ruleFor(result, 'height')?.acceptedValues).toBeUndefined();
+    expect(ruleFor(result, 'vref')?.acceptedValues).toBeUndefined();
+  });
+
   it('filters out empty/whitespace values and skips when nothing remains', () => {
     const table = makeTable([makeRule('a'), makeRule('b')]);
     const result = applyAcceptanceCriteriaToLogicTable(table, {
