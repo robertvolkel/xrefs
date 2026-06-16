@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -17,6 +17,7 @@ import {
   InputAdornment,
   TextField,
   Button,
+  Tooltip,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -25,6 +26,8 @@ import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import AddIcon from '@mui/icons-material/Add';
+import PushPinIcon from '@mui/icons-material/PushPin';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import {
   AppFeedbackListItem,
   AppFeedbackStatus,
@@ -42,6 +45,32 @@ type StatusFilter = AppFeedbackStatus | 'all';
 type CategoryFilter = AppFeedbackCategory | 'all';
 
 const PAGE_SIZE = 50;
+
+// Admin-pinned feedback IDs (pin-order, earliest first). Persisted to
+// localStorage so a refresh keeps the same focus set. Per-browser only —
+// mirrors the Atlas domain-cards pin pattern.
+const PINNED_STORAGE_KEY = 'app-feedback-pinned-v1';
+
+function loadPinnedFromStorage(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePinnedToStorage(ids: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    /* quota or disabled storage — non-fatal */
+  }
+}
 
 function statusChipColor(status: AppFeedbackStatus): 'default' | 'warning' | 'info' | 'success' | 'secondary' {
   switch (status) {
@@ -102,6 +131,28 @@ export default function AppFeedbackTab() {
   const [selected, setSelected] = useState<AppFeedbackListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
+  // Pinned feedback IDs. `pinned` (state) drives the row partition + icon;
+  // `pinnedRef` lets `load` send the current set to the server without being
+  // re-created on every toggle (which would trigger a skeleton-flashing reload).
+  const [pinned, setPinned] = useState<string[]>([]);
+  const pinnedRef = useRef<string[]>([]);
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+
+  useEffect(() => {
+    const stored = loadPinnedFromStorage();
+    setPinned(stored);
+    pinnedRef.current = stored;
+  }, []);
+
+  const togglePin = useCallback((id: string) => {
+    setPinned((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      savePinnedToStorage(next);
+      pinnedRef.current = next;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchTerm);
@@ -121,6 +172,7 @@ export default function AppFeedbackTab() {
         sortDir: sortDirection,
         page,
         limit: PAGE_SIZE,
+        pinnedIds: pinnedRef.current,
       });
       setItems(result.items);
       setTotal(result.total);
@@ -169,6 +221,7 @@ export default function AppFeedbackTab() {
   };
 
   const columns = [
+    { id: 'pin', label: '', sortable: false },
     { id: 'flag', label: '', sortable: false },
     { id: 'created_at', label: 'Submitted', sortable: true },
     { id: 'user', label: 'User', sortable: false },
@@ -177,6 +230,20 @@ export default function AppFeedbackTab() {
     { id: 'status', label: 'Status', sortable: true },
     { id: 'actions', label: '', sortable: false },
   ];
+
+  // Stable-partition the current page: pinned rows float to the top in
+  // pin-order, unpinned rows keep the server's ordering below. The server
+  // already pins-first within the activity sort across the full set so a
+  // pinned item lands on page 1; this keeps the visual float correct for
+  // other sort columns and for instant toggle feedback.
+  const orderedItems = useMemo(() => {
+    const pinIndex = new Map(pinned.map((id, i) => [id, i]));
+    const pinnedRows = items
+      .filter((it) => pinnedSet.has(it.id))
+      .sort((a, b) => (pinIndex.get(a.id) ?? 0) - (pinIndex.get(b.id) ?? 0));
+    const unpinnedRows = items.filter((it) => !pinnedSet.has(it.id));
+    return [...pinnedRows, ...unpinnedRows];
+  }, [items, pinned, pinnedSet]);
 
   const handleRowDeleted = (deletedId: string) => {
     setItems((prev) => prev.filter((it) => it.id !== deletedId));
@@ -300,13 +367,35 @@ export default function AppFeedbackTab() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((item) => (
+              {orderedItems.map((item) => {
+                const isPinned = pinnedSet.has(item.id);
+                return (
                 <TableRow
                   key={item.id}
                   hover
                   onClick={() => setSelected(item)}
-                  sx={{ cursor: 'pointer' }}
+                  sx={{
+                    cursor: 'pointer',
+                    ...(isPinned && { bgcolor: (t) => t.palette.action.selected }),
+                  }}
                 >
+                  <TableCell
+                    sx={{ verticalAlign: 'top', width: 40, px: 0.5 }}
+                    align="center"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Tooltip title={isPinned ? 'Unpin' : 'Pin to top'}>
+                      <IconButton
+                        size="small"
+                        onClick={() => togglePin(item.id)}
+                        sx={{ color: isPinned ? 'warning.main' : 'text.disabled' }}
+                      >
+                        {isPinned
+                          ? <PushPinIcon sx={{ fontSize: 16 }} />
+                          : <PushPinOutlinedIcon sx={{ fontSize: 16 }} />}
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell sx={{ verticalAlign: 'top', width: 54, pr: 0 }}>
                     {!item.adminLastReadAt && item.status === 'open' && (
                       <Chip
@@ -401,7 +490,8 @@ export default function AppFeedbackTab() {
                     />
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         )}
