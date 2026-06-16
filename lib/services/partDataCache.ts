@@ -94,8 +94,12 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       DEFAULT (no-criteria) inductor query, so the candidate set differs even
  *       with accept:null. The full-result cache is consulted before the base
  *       payload, so without this bump pre-deploy inductor recs (scored against the
- *       old narrower pool) would persist for the 30-day TTL. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v15';
+ *       old narrower pool) would persist for the 30-day TTL.
+ *  v16: Digikey parametric-filter widening (Decision #238 Step 3) — a ±% band on a
+ *       voltage/frequency-type attr now also widens the Digikey fetch (was Atlas-only),
+ *       so the full-result candidate set for such bands changed. The full-result cache
+ *       is read before the base payload, so it must invalidate too (mirrors v15). */
+export const RECS_CACHE_SCHEMA_VERSION = 'v16';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

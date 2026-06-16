@@ -73,10 +73,29 @@ export interface DigikeyParameter {
   ValueText: string;
 }
 
+/** One value option of a parametric facet (Decision #238 Step 3). `ValueId` is the value
+ *  STRING (e.g. "5.1 V") — it is what the apply-filter request passes as `Id`, not a numeric id. */
+export interface DigikeyFilterValue {
+  ValueId: string;
+  ValueName: string;
+  ProductCount: number;
+}
+
+/** One parametric facet returned by a category-scoped search (Decision #238 Step 3). */
+export interface DigikeyParametricFilter {
+  ParameterId: number;
+  ParameterText: string;
+  FilterValues: DigikeyFilterValue[];
+}
+
 export interface DigikeyKeywordResponse {
   Products: DigikeyProduct[];
   ProductsCount: number;
   ExactMatches: DigikeyProduct[];
+  /** Faceted filter options — only populated when the request is category-scoped. */
+  FilterOptions?: {
+    ParametricFilters?: DigikeyParametricFilter[];
+  };
 }
 
 export interface DigikeyProductDetailResponse {
@@ -236,6 +255,77 @@ export async function keywordSearch(
 
   if (userId) {
     await logApiCall({ userId, service: 'digikey', operation: 'keyword_search' });
+  }
+
+  return data;
+}
+
+/**
+ * Parametric-filter widening — DISCOVER step (Decision #238 Step 3).
+ *
+ * A category-scoped keyword search whose response carries `FilterOptions.ParametricFilters`
+ * (the available value facets for that category) — used to learn which discrete values exist
+ * for a parameter (e.g. Zener Vz: "4.7 V", "5.1 V", "5.6 V", …) so a ±% band can select the
+ * in-band ones. Returns BOTH the facets and the response products (the caller resolves the
+ * param-map category from the products to match the right facet). Facets are only populated
+ * when `categoryId` is supplied. Caller handles errors (returns empty on failure upstream).
+ */
+export async function getCategoryParametricFacets(
+  keywords: string,
+  categoryId: number,
+  currency?: string,
+  userId?: string,
+): Promise<{ facets: DigikeyParametricFilter[]; products: DigikeyProduct[] }> {
+  const res = await keywordSearch(keywords, { limit: 1, categoryId }, currency, userId);
+  return {
+    facets: res.FilterOptions?.ParametricFilters ?? [],
+    products: [...(res.ExactMatches ?? []), ...(res.Products ?? [])],
+  };
+}
+
+/**
+ * Parametric-filter widening — APPLY step (Decision #238 Step 3).
+ *
+ * Fetch the parts in a category whose `parameterId` value is one of `valueIds`. `valueIds`
+ * are the facet `ValueId` STRINGS from the discover step (proven: Digikey's apply filter keys
+ * on the value string, e.g. "5.1 V", not a numeric id). Bounds the result to `limit`.
+ */
+export async function parametricFilterSearch(
+  categoryId: number,
+  parameterId: number,
+  valueIds: string[],
+  options: { limit?: number } = {},
+  currency?: string,
+  userId?: string,
+): Promise<DigikeyKeywordResponse> {
+  const t0 = performance.now();
+  const token = await getAccessToken();
+
+  const body = {
+    Keywords: '',
+    Limit: options.limit ?? 25,
+    Offset: 0,
+    FilterOptionsRequest: {
+      ParameterFilterRequest: {
+        CategoryFilter: { Id: String(categoryId) },
+        ParameterFilters: [
+          { ParameterId: parameterId, FilterValues: valueIds.map(id => ({ Id: id })) },
+        ],
+      },
+    },
+  };
+
+  const res = await digikeyFetch(SEARCH_URL, {
+    method: 'POST',
+    headers: buildHeaders(token, currency),
+    body: JSON.stringify(body),
+  }, currency);
+
+  const data = await res.json();
+  console.log(`[perf] digikey:parametricFilterSearch ${(performance.now() - t0).toFixed(0)}ms`);
+
+  if (userId) {
+    await logApiCall({ userId, service: 'digikey', operation: 'parametric_filter_search' });
   }
 
   return data;

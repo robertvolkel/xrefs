@@ -20,6 +20,7 @@ export type ApiOperation =
   | 'profile_extract'
   | 'qc_analysis'
   | 'keyword_search'
+  | 'parametric_filter_search'
   | 'product_details'
   | 'batch_search'
   | 'gap_fill'

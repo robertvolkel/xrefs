@@ -72,6 +72,18 @@ export function isFetchWideningCriterion(attributeId: string, criterion: Accepta
   return SET_FETCH_ATTRS.has(attributeId);
 }
 
+/** Whether a range criterion widens the Digikey fetch via the PARAMETRIC-FILTER path
+ *  (Decision #238 Step 3) rather than the E-series keyword fan-out: a numeric attr the UI
+ *  offers a band on that does NOT sit on an enumerable E-series grid (voltages, frequencies,
+ *  impedance, currents). These widen on Digikey through facet discovery + value-filter, and
+ *  on Atlas through the generic numeric RPC. No cache-key impact — they're already in
+ *  RANGE_FETCH_ATTRS, so `fetchWideningKey` counts them. */
+export function isParametricWideningCriterion(attributeId: string, criterion: AcceptanceCriterion): boolean {
+  return criterion.kind === 'range'
+    && RANGE_FETCH_ATTRS.has(attributeId)
+    && !ESERIES_ENUMERABLE_ATTRS.has(attributeId);
+}
+
 /** Unit class for keyword formatting — derived from the attributeId. */
 function unitClassFor(attributeId: string): 'resistance' | 'capacitance' | 'inductance' | null {
   if (attributeId === 'resistance' || attributeId === 'resistance_r25') return 'resistance';

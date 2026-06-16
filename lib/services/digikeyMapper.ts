@@ -15,7 +15,7 @@ import {
   ComponentCategory,
   PartStatus,
 } from '../types';
-import { DigikeyProduct, DigikeyCategory, DigikeyKeywordResponse, DigikeyParameter } from './digikeyClient';
+import { DigikeyProduct, DigikeyCategory, DigikeyKeywordResponse, DigikeyParameter, DigikeyParametricFilter } from './digikeyClient';
 import { getParamMappings, hasCategoryMapping } from './digikeyParamMap';
 
 /** Traverse Digikey's hierarchical category to find the most specific (deepest) name */
@@ -358,8 +358,12 @@ function mapStatus(status: string): PartStatus {
 // NUMERIC VALUE EXTRACTION
 // ============================================================
 
-/** Extract a numeric value and unit from a Digikey value string like "1µF", "25V", "0.90mm" */
-function extractNumericValue(valueText: string): { numericValue?: number; unit?: string } {
+/** Extract a numeric value and unit from a Digikey value string like "1µF", "25V", "0.90mm".
+ *  Exported (Decision #238 Step 3) so the parametric-filter widening path can parse facet
+ *  ValueName strings ("5.1 V", "400 kHz") to base SI for in-band selection. Returns `{}` when
+ *  the string has no leading number+unit (e.g. ranged facets like "5V ~ 10V" yield only the
+ *  first token — callers must filter undefined `numericValue`). */
+export function extractNumericValue(valueText: string): { numericValue?: number; unit?: string } {
   // Try patterns like "1µF", "25 V", "0.90 mm", "10 kΩ"
   const match = valueText.match(/([\d.]+)\s*([a-zA-ZµΩ°%]+)/);
   if (!match) return {};
@@ -1098,6 +1102,30 @@ function resolveParamMapCategory(categoryName: string, parameters: DigikeyParame
     if (lowerCat.includes('diode array')) return 'Schottky Diode Arrays';
   }
   return categoryName;
+}
+
+/**
+ * Find the parametric facet (Decision #238 Step 3) that maps to a target internal
+ * `attributeId`, for the category of `sampleProduct`. Reuses the SAME forward param map
+ * (`getParamMappings`) and virtual-category resolution as `mapDigikeyProductToAttributes`,
+ * so facet ParameterText → attributeId resolution can't drift from per-product mapping.
+ * Returns null when no facet maps (e.g. the attr has no Digikey param-map entry, or the
+ * category exposes no such facet) — caller falls back to Atlas-only widening.
+ */
+export function findFacetForAttribute(
+  attributeId: string,
+  facets: DigikeyParametricFilter[],
+  sampleProduct: DigikeyProduct | undefined,
+): DigikeyParametricFilter | null {
+  if (!sampleProduct || facets.length === 0) return null;
+  const categoryName = getDeepestCategoryName(sampleProduct.Category);
+  const paramMapCategory = resolveParamMapCategory(categoryName, sampleProduct.Parameters ?? []);
+  if (!hasCategoryMapping(paramMapCategory)) return null;
+  for (const facet of facets) {
+    const mappings = getParamMappings(paramMapCategory, facet.ParameterText);
+    if (mappings.some(m => m.attributeId === attributeId)) return facet;
+  }
+  return null;
 }
 
 /** Map a DigikeyProduct to our PartAttributes (Part + parametric attributes) */

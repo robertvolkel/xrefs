@@ -8,12 +8,14 @@
  */
 
 import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, AcceptanceCriteria } from '../types';
-import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
+import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
   mapDigikeyProductToAttributes,
   mapCategory,
   mapSubcategory,
+  findFacetForAttribute,
+  extractNumericValue,
 } from './digikeyMapper';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
@@ -27,7 +29,7 @@ import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
-import { fetchWideningKey, isFetchWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
+import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
@@ -331,7 +333,14 @@ function buildRecommendationsVariant(
 //     + inductance added to the Digikey keyword + E-series fan-out. The default inductor
 //     candidate query now includes the inductance value keyword, so cached v3 base
 //     payloads for inductors carry a different (narrower-keyword) candidate set.
-const BASE_RECS_SCHEMA_VERSION = 'v4';
+// v5: Digikey parametric-filter widening (Decision #238 Step 3) — a ±% band on a
+//     voltage/frequency-type attr (RANGE_FETCH_ATTRS minus ESERIES_ENUMERABLE_ATTRS) now
+//     also widens the DIGIKEY fetch via facet discovery + value-filter, where before those
+//     attrs widened on Atlas only. The base KEY is unchanged (these attrs were already in
+//     RANGE_FETCH_ATTRS / fetchWideningKey), but the candidate SET a key resolves to grew,
+//     so cached v4 base payloads for such bands are stale. No-criteria payloads are
+//     unaffected (the parametric path only fires when a band is set).
+const BASE_RECS_SCHEMA_VERSION = 'v5';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -1771,6 +1780,11 @@ async function fetchMouserSuggestions(
  *  Mirrors the Atlas hard limit (50), slightly higher since Digikey is the primary source. */
 const MAX_WIDENED_CANDIDATES = 60;
 
+/** Cap on how many in-band facet values feed a single parametric apply-filter request
+ *  (Decision #238 Step 3) — a dense facet (e.g. Zener Vz had 541 values) under a wide band
+ *  could otherwise build an oversized request body. The 60-candidate post-cap bounds output. */
+const MAX_PARAMETRIC_VALUES = 25;
+
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
@@ -1781,12 +1795,31 @@ async function fetchDigikeyCandidates(
   const keywords = buildCandidateSearchQuery(sourceAttrs);
   if (!keywords) return [];
 
-  // Fetch-widening (Decision #238 Step 2): when the user has loosened a value-driving
-  // attribute, fan out one keyword search per in-band value (range → E-series neighbors,
-  // set → each accepted value) so near-value / alternate parts actually enter the pool.
+  // Fetch-widening (Decision #238): when the user has loosened a value-driving attribute,
+  // pull near-value / alternate parts so they actually enter the pool. Two mechanisms:
+  //   • Step 2 — E-series KEYWORD fan-out for grid-stocked attrs (resistance/cap/inductance):
+  //     one keyword search per in-band E-series value (range) or accepted value (set).
+  //   • Step 3 — PARAMETRIC facet discover→apply for voltage/frequency-type attrs (those in
+  //     RANGE_FETCH_ATTRS but not on an E-series grid): discover the category's available
+  //     facet values, select the in-band ones, re-query filtered by their ValueIds.
   const fanoutAttrs: Array<{ attr: string; tokens: string[] }> = [];
+  let parametricBand: { attr: string; lo: number; hi: number } | null = null;
   if (acceptanceCriteria) {
     for (const [attr, criterion] of Object.entries(acceptanceCriteria)) {
+      // Step 3: parametric-filter widening — single-attr (first eligible), mirroring
+      // computeAtlasWidening. These attrs produce no E-series keyword tokens, so they
+      // skip the keyword path entirely.
+      if (!parametricBand && isParametricWideningCriterion(attr, criterion)) {
+        const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+        const bounds = criterionToBounds(criterion, nv);
+        if (bounds) { parametricBand = { attr, lo: bounds.lo, hi: bounds.hi }; continue; }
+        // No usable source numericValue → can't form a band; Atlas still widens generically.
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[perf] digikey parametric widening skipped for ${attr} (no source numericValue)`);
+        }
+        continue;
+      }
+      // Step 2: E-series keyword fan-out.
       if (!isFetchWideningCriterion(attr, criterion)) continue;
       let tokens: string[] = [];
       if (criterion.kind === 'range') {
@@ -1815,32 +1848,79 @@ async function fetchDigikeyCandidates(
   }
   if (overrideMaps.length > MAX_WIDEN_QUERIES) overrideMaps = overrideMaps.slice(0, MAX_WIDEN_QUERIES);
 
-  const widening = fanoutAttrs.length > 0;
+  const keywordWidening = fanoutAttrs.length > 0;
+  const categoryId = sourceAttrs.part.digikeyCategoryId;
+  const doParametric = !!parametricBand && typeof categoryId === 'number';
   // Always keep the source's own exact-value query (`keywords`) in the set when widening —
   // the E-series fan-out only hits grid points, so an off-grid source value (e.g. a 4.75k
   // precision resistor, or a non-E-series crystal CL) would otherwise lose its own matches
   // when the user merely *loosens* tolerance. De-dupe identical strings across combos;
   // representative per-query limit when fanning out (fair sample, not a thin top-N slice).
   const queryStrings = [...new Set([
-    ...(widening ? [keywords] : []),
+    ...(keywordWidening ? [keywords] : []),
     ...overrideMaps.map(ov => (ov.size ? buildCandidateSearchQuery(sourceAttrs, ov) : keywords)),
   ].filter(Boolean))];
-  const perQueryLimit = widening ? 25 : 20;
+  const perQueryLimit = keywordWidening ? 25 : 20;
 
-  const responses = await Promise.all(
-    queryStrings.map(q =>
-      keywordSearch(q, { limit: perQueryLimit, categoryId: sourceAttrs.part.digikeyCategoryId }, currency, userId)
-        .catch((error) => {
-          console.warn(`Digikey fan-out query failed for "${q}":`, error);
-          return { Products: [], ExactMatches: [], ProductsCount: 0 } as Awaited<ReturnType<typeof keywordSearch>>;
-        }),
+  // Phase 1: keyword fan-out + parametric DISCOVER, concurrently (~1 round-trip).
+  const [responses, discover] = await Promise.all([
+    Promise.all(
+      queryStrings.map(q =>
+        keywordSearch(q, { limit: perQueryLimit, categoryId }, currency, userId)
+          .catch((error) => {
+            console.warn(`Digikey fan-out query failed for "${q}":`, error);
+            return { Products: [], ExactMatches: [], ProductsCount: 0 } as Awaited<ReturnType<typeof keywordSearch>>;
+          }),
+      ),
     ),
-  );
+    doParametric
+      ? getCategoryParametricFacets(keywords, categoryId!, currency, userId).catch((error) => {
+          console.warn('Digikey parametric discover failed:', error);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+
+  // Phase 2: parametric APPLY (~1 round-trip) — select the in-band facet values, fetch them.
+  let parametricProducts: DigikeyProduct[] = [];
+  if (parametricBand && discover) {
+    const facet = findFacetForAttribute(parametricBand.attr, discover.facets, discover.products[0]);
+    if (facet) {
+      const { lo, hi } = parametricBand;
+      const inBandValueIds = facet.FilterValues
+        .filter(fv => {
+          const { numericValue } = extractNumericValue(fv.ValueName);
+          return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
+        })
+        .slice(0, MAX_PARAMETRIC_VALUES)
+        .map(fv => fv.ValueId);
+      if (inBandValueIds.length) {
+        const applyRes = await parametricFilterSearch(categoryId!, facet.ParameterId, inBandValueIds, { limit: 25 }, currency, userId)
+          .catch((error) => { console.warn('Digikey parametric apply failed:', error); return null; });
+        if (applyRes) {
+          // Belt-and-suspenders: re-verify each returned part's value is actually in band.
+          // Locks the ValueId-vs-ValueName risk — if the apply silently ignored the filter
+          // (returning unfiltered category results), those out-of-band parts are dropped here.
+          const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
+          parametricProducts = raw.filter(p => {
+            const param = p.Parameters?.find(x => x.ParameterText === facet.ParameterText);
+            if (!param) return false;
+            const { numericValue } = extractNumericValue(param.ValueText);
+            return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
+          });
+        }
+      }
+    }
+  }
+
+  const widening = keywordWidening || parametricProducts.length > 0;
 
   // Round-robin interleave each query's results (ExactMatches first within a query) so
   // that under the candidate cap every in-band bucket gets fair representation rather
-  // than the cap keeping only the first one or two queries' parts.
+  // than the cap keeping only the first one or two queries' parts. The parametric apply
+  // result is appended as its own first-class bucket so the cap can't starve it.
   const perQuery = responses.map(r => [...(r.ExactMatches ?? []), ...(r.Products ?? [])]);
+  if (parametricProducts.length) perQuery.push(parametricProducts);
   const allProducts: typeof perQuery[number] = [];
   const maxLen = perQuery.reduce((m, p) => Math.max(m, p.length), 0);
   for (let i = 0; i < maxLen; i++) {
@@ -1873,7 +1953,11 @@ async function fetchDigikeyCandidates(
   }
 
   if (widening) {
-    console.log(`[perf] digikey fan-out: ${queryStrings.length} queries (${fanoutAttrs.map(f => f.attr).join('+')}) → ${candidates.length} candidates`);
+    const parts = [
+      ...(keywordWidening ? [`${queryStrings.length} kw queries (${fanoutAttrs.map(f => f.attr).join('+')})`] : []),
+      ...(parametricProducts.length ? [`parametric ${parametricBand!.attr} (${parametricProducts.length})`] : []),
+    ];
+    console.log(`[perf] digikey widen: ${parts.join(' + ')} → ${candidates.length} candidates`);
   }
 
   return candidates;
