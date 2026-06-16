@@ -472,11 +472,12 @@ Separate from QC feedback. App feedback is the general user-facing channel — b
 - `FeedbackRowMenu` (shared) — kebab → "Delete thread" → confirm dialog → `DELETE /api/app-feedback/[id]` (cleans storage paths first, then DB row; comments cascade). Confirm copy explicitly spells out that delete affects both sides.
 
 **Surfaces (admin side, `/monitoring → AppFeedbackTab`):**
-- Table-based list (paginated). Default `sort_by=activity` — server fetches the full filtered set, computes `hasUnread`, sorts `(hasUnread desc, created_at desc)`, slices to the page. Column-header sort overrides activity until refresh.
+- Table-based list (paginated). Default `sort_by=activity` — server fetches the full filtered set, sorts `(pinned desc, hasUnread desc, created_at desc)`, slices to the page. Column-header sort overrides activity until refresh.
+- **Pin to top** (leftmost column, `PushPinIcon`): admin can pin feedback rows so they float to the top, mirroring the Atlas domain-cards pin. Pinned IDs are **per-browser localStorage** (`app-feedback-pinned-v1`) — no DB column, no API. The client (a) stable-partitions the rendered page pinned-first for instant feedback + non-activity sorts, and (b) sends `pinned_ids` to `GET /api/admin/app-feedback` so the server's activity sort floats pinned rows above the page slice — guaranteeing a pinned item surfaces on page 1 even past the 50-row page boundary. A `pinnedRef` feeds the current set into `load()` without re-creating the callback (no skeleton flash on toggle).
 - Same `FeedbackDetailModal` mounts on row-click; admin-only path shows status dropdown + technical-info collapse + resolved-by metadata on the left column.
-- Per-row "NEW" pill (leftmost column, no header) when `admin_last_read_at IS NULL AND status='open'`.
+- Per-row "NEW" pill (no header) when `admin_last_read_at IS NULL AND status='open'`.
 - "New feedback" button (left of the search bar) reuses the shared `AppFeedbackDialog` so the admin can author a feedback item directly (e.g. logging a bug they found or transcribing feedback received elsewhere). Created under the admin's own `user_id`; on submit, the list resets to page 0 and reloads so it surfaces at top.
-- 30s polling + the existing `feedback-unread-changed` window-event listener cover cross-tab freshness.
+- **No background poll on the table** (removed June 16, 2026 — the 30s re-fetch flashed the loading skeleton and read as "constantly refreshing"). The list refreshes only on user action: filter/sort/pagination, thread open/close, delete/create, and the `feedback-unread-changed` window event (action-driven, same-tab only) — plus a manual page reload for fresh server data. Freshness of the **needs-attention dot is unaffected**: the sidebar keeps its own lightweight `getAdminAppFeedbackList({ limit: 1 })` poll (count only, no table/skeleton) in [AppSidebar.tsx](components/AppSidebar.tsx), which runs on app load + every 30s, so new feedback still lights the nav dot without the user being in the section.
 
 **Badge math (`needsAttentionCount`):** Both the Monitoring sidebar dot AND the App Feedback nav-section dot drive off a single server-computed field returned on the admin list response. Definition: count of rows where `hasUnread=true` OR (`admin_last_read_at IS NULL AND status='open'`). Status state alone does NOT light the dot — opening the modal (which stamps the read column) clears it. The user-side feedback icon (`ForumOutlinedIcon`, bottom-left of the sidebar above Releases) has its own `getOwnAppFeedbackUnreadCount` endpoint, same semantics from the user's perspective.
 
@@ -487,7 +488,7 @@ Separate from QC feedback. App feedback is the general user-facing channel — b
 - `DELETE /api/app-feedback/[id]` — wipe thread (storage + row); RLS gates user-own / admin-any
 - `POST /api/app-feedback/[id]/comments` — append comment; role inferred from `profiles.role`; stamps author's own read
 - `GET /api/app-feedback/unread-count` — sidebar dot driver for user side
-- `GET /api/admin/app-feedback` — list + `statusCounts` + `needsAttentionCount`; supports `sort_by=activity`
+- `GET /api/admin/app-feedback` — list + `statusCounts` + `needsAttentionCount`; supports `sort_by=activity` + `pinned_ids` (comma-separated, floats pinned rows above the page slice)
 - `PATCH /api/admin/app-feedback/[id]` — status only (admin_notes removed; comments replace it)
 - `GET /api/admin/app-feedback/[id]/thread` — admin variant of thread fetch; stamps `admin_last_read_at`
 
