@@ -918,13 +918,16 @@ async function attachPartCapabilities(
       if (!listing) return false;
       return extractEquivalentMpns(listing, mpn, 1).length > 0;
     })(),
-    // Module-scope 5-min cache lives inside getProfileForManufacturer. Atlas-
-    // resolved rows always exist for known MFRs but most aren't actually
-    // enriched (Decision #139 — only ~297 of 1,011 MFRs have JSONB content);
-    // require real content via `hasEnrichedProfileContent` so the button never
-    // opens an empty panel. Mock profiles always carry content, so they pass.
+    // Module-scope 5-min cache lives inside getProfileForManufacturer. Only
+    // Atlas-sourced profiles qualify — we don't offer company profiles for
+    // Western MFRs (Decision #166: "we only carry detailed profiles for Chinese
+    // MFRs"), so the mock-fallback branch (which covers a few Western majors)
+    // must NOT light this button. Atlas rows always exist for known MFRs but
+    // most aren't actually enriched (Decision #139 — only ~297 of 1,011 have
+    // JSONB content); require real content via `hasEnrichedProfileContent` so
+    // the button never opens an empty panel.
     getProfileForManufacturer(attrs.part.manufacturer)
-      .then(r => !!r && (r.source === 'mock' || hasEnrichedProfileContent(r.profile)))
+      .then(r => !!r && r.source === 'atlas' && hasEnrichedProfileContent(r.profile))
       .catch(() => false),
   ]);
 
@@ -1763,6 +1766,11 @@ async function fetchMouserSuggestions(
  * Builds a keyword string from critical parameters of the source part.
  * Returns mapped PartAttributes[] ready for the matching engine.
  */
+/** Upper bound on the merged widened Digikey candidate set, to keep the downstream
+ *  scoring + deferred parts.io/FC enrichment fan-out bounded under wide ±% bands.
+ *  Mirrors the Atlas hard limit (50), slightly higher since Digikey is the primary source. */
+const MAX_WIDENED_CANDIDATES = 60;
+
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
@@ -1829,10 +1837,17 @@ async function fetchDigikeyCandidates(
     ),
   );
 
-  const allProducts = responses.flatMap(r => [
-    ...(r.ExactMatches ?? []),
-    ...(r.Products ?? []),
-  ]);
+  // Round-robin interleave each query's results (ExactMatches first within a query) so
+  // that under the candidate cap every in-band bucket gets fair representation rather
+  // than the cap keeping only the first one or two queries' parts.
+  const perQuery = responses.map(r => [...(r.ExactMatches ?? []), ...(r.Products ?? [])]);
+  const allProducts: typeof perQuery[number] = [];
+  const maxLen = perQuery.reduce((m, p) => Math.max(m, p.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (const products of perQuery) {
+      if (i < products.length) allProducts.push(products[i]);
+    }
+  }
 
   // Warm L2 cache with search results (fire-and-forget)
   warmCacheFromSearchResults(allProducts);
@@ -1841,12 +1856,20 @@ async function fetchDigikeyCandidates(
   const seen = new Set<string>();
   seen.add(sourceAttrs.part.mpn);
 
-  const candidates: PartAttributes[] = [];
+  let candidates: PartAttributes[] = [];
   for (const product of allProducts) {
     const mpn = product.ManufacturerProductNumber;
     if (seen.has(mpn)) continue;
     seen.add(mpn);
     candidates.push({ ...mapDigikeyProductToAttributes(product), dataSource: 'digikey' as const });
+  }
+
+  // Cap the widened pool so it doesn't balloon scoring + deferred parts.io/FC enrichment
+  // (a wide band can fan out to MAX_WIDEN_QUERIES×perQuery results). Non-widened stays at
+  // its single-query limit, well under the cap. The round-robin order above keeps the cap
+  // balanced across in-band buckets.
+  if (widening && candidates.length > MAX_WIDENED_CANDIDATES) {
+    candidates = candidates.slice(0, MAX_WIDENED_CANDIDATES);
   }
 
   if (widening) {
