@@ -24,9 +24,9 @@ function makeRec(opts: {
           parameterName: 'AEC-Q200',
           sourceValue: 'Yes',
           replacementValue: opts.aecMatchDetail,
-          logicType: 'identity_flag',
-          result: 'pass',
-        } as XrefRecommendation['matchDetails'][number]]
+          matchStatus: 'exact',
+          ruleResult: 'pass',
+        }]
       : [],
   };
 }
@@ -45,6 +45,11 @@ describe('isAecQualified', () => {
     expect(isAecQualified(makeRec({ mpn: 'C', aecMatchDetail: 'No' }))).toBe(false);
     expect(isAecQualified(makeRec({ mpn: 'D', aecMatchDetail: 'N/A' }))).toBe(false);
     expect(isAecQualified(makeRec({ mpn: 'E' }))).toBe(false);
+  });
+
+  it('does not false-match longer numeric encodings (trailing boundary)', () => {
+    expect(isAecQualified(makeRec({ mpn: 'F', qualifications: ['AEC-Q1006'] }))).toBe(false);
+    expect(isAecQualified(makeRec({ mpn: 'G', qualifications: ['AEC-Q2009'] }))).toBe(false);
   });
 });
 

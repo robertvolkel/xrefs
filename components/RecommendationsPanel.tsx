@@ -318,8 +318,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         />
 
         {/* QUALIFICATION section — binary "automotive matters" intent (replaces the
-            removed AEC acceptance control). Only shown when some recs are AEC-qualified. */}
-        {aecCount > 0 && (
+            removed AEC acceptance control). Shown when some recs qualify, OR when the
+            filter is already active (so it stays uncheckable after switching to a part
+            with zero AEC candidates — otherwise the panel goes silently empty). */}
+        {(aecCount > 0 || aecOnly) && (
           <>
             <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
               Qualification

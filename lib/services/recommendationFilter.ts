@@ -45,7 +45,7 @@ export function isAecQualified(rec: XrefRecommendation): boolean {
     if (AEC_ATTRIBUTE_IDS.has(d.parameterId) && d.replacementValue?.trim().toLowerCase() === 'yes') return true;
   }
   const quals = rec.part.qualifications;
-  if (Array.isArray(quals) && quals.some(q => /AEC-?Q\s?(100|101|200)/i.test(q))) return true;
+  if (Array.isArray(quals) && quals.some(q => /AEC-?Q\s?(?:100|101|200)(?![0-9])/i.test(q))) return true;
   return false;
 }
 

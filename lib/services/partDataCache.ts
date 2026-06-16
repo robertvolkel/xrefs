@@ -89,8 +89,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       unchanged, but bump as cheap insurance for the pipeline change.
  *  v14: Tolerance bands generalized into unified AcceptanceCriteria (range +
  *       discrete-value 'set'); new acceptedValues short-circuit in the engine.
- *       Cache variant key renamed tol→accept. Bump to invalidate v13 entries. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v14';
+ *       Cache variant key renamed tol→accept. Bump to invalidate v13 entries.
+ *  v15: buildCandidateSearchQuery now emits an inductance value keyword on the
+ *       DEFAULT (no-criteria) inductor query, so the candidate set differs even
+ *       with accept:null. The full-result cache is consulted before the base
+ *       payload, so without this bump pre-deploy inductor recs (scored against the
+ *       old narrower pool) would persist for the 30-day TTL. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v15';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

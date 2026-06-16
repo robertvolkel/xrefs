@@ -28,6 +28,7 @@ import { useTranslation } from 'react-i18next';
 import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
 import { normalize as normalizeMatchValue } from '@/lib/services/matchingEngine';
+import { RANGE_FETCH_ATTRS } from '@/lib/services/fetchWidening';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -61,26 +62,18 @@ const TOLERANCE_MAX = 25;
 const TOLERANCE_MARKS = [1, 5, 10, 20].map((v) => ({ value: v, label: `${v}%` }));
 
 /** Identity attributeIds representing a *continuous* physical quantity, where a
- *  ±% acceptance band (range criterion) is engineering-meaningful. Explicit
- *  allowlist (MVP scope): many `identity` rules are categorical (package_case,
- *  mounting_style, polarity, …) or discrete counts (resolution_bits, gate_count)
- *  for which a band is nonsense — and nothing in the rule/attribute data reliably
- *  distinguishes them (`numericValue`/`unit` are polluted by the parser, e.g.
- *  "0805 (2012 Metric)" → numericValue 2012, unit "Metric"). Gating on this set
- *  is the only robust way to keep the band off those rows. */
-const RANGE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
-  // Passives — continuous values
-  'resistance', 'resistance_r25',
-  'capacitance', 'load_capacitance_pf',
-  'inductance', 'impedance_100mhz',
-  'varistor_voltage',
-  // Frequency control
-  'fsw', 'nominal_frequency_hz', 'output_frequency_hz',
-  // Discrete-semiconductor continuous values
-  'vz', 'vrwm', 'vbr', 'izt', 'trip_current', 'hold_current',
-  // ICs — continuous values
-  'output_voltage', 'input_logic_threshold',
-]);
+ *  ±% acceptance band (range criterion) is engineering-meaningful. Many `identity`
+ *  rules are categorical (package_case, mounting_style, polarity, …) or discrete
+ *  counts (resolution_bits, gate_count) for which a band is nonsense — and nothing
+ *  in the rule/attribute data reliably distinguishes them (`numericValue`/`unit` are
+ *  polluted by the parser, e.g. "0805 (2012 Metric)" → numericValue 2012). Gating on
+ *  this set is the only robust way to keep the band off those rows.
+ *
+ *  Single source of truth: `RANGE_FETCH_ATTRS` (fetchWidening.ts, client-safe) — the
+ *  same set that decides which bands widen the candidate FETCH. UI eligibility and
+ *  fetch-widening eligibility are the same concept (every band widens at least Atlas),
+ *  so they share one constant rather than two hand-mirrored lists. */
+const RANGE_ELIGIBLE_ATTRIBUTE_IDS = RANGE_FETCH_ATTRS;
 
 /** AttributeIds whose acceptable values are a discrete *set* the user picks from a
  *  checklist (set criterion) — genuinely multi-valued categoricals where the candidates
