@@ -35,6 +35,16 @@ export const RANGE_FETCH_ATTRS = new Set<string>([
   'capacitance', 'load_capacitance_pf',
 ]);
 
+/** Subset of RANGE_FETCH_ATTRS whose stocked values follow the standard E-series grid,
+ *  so the Digikey keyword fan-out can enumerate near-value neighbors. `load_capacitance_pf`
+ *  is deliberately ABSENT: crystal load capacitances are a discrete catalog (8/9/12.5/18/
+ *  20/32 pF), NOT an E-series continuum — E-series enumeration would search non-existent
+ *  values. CL still widens correctly on the Atlas side (numeric BETWEEN, no enumeration)
+ *  and keeps its exact-value Digikey query via the default keyword. */
+export const ESERIES_ENUMERABLE_ATTRS = new Set<string>([
+  'resistance', 'resistance_r25', 'capacitance',
+]);
+
 /** Set-criterion attributes whose accepted-values checklist widens the FETCH.
  *  `package_case` is keyword-driving (one query per accepted package). AEC qualification
  *  sets are NOT here — those parts are already in the pool and handled by the scoring
@@ -155,6 +165,7 @@ export function formatValueForKeyword(numericSI: number, attributeId: string): s
   if (cls === 'resistance') {
     if (numericSI >= 1e6) return `${trimNum(numericSI / 1e6)}M`;
     if (numericSI >= 1e3) return `${trimNum(numericSI / 1e3)}k`;
+    if (numericSI < 1) return `${trimNum(numericSI * 1e3)}mOhm`;  // current-sense / milliohm parts
     return `${trimNum(numericSI)}`;
   }
   // capacitance
@@ -175,6 +186,10 @@ export function rangeKeywordTokens(
 ): string[] {
   const bounds = criterionToBounds(criterion, sourceNumericValueSI);
   if (!bounds) return [];
+  // Only enumerate E-series neighbors for attrs whose values actually follow the grid.
+  // Non-enumerable attrs (e.g. load_capacitance_pf) widen via the Atlas numeric RPC +
+  // the preserved default Digikey keyword, not a synthetic E-series fan-out.
+  if (!ESERIES_ENUMERABLE_ATTRS.has(attributeId)) return [];
   const series = unitClassFor(attributeId) === 'capacitance' ? 'E12' : 'E24';
   const values = inBandESeriesValues(bounds.lo, bounds.hi, series);
   const tokens: string[] = [];

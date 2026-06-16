@@ -133,6 +133,11 @@ describe('fetchWidening — formatValueForKeyword (base SI → Digikey token)', 
     expect(formatValueForKeyword(1e-11, 'capacitance')).toBe('10pF');
   });
 
+  it('formats sub-1Ω resistance as milliohms (current-sense parts)', () => {
+    expect(formatValueForKeyword(0.047, 'resistance')).toBe('47mOhm');
+    expect(formatValueForKeyword(0.5, 'resistance')).toBe('500mOhm');
+  });
+
   it('returns null for non-formattable attrs or bad input', () => {
     expect(formatValueForKeyword(100, 'voltage')).toBeNull();
     expect(formatValueForKeyword(0, 'resistance')).toBeNull();
@@ -147,5 +152,11 @@ describe('fetchWidening — rangeKeywordTokens (end-to-end fan-out tokens)', () 
 
   it('is empty when source value is missing', () => {
     expect(rangeKeywordTokens('resistance', { kind: 'range', percent: 10 }, undefined)).toEqual([]);
+  });
+
+  it('does NOT E-series-enumerate load_capacitance_pf (crystal CL is a discrete catalog, not E-series)', () => {
+    // CL widens numerically on the Atlas side + keeps its exact Digikey keyword; no synthetic
+    // E-series fan-out (which would search non-existent CL values like 18/22pF instead of 20pF).
+    expect(rangeKeywordTokens('load_capacitance_pf', { kind: 'range', percent: 10 }, 2.0e-11)).toEqual([]);
   });
 });

@@ -53,12 +53,27 @@ AS $$
   FROM atlas_products p
   WHERE p.family_id = p_family_id
     AND (p_disabled IS NULL OR NOT (p.manufacturer = ANY(p_disabled)))
-    -- only rows that actually carry a numeric value for the widened attribute,
-    -- regex-guarded so the ::numeric cast can't error on stray text
-    AND (p.parameters -> p_attr_id ->> 'numericValue') ~ '^-?\d+(\.\d+)?([eE][-+]?\d+)?$'
-    AND (p.parameters -> p_attr_id ->> 'numericValue')::numeric BETWEEN p_lo AND p_hi
-  -- prefer parts nearest the source value when the band overflows the limit
-  ORDER BY abs((p.parameters -> p_attr_id ->> 'numericValue')::numeric - p_source_nv) ASC
+    -- Keep a row when: it has a numeric value IN BAND, OR it has no/ non-numeric value for
+    -- this attribute (missing data is never rejected — scoring flags it 'review', matching
+    -- the default fetch's behavior). Exclude only numeric values OUTSIDE the band.
+    -- The CASE guards the ::numeric cast: a CASE THEN branch is not evaluated unless its
+    -- WHEN holds, so the cast never runs on non-numeric text (avoids 22P02 cast errors that
+    -- a plain AND-conjunct could trigger under planner reordering).
+    AND (
+      CASE
+        WHEN (p.parameters -> p_attr_id ->> 'numericValue') ~ '^-?\d+(\.\d+)?([eE][-+]?\d+)?$'
+          THEN (p.parameters -> p_attr_id ->> 'numericValue')::numeric BETWEEN p_lo AND p_hi
+        ELSE TRUE
+      END
+    )
+  -- Prefer parts nearest the source value when the band overflows the limit; rows without a
+  -- comparable numeric value sort last (review candidates fill remaining slots).
+  ORDER BY
+    CASE
+      WHEN (p.parameters -> p_attr_id ->> 'numericValue') ~ '^-?\d+(\.\d+)?([eE][-+]?\d+)?$'
+        THEN abs((p.parameters -> p_attr_id ->> 'numericValue')::numeric - p_source_nv)
+      ELSE NULL
+    END ASC NULLS LAST
   LIMIT p_limit;
 $$;
 

@@ -361,10 +361,17 @@ export async function fetchAtlasCandidates(
         // fall through to the default fetch below
       } else {
         const rows = (data as AtlasProductRow[] | null) ?? [];
-        if (rows.length === 0) return [];
-        const overrides = await fetchAllDictOverrides();
-        console.log(`[perf] atlas fan-out: family ${familyId} ${widen.attrId} [${widen.lo}, ${widen.hi}] → ${rows.length} candidates`);
-        return rows.map((row) => rowToPartAttributes(row, overrides));
+        if (rows.length > 0) {
+          const overrides = await fetchAllDictOverrides();
+          console.log(`[perf] atlas fan-out: family ${familyId} ${widen.attrId} [${widen.lo}, ${widen.hi}] → ${rows.length} candidates`);
+          return rows.map((row) => rowToPartAttributes(row, overrides));
+        }
+        // Empty band result: fall back to the default family fetch rather than returning
+        // nothing. Widening must never surface FEWER parts than the un-widened fetch —
+        // an empty band can mean genuinely-no-in-band parts OR a family whose numericValues
+        // predate the SI-prefix backfill (Decision #217 incomplete), where the band can't
+        // match. The default 50 are then scored, and off-band parts fail the ±band anyway.
+        console.log(`[perf] atlas fan-out: family ${familyId} ${widen.attrId} band empty → default fetch`);
       }
     }
 

@@ -1804,11 +1804,15 @@ async function fetchDigikeyCandidates(
   if (overrideMaps.length > MAX_WIDEN_QUERIES) overrideMaps = overrideMaps.slice(0, MAX_WIDEN_QUERIES);
 
   const widening = fanoutAttrs.length > 0;
-  // De-dupe identical keyword strings across combos; representative per-query limit when
-  // fanning out so each in-band bucket contributes a fair sample (not a thin top-N slice).
-  const queryStrings = [...new Set(
-    overrideMaps.map(ov => (ov.size ? buildCandidateSearchQuery(sourceAttrs, ov) : keywords)).filter(Boolean),
-  )];
+  // Always keep the source's own exact-value query (`keywords`) in the set when widening —
+  // the E-series fan-out only hits grid points, so an off-grid source value (e.g. a 4.75k
+  // precision resistor, or a non-E-series crystal CL) would otherwise lose its own matches
+  // when the user merely *loosens* tolerance. De-dupe identical strings across combos;
+  // representative per-query limit when fanning out (fair sample, not a thin top-N slice).
+  const queryStrings = [...new Set([
+    ...(widening ? [keywords] : []),
+    ...overrideMaps.map(ov => (ov.size ? buildCandidateSearchQuery(sourceAttrs, ov) : keywords)),
+  ].filter(Boolean))];
   const perQueryLimit = widening ? 25 : 20;
 
   const responses = await Promise.all(
@@ -2055,7 +2059,11 @@ function buildCandidateSearchQuery(
   const pkg = paramMap.get('package_case');
   const pkgOverride = valueOverrides?.get('package_case');
   if (pkgOverride) {
-    parts.push(pkgOverride);
+    // Override values come from candidate matchDetails and may be full display strings
+    // ("0805 (2012 Metric)"); extract the bare EIA code like the non-override branch so
+    // the keyword isn't polluted.
+    const m = pkgOverride.match(/\b(\d{4})\b/);
+    parts.push(m ? m[1] : pkgOverride);
   } else if (pkg) {
     // Extract just the EIA code (e.g., "0603" from "0603 (1608 Metric)")
     const match = pkg.value.match(/\b(\d{4})\b/);
