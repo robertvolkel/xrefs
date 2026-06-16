@@ -27,7 +27,7 @@ CREATE OR REPLACE FUNCTION fetch_atlas_candidates_widened(
   p_limit     INT DEFAULT 50
 )
 RETURNS TABLE (
-  id                    BIGINT,
+  id                    UUID,
   mpn                   TEXT,
   manufacturer          TEXT,
   description           TEXT,
