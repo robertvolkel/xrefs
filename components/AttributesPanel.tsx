@@ -27,7 +27,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
-import { normalize as normalizeMatchValue, parseBoolean as parseFlagValue } from '@/lib/services/matchingEngine';
+import { normalize as normalizeMatchValue } from '@/lib/services/matchingEngine';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import type { AttributesTab } from './DesktopLayout';
@@ -82,28 +82,22 @@ const RANGE_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
   'output_voltage', 'input_logic_threshold',
 ]);
 
-/** AttributeIds whose acceptable values are a discrete *set* the user picks from
- *  a checklist (set criterion) — categorical or flag rules where a ±% band is
- *  meaningless. MVP scope: AEC qualification, which is non-keyword, so accepting
- *  the non-qualified value surfaces parts already in the candidate pool without a
- *  fetch change. Extend as the pattern is validated (composition, dielectric, …). */
-const SET_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([
-  'aec_q200', 'aec_q101', 'aec_q100',
-]);
+/** AttributeIds whose acceptable values are a discrete *set* the user picks from a
+ *  checklist (set criterion) — genuinely multi-valued categoricals where the candidates
+ *  carry explicit alternative values (e.g. dielectric C0G/X7R/X5R). Currently EMPTY:
+ *  AEC qualification was removed because it's a binary requirement, not a tolerance —
+ *  non-qualified parts carry *missing* AEC data (not "No"), which the checklist can't
+ *  offer and the engine short-circuit can't rescue. "Show AEC-qualified only" is now a
+ *  Replacements-panel filter instead. Add a real categorical here when one is wired. */
+const SET_ELIGIBLE_ATTRIBUTE_IDS = new Set<string>([]);
 
 /** Which acceptance control (if any) a Specs row supports: a continuous ±% band
  *  ('range'), a discrete acceptable-values checklist ('set'), or none. */
 function getAcceptanceKind(param: ParametricAttribute, rule: MatchingRule | undefined): 'range' | 'set' | null {
   if (!rule) return null;
   if (rule.logicType === 'identity' && typeof param.numericValue === 'number' && RANGE_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'range';
-  if (SET_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) {
-    // A `set` criterion only LOOSENS matching — it flips a failing candidate to pass. For a
-    // boolean flag rule (AEC-Q200/Q101/Q100), candidates only fail when the SOURCE requires
-    // the flag (value 'Yes'). If the source doesn't require it ('No'), the flag rule already
-    // passes every candidate, so accepting values would do nothing — hide the no-op control.
-    if (rule.logicType === 'identity_flag' && !parseFlagValue(param.value)) return null;
-    return 'set';
-  }
+  // `set` is reserved for multi-valued categoricals (see SET_ELIGIBLE_ATTRIBUTE_IDS).
+  if (SET_ELIGIBLE_ATTRIBUTE_IDS.has(rule.attributeId)) return 'set';
   return null;
 }
 

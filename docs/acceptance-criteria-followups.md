@@ -39,6 +39,25 @@ Traced the two membership gates under automotive intent:
 Net: accepting "AEC: No" works for the AEC mismatch filter and for unknown-domain
 parts; explicitly cross-domain parts stay blocked by design.
 
+## AEC removed from acceptance → became a results filter (June 16, 2026)
+AEC qualification was the original `set` demonstrator, but it's a **binary requirement,
+not a tolerance** — and verification exposed that the acceptance control was inert for it:
+non-qualified replacements carry **missing** AEC data (not `"No"`), which the checklist
+can't offer (option list skips `N/A`) and the engine short-circuit can't rescue (it
+requires the candidate value to be *present*). On an AEC=No source it's a guaranteed
+no-op; on AEC=Yes there's nothing actionable to accept.
+
+Resolution: **removed AEC from `SET_ELIGIBLE_ATTRIBUTE_IDS`** (now empty — the `set`
+mechanism stays for a genuine multi-valued categorical like dielectric C0G/X7R/X5R, where
+candidates carry explicit values). The "automotive matters" intent is now a **filter**:
+`aec_qualified_only` predicate + `isAecQualified()` in `recommendationFilter.ts`, surfaced
+as an **"AEC-qualified only" toggle** in the Replacements-panel filter popover (only shown
+when some recs are qualified). Inclusive-keep on explicit qualification (matchDetail `Yes`
+OR `part.qualifications` badge), so it sidesteps the missing-data problem entirely. The
+identity_flag hide-on-"No" guard (and the `parseBoolean` export it needed) were reverted as
+moot. Note: passive families (MLCC/resistors) are NOT in `AUTOMOTIVE_AEC_ENFORCEMENT`, so
+this filter is the only AEC control for them.
+
 ## Step 2: fetch-widening — ✅ SHIPPED (commit `9539ed3`)
 Keyword-driving attributes (resistance/capacitance/package) now widen the candidate
 fetch driven by the `AcceptanceCriteria` shape, via new `lib/services/fetchWidening.ts`
