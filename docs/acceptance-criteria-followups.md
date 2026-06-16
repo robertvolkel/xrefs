@@ -39,12 +39,33 @@ Traced the two membership gates under automotive intent:
 Net: accepting "AEC: No" works for the AEC mismatch filter and for unknown-domain
 parts; explicitly cross-domain parts stay blocked by design.
 
-## THEN — Step 2: fetch-widening (the big one)
-Keyword-driving attributes (resistance/capacitance/package, etc.) never fetch
-near-value/alternate candidates, so `range` bands and keyword `set` criteria can't
-surface new parts. `buildCandidateSearchQuery` (`partDataService.ts`) uses the
-exact value as a search keyword. Need parametric/range queries: Digikey parametric
-filters + Atlas numeric-range SQL, driven by the `acceptanceCriteria` shape.
+## Step 2: fetch-widening — ✅ SHIPPED (commit `9539ed3`)
+Keyword-driving attributes (resistance/capacitance/package) now widen the candidate
+fetch driven by the `AcceptanceCriteria` shape, via new `lib/services/fetchWidening.ts`
+(the single source of truth for both the fetch path and the base cache key):
+- **Digikey** = **E-series keyword fan-out** (chosen over full parametric ValueId
+  filtering, which is deferred). `buildCandidateSearchQuery` gained value-token
+  substitution; `fetchDigikeyCandidates` fans out one keyword search per in-band
+  E-series value (`range`) or accepted value (`package_case` `set`), union+dedup,
+  capped at `MAX_WIDEN_QUERIES`.
+- **Atlas** = new `fetch_atlas_candidates_widened` RPC
+  (`scripts/supabase-atlas-candidates-widened-rpc.sql`) that applies the numeric band
+  **before** the `.limit(50)` (fixes value-band starvation: returns the nearest in-band
+  parts, not an arbitrary family slice). Falls back to the default fetch on RPC error only.
+- **Cache:** the candidate set is now acceptance-dependent, so `buildBaseRecsVariant`
+  keys on `fetchWideningKey()` — the **fetch-affecting subset only**, so rescore-only
+  criteria (AEC sets, context) still hit the base cache + Decision #163 fast path.
+  `BASE_RECS_SCHEMA_VERSION` v2→v3.
+
+**Eligibility is intentionally narrower than the UI allowlists.** `FETCH_WIDENING_ELIGIBLE`
+= `{resistance, resistance_r25, capacitance, load_capacitance_pf}` for `range` +
+`{package_case}` for `set`. Other range-eligible attrs (inductance, impedance) stay
+rescore-only (not keyword-driving, not yet wired to the Atlas RPC) — the UI offers the
+band but the pool doesn't widen. Reconciling that UX gap (or extending the Atlas RPC to
+those numeric attrs) is a follow-up. Full parametric ValueId filtering remains the
+documented escalation if E-series fan-out proves to miss good in-band parts.
+
+**Apply the migration:** run `scripts/supabase-atlas-candidates-widened-rpc.sql` in Supabase.
 
 ## Review findings (from `da64b68` review)
 FIXED in the follow-up commit:
