@@ -15,7 +15,7 @@ import {
   mapCategory,
   mapSubcategory,
 } from './digikeyMapper';
-import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
+import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupported } from '../logicTables';
 import { findReplacements } from './matchingEngine';
@@ -27,6 +27,7 @@ import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
+import { fetchWideningKey, isFetchWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
@@ -321,7 +322,12 @@ function buildRecommendationsVariant(
 //     allCandidates carry post-conversion numericValues for Atlas-source
 //     parts. Cached v1 base payloads contain pre-conversion values that
 //     would mis-score on rescore.
-const BASE_RECS_SCHEMA_VERSION = 'v2';
+// v3: Fetch-widening (Decision #238 Step 2) — acceptance criteria that widen the
+//     candidate fetch (±% on resistance/capacitance, accepted package set) now make
+//     the cached candidate SET acceptance-dependent, so the base key projects those
+//     via fetchWideningKey(). Rescore-only criteria (AEC sets, context) are excluded
+//     and still hit the base cache.
+const BASE_RECS_SCHEMA_VERSION = 'v3';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -340,10 +346,15 @@ function buildBaseRecsVariant(
   attributeOverrides: Record<string, string> | undefined,
   currency: string | undefined,
   options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
+  acceptanceCriteria: AcceptanceCriteria | undefined,
 ): string {
   const payload = {
     overrides: attributeOverrides ?? null,
     ccy: currency ?? 'USD',
+    // Only the fetch-affecting subset of acceptance criteria belongs here (Decision
+    // #238 Step 2). Rescore-only criteria stay out so toggling them keeps the base
+    // candidate cache warm and the Decision #163 deferred-enrichment fast path intact.
+    widen: fetchWideningKey(acceptanceCriteria),
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
@@ -1011,7 +1022,7 @@ export async function getRecommendations(
   // ── Base pre-scoring cache (Fix 2): keyed only on inputs that affect candidate
   // fetching (mpn + overrides + currency + opts). A context-only change becomes
   // an in-memory rescore instead of a 3-8s pipeline rerun.
-  const baseRecsKey = buildBaseRecsVariant(mpn, attributeOverrides, currency, options);
+  const baseRecsKey = buildBaseRecsVariant(mpn, attributeOverrides, currency, options, acceptanceCriteria);
   let basePayload: BasePayload | null = null;
   if (!options?.forceRefresh) {
     const baseCached = await getCachedResponse<SerializableBasePayload>('search', mpn, baseRecsKey);
@@ -1153,14 +1164,14 @@ export async function getRecommendations(
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
-        return await fetchDigikeyCandidates(sourceAttrs, currency, userId);
+        return await fetchDigikeyCandidates(sourceAttrs, currency, userId, acceptanceCriteria);
       } catch (error) {
         console.warn('Digikey candidate search failed:', error);
         reportServiceFailure('digikey', 'unavailable', 'Candidate search failed');
         return [];
       }
     })(),
-    fetchAtlasCandidates(familyId).catch((error) => {
+    fetchAtlasCandidates(familyId, computeAtlasWidening(sourceAttrs, acceptanceCriteria)).catch((error) => {
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
@@ -1752,22 +1763,68 @@ async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
   userId?: string,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<PartAttributes[]> {
-  // Build a search query from key parameters
+  // Build the default (exact-value) search query from key parameters
   const keywords = buildCandidateSearchQuery(sourceAttrs);
   if (!keywords) return [];
 
-  const response = await keywordSearch(
-    keywords,
-    { limit: 20, categoryId: sourceAttrs.part.digikeyCategoryId },
-    currency,
-    userId,
+  // Fetch-widening (Decision #238 Step 2): when the user has loosened a value-driving
+  // attribute, fan out one keyword search per in-band value (range → E-series neighbors,
+  // set → each accepted value) so near-value / alternate parts actually enter the pool.
+  const fanoutAttrs: Array<{ attr: string; tokens: string[] }> = [];
+  if (acceptanceCriteria) {
+    for (const [attr, criterion] of Object.entries(acceptanceCriteria)) {
+      if (!isFetchWideningCriterion(attr, criterion)) continue;
+      let tokens: string[] = [];
+      if (criterion.kind === 'range') {
+        const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+        tokens = rangeKeywordTokens(attr, criterion, nv);
+      } else {
+        tokens = criterionToValueSet(criterion) ?? [];
+      }
+      if (tokens.length) fanoutAttrs.push({ attr, tokens });
+    }
+  }
+
+  // Build the set of keyword queries: cartesian product of widened-attr tokens, capped.
+  // No widening → a single default query (today's behavior).
+  let overrideMaps: Map<string, string>[] = [new Map()];
+  for (const { attr, tokens } of fanoutAttrs) {
+    const next: Map<string, string>[] = [];
+    for (const base of overrideMaps) {
+      for (const tok of tokens) {
+        const m = new Map(base);
+        m.set(attr, tok);
+        next.push(m);
+      }
+    }
+    overrideMaps = next;
+  }
+  if (overrideMaps.length > MAX_WIDEN_QUERIES) overrideMaps = overrideMaps.slice(0, MAX_WIDEN_QUERIES);
+
+  const widening = fanoutAttrs.length > 0;
+  // De-dupe identical keyword strings across combos; representative per-query limit when
+  // fanning out so each in-band bucket contributes a fair sample (not a thin top-N slice).
+  const queryStrings = [...new Set(
+    overrideMaps.map(ov => (ov.size ? buildCandidateSearchQuery(sourceAttrs, ov) : keywords)).filter(Boolean),
+  )];
+  const perQueryLimit = widening ? 25 : 20;
+
+  const responses = await Promise.all(
+    queryStrings.map(q =>
+      keywordSearch(q, { limit: perQueryLimit, categoryId: sourceAttrs.part.digikeyCategoryId }, currency, userId)
+        .catch((error) => {
+          console.warn(`Digikey fan-out query failed for "${q}":`, error);
+          return { Products: [], ExactMatches: [], ProductsCount: 0 } as Awaited<ReturnType<typeof keywordSearch>>;
+        }),
+    ),
   );
 
-  const allProducts = [
-    ...(response.ExactMatches ?? []),
-    ...(response.Products ?? []),
-  ];
+  const allProducts = responses.flatMap(r => [
+    ...(r.ExactMatches ?? []),
+    ...(r.Products ?? []),
+  ]);
 
   // Warm L2 cache with search results (fire-and-forget)
   warmCacheFromSearchResults(allProducts);
@@ -1782,6 +1839,10 @@ async function fetchDigikeyCandidates(
     if (seen.has(mpn)) continue;
     seen.add(mpn);
     candidates.push({ ...mapDigikeyProductToAttributes(product), dataSource: 'digikey' as const });
+  }
+
+  if (widening) {
+    console.log(`[perf] digikey fan-out: ${queryStrings.length} queries (${fanoutAttrs.map(f => f.attr).join('+')}) → ${candidates.length} candidates`);
   }
 
   return candidates;
@@ -1822,17 +1883,50 @@ function filterSwitchingRegulatorMismatches(
 // DIGIKEY CANDIDATE FETCHER
 // ============================================================
 
+/**
+ * Derive the Atlas numeric-band widening descriptor (Decision #238 Step 2) from the
+ * source attributes + acceptance criteria. Returns the first fetch-eligible `range`
+ * criterion with a usable source numericValue (single-attr RPC; multi-attr Atlas
+ * widening is out of scope). Undefined → default (unfiltered) Atlas fetch.
+ */
+function computeAtlasWidening(
+  sourceAttrs: PartAttributes,
+  acceptanceCriteria: AcceptanceCriteria | undefined,
+): AtlasCandidateWidening | undefined {
+  if (!acceptanceCriteria) return undefined;
+  for (const attr of Object.keys(acceptanceCriteria).sort()) {
+    const criterion = acceptanceCriteria[attr];
+    if (criterion.kind !== 'range' || !isFetchWideningCriterion(attr, criterion)) continue;
+    const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+    const bounds = criterionToBounds(criterion, nv);
+    if (bounds && typeof nv === 'number') {
+      return { attrId: attr, lo: bounds.lo, hi: bounds.hi, sourceNv: nv };
+    }
+  }
+  return undefined;
+}
+
 /** Build a keyword search string from source part attributes.
- *  When a category filter is applied, the subcategory keyword is unnecessary. */
-function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
+ *  When a category filter is applied, the subcategory keyword is unnecessary.
+ *
+ *  `valueOverrides` (Decision #238 Step 2 fetch-widening) substitutes the keyword token
+ *  for a value-driving attribute (resistance / capacitance / load_capacitance_pf /
+ *  package_case) so the Digikey fan-out can search near-value / alternate parts while
+ *  keeping every other family keyword identical. Empty/absent → today's exact-value query. */
+function buildCandidateSearchQuery(
+  sourceAttrs: PartAttributes,
+  valueOverrides?: Map<string, string>,
+): string {
   const parts: string[] = [];
   const paramMap = new Map(sourceAttrs.parameters.map(p => [p.parameterId, p]));
 
   // Capacitance or resistance value
   const cap = paramMap.get('capacitance');
   const res = paramMap.get('resistance') ?? paramMap.get('resistance_r25');
-  if (cap) parts.push(cap.value);
-  else if (res) parts.push(res.value);
+  const capOverride = valueOverrides?.get('capacitance');
+  const resOverride = valueOverrides?.get('resistance') ?? valueOverrides?.get('resistance_r25');
+  if (cap) parts.push(capOverride ?? cap.value);
+  else if (res) parts.push(resOverride ?? res.value);
 
   // Discrete semiconductors: use voltage class as keyword for category-filtered search.
   // IGBTs, MOSFETs, BJTs, and diodes don't have capacitance/resistance, so without
@@ -1919,7 +2013,7 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   const crystalFreq = paramMap.get('nominal_frequency_hz');
   if (crystalFreq && !outputFreq) parts.push(crystalFreq.value);
   const crystalCL = paramMap.get('load_capacitance_pf');
-  if (crystalCL) parts.push(crystalCL.value);
+  if (crystalCL) parts.push(valueOverrides?.get('load_capacitance_pf') ?? crystalCL.value);
 
   // Fuses (D2): use current rating, voltage, and speed class as keywords
   const fuseCurrentRating = paramMap.get('current_rating_a');
@@ -1959,7 +2053,10 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
 
   // Package
   const pkg = paramMap.get('package_case');
-  if (pkg) {
+  const pkgOverride = valueOverrides?.get('package_case');
+  if (pkgOverride) {
+    parts.push(pkgOverride);
+  } else if (pkg) {
     // Extract just the EIA code (e.g., "0603" from "0603 (1608 Metric)")
     const match = pkg.value.match(/\b(\d{4})\b/);
     if (match) parts.push(match[1]);
