@@ -1939,8 +1939,8 @@ const FAMILY_PARAMS = {
     '总功耗(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
     '耗散功率(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
     'radiant flux (mw) typ.': { attributeId: '_radiant_flux_mw', attributeName: 'Radiant Flux', unit: 'mW', sortOrder: 92 },
+    // ('数据速率' already mapped above to surfaced data_rate_mbps — not re-added here as catalog)
     '传输速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
-    '数据速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
     'data rate(mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
     'data rate (mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
     '输入阈值电流(fh)': { attributeId: '_ift_min_ma', attributeName: 'Input Threshold Current (Min)', unit: 'mA', sortOrder: 94 },
@@ -1993,8 +1993,8 @@ const FAMILY_PARAMS = {
     'supply voltage (v)': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 20 },
     '工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Working Voltage', unit: 'V', sortOrder: 20 },
     '驱动侧工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Driver-Side Working Voltage', unit: 'V', sortOrder: 20 },
+    // ('通道数' already mapped above to channel_count)
     'channel': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
-    '通道数': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
     'input': { attributeId: '_input_type', attributeName: 'Input Type', sortOrder: 106 },
     '输入电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Input Voltage', unit: 'V', sortOrder: 20 },
     '负载电压': { attributeId: '_load_voltage_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 107 },
