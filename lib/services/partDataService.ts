@@ -327,7 +327,11 @@ function buildRecommendationsVariant(
 //     the cached candidate SET acceptance-dependent, so the base key projects those
 //     via fetchWideningKey(). Rescore-only criteria (AEC sets, context) are excluded
 //     and still hit the base cache.
-const BASE_RECS_SCHEMA_VERSION = 'v3';
+// v4: Fetch-widening extended to all numeric range-eligible attrs (Atlas-generic RPC)
+//     + inductance added to the Digikey keyword + E-series fan-out. The default inductor
+//     candidate query now includes the inductance value keyword, so cached v3 base
+//     payloads for inductors carry a different (narrower-keyword) candidate set.
+const BASE_RECS_SCHEMA_VERSION = 'v4';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -1924,13 +1928,16 @@ function buildCandidateSearchQuery(
   const parts: string[] = [];
   const paramMap = new Map(sourceAttrs.parameters.map(p => [p.parameterId, p]));
 
-  // Capacitance or resistance value
+  // Capacitance / resistance / inductance value (mutually exclusive across passive families)
   const cap = paramMap.get('capacitance');
   const res = paramMap.get('resistance') ?? paramMap.get('resistance_r25');
+  const ind = paramMap.get('inductance');
   const capOverride = valueOverrides?.get('capacitance');
   const resOverride = valueOverrides?.get('resistance') ?? valueOverrides?.get('resistance_r25');
+  const indOverride = valueOverrides?.get('inductance');
   if (cap) parts.push(capOverride ?? cap.value);
   else if (res) parts.push(resOverride ?? res.value);
+  else if (ind) parts.push(indOverride ?? ind.value);
 
   // Discrete semiconductors: use voltage class as keyword for category-filtered search.
   // IGBTs, MOSFETs, BJTs, and diodes don't have capacitance/resistance, so without

@@ -57,13 +57,25 @@ fetch driven by the `AcceptanceCriteria` shape, via new `lib/services/fetchWiden
   criteria (AEC sets, context) still hit the base cache + Decision #163 fast path.
   `BASE_RECS_SCHEMA_VERSION` v2→v3.
 
-**Eligibility is intentionally narrower than the UI allowlists.** `FETCH_WIDENING_ELIGIBLE`
-= `{resistance, resistance_r25, capacitance, load_capacitance_pf}` for `range` +
-`{package_case}` for `set`. Other range-eligible attrs (inductance, impedance) stay
-rescore-only (not keyword-driving, not yet wired to the Atlas RPC) — the UI offers the
-band but the pool doesn't widen. Reconciling that UX gap (or extending the Atlas RPC to
-those numeric attrs) is a follow-up. Full parametric ValueId filtering remains the
-documented escalation if E-series fan-out proves to miss good in-band parts.
+**UX-gap reconciliation — DONE (Atlas-all + Digikey inductance).** `RANGE_FETCH_ATTRS` now
+mirrors the UI's full `RANGE_ELIGIBLE_ATTRIBUTE_IDS`, so **every** numeric attribute the UI
+offers a band on widens at least the **Atlas** fetch (the numeric-range RPC is generic — no
+value enumeration needed). The **Digikey** keyword fan-out is the narrower part
+(`ESERIES_ENUMERABLE_ATTRS` = `{resistance, resistance_r25, capacitance, inductance}`):
+resistance/cap/inductance are E-series-stocked so they fan out on Digikey too; everything
+else (voltages, frequencies, impedance, varistor_voltage, etc.) widens on **Atlas only** and
+keeps its exact-value Digikey query. Inductance also became a Digikey search keyword in
+`buildCandidateSearchQuery` (improves the default inductor query too) → `BASE_RECS_SCHEMA_VERSION`
+v3→v4. The two deferred Digikey extensions live in BACKLOG: (a) value-grid widening for
+output_voltage + frequency attrs (keyword-driving but non-E-series); (b) full parametric
+ValueId filtering for every numeric attr.
+
+**Source taxonomy (why only Atlas + Digikey widen).** Fetch-widening applies only to sources
+that search by parametric VALUE — Digikey (keyword) and Atlas (numeric JSONB). parts.io
+(Accuris equivalents), Mouser (`SuggestedReplacement`), and manufacturer cross-refs are
+identity/equivalence lookups keyed on the source MPN — they return a curated set tied to the
+exact part, so there is no value query to widen. Those candidates still get the scoring
+relaxation from Step 1 (an off-value curated equivalent can flip fail→pass).
 
 **Apply the migration:** run `scripts/supabase-atlas-candidates-widened-rpc.sql` in Supabase.
 
