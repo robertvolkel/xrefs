@@ -39,8 +39,6 @@ import FeedbackDetailModal from '@/components/feedback/FeedbackDetailModal';
 import FeedbackRowMenu from '@/components/feedback/FeedbackRowMenu';
 import PaginatedTableSkeleton from './PaginatedTableSkeleton';
 
-const POLL_INTERVAL_MS = 30_000;
-
 type StatusFilter = AppFeedbackStatus | 'all';
 type CategoryFilter = AppFeedbackCategory | 'all';
 
@@ -191,23 +189,6 @@ export default function AppFeedbackTab() {
     const handler = () => { load(); };
     window.addEventListener('feedback-unread-changed', handler);
     return () => window.removeEventListener('feedback-unread-changed', handler);
-  }, [load]);
-
-  // 30s background poll while the tab is visible + immediate refresh on
-  // tab-visibility regain. Skipped when the tab is hidden.
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    const intervalId = setInterval(tick, POLL_INTERVAL_MS);
-    const onVis = () => {
-      if (document.visibilityState === 'visible') load();
-    };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', onVis);
-    };
   }, [load]);
 
   const handleSort = (columnId: string) => {
