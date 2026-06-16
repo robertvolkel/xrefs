@@ -1922,8 +1922,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'forward current (if)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
 
     // VCE(sat) without @Ic,IF condition suffix
+    // ('vce(sat)' bare form already mapped above to vce_sat_v — not re-added here)
     '集射极饱和电压(vce(sat))': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
-    'vce(sat)': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
     'v ceo_max': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
 
     // CTR variants — Chinese-with-(CTR)-suffix and English forms
@@ -1956,8 +1956,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'radiant flux (mw) typ.': { attributeId: '_radiant_flux_mw', attributeName: 'Radiant Flux', unit: 'mW', sortOrder: 92 },
 
     // Data rate — high-speed optocoupler spec, catalog (not in E1 logic).
+    // ('数据速率' already mapped above to surfaced data_rate_mbps — not re-added here as catalog)
     '传输速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
-    '数据速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
     'data rate(mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
     'data rate (mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
 
@@ -2040,9 +2040,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     '工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Working Voltage', unit: 'V', sortOrder: 20 },
     '驱动侧工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Driver-Side Working Voltage', unit: 'V', sortOrder: 20 },
 
-    // Channel count variants
+    // Channel count variants ('通道数' already mapped above to channel_count)
     'channel': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
-    '通道数': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
 
     // Input value for opamp-style optocouplers — catalog
     'input': { attributeId: '_input_type', attributeName: 'Input Type', sortOrder: 106 },
