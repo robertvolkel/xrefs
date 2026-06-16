@@ -6,6 +6,7 @@ import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories, isCertifiedCross, countRealMismatches, DEFAULT_MAX_MISMATCHES } from '@/lib/types';
+import { isAecQualified } from '@/lib/services/recommendationFilter';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { sortRecommendationsForDisplay } from '@/lib/services/recommendationSort';
@@ -61,12 +62,14 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   // DEFAULT_MAX_MISMATCHES (lib/types.ts) so the agent's reported count can't
   // drift from these cards.
   const [hideHighFails, setHideHighFails] = useState(true);
+  const [aecOnly, setAecOnly] = useState(false);
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
   const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
   const displayedManufacturers = showCnOnly ? manufacturers.filter(m => cnManufacturers.has(m)) : manufacturers;
 
   const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
+  const aecCount = useMemo(() => sorted.filter(isAecQualified).length, [sorted]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -75,8 +78,9 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     if (showCnOnly) count++;
     if (selectedCategory !== 'all') count++;
     if (!hideHighFails) count++;
+    if (aecOnly) count++;
     return count;
-  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory, hideHighFails]);
+  }, [activeOnly, selectedMfr, showCnOnly, selectedCategory, hideHighFails, aecOnly]);
 
   const handleClearFilters = () => {
     setActiveOnly(true);
@@ -84,6 +88,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     setShowCnOnly(false);
     setSelectedCategory('all');
     setHideHighFails(true);
+    setAecOnly(false);
   };
 
   const handleToggleCnOnly = (checked: boolean) => {
@@ -122,7 +127,8 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       const total = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
       return total > 0;
     })
-    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory));
+    .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory))
+    .filter(r => !aecOnly || isAecQualified(r));
 
   // Default-policy hides, counted within the current scope so the chip/popover
   // labels reconcile with the header and with what a toggle would actually reveal.
@@ -227,6 +233,10 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           <Chip label="CN MFRs" size="small" onDelete={() => setShowCnOnly(false)}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
         )}
+        {aecOnly && (
+          <Chip label="AEC only" size="small" onDelete={() => setAecOnly(false)}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }} />
+        )}
         {selectedCategory !== 'all' && (
           <Chip
             label={selectedCategory === 'logic_driven' ? 'Logic Driven' : selectedCategory === 'manufacturer_certified' ? 'MFR Certified' : 'Accuris Certified'}
@@ -306,6 +316,25 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
           label={`Hide >${DEFAULT_MAX_MISMATCHES} failed parameters${qualityHiddenCount > 0 ? ` (${qualityHiddenCount} hidden)` : ''}`}
           sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
         />
+
+        {/* QUALIFICATION section — binary "automotive matters" intent (replaces the
+            removed AEC acceptance control). Shown when some recs qualify, OR when the
+            filter is already active (so it stays uncheckable after switching to a part
+            with zero AEC candidates — otherwise the panel goes silently empty). */}
+        {(aecCount > 0 || aecOnly) && (
+          <>
+            <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>
+              Qualification
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox checked={aecOnly} onChange={(e) => setAecOnly(e.target.checked)} size="small" sx={{ p: 0.5 }} />
+              }
+              label={`AEC-qualified only (${aecCount})`}
+              sx={{ ml: 0, mb: 1.5, '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+            />
+          </>
+        )}
 
         {/* MANUFACTURER section */}
         <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mb: 0.5 }}>

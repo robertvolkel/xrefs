@@ -209,7 +209,9 @@ export async function keywordSearch(
   currency?: string,
   userId?: string,
 ): Promise<DigikeyKeywordResponse> {
-  console.time('[perf] digikey:keywordSearch');
+  // performance.now() delta instead of console.time — fan-out fires several keywordSearch
+  // calls concurrently, and a shared console.time label collides ("Label already exists").
+  const t0 = performance.now();
   const token = await getAccessToken();
 
   const body = {
@@ -230,7 +232,7 @@ export async function keywordSearch(
   }, currency);
 
   const data = await res.json();
-  console.timeEnd('[perf] digikey:keywordSearch');
+  console.log(`[perf] digikey:keywordSearch ${(performance.now() - t0).toFixed(0)}ms`);
 
   if (userId) {
     await logApiCall({ userId, service: 'digikey', operation: 'keyword_search' });

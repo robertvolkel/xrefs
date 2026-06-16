@@ -82,8 +82,20 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       (Decision TBD). HONGFA + 9 other relay MFRs re-ingested from
  *       family_id=null to F1/F2 with full parametric data. Cached recs
  *       computed against the old (8-key, null-family) atlas_products
- *       rows are now stale. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v12';
+ *       rows are now stale.
+ *  v13: Per-attribute tolerance bands (Source Specs panel) added to the
+ *       scoring pipeline (applyTolerancesToLogicTable) and to the recs
+ *       cache variant. Scoring output for no-tolerance requests is
+ *       unchanged, but bump as cheap insurance for the pipeline change.
+ *  v14: Tolerance bands generalized into unified AcceptanceCriteria (range +
+ *       discrete-value 'set'); new acceptedValues short-circuit in the engine.
+ *       Cache variant key renamed tol→accept. Bump to invalidate v13 entries.
+ *  v15: buildCandidateSearchQuery now emits an inductance value keyword on the
+ *       DEFAULT (no-criteria) inductor query, so the candidate set differs even
+ *       with accept:null. The full-result cache is consulted before the base
+ *       payload, so without this bump pre-deploy inductor recs (scored against the
+ *       old narrower pool) would persist for the 30-day TTL. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v15';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

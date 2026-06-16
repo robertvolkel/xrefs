@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
-import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation } from '@/lib/types';
+import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion } from '@/lib/types';
 
 export type { AttributesTab };
 import ChatInterface from './ChatInterface';
@@ -164,6 +164,10 @@ export interface DesktopLayoutProps {
   onMpnClick?: (mpn: string) => void;
   // Atlas-MFR linkification for assistant messages (opens the side profile panel).
   knownAtlasManufacturers?: ReadonlySet<string>;
+
+  /** Per-attribute acceptance criteria + setter for the source Specs panel. */
+  acceptanceCriteria?: AcceptanceCriteria;
+  onAcceptanceChange?: (attributeId: string, criterion: AcceptanceCriterion | null) => void;
 }
 
 export default function DesktopLayout(props: DesktopLayoutProps) {
@@ -184,6 +188,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     knownMpns, onMpnClick,
     knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
+    acceptanceCriteria, onAcceptanceChange,
   } = props;
 
   // Tab state was lifted to useAppState (so chat handlers like Best Spot Price
@@ -349,6 +354,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             xrefMfr={xrefMfr}
             onSelectXrefCategory={handleSelectXrefCategory}
             onSelectXrefMfr={handleSelectXrefMfr}
+            acceptanceCriteria={acceptanceCriteria}
+            onAcceptanceChange={onAcceptanceChange}
           />
         </Box>
 

@@ -28,6 +28,25 @@ export interface FilterInput {
    *  Maps to XrefRecommendation.part.mfrOrigin, which is populated for every
    *  rec via the manufacturer alias resolver regardless of dataSource. */
   mfr_origin_filter?: 'atlas' | 'western';
+  /** Keep only AEC-qualified replacements (AEC-Q100/Q101/Q200). The binary
+   *  "automotive matters" intent — replaces the removed AEC acceptance control.
+   *  Inclusive-keep on explicit qualification, so it sidesteps the missing-AEC-data
+   *  problem (non-qualified parts that omit AEC are simply not kept). */
+  aec_qualified_only?: boolean;
+}
+
+const AEC_ATTRIBUTE_IDS = new Set(['aec_q200', 'aec_q101', 'aec_q100']);
+
+/** Whether a recommendation is explicitly AEC-qualified — via an AEC matchDetail that
+ *  reads "Yes" (families with an AEC rule) OR the part's `qualifications` badge array
+ *  (covers families without an AEC rule). Missing/“No” AEC → not qualified. */
+export function isAecQualified(rec: XrefRecommendation): boolean {
+  for (const d of rec.matchDetails) {
+    if (AEC_ATTRIBUTE_IDS.has(d.parameterId) && d.replacementValue?.trim().toLowerCase() === 'yes') return true;
+  }
+  const quals = rec.part.qualifications;
+  if (Array.isArray(quals) && quals.some(q => /AEC-?Q\s?(?:100|101|200)(?![0-9])/i.test(q))) return true;
+  return false;
 }
 
 /** Extract a numeric value from a string, handling SI prefixes (e.g. "1 kOhms" → 1000,
@@ -79,6 +98,9 @@ export function applyRecommendationFilter(
   if (input.mfr_origin_filter) {
     const target = input.mfr_origin_filter;
     filtered = filtered.filter(r => r.part.mfrOrigin === target);
+  }
+  if (input.aec_qualified_only) {
+    filtered = filtered.filter(isAecQualified);
   }
   if (input.exclude_failing_parameters && input.exclude_failing_parameters.length > 0) {
     const excludeNames = input.exclude_failing_parameters.map(n => n.toLowerCase());

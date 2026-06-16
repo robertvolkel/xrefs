@@ -14,6 +14,8 @@ import {
   OrchestratorMessage,
   hasAnyReplacements,
   getDefaultDisplayedRecs,
+  AcceptanceCriteria,
+  AcceptanceCriterion,
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
@@ -79,6 +81,12 @@ interface AppState {
    *  chat UI can linkify mentions of those MFRs in assistant prose without
    *  the user having to first click anything. Decision #203. */
   chatAtlasMfrs: ReadonlySet<string>;
+  /** Per-attribute acceptance criteria the user set from the Source Part Specs
+   *  panel — attributeId → ± percent (e.g. `{ resistance: 5 }`). Loosens the
+   *  matching engine's identity rule for that attribute so candidates within
+   *  the band still match. Session-only: cleared on reset / new part, NOT on
+   *  each search (so criteria persist across re-runs). Decision: acceptance criteria UI. */
+  acceptanceCriteria: AcceptanceCriteria;
 }
 
 const initialState: AppState = {
@@ -104,6 +112,7 @@ const initialState: AppState = {
   currentFilter: null,
   currentFilterLabel: null,
   chatAtlasMfrs: new Set<string>(),
+  acceptanceCriteria: {},
 };
 
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
@@ -143,6 +152,11 @@ export function useAppState() {
   const pendingIntentQueryRef = useRef<string | null>(null);
   // Track attribute overrides so handleContextResponse can include them
   const pendingOverridesRef = useRef<Record<string, string>>({});
+  // Mirror of state.acceptanceCriteria so async callbacks (handleFindReplacements and
+  // its deferred parts.io re-fire) read the current per-attribute acceptance
+  // bands without a render-time read. Unlike pendingOverridesRef, this is NOT
+  // cleared after each search — a set band persists for the session.
+  const acceptanceCriteriaRef = useRef<AcceptanceCriteria>({});
   // Track whether context questions have been asked (ref avoids stale closure)
   const contextAskedRef = useRef(false);
   // Track whether the missing-attributes prompt has already been shown this xref cycle
@@ -174,6 +188,9 @@ export function useAppState() {
   useEffect(() => {
     sourceAttributesRef.current = state.sourceAttributes;
   }, [state.sourceAttributes]);
+  useEffect(() => {
+    acceptanceCriteriaRef.current = state.acceptanceCriteria;
+  }, [state.acceptanceCriteria]);
 
   // Log search when reaching 'viewing' or 'unsupported' phase
   useEffect(() => {
@@ -398,7 +415,7 @@ export function useAppState() {
    *  enrichment — its L1 cache is warm so the merge is effectively free. */
   const triggerPartsioEnrichment = useCallback(
     (
-      args: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes },
+      args: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes; acceptanceCriteria?: AcceptanceCriteria },
       signal: AbortSignal,
     ) => {
       getRecommendationsWithOverrides(
@@ -409,6 +426,7 @@ export function useAppState() {
         args.sourceAttributes,
         undefined,
         false /* run parts.io enrichment */,
+        args.acceptanceCriteria,
       )
         .then((enrichedRecs) => {
           if (signal.aborted || enrichedRecs.length === 0) return;
@@ -430,6 +448,44 @@ export function useAppState() {
     [triggerFCEnrichment],
   );
 
+  /** Set or clear a per-attribute acceptance criterion from the Source Specs
+   *  panel — a ±% band (kind 'range') or an accepted-value set (kind 'set').
+   *  `null` clears it. When replacements are already on screen, silently
+   *  re-scores them with the new criteria (no chat message) so the panel
+   *  reflects the change immediately — reusing the same background re-fetch path
+   *  as deferred parts.io enrichment. The acceptanceCriteriaRef mirror is updated
+   *  synchronously here (the useEffect mirror lags one render) so the immediate
+   *  re-score reads the new criteria, not the stale set. */
+  const handleAcceptanceChange = useCallback((attributeId: string, criterion: AcceptanceCriterion | null) => {
+    const next = { ...acceptanceCriteriaRef.current };
+    if (criterion == null) {
+      if (!(attributeId in next)) return; // no-op clear
+      delete next[attributeId];
+    } else {
+      const existing = next[attributeId];
+      if (existing && JSON.stringify(existing) === JSON.stringify(criterion)) return; // no change
+      next[attributeId] = criterion;
+    }
+    acceptanceCriteriaRef.current = next;
+    setState((prev) => ({ ...prev, acceptanceCriteria: next }));
+
+    // Re-score the visible recommendations with the new criteria, if any shown.
+    const sourceAttrs = sourceAttributesRef.current;
+    const mpn = state.sourcePart?.mpn ?? sourceAttrs?.part.mpn;
+    if (mpn && sourceAttrs && allRecsRef.current.length > 0) {
+      triggerPartsioEnrichment(
+        {
+          mpn,
+          overrides: pendingOverridesRef.current,
+          applicationContext: state.applicationContext ?? undefined,
+          sourceAttributes: sourceAttrs,
+          acceptanceCriteria: next,
+        },
+        freshAbort(),
+      );
+    }
+  }, [state.sourcePart, state.applicationContext, triggerPartsioEnrichment, freshAbort]);
+
   /**
    * Show recommendations immediately, then fire the LLM assessment in the background.
    * This avoids blocking the recommendations panel by 3-8s while the orchestrator responds.
@@ -441,7 +497,7 @@ export function useAppState() {
       conversationContext: string,
       signal: AbortSignal,
       opts?: {
-        deferredPartsio?: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes };
+        deferredPartsio?: { mpn: string; overrides: Record<string, string>; applicationContext?: ApplicationContext; sourceAttributes?: PartAttributes; acceptanceCriteria?: AcceptanceCriteria };
       },
     ) => {
       // Show recs immediately — panels appear without waiting for LLM. The
@@ -690,10 +746,11 @@ export function useAppState() {
             try {
               const overrides = pendingOverridesRef.current;
               const hasOverrides = Object.keys(overrides).length > 0;
-              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs, undefined, true /* skipPartsioEnrichment — deferred */);
+              const tol = acceptanceCriteriaRef.current;
+              const recs = await getRecommendationsWithOverrides(mpn, hasOverrides ? overrides : {}, autoContext, signal, sourceAttrs, undefined, true /* skipPartsioEnrichment — deferred */, tol);
               if (signal.aborted) return;
               showRecsAndDeferAssessment(recs, mpn, `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`, signal, {
-                deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: autoContext, sourceAttributes: sourceAttrs },
+                deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: autoContext, sourceAttributes: sourceAttrs, acceptanceCriteria: tol },
               });
             } catch {
               setStatus('');
@@ -715,6 +772,7 @@ export function useAppState() {
       try {
         const overrides = pendingOverridesRef.current;
         const hasOverrides = Object.keys(overrides).length > 0;
+        const tol = acceptanceCriteriaRef.current;
         const recs = await getRecommendationsWithOverrides(
           mpn,
           hasOverrides ? overrides : {},
@@ -723,6 +781,7 @@ export function useAppState() {
           sourceAttrs,
           undefined,
           true /* skipPartsioEnrichment — deferred */,
+          tol,
         );
         if (signal.aborted) return;
 
@@ -730,7 +789,7 @@ export function useAppState() {
           ? `Application context applied. ${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`
           : `${recs.length} replacement candidates evaluated. Please provide your engineering assessment.`;
         showRecsAndDeferAssessment(recs, mpn, contextMsg, signal, {
-          deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: effectiveContext ?? undefined, sourceAttributes: sourceAttrs },
+          deferredPartsio: { mpn, overrides: hasOverrides ? overrides : {}, applicationContext: effectiveContext ?? undefined, sourceAttributes: sourceAttrs, acceptanceCriteria: tol },
         });
       } catch {
         setStatus('');
@@ -1119,7 +1178,9 @@ export function useAppState() {
         { text: 'Checking price and availability...', delayMs: 2800 },
         { text: 'Analyzing supply risk...', delayMs: 4500 },
       ]);
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
+      // New part confirmed — drop any acceptance criteria set against the previous part.
+      acceptanceCriteriaRef.current = {};
+      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
 
       // Tell the LLM the user confirmed
       conversationRef.current.push({
@@ -1249,7 +1310,9 @@ export function useAppState() {
 
   const handleConfirmDeterministic = useCallback(
     async (part: PartSummary) => {
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part }));
+      // New part confirmed — drop any acceptance criteria set against the previous part.
+      acceptanceCriteriaRef.current = {};
+      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
       await loadAttributesAndRecommendations(part);
     },
     [addMessage, loadAttributesAndRecommendations]
@@ -1655,6 +1718,7 @@ export function useAppState() {
     recsRef.current = [];
     allRecsRef.current = [];
     sourceAttributesRef.current = null;
+    acceptanceCriteriaRef.current = {};
     setStatus('');
     setState(initialState);
   }, [setStatus]);
@@ -1891,6 +1955,7 @@ export function useAppState() {
     // Infer llmAvailable from conversation evidence
     const llmWasUsed = snapshot.orchestratorMessages.length > 0;
 
+    acceptanceCriteriaRef.current = {}; // acceptance criteria are session-only, not persisted
     setState({
       conversationId: snapshot.id,
       phase,
@@ -1914,6 +1979,7 @@ export function useAppState() {
       currentFilter: null,
       currentFilterLabel: null,
       chatAtlasMfrs: new Set<string>(),
+      acceptanceCriteria: {},
     });
   }, []);
 
@@ -1964,6 +2030,7 @@ export function useAppState() {
     handleSkipContext,
     handleMpnClick,
     clearChatFilterSilently,
+    handleAcceptanceChange,
     setActiveAttributesTab,
     consumeAutoOpenMfr,
     getOrchestratorMessages,
