@@ -30,7 +30,7 @@ import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResol
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
 import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
 import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
-import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts } from './partsioClient';
+import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
 import { mapMouserLifecycle } from './mouserMapper';
@@ -340,7 +340,10 @@ function buildRecommendationsVariant(
 //     RANGE_FETCH_ATTRS / fetchWideningKey), but the candidate SET a key resolves to grew,
 //     so cached v4 base payloads for such bands are stale. No-criteria payloads are
 //     unaffected (the parametric path only fires when a band is set).
-const BASE_RECS_SCHEMA_VERSION = 'v5';
+// v6: parts.io candidate status normalized via mapPartsioStatus — allCandidates
+//     carry enum statuses ('Active' for Transferred/Acquired/empty) instead of raw
+//     codes, so the Active-first display sort works (Decision #232).
+const BASE_RECS_SCHEMA_VERSION = 'v6';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -863,7 +866,7 @@ async function getAttributesRaw(
             manufacturer: listing.Manufacturer || 'Unknown',
             description: listing.Description || '',
             detailedDescription: listing.Description || '',
-            status: (listing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            status: mapPartsioStatus(listing['Part Life Cycle Code']),
             category: mapCategory(rawCategory),
             subcategory,
             datasheetUrl: listing['Current Datasheet Url'],
@@ -1716,7 +1719,7 @@ async function fetchPartsioEquivalents(mpn: string, userId?: string): Promise<Pa
             manufacturer: eqListing.Manufacturer || 'Unknown',
             description: eqListing.Description || '',
             detailedDescription: eqListing.Description || '',
-            status: (eqListing['Part Life Cycle Code'] || 'Unknown') as PartAttributes['part']['status'],
+            status: mapPartsioStatus(eqListing['Part Life Cycle Code']),
             subcategory: eqListing.Category || eqListing.Class || '',
             ...extractPartsioLifecycle(eqListing),
           },

@@ -319,8 +319,11 @@ const PARTSIO_CLASS_TO_CATEGORY: Record<string, ComponentCategory> = {
   'Crystals/Resonators': 'Crystals',
 };
 
-/** Map Parts.io lifecycle → PartStatus */
-function mapPartsioStatus(lifecycle: string | undefined): PartStatus {
+/** Map Parts.io lifecycle → PartStatus. Exported so the recommendation pipeline
+ *  (partDataService) normalizes parts.io candidate statuses the same way the
+ *  primary parts.io search path does — raw codes like "Transferred"/"Acquired"
+ *  map to 'Active' (still orderable), only true end-of-life codes sink. */
+export function mapPartsioStatus(lifecycle: string | undefined): PartStatus {
   if (!lifecycle) return 'Active';
   const lc = lifecycle.toLowerCase();
   if (lc.includes('obsolete')) return 'Obsolete';

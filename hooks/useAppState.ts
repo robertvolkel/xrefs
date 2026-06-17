@@ -13,7 +13,6 @@ import {
   SearchResult,
   OrchestratorMessage,
   hasAnyReplacements,
-  getDefaultDisplayedRecs,
   AcceptanceCriteria,
   AcceptanceCriterion,
 } from '@/lib/types';
@@ -949,44 +948,21 @@ export function useAppState() {
         return;
       }
 
-      // The panel re-applies its own default filter (obsolete + high-fail hidden)
-      // on top of whatever we hand it, so the count the user SEES is the default-
-      // displayed slice of `filtered`, not filtered.length itself. Report the
-      // displayed count so the chat message matches the cards.
-      const displayed = getDefaultDisplayedRecs(filtered);
-      const hiddenCount = filtered.length - displayed.length;
-      const hiddenNote =
-        hiddenCount > 0
-          ? ` ${hiddenCount} more ${hiddenCount === 1 ? 'is' : 'are'} hidden (obsolete or 3+ failing parameters) — say "show all" to see ${hiddenCount === 1 ? 'it' : 'them'}.`
-          : '';
-
       // Update the panel — both visible recs and conversation-history note for
       // the LLM (so future turns see the filtered count, not the original).
       // Sync-update recsRef alongside (allRecsRef stays at the full source so
-      // subsequent filter requests narrow from the original 78, not the
+      // subsequent filter requests narrow from the original set, not the
       // already-filtered subset). Also persist the active filter to state so
       // background enrichment paths (parts.io re-enrichment, FC chunks) can
       // re-apply it when they replace the full recs set — without this, the
-      // user sees the panel snap back to all-78 a second after filtering. We
-      // hand the panel the FULL filtered set (not just `displayed`) so its own
-      // "show all" toggle can still reveal the hidden ones.
+      // user sees the panel snap back to the full set a second after filtering.
+      // The panel shows every candidate it's handed (Decision #227 — no status/
+      // quality hiding), so filtered.length is exactly what the user sees.
       recsRef.current = filtered;
       setState((prev) => ({ ...prev, recommendations: filtered, currentFilter: filterInput, currentFilterLabel: label }));
 
-      // All matches are quality-hidden: don't imply zero. Tell the user they
-      // exist and how to reveal them.
-      if (displayed.length === 0) {
-        const allHidden = `Found **${filtered.length}** ${label} replacement${filtered.length === 1 ? '' : 's'}, but ${filtered.length === 1 ? 'it is' : 'all are'} obsolete or ${filtered.length === 1 ? 'has' : 'have'} 3+ failing parameters and ${filtered.length === 1 ? 'is' : 'are'} hidden by default — say "show all" to review ${filtered.length === 1 ? 'it' : 'them'}.`;
-        addMessage('assistant', allHidden);
-        conversationRef.current.push({
-          role: 'assistant',
-          content: `Applied the ${label} filter: ${filtered.length} matched but all are hidden by the panel's default quality filter (obsolete or 3+ failing parameters). Told the user they can say "show all" to see them.`,
-        });
-        return;
-      }
-
-      const top3 = displayed.slice(0, 3);
-      const headline = `Filtered to **${displayed.length}** ${label} replacement${displayed.length === 1 ? '' : 's'}.${hiddenNote}`;
+      const top3 = filtered.slice(0, 3);
+      const headline = `Filtered to **${filtered.length}** ${label} replacement${filtered.length === 1 ? '' : 's'}.`;
       const lines: string[] = [headline];
       if (top3.length > 0) {
         lines.push('', 'Top picks:');
@@ -999,7 +975,7 @@ export function useAppState() {
       addMessage('assistant', message);
       conversationRef.current.push({
         role: 'assistant',
-        content: `Filtered the recommendations panel to ${displayed.length} ${label} shown${hiddenCount > 0 ? ` (${hiddenCount} more hidden by the default quality filter)` : ''} from ${sourceRecs.length}. The user can see the narrowed cards now.`,
+        content: `Filtered the recommendations panel to ${filtered.length} ${label} (from ${sourceRecs.length}). The user can see the narrowed cards now.`,
       });
     },
     [addMessage],

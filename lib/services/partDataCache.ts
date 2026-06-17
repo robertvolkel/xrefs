@@ -98,8 +98,12 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  v16: Digikey parametric-filter widening (Decision #238 Step 3) — a ±% band on a
  *       voltage/frequency-type attr now also widens the Digikey fetch (was Atlas-only),
  *       so the full-result candidate set for such bands changed. The full-result cache
- *       is read before the base payload, so it must invalidate too (mirrors v15). */
-export const RECS_CACHE_SCHEMA_VERSION = 'v16';
+ *       is read before the base payload, so it must invalidate too (mirrors v15).
+ *  v17: parts.io candidate lifecycle status normalized via mapPartsioStatus
+ *       (raw "Transferred"/"Acquired"/empty → 'Active'), changing the stored
+ *       status value AND the Active-first display sort (Decision #232). Cached
+ *       v16 recs carry the old raw status + pre-Active-first order. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v17';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
