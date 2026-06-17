@@ -1805,7 +1805,13 @@ async function fetchDigikeyCandidates(
   const fanoutAttrs: Array<{ attr: string; tokens: string[] }> = [];
   let parametricBand: { attr: string; lo: number; hi: number } | null = null;
   if (acceptanceCriteria) {
-    for (const [attr, criterion] of Object.entries(acceptanceCriteria)) {
+    // Sorted key order so the parametric "first eligible" pick is DETERMINISTIC and matches
+    // computeAtlasWidening + fetchWideningKey (both sorted) — otherwise, with two eligible
+    // bands, Digikey could widen a different attr than Atlas, and two requests differing only
+    // in criteria insertion order would share a (sorted) base cache key but produce different
+    // Digikey pools.
+    for (const attr of Object.keys(acceptanceCriteria).sort()) {
+      const criterion = acceptanceCriteria[attr];
       // Step 3: parametric-filter widening — single-attr (first eligible), mirroring
       // computeAtlasWidening. These attrs produce no E-series keyword tokens, so they
       // skip the keyword path entirely.
@@ -1890,16 +1896,20 @@ async function fetchDigikeyCandidates(
     const facet = findFacetForAttribute(parametricBand.attr, discover.facets, discover.products[0]);
     if (facet) {
       const { lo, hi } = parametricBand;
+      // One in-band predicate, used for both value SELECTION and result RE-VERIFY so the two
+      // passes can't drift (parse a value string → base SI → inside the band).
+      const inBand = (valueStr: string | undefined): boolean => {
+        if (!valueStr) return false;
+        const { numericValue } = extractNumericValue(valueStr);
+        return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
+      };
       // A dense facet can hold far more in-band values than MAX_PARAMETRIC_VALUES (a Zener
       // band spans dozens of oddball precision values like 4.66/4.68 V). Prioritize by
       // ProductCount DESC before the cap so the most-stocked (i.e. standard E-series) values
       // survive — a naive ascending slice would keep obscure low-end values and drop common
       // neighbors like 5.6 V that are well within band.
       const inBandValueIds = facet.FilterValues
-        .filter(fv => {
-          const { numericValue } = extractNumericValue(fv.ValueName);
-          return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
-        })
+        .filter(fv => inBand(fv.ValueName))
         .sort((a, b) => (b.ProductCount ?? 0) - (a.ProductCount ?? 0))
         .slice(0, MAX_PARAMETRIC_VALUES)
         .map(fv => fv.ValueId);
@@ -1911,12 +1921,9 @@ async function fetchDigikeyCandidates(
           // Locks the ValueId-vs-ValueName risk — if the apply silently ignored the filter
           // (returning unfiltered category results), those out-of-band parts are dropped here.
           const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
-          parametricProducts = raw.filter(p => {
-            const param = p.Parameters?.find(x => x.ParameterText === facet.ParameterName);
-            if (!param) return false;
-            const { numericValue } = extractNumericValue(param.ValueText);
-            return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
-          });
+          parametricProducts = raw.filter(p =>
+            inBand(p.Parameters?.find(x => x.ParameterText === facet.ParameterName)?.ValueText),
+          );
         }
       }
     }
