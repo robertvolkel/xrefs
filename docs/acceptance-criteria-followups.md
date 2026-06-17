@@ -82,12 +82,27 @@ offers a band on widens at least the **Atlas** fetch (the numeric-range RPC is g
 value enumeration needed). The **Digikey** keyword fan-out is the narrower part
 (`ESERIES_ENUMERABLE_ATTRS` = `{resistance, resistance_r25, capacitance, inductance}`):
 resistance/cap/inductance are E-series-stocked so they fan out on Digikey too; everything
-else (voltages, frequencies, impedance, varistor_voltage, etc.) widens on **Atlas only** and
-keeps its exact-value Digikey query. Inductance also became a Digikey search keyword in
-`buildCandidateSearchQuery` (improves the default inductor query too) → `BASE_RECS_SCHEMA_VERSION`
-v3→v4. The two deferred Digikey extensions live in BACKLOG: (a) value-grid widening for
-output_voltage + frequency attrs (keyword-driving but non-E-series); (b) full parametric
-ValueId filtering for every numeric attr.
+else (voltages, frequencies, impedance, varistor_voltage, etc.) widened on **Atlas only**
+in Step 2 (Step 3 below closed this for Digikey). Inductance also became a Digikey search
+keyword in `buildCandidateSearchQuery` (improves the default inductor query too) →
+`BASE_RECS_SCHEMA_VERSION` v3→v4.
+
+**Step 3 (Digikey parametric value-grid widening) — ✅ SHIPPED June 16, 2026.** The voltage/
+frequency-type attrs that were Atlas-only now ALSO widen on Digikey, via the full parametric
+ValueId filter (`FilterOptionsRequest.ParameterFilterRequest`) — the originally-deferred
+extension (b), which subsumes (a). Two-call discover→apply in `fetchDigikeyCandidates`:
+`getCategoryParametricFacets('', categoryId)` enumerates the category's facet values,
+`findFacetForAttribute` matches the facet via the existing forward param map (no reverse map),
+in-band values are picked by `ProductCount` DESC (cap 25 → standard E-series neighbors survive
+the cap), `parametricFilterSearch` applies the filter, and an in-band re-verify drops anything
+mis-keyed. Latency bounded to ~2 round-trips (fan-out+discover, then apply). `BASE_RECS_SCHEMA_VERSION`
+v4→v5, `RECS_CACHE_SCHEMA_VERSION` v15→v16. **Live-verified** end-to-end (1N4733A 5.1 V Zener
+±10% → 4.7/5.1/5.6 V Digikey parts). Live probing surfaced three load-bearing facts: facets name
+the parameter via `ParameterName` (the per-product field is `ParameterText`), facets carry their
+own `Category`, and discovery must use an EMPTY keyword so the facet reflects the whole category
+(not the source MPN's 1-part result set). Still deferred (BACKLOG): multi-attr parametric widening;
+attrs with no Digikey param-map entry (e.g. `izt`) stay Atlas-only; parts.io value-search (needs
+prod endpoint + schema discovery).
 
 **Source taxonomy (why only Atlas + Digikey widen).** Fetch-widening applies only to sources
 that search by parametric VALUE — Digikey (keyword) and Atlas (numeric JSONB). parts.io

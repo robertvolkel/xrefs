@@ -1,6 +1,7 @@
 import {
   fetchWideningKey,
   isFetchWideningCriterion,
+  isParametricWideningCriterion,
   criterionToBounds,
   criterionToValueSet,
   inBandESeriesValues,
@@ -33,6 +34,37 @@ describe('fetchWidening — eligibility', () => {
   it('classifies set on package_case as fetch-widening but NOT AEC sets', () => {
     expect(isFetchWideningCriterion('package_case', { kind: 'set', values: ['0603', '0805'] })).toBe(true);
     expect(isFetchWideningCriterion('aec_q200', { kind: 'set', values: ['Yes', 'No'] })).toBe(false);
+  });
+});
+
+describe('fetchWidening — isParametricWideningCriterion (Digikey facet path, Step 3)', () => {
+  it('is true for non-E-series numeric range attrs (voltages, frequencies, impedance, currents)', () => {
+    for (const attr of ['vz', 'vrwm', 'vbr', 'fsw', 'nominal_frequency_hz', 'output_frequency_hz',
+                        'output_voltage', 'impedance_100mhz', 'varistor_voltage', 'trip_current',
+                        'hold_current', 'input_logic_threshold', 'load_capacitance_pf']) {
+      expect(isParametricWideningCriterion(attr, { kind: 'range', percent: 10 })).toBe(true);
+    }
+  });
+
+  it('is FALSE for E-series attrs (those use the keyword fan-out, not the parametric path)', () => {
+    for (const attr of ['resistance', 'resistance_r25', 'capacitance', 'inductance']) {
+      expect(isParametricWideningCriterion(attr, { kind: 'range', percent: 10 })).toBe(false);
+    }
+  });
+
+  it('is FALSE for set criteria and for attrs outside RANGE_FETCH_ATTRS', () => {
+    expect(isParametricWideningCriterion('package_case', { kind: 'set', values: ['0603'] })).toBe(false);
+    expect(isParametricWideningCriterion('vz', { kind: 'set', values: ['5.1 V'] })).toBe(false);
+    expect(isParametricWideningCriterion('esr', { kind: 'range', percent: 10 })).toBe(false);
+  });
+
+  it('partitions RANGE_FETCH_ATTRS: every range attr is EITHER keyword-fanout OR parametric, never both', () => {
+    // The two Digikey mechanisms must be mutually exclusive so a single attr can't fan out twice.
+    for (const attr of ['resistance', 'capacitance', 'inductance', 'vz', 'fsw', 'output_voltage', 'izt']) {
+      const isParametric = isParametricWideningCriterion(attr, { kind: 'range', percent: 10 });
+      const eseries = ['resistance', 'resistance_r25', 'capacitance', 'inductance'].includes(attr);
+      expect(isParametric).toBe(!eseries);
+    }
   });
 });
 
