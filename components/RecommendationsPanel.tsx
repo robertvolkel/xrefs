@@ -5,7 +5,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '@/lib/types';
+import { XrefRecommendation, RecommendationCategory, PartStatus, deriveRecommendationCategories } from '@/lib/types';
 import { isAecQualified } from '@/lib/services/recommendationFilter';
 import RecommendationCard from './RecommendationCard';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
@@ -14,6 +14,18 @@ import { inferContextActive } from './DomainChip';
 
 // Re-export for backward compatibility with existing consumers (e.g. useAppState)
 export { sortRecommendationsForDisplay };
+
+// Lifecycle-status filter (Decision #232 follow-up). Display order + labels for the
+// per-status checkboxes. The panel shows ALL statuses by default (empty hidden set);
+// this is a purely additive, user-initiated narrow — never a default hide.
+const STATUS_ORDER: PartStatus[] = ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+const STATUS_LABELS: Record<PartStatus, string> = {
+  Active: 'Active',
+  Obsolete: 'Obsolete',
+  Discontinued: 'Discontinued',
+  NRND: 'NRND',
+  LastTimeBuy: 'Last Time Buy',
+};
 
 interface RecommendationsPanelProps {
   recommendations: XrefRecommendation[];
@@ -63,6 +75,9 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   // EXPLICIT, user-initiated ones below (manufacturer / CN-only / category / stock /
   // AEC-qualified).
   const [aecOnly, setAecOnly] = useState(false);
+  // Lifecycle-status filter: set of statuses the user has UNCHECKED (hidden). Empty =
+  // all shown (Decision #232 default). A status is only listed if some rec carries it.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<PartStatus>>(new Set());
 
   const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
   const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
@@ -71,20 +86,46 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
   const aecCount = useMemo(() => sorted.filter(isAecQualified).length, [sorted]);
 
+  // Per-status counts over the FULL set (mirrors aecCount/cnCount) — used to label the
+  // checkboxes and decide which statuses to surface at all.
+  const statusCounts = useMemo(() => {
+    const m = new Map<PartStatus, number>();
+    for (const r of sorted) m.set(r.part.status, (m.get(r.part.status) ?? 0) + 1);
+    return m;
+  }, [sorted]);
+  const presentStatuses = useMemo(() => STATUS_ORDER.filter(s => statusCounts.has(s)), [statusCounts]);
+  // Hidden statuses that are actually present (guards against a stale hidden entry for a
+  // status the current part has no candidates in — keeps the chip/filter count honest).
+  const activeHiddenStatuses = useMemo(
+    () => presentStatuses.filter(s => hiddenStatuses.has(s)),
+    [presentStatuses, hiddenStatuses],
+  );
+
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (selectedMfr) count++;
     if (showCnOnly) count++;
     if (selectedCategory !== 'all') count++;
     if (aecOnly) count++;
+    if (activeHiddenStatuses.length > 0) count++;
     return count;
-  }, [selectedMfr, showCnOnly, selectedCategory, aecOnly]);
+  }, [selectedMfr, showCnOnly, selectedCategory, aecOnly, activeHiddenStatuses]);
 
   const handleClearFilters = () => {
     setSelectedMfr('');
     setShowCnOnly(false);
     setSelectedCategory('all');
     setAecOnly(false);
+    setHiddenStatuses(new Set());
+  };
+
+  const handleToggleStatus = (status: PartStatus, checked: boolean) => {
+    setHiddenStatuses(prev => {
+      const next = new Set(prev);
+      if (checked) next.delete(status);
+      else next.add(status);
+      return next;
+    });
   };
 
   const handleToggleCnOnly = (checked: boolean) => {
@@ -123,7 +164,8 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
       return total > 0;
     })
     .filter(r => selectedCategory === 'all' || deriveRecommendationCategories(r).includes(selectedCategory))
-    .filter(r => !aecOnly || isAecQualified(r));
+    .filter(r => !aecOnly || isAecQualified(r))
+    .filter(r => !hiddenStatuses.has(r.part.status));
 
   // Parameter coverage is family-level (same for all candidates), so compute from first recommendation
   const firstMatch = sorted[0]?.matchDetails;
@@ -215,6 +257,14 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             label={selectedCategory === 'logic_driven' ? 'Logic Driven' : selectedCategory === 'manufacturer_certified' ? 'MFR Certified' : 'Accuris Certified'}
             size="small"
             onDelete={() => setSelectedCategory('all')}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
+          />
+        )}
+        {activeHiddenStatuses.length > 0 && (
+          <Chip
+            label={`Hiding: ${activeHiddenStatuses.map(s => STATUS_LABELS[s]).join(', ')}`}
+            size="small"
+            onDelete={() => setHiddenStatuses(new Set())}
             sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
           />
         )}
@@ -338,6 +388,34 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
                 />
               ))}
             </Box>
+          </>
+        )}
+
+        {/* LIFECYCLE STATUS section (Decision #232 follow-up). All statuses are checked by
+            default — the panel hides nothing until the user explicitly unchecks one. Counts
+            are over the full set, so the external chip/chat counts stay reconciled. Rendered
+            only when there's more than one status to choose between (or a hide is already
+            active, so the user can always re-show). */}
+        {(presentStatuses.length > 1 || activeHiddenStatuses.length > 0) && (
+          <>
+            <Typography variant="overline" sx={{ fontSize: '0.65rem', color: 'text.secondary', display: 'block', mt: 1.5, mb: 0.5 }}>
+              Lifecycle Status
+            </Typography>
+            {presentStatuses.map((status) => (
+              <FormControlLabel
+                key={status}
+                control={
+                  <Checkbox
+                    checked={!hiddenStatuses.has(status)}
+                    onChange={(e) => handleToggleStatus(status, e.target.checked)}
+                    size="small"
+                    sx={{ p: 0.5 }}
+                  />
+                }
+                label={`${STATUS_LABELS[status]} (${statusCounts.get(status) ?? 0})`}
+                sx={{ ml: 0, mb: 0.25, display: 'flex', '& .MuiFormControlLabel-label': { fontSize: '0.76rem' } }}
+              />
+            ))}
           </>
         )}
       </Popover>
