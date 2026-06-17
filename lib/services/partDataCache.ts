@@ -78,10 +78,32 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       normalized to base SI (matches Digikey convention), so threshold
  *       and identity comparisons against Atlas-source candidates produce
  *       different scores than cached v10 entries.
- *  v12: parts.io candidate lifecycle status normalized via mapPartsioStatus
+ *  v12: F1 (EMR) / F2 (SSR) Atlas classifier branch + dicts shipped
+ *       (Decision TBD). HONGFA + 9 other relay MFRs re-ingested from
+ *       family_id=null to F1/F2 with full parametric data. Cached recs
+ *       computed against the old (8-key, null-family) atlas_products
+ *       rows are now stale.
+ *  v13: Per-attribute tolerance bands (Source Specs panel) added to the
+ *       scoring pipeline (applyTolerancesToLogicTable) and to the recs
+ *       cache variant. Scoring output for no-tolerance requests is
+ *       unchanged, but bump as cheap insurance for the pipeline change.
+ *  v14: Tolerance bands generalized into unified AcceptanceCriteria (range +
+ *       discrete-value 'set'); new acceptedValues short-circuit in the engine.
+ *       Cache variant key renamed tol→accept. Bump to invalidate v13 entries.
+ *  v15: buildCandidateSearchQuery now emits an inductance value keyword on the
+ *       DEFAULT (no-criteria) inductor query, so the candidate set differs even
+ *       with accept:null. The full-result cache is consulted before the base
+ *       payload, so without this bump pre-deploy inductor recs (scored against the
+ *       old narrower pool) would persist for the 30-day TTL.
+ *  v16: Digikey parametric-filter widening (Decision #238 Step 3) — a ±% band on a
+ *       voltage/frequency-type attr now also widens the Digikey fetch (was Atlas-only),
+ *       so the full-result candidate set for such bands changed. The full-result cache
+ *       is read before the base payload, so it must invalidate too (mirrors v15).
+ *  v17: parts.io candidate lifecycle status normalized via mapPartsioStatus
  *       (raw "Transferred"/"Acquired"/empty → 'Active'), changing the stored
- *       status value + display sort (Decision #232 follow-up). */
-export const RECS_CACHE_SCHEMA_VERSION = 'v12';
+ *       status value AND the Active-first display sort (Decision #232). Cached
+ *       v16 recs carry the old raw status + pre-Active-first order. */
+export const RECS_CACHE_SCHEMA_VERSION = 'v17';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

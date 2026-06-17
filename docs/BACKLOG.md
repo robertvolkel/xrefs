@@ -204,6 +204,66 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 
 **Trigger to flip:** when the first MFR disable is needed for real, OR during a periodic admin-UI audit, OR as part of a broader "canonical-source consolidation" sweep.
 
+## Admin MFRs panel: per-MFR Coverage Δ column (since last touching backfill)
+**Status:** Not started (planned June 12, 2026)
+**Priority:** P2 (closes a real operator visibility gap — today engineers have no in-UI way to see per-MFR backfill impact)
+**Cost:** ~4-6 hours (new history table + RPC + close-handler snapshot + manufacturers route field + UI column)
+
+**Trigger:** Surfaced June 12, 2026 after a long Triage session where the global average-coverage indicator moved only 32% → 33% despite ~320 active accepts across 30+ MFRs that the backfill cleanly applied to 100% of products on KEXIN / SWST / YANGJIE / Comchip / Galaxy. A custom diagnostic script ([scripts/triage-impact-diag.mjs](../scripts/triage-impact-diag.mjs)) confirmed the work landed, but the operator had no UI surface to see per-MFR impact. The global headline is unweighted-MFR-average across 181 MFRs and dilutes focused work by 1/181 ≈ 0.55pp per MFR, so even meaningful work appears invisible at the headline. Engineer trust erodes when work shows no surfaceable signal.
+
+**Spec (user-confirmed June 12, 2026):**
+- New column in [components/admin/ManufacturersPanel.tsx](../components/admin/ManufacturersPanel.tsx) between Coverage and Improvement Potential.
+- Shows `+X.X ppt` (or `−X.X ppt` if regressed) from the LAST backfill that actually changed this MFR's coverage. NOT "since previous backfill" — walk back through history to find the last meaningful touch, so a backfill that didn't move the MFR keeps showing the previous touch's contribution rather than blanking to 0.
+- Tooltip: `"Last meaningful change {relative time}: {prev}% → {current}%"`.
+- Sortable.
+
+**Implementation outline (see plan at `/Users/robvolkel/.claude/plans/reflective-doodling-unicorn.md` for full detail):**
+1. New table `atlas_mfr_coverage_history` (append-only): `(history_id, manufacturer, coverage_pct, scorable_count, total_covered, total_rules, backfill_run_id, snapshot_at)`. Indexes on `(manufacturer, snapshot_at DESC)` and `(backfill_run_id)`. Modeled on `atlas_products_snapshots` ([scripts/supabase-atlas-ingest-pipeline-schema.sql:139-173](../scripts/supabase-atlas-ingest-pipeline-schema.sql)).
+2. New RPC `get_mfr_coverage_delta()` returns one row per MFR via `ROW_NUMBER() OVER (PARTITION BY manufacturer ORDER BY snapshot_at DESC)` window. Shape: `(manufacturer, last_coverage_pct, prev_coverage_pct, last_snapshot_at)`. `prev_coverage_pct` is NULL when only one snapshot exists.
+3. Schema migration seeds a Day-0 baseline (one row per MFR at current coverage, idempotent via `NOT EXISTS`) so the column isn't empty for weeks while history accumulates.
+4. Backfill close handler in [app/api/admin/atlas/backfill-translations/route.ts](../app/api/admin/atlas/backfill-translations/route.ts) lines 168-187: after the existing `writeStatus`, compute fresh per-MFR coverage, compare to latest history row, batch-insert ONLY for MFRs that changed. Call `invalidateManufacturersListCache()`. Try/catch wrapped — snapshot failure must NOT roll back the backfill.
+5. Extract per-MFR coverage compute from [app/api/admin/manufacturers/route.ts](../app/api/admin/manufacturers/route.ts) into a shared `lib/services/mfrCoverageCompute.ts` helper so the close handler and the route use one compute path (no drift risk).
+6. Manufacturers route calls the new RPC in parallel with existing RPCs, includes `coverageDeltaPpt: number | null` and `lastTouchedAt: string | null` per row. Bump L2 cache version `manufacturers-list-v4` → `v5` (response shape change).
+7. Render the column in `ManufacturersPanel.tsx`: chip styling mirrors the Improvement Potential cell (`+X.X ppt` green / `−X.X ppt` red / `—` neutral when null). Extend the existing `sortKey` union with `'coverageDelta'`.
+
+**Verification flow:** apply migration → cold load shows `—` for every row → run a touching backfill → that MFR shows `+X.X ppt` while others stay `—` → run a no-op backfill → confirm idempotent (no new history rows, `+X.X ppt` persists) → run a SECOND touching backfill → delta updates to reflect new touch.
+
+**Why deferred:** the diagnostic script gives the answer on demand for one-off questions ("did my session matter?"). The UI column is quality-of-life polish for routine operator use — worth doing before Triage becomes a routine for additional operators, but not blocking solo workflow today.
+
+**Related:** [Decision #200](DECISIONS.md) Coverage Repair workflow (this column completes the loop); [Decision #202](DECISIONS.md) Improvement Potential (sibling per-MFR metric, forward-looking version of the same idea); the kept-around `scripts/triage-impact-diag.mjs` (ad-hoc analyses beyond what the column shows).
+
+## Triage Accept latency spikes — Supabase service-client pool contention with background recompute (follow-up to Decision #234) (P3)
+**Status:** Not started (surfaced June 12, 2026 immediately after the #234 fix landed)
+**Priority:** P3 (5x improvement already shipped; spike is bounded and rare)
+**Cost:** ~2-3 hours investigation + likely fix
+
+**Symptom.** After reverting per-row dict mutations to single-flight invalidate (Decision #234), warm Accept POSTs land in ~600ms — but rapid-fire third-in-a-row Accepts have been observed at 5.8s, with the dev-server timing breakdown showing 5.1s inside the route handler (compile + middleware look normal: 22ms + 657ms).
+
+**Hypothesis.** The background recompute spawned by Accept N's `invalidateTriageQueueCache()` holds a Supabase service-client connection for the ~20-30s the recompute runs. Accept N+1's INSERT + L2 DELETE need fresh service-client connections; if the underlying HTTP/Postgres pool has reached its concurrent-connection cap, the next Accept queues. Per-call `createServiceClient()` may not be returning a fresh pool slot the way the code assumes — needs verification.
+
+**Investigation:**
+1. Instrument the Accept POST path with `console.time` around `requireAdmin()`, the INSERT, and `invalidateTriageQueueCache()`. Identify which step accounts for the 5s.
+2. Check `lib/supabase/service.ts` — does `createServiceClient()` share an HTTP agent / connection pool, or create a fresh one each call?
+3. Check Supabase project's `max_connections` and current connection usage in the Supabase dashboard during a rapid-fire Accept sequence.
+
+**Possible fixes** (ranked by simplicity):
+- (a) Reuse a single module-scoped service client for L2 DELETE inside the cache invalidate (currently creates a fresh one on every invalidation).
+- (b) Throttle the background recompute kickoff — coalesce N back-to-back invalidates into one recompute that starts after a short debounce window. Aligns with the existing "single-flight" pattern's intent.
+- (c) If pool is the constraint, raise it (Pro plan supports more concurrent connections per Decision #193).
+
+**Not blocking.** The 30s → 600ms baseline improvement holds regardless. This is the next 10x at the tail.
+
+## Backfill UI: stale-status-row trap (button stuck on "Backfilling" after crash)
+**Status:** Not started (surfaced June 12, 2026)
+**Priority:** P3 (workaround exists — DevTools POST one-liner — but rough edge for non-technical operators)
+**Cost:** ~1-2 hours (GET response gains `isStale` flag + UI button reflects it)
+
+**Trigger:** Surfaced June 12, 2026 after a Mac restart killed an in-flight backfill mid-run. The detached child died without writing `lastFinishedAt` to `admin_stats_cache`. GET status returned `lastFinishedAt: null`, so the UI button stayed disabled at "Backfilling" indefinitely. The route ([app/api/admin/atlas/backfill-translations/route.ts:119-134](../app/api/admin/atlas/backfill-translations/route.ts)) enforces a 10-minute stale-lock check **on POST only**, not on GET — so the UI never knows to surface a "stuck — re-trigger?" action. Catch-22: button is disabled because backfill is "in flight," but the operator can't dismiss it without calling POST, which requires the button to not be disabled. Workaround used in the June 12 session: paste `fetch('/api/admin/atlas/backfill-translations', { method: 'POST' }).then(r => r.json()).then(console.log)` into DevTools console — bypasses the disabled button, server's stale-lock check passes, fresh run starts.
+
+**Fix:** GET endpoint should compute `isStale = lastFinishedAt === null && (Date.now() - Date.parse(lastStartedAt)) > STALE_LOCK_MS` and return it alongside the status. UI button shows: `"Backfilling..."` (running, not stale) OR `"Stuck — re-trigger?"` (stale, click fires POST + replaces the stale row). Existing 10-min stale-lock check on POST already handles the takeover correctly; this just makes it discoverable through the UI instead of requiring DevTools.
+
+**Trigger to flip:** next time a non-technical operator hits this OR as part of a broader Backfill UX polish pass.
+
 ## FindChips enrichment degrades silently under rate-limit contention
 **Status:** Not started
 **Priority:** P2 (no impact at current single-user load; becomes real as concurrent users grow)
@@ -2264,3 +2324,148 @@ The unified notification pipeline shipped with two v1 producers (feedback reply 
 5. **Notification retention / cleanup.** No pruning yet — rows accumulate forever. Add a periodic delete of read notifications older than N days (or cap per user) when volume warrants.
 
 6. **Real-time inbox (optional).** The bell polls every 30s (same pattern as feedback dots). Supabase Realtime on the `notifications` table could push instantly if latency becomes a complaint.
+
+## Atlas backfill value-level non-convergence — residual 43 rows (Decision #233, June 11 2026)
+
+**Status:** the duplicate-MPN dual-category collision issue is **FIXED** (Decision #233 `dedupRichestByMpn` richest-wins dedup in both write paths — 61 sparse rows recovered, collisions now converge, global "would change" 244 → 43). What remains is a SEPARATE, smaller residual.
+
+**Problem.** **43 products across 4 MFRs** (MXChip 3, Geehy 5, COSINE 14, ETA 21 — all with ZERO duplicate `componentName`) won't converge on `--backfill-translations`: a live run reports "N changed, 0 errors" yet the next run reports the identical N. Verbose shows **no key add/remove** — so it's a **value-level** diff (the mapped `value` / `unit` / `numericValue` representation differs between map → write → re-map). **No key or data loss** — the params are all present and readable; the backfill just can't mark these rows "done." Low impact (4 small MFRs).
+
+**Likely cause (unconfirmed).** A value-representation round-trip mismatch — e.g. a `numericValue` or unit-prefixed `value` string that `tagAtlasParameters`/`mergeAtlasParameters` writes one way but the next map produces slightly differently, so `compareParamsIgnoringIngestedAt` always sees a diff. Candidate areas: Decision #217 unit-prefix normalization (`extractNumericWithPrefix`), or a JSONB store/read normalization the comparator doesn't account for. **First step:** dump one Geehy product's stored param entry vs a freshly-mapped one and diff field-by-field (value / unit / numericValue / source) to find which field oscillates; then either fix the mapper to be idempotent or relax the comparator for that field.
+
+**51 genuinely-sparse collision rows (NOT a bug).** Of the 231 dual-category collision parts, 51 still store ≤3 keys after the richest-wins fix — because their *richest* occurrence genuinely maps to ≤3 keys (real source-data limitation). Correctly + stably stored; nothing to recover. Listed here only so a future audit doesn't mistake them for stripped data.
+
+## Consolidate the 1000-row pagination footgun into one shared helper (Decision #233 review)
+
+**Problem.** The same `.range()` 1000-row pagination loop is now hand-rolled in **four+ places** — `lib/services/atlasDictOverrides.ts` `fetchOverridesPaginated`, `scripts/atlas-ingest.mjs` `loadAndApplyDictOverrides`, `lib/services/triageQueueCompute.ts` (the overrides IIFE), `lib/services/atlasTriageContext.ts` — all over `atlas_dictionary_overrides`, plus an existing copy in `app/api/admin/atlas/growth/route.ts`. A generic `fetchAllPages<T>(fetcher, pageSize)` **already exists** but is module-private in `lib/services/manufacturerAliasResolver.ts`. This recurring footgun has caused real incidents (Decisions #206/#231/#232/#233). Four divergent copies also drift (e.g. `atlasTriageContext`'s loop `break`s/fail-opens on a page error while the others `throw`/`return error`).
+
+**Fix.** Lift `fetchAllPages` into a shared `lib/services/supabasePagination.ts` (with a single stable-order + STOP-on-error contract and a docstring explaining the trap), and route the TS call sites through it; `scripts/atlas-ingest.mjs` keeps its own inline mirror per the #174 no-import-path convention. **Do as a separate post-merge PR** — it refactors currently-correct, tested code, so it shouldn't ride a ready-to-deploy branch. Maintainability only; nothing is broken today.
+
+## Gaia preferred-suffix fallback is source-order-dependent (Decision #231 / #233 review)
+
+**Problem.** In `atlasMapper.ts` `mapAtlasModel` (mirrored in `scripts/atlas-ingest.mjs` `mapModel`), when a gaia stem has a `preferredSuffix` set but the product ships the preferred variant *absent* and **two or more** non-preferred suffixes present (e.g. only `-Min` and `-Max`, no `-Typ`), both now pass the suffix gate and whichever appears **first in `model.parameters` order** wins the single mapped attribute slot. So two products listing the same two suffixes in opposite source order store different values (Min vs Max) for the same attribute — silent, source-order-dependent divergence, with no preference for the spec-relevant bound. Rare (requires preferred absent + 2+ alternates) and prior-session; surfaced by the PR #2 review.
+
+**Fix (needs a domain decision).** The *correct* bound is parameter-specific (a min-rating vs a max-rating), so this isn't mechanical. Minimum bar: make it **deterministic** — apply a fixed fallback priority among non-preferred suffixes (e.g. a defined Max > Typ > Min order, or per-attribute) so the stored value no longer depends on vendor array order. Decide the priority deliberately; don't rush it into a deploy.
+
+## Specs panels: replace More/Less toggle with labeled sections (UX, P3)
+
+**Problem.** The source-part **Specs** tab hides non-canonical (schema-unrecognized) attributes behind a "More (N)" / "Less" toggle — an annoying extra click that also makes data/mapping gaps invisible. Separately, the right **"COMPARING WITH"** comparison panel only shows scored/canonical rows (built from `matchDetails` + source params), so a replacement's other attributes never appear — an inconsistency with the source panel.
+
+**Fix (designed, plan tabled June 11 2026).** Drop the More/Less collapse on both panels; show all attributes at once with a labeled **"Additional Attributes"** uppercase section header dividing canonical (top) from non-canonical (below, dimmed). Right panel mirrors the left: canonical rows → Additional Attributes → Issue Summary at the bottom. Display-only; no engine/cache/schema-version impact.
+- Left: `components/AttributesPanel.tsx` — keep the existing `recognized`/`extras` split useMemo; remove the toggle `<Link>` + `showExtras` state; render an "Additional Attributes" section-row before the always-shown extras.
+- Right: `components/ComparisonView.tsx` — after `rows` is built, compute `additionalRows` from `replacementAttributes?.parameters` not already shown (data already in scope, no extra fetch); render them value-only/no-dot/dimmed under an "Additional Attributes" section-row; leave the Issue Summary block where it is (already below the table).
+- Shared: add a table-row variant of the existing `SectionHeader` (`components/AttributesTabContent.tsx:211-232` is a `<Box>`, invalid as a `<TableBody>` child) with a `colSpan` prop (2 left / 3 right); add `additionalHeader` i18n key to `attributes.*` + `comparison.*` in `locales/{en,de,zh-CN}.json`.
+- The `recognized`/`extras` concept lives only in `AttributesPanel.tsx` (confirmed repo-wide) — no parts-list/column/export fallout. For non-Atlas parts the flag is undefined → no extras → section simply hidden.
+
+Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
+
+---
+
+## ~~Atlas dict lookup: non-`\s+` whitespace chars in vendor paramNames~~ (RESOLVED — different bug)
+
+**Resolution (June 14, 2026).** Diagnosed mid-investigation: the padding IS plain ASCII space (0x20) — `\s+` collapse was already working. The real bug was CT MICRO encoding UTF-8 special chars (°, µ, ℃, Ω, λ) as **literal escape-sequence text** like `(\xe2\x84\x83)` instead of the actual character. 12 paramName variants across 677 occurrences, single MFR.
+
+**Fix.** New `decodeLiteralByteEscapes()` helper in `lib/services/atlasMapper.ts` (+ mirror in `scripts/atlas-ingest.mjs`) finds runs of `\xHH` literal text and decodes the byte sequence as UTF-8. Applied in the dict-lookup normalization step so dict entries written with the proper char match the broken source form. Invalid UTF-8 byte runs fall back to keeping the raw text (so an audit can spot the bad source instead of silently substituting U+FFFD).
+
+**Why this unblocks Item 2 (L2 LEDs).** CT MICRO is an LED MFR. Without the decoder, the L2 LEDs dict would need duplicate entries — one for the proper char form (`'viewing angle(°)'`) and one for the literal-escape form. With the decoder, a single dict entry covers both. Sets up Item 2 as a clean dict-only edit.
+
+**Carry-forward note.** CT MICRO's ~22K existing products still sit in JSONB under the corrupted catalog-fallback keys (e.g. `topr_xe2_x84_x83` instead of `topr` / `operating_temp`). They'll re-key naturally on next CT MICRO re-ingest, which happens as part of Item 2. No standalone backfill needed.
+
+---
+
+## ~~Atlas L2 LEDs dict expansion~~ (DONE — Refond + CT MICRO + Everlight shipped June 15, 2026)
+
+**Resolution.** ~44 new L2 LEDs dict entries covering CT MICRO LED-indicator vocabulary (`Viewing Angle(°)`, `Size L*W*H(mm)`, `Color Combination`, `Fire`, `Iv (mcd)/lmMin.~ Max.`, `VF(V)Min.~Max.`, `λd(nm)Min.~Max./CIE(X,Y) Typ.`, `TOPR (℃)`) + Refond display-LED vocabulary (`Ta @25℃(TYP.) IF(mA)`, `Ta @25℃(TYP.) vf(V)`, `Max current (mA)`, `2θ1/2(°)`, `50% power angle`, `Iv (RCM)`, `Φe(mW)`, `Lens(mm)`, `Ta @25℃(TYP.) Flux/lm @4000K Ra70`, `Color Rendering Index Ra(min)`, etc.) + Everlight Chinese gaps (`辐射强度`, `耗散功率`, `直流反向耐压`, `正向电流-DC (If)`, `LED极性`). Several new canonical attributeIds introduced: `cri_ra`, `color_temperature`, `radiant_power_mw`, `lens_diameter_mm`, `size_lwh_mm`, `viewing_angle_half_power`, `max_current`, `color_combination`, `mounting_orientation`, `radiant_intensity`, `led_polarity`, `character_size_inches`, `luminous_flux_lm`, `esd_hbm_v`.
+
+**Result.** Re-ingested 3 MFRs: Refond (596+3 = 599 product updates, +2155 new attrs), CT MICRO (326 updates, +1263 new attrs), Everlight (no-op — already covered). LED-touching Triage rows dropped 22 → 7 (−68%). Total Triage queue 24,909 → 24,825 (−84). Sample Refond product RF-A3E31-W60E-B1 now ships 10 canonical attrs (`color`, `max_current`, `viewing_angle`, `forward_current`, `forward_voltage`, `power_dissipation`, etc.) versus the prior 4-5.
+
+**Scope correction.** Original BACKLOG mentioned Sunlord as the highest-volume MFR ("18K+ products"). False — Sunlord ships ZERO LED products; their 16K catalog is inductors / capacitors / filters. The real scope was Refond (789 LED products) + CT MICRO (222 LED) + Everlight (2756 LED) ≈ 3700 LED products. Survey-first decision-making would have caught this before authoring; lesson re-confirmed.
+
+**Latent mjs mirror drift surfaced and fixed.** The mjs L2 LEDs block was missing 16 English-side dict entries that existed in TS (`color`, `forward voltage`, `viewing angle`, `wavelength`, `peak wavelength`, `luminous intensity`, `emission angle`, `test current`, `lens color`, `mounting type`, `forward current`, `reverse voltage`, `color temperature`, `diode configuration`, `operating temperature`, `led color`). Refond's `Color` paramName for 481 products never matched at ingest because of this drift. Fixed inline; future ingests will work correctly. Confirms the Decision #218 pattern — mirror drift is not self-enforcing, and audit-by-grep is the durable check. Other L2 dicts (Switches, RF, Sensors, etc.) likely have similar drift — broader audit recommended but out of scope here.
+
+**Operational note.** When dict additions don't immediately drop stale Triage queue counts: re-run `--rescan-unmapped-params`. The rescan reads the mjs dict at startup, so a dict edit AFTER a rescan won't be reflected until the next rescan. The supersede-clear during `--proceed` also helps drop stale entries from prior batches sharing the same source_file.
+
+---
+
+## Atlas mjs↔TS dict mirror audit — discovery DONE; reconciliation PENDING (Decision #235 follow-up Item 2 surfaced) (P2)
+
+**Audit discovery shipped (June 15, 2026).** New `scripts/atlas-dict-mirror-audit.mjs` parses both files via brace-walking + comment-aware scanning and reports per-dict key-set drift. Full report: [docs/audits/mjs-ts-dict-drift-2026-06-15.md](audits/mjs-ts-dict-drift-2026-06-15.md). Re-run anytime with `node scripts/atlas-dict-mirror-audit.mjs --out docs/audits/mjs-ts-dict-drift-<date>.md`.
+
+**Total drift: 331 one-sided keys across 22 dicts.** Key findings:
+
+- **`SHARED_PARAMS` ✓, `METADATA_PARAMS` ✓, `SKIP_PARAMS` ✓** — all clean.
+- **L3 `FAMILY_PARAMS`** — 11 clean (12 / 52 / 58 / 59 / 60 / 65 / 66 / 67 / 69 / 70 / 71), 11 with drift.
+- **L2 `L2_PARAMS`** — 2 clean (LEDs and Optoelectronics after today's fix + Microcontrollers), 12 with drift; TS systematically richer than mjs across Audio / Battery Products / Connectors / Filters / Memory / Motors and Fans / Power Supplies / Processors / RF and Wireless / Sensors / Switches / Transformers.
+
+**Top severity:**
+1. **`D1` Crystals dict NOT IN mjs at all** (TS=30 entries, mjs=0). Critical — D1 classifier IS in mjs (line 196), so crystal products get correctly classified at `family_id='D1'` but then have NO dict to map their paramNames. All crystal paramNames go to the catalog-fallback path under sanitized stems. Impact today is small (65 products: Slkor 64 + High Diode 1) but grows with every new crystal MFR added.
+2. **`E1` Optocouplers** — mjs has 115 entries, TS has 135 (20 TS-only). Decision #235 closeout shipped 80 new E1 entries; the mjs side may have missed some.
+3. **`B1` / `B3` / `B4` / `B5`** — reverse direction: mjs has MORE entries than TS (64 / 15 / 24 / extra on mjs side). These were ingest-time additions that didn't get back-ported to TS. For READ time (Specs panel display) this means humanized-stem fallback names instead of proper attributeNames.
+4. **`RF and Wireless` L2** — TS=35, mjs=11 (24 TS-only). Likely the next big silent ingest-data-loss case after L2 LEDs.
+5. **Most other L3 ICs (`C4`/`C5`/`C6`/`C7`/`C9`)** — 1-6 entries of drift each, mostly recent edits.
+
+**Reconciliation principle (Decision #218 lesson).** Don't pick a canonical side. Investigate WHY each drift exists. Some are intentional (e.g. ingest-only catalog enrichments that don't need display naming). Some are silent data-loss bugs (L2 LEDs `Color` case). Some are recent dict expansions on one side that just haven't propagated yet. Reconciliation needs per-drift judgment, not a blanket sweep.
+
+**Pending work.**
+- Reconcile per-dict, starting with D1 Crystals (smallest blast radius, easy fix — just port the TS D1 block to mjs).
+- Then L2 RF and Wireless (likely the biggest user-visible win after L2 LEDs).
+- Then E1 Optocouplers (closes out Decision #235 mirror gap).
+- Then case-by-case for the rest. Estimate: ~3-5 hours total reconciliation, can be split across multiple sessions.
+- Re-run audit after each reconciliation. Goal: 0 drift.
+
+**Durable guard.** Audit script can be wired into pre-commit hook (`.husky/pre-commit`) or CI to fail on any drift. Defer until reconciliation phase complete — pre-commit on a 331-entry baseline would block every commit until cleared.
+
+---
+
+## ~~Atlas C7 digital isolators dict expansion~~ (DONE — CHIPANALOG shipped June 15, 2026)
+
+**Resolution.** ~40 C7 dict entries added covering CHIPANALOG's digital isolator + RS-485/CAN transceiver vocabulary + cross-MFR Chinese (TDSEMIC/HXYMOS/ElecSuper) + BORN/Union English transceiver fields + SIT bilingual compound paramNames. Re-ingested CHIPANALOG (348 products): 288 updates, +288 new attrs landed in JSONB across 9 new canonical attributeIds (`supply_current_per_channel` × 181, `esd_other_pins` × 36, `esd_hbm_cdm_kv` × 20, `logic_supply_voltage` × 20, `independent_logic_supply` × 19, `integrated_ldo` × 14, etc.). C7-touching Triage rows dropped 471 → 432 (−39); total Triage queue 24,909 → 24,870.
+
+**Scope correction.** Original BACKLOG mentioned Yint as a secondary C7 MFR — wrong. Yint's c3 distribution is 100% circuit protection (TVS / Rectifiers / PTC Fuses / Varistors / Zeners / GDTs / NTC / SPDs / Inductors / CM Chokes). Zero digital-isolator products. The ~500-product estimate was anchored on the false Yint assumption.
+
+**Latent bug surfaced.** Underscore-prefix attributeIds (`_*`) are SKIPPED at ingest ([atlasMapper.ts:3412](../lib/services/atlasMapper.ts) and gaia path at 3353). This means most of the EXISTING C7 dict (25+ `_*` entries) has silently dropped source data on ingest forever — only the four non-underscore canonicals (`data_rate`, `esd_bus_pins`, `package_case`, `operating_temp`) actually wrote to JSONB. My new entries use non-underscore IDs so they store properly. See the dedicated entry below for the holistic fix.
+
+---
+
+## Atlas underscore-prefix attributeIds silently drop ingest data (latent C7+others bug, surfaced June 15, 2026) (P2)
+
+**Context.** `if (mapping.attributeId.startsWith('_')) continue;` at both [atlasMapper.ts:3412](../lib/services/atlasMapper.ts) (standard path) and `:3353` (gaia path) skips any dict mapping whose attributeId starts with `_`. Mirror in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs). The intent was "internal-only, not for matching engine scoring" — but the side effect is that the SOURCE VALUE never gets written to JSONB. The read-time path (`fromParametersJsonb`) populates display NAMES for `_*` IDs in `nameLookup`, suggesting the design expected `_*` data to be in JSONB — but ingest never puts it there. The two halves contradict.
+
+**Scope.** Anywhere a family dict uses `_*` attributeIds. C7 has 25+ such entries (`_isolation_rating`, `_channels`, `_supply_voltage`, `_output_mode`, `_default_output`, `_cmti`, `_surge_rating`, `_integrated_power`, `_supply_voltage_range`, etc.). C5 has some. Probably others. Net effect: those source paramNames either land in the corrupt catalog-fallback path (under stems like `vrms`, `kvpk`) OR drop entirely after the dict matches and the underscore-skip fires. CHIPANALOG's CA-IS3760HW has 17 source params but only 5 land in JSONB — the other 12 are silently lost. Same shape across all C7 MFRs (348 CHIPANALOG products alone losing ~12 attrs each ≈ ~4K attribute occurrences globally).
+
+**Fix.** Three options:
+1. **Drop the skip entirely.** Let `_*` IDs land in JSONB. Matching engine doesn't iterate by attributeId anyway — it iterates logic-table rules — so unscored `_*` attrs don't pollute scoring. Simplest fix, biggest blast radius. Could surface formerly-invisible attrs in the Specs panel for thousands of products.
+2. **Migrate every `_*` dict entry to canonical IDs.** Manual rename across all family dicts + mjs mirror + write a backfill script that migrates existing JSONB. High effort.
+3. **Hybrid (Item 3 followed this):** keep existing `_*` entries as-is, write all NEW entries with non-underscore IDs. Slow rolling fix as families get new dict work.
+
+Option (1) is the right answer for the holistic cleanup. The "internal only" intent is what `METADATA_ATTRIBUTE_IDS` already enforces in the read path (line 3731) for genuinely-internal cases; the underscore-skip is a redundant + harmful belt. Audit needed: confirm no rules-engine path keys off `_*` prefix before the change.
+
+**Verification.** Pick CA-IS3760HW post-fix: source has 17 params, expect ~15+ to land in JSONB instead of 5. Same shape for any CHIPANALOG product. Avg attr count across CHIPANALOG should jump from ~5.8 to ~12+.
+
+---
+
+## Atlas STEIPU "Miscellaneous" + "Wire Splice Connectors" still in `family_id=null` (Decision #235 byproduct) (P4)
+
+**Context.** Decision #235's relay re-ingest correctly classified STEIPU's 196 source-file products: 118 in F1 (Power/Automotive/Signal/Reed Relays), 12 in F2 (SSRs + Contactors), 66 in null. The 66 null rows split: 32 "Miscellaneous" (c1=Hardware, Fasteners — copper bus bars, heat-sink straps), 32 "Wire Splice Connectors" (c1=Connectors, Interconnects — wire terminals), 1 "Battery Management", 1 "Photointerrupters - Slot Type". These are correctly NOT relays — they fell through to the L2 catch-all and landed at `category='ICs'` (Miscellaneous) or `category='Connectors'` (Wire Splice).
+
+**The "ICs" category landing is wrong** for the Miscellaneous group — they're hardware, not ICs. The classifier's `c1.includes('hardware')` catch-all is missing.
+
+**Fix.** Add `if (c1lower.includes('hardware') || c1lower.includes('fasteners')) return { category: 'Hardware', subcategory: c3, familyId: null };` to the L2 catch-all section in `classifyAtlasCategory` (atlasMapper.ts + .mjs mirror). Trivial 2-line fix per file. Affects ~32 STEIPU + likely a sprinkling from other MFRs.
+
+**Scope.** Low — these products aren't scored anyway (`familyId=null`), just routed to a more honest category label. Filed for cleanup completeness, not blocking.
+
+---
+
+## Acceptance criteria — fetch-widening (step 2) + deferred review items (Decision #238)
+
+**Step 2 (the big one) — ✅ SHIPPED June 15, 2026 (commit `9539ed3`).** Keyword-driving attributes now widen the candidate fetch via new `lib/services/fetchWidening.ts`. **Digikey = E-series keyword fan-out** (one keyword search per in-band E-series value / accepted package, union+dedup, capped); full parametric ValueId filtering deferred as the escalation path. **Atlas = `fetch_atlas_candidates_widened` RPC** applying the numeric band before the limit (filter-before-limit fixes value-band starvation). Cache: candidate set is acceptance-dependent → `buildBaseRecsVariant` keys on the fetch-affecting subset (`fetchWideningKey`), `BASE_RECS_SCHEMA_VERSION` v2→v3. **Apply migration:** `scripts/supabase-atlas-candidates-widened-rpc.sql`. The "9k–11k parts" figure was the eligible-universe size, not a fetch target — output is a ranked in-band shortlist.
+
+**UX-gap reconciliation — ✅ DONE.** `RANGE_FETCH_ATTRS` now mirrors the full UI `RANGE_ELIGIBLE_ATTRIBUTE_IDS`, so every numeric band widens at least the Atlas fetch (generic RPC). Digikey E-series fan-out extended to inductance (`ESERIES_ENUMERABLE_ATTRS` = resistance/cap/inductance); `BASE_RECS_SCHEMA_VERSION` v3→v4. parts.io/Mouser/MFR-crossref are equivalence lookups (MPN-keyed) — nothing to widen.
+
+**Step 3 (Digikey parametric value-grid widening) — ✅ SHIPPED June 16, 2026 (branch `feat/digikey-parametric-widening`).** Voltage/frequency-type specs (`RANGE_FETCH_ATTRS` minus `ESERIES_ENUMERABLE_ATTRS`) now widen the DIGIKEY fetch too (was Atlas-only), via the **full parametric ValueId filter** — extension (b) below, which subsumes (a). Two-call discover→apply: `getCategoryParametricFacets` (empty-keyword category search → `FilterOptions.ParametricFilters`), `findFacetForAttribute` resolves the facet via the existing forward param map, in-band values selected by `ProductCount` DESC (cap 25 so standard E-series neighbors survive), `parametricFilterSearch` applies the ValueId filter; an in-band re-verify drops mis-keyed/unfiltered results. `BASE_RECS_SCHEMA_VERSION` v4→v5, `RECS_CACHE_SCHEMA_VERSION` v15→v16 (candidate set for such bands changed; key shape unchanged). Verified live (1N4733A 5.1 V Zener ±10% → in-band 4.7/5.1/5.6 V Digikey parts). Facets name the parameter via `ParameterName` and carry their own `Category` — both load-bearing, learned from live probing.
+
+  Originally-deferred framing (now done): ~~**(a) Value-grid widening for output_voltage + frequency attrs (P2)** — per-attribute standard-value lists~~ and ~~**(b) Full parametric ValueId filtering (P3)** — `FilterOptionsRequest.ParameterFilterRequest`~~. We built (b) directly (precise, paginated, covers every numeric attr) rather than (a)'s hardcoded value lists.
+
+  **Still deferred (P3):** (i) **multi-attr** parametric widening — currently single-attr (first eligible), mirroring `computeAtlasWidening`; (ii) attrs with **no Digikey param-map entry** (e.g. `izt`) can't match a facet, so they widen Atlas-only (acceptable); (iii) **parts.io value-search** widening — needs the parts.io production endpoint + a param schema-discovery pass (it's a Solr listings API; today it's an MPN-keyed equivalence/enrichment source only).
+
+**Deferred review findings** (from the Decision #238 review; full detail in [acceptance-criteria-followups.md](acceptance-criteria-followups.md)): (#3) lift acceptance eligibility from the two hardcoded UI allowlists to per-rule logic-table metadata (e.g. `rule.acceptanceKind`); (#6) revisit the `numericValue==='number'` range gate that re-introduces parser dependence; (#8) add an `acceptedValues` clause to `overrideMerger` CLEANUP for defense-in-depth; (#9) scope `candidateValuesByAttribute` to set-eligible params; (#10) cosmetic — rename `TOLERANCE_MAX`/`MARKS`, extract the shared editor shell.

@@ -1,6 +1,5 @@
 'use client';
 
-import { useMemo } from 'react';
 import {
   Autocomplete, Box, Button, Chip, Stack, TextField, InputAdornment, ToggleButton, ToggleButtonGroup, Tooltip,
 } from '@mui/material';
@@ -16,7 +15,7 @@ import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import BlockOutlinedIcon from '@mui/icons-material/BlockOutlined';
 import NoteAltIcon from '@mui/icons-material/NoteAlt';
 import FlagIcon from '@mui/icons-material/Flag';
-import type { GlobalUnmappedParam, StatusFilter } from './types';
+import type { StatusFilter } from './types';
 
 export type TriageMode = 'synonyms' | 'auto_flagged' | 'all';
 
@@ -55,7 +54,12 @@ export const EMPTY_FILTERS: TriageFilters = {
 };
 
 interface Props {
-  rows: GlobalUnmappedParam[];
+  /** Distinct MFR options for the dropdown, computed SERVER-SIDE over the full
+   *  working set (Decision #231) — the client only holds one page of rows, so
+   *  it can't derive complete options locally. */
+  mfrOptions: Array<{ slug: string; name: string }>;
+  /** Distinct family options, server-computed for the same reason. */
+  familyOptions: string[];
   filters: TriageFilters;
   onChange: (next: TriageFilters) => void;
   filteredCount: number;
@@ -82,27 +86,9 @@ interface Props {
   flaggedCount?: number;
 }
 
-export default function TriageFilterBar({ rows, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount }: Props) {
-  // Build option lists from the unfiltered row set so the dropdowns stay
-  // stable as the user toggles filters (otherwise selecting a filter would
-  // remove its own option from the list).
-  const mfrOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const r of rows) {
-      for (const m of r.affectedManufacturers ?? []) {
-        if (!map.has(m.slug)) map.set(m.slug, m.name);
-      }
-    }
-    return [...map.entries()]
-      .map(([slug, name]) => ({ slug, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows]);
-
-  const familyOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of rows) if (r.dominantFamily) set.add(r.dominantFamily);
-    return [...set].sort();
-  }, [rows]);
+export default function TriageFilterBar({ mfrOptions, familyOptions, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount }: Props) {
+  // mfrOptions / familyOptions are now server-provided (full working set), so
+  // the dropdowns stay complete + stable even though the client holds one page.
 
   const hasActive =
     filters.search.trim().length > 0 ||
@@ -300,7 +286,7 @@ export default function TriageFilterBar({ rows, filters, onChange, filteredCount
             (never generated). The actual filtering happens inside
             GlobalUnmappedParamsTable's orderedRows useMemo where the
             per-row suggestion state lives. */}
-        <Tooltip title="Filter by AI verdict: Accept (Sonnet proposes a clean mapping), Defer (Sonnet wants engineer judgment), None (no AI suggestion yet — click Generate)">
+        <Tooltip title="Filter by AI verdict: Accept (Sonnet proposes a clean mapping), Defer (Sonnet wants engineer judgment), None (no AI suggestion yet — click Generate). Applies to LOADED rows — the page size is raised while an AI filter is active so it usually covers the whole filtered view; click Show more to extend.">
           <ToggleButtonGroup
             size="small"
             value={filters.aiVerdict}

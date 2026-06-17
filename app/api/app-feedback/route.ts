@@ -218,7 +218,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           type: 'feedback_new',
           title: 'New feedback submitted',
           body: userComment.slice(0, 140),
-          link: '/monitoring',
+          link: '/monitoring?section=app-feedback',
           data: { feedbackId: data.id },
           dedupeKey: `feedback_new:submit:${data.id}`,
         }),

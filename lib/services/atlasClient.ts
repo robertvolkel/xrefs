@@ -313,16 +313,68 @@ export async function getAtlasAttributes(
   }
 }
 
+/** Numeric-band widening descriptor for fetch-widening (Decision #238 Step 2). */
+export interface AtlasCandidateWidening {
+  /** attributeId (= parameters JSONB key) whose numericValue defines the band */
+  attrId: string;
+  /** lower / upper bounds in base SI */
+  lo: number;
+  hi: number;
+  /** source value (base SI) — used to order in-band rows nearest-first */
+  sourceNv: number;
+}
+
 /**
  * Fetch Atlas candidates for the matching engine.
- * Returns all products in the same family, ready for scoring.
+ *
+ * Default: returns up to 50 products in the same family, ready for scoring.
+ *
+ * Widening (Decision #238 Step 2): when `widen` is supplied, calls the
+ * `fetch_atlas_candidates_widened` RPC, which applies the numeric band predicate
+ * BEFORE the limit (so the 50 returned rows are the nearest in-band parts, not an
+ * arbitrary family slice — fixes value-band starvation). Falls back to the default
+ * family fetch only on RPC error (an empty RPC result legitimately means "no in-band
+ * Atlas parts" and must NOT re-add the off-band arbitrary 50).
  */
-export async function fetchAtlasCandidates(familyId: string): Promise<PartAttributes[]> {
+export async function fetchAtlasCandidates(
+  familyId: string,
+  widen?: AtlasCandidateWidening,
+): Promise<PartAttributes[]> {
   try {
     const supabase = await createClient();
 
     // Filter disabled manufacturers at the database level for candidates
     const disabled = await getDisabledManufacturers();
+
+    if (widen) {
+      const { data, error } = await supabase.rpc('fetch_atlas_candidates_widened', {
+        p_family_id: familyId,
+        p_attr_id: widen.attrId,
+        p_lo: widen.lo,
+        p_hi: widen.hi,
+        p_source_nv: widen.sourceNv,
+        p_disabled: [...disabled],
+        p_limit: 50,
+      });
+      if (error) {
+        console.warn('Atlas widened candidate RPC error, falling back to default fetch:', error.message);
+        // fall through to the default fetch below
+      } else {
+        const rows = (data as AtlasProductRow[] | null) ?? [];
+        if (rows.length > 0) {
+          const overrides = await fetchAllDictOverrides();
+          console.log(`[perf] atlas fan-out: family ${familyId} ${widen.attrId} [${widen.lo}, ${widen.hi}] → ${rows.length} candidates`);
+          return rows.map((row) => rowToPartAttributes(row, overrides));
+        }
+        // Empty band result: fall back to the default family fetch rather than returning
+        // nothing. Widening must never surface FEWER parts than the un-widened fetch —
+        // an empty band can mean genuinely-no-in-band parts OR a family whose numericValues
+        // predate the SI-prefix backfill (Decision #217 incomplete), where the band can't
+        // match. The default 50 are then scored, and off-band parts fail the ±band anyway.
+        console.log(`[perf] atlas fan-out: family ${familyId} ${widen.attrId} band empty → default fetch`);
+      }
+    }
+
     let query = supabase
       .from('atlas_products')
       .select('id, mpn, manufacturer, description, clean_description, category, subcategory, family_id, status, datasheet_url, package, parameters, manufacturer_country')

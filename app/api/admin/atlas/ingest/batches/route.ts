@@ -51,6 +51,7 @@ import {
   type Classified,
   type GlobalUnmapped,
 } from '@/lib/services/triageQueueCompute';
+import { queryTriage } from '@/lib/services/triageQueueQuery';
 
 // Force the route to run dynamically on every request (no Next.js auto-caching).
 // We have our own L1+L2 cache layer with explicit invalidation; we don't want
@@ -84,6 +85,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const statusFilterRaw = (searchParams.get('status_filter') ?? 'all');
     const statusFilter: StatusFilter = VALID_STATUS_FILTER.has(statusFilterRaw) ? (statusFilterRaw as StatusFilter) : 'all';
     const forceFresh = searchParams.get('refresh') === '1';
+
+    // ── New server-side query params (Decision #231 perf hardening) ──
+    // When ANY of these is present the route uses the server-side
+    // filter→sort→slice path (queryTriage) and returns ONE page. Absent →
+    // legacy full-set path (below) for backward-compat with stale clients.
+    const pageParam = searchParams.get('page');
+    const pageSizeParam = searchParams.get('page_size');
+    const searchParam = searchParams.get('search');
+    const mfrParam = searchParams.getAll('mfr');           // repeatable or single CSV
+    const familyParam = searchParams.getAll('family');
+    const minProdsParam = searchParams.get('min_prods');
+    const flaggedParam = searchParams.get('flagged');
+    const hasNoteParam = searchParams.get('has_note');
+    const usePagedPath =
+      pageParam !== null || pageSizeParam !== null || searchParam !== null ||
+      mfrParam.length > 0 || familyParam.length > 0 || minProdsParam !== null ||
+      flaggedParam !== null || hasNoteParam !== null;
 
     if (!VALID_STATUSES.includes(statusParam)) {
       return NextResponse.json({ success: false, error: `Invalid status: ${statusParam}` }, { status: 400 });
@@ -254,7 +272,52 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // ── Per-request: batchFilter slice + include + statusFilter + sort ────
+    // ── NEW server-side query path (Decision #231) ──────────────────────
+    // Filter → sort → slice server-side; return ONE page + counts + option
+    // lists. Gated on the presence of any new query param so stale clients
+    // keep the legacy full-set path below. `cachedTriageCounts` /
+    // `cachedStatusCounts` are recomputed inside queryTriage from the working
+    // set (identical predicates), so this path is self-contained.
+    if (usePagedPath) {
+      const page = Math.max(1, parseInt(pageParam ?? '1', 10) || 1);
+      // pageSize: 0 = count-only (no rows); clamp upper bound (Stage 5 bumps
+      // to ~500 for AI-verdict / stale views).
+      const rawPageSize = pageSizeParam === null ? 50 : (parseInt(pageSizeParam, 10) || 0);
+      const pageSize = Math.min(Math.max(0, rawPageSize), 1000);
+      // mfr / family accept repeatable params AND comma-separated values.
+      const splitCsv = (vals: string[]) =>
+        vals.flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
+      const result = queryTriage(classified, {
+        batchFilter,
+        include,
+        statusFilter,
+        search: searchParam ?? '',
+        mfrSlugs: splitCsv(mfrParam),
+        families: splitCsv(familyParam),
+        minProds: Math.max(0, parseInt(minProdsParam ?? '0', 10) || 0),
+        flaggedOnly: flaggedParam === '1',
+        hasNoteOnly: hasNoteParam === '1',
+        sort: 'impact',
+        page,
+        pageSize,
+      });
+      return NextResponse.json({
+        success: true,
+        batches,
+        aggregate: { counts, productCounts, attrChanges },
+        unmappedParamsGlobal: result.rows,
+        triageCounts: result.triageCounts,
+        statusCounts: result.statusCounts,
+        totalFiltered: result.totalFiltered,
+        page,
+        pageSize,
+        mfrOptions: result.mfrOptions,
+        familyOptions: result.familyOptions,
+      });
+    }
+
+    // ── Legacy full-set path (stale clients) ────────────────────────────
+    // Per-request: batchFilter slice + include + statusFilter + sort.
     let workingClassified = classified;
     let triageCounts = cachedTriageCounts;
     let statusCounts = cachedStatusCounts;

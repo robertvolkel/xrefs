@@ -87,9 +87,14 @@ export default function AtlasIngestPanel() {
     setLoadingBatches(true);
     setLoadError(null);
     try {
+      // page_size=0 → count-only: the operator page needs the batch LIST + the
+      // unmapped-param COUNT, but not the full ~4.25 MB unmappedParamsGlobal
+      // payload (which it only used for a `.length`). This routes through the
+      // server-side paged path and returns counts + an empty rows array,
+      // avoiding two full-set pulls per operator load (Decision #231).
       const [pendingRes, appliedRes] = await Promise.all([
-        fetch('/api/admin/atlas/ingest/batches?status=pending'),
-        fetch('/api/admin/atlas/ingest/batches?status=applied'),
+        fetch('/api/admin/atlas/ingest/batches?status=pending&page_size=0'),
+        fetch('/api/admin/atlas/ingest/batches?status=applied&page_size=0'),
       ]);
       if (!pendingRes.ok) throw new Error(`Pending fetch failed: ${pendingRes.status}`);
       if (!appliedRes.ok) throw new Error(`Applied fetch failed: ${appliedRes.status}`);
@@ -409,7 +414,10 @@ export default function AtlasIngestPanel() {
                   but don't get edit power over mappings here. The full editor
                   lives at ?section=atlas-dict-triage so engineers own that
                   workflow independently of the upload/apply flow. */}
-              {batchData.unmappedParamsGlobal.length > 0 && (
+              {/* Count comes from totalFiltered (count-only fetch, page_size=0).
+                  With default include=all/status=all this equals the prior
+                  unmappedParamsGlobal.length — faithful migration, no payload. */}
+              {(batchData.totalFiltered ?? 0) > 0 && (
                 <Alert
                   severity="warning"
                   sx={{ my: 2 }}
@@ -423,7 +431,7 @@ export default function AtlasIngestPanel() {
                     </Button>
                   )}
                 >
-                  <strong>{batchData.unmappedParamsGlobal.length}</strong> unmapped parameter{batchData.unmappedParamsGlobal.length === 1 ? '' : 's'} across pending batches need engineer review before high-fidelity matching.
+                  <strong>{batchData.totalFiltered ?? 0}</strong> unmapped parameter{(batchData.totalFiltered ?? 0) === 1 ? '' : 's'} across pending batches need engineer review before high-fidelity matching.
                 </Alert>
               )}
 

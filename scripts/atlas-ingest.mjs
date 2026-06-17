@@ -35,6 +35,25 @@ function humanizeStem(stem) {
   return stem.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Decode literal byte-escape text — CT MICRO ships "(\xe2\x84\x83)" instead
+// of "(℃)". Mirror of decodeLiteralByteEscapes in atlasMapper.ts (Decision
+// #235 closeout, BACKLOG follow-up #1).
+function decodeLiteralByteEscapes(s) {
+  if (!s.includes('\\x')) return s;
+  return s.replace(/(?:\\x[0-9a-f]{2})+/gi, (run) => {
+    const bytes = [];
+    const re = /\\x([0-9a-f]{2})/gi;
+    let m;
+    while ((m = re.exec(run)) !== null) bytes.push(parseInt(m[1], 16));
+    try {
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+      return decoded.includes('�') ? run : decoded;
+    } catch {
+      return run;
+    }
+  });
+}
+
 function parseGaiaParam(name) {
   if (!name.startsWith('gaia-')) return null;
   const rest = name.slice(5);
@@ -126,6 +145,17 @@ function classifyAtlasCategory(c1, c2, c3) {
   if (lower.includes('optoisolator') || lower.includes('photocoupler')
       || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
     return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
+  }
+
+  // F1 EMR / F2 SSR Relays — MUST come BEFORE discrete-semi rules.
+  // SSR substrings like 'Solid State Relay' are a strict subset of 'relay'
+  // so SSR check goes first. Some SSR c3 strings also contain 'Triac Output'
+  // / 'MOSFET Output' that would route them to B8/B5 without this guard.
+  if (lower.includes('solid state relay') || lower.includes('photo relay') || lower.includes('photomos')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F2' };
+  }
+  if (lower.includes('relay') || c1lower.includes('relay')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F1' };
   }
 
   // Discrete — word-boundary for SCR to prevent "discrete" → "di[scr]ete" collision
@@ -326,6 +356,7 @@ const METADATA_PARAMS = {
   'rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs status': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs code': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   // REACH — EU chemical registration
   'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
@@ -1656,6 +1687,59 @@ const FAMILY_PARAMS = {
     'bus fault protection voltage(v)': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Protection', unit: 'V', sortOrder: 8 },
     'mode': { attributeId: '_operating_mode', attributeName: 'Operating Mode', sortOrder: 92 },
     'operating temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    '温度范围 (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // ── Decision #235 follow-up Item 3 — CHIPANALOG digital isolator + transceiver vocabulary ──
+    // CONVENTION NOTE: novel catalog-only attributes use NON-underscore IDs here.
+    // Underscore-prefix (e.g. `_receivers`) is SKIPPED by the ingest loop, so values
+    // silently disappear. Non-underscore IDs DO write to JSONB and surface in the
+    // Specs panel via fromParametersJsonb's nameLookup. Mirror of atlasMapper.ts.
+    '每通道工作电流 (1mbps,ma,typ)': { attributeId: 'supply_current_per_channel', attributeName: 'Supply Current per Channel @ 1Mbps', unit: 'mA', sortOrder: 109 },
+    'esd等级(v)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating', unit: 'V', sortOrder: 11 },
+    '总线esd等级(v)': { attributeId: 'esd_bus_pins', attributeName: 'Bus ESD Rating', unit: 'V', sortOrder: 11 },
+    'hbm esd 所有引脚(±kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD HBM All Pins', unit: 'kV', sortOrder: 11 },
+    'hbm esd其他引脚 (±kv)': { attributeId: 'esd_other_pins', attributeName: 'ESD HBM Other Pins', unit: 'kV', sortOrder: 111 },
+    'esd 性能 hbm/cdm(kv)': { attributeId: 'esd_hbm_cdm', attributeName: 'ESD HBM/CDM', unit: 'kV', sortOrder: 112 },
+    '输出最大拉/灌电流(a)': { attributeId: 'output_drive_current', attributeName: 'Output Max Source/Sink Current', unit: 'A', sortOrder: 113 },
+    '最大瞬态隔离电压 (vpk)': { attributeId: 'transient_isolation_voltage', attributeName: 'Max Transient Isolation Voltage', unit: 'Vpk', sortOrder: 114 },
+    '最大浪涌隔离电压 (kvpk)': { attributeId: 'surge_isolation_voltage', attributeName: 'Max Surge Isolation Voltage', unit: 'kVpk', sortOrder: 105 },
+    '输出侧uvlo(v)': { attributeId: 'output_uvlo', attributeName: 'Output Side UVLO', unit: 'V', sortOrder: 115 },
+    '输出侧建议工作电压(v)': { attributeId: 'output_supply_recommended', attributeName: 'Output Side Recommended Supply', unit: 'V', sortOrder: 116 },
+    '逻辑电源电压范围(v)': { attributeId: 'logic_supply_voltage_range', attributeName: 'Logic Supply Voltage Range', unit: 'V', sortOrder: 117 },
+    '逻辑侧工作电压 (v)': { attributeId: 'logic_supply_voltage', attributeName: 'Logic Side Operating Voltage', unit: 'V', sortOrder: 118 },
+    '独立逻辑电源': { attributeId: 'independent_logic_supply', attributeName: 'Independent Logic Supply', sortOrder: 119 },
+    '集成ldo': { attributeId: 'integrated_ldo', attributeName: 'Integrated LDO', sortOrder: 120 },
+    '速率(kbps)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'kbps', sortOrder: 5 },
+    '速率(mhz)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'MHz', sortOrder: 5 },
+    'sck 模式': { attributeId: 'sck_mode', attributeName: 'SCK Mode', sortOrder: 121 },
+    // ── Cross-MFR Chinese (TDSEMIC, HXYMOS, ElecSuper) ──
+    '接收器数': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    '驱动器数': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    '节点数': { attributeId: 'bus_nodes', attributeName: 'Bus Nodes', sortOrder: 91 },
+    '驱动器/接收器': { attributeId: 'drivers_receivers', attributeName: 'Drivers/Receivers', sortOrder: 122 },
+    '静电保护': { attributeId: 'esd_bus_pins', attributeName: 'ESD Protection', sortOrder: 11 },
+    // ── BORN / Union English transceiver vocabulary ──
+    'number of receivers': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    'number of transmitters': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    'number of nodes': { attributeId: 'bus_nodes', attributeName: 'Bus Nodes', sortOrder: 91 },
+    'no. of rx': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    'no. of tx': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    'signaling ratemax (max)(mbits)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
+    'signaling rate(max)(mbps)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
+    'supply voltagenom (typ) (v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
+    'supply voltage(nom)(v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
+    'main supply voltage (nom)(v)': { attributeId: 'supply_voltage', attributeName: 'Main Supply Voltage', unit: 'V', sortOrder: 94 },
+    'logic voltage (min)(v)': { attributeId: 'logic_supply_voltage', attributeName: 'Logic Voltage Min', unit: 'V', sortOrder: 118 },
+    'esd hbm (kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD HBM', unit: 'kV', sortOrder: 11 },
+    'esd air (kv)': { attributeId: 'esd_air', attributeName: 'ESD Air Discharge', unit: 'kV', sortOrder: 123 },
+    'iec 61000-4-2contact (±v)': { attributeId: 'esd_bus_pins', attributeName: 'ESD IEC 61000-4-2 Contact', unit: 'V', sortOrder: 11 },
+    'icc(max) (ma)': { attributeId: 'icc_max', attributeName: 'Supply Current', unit: 'mA', sortOrder: 109 },
+    'vcc(min)(v)': { attributeId: 'supply_voltage', attributeName: 'VCC Min', unit: 'V', sortOrder: 94 },
+    'shutdown control': { attributeId: 'shutdown_control', attributeName: 'Shutdown Control', sortOrder: 124 },
+    // ── SIT bilingual compound paramNames (Chinese + English in one key) ──
+    'bus fault voltage (v) 总线容错电压范围': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Voltage', unit: 'V', sortOrder: 8 },
+    'self- diagnostic or autobaud 自诊断': { attributeId: 'self_diagnostic', attributeName: 'Self-Diagnostic or Autobaud', sortOrder: 125 },
+    'wake up & sleep 唤醒与休眠': { attributeId: 'remote_wakeup', attributeName: 'Wake Up & Sleep', sortOrder: 93 },
   },
 
   // ─── C5 Logic ICs ──────────────────────────────────────
@@ -1741,6 +1825,48 @@ const FAMILY_PARAMS = {
     'inl(lsb)': { attributeId: 'inl_lsb', attributeName: 'INL', unit: 'LSB', sortOrder: 10 },
   },
 
+  // ── D1 Crystals ───────────────────────────────────────────
+  // Mirror of atlasMapper.ts D1 block (was missing entirely until June 15, 2026
+  // mirror audit; D1 classifier in mjs:196 correctly routed to family_id='D1'
+  // but had no dict to map paramNames, sending all crystal vocabulary to the
+  // catalog-fallback path under sanitized stems. Affected ~65 products today
+  // — Slkor 64, High Diode 1).
+  D1: {
+    '频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    '标称频率': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', sortOrder: 1 },
+    'frequency (mhz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'MHz', sortOrder: 1 },
+    'frequency (khz)': { attributeId: 'nominal_frequency_hz', attributeName: 'Nominal Frequency', unit: 'kHz', sortOrder: 1 },
+    '负载电容': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    'load capacitance (pf)': { attributeId: 'load_capacitance_pf', attributeName: 'Load Capacitance', unit: 'pF', sortOrder: 5 },
+    '频率公差': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    'frequency tolerance (ppm)': { attributeId: 'frequency_tolerance_ppm', attributeName: 'Frequency Tolerance', unit: 'ppm', sortOrder: 3 },
+    '频率稳定度': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    'frequency stability (ppm)': { attributeId: 'frequency_stability_ppm', attributeName: 'Frequency Stability', unit: 'ppm', sortOrder: 4 },
+    '等效串联电阻': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    'esr (ohm)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    // Ω→ω gotcha: JS toLowerCase() converts Ω to ω
+    'esr (ω)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
+    '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    // Slkor abbreviates "Operating Temperature" → "Operating TEMP" in their crystal source files.
+    'operating temp': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    'package': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
+    '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
+    '老化率': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    'aging': { attributeId: 'aging_ppm_per_year', attributeName: 'Aging Rate', unit: 'ppm/year', sortOrder: 9 },
+    '驱动电平': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    'drive level': { attributeId: 'drive_level_uw', attributeName: 'Drive Level', unit: 'µW', sortOrder: 7 },
+    '并联电容': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
+    'shunt capacitance': { attributeId: 'shunt_capacitance_pf', attributeName: 'Shunt Capacitance', unit: 'pF', sortOrder: 8 },
+  },
+
   // ── E1 Optocouplers / Optoisolators ──────────────────────
   // Maps Chinese opto-coupler param vocabulary to canonical attributeIds
   // defined in lib/logicTables/e1Optocouplers.ts. Mirror of atlasMapper.ts —
@@ -1788,6 +1914,276 @@ const FAMILY_PARAMS = {
     '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 22 },
     // CTR — current transfer ratio. E1 canonical.
     '电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+
+    // ── E1 vendor variants (Decision #235 follow-up, Item 1) ──
+    // MIRROR of atlasMapper.ts E1 block — keep in lock-step per Decision #174.
+    '正向电流(if)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
+    'forward current (if)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
+    '集射极饱和电压(vce(sat))': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    'vce(sat)': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    'v ceo_max': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    '电流传输比(ctr)最小值': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    '电流传输比(ctr)最大值/饱和值': { attributeId: 'ctr_max_pct', attributeName: 'CTR (Max)', unit: '%', sortOrder: 24 },
+    'ctr-电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    'ctr (max)': { attributeId: 'ctr_max_pct', attributeName: 'CTR (Max)', unit: '%', sortOrder: 24 },
+    'ctr (min)': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    'ctr*': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    '上升时间(tr)': { attributeId: 'rise_time_us', attributeName: 'Rise Time', unit: 'µs', sortOrder: 8 },
+    '传播延迟 tphl': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay tpHL', unit: 'µs', sortOrder: 10 },
+    '传播延迟 tplh': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay tpLH', unit: 'µs', sortOrder: 10 },
+    'tphl/tplhmax.(µs)': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay Max', unit: 'µs', sortOrder: 10 },
+    'tphl/tplhmax.(us)': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay Max', unit: 'µs', sortOrder: 10 },
+    'cmti(kv/us)': { attributeId: '_cmti_kv_us', attributeName: 'CMTI', unit: 'kV/µs', sortOrder: 91 },
+    'cmh/l_min (kv/ms)': { attributeId: '_cmti_kv_us', attributeName: 'CMTI', unit: 'kV/µs', sortOrder: 91 },
+    'cmr(v/ns)': { attributeId: '_cmti_kv_us', attributeName: 'CMR', unit: 'V/ns', sortOrder: 91 },
+    '总功耗(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
+    '耗散功率(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
+    'radiant flux (mw) typ.': { attributeId: '_radiant_flux_mw', attributeName: 'Radiant Flux', unit: 'mW', sortOrder: 92 },
+    // ('数据速率' already mapped above to surfaced data_rate_mbps — not re-added here as catalog)
+    '传输速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+    'data rate(mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+    'data rate (mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+    '输入阈值电流(fh)': { attributeId: '_ift_min_ma', attributeName: 'Input Threshold Current (Min)', unit: 'mA', sortOrder: 94 },
+    'iftmax.(ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'ift max(ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'ift (ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'if(on) max. (ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if(on) max.(ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if-on_max (ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if-on_min (ma)': { attributeId: '_if_on_min_ma', attributeName: 'IF(ON) Min', unit: 'mA', sortOrder: 96 },
+    'viso (vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso (rms) (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso(rms)(v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'v iso_max (vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage Max', unit: 'Vrms', sortOrder: 1 },
+    'vl_min (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage Min', unit: 'V', sortOrder: 1 },
+    'topr (°c)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+    'topr (℃)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+    'topr(℃)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+    'vdrm (v)': { attributeId: 'vdrm_v', attributeName: 'Vdrm', unit: 'V', sortOrder: 17 },
+    'vdrm(v)': { attributeId: 'vdrm_v', attributeName: 'Vdrm', unit: 'V', sortOrder: 17 },
+    'static dv/dt(v/µs) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/μs) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/us) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/µs) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'static dv/dt(v/μs) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'static dv/dt(v/us) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'dv/dt (v/μs)': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt', unit: 'V/µs', sortOrder: 97 },
+    'dv/dt (v/us)': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt', unit: 'V/µs', sortOrder: 97 },
+    'vr_max (v)': { attributeId: 'input_reverse_voltage_v', attributeName: 'Reverse Voltage Max', unit: 'V', sortOrder: 6 },
+    'light current (µa) typ.': { attributeId: 'output_current_ma', attributeName: 'Light Current (Typ)', unit: 'µA', sortOrder: 11 },
+    'light current (ma)': { attributeId: 'output_current_ma', attributeName: 'Light Current', unit: 'mA', sortOrder: 11 },
+    'ic': { attributeId: 'output_current_ma', attributeName: 'Output Current Ic', unit: 'mA', sortOrder: 11 },
+    'ton_max (ms)': { attributeId: '_ton_max_ms', attributeName: 'Turn-On Time Max', unit: 'ms', sortOrder: 99 },
+    'toff_max (ms)': { attributeId: '_toff_max_ms', attributeName: 'Turn-Off Time Max', unit: 'ms', sortOrder: 99 },
+    'ron (ω)': { attributeId: '_ron_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 100 },
+    '槽宽': { attributeId: '_slot_width_mm', attributeName: 'Slot Width', unit: 'mm', sortOrder: 101 },
+    'if_max (ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current Max', unit: 'mA', sortOrder: 5 },
+    'if (ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current', unit: 'mA', sortOrder: 5 },
+    'if(ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current', unit: 'mA', sortOrder: 5 },
+    'peakwavelength(nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Peak Wavelength', unit: 'nm', sortOrder: 102 },
+    'peak wavelength (nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Peak Wavelength', unit: 'nm', sortOrder: 102 },
+    'wavelength(nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Wavelength', unit: 'nm', sortOrder: 102 },
+    'vf(v) 20ma': { attributeId: 'input_forward_voltage_vf', attributeName: 'Vf @ 20mA', unit: 'V', sortOrder: 4 },
+    'intensity(mw/sr)typ. 20ma': { attributeId: '_intensity_mw_sr', attributeName: 'Intensity @ 20mA', unit: 'mW/sr', sortOrder: 103 },
+    'max rating(ma)': { attributeId: '_max_rating_ma', attributeName: 'Max Rating', unit: 'mA', sortOrder: 104 },
+    'max rating (ma)': { attributeId: '_max_rating_ma', attributeName: 'Max Rating', unit: 'mA', sortOrder: 104 },
+    'hysteresis ratio': { attributeId: '_hysteresis_ratio', attributeName: 'Hysteresis Ratio', sortOrder: 105 },
+    'vcc(v)': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage (Vcc)', unit: 'V', sortOrder: 20 },
+    'supply voltage (v)': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 20 },
+    '工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Working Voltage', unit: 'V', sortOrder: 20 },
+    '驱动侧工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Driver-Side Working Voltage', unit: 'V', sortOrder: 20 },
+    // ('通道数' already mapped above to channel_count)
+    'channel': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
+    'input': { attributeId: '_input_type', attributeName: 'Input Type', sortOrder: 106 },
+    '输入电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Input Voltage', unit: 'V', sortOrder: 20 },
+    '负载电压': { attributeId: '_load_voltage_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 107 },
+    '负载电流': { attributeId: '_load_current_ma', attributeName: 'Load Current', unit: 'mA', sortOrder: 108 },
+    '连续负载电流': { attributeId: '_load_current_ma', attributeName: 'Continuous Load Current', unit: 'mA', sortOrder: 108 },
+    '直流反向耐压(vr)': { attributeId: 'input_reverse_voltage_v', attributeName: 'DC Reverse Voltage (Vr)', unit: 'V', sortOrder: 6 },
+    '正向压降(vf)': { attributeId: 'input_forward_voltage_vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 4 },
+    '正向压降': { attributeId: 'input_forward_voltage_vf', attributeName: 'Forward Voltage', unit: 'V', sortOrder: 4 },
+    '集电极暗电流': { attributeId: '_iceo_dark_ua', attributeName: 'Collector Dark Current', unit: 'µA', sortOrder: 109 },
+    '过零功能': { attributeId: '_zero_cross', attributeName: 'Zero-Cross Function', sortOrder: 110 },
+    '过零': { attributeId: '_zero_cross', attributeName: 'Zero-Cross', sortOrder: 110 },
+  },
+
+  // ─── F1 Electromechanical Relays ──────────────────────
+  // MIRROR of atlasMapper.ts F1 block — keep in lock-step per Decision #174.
+  F1: {
+    '线圈工作电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '额定线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'rated coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '线圈电压类型': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    'coil voltage type': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    '额定线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    '线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    'coil power': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    '线圈电阻': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    'coil resistance': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    '线圈并联元件': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    'coil suppression': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    '线圈特征': { attributeId: '_coil_characteristic', attributeName: 'Coil Characteristic', sortOrder: 6 },
+    '吸合电压': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    'must operate voltage': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    '释放电压': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+    'must release voltage': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+    '触点形式': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    'contact form': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    '触点数': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'contact count': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'number of contacts': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    '触点材料': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    'contact material': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    '最大切换电压(ac)': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage (AC)', unit: 'V', sortOrder: 13 },
+    '最大切换电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '负载电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 13 },
+    'max switching voltage': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '最大切换电压(dc)': { attributeId: '_contact_voltage_dc_v', attributeName: 'Max Switching Voltage (DC)', unit: 'V', sortOrder: 14 },
+    '最大额定切换电流(ac)': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current (AC)', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '负载电流': { attributeId: 'contact_current_rating_a', attributeName: 'Load Current', unit: 'A', sortOrder: 15 },
+    'max switching current': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流(dc)': { attributeId: '_contact_current_dc_a', attributeName: 'Max Switching Current (DC)', unit: 'A', sortOrder: 16 },
+    '触点电压类型': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    'contact voltage type': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    '最大额定切换功率(va)': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    '最大切换功率': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    'max switching power': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    '介质耐压(单位：vac)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    'dielectric withstanding voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    '动作时间(单位：ms)': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '动作时间': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    'operate time': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '释放时间(单位：ms)': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    '释放时间': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    'release time': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    '触点回跳时间': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+    'contact bounce': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+    '机械耐久性(单位：次)': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '机械寿命': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    'mechanical life': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '电耐久性(单位：次)': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    '电寿命': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    'electrical life': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    'operating temperature range': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    'package footprint': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    '密封类型': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    'sealing type': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    'aec-q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+    'aec_q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+    '绝缘电阻(单位：mω)': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '绝缘电阻': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    'insulation resistance': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '触点间隙(单位：mm)': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '触点间隙': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '爬电距离(单位：mm)': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '爬电距离': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '电气距离(单位：mm)': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '电气间隙': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '绝缘等级': { attributeId: '_insulation_class', attributeName: 'Insulation Class', sortOrder: 94 },
+    '引出端形式': { attributeId: '_terminal_form', attributeName: 'Terminal Form', sortOrder: 95 },
+    '引出端结构形式': { attributeId: '_terminal_structure', attributeName: 'Terminal Structure', sortOrder: 96 },
+    '产品应用领域': { attributeId: '_application_field', attributeName: 'Application Field', sortOrder: 97 },
+    '产品应用场合': { attributeId: '_application_use', attributeName: 'Application Use', sortOrder: 98 },
+    '重量(单位：g)': { attributeId: '_weight_g', attributeName: 'Weight', unit: 'g', sortOrder: 99 },
+    '体积(单位：mm3)': { attributeId: '_volume_mm3', attributeName: 'Volume', unit: 'mm³', sortOrder: 100 },
+  },
+
+  // ─── F2 Solid State Relays ────────────────────────────
+  // MIRROR of atlasMapper.ts F2 block — keep in lock-step per Decision #174.
+  F2: {
+    '输出开关类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    '输出类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    'output switch type': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    '触发模式': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    '过零控制': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'firing mode': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'zero crossing': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    '负载电压类型': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'load voltage type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    '最大负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    '负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    'max load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    'load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    '最大负载电流': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    '负载电流': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    'max load current': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    'load current': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    '最小负载电流': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    'min load current': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    '截止漏电流': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    'off-state leakage': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    '输入电压范围': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    '控制电压': { attributeId: 'input_voltage_range_v', attributeName: 'Control Voltage', unit: 'V', sortOrder: 9 },
+    'input voltage range': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    '输入电流': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    'input current': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    '导通时间': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    'turn-on time': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    'turn-off time': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    'dv/dt': { attributeId: 'dv_dt_rating_v_us', attributeName: 'dv/dt Rating', unit: 'V/µs', sortOrder: 13 },
+    'di/dt': { attributeId: 'di_dt_rating_a_us', attributeName: 'di/dt Rating', unit: 'A/µs', sortOrder: 14 },
+    '导通压降': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    'on-state voltage drop': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    '内置缓冲电路': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    'built-in snubber': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    '内置压敏电阻': { attributeId: 'built_in_varistor', attributeName: 'Built-In Varistor', sortOrder: 17 },
+    '隔离电压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 18 },
+    'isolation voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '安全认证': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    'safety certification': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    '封装': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    '热阻': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+    'thermal resistance': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+
+    // ── APSEMI English vendor convention (Decision #235 follow-up) ──
+    // MIRROR of atlasMapper.ts F2 — keep in lock-step per Decision #174.
+    'circuit': { attributeId: '_output_config', attributeName: 'Output Configuration', sortOrder: 90 },
+    'voltage - input': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    'output type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    'device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package / case': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'supplier device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+
+    // APSEMI PhotoMOS subset (output MOSFET catalog)
+    'fet type': { attributeId: '_fet_type', attributeName: 'FET Type', sortOrder: 91 },
+    'rds on (max) @ id, vgs': { attributeId: '_rds_on_mohm', attributeName: 'Rds(on) Max', unit: 'mΩ', sortOrder: 92 },
+    'vgs(th) (max) @ id': { attributeId: '_vgs_th_v', attributeName: 'Vgs(th) Max', unit: 'V', sortOrder: 93 },
+    'vgs (max)': { attributeId: '_vgs_max_v', attributeName: 'Vgs Max', unit: 'V', sortOrder: 94 },
+    'power dissipation (max)': { attributeId: '_power_dissipation_w', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 95 },
+    'current - continuous drain (id) @ 25°c': { attributeId: '_id_continuous_a', attributeName: 'Id Continuous @ 25°C', unit: 'A', sortOrder: 96 },
+    'drive voltage (max rds on, min rds on)': { attributeId: '_drive_voltage_v', attributeName: 'Drive Voltage', unit: 'V', sortOrder: 97 },
+
+    // STEIPU / AOTE / KTP Chinese variants
+    '隔离电压(vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '触点形式': { attributeId: '_output_config', attributeName: 'Contact Configuration', sortOrder: 90 },
+    '最大切换电流': { attributeId: 'load_current_max_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 6 },
+    '连续负载电流': { attributeId: 'load_current_max_a', attributeName: 'Continuous Load Current', unit: 'A', sortOrder: 6 },
+    '导通时间(ton)': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间(toff)': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    '导通电阻': { attributeId: '_on_resistance_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 98 },
+    '过零功能': { attributeId: 'firing_mode', attributeName: 'Zero-Cross Function', sortOrder: 2 },
+    '输入电压': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    '输入类型': { attributeId: 'load_voltage_type', attributeName: 'Input Type', sortOrder: 4 },
+    '工作电压': { attributeId: 'input_voltage_range_v', attributeName: 'Working Voltage', unit: 'V', sortOrder: 9 },
   },
 };
 
@@ -1913,38 +2309,52 @@ const L2_PARAMS = {
   },
   'LEDs and Optoelectronics': {
     '颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    'color': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
     // Synonym used by Everlight (亿光) for color
     '发光颜色': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
+    'led color': { attributeId: 'color', attributeName: 'Color', sortOrder: 1 },
     '波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
     '主波长': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'wavelength': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
     // Peak wavelength is a distinct canonical from dominant wavelength
     '峰值波长': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 4 },
+    'peak wavelength': { attributeId: 'wavelength_peak', attributeName: 'Wavelength (Peak)', unit: 'nm', sortOrder: 4 },
     '光强': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '发光强度': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'luminous intensity': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
     '视角': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'viewing angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
     // Synonym used by Everlight (亿光) for viewing angle
     '发光角度': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'emission angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
     '正向电压': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '正向压降': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'forward voltage': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     // Suffix-tagged variant used by Everlight ('正向电压(VF)' lowercased)
     '正向电压(vf)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
     '测试电流': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'test current': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
     // Lens color — distinct canonical for the LED's lens material/color
     '透镜颜色': { attributeId: 'lens_color', attributeName: 'Lens Color', sortOrder: 9 },
+    'lens color': { attributeId: 'lens_color', attributeName: 'Lens Color', sortOrder: 9 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 11 },
     '封装': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     'package': { attributeId: 'package_case', attributeName: 'Package / Case', sortOrder: 12 },
     // Forward Current (If) — LED operating current. New canonical (no logic
     // table family models LEDs explicitly; B1's io_avg is for power rectifiers).
     '正向电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'forward current': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Synonym used by Everlight on a small subset of LED products.
     '工作电流': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
     // Reverse voltage — for Photodiodes (which route to LEDs and Optoelectronics
     // via the 'photodiode' substring rule in the classifier, NOT to Sensors).
     // Photodiodes operate in reverse-bias; this is the breakdown spec.
     '反向电压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
+    'reverse voltage': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage', unit: 'V', sortOrder: 19 },
     // Color temperature — relevant for white LEDs (warm/cool white). New canonical.
     '色温': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'color temperature': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
     // Power dissipation — already a canonical (atlasMapper.ts:584). Unit W.
     '功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
     // Lamp base type — physical socket/header (E27, GU10, T1, etc.). New canonical.
@@ -1952,9 +2362,63 @@ const L2_PARAMS = {
     // Diode configuration — array layout, common-anode vs common-cathode.
     // Reuses existing 'configuration' canonical.
     '二极管配置': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 17 },
+    'diode configuration': { attributeId: 'configuration', attributeName: 'Configuration', sortOrder: 17 },
     // Operating temperature — uses established 'operating_temp' canonical
     // (NOT 'operating_temperature'), consistent with 19+ existing usages.
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    // ── Decision #235 follow-up Item 2 — CT MICRO + Refond + Everlight LED vocabulary ──
+    // Mirror of atlasMapper.ts L2 LEDs block. All non-underscore IDs (catalog-only
+    // attrs land in JSONB; underscore-prefix silently skips per Item 3 lessons).
+    // CT MICRO LED-indicator variants (literal-escape forms decoded by Item 1 helper)
+    'viewing angle(°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'viewing angle (°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'topr(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'topr (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'vf(v)min.~max.': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'iv (mcd)/lmmin.~ max.': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'λd(nm)min.~max./cie(x,y) typ.': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'size l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    'color combination': { attributeId: 'color_combination', attributeName: 'Color Combination', sortOrder: 22 },
+    'fire': { attributeId: 'mounting_orientation', attributeName: 'Mounting Orientation', sortOrder: 23 },
+    // Refond LED variants
+    'power': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'po(w)': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'ta @25℃(typ.) if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'ta @25℃(typ.) vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'max current (ma)': { attributeId: 'max_current', attributeName: 'Max Forward Current', unit: 'mA', sortOrder: 24 },
+    '2θ1/2(°)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '50% power angle': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '2 stomach 1/2(captive)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    'if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'test condition(ma)': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'λd(nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'd (nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'iv(mcd)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'iv (rcm)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', sortOrder: 5 },
+    'angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    // Refond Color/CCT/CRI
+    'color(k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'correlated color temperature cct (k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'ta @25℃(typ.) cct/wd': { attributeId: 'color_temperature', attributeName: 'Color Temperature (CCT)', unit: 'K', sortOrder: 14 },
+    'color rendering index ra(min)': { attributeId: 'cri_ra', attributeName: 'CRI Ra (min)', sortOrder: 26 },
+    'ta @25℃(typ.) ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ta @25℃(typ.) flux/lm @4000k ra70': { attributeId: 'luminous_flux_lm', attributeName: 'Luminous Flux', unit: 'lm', sortOrder: 27 },
+    // Refond ESD + lens + radiant power
+    'esd withstand voltage ()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'esd withstand voltage()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'φe(mw)': { attributeId: 'radiant_power_mw', attributeName: 'Radiant Power (Φe)', unit: 'mW', sortOrder: 29 },
+    'lens(mm)': { attributeId: 'lens_diameter_mm', attributeName: 'Lens Diameter', unit: 'mm', sortOrder: 30 },
+    // Everlight gaps
+    '辐射强度': { attributeId: 'radiant_intensity', attributeName: 'Radiant Intensity', unit: 'mW/sr', sortOrder: 31 },
+    '耗散功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    '直流反向耐压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage (DC)', unit: 'V', sortOrder: 19 },
+    '正向电流-dc (if)': { attributeId: 'forward_current', attributeName: 'Forward Current (If, DC)', unit: 'mA', sortOrder: 13 },
+    'led极性': { attributeId: 'led_polarity', attributeName: 'LED Polarity', sortOrder: 32 },
+    '数字/字母大小(英寸)': { attributeId: 'character_size_inches', attributeName: 'Character Size', unit: 'in', sortOrder: 33 },
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
@@ -2080,8 +2544,8 @@ const L2_PARAMS = {
 
 // Parameters to skip (metadata, not parametric)
 const SKIP_PARAMS = new Set([
-  'description', '品牌', '原始制造商', '最小包装', '包装', '元件生命周期',
-  '零件状态', '原产国家', '是否无铅', '安装类型', '引脚数', '卷盘尺寸',
+  'description', '品牌', '原始制造商', '最小包装', '包装', '包装形式', '元件生命周期',
+  '零件状态', '原产国家', 'country of origin', '是否无铅', '安装类型', '引脚数', '卷盘尺寸',
   '脚间距', '长x宽/尺寸', '高度', '存储温度', '印字代码', '成分', '认证信息',
   '商品目录', '系列', '系列名称', '等级', '特性', '应用领域', '应用', '封装技术',
   '产品状态', '序号', 'category_name', '描述', 'class', '印字类型', '无卤',
@@ -2280,10 +2744,16 @@ function mapModel(model, manufacturerName, sourceFile) {
   for (const p of model.parameters) {
     if (isMissing(p.value)) continue;
 
-    const lowerName = p.name.toLowerCase().trim();
+    // Normalize: decode literal byte-escape text (CT MICRO), then lowercase +
+    // trim + collapse internal whitespace runs (mirror of atlasMapper.ts —
+    // handles CT MICRO multi-space padding, APSEMI trailing spaces, and
+    // CT MICRO's `\xHH\xHH...` literal encoding for °/µ/℃/Ω/λ.
+    // Decision #235 follow-ups.)
+    const decodedName = decodeLiteralByteEscapes(p.name);
+    const lowerName = decodedName.toLowerCase().trim().replace(/\s+/g, ' ');
     // Dictionary entries take priority over skip list (metadata included)
     const hasDictMapping = !!(familyDict?.[lowerName] ?? SHARED_PARAMS[lowerName] ?? METADATA_PARAMS[lowerName]);
-    if (!hasDictMapping && (SKIP_PARAMS.has(p.name) || SKIP_PARAMS.has(lowerName))) continue;
+    if (!hasDictMapping && (SKIP_PARAMS.has(decodedName) || SKIP_PARAMS.has(lowerName))) continue;
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
     // ── Gaia parameter handling ──────────────────────────────
@@ -2302,7 +2772,7 @@ function mapModel(model, manufacturerName, sourceFile) {
             ...(parsed.unit ? { unit: parsed.unit } : {}),
           };
         }
-        unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
+        unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: gaia.stem, kind: 'gaia' });
         continue;
       }
       if (gaiaMapping.preferredSuffix && gaia.suffix && gaia.suffix !== gaiaMapping.preferredSuffix) {
@@ -2345,7 +2815,7 @@ function mapModel(model, manufacturerName, sourceFile) {
           ...(extractNumeric(p.value) !== undefined && { numericValue: extractNumeric(p.value) }),
         };
       }
-      unmappedParams.push({ paramName: p.name, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
+      unmappedParams.push({ paramName: decodedName, sampleValue: String(p.value).slice(0, 80), attributeId: rawId, kind: 'standard' });
       continue;
     }
 
@@ -2548,6 +3018,30 @@ function tagAtlasParameters(parameters) {
     out[key] = { ...entry, source: 'atlas', ingested_at: nowIso };
   }
   return out;
+}
+
+// Collapse duplicate-MPN occurrences within ONE source file to ONE entry,
+// keeping the RICHEST (most mapped parameters). Vendor JSON occasionally lists
+// the same componentName twice under two different category classifications —
+// classically the same part as both a TVS Diode (B4, full electrical params)
+// and a Rectifier (B1, ~1 param). atlas_products keys on (mpn, manufacturer),
+// so naive last-write-wins would store whichever occurrence happens to be
+// processed last — often the sparse one, silently dropping the rich electrical
+// spec, AND it never converges (the non-winning occurrence is a perpetual diff).
+// Deterministic richest-wins fixes both: most mapped keys wins; ties keep the
+// first occurrence for stability. Decision #233 follow-up. Mirror-not-needed:
+// the read path (atlasMapper.ts) maps a single already-deduped DB row, so source
+// duplication is an ingest-only concern.
+function dedupRichestByMpn(products) {
+  const bestByMpn = new Map(); // mpn -> product
+  for (const p of products) {
+    const prev = bestByMpn.get(p.mpn);
+    if (!prev) { bestByMpn.set(p.mpn, p); continue; }
+    const prevKeys = Object.keys(prev.parameters || {}).length;
+    const curKeys = Object.keys(p.parameters || {}).length;
+    if (curKeys > prevKeys) bestByMpn.set(p.mpn, p); // strictly richer wins; tie → keep first
+  }
+  return Array.from(bestByMpn.values());
 }
 
 // Returns true iff every entry in `parameters` is source: 'atlas' (or legacy untagged).
@@ -2782,6 +3276,7 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--list-pending')         { mode = 'list-pending'; continue; }
   if (a === '--regenerate-affected-by') { mode = 'regenerate-affected-by'; modeArg = args[++i]; continue; }
   if (a === '--backfill-translations') { mode = 'backfill-translations'; continue; }
+  if (a === '--rescan-unmapped-params') { mode = 'rescan-unmapped-params'; continue; }
   if (a === '--discover-legacy')      { mode = 'discover-legacy'; continue; }
   if (a === '--force')                { forceFlag = true; continue; }
   if (a === '--mfr')                  { modeArg = args[++i]; continue; }
@@ -2848,6 +3343,16 @@ genuinely-unmapped params into the Triage queue WITHOUT touching atlas_products
 Idempotent: files that already have any batch are skipped unless --force
 re-scans files whose only batch is a discovery batch.
   node scripts/atlas-ingest.mjs --discover-legacy [--dry-run] [--mfr <filter>] [--force] [--concurrency 5]
+
+Rescan unmapped params — walk every applied/pending/discovery batch's frozen
+report.unmappedParams and drop entries that would now resolve against the
+active dict (per-family / L2-category / shared / metadata / skipParams).
+Run after adding dict entries to refresh the Triage queue without re-ingesting
+every MFR. The same staleness pattern that --proceed now auto-clears for
+same-source_file (Decision #235), but for the cross-batch dict-additions case
+where a paramName became mapped via a code change, not via a new apply.
+Idempotent.
+  node scripts/atlas-ingest.mjs --rescan-unmapped-params [--dry-run]
 `);
 }
 
@@ -2902,16 +3407,35 @@ async function loadAndApplyDictOverrides() {
   if (!supabase) return { count: 0 };
   let rows;
   try {
-    const { data, error } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
-      .eq('is_active', true);
-    if (error) {
-      // Table missing or unauthorised — ingest still works, just without overrides.
-      console.warn(`  (dict overrides skipped: ${error.message})`);
-      return { count: 0 };
+    // Paginate — PostgREST caps a single SELECT at 1000 rows and
+    // atlas_dictionary_overrides has crossed that (every accepted Triage
+    // mapping adds a row). An un-paginated select silently dropped every
+    // override past #1000 at backfill time. STOP on error (never loop on a
+    // failed page — Decision #183 trap). Mirror of fetchOverridesPaginated in
+    // lib/services/atlasDictOverrides.ts. Same 1000-row class as Decision #206.
+    const PAGE = 1000;
+    rows = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('atlas_dictionary_overrides')
+        .select('family_id, param_name, action, attribute_id, attribute_name, unit, sort_order')
+        .eq('is_active', true)
+        // STABLE total ordering is load-bearing (mirror of atlasDictOverrides.ts):
+        // without it PostgREST paginates in arbitrary order, so boundary rows past
+        // #1000 silently drop/dup across pages → non-deterministic mapping (the
+        // backfill oscillation that left 13 MFRs' B4 TVS params unconvergent). (#232)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        // Table missing or unauthorised — ingest still works, just without overrides.
+        console.warn(`  (dict overrides skipped: ${error.message})`);
+        return { count: 0 };
+      }
+      const batch = data ?? [];
+      rows.push(...batch);
+      if (batch.length < PAGE) break;
     }
-    rows = data ?? [];
   } catch (err) {
     console.warn(`  (dict overrides skipped: ${err.message})`);
     return { count: 0 };
@@ -3359,7 +3883,14 @@ async function reportOneFile(filePath, opts = {}) {
   const fileSha = sha256File(filePath);
 
   const mapResult = mapManufacturerProducts(filePath);
-  const { mfrName, mappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+  const { mfrName, mappedProducts: rawMappedProducts, perProductUnmapped, total, mapped, errors, familyCounts, categoryCounts, mpnQualityIssues } = mapResult;
+
+  // Richest-wins dedup BEFORE computeDiff so the batch-review preview counts
+  // (willInsert/willUpdate) match what runProceed/runBackfillTranslations
+  // actually write — they dedup the same way. Without this the preview
+  // overcounts duplicate-MPN dual-category rows (e.g. a part listed as both TVS
+  // and Rectifier shows +2 inserts but proceed writes 1). Decision #233.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
 
   // Tag new atlas params
   for (const p of mappedProducts) {
@@ -3520,18 +4051,15 @@ async function runProceed(batchId) {
 
   const { mfrName, mappedProducts: rawMappedProducts } = mapManufacturerProducts(filePath);
   // Dedup by MPN — vendor JSON occasionally lists the same MPN twice for one
-  // MFR, which would crash the upsert with "ON CONFLICT DO UPDATE command
-  // cannot affect row a second time". Keep the LAST occurrence so the merge
-  // semantics match what a sequential apply would produce (last write wins).
-  const dedupedByMpn = new Map();
-  for (const p of rawMappedProducts) {
-    dedupedByMpn.set(p.mpn, p);
-  }
-  const dupeCount = rawMappedProducts.length - dedupedByMpn.size;
+  // MFR (would also crash the upsert with "ON CONFLICT DO UPDATE command cannot
+  // affect row a second time"). Keep the RICHEST occurrence, not last — a part
+  // listed as both TVS (full params) and Rectifier (~1 param) must store the
+  // rich electrical spec, deterministically. Decision #233 follow-up.
+  const mappedProducts = dedupRichestByMpn(rawMappedProducts);
+  const dupeCount = rawMappedProducts.length - mappedProducts.length;
   if (dupeCount > 0) {
-    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (last occurrence wins)`);
+    console.log(`  ⚠ ${dupeCount} duplicate MPN(s) collapsed (richest occurrence wins)`);
   }
-  const mappedProducts = Array.from(dedupedByMpn.values());
   for (const p of mappedProducts) {
     p.parameters = tagAtlasParameters(p.parameters);
   }
@@ -3682,6 +4210,49 @@ async function runProceed(batchId) {
     .update({ status: 'applied', applied_at: new Date().toISOString() })
     .eq('batch_id', batchId);
   if (updErr) throw new Error(`Failed to mark batch applied: ${updErr.message}`);
+
+  // 5b. Clear superseded batches' unmappedParams.
+  // Same source_file = same MFR's source-of-truth. With this batch now
+  // applied, any OTHER batch (any status) for the same source_file holds a
+  // frozen unmappedParams snapshot that the Triage queue RPC
+  // (get_triage_unmapped_aggregate, Decision #180) keeps summing into its
+  // productCount aggregates — surfacing paramNames the new batch may have
+  // already mapped. Blanket clear because the new batch's unmappedParams
+  // (already written to its report) is a strict subset of any older
+  // batch's list (same source file means same paramName universe; new dict
+  // entries only ever REMOVE entries from that universe). Decision #235
+  // follow-up — productized from _tmp-clear-superseded-unmapped.mjs so the
+  // staleness doesn't accumulate on every re-ingest. Failure here is
+  // non-fatal: the apply already succeeded, the cleanup is idempotent on
+  // any future --proceed for the same source_file.
+  try {
+    const { data: superseded, error: sErr } = await supabase
+      .from('atlas_ingest_batches')
+      .select('batch_id, report, status')
+      .eq('source_file', batch.source_file)
+      .neq('batch_id', batchId);
+    if (sErr) {
+      console.error(`  ⚠ Supersede scan failed (non-fatal): ${sErr.message}`);
+    } else if (superseded && superseded.length) {
+      let cleared = 0;
+      for (const s of superseded) {
+        const ups = Array.isArray(s.report?.unmappedParams) ? s.report.unmappedParams : [];
+        if (ups.length === 0) continue;
+        const newReport = { ...(s.report ?? {}), unmappedParams: [] };
+        const { error: upErr } = await supabase
+          .from('atlas_ingest_batches')
+          .update({ report: newReport })
+          .eq('batch_id', s.batch_id);
+        if (upErr) console.error(`  ⚠ Could not clear ${s.batch_id.slice(0, 8)}: ${upErr.message}`);
+        else cleared++;
+      }
+      if (cleared > 0) {
+        console.log(`  ✓ Cleared unmappedParams from ${cleared} superseded batch(es) for ${batch.source_file}`);
+      }
+    }
+  } catch (e) {
+    console.error(`  ⚠ Supersede cleanup failed (non-fatal): ${e.message}`);
+  }
 
   // 6. Cache invalidation:
   //   - When run via API (the typical path): the calling route will fire its
@@ -4011,7 +4582,11 @@ async function runBackfillTranslations(mfrFilter) {
       grandTotal.errors++;
       continue;
     }
-    const { mfrName, mappedProducts } = mapResult;
+    const { mfrName, mappedProducts: rawMappedProducts } = mapResult;
+    // Richest-wins dedup so duplicate-MPN dual-category rows land their rich
+    // mapping (not last-wins). Same collapse the dry-run sees, so these rows
+    // converge instead of perpetually re-flagging. Decision #233 follow-up.
+    const mappedProducts = dedupRichestByMpn(rawMappedProducts);
     if (mappedProducts.length === 0) {
       // Empty source file or filter-skipped — nothing to do.
       continue;
@@ -4209,6 +4784,101 @@ async function runDiscoverLegacy(mfrFilter) {
   }
 }
 
+// ─── runRescanUnmappedParams ──────────────────────────────
+// Walk every applied/pending/discovery batch's report.unmappedParams and
+// drop entries that would now resolve against the active dict (per-family,
+// L2-category, shared, metadata, skipParams). Productizes the manual
+// cleanup pattern from _tmp-clear-now-mapped-params.mjs. Decision #235
+// follow-up — for the dict-additions case where a paramName became mapped
+// via a code change (rather than the supersede case handled inline in
+// --proceed).
+//
+// Same source_file (within-MFR) staleness is already handled by --proceed
+// auto-clear; this command handles ACROSS-MFR staleness where dict additions
+// help paramNames that appear in many MFRs' batch reports. Run after any
+// session that adds dict entries.
+async function runRescanUnmappedParams() {
+  const norm = (s) => (s ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+  // Pre-build the set of all currently-mapped keys. Dicts have already had
+  // their DB overrides merged in by loadAndApplyDictOverrides() at startup,
+  // so this reflects current state including any engineer Triage Accepts.
+  const mapped = new Set();
+  for (const fdict of Object.values(FAMILY_PARAMS ?? {})) {
+    for (const k of Object.keys(fdict)) mapped.add(norm(k));
+  }
+  for (const fdict of Object.values(L2_PARAMS ?? {})) {
+    for (const k of Object.keys(fdict)) mapped.add(norm(k));
+  }
+  for (const k of Object.keys(SHARED_PARAMS ?? {})) mapped.add(norm(k));
+  for (const k of Object.keys(METADATA_PARAMS ?? {})) mapped.add(norm(k));
+  for (const k of (SKIP_PARAMS ?? [])) mapped.add(norm(k));
+  console.log(`Loaded ${mapped.size} unique mapped-key candidates from active dicts + skipParams.`);
+
+  // Paginate every batch (applied + pending + discovery).
+  let from = 0;
+  const all = [];
+  while (true) {
+    const { data, error } = await supabase
+      .from('atlas_ingest_batches')
+      .select('batch_id, manufacturer, status, report')
+      .in('status', ['applied', 'pending', 'discovery'])
+      .range(from, from + 999);
+    if (error) { console.error(error.message); return; }
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  console.log(`Scanned ${all.length} batches.`);
+
+  // Plan per-batch updates.
+  const updates = [];
+  let totalRemoved = 0;
+  for (const b of all) {
+    const ups = Array.isArray(b.report?.unmappedParams) ? b.report.unmappedParams : [];
+    if (!ups.length) continue;
+    const kept = ups.filter((e) => !mapped.has(norm(e?.paramName)));
+    if (kept.length === ups.length) continue;
+    totalRemoved += (ups.length - kept.length);
+    updates.push({ batch: b, kept });
+  }
+  console.log(`${updates.length} batches need updating; ${totalRemoved} stale entries to remove.`);
+
+  if (dryRun) {
+    for (const u of updates.slice(0, 25)) {
+      console.log(`  ${u.batch.batch_id.slice(0, 8)}  ${(u.batch.manufacturer ?? '').padEnd(14)} [${u.batch.status}]  ${u.batch.report.unmappedParams.length} → ${u.kept.length}`);
+    }
+    if (updates.length > 25) console.log(`  ... and ${updates.length - 25} more`);
+    console.log('\n[dry-run] No writes. Re-run without --dry-run to apply.');
+    return;
+  }
+
+  if (updates.length === 0) {
+    console.log('No batches needed updating. Triage queue already reflects current dict state.');
+    return;
+  }
+
+  console.log(`Applying ${updates.length} updates...`);
+  let ok = 0;
+  for (const u of updates) {
+    const newReport = { ...u.batch.report, unmappedParams: u.kept };
+    const { error } = await supabase
+      .from('atlas_ingest_batches')
+      .update({ report: newReport })
+      .eq('batch_id', u.batch.batch_id);
+    if (error) console.error(`  ${u.batch.batch_id.slice(0, 8)}: ${error.message}`);
+    else ok++;
+  }
+  console.log(`Done. ${ok} batches updated.`);
+  try {
+    await supabase.from('admin_stats_cache').delete().in('key', ['triage-queue', 'manufacturers-list']);
+    console.log('Admin caches invalidated (triage-queue, manufacturers-list).');
+  } catch (err) {
+    console.error('Cache invalidation failed (non-fatal):', err.message);
+  }
+}
+
 /** Compare two parameters JSONB blobs, ignoring ingested_at timestamp on
  *  atlas-tagged entries. Returns true if "effectively identical" — same
  *  keys, same source tags, same values. */
@@ -4269,6 +4939,7 @@ function numericValuesEqual(a, b) {
       case 'regenerate-affected-by': await runRegenerateAffectedBy(modeArg); break;
       case 'backfill-translations': await runBackfillTranslations(modeArg); break;
       case 'discover-legacy':        await runDiscoverLegacy(modeArg); break;
+      case 'rescan-unmapped-params': await runRescanUnmappedParams(); break;
       default:
         printUsage();
         process.exit(1);

@@ -227,16 +227,30 @@ export async function getCrossFamilyCanonicalSummary(): Promise<CrossFamilyCanon
   }
 
   // (3) Active engineer overrides. Fail-open on DB error — the TS dicts
-  // alone are already useful context for the AI.
+  // alone are already useful context for the AI. Paginate: this is unscoped
+  // (all families) and the table is >1000 rows (1136 active), so a single
+  // SELECT would hit PostgREST's 1000 cap and feed the AI an incomplete view
+  // of already-mapped canonicals — nudging it to re-suggest existing mappings.
+  // Same 1000-row footgun as triageQueueCompute (Decisions #206/#232).
   try {
     const supabase = createServiceClient();
-    const { data, error } = await supabase
-      .from('atlas_dictionary_overrides')
-      .select('family_id, attribute_id, attribute_name')
-      .eq('is_active', true)
-      .not('attribute_id', 'is', null);
-    if (!error && data) {
-      for (const row of data) {
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('atlas_dictionary_overrides')
+        .select('family_id, attribute_id, attribute_name')
+        .eq('is_active', true)
+        .not('attribute_id', 'is', null)
+        // attribute_id is NON-unique (operating_temp/cj/ir_leakage each map in
+        // dozens of families), so it is NOT a valid pagination sort on its own —
+        // boundary rows sharing an attribute_id would skip/dup across pages. The
+        // unique `id` tiebreak makes the total order stable. (Decision #233)
+        .order('attribute_id', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) break; // fail-open on any page
+      const batch = data ?? [];
+      for (const row of batch) {
         const id = row.attribute_id as string | null;
         const fam = row.family_id as string | null;
         if (!id || !fam || id.startsWith('_')) continue;
@@ -247,6 +261,7 @@ export async function getCrossFamilyCanonicalSummary(): Promise<CrossFamilyCanon
         }
         entry.families.add(fam);
       }
+      if (batch.length < PAGE) break;
     }
   } catch {
     // fail-open

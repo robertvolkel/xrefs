@@ -7936,7 +7936,307 @@ type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects IS
 (883 unmapped) and the ISC backfill dry-run now shows 1,493 changes incl. `20ETF10 → trr`. SQL
 (migration + RPC re-run) must be applied manually in Supabase before discovery inserts work.
 
-## Decision #232 — Suggestions panel shows ALL candidates; Active-first within bucket; supersedes #226 (June 10, 2026)
+## Decision #232 — Dictionary-override loaders silently capped at 1000 (June 10, 2026)
+
+**Symptom.** While adding two B1 gaia aliases (ISC's `peak_repetitive_reverse_voltage → vrrm`,
+`non_repetitive_peak_surge_current → ifsm`, the value-present-but-Missing case on `20ETF10`),
+the backfill printed `Loaded 1000 dictionary overrides (add: 1000, modify: 0, remove: 0)` — a
+suspiciously round number with the cap signature.
+
+**Root cause.** Both dictionary-override loaders fetched
+`atlas_dictionary_overrides.select().eq('is_active', true)` with **no `.range()` pagination**, so
+PostgREST's 1000-row default response cap silently truncated the result. Confirmed: after
+pagination the true count is **1034** — 34 active overrides (every accepted Triage mapping past
+#1000) were being **silently dropped**. This bit BOTH paths:
+- ingest/backfill: [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides()`
+- live read: [lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts)
+  `fetchAllDictOverrides()` + `fetchDictOverrides()` (feeds `fromParametersJsonb` recommendation scoring)
+
+So mappings beyond #1000 stopped applying **anywhere** — directly throttling the legacy-discovery
+loop (Decision #231): the more the engineer accepts in Triage, the more accepts are ignored. This
+is a **new instance** of the same 1000-row footgun class as Decision #206 (which fixed the *triage
+aggregation RPC* via `RETURNS jsonb`) — different code, different table, never touched by #206.
+
+**Fix.** Paginate both loaders with `.range(from, from+999)` loops that **STOP on error** (never
+loop on a failed page — the Decision #183 partial-result trap). Read-path uses a shared
+`fetchOverridesPaginated(supabase, familyId?)` helper; the .mjs carries the mirror inline next to
+the existing `loadCollidingEnNames()` pagination. After the fix the loader reports the true 1034.
+
+**Same-session companion (gaia aliases).** The two B1 aliases live in the shared
+[atlas-gaia-dicts.json](../lib/services/atlas-gaia-dicts.json) (loaded by both the TS read-path and
+`atlas-ingest.mjs` — no mirror needed). ISC backfill: **224 products changed, 0 errors**;
+`20ETF10` now carries `vrrm = 1000 V` / `ifsm = 300 A`. Pattern matches the Galaxy vendor-spelling
+playbook (Decision #215) — vendor word-order variants the existing dict didn't cover.
+
+**Verification.** tsc clean on changed files; 241 atlas tests pass; ISC dry-run + real backfill
+both report 224 changed / 0 errors; loader count 1000 → 1034.
+
+## Decision #233 — Override loader stable ordering + full-fleet legacy backfill + duplicate-MPN convergence finding (June 11, 2026)
+
+**Context.** Ran the full legacy-discovery + backfill follow-through from Decision #231. Discovery:
+`--discover-legacy` created **101 new discovery batches** (now 102 discovery / 295 applied / 0
+pending); the Triage distinct-param total rose **14,413 → 26,440** (legacy MCU/memory/processor MFRs
+carry heavy vendor-unique param sprawl). Backfill (user-approved, run-now scoped waves):
+**18,441 products** would change fleet-wide from the gaia preferredSuffix fix + the #232-uncapped
+overrides; executed as MindMotion (validate 112) → 70-MFR tail (5,570) → JJW (3,925) → SWST (8,834,
+5 transient `fetch failed`, idempotent re-run converged). ~18,197 rows backfilled clean and
+**converged** (subsequent global dry-run shows them `same`).
+
+**Bug found mid-backfill — non-deterministic override loading.** A 244-row / 13-MFR remainder would
+NOT converge: re-running reported "N changed, 0 errors" yet the next dry-run flagged the identical
+rows, and a probe showed a product's mapped key-set flipping between runs. Root cause #1: **both
+dictionary-override loaders paginated with `.range()` but no `ORDER BY`** — PostgREST returns
+paginated rows in arbitrary, run-to-run order, so the ~35 active overrides *past #1000* (exactly the
+ones #232 just un-capped) silently dropped/duplicated across the page boundary. Same 1000-row footgun
+family as Decisions #206/#232, third instance. **Fix:** added a stable total order
+`.order('created_at').order('id')` before `.range()` in BOTH
+[lib/services/atlasDictOverrides.ts](../lib/services/atlasDictOverrides.ts) `fetchOverridesPaginated`
+(live recommendation-scoring read path — this was a latent **scoring-determinism** bug, not just an
+ingest one) and [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) `loadAndApplyDictOverrides`
+(mirror). `created_at` = meaningful order (newer accepts apply last), `id` = unique tiebreak that
+guarantees no skip/dup. Post-fix the loader loads a stable 1035 every run.
+
+**The deeper root cause #2 — duplicate-MPN dual-category source collisions (the real reason the 244
+won't converge).** The ORDER-BY fix made loading deterministic but the 244 STILL flagged. Source
+inspection: SEMBO's `SA5.0A` (and ~200 of the 244) appears **twice in one source file** under two
+different category classifications — e.g. once as **TVS Diodes** (B4, 8 params → 7 rich keys: ipp /
+vbr / vc / ir_leakage / vrwm / polarity / package) and once as **Rectifiers** (B1, 7 params → ~1 key).
+Both share `componentName`, so ingest/backfill map both and write both against the same
+`(mpn, manufacturer)` DB row — **last-write-wins** — and the dry-run *always* sees the non-winning
+occurrence as a pending diff. These rows are **irreducible via backfill**: they can never converge,
+and forcing re-runs risks landing the sparse Rectifier version over good TVS data. Confirmed by
+matching the per-MFR "would change" counts to dual-category-dup counts almost exactly (YJYCOIN 34≡34,
+INPAQ 67≡67, Hanrun 7≡7, SUMIDA 3≡3, SEMBO/LGE 1≡1, Aosong 2≡2). A residual ~43 (MXChip/UMW/Geehy/
+COSINE/ETA, 0 dups) are a smaller separate value-level matter, not investigated. These collisions
+predate this session (always in the source); backfill merely rewrote them under the same last-wins
+rule. **Decision: stop backfilling these 13; the proper fix is deterministic collision resolution
+(prefer the richer / more-specific classification, or dedup at source) — BACKLOG'd**, tied to
+Decisions #175 (B1↔B4 reclassification), #191 (MPN-quality validator), #225 (name-string identity).
+
+**Verification.** 2067/2067 tests pass; tsc clean on changed files; post-fix override load stable at
+1035 across 5 runs; SEMBO `SA5.0A` restored to its 7-key TVS mapping. Net fleet backfill ≈18,197
+rows converged, 0 net errors. NO SQL/DDL required (the #231 migration + jsonb RPC were already in
+prod). Files changed: the two override loaders only.
+
+**Follow-up same session — duplicate-MPN collision FIXED (richest-wins dedup), not just deferred.**
+Rather than leave the 244 as BACKLOG, shipped the deterministic fix: new `dedupRichestByMpn(products)`
+helper in [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) collapses same-`componentName`
+occurrences within one source file to the **richest** (most mapped keys; ties keep first for
+stability). Wired into BOTH write paths — `runBackfillTranslations` (had no dedup → last-UPDATE-wins)
+and `runProceed` (changed its existing **last**-wins Map to richest-wins). Ingest-only (the read path
+maps a single already-deduped DB row, so no atlasMapper.ts mirror needed). Because the dry-run uses
+the same `runBackfillTranslations` path, these rows now **converge** instead of perpetually
+re-flagging. Recovery run over the 13 MFRs: **162 changed, 0 errors**; global "would change" dropped
+**244 → 43**; collision rows' rich/sparse split improved **119/112 → 180/51** (61 sparse rows
+recovered to their full TVS spec). The remaining **51 "sparse"** are parts whose *richest* occurrence
+genuinely maps to ≤3 keys (real source-data limitation, now correctly + stably stored — not loss).
+**No permanent data loss occurred** — all rich versions live in the source files and are now applied.
+The residual **43** non-convergent rows (MXChip 3, Geehy 5, COSINE 14, ETA 21 — zero duplicate MPNs)
+are a SEPARATE, minor **value-level** non-convergence (same keys, a value/unit/numericValue
+representation that won't settle across map→write→re-map; NO key/data loss) — BACKLOG'd for later,
+low impact (4 small MFRs). 2067/2067 tests pass; richest-wins helper unit-checked.
+
+**Third + fourth instances of the 1000-row footgun — Triage override fetches (same session).** An
+engineer asked "am I re-mapping params I already mapped?" Investigation found TWO more uncapped
+`atlas_dictionary_overrides` SELECTs (the table is now **1319 rows: 1136 active + 183 inactive**, so
+a single SELECT silently drops 319 to the cap):
+- [lib/services/triageQueueCompute.ts](../lib/services/triageQueueCompute.ts) `getOrComputeTriageData`
+  — fetched overrides ordered `updated_at desc`, no `.range()`. The cap dropped the **253 oldest
+  active overrides** from the "already-accepted" map, so the params they map were no longer
+  recognised and **reappeared in the OPEN Triage queue** (engineer re-sees old work). This is the
+  one that drives the visible queue.
+- [lib/services/atlasTriageContext.ts](../lib/services/atlasTriageContext.ts) cross-family canonical
+  index (feeds the AI /suggest + /investigate prompts) — unscoped `is_active` fetch, no `.range()`,
+  so the AI saw an incomplete view of already-mapped canonicals and could re-suggest existing ones.
+**Both fixed** with paginated loops + stable order (`updated_at desc, id` / `attribute_id`), STOP-on-
+error. **Measured real impact**, replicating the compute's `${dominantFamily|dominantCategory}:norm(param)`
+match over the live 26,440-row queue with capped (883-active) vs full (1136-active) maps: only **8
+queue rows** were actually resurfacing (the other 245 dropped overrides map params not currently in
+the aggregate). So the bug is real but small *today* — it grows as accepts accumulate, and it
+degraded AI suggestions. The engineer's broader déjà-vu is mostly **vendor-spelling variants** (same
+concept, different Chinese/English string per MFR — Decision #215 pattern) + **cross-scope re-mapping**
+(same param under a different family/category — Decision #178), i.e. genuinely-new work that merely
+*feels* repetitive. 2067/2067 tests pass; tsc clean on both files. Atlas now has **FOUR** known
+override-fetch sites; the two display/per-family ones ([dictionaries/route.ts](../app/api/admin/atlas/dictionaries/route.ts)
+list, `fetchAcceptedCanonicals` per-family) are scope-bounded and not at practical cap risk.
+
+## Decision #234 — Reverted per-row dict mutations to single-flight invalidate (June 12, 2026)
+
+**Symptom.** Engineer reported Triage Accept clicks took 30+ seconds each, up from "a few seconds" earlier in the week. Consistent across every Accept, not intermittent.
+
+**Root cause.** Decision #186(e) had switched dict `POST` / `PATCH` / `DELETE` from `invalidateTriageQueueCache()` (single-flight, fire-and-forget after `L2 DELETE`) to `invalidateTriageQueueCacheAndAwaitFresh()` (drain in-flight + `L2 DELETE` + start fresh recompute + **await it**). At the time the swap shipped, the recompute was ~2–3s (Decision #180 had just brought it down via the JSONB RPC) and `await` semantics were cheap. Two recent changes compounded the cost:
+
+1. **Decision #231 (June 10)** moved filter/sort/clustering server-side. The compute now does per-row `isFlagged` / `hasNote` / `similarSiblings` PLUS "+N similar" siblings over the FULL queue set (~26k rows after PR #2).
+2. **Decision #233 (June 11)** paginated `atlas_dictionary_overrides` to handle the 1,319-row table. The compute now reads **all** active overrides on every recompute, not just the first 1,000.
+
+Net: the recompute grew from ~2–3s to ~20–30s. Because per-row mutations awaited it under #186(e), every Accept inherited the full cost.
+
+**Why #186(e) was the wrong fix even at the time.** The concern it addressed was "client refetch races the recompute and sees the just-overridden row as Open." That concern had already been **superseded by Decision #182** (optimistic UI): `onRowAccepted` mutates the row in place — there *is no* client refetch on Accept. The pre-existing [cache-invalidation-wait-then-restart](../.claude/projects/-Users-robvolkel-Developer-xrefs-app/memory/cache-invalidation-wait-then-restart.md) memory (2026-05-08) had already documented the convention: per-row mutations use single-flight, batch-state mutations use wait-then-restart. #186(e) silently violated that convention to satisfy a freshness guarantee that wasn't actually being used by any code path.
+
+**Fix.** Reverted three call sites back to `invalidateTriageQueueCache()`:
+- [app/api/admin/atlas/dictionaries/route.ts:237](../app/api/admin/atlas/dictionaries/route.ts) — POST = Accept
+- [app/api/admin/atlas/dictionaries/[overrideId]/route.ts:52](../app/api/admin/atlas/dictionaries/[overrideId]/route.ts) — PATCH = edit override
+- [app/api/admin/atlas/dictionaries/[overrideId]/route.ts:98](../app/api/admin/atlas/dictionaries/[overrideId]/route.ts) — DELETE = Revert
+
+The `L2 DELETE` still runs synchronously (~100–300ms — keeps concurrent readers from seeing pre-insert state). The background recompute fires async; the next Triage GET that misses L2 waits ~20–30s on cold compute, but subsequent GETs hit warm L2. Batch-state mutations (upload / proceed / revert / regenerate / batch-DELETE / proceed-all-clean) unchanged — `invalidateTriageQueueCacheAndAwaitFresh()` remains correct for those per the original Decision #180 split, since they're slow operations where the user is already in a "waiting for slow op" mental state and downstream-page freshness matters.
+
+**Verified.** Live dev-server timings on three back-to-back Accepts:
+
+| # | Total | compile | proxy.ts | render | Note |
+|---|-------|---------|----------|--------|------|
+| 1 | 1.0 s | 213 ms | 300 ms | 531 ms | Cold compile |
+| 2 | 612 ms | 4 ms | 193 ms | 415 ms | Warm — expected baseline |
+| 3 | 5.8 s | 22 ms | 657 ms | 5.1 s | Spike (see follow-up) |
+
+Net: ~30 s → ~600 ms warm = **50× improvement**. The 5.8 s spike on the third request is almost certainly the prior Accept's background recompute holding a Supabase service-client connection while this Accept's POST queues on the pool — filed as a BACKLOG follow-up; the underlying 50× win is unaffected.
+
+**Tests.** `__tests__/services/triageQueue*` (12/12) passes. TS errors in `matchingEngine.test.ts` are pre-existing and unrelated.
+
+**Lesson — recompute cost is a moving target.** A pattern that's free when the recompute is 2 s becomes a foot-gun when the recompute is 25 s. The choice between single-flight and wait-then-restart should be made based on *"does the caller actually depend on the freshness guarantee?"* — not on *"is this technically an awaited call?"* When the answer is no (because optimistic UI handles freshness for the acting user), single-flight is always the safer default: its worst case is "next cold read pays 25 s," which is bounded, rare, and amortized across all callers — vs. wait-then-restart which charges every single mutation 25 s.
+
+
+## Decision #235 — F1/F2 Atlas classifier branch + relay MFR re-ingest (June 14, 2026)
+
+**Symptom.** User flagged a Triage row for `介质耐压` (dielectric withstanding voltage) on HONGFA showing AI verdict "wrong family" → reclassify to "Transformers" with productCount 141k. Spot-checked the row: zero affected products in HONGFA scope per the diagnostic. Same pattern repeated across 9 other clearly-relay paramNames (`线圈电压类型`, `触点形式`, `机械耐久性`, etc.), all labeled B5 MOSFETs.
+
+**Investigation.** Three rounds of progressively cheaper, more thorough diagnostics:
+
+1. **Source file pristine** — `mfr_30_HONGFA_宏发_params.json` ships c1="Relays", c2/c3="Power Relays, Over 2 Amps", 20,206 products with canonical relay parametric data (`触点形式`, `线圈工作电压`, `介质耐压`, ~34 params per product). Not an ingest input bug.
+2. **Classifier blind spot** — `classifyAtlasCategory` in [lib/services/atlasMapper.ts](../lib/services/atlasMapper.ts) and the [scripts/atlas-ingest.mjs](../scripts/atlas-ingest.mjs) mirror had **zero relay handling at any tier**. No L3 branch for F1/F2, no L2 fallback (Transformers / Filters / Sensors / etc all had c1/c2 catch-alls; relays did not), and no c1 catch-all for the "Relays" string. HONGFA's perfectly-tagged file fell all the way through to the final catch-all and landed as `{ category: 'ICs', subcategory: 'Power Relays, Over 2 Amps', familyId: null }`. Paginated `GROUP BY family_id` confirmed: **19,843 (98.2 %) HONGFA products sitting at `family_id = null`, 363 (1.8 %) in B5**.
+3. **Catastrophic JSONB degradation** — sampled 12 HONGFA products at random offsets across the catalog. Every one had only 7–10 parameter keys, mostly **unit-suffix stems** like `g, m, ac, dc, mm, ms, mm3, input_voltage_type`. Source ships ~34 paramNames per product; effective ingest survival rate was ~24 %. Cause: unmapped paramNames falling through to an aggressive unit-suffix fallback that collides on shared suffixes (`重量(单位：g)` and any other `(单位：g)`-suffixed param both key to `g`, last write wins). F1 and F2 dicts in `atlasParamDictionaries` were **completely empty** (grep clean), so every Chinese relay paramName hit the fallback.
+
+**The 363-in-B5 turned out to be benign.** Hypothesized to be a separate SSR/PhotoMOS line caught by a Rds(on) signature. Actually: same disease, different legacy state. The re-ingest upsert correctly flipped all 20,206 products to F1 in a single pass (none stayed in B5).
+
+**Fix — three code changes + nine data migrations.**
+
+1. **Classifier branch** in [lib/services/atlasMapper.ts:200](../lib/services/atlasMapper.ts) + mirror in [scripts/atlas-ingest.mjs:130](../scripts/atlas-ingest.mjs). SSR check first (substring subset: `'solid state relay'` / `'photo relay'` / `'photomos'`) → F2. EMR catch-all (`c3.includes('relay')` or `c1.includes('relay')`) → F1. Placed between E1 Optocouplers and the discrete-semi block, matching that block's "subset check before generic match" pattern.
+2. **F1 + F2 dicts** in [lib/services/atlasMapper.ts:1819](../lib/services/atlasMapper.ts) + mirror. F1: ~75 entries covering all 34 HONGFA paramNames + English aliases, mapped to F1 logic-table canonicals (`coil_voltage_vdc`, `contact_form`, `contact_voltage_rating_v`, `operate_time_ms`, `mechanical_life_ops`, `isolation_voltage_vrms`, etc.) with underscore-prefix catalog attrs for non-scored fields. AC/DC switching ratings split (AC → canonical, DC → catalog `_contact_voltage_dc_v`) so both can coexist in JSONB without overwriting. F2: ~30 entries seeded from F2 logic table + best-guess Chinese aliases — no ground-truth SSR vendor file yet, expect refinement via Triage when the first dedicated Chinese SSR MFR drops.
+3. **`包装形式` added to skipParams** in both files. HONGFA's only unmapped param post-fix was `包装形式` (packaging form, values "吸塑片" / "型管或吸塑盘"). The shorter `包装` was already in skipParams as a buyer-concern not a parametric; this is the same concept under the longer Chinese name. One-line addition rather than a Triage Accept since the convention already exists.
+4. **`RECS_CACHE_SCHEMA_VERSION` v11 → v12** in [lib/services/partDataCache.ts:81](../lib/services/partDataCache.ts) to invalidate any recommendation responses cached against pre-re-ingest (null-family, 8-key) HONGFA / Slkor / Everlight / etc. products. Otherwise up to 30-day staleness on any MPN that was searched before this change.
+
+**Data migrations applied.** Eight pending batches generated and applied via the Decision #174 pipeline (each writes a `atlas_products_snapshots` row first; revert window 30 days):
+
+| MFR | Products | Family after |
+|---|---|---|
+| HONGFA | 20,206 | F1 = 20,206 |
+| Everlight | 3,559 | F2 = 4 + LEDs/optos as before |
+| Slkor | 1,153 | F1 + scattered (mixed discrete-semi MFR) |
+| CT MICRO | 357 | F1 |
+| APSEMI | 349 | F2 = 393 (PhotoMOS line) |
+| CHIPANALOG | 348 | F2 = 1 |
+| AOTE | 309 | F2 |
+| KTP | 200 | F2 |
+| STEIPU | 196 | F1 = 370, F2 = 12 |
+
+Total upserts: **~26,677 products** updated. Verified post-apply scope check: of 20,708 products with subcategory containing "relay" (or 继电器) currently in the DB, **20,706 are now in F1 or F2; 0 in B5; 2 in null** (down from 19,843 in null). Average JSONB key count per HONGFA product: **7.3 → 14.6** (sample products carry 14–15 real F1 canonicals each: `coil_voltage_vdc, contact_form, contact_count, contact_material, contact_voltage_rating_v, contact_current_rating_a, isolation_voltage_vrms, operate_time_ms, release_time_ms, mechanical_life_ops, electrical_life_ops, operating_temp_range, package_footprint, coil_power_mw, mounting_type, coil_suppress_diode`).
+
+**Tests.** Full suite 2068 / 2068 passes. Atlas-specific suite 241 / 241.
+
+**Lesson — three concentric blind spots compound.** The bug surfaced because the AI Triage Investigator gave a wrong verdict (Transformers, an L2 category — Decision #190's validation would have rejected it had Confirm fired). But the AI verdict was the symptom, not the disease. Behind it sat:
+
+- **Layer 1**: classifier missing F1/F2 branches.
+- **Layer 2**: dicts missing for F1/F2.
+- **Layer 3**: ingest fallback that silently degrades unmapped params instead of preserving them under their raw paramName.
+
+Each layer alone would have been recoverable in Triage. Together they made **~26K products effectively invisible** to the recommendation engine — sitting at `family_id = null` (no logic table runs) with ~24 % of their parametric data preserved (and even that 24 % under collided unit-stem keys). The system had no signal that this was happening: every relay MFR ingested cleanly with no errors, no warnings, no Triage queue noise that pointed at the disease (the unmapped paramNames appeared in Triage but only got assigned to `dominantFamily = B5` because of the 363 stragglers, leading the AI Investigator down a wrong path).
+
+**Followup.** Step 5 of the plan — adding unambiguous-relay paramNames (e.g. `^contact_form`, `^coil_voltage`, `^mechanical_life`) to `FAMILY_PARAM_SIGNATURES` (Decision #207) — would have caught Layer 1 even without the classifier branch. Tracked in BACKLOG as the future-proofing safety net. Decision #199 retroactive backfill (`npm run atlas:backfill --mfr <slug>`) is now available for cleaning up the English-paramName variants the engineer will accept via Triage over the next few sessions (APSEMI uses "Circuit ", "Voltage - Input ", "Operating Temperature " with trailing spaces; CT MICRO ships compound forms like `集射极饱和电压(VCE(sat))`).
+
+**Post-apply Triage cleanup — superseded-batch staleness.** After the re-ingest, user reported the Triage UI still showed all the now-mapped Chinese relay paramNames as unmapped, with their stale pre-fix dominantFamily=B5. Investigation: `get_triage_unmapped_aggregate()` (Decision #180) reads `report->'unmappedParams'` JSONB from **every** `atlas_ingest_batches` row with `status IN ('pending', 'applied', 'discovery')`. SUMs productCount across batches. Old applied batches from prior ingests (HONGFA had a 2026-05-20 batch alongside today's 2026-06-14 batch; Slkor had 3 batches; Everlight had 3) carried a frozen pre-fix `unmappedParams` array — those got summed into the current aggregate even though today's batch correctly reports only `包装形式` as unmapped. Net: 22 superseded batches across 19 MFRs (6 from this session, 16 accumulated from prior re-ingest sessions) polluting the queue.
+
+Fix: `scripts/_tmp-clear-superseded-unmapped.mjs` identifies applied batches with a NEWER applied batch for the same `source_file` and zeroes out their `report.unmappedParams` array (preserves snapshot links, classification stats, audit trail — only clears the queue-contribution field). Cleared all 22 in one pass, invalidated `admin_stats_cache` L2 row for `triage-queue`. Verified post-cleanup via direct RPC call: 11 of the 11 originally-polluted HONGFA paramNames disappeared from the queue except `包装形式` (HONGFA's June 14 batch was generated before `包装形式` was added to skipParams; will clear on next HONGFA re-ingest).
+
+**Lesson — the .mjs `--proceed` path should clear superseded batches' unmappedParams automatically.** Re-ingest IS the supersede signal — there's no scenario where the previous batch's unmappedParams aggregate should still contribute to the queue after a newer batch is applied for the same source_file. Tracked in BACKLOG: add `clearSupersededUnmappedParams(sourceFile)` call inside the `--proceed` path so this doesn't recur. Until that lands, manually re-run `_tmp-clear-superseded-unmapped.mjs --apply` after any batch of re-ingests; idempotent (skips batches whose unmappedParams is already empty).
+
+**Closeout (June 14, 2026) — 7 follow-up commits that finished Items 1 + 2:**
+
+**A. F2 SSR dict expansion + whitespace normalization (commit `2fda2ac`).** The classifier moved 7 non-HONGFA relay MFRs into F1/F2, but my Chinese-focused dicts (seeded from HONGFA's vocabulary) didn't cover APSEMI's English vendor convention or STEIPU/AOTE/KTP's distinct Chinese variants — leaving those products classified-but-degraded with ~0 mapped F2 attributes. Added ~25 F2 entries (APSEMI English: `circuit`, `voltage - input`, `output type`, `operating temperature`, `device package`; PhotoMOS catalog: `fet type`, `rds on`, `vgs(th)`; Chinese: `隔离电压(vrms)`, `触点形式`, `最大切换电流`, `连续负载电流`, `导通时间(ton)`, `截止时间(toff)`, `导通电阻`, `过零功能`) + `rohs code` to metadata dict + `country of origin` to skipParams. Also added internal-whitespace normalization to the dict lookup (`p.name.toLowerCase().trim().replace(/\s+/g, ' ')`) so CT MICRO's multi-space padded paramNames (`Light Current   (mA)`) and APSEMI's trailing-space pattern match dict keys without per-variant entries. Backfilled APSEMI (341 changed), STEIPU (11), AOTE (33), KTP (2), HONGFA (0 — already gold standard).
+
+**B. Stale-batch cleanup (commit `2a414b1`).** Same staleness pattern as A applied to batch reports: today's dict additions made paramNames mapped, but 103 batches' frozen `unmappedParams` still listed them. Generic `_tmp-clear-now-mapped-params.mjs` cleared 185 stale entries across 19+ MFRs (many Chinese MFRs use the same paramNames I added, not just relay ones). Triage queue: 26,329 → 26,294.
+
+**C. Productized cleanup commands (commit `c0481e4`) — closes the "still open" backlog item from above.** Replaced the `_tmp` scripts with first-class ingest commands:
+
+1. **`--proceed` auto-clear (inline)**. After successful `status='applied'` mark, finds every OTHER batch for the same `source_file` and blanket-clears their `report.unmappedParams = []`. Same source_file = same paramName universe; the new batch's report is a strict subset of any older batch's (new dict entries only ever REMOVE entries). Failure is non-fatal — the apply already succeeded, idempotent on next `--proceed`.
+2. **`--rescan-unmapped-params` standalone command**. Walks every applied/pending/discovery batch's report.unmappedParams and drops entries that would now resolve against the active dict (per-family / L2-category / shared / metadata / skipParams) after `loadAndApplyDictOverrides()` merge. Handles the cross-batch dict-additions case where a paramName became mapped via a code change or a Triage Accept in `atlas_dictionary_overrides`, which `--proceed` auto-clear doesn't subsume. Supports `--dry-run`.
+
+First rescan revealed the full backlog: **334 batches across all MFRs had 3,422 stale entries** accumulated over every Triage Accept since the system started. SG-Micro 194→150, Sunlord 92→65, AnBon 64→23, SIMCOM 2163→2124, YFW 1125→1083. Triage queue: 26,294 → 24,969 (–1,325).
+
+**D. E1 optocoupler dict expansion (commit `e54c933`) — Item 1 from the post-session followups.** Survey of Triage queue scoped to `dominantFamily=E1` showed 80 unmapped paramNames affecting 2K+ optocoupler products. Most were vendor-variant forms of paramNames the existing E1 dict already handled — parenthetical-suffix variation, half-letter case in propagation-delay names, Greek μ vs Latin u in CMTI units, or English forms from MFRs using JEDEC nomenclature. Added ~80 new E1 entries: `正向电流(If)` and `forward current (if)` → `if_rated_ma`; `集射极饱和电压(VCE(sat))` → `vce_sat_v`; `电流传输比(CTR)最小值` / `最大值/饱和值` → `ctr_min_pct` / `ctr_max_pct`; `传播延迟 tpHL` / `tpLH` (with space) → `propagation_delay_us`; `cmti(kv/us)` Latin-u variant → `_cmti_kv_us`; power dissipation / data rate / input threshold current catalogs; JJW English (`VISO (Vrms)`, `TOPR (°C)`, `VR_Max (V)`); CT MICRO Static dv/dt variants; light-current / Ic output current variants; many shared opto-LED-side catalogs.
+
+Backfilled 9 opto-heavy MFRs:
+
+| MFR | Products | Changed | % |
+|---|---|---|---|
+| AOTE | 309 | 248 | 80 % |
+| Kinglight | 502 | 237 | 47 % |
+| JJW | 8,287 | 2,251 | 27 % |
+| Yint | 2,546 | 1,154 | 45 % |
+| CT MICRO | 357 | 103 | 29 % |
+| Everlight | 3,559 | 45 | 1 % (mostly LEDs) |
+| KTP | 200 | 27 | 14 % |
+| MP | 269 | 22 | 8 % |
+
+**~4,087 products newly mapped.** Then `--rescan-unmapped-params` cleared 174 more stale entries from 61 batches. E1-touching unmapped paramNames in Triage queue: **80 → 39 (–51 %)**.
+
+**Remaining stragglers filed in BACKLOG**: CT MICRO multi-space `TOPR` pattern (likely non-standard whitespace char — `\s+` collapse doesn't catch it); L2 LEDs dict expansion (Sunlord + CT MICRO + Everlight LED products, ~8K products); C7 digital isolators dict expansion (CHIPANALOG + parts of Yint, ~500 products).
+
+**Final session totals.** 7 commits, ~26,677 + ~4,087 = **~30,764 products' parametric data corrected** (relay misclassification + opto vendor-variant mapping). 519 batches' stale `unmappedParams` cleared (22 + 103 + 334 + 61). Triage queue: surfaces a ~5% smaller and meaningfully more accurate work list. F1/F2/E1 dicts grew by ~190 entries. New atlas-ingest commands prevent the staleness pattern from recurring on future re-ingests or dict additions.
+
+
+## Decision #236 — Recommendation sort: least-fails-first (real mismatches as primary key) (June 15, 2026)
+
+**Symptom.** User observed the single-part Replacements list was non-monotonic in fail count: a few cards with many fails at the top, then clean (no-fail) cards below, then fails increasing again. The "right behavior" per the product owner: least fails first.
+
+**Cause.** `sortRecommendationsForDisplay()` in [lib/services/recommendationSort.ts](../lib/services/recommendationSort.ts) bucketed **Accuris Certified → MFR Certified → Logic Driven** as the *primary* key (Decisions #127/#133/#143), with match %/composite score only as within-bucket tiebreaks. So the certified bucket (whose cards in this case all carried "3 failed") floated to the top regardless of fails, the Logic bucket began at highest match % (fewest fails), then fails rose as match % fell. The non-monotonic pattern was the bucket boundary.
+
+**Decision (user-chosen, via two-question prompt).** *Fails win globally*, using *real mismatches*:
+- Primary sort key is now `countRealMismatches(rec)` ascending — fail rules where the replacement has a value that disagrees; missing-data fails (`replacementValue === 'N/A'`) don't count (same metric the `hideHighFails` filter already uses, [lib/types.ts:231](../lib/types.ts#L231)).
+- The former bucket order (Accuris → MFR → Logic), mfr-equivalence rank, qualification-domain rank, and match %/composite score are all **demoted to tiebreaks** among candidates with the same real-mismatch count.
+- A clean logic match therefore outranks a high-fail Accuris/MFR certified cross. Certified status no longer floats high-fail crosses to the top; it only breaks ties.
+
+**Scope / side effects.**
+- The sort is shared server-side ([partDataService.ts:1606](../lib/services/partDataService.ts#L1606), before cache write) and client-side ([RecommendationsPanel.tsx:42](../components/RecommendationsPanel.tsx#L42), re-sorted on render). So the change takes effect on display immediately with **no `RECS_CACHE_SCHEMA_VERSION` bump** (sort-order only; shape unchanged; the panel always re-sorts whatever it receives).
+- `row.replacement` (the top BOM-row pick, persisted from `recs[0]` at validation time) now also reflects fewest-fails-first. Already-validated lists keep their prior top pick until re-validated; new/re-validated rows get the new ordering.
+- The **certified-cross bypass is untouched** — high-fail certified crosses still *appear* (the `hideHighFails` filter still exempts them, Decision #133); they just no longer sit at the top.
+- Supersedes the *primary-key* ordering from Decision #143; the bucket order it defined survives as the first tiebreak.
+
+**Files.** `lib/services/recommendationSort.ts` (import `countRealMismatches`; `failDiff` as the first comparator; docstring rewritten), `lib/services/partDataService.ts` (stale comment updated). 2075 tests pass.
+
+## Decision #237 — Tolerance-band eligibility restricted to a continuous-numeric allowlist (June 15, 2026)
+
+**Symptom.** The Source Specs panel offered a ±% tolerance slider on `Package / Case` (value `0805`), where a tolerance band is meaningless. The feature is intended for numeric attributes only.
+
+**Cause.** The eligibility gate `isToleranceEligible()` in [components/AttributesPanel.tsx](../components/AttributesPanel.tsx) only checked `logicType === 'identity'` + `numericValue` present. But `package_case` is `logicType: 'identity'` — identical to `resistance`/`capacitance` ([chipResistors.ts:25](../lib/logicTables/chipResistors.ts#L25)) — so logicType can't distinguish numeric from categorical identity. And the number parser turns `"0805 (2012 Metric)"` into `numericValue: 2012, unit: "Metric"` ([digikeyMapper.ts:362](../lib/services/digikeyMapper.ts#L362)), so neither `numericValue` nor `unit` could gate it out either. Nothing in the rule or attribute data reliably separates a *continuous* numeric (resistance, capacitance, frequency) from a categorical (`package_case`, `mounting_style`, `polarity`) or a discrete count (`resolution_bits`, `gate_count`) — all of which were getting a slider.
+
+**Decision (MVP scope).** Gate on an explicit allowlist `TOLERANCE_ELIGIBLE_ATTRIBUTE_IDS` of continuous physical quantities; require `rule.attributeId` to be on it (in addition to `identity` + `numericValue`). Built by surveying every `identity` rule across the logic tables and keeping the clearly-continuous ones:
+- **Passives:** `resistance`, `resistance_r25`, `capacitance`, `load_capacitance_pf`, `inductance`, `impedance_100mhz`, `varistor_voltage`
+- **Frequency control:** `fsw`, `nominal_frequency_hz`, `output_frequency_hz`
+- **Discrete semis:** `vz`, `vrwm`, `vbr`, `izt`, `trip_current`, `hold_current`
+- **ICs:** `output_voltage`, `input_logic_threshold`
+
+An allowlist (vs denylist) is deliberately conservative: a numeric attribute we forgot to add simply won't get a slider (acceptable, one-line fix to extend), whereas a categorical we forgot to deny would show nonsense. `Package / Case`, `mounting_style`, `polarity`, `resolution_bits`, etc. now correctly show no control; `Resistance` keeps it.
+
+**Files.** `components/AttributesPanel.tsx` (allowlist constant + `isToleranceEligible` extended; docstrings updated). 2075 tests pass.
+
+## Decision #238 — Per-attribute acceptance criteria (range + discrete set) on the Source Specs panel (June 15, 2026)
+
+**Context.** A customer asked to click an attribute in the Source Part Specs panel and set an acceptable **tolerance** for matching — "not all values have to match the original." Shipped first as a ±% tolerance band on numeric identity rules (Decisions #236/#237 are part of that line), then generalized.
+
+**Unified model.** `AcceptanceCriterion = { kind:'range'; percent } | { kind:'set'; values }` and `AcceptanceCriteria = Record<attributeId, AcceptanceCriterion>` ([lib/types.ts](../lib/types.ts)) — one shape covering both continuous (±% band) and categorical/discrete (accepted-values checklist) acceptance. This is deliberately the shape a future candidate-fetch (parametric query) layer will read. Threaded through `getRecommendations` → POST `/api/xref/[mpn]` → `getRecommendationsWithOverrides` → `useAppState` (`acceptanceCriteria` state + `acceptanceCriteriaRef`, session-only, cleared on reset/new-part). Added to the full-result cache variant (key `accept`); `RECS_CACHE_SCHEMA_VERSION` v12→v13→**v14**. NOT in `buildBaseRecsVariant` (rescore-only, doesn't affect candidate fetch).
+
+**Engine.** Two mechanisms, applied by `applyAcceptanceCriteriaToLogicTable` ([lib/services/acceptanceModifier.ts](../lib/services/acceptanceModifier.ts), mirrors `contextModifier`): `range` → raise-only `tolerancePercent` on identity rules (reuses the existing band in `evaluateIdentity`); `set` → `MatchingRule.acceptedValues`, consumed by a rule-type-agnostic **short-circuit at the top of `evaluateRule`** ([matchingEngine.ts](../lib/services/matchingEngine.ts)) that returns `pass` when a candidate's `normalize()`d value is in the accepted set. The modifier restricts `set` to identity-family rules (identity / identity_flag / identity_upgrade) so an accepted value can never bypass a numeric SAFETY gate (threshold/fit/vref_check) — the modifier is the safety boundary, not the UI.
+
+**UI.** Eligible Specs rows get a hover-revealed tune icon left of the D/P/A source badge; click opens an inline editor — a ±% **RangeEditor** (slider+input) for continuous attrs, or a **SetEditor** checklist for discrete ones. Eligibility is two hardcoded allowlists in `AttributesPanel` (`RANGE_ELIGIBLE_ATTRIBUTE_IDS`, `SET_ELIGIBLE_ATTRIBUTE_IDS`); set demonstrator = `aec_q200/q101/q100`. Checklist options come from the current candidates' `matchDetails` (deduped + source-excluded via the engine's exported `normalize()`); `SetEditor` is controlled (no desync). Changing any criterion silently auto-re-scores the visible Replacements panel via the deferred parts.io re-fetch path (no chat message).
+
+**Scope / known gap (step 2).** Step 1 (above) covered **scoring relaxation only**. **Acceptance does NOT override the qualification-domain SAFETY gate** (cross-domain block); it IS reconciled with `filterAutomotiveAecMismatches` (which keys off the rule result the short-circuit flips). Full status, the resolved/deferred review findings, and step-2 detail live in [docs/acceptance-criteria-followups.md](acceptance-criteria-followups.md).
+
+**Step 2 — fetch-widening (SHIPPED, commit `9539ed3`).** Keyword-driving attributes now widen the candidate FETCH driven by the `AcceptanceCriteria` shape. New [lib/services/fetchWidening.ts](../lib/services/fetchWidening.ts) is the single source of truth for both the fetch path and the base cache key. **Digikey = E-series keyword fan-out** (chosen over full parametric ValueId filtering, deferred): `buildCandidateSearchQuery` gained value-token substitution; `fetchDigikeyCandidates` fans out one keyword search per in-band E-series value (`range`) / accepted value (`package_case` `set`), union+dedup, capped at `MAX_WIDEN_QUERIES`. **Atlas** = new `fetch_atlas_candidates_widened` RPC ([scripts/supabase-atlas-candidates-widened-rpc.sql](../scripts/supabase-atlas-candidates-widened-rpc.sql)) that applies the numeric band BEFORE the `.limit(50)` (fixes value-band starvation), falling back to the default fetch on RPC error only. **Cache:** candidate set is now acceptance-dependent → `buildBaseRecsVariant` keys on `fetchWideningKey()` (the **fetch-affecting subset only**, so rescore-only criteria — AEC sets, context — still hit the base cache + Decision #163 fast path); `BASE_RECS_SCHEMA_VERSION` v2→v3. `FETCH_WIDENING_ELIGIBLE` is intentionally narrower than the UI allowlists (resistance/cap + package_case); other range-eligible attrs (inductance/impedance) stay rescore-only — UX-gap reconciliation + full parametric ValueId filtering are the documented follow-ups. The headline figure ("±% on resistance pull in 9k–11k parts") is the eligible-universe size, NOT a fetch target — output is a ranked shortlist of in-band parts, not an enumeration. 21 new unit tests; suite 2100 pass.
+
+**Step 3 — Digikey parametric value-grid widening (SHIPPED June 16, 2026, branch `feat/digikey-parametric-widening`).** Closes the Step-2 gap where voltage/frequency-type specs widened on **Atlas only**: they now also widen the **Digikey** fetch via the full parametric ValueId filter (`FilterOptionsRequest.ParameterFilterRequest`) — the originally-deferred escalation, which subsumes the value-grid idea. Two-call discover→apply in `fetchDigikeyCandidates`, gated by new `isParametricWideningCriterion` (`RANGE_FETCH_ATTRS` minus `ESERIES_ENUMERABLE_ATTRS`, single-attr/first-eligible like `computeAtlasWidening`): (1) `getCategoryParametricFacets('', categoryId)` — **empty keyword** so the facet reflects the whole category, not the source MPN's 1-part result; (2) `findFacetForAttribute` matches the facet to the attr via the **existing forward param map** (no reverse map, no drift) — facets name the parameter via `ParameterName` (per-product field is `ParameterText`) and carry their own `Category`; (3) in-band facet values selected by **`ProductCount` DESC** (cap `MAX_PARAMETRIC_VALUES`=25) so standard E-series neighbors survive a dense facet (a 5.1 V Zener band holds dozens of oddball precision values); (4) `parametricFilterSearch` applies the ValueId filter; (5) in-band **re-verify** drops mis-keyed/unfiltered results. Latency bounded to ~2 round-trips (fan-out+discover in one `Promise.all`, then apply). `BASE_RECS_SCHEMA_VERSION` v4→v5, `RECS_CACHE_SCHEMA_VERSION` v15→v16 (candidate set for such bands changed; key shape unchanged — these attrs were already in `RANGE_FETCH_ATTRS`). **Live-verified** against the Digikey v4 API (1N4733A 5.1 V Zener ±10% → 541 Vz facet values, 25 most-stocked in-band selected, apply returns in-band 4.7/5.1/5.6 V parts). New `digikeyClient` fns + `findFacetForAttribute`/exported `extractNumericValue` in `digikeyMapper`. Still deferred: multi-attr parametric widening; attrs with no Digikey param-map entry (e.g. `izt`) stay Atlas-only; parts.io value-search. 2128 tests pass.
+
+**Files.** `lib/types.ts`, `lib/services/acceptanceModifier.ts` (new), `lib/services/matchingEngine.ts`, `lib/services/partDataService.ts`, `lib/services/partDataCache.ts`, `app/api/xref/[mpn]/route.ts`, `lib/api.ts`, `hooks/useAppState.ts`, `components/{AttributesPanel,DesktopLayout,AppShell}.tsx`, tests. Step 2 added `lib/services/fetchWidening.ts` + `scripts/supabase-atlas-candidates-widened-rpc.sql`. Step 3 added `digikeyClient`/`digikeyMapper`/`apiUsageLogger` changes + `__tests__/services/digikeyParametricWidening.test.ts`. Branches `feat/source-attribute-tolerance` (Steps 1–2) + `feat/digikey-parametric-widening` (Step 3).
+
+## Decision #232 — Suggestions panel shows ALL candidates; Active-first within bucket; supersedes #226 (June 10, 2026; merged after #238)
 
 **Trigger.** For 2SC1815 the panel filter popover advertised "Accuris Certified (10)" but clicking it showed **zero** cards — even after the user unchecked "Hide >2 failed parameters". Root cause: the 10 Accuris (parts.io) crosses carry non-`'Active'` lifecycle statuses (raw codes like "Transferred"/"Unknown" from [partDataService.ts](../lib/services/partDataService.ts) `fetchPartsioEquivalents`), so they were hidden by the panel's **"Active only"** default filter — not the quality filter the user relaxed. Compounding it, the source-panel Cross References summary counted over the default-displayed set (Decision #229/#226) and so omitted Accuris, while the panel filter counted the full pool — the two surfaces disagreed (29 vs 79).
 
@@ -7945,9 +8245,9 @@ type errors in changed files; `--discover-legacy --dry-run --mfr 388` detects IS
 **This supersedes Decision #226** (chat/Overview count-sync). #226 existed only to reconcile counts with a panel that hid a subset; with the panel hiding nothing, "displayed count" == full count, so the contradiction dissolves by construction and the shared predicate is removed.
 
 **Changes.**
-- [components/RecommendationsPanel.tsx](../components/RecommendationsPanel.tsx): removed `activeOnly` + `hideHighFails` state, the STATUS/QUALITY popover sections, their dismissible chips, the render-loop CSS collapse, and all derived hidden-counts. `filtered` is now just the explicit user filters (manufacturer / CN-only / zero-stock / category); every card renders. Header shows the plain count.
-- [lib/services/recommendationSort.ts](../lib/services/recommendationSort.ts): new `statusRank` (`status === 'Active' ? 0 : 1`) applied as the second sort key — after bucket, before mfr-equivalence — so Active floats to the top of each bucket; existing match%/composite ordering applies within the Active and non-Active sub-groups.
-- Unwound #226: removed `DEFAULT_MAX_MISMATCHES`, `isDefaultDisplayed`, `getDefaultDisplayedRecs` from [lib/types.ts](../lib/types.ts); `buildRecsSummary`, `summarizeRecommendations`, and `dispatchFilterIntent` revert to full counts; [AttributesTabContent.tsx](../components/AttributesTabContent.tsx) `summarizeCrossRefs` counts over the full set (keeps Decision #229's invariant "chip count = what a click surfaces", since a click now surfaces everything). `countRealMismatches` / `isCertifiedCross` / `filterRecsByMismatchCount` kept (batch/parts-list still use them).
-- Status field — **parts.io candidate status normalized** (follow-up fix, same session). `fetchPartsioEquivalents` and the parts.io primary-source path in `getAttributes` cast the raw parts.io `Part Life Cycle Code` straight to `status`, so codes like "Transferred"/"Acquired"/empty were NOT the literal `'Active'` — `statusRank` couldn't recognize them as active, and they neither showed the green Active chip nor sorted to the top (the bug the user hit: parts.io crosses ranked alongside obsolete instead of as Active). Fix: route both sites through the existing `mapPartsioStatus()` (now exported from [partsioClient.ts](../lib/services/partsioClient.ts)) — orderable codes (Active/Production/Transferred/Acquired/Unknown/empty) → `'Active'`, only true end-of-life codes (Obsolete/Discontinued/EOL→NRND/LTB) sink. Trade-off: "Transferred"/"Acquired" now display as `'Active'` rather than their raw label — acceptable because those parts are still orderable and the user's priority is *Active-first*; the meaningful end-of-life distinctions are preserved. This changes the stored `status` *value*, so cache versions bumped: `RECS_CACHE_SCHEMA_VERSION` v11→v12 and `BASE_RECS_SCHEMA_VERSION` v2→v3.
+- [components/RecommendationsPanel.tsx](../components/RecommendationsPanel.tsx): removed `activeOnly` + `hideHighFails` state, the STATUS/QUALITY popover sections, their dismissible chips, and all derived hidden-counts. `filtered` is now just the explicit user filters (manufacturer / CN-only / zero-stock / category / AEC-qualified — the last from Decision #238); every card renders. Header shows the plain count.
+- [lib/services/recommendationSort.ts](../lib/services/recommendationSort.ts): new `statusRank` (`status === 'Active' ? 0 : 1`) applied as a sort key — after the least-fails-first primary (Decision #236) + bucket, before mfr-equivalence — so Active floats to the top of each bucket.
+- Unwound #226: removed `DEFAULT_MAX_MISMATCHES`, `isDefaultDisplayed`, `getDefaultDisplayedRecs` from [lib/types.ts](../lib/types.ts); `buildRecsSummary`, `summarizeRecommendations`, `dispatchFilterIntent`, `llmOrchestrator.summarizeRecommendations`, and [AttributesTabContent.tsx](../components/AttributesTabContent.tsx) `summarizeCrossRefs` revert to full counts. `countRealMismatches` / `isCertifiedCross` / `filterRecsByMismatchCount` kept (batch/parts-list still use them).
+- parts.io status normalized via `mapPartsioStatus()` (exported from `partsioClient.ts`) at both parts.io→Part sites in `partDataService.ts` — orderable codes → `'Active'`, only true end-of-life sink — so Active-first works + the green chip shows (follow-up commit).
 
-**Verification:** 2063/2063 tests pass (recommendationSummary reverted to full-count expectations; new recommendationSort Active-first suite + mapPartsioStatus contract suite); tsc clean on changed files; no new lint warnings. Manual: clicking Accuris Certified now shows all 10 (with status chips); orderable parts.io crosses show green Active and sort above obsolete; source-panel chip counts equal the panel; chat "Found N" equals on-screen cards; parts-list auto-pick unchanged.
+**Merge note (into main after #238).** Reconciled with #236 (least-fails-first sort — `statusRank` is now a tiebreak *after* the `countRealMismatches` primary, not the top key), #238 (the `aec_qualified_only` filter is kept as the one explicit popover toggle), and #229 (`getDefaultDisplayedRecs` removed from `AttributesTabContent`/`llmOrchestrator`/`recommendationSummary` too). Cache bumps land as `RECS_CACHE_SCHEMA_VERSION` v16→v17 and `BASE_RECS_SCHEMA_VERSION` v5→v6 (status-value + sort-order change). Branch `feat/suggestions-panel-show-all`.

@@ -11,7 +11,7 @@ import {
   type AtlasParamMapping,
 } from '@/lib/services/atlasMapper';
 import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
-import { invalidateTriageQueueCacheAndAwaitFresh } from '@/lib/services/triageQueueCache';
+import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 
 /** GET /api/admin/atlas/dictionaries?familyId=B5  OR  ?category=Microcontrollers */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -226,14 +226,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     invalidateDictOverrideCache(body.familyId);
-    // Wait-then-restart variant: the single-flight `invalidateTriageQueueCache()`
-    // kicks off a background recompute and returns immediately, which means
-    // the client's immediately-following refetch can race the recompute and
-    // still see the just-overridden row as Open. The await variant drains
-    // any in-flight recompute that may have read pre-insert DB state, fires
-    // a fresh one, AND waits for completion before returning success — so
-    // the very next GET sees the freshly-annotated queue (Decision #182).
-    await invalidateTriageQueueCacheAndAwaitFresh();
+    // Single-flight: DELETE L2 (~100-300ms), fire background recompute, return.
+    // Per-row mutations must NOT await the recompute — it scales with the
+    // full Triage queue (now ~26K params after PR #2) and was costing 20-30s
+    // per Accept under await-fresh. The acting user is covered by client-side
+    // optimistic updates (Decision #182): `onRowAccepted` mutates the row in
+    // place, no refetch needed. Concurrent readers tolerate slightly-stale L2
+    // for a few seconds until the background recompute lands; the L2 DELETE
+    // ensures they don't see pre-insert state on their next read.
+    await invalidateTriageQueueCache();
 
     return NextResponse.json({ success: true, data: mapRowToRecord(data) }, { status: 201 });
   } catch (error) {

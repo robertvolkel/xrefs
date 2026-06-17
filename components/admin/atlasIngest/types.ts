@@ -192,6 +192,19 @@ export type DeepAnalysis = {
   }>;
 };
 
+/** Compact cosmetic-variant sibling (Tier-1 "+N similar"), computed server-side.
+ *  Mirrors SiblingRef in lib/services/triageClustering.ts. Carries exactly what
+ *  the "+N similar" chip + bulk-accept path read: the override target name, a
+ *  few sample values for the tooltip, the override scope, and the batches to
+ *  regenerate. */
+export type SimilarSibling = {
+  paramName: string;
+  sampleValues: string[];
+  dominantFamily: string | null;
+  dominantCategory: string | null;
+  affectedBatchIds: string[];
+};
+
 export type GlobalUnmappedParam = {
   paramName: string;
   sampleValues: string[];
@@ -242,6 +255,17 @@ export type GlobalUnmappedParam = {
    *  paramName in any current JSONB report). Means productCount=0 etc. — UI
    *  renders a "no longer in any pending batch" indicator. */
   orphaned?: boolean;
+  /** Engineer bookmark flag (atlas_unmapped_param_notes.is_flagged), carried
+   *  server-side so the `flagged` filter can run before pagination. */
+  isFlagged?: boolean;
+  /** True iff a non-empty team note exists for this paramName. Powers the
+   *  server-side `has_note` filter. */
+  hasNote?: boolean;
+  /** Tier-1 "+N similar" cosmetic-variant siblings within the same override
+   *  scope, computed server-side over the FULL classified set so the chip +
+   *  bulk-accept stay correct under pagination (the client may hold only one
+   *  page). Carries the fields the bulk-accept path needs (scope + batches). */
+  similarSiblings?: SimilarSibling[];
   /** Server-computed matching-engine impact score. See the route's
    *  computeMatchingImpact() — drives the Impact column / chip in the Triage
    *  table and the default sort. */
@@ -305,4 +329,18 @@ export type BatchListResponse = {
    *  (reverted) override. Computed across all classified rows regardless of
    *  the include filter (mode). */
   statusCounts?: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
+  /** Server-side pagination metadata (Decision #231). Present only on the
+   *  new paged path (when the client sends `page`/filters). On the legacy
+   *  full-set path these are absent and `unmappedParamsGlobal` is the entire
+   *  filtered set. */
+  /** Total rows matching the active filters BEFORE the page slice — drives the
+   *  "N shown of M" + "Show more" affordance. */
+  totalFiltered?: number;
+  page?: number;
+  pageSize?: number;
+  /** Full distinct option lists for the filter-bar dropdowns, built server-side
+   *  over the working (batch-scoped) set so they stay complete even though the
+   *  client only holds one page of rows. */
+  mfrOptions?: Array<{ slug: string; name: string }>;
+  familyOptions?: string[];
 };

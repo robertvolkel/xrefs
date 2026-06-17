@@ -7,15 +7,17 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount } from '../types';
-import { keywordSearch, getProductDetails, warmCacheFromSearchResults } from './digikeyClient';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, AcceptanceCriteria } from '../types';
+import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
   mapDigikeyProductToAttributes,
   mapCategory,
   mapSubcategory,
+  findFacetForAttribute,
+  extractNumericValue,
 } from './digikeyMapper';
-import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates } from './atlasClient';
+import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupported } from '../logicTables';
 import { findReplacements } from './matchingEngine';
@@ -26,6 +28,8 @@ import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
 import { resolveUserEffects, applyUserEffectsToLogicTable } from './contextResolver';
 import { applyRuleOverrides, applyContextOverrides } from './overrideMerger';
+import { applyAcceptanceCriteriaToLogicTable } from './acceptanceModifier';
+import { fetchWideningKey, isFetchWideningCriterion, isParametricWideningCriterion, rangeKeywordTokens, criterionToValueSet, criterionToBounds, MAX_WIDEN_QUERIES } from './fetchWidening';
 import { isPartsioConfigured, getPartsioProductDetails, extractEquivalentMpns, searchPartsioProducts, mapPartsioStatus } from './partsioClient';
 import { mapPartsioProductToAttributes } from './partsioMapper';
 import { isMouserConfigured, getMouserProduct, hasMouserBudget, resolveMouserSuggestedMpn, MouserProduct } from './mouserClient';
@@ -276,6 +280,7 @@ function buildRecommendationsVariant(
   userPreferences: UserPreferences | undefined,
   options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
   replacementPriorities: ReplacementPriorities | undefined,
+  acceptanceCriteria: AcceptanceCriteria | undefined,
 ): string {
   const sortedPreferred = preferredManufacturers ? [...preferredManufacturers].sort() : undefined;
   // Scoring inputs only — `hideZeroStock` is a display-time filter and is intentionally
@@ -290,6 +295,9 @@ function buildRecommendationsVariant(
     pref: sortedPreferred ?? null,
     userPrefs: userPreferences ?? null,
     replPri: replPriForHash,
+    // Per-attribute acceptance criteria are a scoring input (rescore only, not
+    // candidate fetch), so they belong here but NOT in buildBaseRecsVariant.
+    accept: acceptanceCriteria ?? null,
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
@@ -316,10 +324,26 @@ function buildRecommendationsVariant(
 //     allCandidates carry post-conversion numericValues for Atlas-source
 //     parts. Cached v1 base payloads contain pre-conversion values that
 //     would mis-score on rescore.
-// v3: parts.io candidate status normalized via mapPartsioStatus — allCandidates
-//     carry enum statuses ('Active' for Transferred/Acquired/empty) instead of
-//     raw codes, so Active-first display sort works (Decision #232 follow-up).
-const BASE_RECS_SCHEMA_VERSION = 'v3';
+// v3: Fetch-widening (Decision #238 Step 2) — acceptance criteria that widen the
+//     candidate fetch (±% on resistance/capacitance, accepted package set) now make
+//     the cached candidate SET acceptance-dependent, so the base key projects those
+//     via fetchWideningKey(). Rescore-only criteria (AEC sets, context) are excluded
+//     and still hit the base cache.
+// v4: Fetch-widening extended to all numeric range-eligible attrs (Atlas-generic RPC)
+//     + inductance added to the Digikey keyword + E-series fan-out. The default inductor
+//     candidate query now includes the inductance value keyword, so cached v3 base
+//     payloads for inductors carry a different (narrower-keyword) candidate set.
+// v5: Digikey parametric-filter widening (Decision #238 Step 3) — a ±% band on a
+//     voltage/frequency-type attr (RANGE_FETCH_ATTRS minus ESERIES_ENUMERABLE_ATTRS) now
+//     also widens the DIGIKEY fetch via facet discovery + value-filter, where before those
+//     attrs widened on Atlas only. The base KEY is unchanged (these attrs were already in
+//     RANGE_FETCH_ATTRS / fetchWideningKey), but the candidate SET a key resolves to grew,
+//     so cached v4 base payloads for such bands are stale. No-criteria payloads are
+//     unaffected (the parametric path only fires when a band is set).
+// v6: parts.io candidate status normalized via mapPartsioStatus — allCandidates
+//     carry enum statuses ('Active' for Transferred/Acquired/empty) instead of raw
+//     codes, so the Active-first display sort works (Decision #232).
+const BASE_RECS_SCHEMA_VERSION = 'v6';
 
 interface SerializableBasePayload {
   v: typeof BASE_RECS_SCHEMA_VERSION;
@@ -338,10 +362,15 @@ function buildBaseRecsVariant(
   attributeOverrides: Record<string, string> | undefined,
   currency: string | undefined,
   options: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean } | undefined,
+  acceptanceCriteria: AcceptanceCriteria | undefined,
 ): string {
   const payload = {
     overrides: attributeOverrides ?? null,
     ccy: currency ?? 'USD',
+    // Only the fetch-affecting subset of acceptance criteria belongs here (Decision
+    // #238 Step 2). Rescore-only criteria stay out so toggling them keeps the base
+    // candidate cache warm and the Decision #163 deferred-enrichment fast path intact.
+    widen: fetchWideningKey(acceptanceCriteria),
     opts: {
       skipPartsioEnrichment: !!options?.skipPartsioEnrichment,
       filterForBatch: !!options?.filterForBatch,
@@ -901,13 +930,16 @@ async function attachPartCapabilities(
       if (!listing) return false;
       return extractEquivalentMpns(listing, mpn, 1).length > 0;
     })(),
-    // Module-scope 5-min cache lives inside getProfileForManufacturer. Atlas-
-    // resolved rows always exist for known MFRs but most aren't actually
-    // enriched (Decision #139 — only ~297 of 1,011 MFRs have JSONB content);
-    // require real content via `hasEnrichedProfileContent` so the button never
-    // opens an empty panel. Mock profiles always carry content, so they pass.
+    // Module-scope 5-min cache lives inside getProfileForManufacturer. Only
+    // Atlas-sourced profiles qualify — we don't offer company profiles for
+    // Western MFRs (Decision #166: "we only carry detailed profiles for Chinese
+    // MFRs"), so the mock-fallback branch (which covers a few Western majors)
+    // must NOT light this button. Atlas rows always exist for known MFRs but
+    // most aren't actually enriched (Decision #139 — only ~297 of 1,011 have
+    // JSONB content); require real content via `hasEnrichedProfileContent` so
+    // the button never opens an empty panel.
     getProfileForManufacturer(attrs.part.manufacturer)
-      .then(r => !!r && (r.source === 'mock' || hasEnrichedProfileContent(r.profile)))
+      .then(r => !!r && r.source === 'atlas' && hasEnrichedProfileContent(r.profile))
       .catch(() => false),
   ]);
 
@@ -949,10 +981,12 @@ export async function lookupCachedRecommendations(
   userPreferences?: UserPreferences,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean },
   replacementPriorities?: ReplacementPriorities,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<RecommendationResult | null> {
   const variant = buildRecommendationsVariant(
     mpn, attributeOverrides, applicationContext, currency,
     preferredManufacturers, userPreferences, options, replacementPriorities,
+    acceptanceCriteria,
   );
   const cached = await getCachedResponse<RecommendationResult>('search', mpn, variant);
   return cached?.data ?? null;
@@ -969,6 +1003,7 @@ export async function getRecommendations(
   prefetchedAttributes?: PartAttributes,
   options?: { skipPartsioEnrichment?: boolean; filterForBatch?: boolean; skipFindchips?: boolean; forceRefresh?: boolean },
   replacementPriorities?: ReplacementPriorities,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<RecommendationResult> {
   const recsStart = performance.now();
 
@@ -991,6 +1026,7 @@ export async function getRecommendations(
     userPreferences,
     options,
     replacementPriorities,
+    acceptanceCriteria,
   );
   if (!options?.forceRefresh) {
     const recsCached = await getCachedResponse<RecommendationResult>('search', mpn, recsCacheVariant);
@@ -1005,7 +1041,7 @@ export async function getRecommendations(
   // ── Base pre-scoring cache (Fix 2): keyed only on inputs that affect candidate
   // fetching (mpn + overrides + currency + opts). A context-only change becomes
   // an in-memory rescore instead of a 3-8s pipeline rerun.
-  const baseRecsKey = buildBaseRecsVariant(mpn, attributeOverrides, currency, options);
+  const baseRecsKey = buildBaseRecsVariant(mpn, attributeOverrides, currency, options, acceptanceCriteria);
   let basePayload: BasePayload | null = null;
   if (!options?.forceRefresh) {
     const baseCached = await getCachedResponse<SerializableBasePayload>('search', mpn, baseRecsKey);
@@ -1147,14 +1183,14 @@ export async function getRecommendations(
     (async () => {
       if (!isDigikeyConfigured()) return [];
       try {
-        return await fetchDigikeyCandidates(sourceAttrs, currency, userId);
+        return await fetchDigikeyCandidates(sourceAttrs, currency, userId, acceptanceCriteria);
       } catch (error) {
         console.warn('Digikey candidate search failed:', error);
         reportServiceFailure('digikey', 'unavailable', 'Candidate search failed');
         return [];
       }
     })(),
-    fetchAtlasCandidates(familyId).catch((error) => {
+    fetchAtlasCandidates(familyId, computeAtlasWidening(sourceAttrs, acceptanceCriteria)).catch((error) => {
       console.warn('Atlas candidate fetch failed:', error);
       return [] as PartAttributes[];
     }),
@@ -1347,12 +1383,18 @@ export async function getRecommendations(
   // Step 2b: Apply admin rule overrides on top of TS base
   const tableWithOverrides = await applyRuleOverrides(logicTable);
 
+  // Step 2b.5: Apply user-supplied per-attribute acceptance criteria (Source
+  // Specs panel) — ±% bands (range) and accepted-value sets. Sits after admin
+  // overrides (the baseline) and before user/context effects. See
+  // applyAcceptanceCriteriaToLogicTable. No-op when none were set.
+  const tableWithAcceptance = applyAcceptanceCriteriaToLogicTable(tableWithOverrides, acceptanceCriteria);
+
   // Step 2c: Apply user-level global effects (compliance defaults, industry escalations)
-  let tableWithUserEffects = tableWithOverrides;
+  let tableWithUserEffects = tableWithAcceptance;
   if (userPreferences && Object.keys(userPreferences).length > 0) {
-    const userEffects = resolveUserEffects(userPreferences, tableWithOverrides);
+    const userEffects = resolveUserEffects(userPreferences, tableWithAcceptance);
     if (userEffects.length > 0) {
-      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithOverrides, userEffects);
+      tableWithUserEffects = applyUserEffectsToLogicTable(tableWithAcceptance, userEffects);
     }
   }
 
@@ -1590,7 +1632,8 @@ export async function getRecommendations(
 
     // Apply display-priority sort server-side so `row.replacement` (recs[0] at
     // validation time) agrees with the modal's top card on the client. Both use
-    // sortRecommendationsForDisplay (Accuris → MFR → Logic → composite/score tiebreak).
+    // sortRecommendationsForDisplay (fewest real mismatches first, then
+    // Accuris → MFR → Logic → composite/score tiebreaks).
     recs = sortRecommendationsForDisplay(recs, undefined, applicationContext);
 
     // Qualification-domain telemetry (Decision #155). Only populated when
@@ -1735,26 +1778,175 @@ async function fetchMouserSuggestions(
  * Builds a keyword string from critical parameters of the source part.
  * Returns mapped PartAttributes[] ready for the matching engine.
  */
+/** Upper bound on the merged widened Digikey candidate set, to keep the downstream
+ *  scoring + deferred parts.io/FC enrichment fan-out bounded under wide ±% bands.
+ *  Mirrors the Atlas hard limit (50), slightly higher since Digikey is the primary source. */
+const MAX_WIDENED_CANDIDATES = 60;
+
+/** Cap on how many in-band facet values feed a single parametric apply-filter request
+ *  (Decision #238 Step 3) — a dense facet (e.g. Zener Vz had 541 values) under a wide band
+ *  could otherwise build an oversized request body. The 60-candidate post-cap bounds output. */
+const MAX_PARAMETRIC_VALUES = 25;
+
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
   userId?: string,
+  acceptanceCriteria?: AcceptanceCriteria,
 ): Promise<PartAttributes[]> {
-  // Build a search query from key parameters
+  // Build the default (exact-value) search query from key parameters
   const keywords = buildCandidateSearchQuery(sourceAttrs);
   if (!keywords) return [];
 
-  const response = await keywordSearch(
-    keywords,
-    { limit: 20, categoryId: sourceAttrs.part.digikeyCategoryId },
-    currency,
-    userId,
-  );
+  // Fetch-widening (Decision #238): when the user has loosened a value-driving attribute,
+  // pull near-value / alternate parts so they actually enter the pool. Two mechanisms:
+  //   • Step 2 — E-series KEYWORD fan-out for grid-stocked attrs (resistance/cap/inductance):
+  //     one keyword search per in-band E-series value (range) or accepted value (set).
+  //   • Step 3 — PARAMETRIC facet discover→apply for voltage/frequency-type attrs (those in
+  //     RANGE_FETCH_ATTRS but not on an E-series grid): discover the category's available
+  //     facet values, select the in-band ones, re-query filtered by their ValueIds.
+  const fanoutAttrs: Array<{ attr: string; tokens: string[] }> = [];
+  let parametricBand: { attr: string; lo: number; hi: number } | null = null;
+  if (acceptanceCriteria) {
+    // Sorted key order so the parametric "first eligible" pick is DETERMINISTIC and matches
+    // computeAtlasWidening + fetchWideningKey (both sorted) — otherwise, with two eligible
+    // bands, Digikey could widen a different attr than Atlas, and two requests differing only
+    // in criteria insertion order would share a (sorted) base cache key but produce different
+    // Digikey pools.
+    for (const attr of Object.keys(acceptanceCriteria).sort()) {
+      const criterion = acceptanceCriteria[attr];
+      // Step 3: parametric-filter widening — single-attr (first eligible), mirroring
+      // computeAtlasWidening. These attrs produce no E-series keyword tokens, so they
+      // skip the keyword path entirely.
+      if (!parametricBand && isParametricWideningCriterion(attr, criterion)) {
+        const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+        const bounds = criterionToBounds(criterion, nv);
+        if (bounds) { parametricBand = { attr, lo: bounds.lo, hi: bounds.hi }; continue; }
+        // No usable source numericValue → can't form a band; Atlas still widens generically.
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[perf] digikey parametric widening skipped for ${attr} (no source numericValue)`);
+        }
+        continue;
+      }
+      // Step 2: E-series keyword fan-out.
+      if (!isFetchWideningCriterion(attr, criterion)) continue;
+      let tokens: string[] = [];
+      if (criterion.kind === 'range') {
+        const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+        tokens = rangeKeywordTokens(attr, criterion, nv);
+      } else {
+        tokens = criterionToValueSet(criterion) ?? [];
+      }
+      if (tokens.length) fanoutAttrs.push({ attr, tokens });
+    }
+  }
 
-  const allProducts = [
-    ...(response.ExactMatches ?? []),
-    ...(response.Products ?? []),
-  ];
+  // Build the set of keyword queries: cartesian product of widened-attr tokens, capped.
+  // No widening → a single default query (today's behavior).
+  let overrideMaps: Map<string, string>[] = [new Map()];
+  for (const { attr, tokens } of fanoutAttrs) {
+    const next: Map<string, string>[] = [];
+    for (const base of overrideMaps) {
+      for (const tok of tokens) {
+        const m = new Map(base);
+        m.set(attr, tok);
+        next.push(m);
+      }
+    }
+    overrideMaps = next;
+  }
+  if (overrideMaps.length > MAX_WIDEN_QUERIES) overrideMaps = overrideMaps.slice(0, MAX_WIDEN_QUERIES);
+
+  const keywordWidening = fanoutAttrs.length > 0;
+  const categoryId = sourceAttrs.part.digikeyCategoryId;
+  const doParametric = !!parametricBand && typeof categoryId === 'number';
+  // Always keep the source's own exact-value query (`keywords`) in the set when widening —
+  // the E-series fan-out only hits grid points, so an off-grid source value (e.g. a 4.75k
+  // precision resistor, or a non-E-series crystal CL) would otherwise lose its own matches
+  // when the user merely *loosens* tolerance. De-dupe identical strings across combos;
+  // representative per-query limit when fanning out (fair sample, not a thin top-N slice).
+  const queryStrings = [...new Set([
+    ...(keywordWidening ? [keywords] : []),
+    ...overrideMaps.map(ov => (ov.size ? buildCandidateSearchQuery(sourceAttrs, ov) : keywords)),
+  ].filter(Boolean))];
+  const perQueryLimit = keywordWidening ? 25 : 20;
+
+  // Phase 1: keyword fan-out + parametric DISCOVER, concurrently (~1 round-trip).
+  const [responses, discover] = await Promise.all([
+    Promise.all(
+      queryStrings.map(q =>
+        keywordSearch(q, { limit: perQueryLimit, categoryId }, currency, userId)
+          .catch((error) => {
+            console.warn(`Digikey fan-out query failed for "${q}":`, error);
+            return { Products: [], ExactMatches: [], ProductsCount: 0 } as Awaited<ReturnType<typeof keywordSearch>>;
+          }),
+      ),
+    ),
+    doParametric
+      // Empty keyword (category filter only) so the facet reflects the WHOLE category's
+      // available values, not just the source MPN's narrow result set (a keyword like the
+      // source value would collapse the facet to that one value).
+      ? getCategoryParametricFacets('', categoryId!, currency, userId).catch((error) => {
+          console.warn('Digikey parametric discover failed:', error);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+
+  // Phase 2: parametric APPLY (~1 round-trip) — select the in-band facet values, fetch them.
+  let parametricProducts: DigikeyProduct[] = [];
+  if (parametricBand && discover) {
+    const facet = findFacetForAttribute(parametricBand.attr, discover.facets, discover.products[0]);
+    if (facet) {
+      const { lo, hi } = parametricBand;
+      // One in-band predicate, used for both value SELECTION and result RE-VERIFY so the two
+      // passes can't drift (parse a value string → base SI → inside the band).
+      const inBand = (valueStr: string | undefined): boolean => {
+        if (!valueStr) return false;
+        const { numericValue } = extractNumericValue(valueStr);
+        return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
+      };
+      // A dense facet can hold far more in-band values than MAX_PARAMETRIC_VALUES (a Zener
+      // band spans dozens of oddball precision values like 4.66/4.68 V). Prioritize by
+      // ProductCount DESC before the cap so the most-stocked (i.e. standard E-series) values
+      // survive — a naive ascending slice would keep obscure low-end values and drop common
+      // neighbors like 5.6 V that are well within band.
+      const inBandValueIds = facet.FilterValues
+        .filter(fv => inBand(fv.ValueName))
+        .sort((a, b) => (b.ProductCount ?? 0) - (a.ProductCount ?? 0))
+        .slice(0, MAX_PARAMETRIC_VALUES)
+        .map(fv => fv.ValueId);
+      if (inBandValueIds.length) {
+        const applyRes = await parametricFilterSearch(categoryId!, facet.ParameterId, inBandValueIds, { limit: 25 }, currency, userId)
+          .catch((error) => { console.warn('Digikey parametric apply failed:', error); return null; });
+        if (applyRes) {
+          // Belt-and-suspenders: re-verify each returned part's value is actually in band.
+          // Locks the ValueId-vs-ValueName risk — if the apply silently ignored the filter
+          // (returning unfiltered category results), those out-of-band parts are dropped here.
+          const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
+          parametricProducts = raw.filter(p =>
+            inBand(p.Parameters?.find(x => x.ParameterText === facet.ParameterName)?.ValueText),
+          );
+        }
+      }
+    }
+  }
+
+  const widening = keywordWidening || parametricProducts.length > 0;
+
+  // Round-robin interleave each query's results (ExactMatches first within a query) so
+  // that under the candidate cap every in-band bucket gets fair representation rather
+  // than the cap keeping only the first one or two queries' parts. The parametric apply
+  // result is appended as its own first-class bucket so the cap can't starve it.
+  const perQuery = responses.map(r => [...(r.ExactMatches ?? []), ...(r.Products ?? [])]);
+  if (parametricProducts.length) perQuery.push(parametricProducts);
+  const allProducts: typeof perQuery[number] = [];
+  const maxLen = perQuery.reduce((m, p) => Math.max(m, p.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (const products of perQuery) {
+      if (i < products.length) allProducts.push(products[i]);
+    }
+  }
 
   // Warm L2 cache with search results (fire-and-forget)
   warmCacheFromSearchResults(allProducts);
@@ -1763,12 +1955,28 @@ async function fetchDigikeyCandidates(
   const seen = new Set<string>();
   seen.add(sourceAttrs.part.mpn);
 
-  const candidates: PartAttributes[] = [];
+  let candidates: PartAttributes[] = [];
   for (const product of allProducts) {
     const mpn = product.ManufacturerProductNumber;
     if (seen.has(mpn)) continue;
     seen.add(mpn);
     candidates.push({ ...mapDigikeyProductToAttributes(product), dataSource: 'digikey' as const });
+  }
+
+  // Cap the widened pool so it doesn't balloon scoring + deferred parts.io/FC enrichment
+  // (a wide band can fan out to MAX_WIDEN_QUERIES×perQuery results). Non-widened stays at
+  // its single-query limit, well under the cap. The round-robin order above keeps the cap
+  // balanced across in-band buckets.
+  if (widening && candidates.length > MAX_WIDENED_CANDIDATES) {
+    candidates = candidates.slice(0, MAX_WIDENED_CANDIDATES);
+  }
+
+  if (widening) {
+    const parts = [
+      ...(keywordWidening ? [`${queryStrings.length} kw queries (${fanoutAttrs.map(f => f.attr).join('+')})`] : []),
+      ...(parametricProducts.length ? [`parametric ${parametricBand!.attr} (${parametricProducts.length})`] : []),
+    ];
+    console.log(`[perf] digikey widen: ${parts.join(' + ')} → ${candidates.length} candidates`);
   }
 
   return candidates;
@@ -1809,17 +2017,53 @@ function filterSwitchingRegulatorMismatches(
 // DIGIKEY CANDIDATE FETCHER
 // ============================================================
 
+/**
+ * Derive the Atlas numeric-band widening descriptor (Decision #238 Step 2) from the
+ * source attributes + acceptance criteria. Returns the first fetch-eligible `range`
+ * criterion with a usable source numericValue (single-attr RPC; multi-attr Atlas
+ * widening is out of scope). Undefined → default (unfiltered) Atlas fetch.
+ */
+function computeAtlasWidening(
+  sourceAttrs: PartAttributes,
+  acceptanceCriteria: AcceptanceCriteria | undefined,
+): AtlasCandidateWidening | undefined {
+  if (!acceptanceCriteria) return undefined;
+  for (const attr of Object.keys(acceptanceCriteria).sort()) {
+    const criterion = acceptanceCriteria[attr];
+    if (criterion.kind !== 'range' || !isFetchWideningCriterion(attr, criterion)) continue;
+    const nv = sourceAttrs.parameters.find(p => p.parameterId === attr)?.numericValue;
+    const bounds = criterionToBounds(criterion, nv);
+    if (bounds && typeof nv === 'number') {
+      return { attrId: attr, lo: bounds.lo, hi: bounds.hi, sourceNv: nv };
+    }
+  }
+  return undefined;
+}
+
 /** Build a keyword search string from source part attributes.
- *  When a category filter is applied, the subcategory keyword is unnecessary. */
-function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
+ *  When a category filter is applied, the subcategory keyword is unnecessary.
+ *
+ *  `valueOverrides` (Decision #238 Step 2 fetch-widening) substitutes the keyword token
+ *  for a value-driving attribute (resistance / capacitance / load_capacitance_pf /
+ *  package_case) so the Digikey fan-out can search near-value / alternate parts while
+ *  keeping every other family keyword identical. Empty/absent → today's exact-value query. */
+function buildCandidateSearchQuery(
+  sourceAttrs: PartAttributes,
+  valueOverrides?: Map<string, string>,
+): string {
   const parts: string[] = [];
   const paramMap = new Map(sourceAttrs.parameters.map(p => [p.parameterId, p]));
 
-  // Capacitance or resistance value
+  // Capacitance / resistance / inductance value (mutually exclusive across passive families)
   const cap = paramMap.get('capacitance');
   const res = paramMap.get('resistance') ?? paramMap.get('resistance_r25');
-  if (cap) parts.push(cap.value);
-  else if (res) parts.push(res.value);
+  const ind = paramMap.get('inductance');
+  const capOverride = valueOverrides?.get('capacitance');
+  const resOverride = valueOverrides?.get('resistance') ?? valueOverrides?.get('resistance_r25');
+  const indOverride = valueOverrides?.get('inductance');
+  if (cap) parts.push(capOverride ?? cap.value);
+  else if (res) parts.push(resOverride ?? res.value);
+  else if (ind) parts.push(indOverride ?? ind.value);
 
   // Discrete semiconductors: use voltage class as keyword for category-filtered search.
   // IGBTs, MOSFETs, BJTs, and diodes don't have capacitance/resistance, so without
@@ -1906,7 +2150,7 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
   const crystalFreq = paramMap.get('nominal_frequency_hz');
   if (crystalFreq && !outputFreq) parts.push(crystalFreq.value);
   const crystalCL = paramMap.get('load_capacitance_pf');
-  if (crystalCL) parts.push(crystalCL.value);
+  if (crystalCL) parts.push(valueOverrides?.get('load_capacitance_pf') ?? crystalCL.value);
 
   // Fuses (D2): use current rating, voltage, and speed class as keywords
   const fuseCurrentRating = paramMap.get('current_rating_a');
@@ -1946,7 +2190,14 @@ function buildCandidateSearchQuery(sourceAttrs: PartAttributes): string {
 
   // Package
   const pkg = paramMap.get('package_case');
-  if (pkg) {
+  const pkgOverride = valueOverrides?.get('package_case');
+  if (pkgOverride) {
+    // Override values come from candidate matchDetails and may be full display strings
+    // ("0805 (2012 Metric)"); extract the bare EIA code like the non-override branch so
+    // the keyword isn't polluted.
+    const m = pkgOverride.match(/\b(\d{4})\b/);
+    parts.push(m ? m[1] : pkgOverride);
+  } else if (pkg) {
     // Extract just the EIA code (e.g., "0603" from "0603 (1608 Metric)")
     const match = pkg.value.match(/\b(\d{4})\b/);
     if (match) parts.push(match[1]);

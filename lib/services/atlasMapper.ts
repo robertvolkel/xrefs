@@ -38,6 +38,34 @@ import { getL2ParamMapForCategory, type ParamMapping } from './digikeyParamMap';
 function stripGaiaPrefix(s: string): string {
   return s.replace(/^gaia[-_]/i, '');
 }
+
+/**
+ * Decode literal byte-escape text (e.g. "(\xe2\x84\x83)" → "(℃)") back to its
+ * UTF-8 character. CT MICRO's source file ships paramNames with the UTF-8
+ * bytes for special chars (°, µ, ℃, Ω, λ) encoded as LITERAL backslash-x
+ * escape-sequence text instead of the actual character. Decoding lets dict
+ * entries written with the proper char match a single time. Decision #235
+ * closeout — BACKLOG follow-up #1.
+ *
+ * Mirrored byte-for-byte in scripts/atlas-ingest.mjs.
+ */
+function decodeLiteralByteEscapes(s: string): string {
+  if (!s.includes('\\x')) return s;
+  return s.replace(/(?:\\x[0-9a-f]{2})+/gi, (run) => {
+    const bytes: number[] = [];
+    const re = /\\x([0-9a-f]{2})/gi;
+    let m;
+    while ((m = re.exec(run)) !== null) bytes.push(parseInt(m[1], 16));
+    try {
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
+      // Reject invalid byte runs (U+FFFD replacement) — keep raw text so
+      // an audit can spot the bad source rather than silently substituting.
+      return decoded.includes('�') ? run : decoded;
+    } catch {
+      return run;
+    }
+  });
+}
 import { FAMILY_PARAM_SIGNATURES } from './atlasFamilyParamSignatures';
 
 // ─── Atlas JSON Types ─────────────────────────────────────
@@ -200,6 +228,19 @@ export function classifyAtlasCategory(c1: string, c2: string, c3: string): Famil
   if (lower.includes('optoisolator') || lower.includes('photocoupler')
       || lower.includes('opto-coupler') || lower.includes('optocoupler')) {
     return { category: 'Optocouplers', subcategory: 'Optocoupler', familyId: 'E1' };
+  }
+
+  // ─── F1 EMR / F2 SSR Relays ───
+  // SSR checked first — c3 substrings like 'Solid State Relay' are a strict
+  // subset of the broader 'relay' match. Without this ordering, HONGFA-style
+  // EMR catches would consume SSRs too. Also MUST come BEFORE discrete-semi
+  // rules below: some SSR c3 strings contain 'Triac Output' / 'MOSFET Output'
+  // that would otherwise route them to B8 / B5.
+  if (lower.includes('solid state relay') || lower.includes('photo relay') || lower.includes('photomos')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F2' };
+  }
+  if (lower.includes('relay') || c1lower.includes('relay')) {
+    return { category: 'Relays', subcategory: c3, familyId: 'F1' };
   }
 
   // ─── Discrete Semiconductors ───
@@ -1599,6 +1640,58 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'operating temperature range(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '温度范围 (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 16 },
+    // ── Decision #235 follow-up Item 3 — CHIPANALOG digital isolator + transceiver vocabulary ──
+    // CONVENTION NOTE: novel catalog-only attributes use NON-underscore IDs here.
+    // Underscore-prefix (e.g. `_receivers`) is SKIPPED by the ingest loop (atlasMapper.ts:3412),
+    // so values silently disappear. Non-underscore IDs DO write to JSONB and surface in the
+    // Specs panel via fromParametersJsonb's nameLookup. Existing dict `_*` entries are a
+    // separate BACKLOG follow-up (legacy convention, silently lost ingest data for years).
+    '每通道工作电流 (1mbps,ma,typ)': { attributeId: 'supply_current_per_channel', attributeName: 'Supply Current per Channel @ 1Mbps', unit: 'mA', sortOrder: 109 },
+    'esd等级(v)': { attributeId: 'esd_bus_pins', attributeName: 'ESD Rating', unit: 'V', sortOrder: 11 },
+    '总线esd等级(v)': { attributeId: 'esd_bus_pins', attributeName: 'Bus ESD Rating', unit: 'V', sortOrder: 11 },
+    'hbm esd 所有引脚(±kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD HBM All Pins', unit: 'kV', sortOrder: 11 },
+    'hbm esd其他引脚 (±kv)': { attributeId: 'esd_other_pins', attributeName: 'ESD HBM Other Pins', unit: 'kV', sortOrder: 111 },
+    'esd 性能 hbm/cdm(kv)': { attributeId: 'esd_hbm_cdm', attributeName: 'ESD HBM/CDM', unit: 'kV', sortOrder: 112 },
+    '输出最大拉/灌电流(a)': { attributeId: 'output_drive_current', attributeName: 'Output Max Source/Sink Current', unit: 'A', sortOrder: 113 },
+    '最大瞬态隔离电压 (vpk)': { attributeId: 'transient_isolation_voltage', attributeName: 'Max Transient Isolation Voltage', unit: 'Vpk', sortOrder: 114 },
+    '最大浪涌隔离电压 (kvpk)': { attributeId: 'surge_isolation_voltage', attributeName: 'Max Surge Isolation Voltage', unit: 'kVpk', sortOrder: 105 },
+    '输出侧uvlo(v)': { attributeId: 'output_uvlo', attributeName: 'Output Side UVLO', unit: 'V', sortOrder: 115 },
+    '输出侧建议工作电压(v)': { attributeId: 'output_supply_recommended', attributeName: 'Output Side Recommended Supply', unit: 'V', sortOrder: 116 },
+    '逻辑电源电压范围(v)': { attributeId: 'logic_supply_voltage_range', attributeName: 'Logic Supply Voltage Range', unit: 'V', sortOrder: 117 },
+    '逻辑侧工作电压 (v)': { attributeId: 'logic_supply_voltage', attributeName: 'Logic Side Operating Voltage', unit: 'V', sortOrder: 118 },
+    '独立逻辑电源': { attributeId: 'independent_logic_supply', attributeName: 'Independent Logic Supply', sortOrder: 119 },
+    '集成ldo': { attributeId: 'integrated_ldo', attributeName: 'Integrated LDO', sortOrder: 120 },
+    '速率(kbps)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'kbps', sortOrder: 5 },
+    '速率(mhz)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'MHz', sortOrder: 5 },
+    'sck 模式': { attributeId: 'sck_mode', attributeName: 'SCK Mode', sortOrder: 121 },
+    // ── Cross-MFR Chinese (TDSEMIC, HXYMOS, ElecSuper) ──
+    '接收器数': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    '驱动器数': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    '节点数': { attributeId: 'bus_nodes', attributeName: 'Bus Nodes', sortOrder: 91 },
+    '驱动器/接收器': { attributeId: 'drivers_receivers', attributeName: 'Drivers/Receivers', sortOrder: 122 },
+    '静电保护': { attributeId: 'esd_bus_pins', attributeName: 'ESD Protection', sortOrder: 11 },
+    // ── BORN / Union English transceiver vocabulary ──
+    'number of receivers': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    'number of transmitters': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    'number of nodes': { attributeId: 'bus_nodes', attributeName: 'Bus Nodes', sortOrder: 91 },
+    'no. of rx': { attributeId: 'receivers_per_package', attributeName: 'Receivers per Package', sortOrder: 108 },
+    'no. of tx': { attributeId: 'drivers_per_package', attributeName: 'Drivers per Package', sortOrder: 107 },
+    'signaling ratemax (max)(mbits)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
+    'signaling rate(max)(mbps)': { attributeId: 'data_rate', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 5 },
+    'supply voltagenom (typ) (v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
+    'supply voltage(nom)(v)': { attributeId: 'supply_voltage', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 94 },
+    'main supply voltage (nom)(v)': { attributeId: 'supply_voltage', attributeName: 'Main Supply Voltage', unit: 'V', sortOrder: 94 },
+    'logic voltage (min)(v)': { attributeId: 'logic_supply_voltage', attributeName: 'Logic Voltage Min', unit: 'V', sortOrder: 118 },
+    'esd hbm (kv)': { attributeId: 'esd_bus_pins', attributeName: 'ESD HBM', unit: 'kV', sortOrder: 11 },
+    'esd air (kv)': { attributeId: 'esd_air', attributeName: 'ESD Air Discharge', unit: 'kV', sortOrder: 123 },
+    'iec 61000-4-2contact (±v)': { attributeId: 'esd_bus_pins', attributeName: 'ESD IEC 61000-4-2 Contact', unit: 'V', sortOrder: 11 },
+    'icc(max) (ma)': { attributeId: 'icc_max', attributeName: 'Supply Current', unit: 'mA', sortOrder: 109 },
+    'vcc(min)(v)': { attributeId: 'supply_voltage', attributeName: 'VCC Min', unit: 'V', sortOrder: 94 },
+    'shutdown control': { attributeId: 'shutdown_control', attributeName: 'Shutdown Control', sortOrder: 124 },
+    // ── SIT bilingual compound paramNames (Chinese + English in one key) ──
+    'bus fault voltage (v) 总线容错电压范围': { attributeId: 'bus_fault_protection', attributeName: 'Bus Fault Voltage', unit: 'V', sortOrder: 8 },
+    'self- diagnostic or autobaud 自诊断': { attributeId: 'self_diagnostic', attributeName: 'Self-Diagnostic or Autobaud', sortOrder: 125 },
+    'wake up & sleep 唤醒与休眠': { attributeId: 'remote_wakeup', attributeName: 'Wake Up & Sleep', sortOrder: 93 },
   },
 
   // ─── C5 Logic ICs ──────────────────────────────────────
@@ -1712,6 +1805,8 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     'esr (ω)': { attributeId: 'equivalent_series_resistance_ohm', attributeName: 'ESR', unit: 'Ω', sortOrder: 6 },
     '工作温度': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
     'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
+    // Slkor abbreviates "Operating Temperature" → "Operating TEMP" in their crystal source files.
+    'operating temp': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 13 },
     '封装': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
     'package': { attributeId: 'package_type', attributeName: 'Package / Case', sortOrder: 10 },
     '安装类型': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 12 },
@@ -1813,6 +1908,417 @@ const atlasParamDictionaries: Record<string, Record<string, AtlasParamMapping>> 
     // CTR — current transfer ratio. E1 canonical (min/max/class variants exist).
     'ctr': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
     '电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+
+    // ── E1 vendor variants (Decision #235 follow-up, Item 1) ──
+    // Triage survey across all E1-touching MFRs (AOTE, Kinglight, MP, CT MICRO,
+    // KTP, JJW, etc.) showed thousands of products with paramNames that differ
+    // from the existing E1 entries by parenthetical-suffix variation, half-letter
+    // case in propagation-delay names, or Greek μ vs Latin u in CMTI units. Adding
+    // aliases here is higher-leverage than adding to each individual MFR's
+    // override.
+
+    // 正向电流(If) — vendor variant of 正向电流 with (If) parenthetical
+    '正向电流(if)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
+    'forward current (if)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 5 },
+
+    // VCE(sat) without @Ic,IF condition suffix
+    // ('vce(sat)' bare form already mapped above to vce_sat_v — not re-added here)
+    '集射极饱和电压(vce(sat))': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+    'v ceo_max': { attributeId: 'vce_sat_v', attributeName: 'Vce(sat)', unit: 'V', sortOrder: 7 },
+
+    // CTR variants — Chinese-with-(CTR)-suffix and English forms
+    '电流传输比(ctr)最小值': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    '电流传输比(ctr)最大值/饱和值': { attributeId: 'ctr_max_pct', attributeName: 'CTR (Max)', unit: '%', sortOrder: 24 },
+    'ctr-电流传输比': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    'ctr (max)': { attributeId: 'ctr_max_pct', attributeName: 'CTR (Max)', unit: '%', sortOrder: 24 },
+    'ctr (min)': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+    'ctr*': { attributeId: 'ctr_min_pct', attributeName: 'CTR (Min)', unit: '%', sortOrder: 23 },
+
+    // 上升时间(tr) variant of existing 上升时间
+    '上升时间(tr)': { attributeId: 'rise_time_us', attributeName: 'Rise Time', unit: 'µs', sortOrder: 8 },
+
+    // Propagation delay — separate tpHL/tpLH variants (existing entry is the
+    // combined 传播延迟tplh/tphl form). Both map to the same canonical.
+    '传播延迟 tphl': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay tpHL', unit: 'µs', sortOrder: 10 },
+    '传播延迟 tplh': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay tpLH', unit: 'µs', sortOrder: 10 },
+    'tphl/tplhmax.(µs)': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay Max', unit: 'µs', sortOrder: 10 },
+    'tphl/tplhmax.(us)': { attributeId: 'propagation_delay_us', attributeName: 'Propagation Delay Max', unit: 'µs', sortOrder: 10 },
+
+    // CMTI — Latin u variant of existing cmti(kv/μs). Different unicode chars
+    // so .replace(/\s+/g, ' ') normalization doesn't unify them.
+    'cmti(kv/us)': { attributeId: '_cmti_kv_us', attributeName: 'CMTI', unit: 'kV/µs', sortOrder: 91 },
+    'cmh/l_min (kv/ms)': { attributeId: '_cmti_kv_us', attributeName: 'CMTI', unit: 'kV/µs', sortOrder: 91 },
+    'cmr(v/ns)': { attributeId: '_cmti_kv_us', attributeName: 'CMR', unit: 'V/ns', sortOrder: 91 },
+
+    // Power dissipation — NOT in E1 logic table; catalog only.
+    '总功耗(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
+    '耗散功率(pd)': { attributeId: '_power_dissipation_mw', attributeName: 'Power Dissipation', unit: 'mW', sortOrder: 92 },
+    'radiant flux (mw) typ.': { attributeId: '_radiant_flux_mw', attributeName: 'Radiant Flux', unit: 'mW', sortOrder: 92 },
+
+    // Data rate — high-speed optocoupler spec, catalog (not in E1 logic).
+    // ('数据速率' already mapped above to surfaced data_rate_mbps — not re-added here as catalog)
+    '传输速率': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+    'data rate(mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+    'data rate (mbit/s)': { attributeId: '_data_rate_mbps', attributeName: 'Data Rate', unit: 'Mbps', sortOrder: 93 },
+
+    // Input threshold current — catalog.
+    '输入阈值电流(fh)': { attributeId: '_ift_min_ma', attributeName: 'Input Threshold Current (Min)', unit: 'mA', sortOrder: 94 },
+    'iftmax.(ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'ift max(ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'ift (ma)': { attributeId: '_ift_max_ma', attributeName: 'Input Threshold Current (Max)', unit: 'mA', sortOrder: 95 },
+    'if(on) max. (ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if(on) max.(ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if-on_max (ma)': { attributeId: '_if_on_max_ma', attributeName: 'IF(ON) Max', unit: 'mA', sortOrder: 95 },
+    'if-on_min (ma)': { attributeId: '_if_on_min_ma', attributeName: 'IF(ON) Min', unit: 'mA', sortOrder: 96 },
+
+    // JJW vendor English variants for isolation voltage (existing E1 has these
+    // for Chinese; vendor uses padded English forms).
+    'viso (vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso (rms) (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'viso(rms)(v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 1 },
+    'v iso_max (vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage Max', unit: 'Vrms', sortOrder: 1 },
+    'vl_min (v)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage Min', unit: 'V', sortOrder: 1 },
+
+    // Operating temperature range — vendor TOPR variants
+    'topr (°c)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+    'topr (℃)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+    'topr(℃)': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 21 },
+
+    // Vdrm — peak off-state voltage (for triac/SCR-output optocouplers)
+    'vdrm (v)': { attributeId: 'vdrm_v', attributeName: 'Vdrm', unit: 'V', sortOrder: 17 },
+    'vdrm(v)': { attributeId: 'vdrm_v', attributeName: 'Vdrm', unit: 'V', sortOrder: 17 },
+
+    // Static dv/dt — catalog (TRIAC-output false-trigger immunity)
+    'static dv/dt(v/µs) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/μs) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/us) min.': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt (Min)', unit: 'V/µs', sortOrder: 97 },
+    'static dv/dt(v/µs) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'static dv/dt(v/μs) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'static dv/dt(v/us) typ.': { attributeId: '_static_dv_dt_v_us_typ', attributeName: 'Static dv/dt (Typ)', unit: 'V/µs', sortOrder: 98 },
+    'dv/dt (v/μs)': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt', unit: 'V/µs', sortOrder: 97 },
+    'dv/dt (v/us)': { attributeId: '_static_dv_dt_v_us_min', attributeName: 'Static dv/dt', unit: 'V/µs', sortOrder: 97 },
+
+    // VR_Max — input-side reverse voltage max (existing 反向电压 alias)
+    'vr_max (v)': { attributeId: 'input_reverse_voltage_v', attributeName: 'Reverse Voltage Max', unit: 'V', sortOrder: 6 },
+
+    // Light current / IC — output transistor collector current (existing 输出电流)
+    'light current (µa) typ.': { attributeId: 'output_current_ma', attributeName: 'Light Current (Typ)', unit: 'µA', sortOrder: 11 },
+    'light current (ma)': { attributeId: 'output_current_ma', attributeName: 'Light Current', unit: 'mA', sortOrder: 11 },
+    'ic': { attributeId: 'output_current_ma', attributeName: 'Output Current Ic', unit: 'mA', sortOrder: 11 },
+
+    // Switch on/off time — catalog
+    'ton_max (ms)': { attributeId: '_ton_max_ms', attributeName: 'Turn-On Time Max', unit: 'ms', sortOrder: 99 },
+    'toff_max (ms)': { attributeId: '_toff_max_ms', attributeName: 'Turn-Off Time Max', unit: 'ms', sortOrder: 99 },
+
+    // On-resistance for MOSFET-output (PhotoMOS-style) E1 — catalog
+    'ron (ω)': { attributeId: '_ron_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 100 },
+
+    // Slot width — mechanical for slot-type photointerrupters
+    '槽宽': { attributeId: '_slot_width_mm', attributeName: 'Slot Width', unit: 'mm', sortOrder: 101 },
+
+    // IF_Max — forward current absolute max (variant of if_rated_ma)
+    'if_max (ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current Max', unit: 'mA', sortOrder: 5 },
+    'if (ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current', unit: 'mA', sortOrder: 5 },
+    'if(ma)': { attributeId: 'if_rated_ma', attributeName: 'Forward Current', unit: 'mA', sortOrder: 5 },
+
+    // Wavelength / radiant — catalog for LED-side
+    'peakwavelength(nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Peak Wavelength', unit: 'nm', sortOrder: 102 },
+    'peak wavelength (nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Peak Wavelength', unit: 'nm', sortOrder: 102 },
+    'wavelength(nm)': { attributeId: '_peak_wavelength_nm', attributeName: 'Wavelength', unit: 'nm', sortOrder: 102 },
+    'vf(v) 20ma': { attributeId: 'input_forward_voltage_vf', attributeName: 'Vf @ 20mA', unit: 'V', sortOrder: 4 },
+    'intensity(mw/sr)typ. 20ma': { attributeId: '_intensity_mw_sr', attributeName: 'Intensity @ 20mA', unit: 'mW/sr', sortOrder: 103 },
+    'max rating(ma)': { attributeId: '_max_rating_ma', attributeName: 'Max Rating', unit: 'mA', sortOrder: 104 },
+    'max rating (ma)': { attributeId: '_max_rating_ma', attributeName: 'Max Rating', unit: 'mA', sortOrder: 104 },
+
+    // CTR class / hysteresis catalog
+    'hysteresis ratio': { attributeId: '_hysteresis_ratio', attributeName: 'Hysteresis Ratio', sortOrder: 105 },
+
+    // Vcc / supply variants
+    'vcc(v)': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage (Vcc)', unit: 'V', sortOrder: 20 },
+    'supply voltage (v)': { attributeId: 'supply_voltage_vcc', attributeName: 'Supply Voltage', unit: 'V', sortOrder: 20 },
+    '工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Working Voltage', unit: 'V', sortOrder: 20 },
+    '驱动侧工作电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Driver-Side Working Voltage', unit: 'V', sortOrder: 20 },
+
+    // Channel count variants ('通道数' already mapped above to channel_count)
+    'channel': { attributeId: 'channel_count', attributeName: 'Channel Count', sortOrder: 2 },
+
+    // Input value for opamp-style optocouplers — catalog
+    'input': { attributeId: '_input_type', attributeName: 'Input Type', sortOrder: 106 },
+    '输入电压': { attributeId: 'supply_voltage_vcc', attributeName: 'Input Voltage', unit: 'V', sortOrder: 20 },
+
+    // Vendor's load voltage / current — for opto-driven applications (catalog)
+    '负载电压': { attributeId: '_load_voltage_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 107 },
+    '负载电流': { attributeId: '_load_current_ma', attributeName: 'Load Current', unit: 'mA', sortOrder: 108 },
+    '连续负载电流': { attributeId: '_load_current_ma', attributeName: 'Continuous Load Current', unit: 'mA', sortOrder: 108 },
+    '直流反向耐压(vr)': { attributeId: 'input_reverse_voltage_v', attributeName: 'DC Reverse Voltage (Vr)', unit: 'V', sortOrder: 6 },
+    '正向压降(vf)': { attributeId: 'input_forward_voltage_vf', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 4 },
+    '正向压降': { attributeId: 'input_forward_voltage_vf', attributeName: 'Forward Voltage', unit: 'V', sortOrder: 4 },
+
+    // Misc collector spec — output transistor (catalog)
+    '集电极暗电流': { attributeId: '_iceo_dark_ua', attributeName: 'Collector Dark Current', unit: 'µA', sortOrder: 109 },
+
+    // 过零功能 / firing — overlap with F2 SSR concept (catalog here)
+    '过零功能': { attributeId: '_zero_cross', attributeName: 'Zero-Cross Function', sortOrder: 110 },
+    '过零': { attributeId: '_zero_cross', attributeName: 'Zero-Cross', sortOrder: 110 },
+  },
+
+  // ─── F1 Electromechanical Relays ──────────────────────
+  // Seeded from HONGFA's source file (mfr_30_HONGFA_宏发_params.json) which
+  // ships ~34 paramNames per product. Most relay MFRs use overlapping
+  // Chinese terms (TE, Omron, Panasonic, Songle, Fujitsu). When a new relay
+  // MFR drops with a distinct paramName, add it via Triage Accept.
+  //
+  // AC vs DC switching ratings: HONGFA splits 最大切换电压 and 最大额定切换电流
+  // into separate (AC) and (DC) paramNames. Both can co-exist on one product.
+  // To avoid JSONB collision on canonical attribute IDs, AC variants map to
+  // the F1 logic-table canonical, DC variants map to a _-prefixed catalog
+  // attribute. Most general-purpose relays drive AC loads, so canonical
+  // values typically reflect the AC rating.
+  F1: {
+    // ── Coil (supply side) ──
+    '线圈工作电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '额定线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    '线圈电压': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    'rated coil voltage': { attributeId: 'coil_voltage_vdc', attributeName: 'Coil Voltage', unit: 'V', sortOrder: 1 },
+    // Coil voltage type (AC/DC) — NOT in F1 logic table (no rule scores it),
+    // but a critical catalog discriminator. Underscore prefix per convention.
+    '线圈电压类型': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    'coil voltage type': { attributeId: '_coil_voltage_type', attributeName: 'Coil Voltage Type', sortOrder: 2 },
+    // Coil power — HONGFA uses both 线圈功率 (categorical e.g. 标准型/standard)
+    // and 额定线圈功率 (numeric VA/W). Map both to coil_power_mw; numeric one
+    // wins because it gets processed with the unit-bearing form.
+    '额定线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    '线圈功率': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    'coil power': { attributeId: 'coil_power_mw', attributeName: 'Coil Power', unit: 'mW', sortOrder: 3 },
+    // Coil resistance — F1 logic table canonical (threshold rule for GPIO drive).
+    '线圈电阻': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    'coil resistance': { attributeId: 'coil_resistance_ohm', attributeName: 'Coil Resistance', unit: 'Ω', sortOrder: 4 },
+    // Coil parallel component — value is typically 二极管/diode or N/A.
+    // F1 logic table has 'coil_suppress_diode' as a flag attribute.
+    '线圈并联元件': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    'coil suppression': { attributeId: 'coil_suppress_diode', attributeName: 'Coil Suppression', sortOrder: 5 },
+    // Coil characteristic (monostable/bistable) — catalog only.
+    '线圈特征': { attributeId: '_coil_characteristic', attributeName: 'Coil Characteristic', sortOrder: 6 },
+    // Must-operate / must-release voltage — F1 logic canonical.
+    '吸合电压': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    'must operate voltage': { attributeId: 'must_operate_voltage_v', attributeName: 'Must-Operate Voltage', unit: 'V', sortOrder: 7 },
+    '释放电压': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+    'must release voltage': { attributeId: 'must_release_voltage_v', attributeName: 'Must-Release Voltage', unit: 'V', sortOrder: 8 },
+
+    // ── Contacts (load side) ──
+    '触点形式': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    'contact form': { attributeId: 'contact_form', attributeName: 'Contact Form', sortOrder: 10 },
+    '触点数': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'contact count': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    'number of contacts': { attributeId: 'contact_count', attributeName: 'Contact Count', sortOrder: 11 },
+    '触点材料': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    'contact material': { attributeId: 'contact_material', attributeName: 'Contact Material', sortOrder: 12 },
+    // AC variant maps to F1 canonical; DC variant goes to catalog to avoid collision.
+    '最大切换电压(ac)': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage (AC)', unit: 'V', sortOrder: 13 },
+    '最大切换电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '负载电压': { attributeId: 'contact_voltage_rating_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 13 },
+    'max switching voltage': { attributeId: 'contact_voltage_rating_v', attributeName: 'Max Switching Voltage', unit: 'V', sortOrder: 13 },
+    '最大切换电压(dc)': { attributeId: '_contact_voltage_dc_v', attributeName: 'Max Switching Voltage (DC)', unit: 'V', sortOrder: 14 },
+    '最大额定切换电流(ac)': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current (AC)', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '负载电流': { attributeId: 'contact_current_rating_a', attributeName: 'Load Current', unit: 'A', sortOrder: 15 },
+    'max switching current': { attributeId: 'contact_current_rating_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 15 },
+    '最大额定切换电流(dc)': { attributeId: '_contact_current_dc_a', attributeName: 'Max Switching Current (DC)', unit: 'A', sortOrder: 16 },
+    // Contact voltage type (AC/DC) — F1 logic canonical (identity_flag rule).
+    '触点电压类型': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    'contact voltage type': { attributeId: 'contact_voltage_type', attributeName: 'Contact Voltage Type', sortOrder: 17 },
+    // Max switching power — VA rating, F1 logic canonical.
+    '最大额定切换功率(va)': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    '最大切换功率': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+    'max switching power': { attributeId: 'max_switching_power_va', attributeName: 'Max Switching Power', unit: 'VA', sortOrder: 18 },
+
+    // ── Isolation / dielectric (safety side) ──
+    // 介质耐压 = dielectric withstanding voltage (the hi-pot test). F1 logic
+    // doesn't model it explicitly, but the safety-critical concept aligns
+    // with isolation_voltage_vrms (used by F2 and E1). Mapping here makes
+    // the value scorable wherever a future rule references this attr.
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    '介质耐压(单位：vac)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+    'dielectric withstanding voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 19 },
+
+    // ── Timing (operate/release) ──
+    '动作时间(单位：ms)': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '动作时间': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    'operate time': { attributeId: 'operate_time_ms', attributeName: 'Operate Time', unit: 'ms', sortOrder: 20 },
+    '释放时间(单位：ms)': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    '释放时间': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    'release time': { attributeId: 'release_time_ms', attributeName: 'Release Time', unit: 'ms', sortOrder: 21 },
+    // Contact bounce — F1 logic canonical.
+    '触点回跳时间': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+    'contact bounce': { attributeId: 'contact_bounce_ms', attributeName: 'Contact Bounce', unit: 'ms', sortOrder: 22 },
+
+    // ── Endurance ──
+    '机械耐久性(单位：次)': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '机械寿命': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    'mechanical life': { attributeId: 'mechanical_life_ops', attributeName: 'Mechanical Life', unit: 'ops', sortOrder: 23 },
+    '电耐久性(单位：次)': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    '电寿命': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+    'electrical life': { attributeId: 'electrical_life_ops', attributeName: 'Electrical Life', unit: 'ops', sortOrder: 24 },
+
+    // ── Environmental / mechanical ──
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    'operating temperature range': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 25 },
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 26 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    'package footprint': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 27 },
+    // Sealing type — F1 logic canonical (washable/sealed/flux-proof).
+    '密封类型': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    'sealing type': { attributeId: 'sealing_type', attributeName: 'Sealing Type', sortOrder: 28 },
+    // AEC-Q200 qualification (automotive). F1 logic canonical (identity_flag).
+    'aec-q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+    'aec_q200': { attributeId: 'aec_q200', attributeName: 'AEC-Q200', sortOrder: 29 },
+
+    // ── Catalog-only (underscore prefix; not scored by F1 rules) ──
+    '绝缘电阻(单位：mω)': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '绝缘电阻': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    'insulation resistance': { attributeId: '_insulation_resistance_mohm', attributeName: 'Insulation Resistance', unit: 'MΩ', sortOrder: 90 },
+    '触点间隙(单位：mm)': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '触点间隙': { attributeId: '_contact_gap_mm', attributeName: 'Contact Gap', unit: 'mm', sortOrder: 91 },
+    '爬电距离(单位：mm)': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '爬电距离': { attributeId: '_creepage_distance_mm', attributeName: 'Creepage Distance', unit: 'mm', sortOrder: 92 },
+    '电气距离(单位：mm)': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '电气间隙': { attributeId: '_clearance_distance_mm', attributeName: 'Clearance Distance', unit: 'mm', sortOrder: 93 },
+    '绝缘等级': { attributeId: '_insulation_class', attributeName: 'Insulation Class', sortOrder: 94 },
+    '引出端形式': { attributeId: '_terminal_form', attributeName: 'Terminal Form', sortOrder: 95 },
+    '引出端结构形式': { attributeId: '_terminal_structure', attributeName: 'Terminal Structure', sortOrder: 96 },
+    '产品应用领域': { attributeId: '_application_field', attributeName: 'Application Field', sortOrder: 97 },
+    '产品应用场合': { attributeId: '_application_use', attributeName: 'Application Use', sortOrder: 98 },
+    '重量(单位：g)': { attributeId: '_weight_g', attributeName: 'Weight', unit: 'g', sortOrder: 99 },
+    '体积(单位：mm3)': { attributeId: '_volume_mm3', attributeName: 'Volume', unit: 'mm³', sortOrder: 100 },
+  },
+
+  // ─── F2 Solid State Relays ────────────────────────────
+  // Seeded from F2 logic-table canonicals + best-guess Chinese aliases.
+  // No HONGFA-equivalent ground-truth source yet — when the first Chinese SSR
+  // MFR (e.g. Kyotto, Carlo Gavazzi reseller, generic 国产 SSR vendor) drops,
+  // expect the engineer to add MFR-specific aliases via Triage Accept.
+  F2: {
+    // Output switch type — F2 HARD GATE (TRIAC vs SCR vs MOSFET).
+    '输出开关类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    '输出类型': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    'output switch type': { attributeId: 'output_switch_type', attributeName: 'Output Switch Type', sortOrder: 1 },
+    // Firing mode — F2 HARD GATE (zero-crossing vs random-fire).
+    '触发模式': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    '过零控制': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'firing mode': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    'zero crossing': { attributeId: 'firing_mode', attributeName: 'Firing Mode', sortOrder: 2 },
+    // Mounting type — PCB / panel / DIN-rail.
+    '安装形式': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    'mounting type': { attributeId: 'mounting_type', attributeName: 'Mounting Type', sortOrder: 3 },
+    // Load voltage type (AC/DC).
+    '负载电压类型': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'load voltage type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    // Load voltage max — F2 safety-critical threshold.
+    '最大负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    '负载电压': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    'max load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Max Load Voltage', unit: 'V', sortOrder: 5 },
+    'load voltage': { attributeId: 'load_voltage_max_v', attributeName: 'Load Voltage', unit: 'V', sortOrder: 5 },
+    // Load current max — F2 safety-critical threshold.
+    '最大负载电流': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    '负载电流': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    'max load current': { attributeId: 'load_current_max_a', attributeName: 'Max Load Current', unit: 'A', sortOrder: 6 },
+    'load current': { attributeId: 'load_current_max_a', attributeName: 'Load Current', unit: 'A', sortOrder: 6 },
+    // Load current min — hidden TRIAC failure mode for low-current loads.
+    '最小负载电流': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    'min load current': { attributeId: 'load_current_min_a', attributeName: 'Min Load Current', unit: 'A', sortOrder: 7 },
+    // Off-state leakage.
+    '截止漏电流': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    'off-state leakage': { attributeId: 'off_state_leakage_ma', attributeName: 'Off-State Leakage', unit: 'mA', sortOrder: 8 },
+    // Input voltage range — F2 control-side spec.
+    '输入电压范围': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    '控制电压': { attributeId: 'input_voltage_range_v', attributeName: 'Control Voltage', unit: 'V', sortOrder: 9 },
+    'input voltage range': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage Range', unit: 'V', sortOrder: 9 },
+    // Input current.
+    '输入电流': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    'input current': { attributeId: 'input_current_ma', attributeName: 'Input Current', unit: 'mA', sortOrder: 10 },
+    // Switching times.
+    '导通时间': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    'turn-on time': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    'turn-off time': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    // dv/dt and di/dt ratings — SCR/TRIAC false-trigger immunity.
+    'dv/dt': { attributeId: 'dv_dt_rating_v_us', attributeName: 'dv/dt Rating', unit: 'V/µs', sortOrder: 13 },
+    'di/dt': { attributeId: 'di_dt_rating_a_us', attributeName: 'di/dt Rating', unit: 'A/µs', sortOrder: 14 },
+    // On-state voltage drop — SSR conduction loss.
+    '导通压降': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    'on-state voltage drop': { attributeId: 'on_state_voltage_drop_v', attributeName: 'On-State Voltage Drop', unit: 'V', sortOrder: 15 },
+    // Built-in snubber / varistor (transient protection).
+    '内置缓冲电路': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    'built-in snubber': { attributeId: 'built_in_snubber', attributeName: 'Built-In Snubber', sortOrder: 16 },
+    '内置压敏电阻': { attributeId: 'built_in_varistor', attributeName: 'Built-In Varistor', sortOrder: 17 },
+    // Isolation voltage — F2 safety canonical (shared with E1 conceptually).
+    '隔离电压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    '介质耐压': { attributeId: 'isolation_voltage_vrms', attributeName: 'Dielectric Withstanding Voltage', unit: 'Vrms', sortOrder: 18 },
+    'isolation voltage': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    // Safety certification (UL/CE/VDE/TÜV).
+    '安全认证': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    'safety certification': { attributeId: 'safety_certification', attributeName: 'Safety Certification', sortOrder: 19 },
+    // Operating temperature.
+    '温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    '工作温度范围': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    // Package.
+    '封装': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    '封装形式': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    // Thermal resistance.
+    '热阻': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+    'thermal resistance': { attributeId: 'thermal_resistance_jc', attributeName: 'Thermal Resistance', unit: '°C/W', sortOrder: 22 },
+
+    // ── APSEMI English vendor convention (Decision #235 follow-up) ──
+    // APSEMI ships SSRs (304 products) with English paramNames; the trailing
+    // spaces in their source ('Circuit ', 'Voltage - Input ') get stripped by
+    // the lookup's .trim() so dict keys match the trimmed form.
+    'circuit': { attributeId: '_output_config', attributeName: 'Output Configuration', sortOrder: 90 },
+    'voltage - input': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    'output type': { attributeId: 'load_voltage_type', attributeName: 'Load Voltage Type', sortOrder: 4 },
+    'operating temperature': { attributeId: 'operating_temp_range', attributeName: 'Operating Temperature Range', unit: '°C', sortOrder: 20 },
+    'device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'package / case': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+    'supplier device package': { attributeId: 'package_footprint', attributeName: 'Package', sortOrder: 21 },
+
+    // ── APSEMI PhotoMOS subset (37 products with output-MOSFET specs) ──
+    // F2 logic table doesn't score these (they belong to B5), but for PhotoMOS
+    // SSRs which embed a MOSFET, preserving the data as catalog (underscore
+    // prefix) lets the Specs panel show what the vendor publishes.
+    'fet type': { attributeId: '_fet_type', attributeName: 'FET Type', sortOrder: 91 },
+    'rds on (max) @ id, vgs': { attributeId: '_rds_on_mohm', attributeName: 'Rds(on) Max', unit: 'mΩ', sortOrder: 92 },
+    'vgs(th) (max) @ id': { attributeId: '_vgs_th_v', attributeName: 'Vgs(th) Max', unit: 'V', sortOrder: 93 },
+    'vgs (max)': { attributeId: '_vgs_max_v', attributeName: 'Vgs Max', unit: 'V', sortOrder: 94 },
+    'power dissipation (max)': { attributeId: '_power_dissipation_w', attributeName: 'Power Dissipation Max', unit: 'W', sortOrder: 95 },
+    'current - continuous drain (id) @ 25°c': { attributeId: '_id_continuous_a', attributeName: 'Id Continuous @ 25°C', unit: 'A', sortOrder: 96 },
+    'drive voltage (max rds on, min rds on)': { attributeId: '_drive_voltage_v', attributeName: 'Drive Voltage', unit: 'V', sortOrder: 97 },
+
+    // ── STEIPU / AOTE / KTP Chinese variants ──
+    // Variant of 隔离电压 with explicit unit suffix used by several SSR/opto
+    // MFRs. Both forms map to the same canonical.
+    '隔离电压(vrms)': { attributeId: 'isolation_voltage_vrms', attributeName: 'Isolation Voltage', unit: 'Vrms', sortOrder: 18 },
+    // 触点形式 in SSR scope ≠ relay contact-form. SSRs don't have mechanical
+    // contacts but vendors borrow the term to describe output config (SPST-NO
+    // = single output, normally-open behavior). Catalog-only here.
+    '触点形式': { attributeId: '_output_config', attributeName: 'Contact Configuration', sortOrder: 90 },
+    // SSR-side switching ratings
+    '最大切换电流': { attributeId: 'load_current_max_a', attributeName: 'Max Switching Current', unit: 'A', sortOrder: 6 },
+    '连续负载电流': { attributeId: 'load_current_max_a', attributeName: 'Continuous Load Current', unit: 'A', sortOrder: 6 },
+    '导通时间(ton)': { attributeId: 'turn_on_time_ms', attributeName: 'Turn-On Time', unit: 'ms', sortOrder: 11 },
+    '截止时间(toff)': { attributeId: 'turn_off_time_ms', attributeName: 'Turn-Off Time', unit: 'ms', sortOrder: 12 },
+    '导通电阻': { attributeId: '_on_resistance_ohm', attributeName: 'On Resistance', unit: 'Ω', sortOrder: 98 },
+    // 过零功能 = zero-cross function (yes/no). Maps to firing_mode whose values
+    // are zero-crossing / random — semantically the same discriminator.
+    '过零功能': { attributeId: 'firing_mode', attributeName: 'Zero-Cross Function', sortOrder: 2 },
+    // Input variants
+    '输入电压': { attributeId: 'input_voltage_range_v', attributeName: 'Input Voltage', unit: 'V', sortOrder: 9 },
+    '输入类型': { attributeId: 'load_voltage_type', attributeName: 'Input Type', sortOrder: 4 },
+    // Working voltage for SSR control side
+    '工作电压': { attributeId: 'input_voltage_range_v', attributeName: 'Working Voltage', unit: 'V', sortOrder: 9 },
   },
 };
 
@@ -1853,6 +2359,7 @@ const metadataParamDictionary: Record<string, AtlasParamMapping> = {
   'rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs status': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  'rohs code': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   // REACH — EU chemical registration
   'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
@@ -1890,9 +2397,11 @@ const skipParams = new Set([
   '原始制造商',  // original manufacturer
   '最小包装',    // minimum order quantity
   '包装',        // packaging format
+  '包装形式',    // packaging form (longer variant — blister/tube/box buyer concern, not parametric)
   '元件生命周期', // component lifecycle
   '零件状态',    // part status (use 状态/Status instead)
   '原产国家',    // country of origin
+  'country of origin',    // English variant (APSEMI)
   '是否无铅',    // lead-free
   '安装类型',    // mounting type
   '引脚数',      // pin count
@@ -2386,6 +2895,60 @@ const atlasL2ParamDictionaries: Record<string, Record<string, AtlasParamMapping>
     // in atlasMapper.ts.
     '工作温度': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
     'operating temperature': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    // ── Decision #235 follow-up Item 2 — CT MICRO + Refond + Everlight LED vocabulary ──
+    // CONVENTION: all entries use non-underscore IDs so values land in JSONB
+    // (see C7 Item 3 lessons learned — `_*` prefix silently skips ingest).
+    // CT MICRO ships paramNames as `Field(unit)Min.~Max.` — Item 1 decoder
+    // handles the literal-escape forms (`\xc2\xb0` → `°` etc.) before lookup.
+    // CT MICRO LED-indicator variants
+    'viewing angle(°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'viewing angle (°)': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', unit: '°', sortOrder: 6 },
+    'topr(℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'topr (℃)': { attributeId: 'operating_temp', attributeName: 'Operating Temperature', unit: '°C', sortOrder: 18 },
+    'vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'vf(v)min.~max.': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'iv (mcd)/lmmin.~ max.': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'λd(nm)min.~max./cie(x,y) typ.': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'size l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    'color combination': { attributeId: 'color_combination', attributeName: 'Color Combination', sortOrder: 22 },
+    'fire': { attributeId: 'mounting_orientation', attributeName: 'Mounting Orientation', sortOrder: 23 },
+    // Refond LED variants — unit-suffixed forms not covered by existing entries
+    'power': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'po(w)': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    'ta @25℃(typ.) if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'ta @25℃(typ.) vf(v)': { attributeId: 'forward_voltage', attributeName: 'Forward Voltage (Vf)', unit: 'V', sortOrder: 7 },
+    'max current (ma)': { attributeId: 'max_current', attributeName: 'Max Forward Current', unit: 'mA', sortOrder: 24 },
+    '2θ1/2(°)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '50% power angle': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    '2 stomach 1/2(captive)': { attributeId: 'viewing_angle_half_power', attributeName: 'Viewing Angle (Half Power)', unit: '°', sortOrder: 25 },
+    'if(ma)': { attributeId: 'forward_current', attributeName: 'Forward Current (If)', unit: 'mA', sortOrder: 13 },
+    'test condition(ma)': { attributeId: 'test_current', attributeName: 'Test Current', unit: 'mA', sortOrder: 8 },
+    'λd(nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'd (nm)': { attributeId: 'wavelength_dominant', attributeName: 'Wavelength (Dominant)', unit: 'nm', sortOrder: 3 },
+    'iv(mcd)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', unit: 'mcd', sortOrder: 5 },
+    'iv (rcm)': { attributeId: 'luminous_intensity', attributeName: 'Luminous Intensity', sortOrder: 5 },
+    'angle': { attributeId: 'viewing_angle', attributeName: 'Viewing Angle', sortOrder: 6 },
+    'l*w*h(mm)': { attributeId: 'size_lwh_mm', attributeName: 'Size L×W×H', unit: 'mm', sortOrder: 21 },
+    // Refond Color/CCT/CRI vocabulary
+    'color(k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'correlated color temperature cct (k)': { attributeId: 'color_temperature', attributeName: 'Color Temperature', unit: 'K', sortOrder: 14 },
+    'ta @25℃(typ.) cct/wd': { attributeId: 'color_temperature', attributeName: 'Color Temperature (CCT)', unit: 'K', sortOrder: 14 },
+    'color rendering index ra(min)': { attributeId: 'cri_ra', attributeName: 'CRI Ra (min)', sortOrder: 26 },
+    'ta @25℃(typ.) ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ra': { attributeId: 'cri_ra', attributeName: 'CRI Ra', sortOrder: 26 },
+    'ta @25℃(typ.) flux/lm @4000k ra70': { attributeId: 'luminous_flux_lm', attributeName: 'Luminous Flux', unit: 'lm', sortOrder: 27 },
+    // Refond ESD + lens + radiant power
+    'esd withstand voltage ()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'esd withstand voltage()hbm': { attributeId: 'esd_hbm_v', attributeName: 'ESD HBM Withstand', unit: 'V', sortOrder: 28 },
+    'φe(mw)': { attributeId: 'radiant_power_mw', attributeName: 'Radiant Power (Φe)', unit: 'mW', sortOrder: 29 },
+    'lens(mm)': { attributeId: 'lens_diameter_mm', attributeName: 'Lens Diameter', unit: 'mm', sortOrder: 30 },
+    // Everlight gaps
+    '辐射强度': { attributeId: 'radiant_intensity', attributeName: 'Radiant Intensity', unit: 'mW/sr', sortOrder: 31 },
+    '耗散功率': { attributeId: 'power_dissipation', attributeName: 'Power Dissipation', unit: 'W', sortOrder: 15 },
+    '直流反向耐压': { attributeId: 'reverse_voltage_v', attributeName: 'Reverse Voltage (DC)', unit: 'V', sortOrder: 19 },
+    '正向电流-dc (if)': { attributeId: 'forward_current', attributeName: 'Forward Current (If, DC)', unit: 'mA', sortOrder: 13 },
+    'led极性': { attributeId: 'led_polarity', attributeName: 'LED Polarity', sortOrder: 32 },
+    '数字/字母大小(英寸)': { attributeId: 'character_size_inches', attributeName: 'Character Size', unit: 'in', sortOrder: 33 },
   },
   Switches: {
     '电路': { attributeId: 'circuit', attributeName: 'Circuit', sortOrder: 1 },
@@ -2794,11 +3357,19 @@ export function mapAtlasModel(
   for (const p of model.parameters) {
     if (isMissingValue(p.value)) continue;
 
-    const lowerName = p.name.toLowerCase().trim();
+    // Normalize: decode literal byte-escape text (CT MICRO `(\xe2\x84\x83)` →
+    // `(℃)`), then lowercase + trim + collapse internal whitespace runs.
+    // CT MICRO ships paramNames like 'Light Current   (mA)' with multi-space
+    // padding; APSEMI ships trailing spaces ('Circuit '). Both need to match
+    // dict keys written as single-space normalized form (per the F1/F2
+    // additions in Decision #235). The decode lets the SAME dict entry cover
+    // CT MICRO's broken-encoding variant without separate registrations.
+    const decodedName = decodeLiteralByteEscapes(p.name);
+    const lowerName = decodedName.toLowerCase().trim().replace(/\s+/g, ' ');
 
     // Skip metadata fields — but dictionary entries take priority over skip list
     const hasDictMapping = !!(familyDict?.[lowerName] ?? sharedParamDictionary[lowerName] ?? metadataParamDictionary[lowerName]);
-    if (!hasDictMapping && (skipParams.has(p.name) || skipParams.has(lowerName))) continue;
+    if (!hasDictMapping && (skipParams.has(decodedName) || skipParams.has(lowerName))) continue;
     // Skip status (already extracted above)
     if (lowerName === '状态' || lowerName === 'status' || lowerName === '零件状态') continue;
 
@@ -2888,7 +3459,7 @@ export function mapAtlasModel(
         seenAttributeIds.add(rawId);
         parameters.push({
           parameterId: rawId,
-          parameterName: stripGaiaPrefix(p.name.trim()),
+          parameterName: stripGaiaPrefix(decodedName.trim()),
           value: p.value.trim(),
           numericValue: extractNumeric(p.value),
           sortOrder: 200 + parameters.length,
