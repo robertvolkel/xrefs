@@ -2361,11 +2361,16 @@ const metadataParamDictionary: Record<string, AtlasParamMapping> = {
   'rohs符合性': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs code': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   'rohs合规': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
+  // Galaxy "符合RoHS" — verb-first idiom ("compliant with RoHS"), distinct
+  // from the "rohs符合性"/"rohs合规" noun-form variants above.
+  '符合rohs': { attributeId: 'rohs', attributeName: 'RoHS', sortOrder: 900 },
   // REACH — EU chemical registration
   'reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
   'reach status': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
   'reach符合性': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
   'reach合规': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
+  // Galaxy "符合Reach" — verb-first idiom, parallel to "符合rohs" above.
+  '符合reach': { attributeId: 'reach', attributeName: 'REACH', sortOrder: 901 },
   // ECCN — US export control classification
   'eccn': { attributeId: 'eccn_code', attributeName: 'ECCN Code', sortOrder: 902 },
   'eccn code': { attributeId: 'eccn_code', attributeName: 'ECCN Code', sortOrder: 902 },
