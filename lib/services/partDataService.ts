@@ -1874,7 +1874,10 @@ async function fetchDigikeyCandidates(
       ),
     ),
     doParametric
-      ? getCategoryParametricFacets(keywords, categoryId!, currency, userId).catch((error) => {
+      // Empty keyword (category filter only) so the facet reflects the WHOLE category's
+      // available values, not just the source MPN's narrow result set (a keyword like the
+      // source value would collapse the facet to that one value).
+      ? getCategoryParametricFacets('', categoryId!, currency, userId).catch((error) => {
           console.warn('Digikey parametric discover failed:', error);
           return null;
         })
@@ -1887,11 +1890,17 @@ async function fetchDigikeyCandidates(
     const facet = findFacetForAttribute(parametricBand.attr, discover.facets, discover.products[0]);
     if (facet) {
       const { lo, hi } = parametricBand;
+      // A dense facet can hold far more in-band values than MAX_PARAMETRIC_VALUES (a Zener
+      // band spans dozens of oddball precision values like 4.66/4.68 V). Prioritize by
+      // ProductCount DESC before the cap so the most-stocked (i.e. standard E-series) values
+      // survive — a naive ascending slice would keep obscure low-end values and drop common
+      // neighbors like 5.6 V that are well within band.
       const inBandValueIds = facet.FilterValues
         .filter(fv => {
           const { numericValue } = extractNumericValue(fv.ValueName);
           return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;
         })
+        .sort((a, b) => (b.ProductCount ?? 0) - (a.ProductCount ?? 0))
         .slice(0, MAX_PARAMETRIC_VALUES)
         .map(fv => fv.ValueId);
       if (inBandValueIds.length) {
@@ -1903,7 +1912,7 @@ async function fetchDigikeyCandidates(
           // (returning unfiltered category results), those out-of-band parts are dropped here.
           const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
           parametricProducts = raw.filter(p => {
-            const param = p.Parameters?.find(x => x.ParameterText === facet.ParameterText);
+            const param = p.Parameters?.find(x => x.ParameterText === facet.ParameterName);
             if (!param) return false;
             const { numericValue } = extractNumericValue(param.ValueText);
             return typeof numericValue === 'number' && numericValue >= lo && numericValue <= hi;

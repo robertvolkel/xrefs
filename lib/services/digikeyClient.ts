@@ -81,10 +81,16 @@ export interface DigikeyFilterValue {
   ProductCount: number;
 }
 
-/** One parametric facet returned by a category-scoped search (Decision #238 Step 3). */
+/** One parametric facet returned by a category-scoped search (Decision #238 Step 3).
+ *  NOTE: facets name the parameter via `ParameterName` (the per-PRODUCT parameter uses
+ *  `ParameterText` — same string content, different field). Each facet also carries its
+ *  own `Category`, which is the reliable category key (the response product's nested
+ *  Category walks ChildCategories[0] blindly and can miss the leaf). */
 export interface DigikeyParametricFilter {
   ParameterId: number;
-  ParameterText: string;
+  ParameterName: string;
+  ParameterType?: string;
+  Category?: { Id: number; Value: string; ProductCount?: number | null };
   FilterValues: DigikeyFilterValue[];
 }
 

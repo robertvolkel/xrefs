@@ -1106,9 +1106,11 @@ function resolveParamMapCategory(categoryName: string, parameters: DigikeyParame
 
 /**
  * Find the parametric facet (Decision #238 Step 3) that maps to a target internal
- * `attributeId`, for the category of `sampleProduct`. Reuses the SAME forward param map
- * (`getParamMappings`) and virtual-category resolution as `mapDigikeyProductToAttributes`,
- * so facet ParameterText → attributeId resolution can't drift from per-product mapping.
+ * `attributeId`. Reuses the SAME forward param map (`getParamMappings`) and virtual-category
+ * resolution as `mapDigikeyProductToAttributes`, so facet → attributeId resolution can't
+ * drift from per-product mapping. Category is taken from each facet's own `Category.Value`
+ * (reliable), falling back to the sample product's deepest category. NOTE: facets name the
+ * parameter via `ParameterName` (the per-product field is `ParameterText`, same string).
  * Returns null when no facet maps (e.g. the attr has no Digikey param-map entry, or the
  * category exposes no such facet) — caller falls back to Atlas-only widening.
  */
@@ -1117,12 +1119,17 @@ export function findFacetForAttribute(
   facets: DigikeyParametricFilter[],
   sampleProduct: DigikeyProduct | undefined,
 ): DigikeyParametricFilter | null {
-  if (!sampleProduct || facets.length === 0) return null;
-  const categoryName = getDeepestCategoryName(sampleProduct.Category);
-  const paramMapCategory = resolveParamMapCategory(categoryName, sampleProduct.Parameters ?? []);
-  if (!hasCategoryMapping(paramMapCategory)) return null;
+  if (facets.length === 0) return null;
   for (const facet of facets) {
-    const mappings = getParamMappings(paramMapCategory, facet.ParameterText);
+    const categoryName = facet.Category?.Value
+      ?? (sampleProduct ? getDeepestCategoryName(sampleProduct.Category) : undefined);
+    if (!categoryName) continue;
+    // Apply the Schottky virtual-category nuance via the sample product's Technology param.
+    const paramMapCategory = sampleProduct
+      ? resolveParamMapCategory(categoryName, sampleProduct.Parameters ?? [])
+      : categoryName;
+    if (!hasCategoryMapping(paramMapCategory)) continue;
+    const mappings = getParamMappings(paramMapCategory, facet.ParameterName);
     if (mappings.some(m => m.attributeId === attributeId)) return facet;
   }
   return null;

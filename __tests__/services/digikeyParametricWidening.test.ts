@@ -18,7 +18,8 @@ function zenerProduct(): DigikeyProduct {
 
 const vzFacet: DigikeyParametricFilter = {
   ParameterId: 920,
-  ParameterText: 'Voltage - Zener (Nom) (Vz)',
+  ParameterName: 'Voltage - Zener (Nom) (Vz)',
+  Category: { Id: 287, Value: 'Single Zener Diodes' },
   FilterValues: [
     { ValueId: '4.3 V', ValueName: '4.3 V', ProductCount: 5 },
     { ValueId: '4.7 V', ValueName: '4.7 V', ProductCount: 40 },
@@ -31,29 +32,49 @@ const vzFacet: DigikeyParametricFilter = {
 
 const tolFacet: DigikeyParametricFilter = {
   ParameterId: 99,
-  ParameterText: 'Tolerance',
+  ParameterName: 'Tolerance',
+  Category: { Id: 287, Value: 'Single Zener Diodes' },
   FilterValues: [{ ValueId: '±5%', ValueName: '±5%', ProductCount: 100 }],
 };
 
 describe('findFacetForAttribute', () => {
-  it('matches the facet whose ParameterText maps to the target attributeId (via the forward param map)', () => {
+  it('matches the facet whose ParameterName maps to the target attributeId (via the forward param map)', () => {
     const facet = findFacetForAttribute('vz', [tolFacet, vzFacet], zenerProduct());
     expect(facet).not.toBeNull();
     expect(facet!.ParameterId).toBe(920);
+  });
+
+  it('resolves the category from the facet itself, so no sample product is required', () => {
+    expect(findFacetForAttribute('vz', [tolFacet, vzFacet], undefined)?.ParameterId).toBe(920);
   });
 
   it('returns null when no facet maps to the target attr (e.g. izt has no Digikey param-map entry)', () => {
     expect(findFacetForAttribute('izt', [tolFacet, vzFacet], zenerProduct())).toBeNull();
   });
 
-  it('returns null when there is no sample product or no facets', () => {
-    expect(findFacetForAttribute('vz', [vzFacet], undefined)).toBeNull();
+  it('returns null for an empty facet list', () => {
     expect(findFacetForAttribute('vz', [], zenerProduct())).toBeNull();
   });
 
-  it('returns null when the product category has no param-map coverage', () => {
-    const unknown = { Category: { CategoryId: 1, Name: 'Mystery Widgets' }, Parameters: [] } as unknown as DigikeyProduct;
-    expect(findFacetForAttribute('vz', [vzFacet], unknown)).toBeNull();
+  it("returns null when the facet's own category has no param-map coverage", () => {
+    const orphan: DigikeyParametricFilter = {
+      ParameterId: 1,
+      ParameterName: 'Voltage - Zener (Nom) (Vz)',
+      Category: { Id: 9, Value: 'Mystery Widgets' },
+      FilterValues: [{ ValueId: '5.1 V', ValueName: '5.1 V', ProductCount: 1 }],
+    };
+    expect(findFacetForAttribute('vz', [orphan], undefined)).toBeNull();
+  });
+
+  it('falls back to the sample product category when a facet omits its own Category', () => {
+    const noCat: DigikeyParametricFilter = {
+      ParameterId: 920,
+      ParameterName: 'Voltage - Zener (Nom) (Vz)',
+      FilterValues: [{ ValueId: '5.1 V', ValueName: '5.1 V', ProductCount: 1 }],
+    };
+    expect(findFacetForAttribute('vz', [noCat], zenerProduct())?.ParameterId).toBe(920);
+    // …and null when neither the facet nor the product yields a usable category
+    expect(findFacetForAttribute('vz', [noCat], undefined)).toBeNull();
   });
 });
 
