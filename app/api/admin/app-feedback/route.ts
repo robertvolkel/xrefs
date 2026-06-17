@@ -20,6 +20,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const page = parseInt(searchParams.get('page') ?? '0', 10);
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 100);
     const offset = page * limit;
+    // Admin-pinned feedback IDs (per-browser, sent by the client). Pinned rows
+    // are floated to the top of the activity sort BEFORE the page slice so a
+    // pinned item always surfaces on page 1 regardless of where it would
+    // otherwise sort.
+    const pinnedSet = new Set(
+      (searchParams.get('pinned_ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    );
 
     const supabase = await createClient();
 
@@ -131,6 +138,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       pagedRows = [...(fbRows ?? [])].sort((a, b) => {
         const aFid = a.id as string;
         const bFid = b.id as string;
+        // Pinned rows always sort first.
+        const aPinned = pinnedSet.has(aFid);
+        const bPinned = pinnedSet.has(bFid);
+        if (aPinned !== bPinned) return aPinned ? -1 : 1;
         const aAdminRead = a.admin_last_read_at as string | undefined;
         const bAdminRead = b.admin_last_read_at as string | undefined;
         const aLatestUser = latestUserAtByFeedback.get(aFid);

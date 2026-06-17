@@ -426,6 +426,7 @@ export async function getAdminAppFeedbackList(params?: {
   sortDir?: 'asc' | 'desc';
   page?: number;
   limit?: number;
+  pinnedIds?: string[];
 }): Promise<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts; needsAttentionCount: number }> {
   const searchParams = new URLSearchParams();
   if (params?.status) searchParams.set('status', params.status);
@@ -435,6 +436,7 @@ export async function getAdminAppFeedbackList(params?: {
   if (params?.sortDir) searchParams.set('sort_dir', params.sortDir);
   if (params?.page !== undefined) searchParams.set('page', String(params.page));
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  if (params?.pinnedIds && params.pinnedIds.length > 0) searchParams.set('pinned_ids', params.pinnedIds.join(','));
   const qs = searchParams.toString();
   return fetchApi<{ items: AppFeedbackListItem[]; total: number; statusCounts: AppFeedbackStatusCounts; needsAttentionCount: number }>(
     `${BASE}/admin/app-feedback${qs ? `?${qs}` : ''}`
