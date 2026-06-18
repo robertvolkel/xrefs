@@ -179,6 +179,8 @@ export default function AppShell() {
         onQuantitySubmit={appState.handleQuantitySubmit}
         activeAttributesTab={appState.activeAttributesTab}
         onAttributesTabChange={appState.setActiveAttributesTab}
+        spotQuantity={appState.spotQuantity}
+        onSpotQuantityChange={appState.setSpotQuantity}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}

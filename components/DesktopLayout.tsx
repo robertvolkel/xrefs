@@ -142,6 +142,10 @@ export interface DesktopLayoutProps {
   /** Lifted from DesktopLayout's local state so chat handlers can switch tabs. */
   activeAttributesTab?: AttributesTab;
   onAttributesTabChange?: (tab: AttributesTab) => void;
+  /** Shared spot-pricing quantity for the Commercial-tab best-price highlight.
+   *  One value across both the Source and Replacement panels. */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
 
   // Handlers — panels
   onManufacturerClick: (manufacturer: string) => void;
@@ -188,6 +192,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     knownMpns, onMpnClick,
     knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
+    spotQuantity, onSpotQuantityChange,
     acceptanceCriteria, onAcceptanceChange,
   } = props;
 
@@ -206,6 +211,11 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   }, [sourceAttributes?.part.mpn]);
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
+  // Shared spot quantity falls back to local state for any consumer not wiring
+  // the props (mirrors the localTab fallback above).
+  const [localSpotQty, setLocalSpotQty] = useState(1);
+  const effectiveSpotQty = spotQuantity ?? localSpotQty;
+  const setEffectiveSpotQty = onSpotQuantityChange ?? setLocalSpotQty;
 
   // Clicking a source-panel chip while comparing returns to the (now filtered)
   // recommendations list so the result is actually visible.
@@ -356,6 +366,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             onSelectXrefMfr={handleSelectXrefMfr}
             acceptanceCriteria={acceptanceCriteria}
             onAcceptanceChange={onAcceptanceChange}
+            spotQuantity={effectiveSpotQty}
+            onSpotQuantityChange={setEffectiveSpotQty}
           />
         </Box>
 
@@ -389,6 +401,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onTabChange={setAttributesTab}
               isLoadingReplacement={isLoadingComparison}
               replacementError={comparisonError}
+              spotQuantity={effectiveSpotQty}
+              onSpotQuantityChange={setEffectiveSpotQty}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel

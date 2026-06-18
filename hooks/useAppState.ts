@@ -55,6 +55,11 @@ interface AppState {
    *  DesktopLayout so chat-message handlers (e.g., Best Spot Price) can
    *  programmatically switch tabs after computing a result. */
   activeAttributesTab: AttributesTab;
+  /** Shared spot-pricing quantity driving BOTH the chat Best Spot Price flow
+   *  and the Commercial-tab best-price highlight/reorder. One value across the
+   *  Source and Replacement panels so the side-by-side comparison prices at the
+   *  same qty. Defaults to 1; reset to 1 on a new source part. */
+  spotQuantity: number;
   /** When the user's search query telegraphs intent (e.g., "lowest price for
    *  X"), we carry it through the part-confirmation step and auto-fire the
    *  matching action after attributes load — instead of presenting the
@@ -104,6 +109,7 @@ const initialState: AppState = {
   llmAvailable: null,
   isEnrichingFC: false,
   activeAttributesTab: 'overview',
+  spotQuantity: 1,
   pendingIntent: null,
   autoOpenMfr: null,
   isLoadingComparison: false,
@@ -238,6 +244,12 @@ export function useAppState() {
     setState((prev) => ({ ...prev, activeAttributesTab: tab }));
   }, []);
 
+  /** Shared spot-pricing quantity setter. Written by both the Commercial-tab
+   *  qty control and the chat Best Spot Price flow so the two stay in sync. */
+  const setSpotQuantity = useCallback((qty: number) => {
+    setState((prev) => (prev.spotQuantity === qty ? prev : { ...prev, spotQuantity: qty }));
+  }, []);
+
   /** AppShell calls this once it has consumed the autoOpenMfr signal —
    *  clears the field so the effect doesn't refire on subsequent renders. */
   const consumeAutoOpenMfr = useCallback(() => {
@@ -245,9 +257,13 @@ export function useAppState() {
   }, []);
 
   // Reset to overview whenever the source MPN changes — preserves the prior
-  // DesktopLayout-local behavior now that tab state lives here.
+  // DesktopLayout-local behavior now that tab state lives here. Also reset the
+  // shared spot quantity to 1 so a new source part starts fresh.
   useEffect(() => {
-    setState((prev) => (prev.activeAttributesTab === 'overview' ? prev : { ...prev, activeAttributesTab: 'overview' }));
+    setState((prev) => {
+      if (prev.activeAttributesTab === 'overview' && prev.spotQuantity === 1) return prev;
+      return { ...prev, activeAttributesTab: 'overview', spotQuantity: 1 };
+    });
   }, [state.sourcePart?.mpn]);
 
   // Reset to Overview when the user enters a form / replacement / comparison
@@ -1525,6 +1541,7 @@ export function useAppState() {
     // No user-message echo — the prompt collapses to a "Qty: N" pill instead.
     // LLM context still records the chosen qty via conversationRef.
     lockQuantityPrompt(messageId, quantity);
+    setSpotQuantity(quantity); // sync the Commercial-tab highlight to the chat qty
     conversationRef.current.push({
       role: 'user',
       content: `Quantity for best spot price: ${quantity}.`,
@@ -1532,7 +1549,7 @@ export function useAppState() {
     const quotes = state.sourceAttributes?.part.supplierQuotes;
     const result = computeBestPrice(quotes, quantity);
     renderBestPriceResult(result);
-  }, [lockQuantityPrompt, renderBestPriceResult, state.sourceAttributes]);
+  }, [lockQuantityPrompt, setSpotQuantity, renderBestPriceResult, state.sourceAttributes]);
 
   const handleChoiceSelect = useCallback(
     async (choice: ChoiceOption) => {
@@ -1588,6 +1605,7 @@ export function useAppState() {
         // distributor's minimum order qty, since the user's original request
         // was below every supplier's MOQ.
         markChoiceSelected(choice.id);
+        setSpotQuantity(choice.quantity); // sync the Commercial-tab highlight to the chat qty
         conversationRef.current.push({ role: 'user', content: `Price at qty ${choice.quantity}.` });
         const quotes = state.sourceAttributes?.part.supplierQuotes;
         renderBestPriceResult(computeBestPrice(quotes, choice.quantity));
@@ -1600,7 +1618,7 @@ export function useAppState() {
       conversationRef.current.push({ role: 'user', content: choice.label });
       await handleSearchWithLLM(choice.label);
     },
-    [addMessage, markChoiceSelected, state.searchResult, state.sourcePart, state.sourceAttributes, handleConfirmPart, handleFindReplacements, handleSearchWithLLM, renderBestPriceResult]
+    [addMessage, markChoiceSelected, setSpotQuantity, state.searchResult, state.sourcePart, state.sourceAttributes, handleConfirmPart, handleFindReplacements, handleSearchWithLLM, renderBestPriceResult]
   );
 
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {
@@ -1948,6 +1966,7 @@ export function useAppState() {
       llmAvailable: llmWasUsed ? true : null,
       isEnrichingFC: false,
       activeAttributesTab: 'overview',
+      spotQuantity: 1,
       pendingIntent: null,
       autoOpenMfr: null,
       isLoadingComparison: false,
@@ -2008,6 +2027,7 @@ export function useAppState() {
     clearChatFilterSilently,
     handleAcceptanceChange,
     setActiveAttributesTab,
+    setSpotQuantity,
     consumeAutoOpenMfr,
     getOrchestratorMessages,
     setConversationId,

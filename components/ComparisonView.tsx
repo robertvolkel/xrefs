@@ -46,6 +46,10 @@ interface ComparisonViewProps {
   /** True when the replacement-attributes fetch failed — distinguishes from
    *  "still loading" so we can show an error message instead of an indefinite skeleton. */
   replacementError?: boolean;
+  /** Shared spot-pricing quantity for the Commercial tab's best-price highlight.
+   *  Same value as the Source panel so both price at the same qty. */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
 }
 
 const DOT_GREEN = '#69F0AE';
@@ -125,6 +129,8 @@ export default function ComparisonView({
   onTabChange,
   isLoadingReplacement = false,
   replacementError = false,
+  spotQuantity = 1,
+  onSpotQuantityChange,
 }: ComparisonViewProps) {
   const { t } = useTranslation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -481,7 +487,7 @@ export default function ComparisonView({
             </Typography>
           </Box>
         ) : (
-          <CommercialContent part={replPart} t={t} />
+          <CommercialContent part={replPart} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} />
         )
       )}
 

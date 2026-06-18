@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -12,6 +12,8 @@ import {
   Stack,
   Link,
   Tooltip,
+  TextField,
+  Button,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
@@ -19,8 +21,72 @@ import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, derive
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
+import { computeBestPrice } from '@/lib/services/bestPriceCalculator';
 
 type T = TFunction<'translation', undefined>;
+
+/* ── Best-price highlight palette (matches manufacturer_certified green) ── */
+const BEST_PRICE_GREEN = '#69F0AE';
+const BEST_PRICE_GREEN_BG = 'rgba(105, 240, 174, 0.12)';
+
+/* ── Spot-quantity preset tiers, matching the chat Best Spot Price flow ── */
+const SPOT_QTY_PRESETS = [1, 10, 100, 1_000, 10_000, 100_000];
+const formatSpotPreset = (q: number): string => {
+  if (q >= 1_000_000) return `${q / 1_000_000}M`;
+  if (q >= 1_000) return `${q / 1_000}K`;
+  return String(q);
+};
+
+/* ── Always-editable quantity control for the Commercial tab header.
+ *  Unlike chat's QuantityPrompt (one-shot submit + lock), this stays live so
+ *  the user can re-price repeatedly. Commits valid positive integers only. ── */
+function QuantityInline({ value, onChange }: { value: number; onChange: (qty: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  // Keep the field in sync when the shared qty changes elsewhere (chat, the
+  // sibling panel) without clobbering an in-progress edit that already matches.
+  useEffect(() => { setDraft(String(value)); }, [value]);
+
+  const commit = (raw: string) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+      setDraft(String(value)); // revert invalid input
+      return;
+    }
+    if (n !== value) onChange(n);
+  };
+
+  return (
+    <Box sx={{ mb: 1.5 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
+        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', fontWeight: 600 }}>
+          Quantity
+        </Typography>
+        <TextField
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+          onBlur={() => commit(draft)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft); } }}
+          size="small"
+          inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', 'aria-label': 'Quantity', style: { padding: '2px 8px', fontSize: '0.75rem', width: 72 } }}
+        />
+      </Stack>
+      <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+        {SPOT_QTY_PRESETS.map((q) => (
+          <Button
+            key={q}
+            variant={q === value ? 'contained' : 'outlined'}
+            size="small"
+            color="inherit"
+            onClick={() => { if (q !== value) onChange(q); }}
+            sx={{ minWidth: 44, py: 0.1, px: 0.75, fontSize: '0.65rem', textTransform: 'none', lineHeight: 1.4 }}
+          >
+            {formatSpotPreset(q)}
+          </Button>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
 
 /* ── Pill toggle bar shared styles ── */
 export const pillGroupSx = {
@@ -500,18 +566,56 @@ export function formatPrice(price: number, currency?: string): string {
 }
 
 /* ── Supplier quote card ── */
-export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
+export function SupplierCard({
+  quote,
+  t,
+  mpn,
+  manufacturer,
+  isBestPrice = false,
+  highlightTierQty = null,
+  highlightCurrency = null,
+  bestLabel,
+}: {
+  quote: SupplierQuote;
+  t: T;
+  mpn?: string;
+  manufacturer?: string;
+  /** When true, crown this card as the best spot price (green border + tint + chip). */
+  isBestPrice?: boolean;
+  /** The price-break tier qty to highlight green inside this card's table. */
+  highlightTierQty?: number | null;
+  /** Currency of the winning tier — disambiguates rare mixed-currency suppliers. */
+  highlightCurrency?: string | null;
+  /** Header chip label for a crowned card (e.g. "Best @ qty 100" / "Min qty 250"). */
+  bestLabel?: string;
+}) {
   const supplierLabel = _SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
 
   return (
-    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 1 }}>
+    <Box
+      sx={{
+        border: isBestPrice ? 2 : 1,
+        borderColor: isBestPrice ? BEST_PRICE_GREEN : 'divider',
+        bgcolor: isBestPrice ? BEST_PRICE_GREEN_BG : 'transparent',
+        borderRadius: 1,
+        p: 1.5,
+        mb: 1,
+      }}
+    >
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.75 }}>
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <Typography variant="subtitle2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
             {supplierLabel}
           </Typography>
+          {isBestPrice && bestLabel && (
+            <Chip
+              label={bestLabel}
+              size="small"
+              sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: BEST_PRICE_GREEN, bgcolor: BEST_PRICE_GREEN_BG, border: `1px solid ${BEST_PRICE_GREEN}`, '& .MuiChip-label': { px: 0.6 } }}
+            />
+          )}
           {quote.authorized && (
             <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'success.main', fontWeight: 500 }}>Auth</Typography>
           )}
@@ -581,12 +685,19 @@ export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQ
             </TableRow>
           </TableHead>
           <TableBody>
-            {quote.priceBreaks.map((pb) => (
-              <TableRow key={pb.quantity}>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{pb.quantity.toLocaleString()}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
-              </TableRow>
-            ))}
+            {quote.priceBreaks.map((pb) => {
+              const isWinningRow =
+                isBestPrice &&
+                highlightTierQty != null &&
+                pb.quantity === highlightTierQty &&
+                (highlightCurrency == null || (pb.currency || '').toUpperCase() === highlightCurrency.toUpperCase());
+              return (
+                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: BEST_PRICE_GREEN_BG } : undefined}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? BEST_PRICE_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? BEST_PRICE_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
@@ -595,9 +706,28 @@ export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQ
 }
 
 /* ── Commercial tab content ── */
-export function CommercialContent({ part, t }: { part: Part; t: T }) {
+export function CommercialContent({
+  part,
+  t,
+  spotQuantity = 1,
+  onSpotQuantityChange,
+}: {
+  part: Part;
+  t: T;
+  /** Shared spot-pricing quantity. Drives the best-price crown + reorder. */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
+}) {
   const [showAll, setShowAll] = useState(false);
   const hasQuotes = part.supplierQuotes && part.supplierQuotes.length > 0;
+
+  // Compute the best spot price at the requested qty. Memoized; runs before the
+  // early return so hook order stays stable. Each panel crowns the best price
+  // for ITS OWN part at the shared qty.
+  const bestPrice = useMemo(
+    () => computeBestPrice(part.supplierQuotes, spotQuantity),
+    [part.supplierQuotes, spotQuantity],
+  );
 
   if (!hasQuotes) {
     return (
@@ -609,16 +739,56 @@ export function CommercialContent({ part, t }: { part: Part; t: T }) {
     );
   }
 
+  // Derive the winning supplier + tier from the compute result. A 'fallback'
+  // winner (qty below every MOQ) is still crowned but labeled "Min qty N".
+  const winner =
+    bestPrice.kind === 'match' ? bestPrice.top
+    : bestPrice.kind === 'fallback' ? bestPrice.minOption
+    : null;
+  const winnerSupplier = winner?.supplier ?? null;
+  const winnerTierQty = winner?.appliedTierQty ?? null;
+  const winnerCurrency = winner?.currency ?? null;
+  const bestLabel =
+    bestPrice.kind === 'match' ? `Best @ qty ${spotQuantity.toLocaleString()}`
+    : bestPrice.kind === 'fallback' ? `Min qty ${winner?.minOrderQty.toLocaleString()}`
+    : undefined;
+
   const quotes = part.supplierQuotes!;
+  // Reorder so the winning distributor is first (stable for the rest).
+  const ordered = winnerSupplier
+    ? [...quotes].sort((a, b) => {
+        const aWin = a.supplier === winnerSupplier ? 1 : 0;
+        const bWin = b.supplier === winnerSupplier ? 1 : 0;
+        return bWin - aWin;
+      })
+    : quotes;
+  // Crown only the FIRST quote matching the winner (after reorder this is index
+  // 0) so duplicate supplier names can't both light up green.
+  const winnerIndex = winnerSupplier ? ordered.findIndex((q) => q.supplier === winnerSupplier) : -1;
+
   const INITIAL_SHOW = 5;
-  const visibleQuotes = showAll ? quotes : quotes.slice(0, INITIAL_SHOW);
-  const hiddenCount = quotes.length - INITIAL_SHOW;
+  const visibleQuotes = showAll ? ordered : ordered.slice(0, INITIAL_SHOW);
+  const hiddenCount = ordered.length - INITIAL_SHOW;
 
   return (
     <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
-      {visibleQuotes.map((q, i) => (
-        <SupplierCard key={`${q.supplier}-${q.supplierPartNumber ?? i}`} quote={q} t={t} mpn={part.mpn} manufacturer={part.manufacturer} />
-      ))}
+      <QuantityInline value={spotQuantity} onChange={(q) => onSpotQuantityChange?.(q)} />
+      {visibleQuotes.map((q, i) => {
+        const isWinner = i === winnerIndex;
+        return (
+          <SupplierCard
+            key={`${q.supplier}-${q.supplierPartNumber ?? i}`}
+            quote={q}
+            t={t}
+            mpn={part.mpn}
+            manufacturer={part.manufacturer}
+            isBestPrice={isWinner}
+            highlightTierQty={isWinner ? winnerTierQty : null}
+            highlightCurrency={isWinner ? winnerCurrency : null}
+            bestLabel={isWinner ? bestLabel : undefined}
+          />
+        );
+      })}
       {!showAll && hiddenCount > 0 && (
         <Typography
           variant="body2"
