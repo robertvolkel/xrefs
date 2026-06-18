@@ -144,7 +144,7 @@ The `partCapabilities` object signals which downstream actions will productively
 | `replacements.mfrCertified` | Admin-uploaded manufacturer cross-references exist for this MPN |
 | `replacements.partsioCertified` | Parts.io has FFF or Functional Equivalent MPNs for this part |
 | `replacements.mouserSuggested` | Mouser SuggestedReplacement is populated (typically EOL parts) |
-| `mfrProfile` | A manufacturer profile is on file (Atlas-resolved or mock fallback) — `get_manufacturer_profile` / `/api/manufacturer-profile` will return content |
+| `mfrProfile` | An **Atlas** (Chinese MFR) profile with enriched content is on file — `get_manufacturer_profile` / `/api/manufacturer-profile` will return rich content. Western MFRs (and unenriched Atlas rows) report `false`; we don't offer profiles for them (Decision #166) |
 | `bestPrice` | At least one supplier has price-break data — clients can offer a best-price-at-quantity affordance |
 
 If all four `replacements.*` are `false`, calling `GET/POST /api/xref/{mpn}` will return zero or near-zero results. Clients should suppress any "find replacements" affordance in that case. Likewise, suppress any "show profile" affordance when `mfrProfile` is `false`, and any "best price" affordance when `bestPrice` is `false`.
