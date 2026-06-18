@@ -8280,3 +8280,18 @@ An allowlist (vs denylist) is deliberately conservative: a numeric attribute we 
 **Files.** `lib/services/llmOrchestrator.ts` (SYSTEM_PROMPT only).
 
 **Follow-up.** This block is now a 4th per-shape discipline; the BACKLOG "global system-prompt block" consolidation should fold it (with #166/#172/#173) into one referenced rule rather than leaving four standalone blocks — more pressing as a result. Note `chat()` runs on Haiku, where abstracted/consolidated discipline may be more fragile than on Sonnet/Opus (cf. BACKLOG #1236).
+
+## Decision #240 — Commercial-tab spot pricing goes stock-aware: insufficient-stock flag + in-stock-first ordering + crown-on-fulfillable (June 18, 2026)
+
+**Trigger.** On the single-part Commercial tab (the spot-pricing feature: a quantity control + a green "Best @ qty N" crown on the cheapest distributor), the crown and the card order ignored stock entirely. A distributor with the lowest unit price but **0 in stock** still wore the crown and sat at the top — a "best price" the user can't actually buy. The user asked for two things: (1) flag distributors whose stock can't cover the needed quantity, and (2) push them down so the top of the list is distributors that can fulfill the order, cheapest first.
+
+**Decision.** Make the Commercial tab stock-aware against the spot quantity (`qty`). Scoped to the tab's display logic only — the chat "Best Spot Price" flow (Decision #170) and `computeBestPrice` in `bestPriceCalculator.ts` are **unchanged**.
+
+**Changes** (all in [components/AttributesTabContent.tsx](../components/AttributesTabContent.tsx)):
+1. **Insufficient-stock highlight.** `SupplierCard` gained a `requiredQty` prop (default `1`). The In Stock cell tints light-red (`rgba(255,82,82,0.12)` pill + `#FF5252` value) when `quantityAvailable != null && quantityAvailable < requiredQty` — generalizes the prior `=== 0` check (at qty 1 it still flags exactly 0-stock, so the default-prop `SupplierBreakdownPopover` caller is unaffected). **Unknown stock (`null`) is never flagged** — we can't assert "less than" what we can't see.
+2. **In-stock-first ordering.** `CommercialContent` replaces the old winner-float-only sort with: crowned winner pinned first, then distributors that can fulfill the qty (`quantityAvailable >= qty`, cheapest unit price first), then those that can't (also cheapest first). The `isWinner`-first branch is **load-bearing** — it keeps the currency-filtered crown above any numerically-cheaper non-dominant-currency card the raw-number price sort would otherwise float up.
+3. **Crown on a fulfillable distributor.** The `bestPrice` memo now runs `computeBestPrice` over the **in-stock subset** (`quantityAvailable >= qty`), falling back to the full quote set only when nobody has enough stock (so a crown still appears). `winnerOriginalIndex` prefers the in-stock quote when the winning supplier name appears more than once, so the crown can't latch onto a same-named out-of-stock duplicate.
+
+**Known limitations (accepted, recorded).** Within-group price ordering is raw-number — no FX conversion — so cross-currency price ties are best-effort, the same limitation the crown already had. And because the tab crowns best-**in-stock** while the chat Best Spot Price flow reports overall-cheapest, the two can diverge when the cheapest distributor is out of stock; aligning the chat flow to be stock-aware was deliberately left out of scope.
+
+**No cache bump, no migration** — display/interaction only. Branch `feat/commercial-best-spot-price`.
