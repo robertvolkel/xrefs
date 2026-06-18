@@ -15,7 +15,10 @@ export async function GET(
     if (authError) return authError;
 
     const { mpn } = await params;
-    const decodedMpn = decodeURIComponent(mpn);
+    // Next.js already URL-decodes route params; a second decodeURIComponent
+    // throws on MPNs with a literal '%' (e.g. "1%" tolerance crosses), so use
+    // the param as-is.
+    const decodedMpn = mpn;
     const prefs = await fetchUserPreferences(user!.id);
 
     const result = await getRecommendations(decodedMpn, undefined, undefined, undefined, undefined, prefs, user!.id);
@@ -55,7 +58,10 @@ export async function POST(
     if (authError2) return authError2;
 
     const { mpn } = await params;
-    const decodedMpn = decodeURIComponent(mpn);
+    // Next.js already URL-decodes route params; a second decodeURIComponent
+    // throws on MPNs with a literal '%' (e.g. "1%" tolerance crosses), so use
+    // the param as-is.
+    const decodedMpn = mpn;
     const prefs = await fetchUserPreferences(user!.id);
     const { overrides, applicationContext, sourceAttributes, replacementPriorities, skipPartsioEnrichment, acceptanceCriteria } = await request.json() as {
       overrides?: Record<string, string>;
