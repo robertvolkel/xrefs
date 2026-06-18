@@ -22,6 +22,7 @@ import { detectFilterIntent, detectClearFilterIntent } from '@/lib/services/filt
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { formatSupplierName } from '@/lib/constants/suppliers';
+import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import {
   searchParts,
   getPartAttributes,
@@ -257,13 +258,15 @@ export function useAppState() {
   }, []);
 
   // Reset to overview whenever the source MPN changes — preserves the prior
-  // DesktopLayout-local behavior now that tab state lives here. Also reset the
-  // shared spot quantity to 1 so a new source part starts fresh.
+  // DesktopLayout-local behavior now that tab state lives here.
   useEffect(() => {
-    setState((prev) => {
-      if (prev.activeAttributesTab === 'overview' && prev.spotQuantity === 1) return prev;
-      return { ...prev, activeAttributesTab: 'overview', spotQuantity: 1 };
-    });
+    setState((prev) => (prev.activeAttributesTab === 'overview' ? prev : { ...prev, activeAttributesTab: 'overview' }));
+  }, [state.sourcePart?.mpn]);
+
+  // Reset the shared spot quantity to 1 on a new source part so pricing starts
+  // fresh. Separate from the tab reset above — unrelated concern, same trigger.
+  useEffect(() => {
+    setState((prev) => (prev.spotQuantity === 1 ? prev : { ...prev, spotQuantity: 1 }));
   }, [state.sourcePart?.mpn]);
 
   // Reset to Overview when the user enters a form / replacement / comparison
@@ -852,7 +855,7 @@ export function useAppState() {
         addMessage(
           'assistant',
           `${partLabel}What quantity? Pick a common tier or type a custom number.`,
-          { type: 'quantity-prompt', presets: [1, 10, 100, 1_000, 10_000, 100_000], status: 'pending' },
+          { type: 'quantity-prompt', presets: [...QUANTITY_PRESETS], status: 'pending' },
         );
         setStatus('');
         return true;
@@ -1595,7 +1598,7 @@ export function useAppState() {
         addMessage(
           'assistant',
           `What quantity? Pick a common tier or type a custom number.`,
-          { type: 'quantity-prompt', presets: [1, 10, 100, 1_000, 10_000, 100_000], status: 'pending' },
+          { type: 'quantity-prompt', presets: [...QUANTITY_PRESETS], status: 'pending' },
         );
         return;
       }

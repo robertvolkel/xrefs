@@ -13,7 +13,6 @@ import {
   Link,
   Tooltip,
   TextField,
-  Button,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
@@ -21,21 +20,21 @@ import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, derive
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
-import { computeBestPrice } from '@/lib/services/bestPriceCalculator';
+import { computeBestPrice, formatPrice } from '@/lib/services/bestPriceCalculator';
+import { QUANTITY_PRESETS, parseQuantity } from '@/lib/constants/quantityPresets';
+import QuantityPresetButtons from './QuantityPresetButtons';
 
 type T = TFunction<'translation', undefined>;
 
-/* ── Best-price highlight palette (matches manufacturer_certified green) ── */
-const BEST_PRICE_GREEN = '#69F0AE';
-const BEST_PRICE_GREEN_BG = 'rgba(105, 240, 174, 0.12)';
+// Re-export the canonical price formatter (single implementation lives in
+// bestPriceCalculator so the Commercial tab and the chat best-price prose format
+// the same number identically). Existing importers (e.g. RecommendationCard)
+// keep importing it from here.
+export { formatPrice };
 
-/* ── Spot-quantity preset tiers, matching the chat Best Spot Price flow ── */
-const SPOT_QTY_PRESETS = [1, 10, 100, 1_000, 10_000, 100_000];
-const formatSpotPreset = (q: number): string => {
-  if (q >= 1_000_000) return `${q / 1_000_000}M`;
-  if (q >= 1_000) return `${q / 1_000}K`;
-  return String(q);
-};
+/* ── "Good/certified" green, shared with the manufacturer_certified chip below ── */
+const SUCCESS_GREEN = '#69F0AE';
+const SUCCESS_GREEN_BG = 'rgba(105, 240, 174, 0.12)';
 
 /* ── Always-editable quantity control for the Commercial tab header.
  *  Unlike chat's QuantityPrompt (one-shot submit + lock), this stays live so
@@ -52,8 +51,8 @@ function QuantityInline({ value, onChange }: { value: number; onChange: (qty: nu
   }, [value]);
 
   const commit = (raw: string) => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    const n = parseQuantity(raw);
+    if (n === null) {
       setDraft(String(value)); // revert invalid input
       return;
     }
@@ -76,20 +75,7 @@ function QuantityInline({ value, onChange }: { value: number; onChange: (qty: nu
           inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', 'aria-label': 'Quantity', style: { padding: '2px 8px', fontSize: '0.75rem', width: 72 } }}
         />
       </Stack>
-      <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        {SPOT_QTY_PRESETS.map((q) => (
-          <Button
-            key={q}
-            variant={q === value ? 'contained' : 'outlined'}
-            size="small"
-            color="inherit"
-            onClick={() => { if (q !== value) onChange(q); }}
-            sx={{ minWidth: 44, py: 0.1, px: 0.75, fontSize: '0.65rem', textTransform: 'none', lineHeight: 1.4 }}
-          >
-            {formatSpotPreset(q)}
-          </Button>
-        ))}
-      </Stack>
+      <QuantityPresetButtons compact presets={QUANTITY_PRESETS} activeValue={value} onSelect={onChange} />
     </Box>
   );
 }
@@ -217,7 +203,7 @@ function DescriptionRow({ description }: { description?: string }) {
 /* ── Overview tab helpers ── */
 
 const CATEGORY_CHIP_COLORS: Record<'manufacturer_certified' | 'third_party_certified' | 'logic_driven', { bg: string; border: string; fg: string }> = {
-  manufacturer_certified: { bg: 'rgba(105, 240, 174, 0.12)', border: '#69F0AE', fg: '#69F0AE' },
+  manufacturer_certified: { bg: SUCCESS_GREEN_BG, border: SUCCESS_GREEN, fg: SUCCESS_GREEN },
   third_party_certified: { bg: 'rgba(255, 213, 79, 0.12)', border: '#FFD54F', fg: '#FFD54F' },
   logic_driven: { bg: 'rgba(79, 195, 247, 0.12)', border: '#4FC3F7', fg: '#4FC3F7' },
 };
@@ -561,16 +547,6 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
 export { SUPPLIER_DISPLAY, formatSupplierName } from '@/lib/constants/suppliers';
 import { SUPPLIER_DISPLAY as _SUPPLIER_DISPLAY } from '@/lib/constants/suppliers';
 
-/** Format price with currency symbol */
-export function formatPrice(price: number, currency?: string): string {
-  const cur = currency ?? 'USD';
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(price);
-  } catch {
-    return `${cur} ${price.toFixed(4)}`;
-  }
-}
-
 /* ── Supplier quote card ── */
 export function SupplierCard({
   quote,
@@ -602,8 +578,8 @@ export function SupplierCard({
     <Box
       sx={{
         border: isBestPrice ? 2 : 1,
-        borderColor: isBestPrice ? BEST_PRICE_GREEN : 'divider',
-        bgcolor: isBestPrice ? BEST_PRICE_GREEN_BG : 'transparent',
+        borderColor: isBestPrice ? SUCCESS_GREEN : 'divider',
+        bgcolor: isBestPrice ? SUCCESS_GREEN_BG : 'transparent',
         borderRadius: 1,
         p: 1.5,
         mb: 1,
@@ -619,7 +595,7 @@ export function SupplierCard({
             <Chip
               label={bestLabel}
               size="small"
-              sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: BEST_PRICE_GREEN, bgcolor: BEST_PRICE_GREEN_BG, border: `1px solid ${BEST_PRICE_GREEN}`, '& .MuiChip-label': { px: 0.6 } }}
+              sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: SUCCESS_GREEN, bgcolor: SUCCESS_GREEN_BG, border: `1px solid ${SUCCESS_GREEN}`, '& .MuiChip-label': { px: 0.6 } }}
             />
           )}
           {quote.authorized && (
@@ -698,9 +674,9 @@ export function SupplierCard({
                 pb.quantity === highlightTierQty &&
                 (highlightCurrency == null || (pb.currency || '').toUpperCase() === highlightCurrency.toUpperCase());
               return (
-                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: BEST_PRICE_GREEN_BG } : undefined}>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? BEST_PRICE_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? BEST_PRICE_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
+                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: SUCCESS_GREEN_BG } : undefined}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
                 </TableRow>
               );
             })}
