@@ -553,6 +553,7 @@ export function SupplierCard({
   t,
   mpn,
   manufacturer,
+  requiredQty = 1,
   isBestPrice = false,
   highlightTierQty = null,
   highlightCurrency = null,
@@ -562,6 +563,8 @@ export function SupplierCard({
   t: T;
   mpn?: string;
   manufacturer?: string;
+  /** Spot quantity the user needs. Stock below this is flagged red. */
+  requiredQty?: number;
   /** When true, crown this card as the best spot price (green border + tint + chip). */
   isBestPrice?: boolean;
   /** The price-break tier qty to highlight green inside this card's table. */
@@ -573,6 +576,9 @@ export function SupplierCard({
 }) {
   const supplierLabel = _SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
+  // Flag when the distributor's available stock can't cover the requested qty.
+  // Unknown stock (null) isn't flagged — we can't assert "less than".
+  const isInsufficientStock = quote.quantityAvailable != null && quote.quantityAvailable < requiredQty;
 
   return (
     <Box
@@ -643,9 +649,15 @@ export function SupplierCard({
           </Box>
         )}
         {quote.quantityAvailable != null && (
-          <Box>
+          <Box
+            sx={
+              isInsufficientStock
+                ? { bgcolor: 'rgba(255, 82, 82, 0.12)', borderRadius: 0.75, px: 0.75, mx: -0.75 }
+                : undefined
+            }
+          >
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.stock')}</Typography>
-            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{quote.quantityAvailable.toLocaleString()}</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, color: isInsufficientStock ? '#FF5252' : undefined }}>{quote.quantityAvailable.toLocaleString()}</Typography>
           </Box>
         )}
         {quote.packageType && (
@@ -713,11 +725,16 @@ export function CommercialContent({
 
   // Compute the best spot price at the requested qty. Memoized; runs before the
   // early return so hook order stays stable. Each panel crowns the best price
-  // for ITS OWN part at the shared qty.
-  const bestPrice = useMemo(
-    () => computeBestPrice(part.supplierQuotes, qty),
-    [part.supplierQuotes, qty],
-  );
+  // for ITS OWN part at the shared qty. We crown the cheapest distributor that
+  // can actually FULFILL the qty (sufficient stock) — a "best price" you can't
+  // buy isn't useful. Only when nobody has enough stock do we fall back to the
+  // overall cheapest so a crown still appears.
+  const bestPrice = useMemo(() => {
+    const all = part.supplierQuotes;
+    if (!all || all.length === 0) return computeBestPrice(all, qty);
+    const inStock = all.filter((q) => q.quantityAvailable != null && q.quantityAvailable >= qty);
+    return computeBestPrice(inStock.length > 0 ? inStock : all, qty);
+  }, [part.supplierQuotes, qty]);
 
   if (!hasQuotes) {
     return (
@@ -744,20 +761,45 @@ export function CommercialContent({
     : undefined;
 
   const quotes = part.supplierQuotes!;
+  // A distributor can fulfill the order when its available stock covers the
+  // requested qty. Unknown stock (null) counts as NOT sufficient — we sink it
+  // rather than promise stock we can't see.
+  const hasSufficientStock = (q: SupplierQuote) => q.quantityAvailable != null && q.quantityAvailable >= qty;
+  // Effective per-unit price at the requested qty (largest tier ≤ qty, else the
+  // cheapest available tier). Ordering only — no FX, so cross-currency price
+  // ties are best-effort, same limitation as the crown.
+  const effectivePriceAtQty = (q: SupplierQuote): number => {
+    const breaks = (q.priceBreaks ?? []).slice().sort((a, b) => a.quantity - b.quantity);
+    if (breaks.length === 0) return Number.POSITIVE_INFINITY;
+    const eligible = breaks.filter((b) => b.quantity <= qty);
+    return (eligible[eligible.length - 1] ?? breaks[0]).unitPrice;
+  };
   // Tag each quote with a STABLE key (from its original index, so the key
-  // doesn't shift under the winner-first reorder and cards don't remount on a
-  // qty change) and whether it is the crowned winner. Crown by original-array
-  // identity — the FIRST quote matching the winning supplier — so a same-named
-  // duplicate quote can't steal the crown from the actual cheapest one.
-  const winnerOriginalIndex = winnerSupplier ? quotes.findIndex((q) => q.supplier === winnerSupplier) : -1;
+  // doesn't shift under reorder and cards don't remount on a qty change) and
+  // whether it is the crowned winner. Crown by original-array identity, but
+  // prefer an in-stock quote when the winning supplier appears more than once,
+  // so the crown can't latch onto a same-named out-of-stock duplicate.
+  const winnerOriginalIndex = winnerSupplier
+    ? (() => {
+        const inStockIdx = quotes.findIndex((q) => q.supplier === winnerSupplier && hasSufficientStock(q));
+        return inStockIdx >= 0 ? inStockIdx : quotes.findIndex((q) => q.supplier === winnerSupplier);
+      })()
+    : -1;
   const tagged = quotes.map((q, i) => ({
     q,
     key: `${q.supplier}-${q.supplierPartNumber ?? `i${i}`}`,
     isWinner: i === winnerOriginalIndex,
   }));
-  const ordered = winnerSupplier
-    ? [...tagged].sort((a, b) => (b.isWinner ? 1 : 0) - (a.isWinner ? 1 : 0))
-    : tagged;
+  // Order: distributors that can fulfill the qty first (cheapest first), then
+  // those that can't (also cheapest first). The crowned winner stays pinned to
+  // the very top.
+  const ordered = [...tagged].sort((a, b) => {
+    if (a.isWinner !== b.isWinner) return a.isWinner ? -1 : 1;
+    const stockRankA = hasSufficientStock(a.q) ? 0 : 1;
+    const stockRankB = hasSufficientStock(b.q) ? 0 : 1;
+    if (stockRankA !== stockRankB) return stockRankA - stockRankB;
+    return effectivePriceAtQty(a.q) - effectivePriceAtQty(b.q);
+  });
 
   const INITIAL_SHOW = 5;
   const visibleQuotes = showAll ? ordered : ordered.slice(0, INITIAL_SHOW);
@@ -773,6 +815,7 @@ export function CommercialContent({
           t={t}
           mpn={part.mpn}
           manufacturer={part.manufacturer}
+          requiredQty={qty}
           isBestPrice={isWinner}
           highlightTierQty={isWinner ? winnerTierQty : null}
           highlightCurrency={isWinner ? winnerCurrency : null}
