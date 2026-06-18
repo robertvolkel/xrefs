@@ -120,6 +120,7 @@ export default function AppShell() {
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
         isEnrichingFC={appState.isEnrichingFC}
+        autoAecOnly={appState.autoAecOnly}
         onSearch={appState.handleSearch}
         onConfirm={appState.handleConfirmPart}
         onReject={appState.handleRejectPart}
@@ -181,6 +182,7 @@ export default function AppShell() {
         onAttributesTabChange={appState.setActiveAttributesTab}
         spotQuantity={appState.spotQuantity}
         onSpotQuantityChange={appState.setSpotQuantity}
+        autoAecOnly={appState.autoAecOnly}
         onSelectRecommendation={appState.handleSelectRecommendation}
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}

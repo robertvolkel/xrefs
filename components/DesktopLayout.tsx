@@ -146,6 +146,9 @@ export interface DesktopLayoutProps {
    *  One value across both the Source and Replacement panels. */
   spotQuantity?: number;
   onSpotQuantityChange?: (qty: number) => void;
+  /** Auto-check the "AEC-qualified only" Replacements filter when automotive
+   *  AEC context is active (Decision #221). */
+  autoAecOnly?: boolean;
 
   // Handlers — panels
   onManufacturerClick: (manufacturer: string) => void;
@@ -193,6 +196,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
     spotQuantity, onSpotQuantityChange,
+    autoAecOnly,
     acceptanceCriteria, onAcceptanceChange,
   } = props;
 
@@ -412,6 +416,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onCategoryFilterChange={setXrefCategory}
               mfrFilter={xrefMfr}
               onMfrFilterChange={setXrefMfr}
+              autoAecOnly={autoAecOnly}
             />
           ) : showRightPanel ? (
             <Box

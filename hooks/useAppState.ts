@@ -23,6 +23,7 @@ import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
+import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
 import {
   searchParts,
   getPartAttributes,
@@ -2014,6 +2015,9 @@ export function useAppState() {
 
   return {
     ...state,
+    // True when the active context signals automotive AEC intent — drives the
+    // auto-applied "AEC-qualified only" Replacements filter (Decision #221).
+    autoAecOnly: isAutomotiveAecContext(state.applicationContext?.familyId, state.applicationContext?.answers),
     handleSearch,
     handleConfirmPart,
     handleRejectPart,
