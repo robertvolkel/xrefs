@@ -1,6 +1,6 @@
 'use client';
 import { useMemo } from 'react';
-import { Card, CardActionArea, CardContent, Typography, Stack, Chip } from '@mui/material';
+import { Card, CardActionArea, CardContent, Typography, Stack, Chip, Tooltip, Box } from '@mui/material';
 import { PartSummary } from '@/lib/types';
 
 interface PartOptionsSelectorProps {
@@ -89,9 +89,13 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 )}
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {part.description?.trim()
-                  ? <>{part.manufacturer} &mdash; {part.description}</>
-                  : part.manufacturer}
+                {part.manufacturer}
+                {part.dataSource === 'atlas' && (
+                  <Tooltip title="Chinese manufacturer" arrow>
+                    <Box component="span" sx={{ ml: 0.5, fontSize: 11, verticalAlign: 'middle', lineHeight: 1 }}>&#127464;&#127475;</Box>
+                  </Tooltip>
+                )}
+                {part.description?.trim() ? <> &mdash; {part.description}</> : null}
               </Typography>
               {distinguishing.get(part.mpn) && (
                 <Typography

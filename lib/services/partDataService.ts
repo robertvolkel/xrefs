@@ -539,6 +539,16 @@ export async function searchParts(
     }
   }
 
+  // Surface Active parts first regardless of source. The merge above already
+  // runs in source priority order (Digikey/western → Atlas → parts.io), and
+  // Array.sort is stable, so a sort keyed only on active-vs-not preserves that
+  // order within each group — yielding: western-active, atlas-active, … then
+  // all non-active (Obsolete/Discontinued/NRND/Last Time Buy) at the end.
+  // Missing status is treated as orderable (top) so unknown-status parts aren't
+  // buried below obsolete ones.
+  const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
+  mergedMatches.sort((a, b) => orderableRank(a) - orderableRank(b));
+
   if (mergedMatches.length > 0) {
     // Populate distributor counts from L2 cache (no live FC calls). Cache is
     // filled as a side effect of any prior getAttributes()/getRecommendations()

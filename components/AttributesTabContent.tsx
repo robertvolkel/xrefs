@@ -577,9 +577,8 @@ export function SupplierCard({
   return (
     <Box
       sx={{
-        border: isBestPrice ? 2 : 1,
-        borderColor: isBestPrice ? SUCCESS_GREEN : 'divider',
-        bgcolor: isBestPrice ? SUCCESS_GREEN_BG : 'transparent',
+        border: 1,
+        borderColor: 'divider',
         borderRadius: 1,
         p: 1.5,
         mb: 1,
