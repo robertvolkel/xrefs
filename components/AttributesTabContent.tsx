@@ -42,9 +42,14 @@ const formatSpotPreset = (q: number): string => {
  *  the user can re-price repeatedly. Commits valid positive integers only. ── */
 function QuantityInline({ value, onChange }: { value: number; onChange: (qty: number) => void }) {
   const [draft, setDraft] = useState(String(value));
-  // Keep the field in sync when the shared qty changes elsewhere (chat, the
-  // sibling panel) without clobbering an in-progress edit that already matches.
-  useEffect(() => { setDraft(String(value)); }, [value]);
+  // Sync the field to an external value change (preset click, chat, sibling
+  // panel) — but if the field is focused (the user is mid-edit), the updater
+  // returns the current draft unchanged so their in-progress edit isn't wiped.
+  // The setDraft call stays unconditional; the focus check lives in the updater.
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    setDraft((d) => (focusedRef.current ? d : String(value)));
+  }, [value]);
 
   const commit = (raw: string) => {
     const n = Number(raw);
@@ -64,7 +69,8 @@ function QuantityInline({ value, onChange }: { value: number; onChange: (qty: nu
         <TextField
           value={draft}
           onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
-          onBlur={() => commit(draft)}
+          onFocus={() => { focusedRef.current = true; }}
+          onBlur={() => { focusedRef.current = false; commit(draft); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft); } }}
           size="small"
           inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', 'aria-label': 'Quantity', style: { padding: '2px 8px', fontSize: '0.75rem', width: 72 } }}
@@ -721,12 +727,21 @@ export function CommercialContent({
   const [showAll, setShowAll] = useState(false);
   const hasQuotes = part.supplierQuotes && part.supplierQuotes.length > 0;
 
+  // Own the quantity self-contained so the control works everywhere this tab
+  // renders (mobile, parts-list modal), not just where a parent wires the
+  // shared state. When `onSpotQuantityChange` is provided we're controlled —
+  // the shared `spotQuantity` drives the crown and chat-sync; otherwise we fall
+  // back to local state.
+  const [localQty, setLocalQty] = useState(1);
+  const qty = onSpotQuantityChange ? spotQuantity : localQty;
+  const setQty = onSpotQuantityChange ?? setLocalQty;
+
   // Compute the best spot price at the requested qty. Memoized; runs before the
   // early return so hook order stays stable. Each panel crowns the best price
   // for ITS OWN part at the shared qty.
   const bestPrice = useMemo(
-    () => computeBestPrice(part.supplierQuotes, spotQuantity),
-    [part.supplierQuotes, spotQuantity],
+    () => computeBestPrice(part.supplierQuotes, qty),
+    [part.supplierQuotes, qty],
   );
 
   if (!hasQuotes) {
@@ -749,22 +764,25 @@ export function CommercialContent({
   const winnerTierQty = winner?.appliedTierQty ?? null;
   const winnerCurrency = winner?.currency ?? null;
   const bestLabel =
-    bestPrice.kind === 'match' ? `Best @ qty ${spotQuantity.toLocaleString()}`
+    bestPrice.kind === 'match' ? `Best @ qty ${qty.toLocaleString()}`
     : bestPrice.kind === 'fallback' ? `Min qty ${winner?.minOrderQty.toLocaleString()}`
     : undefined;
 
   const quotes = part.supplierQuotes!;
-  // Reorder so the winning distributor is first (stable for the rest).
+  // Tag each quote with a STABLE key (from its original index, so the key
+  // doesn't shift under the winner-first reorder and cards don't remount on a
+  // qty change) and whether it is the crowned winner. Crown by original-array
+  // identity — the FIRST quote matching the winning supplier — so a same-named
+  // duplicate quote can't steal the crown from the actual cheapest one.
+  const winnerOriginalIndex = winnerSupplier ? quotes.findIndex((q) => q.supplier === winnerSupplier) : -1;
+  const tagged = quotes.map((q, i) => ({
+    q,
+    key: `${q.supplier}-${q.supplierPartNumber ?? `i${i}`}`,
+    isWinner: i === winnerOriginalIndex,
+  }));
   const ordered = winnerSupplier
-    ? [...quotes].sort((a, b) => {
-        const aWin = a.supplier === winnerSupplier ? 1 : 0;
-        const bWin = b.supplier === winnerSupplier ? 1 : 0;
-        return bWin - aWin;
-      })
-    : quotes;
-  // Crown only the FIRST quote matching the winner (after reorder this is index
-  // 0) so duplicate supplier names can't both light up green.
-  const winnerIndex = winnerSupplier ? ordered.findIndex((q) => q.supplier === winnerSupplier) : -1;
+    ? [...tagged].sort((a, b) => (b.isWinner ? 1 : 0) - (a.isWinner ? 1 : 0))
+    : tagged;
 
   const INITIAL_SHOW = 5;
   const visibleQuotes = showAll ? ordered : ordered.slice(0, INITIAL_SHOW);
@@ -772,23 +790,20 @@ export function CommercialContent({
 
   return (
     <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
-      <QuantityInline value={spotQuantity} onChange={(q) => onSpotQuantityChange?.(q)} />
-      {visibleQuotes.map((q, i) => {
-        const isWinner = i === winnerIndex;
-        return (
-          <SupplierCard
-            key={`${q.supplier}-${q.supplierPartNumber ?? i}`}
-            quote={q}
-            t={t}
-            mpn={part.mpn}
-            manufacturer={part.manufacturer}
-            isBestPrice={isWinner}
-            highlightTierQty={isWinner ? winnerTierQty : null}
-            highlightCurrency={isWinner ? winnerCurrency : null}
-            bestLabel={isWinner ? bestLabel : undefined}
-          />
-        );
-      })}
+      <QuantityInline value={qty} onChange={(q) => setQty(q)} />
+      {visibleQuotes.map(({ q, key, isWinner }) => (
+        <SupplierCard
+          key={key}
+          quote={q}
+          t={t}
+          mpn={part.mpn}
+          manufacturer={part.manufacturer}
+          isBestPrice={isWinner}
+          highlightTierQty={isWinner ? winnerTierQty : null}
+          highlightCurrency={isWinner ? winnerCurrency : null}
+          bestLabel={isWinner ? bestLabel : undefined}
+        />
+      ))}
       {!showAll && hiddenCount > 0 && (
         <Typography
           variant="body2"

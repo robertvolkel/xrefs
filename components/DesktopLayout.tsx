@@ -211,11 +211,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   }, [sourceAttributes?.part.mpn]);
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
-  // Shared spot quantity falls back to local state for any consumer not wiring
-  // the props (mirrors the localTab fallback above).
-  const [localSpotQty, setLocalSpotQty] = useState(1);
-  const effectiveSpotQty = spotQuantity ?? localSpotQty;
-  const setEffectiveSpotQty = onSpotQuantityChange ?? setLocalSpotQty;
+  // Spot quantity is forwarded straight through to the panels — CommercialContent
+  // owns a local fallback when these are absent, so the control works even when a
+  // consumer (mobile / parts-list modal) doesn't wire the shared state.
 
   // Clicking a source-panel chip while comparing returns to the (now filtered)
   // recommendations list so the result is actually visible.
@@ -366,8 +364,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             onSelectXrefMfr={handleSelectXrefMfr}
             acceptanceCriteria={acceptanceCriteria}
             onAcceptanceChange={onAcceptanceChange}
-            spotQuantity={effectiveSpotQty}
-            onSpotQuantityChange={setEffectiveSpotQty}
+            spotQuantity={spotQuantity}
+            onSpotQuantityChange={onSpotQuantityChange}
           />
         </Box>
 
@@ -401,8 +399,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onTabChange={setAttributesTab}
               isLoadingReplacement={isLoadingComparison}
               replacementError={comparisonError}
-              spotQuantity={effectiveSpotQty}
-              onSpotQuantityChange={setEffectiveSpotQty}
+              spotQuantity={spotQuantity}
+              onSpotQuantityChange={onSpotQuantityChange}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel
