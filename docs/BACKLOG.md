@@ -2419,6 +2419,28 @@ Full plan: `~/.claude/plans/i-am-more-concerned-flickering-mccarthy.md`.
 
 ---
 
+## Triage "Generate N" button — count + cost decoupled from visible-rows filter (P3)
+
+**Symptom.** Under AI: ACCEPT the button says "Generate 500" while the table shows 0 visible rows; under AI: ALL the same button says "Generate 100". Reads as backwards — "ALL" should be ≥ a subset filter like "ACCEPT". User-reported June 19, 2026.
+
+**Root cause.** Two independent design choices interact poorly:
+1. [components/admin/AtlasDictTriagePanel.tsx:40-41](../components/admin/AtlasDictTriagePanel.tsx#L40-L41) — `DEFAULT_PAGE_SIZE = 100`, `AI_FILTER_PAGE_SIZE = 500`. The server page size bumps to 500 whenever any AI filter (Accept/Defer/None) is active, because the AI verdict filter runs client-side against localStorage-cached verdicts and needs a bigger pool to filter against.
+2. [components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx:1146-1149](../components/admin/atlasIngest/GlobalUnmappedParamsTable.tsx#L1146-L1149) — `pendingSuggestionRows` counts loaded rows (`rows` prop) that lack a cached verdict, NOT visible rows after the AI filter.
+
+Net: button label = "rows loaded that need a verdict" — not "rows that will be visible after Generate". When LS cache is empty and AI: ACCEPT is selected, the user is asked to spend ~$2.50 to surface maybe 50-150 actual accepts; the rest of the 500 generations sink invisible into the cache under the current filter (they're recoverable by toggling to ALL).
+
+**Fix options (pick one or compose):**
+1. **Clarify the label.** Change "Generate 500" → "Generate 500 (≈X% expected accepts)" or "Generate 500 loaded · Y will pass current filter (estimated)". Cheap; doesn't change behavior.
+2. **Make the page-size bump ALL-mode-aware OR scope-aware.** Page size 100 across all AI filters; rely on Load More to grow the pool when the client filter eats most rows. Removes the surprise but hurts UX when LS cache is warm under a restrictive filter (more clicks).
+3. **Switch AI filter to server-side.** Send `aiVerdictFilter` to the API + server consults the AI suggestion store (currently this is client-LS-only, so the server doesn't know — would need a server-side cache of suggestions). Bigger change; cleaner UX.
+4. **Disable bulk Generate under restrictive AI filters.** Force per-row generation when AI ≠ ALL. Aggressive but prevents the "$2.50 for 50 results" surprise.
+
+Recommendation: ship option 1 as a quick fix (15 min), then evaluate whether 2 or 3 is worth the larger investment. The per-row Generate already works fine for incremental spend control, so the bulk Generate "footgun" is the real wart.
+
+**Out of scope.** Doesn't affect ACCEPTED rows in the database (those are persisted in `atlas_dictionary_overrides`). Pure UX/cost-clarity concern.
+
+---
+
 ## ~~Atlas C7 digital isolators dict expansion~~ (DONE — CHIPANALOG shipped June 15, 2026)
 
 **Resolution.** ~40 C7 dict entries added covering CHIPANALOG's digital isolator + RS-485/CAN transceiver vocabulary + cross-MFR Chinese (TDSEMIC/HXYMOS/ElecSuper) + BORN/Union English transceiver fields + SIT bilingual compound paramNames. Re-ingested CHIPANALOG (348 products): 288 updates, +288 new attrs landed in JSONB across 9 new canonical attributeIds (`supply_current_per_channel` × 181, `esd_other_pins` × 36, `esd_hbm_cdm_kv` × 20, `logic_supply_voltage` × 20, `independent_logic_supply` × 19, `integrated_ldo` × 14, etc.). C7-touching Triage rows dropped 471 → 432 (−39); total Triage queue 24,909 → 24,870.
