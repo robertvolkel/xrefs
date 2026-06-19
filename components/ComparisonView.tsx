@@ -50,6 +50,9 @@ interface ComparisonViewProps {
    *  Same value as the Source panel so both price at the same qty. */
   spotQuantity?: number;
   onSpotQuantityChange?: (qty: number) => void;
+  /** True while FindChips enrichment may still deliver quotes — lets the
+   *  Commercial tab show a loading skeleton instead of "no commercial data". */
+  isEnrichingFC?: boolean;
 }
 
 const DOT_GREEN = '#69F0AE';
@@ -131,6 +134,7 @@ export default function ComparisonView({
   replacementError = false,
   spotQuantity = 1,
   onSpotQuantityChange,
+  isEnrichingFC = false,
 }: ComparisonViewProps) {
   const { t } = useTranslation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -487,7 +491,7 @@ export default function ComparisonView({
             </Typography>
           </Box>
         ) : (
-          <CommercialContent part={replPart} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} />
+          <CommercialContent part={replPart} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} isEnriching={isEnrichingFC} />
         )
       )}
 

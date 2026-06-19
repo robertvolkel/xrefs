@@ -17,8 +17,8 @@ import {
   AcceptanceCriterion,
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
-import { detectQueryIntent, PendingIntent } from '@/lib/services/intentDetector';
-import { detectFilterIntent, detectClearFilterIntent } from '@/lib/services/filterIntentDetector';
+import { detectQueryIntent, extractQuantity, extractBestPriceQuantity, PendingIntent } from '@/lib/services/intentDetector';
+import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from '@/lib/services/filterIntentDetector';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { formatSupplierName } from '@/lib/constants/suppliers';
@@ -251,6 +251,103 @@ export function useAppState() {
   const setSpotQuantity = useCallback((qty: number) => {
     setState((prev) => (prev.spotQuantity === qty ? prev : { ...prev, spotQuantity: qty }));
   }, []);
+
+  /** Render a best-price computation as a chat message + open the Commercial
+   *  tab. Used by the quantity-prompt submission path, the "price at minimum"
+   *  fallback Yes-button, and the natural-language qty paths (dispatchIntent /
+   *  handleSearch). Pure UI side-effect, no LLM round-trip. Defined high (next
+   *  to setSpotQuantity) so the earlier dispatch/search handlers can call it via
+   *  priceAtQuantity without a temporal-dead-zone reference. */
+  const renderBestPriceResult = useCallback((result: BestPriceResult) => {
+    if (result.kind === 'none') {
+      addMessage(
+        'assistant',
+        result.reason === 'no-quotes'
+          ? `No supplier quotes are available for this part right now.`
+          : `Couldn't compute a price at qty ${result.requestedQty}.`,
+      );
+      return;
+    }
+
+    if (result.kind === 'fallback') {
+      const opt = result.minOption;
+      const price = formatPrice(opt.unitPrice, opt.currency);
+      addMessage(
+        'assistant',
+        `Lowest available is qty **${opt.minOrderQty}** from **${formatSupplierName(opt.supplier)}** at **${price}** each. Want me to price that instead?`,
+        {
+          type: 'choices',
+          choices: [
+            {
+              id: `price_at_${opt.minOrderQty}`,
+              label: `Yes — price at qty ${opt.minOrderQty}`,
+              action: 'best_price_at_qty',
+              quantity: opt.minOrderQty,
+            },
+          ],
+        },
+      );
+      // Switch to Commercial so the user sees the full quote table.
+      setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
+      return;
+    }
+
+    // Match — numbered list with the top option in bold + per-option totals.
+    // Single-option case skips the list and uses a one-line headline since
+    // numbering "1." against zero alternatives reads oddly.
+    const ranked = [result.top, ...result.others];
+    const qtyLabel = result.requestedQty.toLocaleString();
+    const lines: string[] = [];
+
+    if (ranked.length === 1) {
+      const opt = ranked[0];
+      const unit = formatPrice(opt.unitPrice, opt.currency);
+      const total = formatPrice(opt.totalPrice, opt.currency);
+      lines.push(`At qty **${qtyLabel}**, best spot price is **${formatSupplierName(opt.supplier)}: ${unit}/each** (total ${total}).`);
+    } else {
+      lines.push(`At qty **${qtyLabel}**, best spot prices:`, '');
+      ranked.forEach((opt, i) => {
+        const unit = formatPrice(opt.unitPrice, opt.currency);
+        const total = formatPrice(opt.totalPrice, opt.currency);
+        const body = `${formatSupplierName(opt.supplier)}: ${unit}/each (total ${total})`;
+        lines.push(i === 0 ? `${i + 1}. **${body}**` : `${i + 1}. ${body}`);
+      });
+    }
+
+    // Higher-MOQ alternates — distributors that stock the part but require a
+    // bigger order than the user asked for. Surfacing them lets the user
+    // decide whether bumping quantity unlocks a meaningfully better deal.
+    if (result.overMinimum.length > 0) {
+      lines.push('');
+      lines.push(`Also available at higher MOQ:`);
+      for (const opt of result.overMinimum) {
+        const unit = formatPrice(opt.unitPrice, opt.currency);
+        lines.push(`- ${formatSupplierName(opt.supplier)}: ${unit}/each at qty ${opt.minOrderQty.toLocaleString()}+`);
+      }
+    }
+
+    // Tab pointer only when we've truly truncated — i.e., the panel has
+    // suppliers we didn't enumerate in either the ranked list or the MOQ
+    // footnote. Avoids a redundant pointer when chat already covered everything.
+    const surfacedCount = ranked.length + result.overMinimum.length;
+    if (result.totalSuppliers > surfacedCount) {
+      lines.push('');
+      lines.push(`See the **Commercial** tab for the full quote list.`);
+    }
+    addMessage('assistant', lines.join('\n'));
+    setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
+  }, [addMessage]);
+
+  /** Shared spot-price action: sync the Commercial-tab qty + render the result
+   *  at that qty. Callers pass `sourceAttrsOverride` when they hold fresher
+   *  attributes than committed state (auto-fire / dispatch paths) to dodge the
+   *  state stale-closure. The natural-language and chip/choice paths all funnel
+   *  through here so the chat and the panel can never disagree on quantity. */
+  const priceAtQuantity = useCallback((quantity: number, sourceAttrsOverride?: PartAttributes) => {
+    setSpotQuantity(quantity); // sync the Commercial-tab highlight to the chat qty
+    const quotes = (sourceAttrsOverride ?? state.sourceAttributes)?.part.supplierQuotes;
+    renderBestPriceResult(computeBestPrice(quotes, quantity));
+  }, [setSpotQuantity, renderBestPriceResult, state.sourceAttributes]);
 
   /** AppShell calls this once it has consumed the autoOpenMfr signal —
    *  clears the field so the effect doesn't refire on subsequent renders. */
@@ -836,6 +933,7 @@ export function useAppState() {
       mpn: string,
       sourceAttrs: PartAttributes,
       mode: 'fresh' | 'followup' = 'fresh',
+      quantity?: number,
     ): Promise<boolean> => {
       const caps = sourceAttrs.partCapabilities;
       const partLabel = mode === 'fresh' ? `Got it — **${mpn}** loaded. ` : '';
@@ -853,6 +951,15 @@ export function useAppState() {
           phase: 'awaiting-action' as AppPhase,
           sourceAttributes: sourceAttrs,
         }));
+        // Quantity stated in the message ("price for 100", "1 unit") — skip the
+        // prompt and price directly, syncing the Commercial tab. Pass sourceAttrs
+        // so the compute uses fresh quotes (committed state lags a render here).
+        if (quantity != null) {
+          if (mode === 'fresh') addMessage('assistant', `Got it — **${mpn}** loaded.`);
+          priceAtQuantity(quantity, sourceAttrs);
+          setStatus('');
+          return true;
+        }
         addMessage(
           'assistant',
           `${partLabel}What quantity? Pick a common tier or type a custom number.`,
@@ -911,7 +1018,7 @@ export function useAppState() {
 
       return false;
     },
-    [addMessage, setStatus, handleFindReplacements],
+    [addMessage, setStatus, handleFindReplacements, priceAtQuantity],
   );
 
   /** Consume `pendingIntent` after part attributes load (initial-search path). */
@@ -929,7 +1036,11 @@ export function useAppState() {
       if (intent === 'find_replacements' && stashedQuery) {
         pendingPostRecsFilterRef.current = stashedQuery;
       }
-      return dispatchIntent(intent, mpn, sourceAttrs, 'fresh');
+      // Carry a bundled quantity ("price for 100 of X") through to the spot-price
+      // flow so confirmation goes straight to the priced result, not the prompt.
+      const qty =
+        intent === 'best_price' && stashedQuery ? extractBestPriceQuantity(stashedQuery) ?? undefined : undefined;
+      return dispatchIntent(intent, mpn, sourceAttrs, 'fresh', qty);
     },
     [state.pendingIntent, dispatchIntent],
   );
@@ -1323,6 +1434,7 @@ export function useAppState() {
       queryRef.current = query;
       loggedRef.current = false;
       const intent = detectQueryIntent(query);
+      const qty = extractQuantity(query);
       const sourceAttrs = sourceAttributesRef.current;
       const sourcePart = state.sourcePart;
       const currentRecs = allRecsRef.current;
@@ -1365,13 +1477,55 @@ export function useAppState() {
         }
         addMessage('user', query);
         conversationRef.current.push({ role: 'user', content: query });
-        const dispatched = await dispatchIntent(intent, sourcePart.mpn, sourceAttrs, 'followup');
+        // "price for 100" / "cost of 50 units" — carry the stated qty so the
+        // spot-price flow prices it directly instead of re-prompting.
+        const dispatched = await dispatchIntent(
+          intent,
+          sourcePart.mpn,
+          sourceAttrs,
+          'followup',
+          // Permissive parse on the price path — "price for just 100" should
+          // price at 100, not re-prompt. Strict `qty` is for the no-intent branch.
+          intent === 'best_price' ? extractBestPriceQuantity(query) ?? undefined : undefined,
+        );
         if (dispatched) return;
         // Capability missing — dispatchIntent has already shown a one-line note.
         // Clear the stash so a stale predicate doesn't re-fire on the next recs load.
         pendingPostRecsFilterRef.current = null;
         // Fall through to LLM so it can engage with the user's question (e.g.,
         // explain why coverage is missing, suggest related actions).
+      }
+
+      // Bare-quantity restatement ("I will need 100 units", "make it 50", "100")
+      // with no other intent. In the single-part view a quantity can only mean
+      // spot pricing, so re-price at it and sync the Commercial tab. Gated on a
+      // loaded part with pricing; otherwise fall through to the LLM.
+      if (!intent && qty != null && sourceAttrs && sourcePart && sourceAttrs.partCapabilities?.bestPrice) {
+        addMessage('user', query);
+        conversationRef.current.push({ role: 'user', content: query });
+        priceAtQuantity(qty, sourceAttrs);
+        return;
+      }
+
+      // Pre-recs origin-filter request: a part is loaded but no cross-references
+      // have run yet, and the user asks for region-filtered alternatives
+      // ("recommend Chinese MFRs only", "any Western options"). These carry no
+      // replacement keyword, so detectQueryIntent misses them and they'd fall to
+      // the LLM — which then speculates about availability before any candidate
+      // exists (forbidden by the pre-recs replacement-coverage discipline). Run
+      // cross-references and stash the query so the origin filter applies once
+      // recs land (same post-recs mechanism as a bundled find_replacements,
+      // Decision #172). If recs already exist, the filter shortcut above handled
+      // it, so this only fires on a cold panel.
+      if (!intent && sourceAttrs && sourcePart && currentRecs.length === 0 && detectOriginIntent(query)) {
+        pendingPostRecsFilterRef.current = query;
+        addMessage('user', query);
+        conversationRef.current.push({ role: 'user', content: query });
+        const dispatched = await dispatchIntent('find_replacements', sourcePart.mpn, sourceAttrs, 'followup');
+        if (dispatched) return;
+        // No replacement coverage — dispatchIntent already said so. Clear the
+        // stash so it can't bleed into a later recs load; fall through to the LLM.
+        pendingPostRecsFilterRef.current = null;
       }
 
       // Pattern-detect user intent so the post-confirmation flow can skip the
@@ -1387,7 +1541,7 @@ export function useAppState() {
         await handleSearchWithLLM(query);
       }
     },
-    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, handleSearchWithLLM, handleSearchDeterministic]
+    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, handleSearchWithLLM, handleSearchDeterministic, priceAtQuantity]
   );
 
   const handleConfirmPart = useCallback(
@@ -1458,102 +1612,16 @@ export function useAppState() {
     });
   }, []);
 
-  /** Render a best-price computation as a chat message + open the Commercial
-   *  tab. Used by both the quantity-prompt submission path and the "price at
-   *  minimum" fallback Yes-button. Pure UI side-effect, no LLM round-trip. */
-  const renderBestPriceResult = useCallback((result: BestPriceResult) => {
-    if (result.kind === 'none') {
-      addMessage(
-        'assistant',
-        result.reason === 'no-quotes'
-          ? `No supplier quotes are available for this part right now.`
-          : `Couldn't compute a price at qty ${result.requestedQty}.`,
-      );
-      return;
-    }
-
-    if (result.kind === 'fallback') {
-      const opt = result.minOption;
-      const price = formatPrice(opt.unitPrice, opt.currency);
-      addMessage(
-        'assistant',
-        `Lowest available is qty **${opt.minOrderQty}** from **${formatSupplierName(opt.supplier)}** at **${price}** each. Want me to price that instead?`,
-        {
-          type: 'choices',
-          choices: [
-            {
-              id: `price_at_${opt.minOrderQty}`,
-              label: `Yes — price at qty ${opt.minOrderQty}`,
-              action: 'best_price_at_qty',
-              quantity: opt.minOrderQty,
-            },
-          ],
-        },
-      );
-      // Switch to Commercial so the user sees the full quote table.
-      setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
-      return;
-    }
-
-    // Match — numbered list with the top option in bold + per-option totals.
-    // Single-option case skips the list and uses a one-line headline since
-    // numbering "1." against zero alternatives reads oddly.
-    const ranked = [result.top, ...result.others];
-    const qtyLabel = result.requestedQty.toLocaleString();
-    const lines: string[] = [];
-
-    if (ranked.length === 1) {
-      const opt = ranked[0];
-      const unit = formatPrice(opt.unitPrice, opt.currency);
-      const total = formatPrice(opt.totalPrice, opt.currency);
-      lines.push(`At qty **${qtyLabel}**, best spot price is **${formatSupplierName(opt.supplier)}: ${unit}/each** (total ${total}).`);
-    } else {
-      lines.push(`At qty **${qtyLabel}**, best spot prices:`, '');
-      ranked.forEach((opt, i) => {
-        const unit = formatPrice(opt.unitPrice, opt.currency);
-        const total = formatPrice(opt.totalPrice, opt.currency);
-        const body = `${formatSupplierName(opt.supplier)}: ${unit}/each (total ${total})`;
-        lines.push(i === 0 ? `${i + 1}. **${body}**` : `${i + 1}. ${body}`);
-      });
-    }
-
-    // Higher-MOQ alternates — distributors that stock the part but require a
-    // bigger order than the user asked for. Surfacing them lets the user
-    // decide whether bumping quantity unlocks a meaningfully better deal.
-    if (result.overMinimum.length > 0) {
-      lines.push('');
-      lines.push(`Also available at higher MOQ:`);
-      for (const opt of result.overMinimum) {
-        const unit = formatPrice(opt.unitPrice, opt.currency);
-        lines.push(`- ${formatSupplierName(opt.supplier)}: ${unit}/each at qty ${opt.minOrderQty.toLocaleString()}+`);
-      }
-    }
-
-    // Tab pointer only when we've truly truncated — i.e., the panel has
-    // suppliers we didn't enumerate in either the ranked list or the MOQ
-    // footnote. Avoids a redundant pointer when chat already covered everything.
-    const surfacedCount = ranked.length + result.overMinimum.length;
-    if (result.totalSuppliers > surfacedCount) {
-      lines.push('');
-      lines.push(`See the **Commercial** tab for the full quote list.`);
-    }
-    addMessage('assistant', lines.join('\n'));
-    setState((prev) => ({ ...prev, activeAttributesTab: 'commercial' }));
-  }, [addMessage]);
-
   const handleQuantitySubmit = useCallback((messageId: string, quantity: number) => {
     // No user-message echo — the prompt collapses to a "Qty: N" pill instead.
     // LLM context still records the chosen qty via conversationRef.
     lockQuantityPrompt(messageId, quantity);
-    setSpotQuantity(quantity); // sync the Commercial-tab highlight to the chat qty
     conversationRef.current.push({
       role: 'user',
       content: `Quantity for best spot price: ${quantity}.`,
     });
-    const quotes = state.sourceAttributes?.part.supplierQuotes;
-    const result = computeBestPrice(quotes, quantity);
-    renderBestPriceResult(result);
-  }, [lockQuantityPrompt, setSpotQuantity, renderBestPriceResult, state.sourceAttributes]);
+    priceAtQuantity(quantity);
+  }, [lockQuantityPrompt, priceAtQuantity]);
 
   const handleChoiceSelect = useCallback(
     async (choice: ChoiceOption) => {
@@ -1609,10 +1677,8 @@ export function useAppState() {
         // distributor's minimum order qty, since the user's original request
         // was below every supplier's MOQ.
         markChoiceSelected(choice.id);
-        setSpotQuantity(choice.quantity); // sync the Commercial-tab highlight to the chat qty
         conversationRef.current.push({ role: 'user', content: `Price at qty ${choice.quantity}.` });
-        const quotes = state.sourceAttributes?.part.supplierQuotes;
-        renderBestPriceResult(computeBestPrice(quotes, choice.quantity));
+        priceAtQuantity(choice.quantity);
         return;
       }
 
@@ -1622,7 +1688,7 @@ export function useAppState() {
       conversationRef.current.push({ role: 'user', content: choice.label });
       await handleSearchWithLLM(choice.label);
     },
-    [addMessage, markChoiceSelected, setSpotQuantity, state.searchResult, state.sourcePart, state.sourceAttributes, handleConfirmPart, handleFindReplacements, handleSearchWithLLM, renderBestPriceResult]
+    [addMessage, markChoiceSelected, priceAtQuantity, state.searchResult, state.sourcePart, handleConfirmPart, handleFindReplacements, handleSearchWithLLM]
   );
 
   const handleSelectRecommendation = useCallback(async (rec: XrefRecommendation) => {

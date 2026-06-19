@@ -405,6 +405,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               replacementError={comparisonError}
               spotQuantity={spotQuantity}
               onSpotQuantityChange={onSpotQuantityChange}
+              isEnrichingFC={isEnrichingFC}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel

@@ -1,5 +1,5 @@
 'use client';
-import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, Stack, Box } from '@mui/material';
+import { Card, CardActionArea, CardContent, Chip, Divider, Tooltip, Typography, Stack, Box, Skeleton } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarOutlineIcon from '@mui/icons-material/StarOutline';
 import { XrefRecommendation, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
@@ -152,13 +152,25 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                 const totalStock = quotes.reduce((sum, q) => sum + (q.quantityAvailable ?? 0), 0);
 
                 if (distributorCount === 0) {
+                  // While FC enrichment is in flight, show an animated shimmer in
+                  // place of the price/stock rows so the empty state reads as
+                  // "loading" rather than "broken / no data". Two short lines
+                  // stand in for the Price-Range + Total-Stock rows below.
+                  if (isEnrichingFC) {
+                    return (
+                      <Box sx={{ mt: 0.5 }} aria-label="Loading pricing and stock">
+                        <Skeleton variant="text" width="65%" height={16} />
+                        <Skeleton variant="text" width="40%" height={16} />
+                      </Box>
+                    );
+                  }
                   return (
                     <Typography
                       variant="body2"
-                      sx={{ mt: 0.5, fontSize: '0.72rem', color: 'text.disabled', fontStyle: isEnrichingFC ? 'italic' : 'normal' }}
+                      sx={{ mt: 0.5, fontSize: '0.72rem', color: 'text.disabled' }}
                       noWrap
                     >
-                      {isEnrichingFC ? 'Loading pricing…' : 'No distributor data'}
+                      No distributor data
                     </Typography>
                   );
                 }

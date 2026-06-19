@@ -13,6 +13,7 @@ import {
   Link,
   Tooltip,
   TextField,
+  Skeleton,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
@@ -704,12 +705,16 @@ export function CommercialContent({
   t,
   spotQuantity = 1,
   onSpotQuantityChange,
+  isEnriching = false,
 }: {
   part: Part;
   t: T;
   /** Shared spot-pricing quantity. Drives the best-price crown + reorder. */
   spotQuantity?: number;
   onSpotQuantityChange?: (qty: number) => void;
+  /** True while FindChips enrichment may still deliver quotes — show a loading
+   *  skeleton instead of the "no commercial data" empty state. */
+  isEnriching?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
   const hasQuotes = part.supplierQuotes && part.supplierQuotes.length > 0;
@@ -737,6 +742,25 @@ export function CommercialContent({
   }, [part.supplierQuotes, qty]);
 
   if (!hasQuotes) {
+    // Distinguish "still loading pricing" from "genuinely no data". Inline
+    // skeleton (not the AttributesPanel CommercialSkeleton — importing it here
+    // would create an AttributesPanel ↔ AttributesTabContent cycle).
+    if (isEnriching) {
+      return (
+        <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }} aria-label="Loading pricing and stock">
+          {[0, 1].map((i) => (
+            <Box key={i} sx={{ mb: 1.5, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                <Skeleton variant="text" width={120} height={18} />
+                <Skeleton variant="text" width={60} height={18} />
+              </Stack>
+              <Skeleton variant="text" width="40%" height={14} />
+              <Skeleton variant="text" width="55%" height={14} />
+            </Box>
+          ))}
+        </Box>
+      );
+    }
     return (
       <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}>
