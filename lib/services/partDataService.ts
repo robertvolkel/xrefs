@@ -19,6 +19,7 @@ import {
 } from './digikeyMapper';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
+import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
 import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupported } from '../logicTables';
 import { findReplacements } from './matchingEngine';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
@@ -538,6 +539,16 @@ export async function searchParts(
       }
     }
   }
+
+  // Surface Active parts first regardless of source. The merge above already
+  // runs in source priority order (Digikey/western → Atlas → parts.io), and
+  // Array.sort is stable, so a sort keyed only on active-vs-not preserves that
+  // order within each group — yielding: western-active, atlas-active, … then
+  // all non-active (Obsolete/Discontinued/NRND/Last Time Buy) at the end.
+  // Missing status is treated as orderable (top) so unknown-status parts aren't
+  // buried below obsolete ones.
+  const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
+  mergedMatches.sort((a, b) => orderableRank(a) - orderableRank(b));
 
   if (mergedMatches.length > 0) {
     // Populate distributor counts from L2 cache (no live FC calls). Cache is
@@ -1565,8 +1576,14 @@ export async function getRecommendations(
 
     // Step 3a: Automotive AEC enforcement (table-driven, see AUTOMOTIVE_AEC_ENFORCEMENT)
     // Covers every family with an automotive context question that escalates an AEC rule.
+    // NOT bypassed for certified crosses — automotive AEC-Q qualification is a
+    // qualification gate, orthogonal to functional equivalence: an Accuris/MFR
+    // "certified" cross means form/fit/function equivalent, NOT automotive-qualified
+    // (e.g. a military JAN part is a functional 2N2222 cross but not AEC-Q101). Same
+    // principle as the qualification-domain gate above, which also runs around the
+    // bypass so certified crosses can't route around the qualification requirement.
     if (hasAutomotiveAecEnforcement(familyId)) {
-      withCertifiedBypass((r, s) => filterAutomotiveAecMismatches(r, s, applicationContext, familyId));
+      recs = filterAutomotiveAecMismatches(recs, scoringSourceAttrs, applicationContext, familyId);
     }
     // Step 3b: C2 switching regulators — topology/architecture BLOCKING identity gates
     if (familyId === 'C2') withCertifiedBypass(filterSwitchingRegulatorMismatches);
@@ -4154,48 +4171,10 @@ function filterOptocouplerMismatches(
 // Replaces per-family copy-paste filters from Decisions #211 / #219.
 // To add a family: add a row here. No new code, no new switch entry.
 
-type AutomotiveAecEntry = {
-  familyId: string;
-  questionId: string;
-  answerValue: string;
-  attributeId: string;
-  attributeName: string;
-};
-
-const AUTOMOTIVE_AEC_ENFORCEMENT: readonly AutomotiveAecEntry[] = [
-  { familyId: 'B5', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  { familyId: 'B6', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  { familyId: 'B7', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  // B8 Thyristors: sub-type context Q1 (SCR/TRIAC/DIAC) suppresses sub-type-
-  // specific rules via `not_applicable` effects but does NOT touch aec_q101 —
-  // automotive qualification applies uniformly across all three sub-types.
-  { familyId: 'B8', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  { familyId: 'B9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  { familyId: 'C9', questionId: 'automotive',                answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
-  { familyId: 'C10', questionId: 'automotive',               answerValue: 'yes', attributeId: 'aec_q100', attributeName: 'AEC-Q100 (Automotive Qualification)' },
-  // D1 Crystals use a combined "extended temp / automotive" question — both
-  // conditions land on the same answer ('yes') and both require AEC-Q200.
-  { familyId: 'D1', questionId: 'extended_temp_automotive',  answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
-  { familyId: 'D2', questionId: 'automotive_aec_q200',       answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
-  // E1 Optocouplers — AEC-Q101 (LED + phototransistor pair = discrete semis).
-  // The AEC wrap runs ALONGSIDE the existing filterOptocouplerMismatches
-  // (output_transistor_type + channel_count gates) — independent, both
-  // bypass for certified crosses.
-  { familyId: 'E1', questionId: 'automotive_aec_q101',       answerValue: 'yes', attributeId: 'aec_q101', attributeName: 'AEC-Q101 (Automotive Qualification)' },
-  // F1 EMRs — AEC-Q200 (electromechanical/passive). Same alongside relationship
-  // with the existing filterRelayMismatches (contact_form + coil_voltage gates).
-  { familyId: 'F1', questionId: 'automotive_aec_q200',       answerValue: 'yes', attributeId: 'aec_q200', attributeName: 'AEC-Q200 (Automotive Qualification)' },
-] as const;
-
-/** Exported for tests + Decision #220 introspection. */
-export function getAutomotiveAecEnforcementTable(): readonly AutomotiveAecEntry[] {
-  return AUTOMOTIVE_AEC_ENFORCEMENT;
-}
-
-/** Returns true iff at least one table entry is registered for this familyId. */
-export function hasAutomotiveAecEnforcement(familyId: string): boolean {
-  return AUTOMOTIVE_AEC_ENFORCEMENT.some(e => e.familyId === familyId);
-}
+// The AUTOMOTIVE_AEC_ENFORCEMENT table + helpers now live in the client-safe
+// `automotiveAecEnforcement` module (imported above) so the UI can consume them.
+// Re-exported here for existing importers (tests, Decision #220 introspection).
+export { getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement };
 
 // ── Context-driven source-attribute overrides ─────────────────────────
 //

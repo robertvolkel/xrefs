@@ -1,4 +1,4 @@
-import { detectFilterIntent, detectClearFilterIntent } from '@/lib/services/filterIntentDetector';
+import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from '@/lib/services/filterIntentDetector';
 import type { XrefRecommendation } from '@/lib/types';
 
 const rec = (
@@ -206,6 +206,37 @@ describe('detectFilterIntent — origin (Chinese / Western)', () => {
     const r = detectFilterIntent('show only Chinese Murata', recsWithOrigin);
     expect(r?.filterInput.mfr_origin_filter).toBe('atlas');
     expect(r?.filterInput.manufacturer_filter).toBeUndefined();
+  });
+});
+
+describe('detectOriginIntent — recs-independent (used pre-recs)', () => {
+  // The exported origin detector is pure query regex, so the pre-recs path can
+  // recognize "recommend Chinese MFRs only" and run cross-references with the
+  // filter bundled, before any candidates exist.
+  it.each([
+    ['Can you recommend Chinese MFRs only?', 'atlas'],
+    ['Chinese recommendations', 'atlas'],
+    ['any Chinese alternatives', 'atlas'],
+    ['made in China options', 'atlas'],
+  ])('"%s" -> atlas', (q) => {
+    expect(detectOriginIntent(q)?.filterInput.mfr_origin_filter).toBe('atlas');
+  });
+
+  it.each([
+    'recommend Western MFRs only',
+    'non-Chinese options',
+    'American or European alternatives',
+  ])('"%s" -> western', (q) => {
+    expect(detectOriginIntent(q)?.filterInput.mfr_origin_filter).toBe('western');
+  });
+
+  it.each([
+    'what is the price for 100',
+    'show me replacements',
+    'tell me about this part',
+    '',
+  ])('returns null for: "%s"', (q) => {
+    expect(detectOriginIntent(q)).toBeNull();
   });
 });
 

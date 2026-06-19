@@ -55,6 +55,10 @@ interface AttributesPanelProps {
    *  eligible Specs rows — only wired for the source panel. */
   acceptanceCriteria?: AcceptanceCriteria;
   onAcceptanceChange?: (attributeId: string, criterion: AcceptanceCriterion | null) => void;
+  /** Shared spot-pricing quantity for the Commercial tab's best-price highlight.
+   *  Defaults to 1 when not wired (e.g. modal-chat reuse). */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
 }
 
 /** Maximum ± band offered by the range slider. */
@@ -292,7 +296,7 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -656,7 +660,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
         loading ? (
           <CommercialSkeleton />
         ) : attributes ? (
-          <CommercialContent part={attributes.part} t={t} />
+          <CommercialContent part={attributes.part} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} />
         ) : null
       )}
     </Box>

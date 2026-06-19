@@ -102,8 +102,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *  v17: parts.io candidate lifecycle status normalized via mapPartsioStatus
  *       (raw "Transferred"/"Acquired"/empty → 'Active'), changing the stored
  *       status value AND the Active-first display sort (Decision #232). Cached
- *       v16 recs carry the old raw status + pre-Active-first order. */
-export const RECS_CACHE_SCHEMA_VERSION = 'v17';
+ *       v16 recs carry the old raw status + pre-Active-first order.
+ *  v18: automotive AEC enforcement (filterAutomotiveAecMismatches) no longer
+ *       bypassed for certified crosses (Decision #221 follow-up) — an automotive
+ *       context now drops non-AEC Accuris/MFR crosses. Cached v17 automotive
+ *       results still include those crosses. (Full-result tier only — keyed on
+ *       context; the base-payload tier runs before this post-scoring filter.) */
+export const RECS_CACHE_SCHEMA_VERSION = 'v18';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that

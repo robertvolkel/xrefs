@@ -142,6 +142,13 @@ export interface DesktopLayoutProps {
   /** Lifted from DesktopLayout's local state so chat handlers can switch tabs. */
   activeAttributesTab?: AttributesTab;
   onAttributesTabChange?: (tab: AttributesTab) => void;
+  /** Shared spot-pricing quantity for the Commercial-tab best-price highlight.
+   *  One value across both the Source and Replacement panels. */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
+  /** Auto-check the "AEC-qualified only" Replacements filter when automotive
+   *  AEC context is active (Decision #221). */
+  autoAecOnly?: boolean;
 
   // Handlers — panels
   onManufacturerClick: (manufacturer: string) => void;
@@ -188,6 +195,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     knownMpns, onMpnClick,
     knownAtlasManufacturers,
     activeAttributesTab, onAttributesTabChange,
+    spotQuantity, onSpotQuantityChange,
+    autoAecOnly,
     acceptanceCriteria, onAcceptanceChange,
   } = props;
 
@@ -206,6 +215,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   }, [sourceAttributes?.part.mpn]);
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
+  // Spot quantity is forwarded straight through to the panels — CommercialContent
+  // owns a local fallback when these are absent, so the control works even when a
+  // consumer (mobile / parts-list modal) doesn't wire the shared state.
 
   // Clicking a source-panel chip while comparing returns to the (now filtered)
   // recommendations list so the result is actually visible.
@@ -356,6 +368,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             onSelectXrefMfr={handleSelectXrefMfr}
             acceptanceCriteria={acceptanceCriteria}
             onAcceptanceChange={onAcceptanceChange}
+            spotQuantity={spotQuantity}
+            onSpotQuantityChange={onSpotQuantityChange}
           />
         </Box>
 
@@ -389,6 +403,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onTabChange={setAttributesTab}
               isLoadingReplacement={isLoadingComparison}
               replacementError={comparisonError}
+              spotQuantity={spotQuantity}
+              onSpotQuantityChange={onSpotQuantityChange}
+              isEnrichingFC={isEnrichingFC}
             />
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel
@@ -400,6 +417,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onCategoryFilterChange={setXrefCategory}
               mfrFilter={xrefMfr}
               onMfrFilterChange={setXrefMfr}
+              autoAecOnly={autoAecOnly}
             />
           ) : showRightPanel ? (
             <Box

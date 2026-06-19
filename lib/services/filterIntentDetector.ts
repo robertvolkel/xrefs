@@ -123,8 +123,13 @@ function detectCategoryIntent(query: string): FilterIntent | null {
  *  Does NOT require a filter verb — origin words are inherently narrowing in
  *  this product context (you don't ask "is this part Chinese?" to a recs
  *  panel; you say it because you want to see only those). False positives
- *  here are cheap; the user can clear the filter with "show all". */
-function detectOriginIntent(query: string): FilterIntent | null {
+ *  here are cheap; the user can clear the filter with "show all".
+ *
+ *  Exported (unlike the other sub-detectors) because it is pure query regex —
+ *  recs-independent — so the pre-recs path can use it to recognize a
+ *  region-filtered replacement request ("recommend Chinese MFRs only") BEFORE
+ *  any candidates exist, then run cross-references with the filter bundled. */
+export function detectOriginIntent(query: string): FilterIntent | null {
   // Western FIRST so "non-chinese" / "non chinese" doesn't get swallowed by
   // the bare \bchinese\b atlas pattern below.
   if (/\b(western|american|european)\b/i.test(query)

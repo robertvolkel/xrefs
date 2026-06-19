@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, LinearProgress, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
@@ -48,9 +48,12 @@ interface RecommendationsPanelProps {
   /** Controlled manufacturer filter (shared with the source-panel MFR chips). */
   mfrFilter?: string;
   onMfrFilterChange?: (mfr: string) => void;
+  /** When true (automotive-AEC context was selected), auto-check the
+   *  "AEC-qualified only" filter once. The user can still uncheck it. */
+  autoAecOnly?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange, autoAecOnly = false }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
@@ -75,6 +78,12 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   // EXPLICIT, user-initiated ones below (manufacturer / CN-only / category / stock /
   // AEC-qualified).
   const [aecOnly, setAecOnly] = useState(false);
+  // Auto-apply the AEC filter to mirror automotive-AEC context (Decision #221 —
+  // "Both" option). The effect fires only when `autoAecOnly` actually changes,
+  // so a fresh automotive selection checks the box, but the user can uncheck it
+  // afterwards and it stays unchecked (the effect won't re-run until the
+  // automotive intent toggles again).
+  useEffect(() => { setAecOnly(autoAecOnly); }, [autoAecOnly]);
   // Lifecycle-status filter: set of statuses the user has UNCHECKED (hidden). Empty =
   // all shown (Decision #232 default). A status is only listed if some rec carries it.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<PartStatus>>(new Set());

@@ -190,17 +190,24 @@ export function computeBestPrice(
   return { kind: 'none', requestedQty, reason: 'no-price-breaks' };
 }
 
-/** Format a unit price using the price's own currency code via Intl.NumberFormat. */
-export function formatPrice(amount: number, currency: string): string {
+/**
+ * Format a unit price using the price's own currency code via Intl.NumberFormat.
+ * Adaptive 2–4 decimals: always shows at least 2, up to 4 for sub-cent distributor
+ * pricing (e.g. $0.0014) while trimming trailing zeros past 2 ($0.10, not $0.1000).
+ * Single canonical implementation — the Commercial tab and chat best-price prose
+ * both format the same number identically (re-exported from AttributesTabContent).
+ */
+export function formatPrice(amount: number, currency?: string): string {
+  const cur = currency || 'USD';
   try {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency || 'USD',
-      minimumFractionDigits: amount < 1 ? 4 : 2,
-      maximumFractionDigits: amount < 1 ? 4 : 2,
+      currency: cur,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
     }).format(amount);
   } catch {
     // Bad currency codes (FindChips occasionally returns blanks) — fall back to bare number.
-    return amount.toFixed(amount < 1 ? 4 : 2);
+    return `${cur} ${amount.toFixed(amount < 1 ? 4 : 2)}`;
   }
 }

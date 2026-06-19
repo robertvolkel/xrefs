@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -12,6 +12,8 @@ import {
   Stack,
   Link,
   Tooltip,
+  TextField,
+  Skeleton,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { TFunction } from 'i18next';
@@ -19,8 +21,65 @@ import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, derive
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
+import { computeBestPrice, formatPrice } from '@/lib/services/bestPriceCalculator';
+import { QUANTITY_PRESETS, parseQuantity } from '@/lib/constants/quantityPresets';
+import QuantityPresetButtons from './QuantityPresetButtons';
 
 type T = TFunction<'translation', undefined>;
+
+// Re-export the canonical price formatter (single implementation lives in
+// bestPriceCalculator so the Commercial tab and the chat best-price prose format
+// the same number identically). Existing importers (e.g. RecommendationCard)
+// keep importing it from here.
+export { formatPrice };
+
+/* ── "Good/certified" green, shared with the manufacturer_certified chip below ── */
+const SUCCESS_GREEN = '#69F0AE';
+const SUCCESS_GREEN_BG = 'rgba(105, 240, 174, 0.12)';
+
+/* ── Always-editable quantity control for the Commercial tab header.
+ *  Unlike chat's QuantityPrompt (one-shot submit + lock), this stays live so
+ *  the user can re-price repeatedly. Commits valid positive integers only. ── */
+function QuantityInline({ value, onChange }: { value: number; onChange: (qty: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  // Sync the field to an external value change (preset click, chat, sibling
+  // panel) — but if the field is focused (the user is mid-edit), the updater
+  // returns the current draft unchanged so their in-progress edit isn't wiped.
+  // The setDraft call stays unconditional; the focus check lives in the updater.
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    setDraft((d) => (focusedRef.current ? d : String(value)));
+  }, [value]);
+
+  const commit = (raw: string) => {
+    const n = parseQuantity(raw);
+    if (n === null) {
+      setDraft(String(value)); // revert invalid input
+      return;
+    }
+    if (n !== value) onChange(n);
+  };
+
+  return (
+    <Box sx={{ mb: 1.5 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
+        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', fontWeight: 600 }}>
+          Quantity
+        </Typography>
+        <TextField
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ''))}
+          onFocus={() => { focusedRef.current = true; }}
+          onBlur={() => { focusedRef.current = false; commit(draft); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft); } }}
+          size="small"
+          inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', 'aria-label': 'Quantity', style: { padding: '2px 8px', fontSize: '0.75rem', width: 72 } }}
+        />
+      </Stack>
+      <QuantityPresetButtons compact presets={QUANTITY_PRESETS} activeValue={value} onSelect={onChange} />
+    </Box>
+  );
+}
 
 /* ── Pill toggle bar shared styles ── */
 export const pillGroupSx = {
@@ -145,7 +204,7 @@ function DescriptionRow({ description }: { description?: string }) {
 /* ── Overview tab helpers ── */
 
 const CATEGORY_CHIP_COLORS: Record<'manufacturer_certified' | 'third_party_certified' | 'logic_driven', { bg: string; border: string; fg: string }> = {
-  manufacturer_certified: { bg: 'rgba(105, 240, 174, 0.12)', border: '#69F0AE', fg: '#69F0AE' },
+  manufacturer_certified: { bg: SUCCESS_GREEN_BG, border: SUCCESS_GREEN, fg: SUCCESS_GREEN },
   third_party_certified: { bg: 'rgba(255, 213, 79, 0.12)', border: '#FFD54F', fg: '#FFD54F' },
   logic_driven: { bg: 'rgba(79, 195, 247, 0.12)', border: '#4FC3F7', fg: '#4FC3F7' },
 };
@@ -489,29 +548,62 @@ export function OverviewContent({ part, t, allRecommendations, dataSource, xrefC
 export { SUPPLIER_DISPLAY, formatSupplierName } from '@/lib/constants/suppliers';
 import { SUPPLIER_DISPLAY as _SUPPLIER_DISPLAY } from '@/lib/constants/suppliers';
 
-/** Format price with currency symbol */
-export function formatPrice(price: number, currency?: string): string {
-  const cur = currency ?? 'USD';
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(price);
-  } catch {
-    return `${cur} ${price.toFixed(4)}`;
-  }
-}
-
 /* ── Supplier quote card ── */
-export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQuote; t: T; mpn?: string; manufacturer?: string }) {
+export function SupplierCard({
+  quote,
+  t,
+  mpn,
+  manufacturer,
+  requiredQty = 1,
+  isBestPrice = false,
+  highlightTierQty = null,
+  highlightCurrency = null,
+  bestLabel,
+}: {
+  quote: SupplierQuote;
+  t: T;
+  mpn?: string;
+  manufacturer?: string;
+  /** Spot quantity the user needs. Stock below this is flagged red. */
+  requiredQty?: number;
+  /** When true, crown this card as the best spot price (green border + tint + chip). */
+  isBestPrice?: boolean;
+  /** The price-break tier qty to highlight green inside this card's table. */
+  highlightTierQty?: number | null;
+  /** Currency of the winning tier — disambiguates rare mixed-currency suppliers. */
+  highlightCurrency?: string | null;
+  /** Header chip label for a crowned card (e.g. "Best @ qty 100" / "Min qty 250"). */
+  bestLabel?: string;
+}) {
   const supplierLabel = _SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
+  // Flag when the distributor's available stock can't cover the requested qty.
+  // Unknown stock (null) isn't flagged — we can't assert "less than".
+  const isInsufficientStock = quote.quantityAvailable != null && quote.quantityAvailable < requiredQty;
 
   return (
-    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, mb: 1 }}>
+    <Box
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1,
+        p: 1.5,
+        mb: 1,
+      }}
+    >
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.75 }}>
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <Typography variant="subtitle2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>
             {supplierLabel}
           </Typography>
+          {isBestPrice && bestLabel && (
+            <Chip
+              label={bestLabel}
+              size="small"
+              sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: SUCCESS_GREEN, bgcolor: SUCCESS_GREEN_BG, border: `1px solid ${SUCCESS_GREEN}`, '& .MuiChip-label': { px: 0.6 } }}
+            />
+          )}
           {quote.authorized && (
             <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'success.main', fontWeight: 500 }}>Auth</Typography>
           )}
@@ -558,9 +650,15 @@ export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQ
           </Box>
         )}
         {quote.quantityAvailable != null && (
-          <Box>
+          <Box
+            sx={
+              isInsufficientStock
+                ? { bgcolor: 'rgba(255, 82, 82, 0.12)', borderRadius: 0.75, px: 0.75, mx: -0.75 }
+                : undefined
+            }
+          >
             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block' }}>{t('attributes.stock')}</Typography>
-            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE }}>{quote.quantityAvailable.toLocaleString()}</Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, color: isInsufficientStock ? '#FF5252' : undefined }}>{quote.quantityAvailable.toLocaleString()}</Typography>
           </Box>
         )}
         {quote.packageType && (
@@ -581,12 +679,19 @@ export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQ
             </TableRow>
           </TableHead>
           <TableBody>
-            {quote.priceBreaks.map((pb) => (
-              <TableRow key={pb.quantity}>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{pb.quantity.toLocaleString()}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25 }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
-              </TableRow>
-            ))}
+            {quote.priceBreaks.map((pb) => {
+              const isWinningRow =
+                isBestPrice &&
+                highlightTierQty != null &&
+                pb.quantity === highlightTierQty &&
+                (highlightCurrency == null || (pb.currency || '').toUpperCase() === highlightCurrency.toUpperCase());
+              return (
+                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: SUCCESS_GREEN_BG } : undefined}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
@@ -595,11 +700,67 @@ export function SupplierCard({ quote, t, mpn, manufacturer }: { quote: SupplierQ
 }
 
 /* ── Commercial tab content ── */
-export function CommercialContent({ part, t }: { part: Part; t: T }) {
+export function CommercialContent({
+  part,
+  t,
+  spotQuantity = 1,
+  onSpotQuantityChange,
+  isEnriching = false,
+}: {
+  part: Part;
+  t: T;
+  /** Shared spot-pricing quantity. Drives the best-price crown + reorder. */
+  spotQuantity?: number;
+  onSpotQuantityChange?: (qty: number) => void;
+  /** True while FindChips enrichment may still deliver quotes — show a loading
+   *  skeleton instead of the "no commercial data" empty state. */
+  isEnriching?: boolean;
+}) {
   const [showAll, setShowAll] = useState(false);
   const hasQuotes = part.supplierQuotes && part.supplierQuotes.length > 0;
 
+  // Own the quantity self-contained so the control works everywhere this tab
+  // renders (mobile, parts-list modal), not just where a parent wires the
+  // shared state. When `onSpotQuantityChange` is provided we're controlled —
+  // the shared `spotQuantity` drives the crown and chat-sync; otherwise we fall
+  // back to local state.
+  const [localQty, setLocalQty] = useState(1);
+  const qty = onSpotQuantityChange ? spotQuantity : localQty;
+  const setQty = onSpotQuantityChange ?? setLocalQty;
+
+  // Compute the best spot price at the requested qty. Memoized; runs before the
+  // early return so hook order stays stable. Each panel crowns the best price
+  // for ITS OWN part at the shared qty. We crown the cheapest distributor that
+  // can actually FULFILL the qty (sufficient stock) — a "best price" you can't
+  // buy isn't useful. Only when nobody has enough stock do we fall back to the
+  // overall cheapest so a crown still appears.
+  const bestPrice = useMemo(() => {
+    const all = part.supplierQuotes;
+    if (!all || all.length === 0) return computeBestPrice(all, qty);
+    const inStock = all.filter((q) => q.quantityAvailable != null && q.quantityAvailable >= qty);
+    return computeBestPrice(inStock.length > 0 ? inStock : all, qty);
+  }, [part.supplierQuotes, qty]);
+
   if (!hasQuotes) {
+    // Distinguish "still loading pricing" from "genuinely no data". Inline
+    // skeleton (not the AttributesPanel CommercialSkeleton — importing it here
+    // would create an AttributesPanel ↔ AttributesTabContent cycle).
+    if (isEnriching) {
+      return (
+        <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }} aria-label="Loading pricing and stock">
+          {[0, 1].map((i) => (
+            <Box key={i} sx={{ mb: 1.5, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                <Skeleton variant="text" width={120} height={18} />
+                <Skeleton variant="text" width={60} height={18} />
+              </Stack>
+              <Skeleton variant="text" width="40%" height={14} />
+              <Skeleton variant="text" width="55%" height={14} />
+            </Box>
+          ))}
+        </Box>
+      );
+    }
     return (
       <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
         <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}>
@@ -609,15 +770,81 @@ export function CommercialContent({ part, t }: { part: Part; t: T }) {
     );
   }
 
+  // Derive the winning supplier + tier from the compute result. A 'fallback'
+  // winner (qty below every MOQ) is still crowned but labeled "Min qty N".
+  const winner =
+    bestPrice.kind === 'match' ? bestPrice.top
+    : bestPrice.kind === 'fallback' ? bestPrice.minOption
+    : null;
+  const winnerSupplier = winner?.supplier ?? null;
+  const winnerTierQty = winner?.appliedTierQty ?? null;
+  const winnerCurrency = winner?.currency ?? null;
+  const bestLabel =
+    bestPrice.kind === 'match' ? `Best @ qty ${qty.toLocaleString()}`
+    : bestPrice.kind === 'fallback' ? `Min qty ${winner?.minOrderQty.toLocaleString()}`
+    : undefined;
+
   const quotes = part.supplierQuotes!;
+  // A distributor can fulfill the order when its available stock covers the
+  // requested qty. Unknown stock (null) counts as NOT sufficient — we sink it
+  // rather than promise stock we can't see.
+  const hasSufficientStock = (q: SupplierQuote) => q.quantityAvailable != null && q.quantityAvailable >= qty;
+  // Effective per-unit price at the requested qty (largest tier ≤ qty, else the
+  // cheapest available tier). Ordering only — no FX, so cross-currency price
+  // ties are best-effort, same limitation as the crown.
+  const effectivePriceAtQty = (q: SupplierQuote): number => {
+    const breaks = (q.priceBreaks ?? []).slice().sort((a, b) => a.quantity - b.quantity);
+    if (breaks.length === 0) return Number.POSITIVE_INFINITY;
+    const eligible = breaks.filter((b) => b.quantity <= qty);
+    return (eligible[eligible.length - 1] ?? breaks[0]).unitPrice;
+  };
+  // Tag each quote with a STABLE key (from its original index, so the key
+  // doesn't shift under reorder and cards don't remount on a qty change) and
+  // whether it is the crowned winner. Crown by original-array identity, but
+  // prefer an in-stock quote when the winning supplier appears more than once,
+  // so the crown can't latch onto a same-named out-of-stock duplicate.
+  const winnerOriginalIndex = winnerSupplier
+    ? (() => {
+        const inStockIdx = quotes.findIndex((q) => q.supplier === winnerSupplier && hasSufficientStock(q));
+        return inStockIdx >= 0 ? inStockIdx : quotes.findIndex((q) => q.supplier === winnerSupplier);
+      })()
+    : -1;
+  const tagged = quotes.map((q, i) => ({
+    q,
+    key: `${q.supplier}-${q.supplierPartNumber ?? `i${i}`}`,
+    isWinner: i === winnerOriginalIndex,
+  }));
+  // Order: distributors that can fulfill the qty first (cheapest first), then
+  // those that can't (also cheapest first). The crowned winner stays pinned to
+  // the very top.
+  const ordered = [...tagged].sort((a, b) => {
+    if (a.isWinner !== b.isWinner) return a.isWinner ? -1 : 1;
+    const stockRankA = hasSufficientStock(a.q) ? 0 : 1;
+    const stockRankB = hasSufficientStock(b.q) ? 0 : 1;
+    if (stockRankA !== stockRankB) return stockRankA - stockRankB;
+    return effectivePriceAtQty(a.q) - effectivePriceAtQty(b.q);
+  });
+
   const INITIAL_SHOW = 5;
-  const visibleQuotes = showAll ? quotes : quotes.slice(0, INITIAL_SHOW);
-  const hiddenCount = quotes.length - INITIAL_SHOW;
+  const visibleQuotes = showAll ? ordered : ordered.slice(0, INITIAL_SHOW);
+  const hiddenCount = ordered.length - INITIAL_SHOW;
 
   return (
     <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
-      {visibleQuotes.map((q, i) => (
-        <SupplierCard key={`${q.supplier}-${q.supplierPartNumber ?? i}`} quote={q} t={t} mpn={part.mpn} manufacturer={part.manufacturer} />
+      <QuantityInline value={qty} onChange={(q) => setQty(q)} />
+      {visibleQuotes.map(({ q, key, isWinner }) => (
+        <SupplierCard
+          key={key}
+          quote={q}
+          t={t}
+          mpn={part.mpn}
+          manufacturer={part.manufacturer}
+          requiredQty={qty}
+          isBestPrice={isWinner}
+          highlightTierQty={isWinner ? winnerTierQty : null}
+          highlightCurrency={isWinner ? winnerCurrency : null}
+          bestLabel={isWinner ? bestLabel : undefined}
+        />
       ))}
       {!showAll && hiddenCount > 0 && (
         <Typography

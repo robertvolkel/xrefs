@@ -1,7 +1,9 @@
 'use client';
 import { useState, FormEvent } from 'react';
-import { Button, Stack, TextField, Box, Chip } from '@mui/material';
+import { Button, TextField, Box, Chip } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
+import { parseQuantity } from '@/lib/constants/quantityPresets';
+import QuantityPresetButtons from './QuantityPresetButtons';
 
 interface QuantityPromptProps {
   presets: number[];
@@ -12,12 +14,6 @@ interface QuantityPromptProps {
   onSelect: (quantity: number) => void;
 }
 
-const formatPreset = (q: number): string => {
-  if (q >= 1_000_000) return `${q / 1_000_000}M`;
-  if (q >= 1_000) return `${q / 1_000}K`;
-  return String(q);
-};
-
 export default function QuantityPrompt({ presets, status, submittedQty, onSelect }: QuantityPromptProps) {
   const [custom, setCustom] = useState('');
   const locked = status === 'submitted';
@@ -25,8 +21,8 @@ export default function QuantityPrompt({ presets, status, submittedQty, onSelect
   const handleCustomSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (locked) return;
-    const n = Number(custom);
-    if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return;
+    const n = parseQuantity(custom);
+    if (n === null) return;
     onSelect(n);
   };
 
@@ -48,21 +44,9 @@ export default function QuantityPrompt({ presets, status, submittedQty, onSelect
 
   return (
     <Box sx={{ mt: 1, opacity: locked ? 0.5 : 1, pointerEvents: locked ? 'none' : 'auto' }}>
-      <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1, mb: 1 }}>
-        {presets.map((q) => (
-          <Button
-            key={q}
-            variant="outlined"
-            size="small"
-            color="inherit"
-            onClick={() => onSelect(q)}
-            disabled={locked}
-            sx={{ minHeight: { xs: 44, sm: 'auto' }, textTransform: 'none', minWidth: 56 }}
-          >
-            {formatPreset(q)}
-          </Button>
-        ))}
-      </Stack>
+      <Box sx={{ mb: 1 }}>
+        <QuantityPresetButtons presets={presets} onSelect={onSelect} disabled={locked} />
+      </Box>
       <Box component="form" onSubmit={handleCustomSubmit} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
         <TextField
           value={custom}

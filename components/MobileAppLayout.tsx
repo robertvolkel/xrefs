@@ -67,6 +67,8 @@ interface MobileAppLayoutProps {
   showRightPanel: boolean;
   isLoadingRecs: boolean;
   isEnrichingFC: boolean;
+  /** Auto-check the "AEC-qualified only" Replacements filter on automotive AEC context. */
+  autoAecOnly?: boolean;
   // Handlers
   onSearch: (query: string) => void;
   onConfirm: (part: PartSummary) => void;
@@ -102,6 +104,7 @@ export default function MobileAppLayout({
   showRightPanel,
   isLoadingRecs,
   isEnrichingFC,
+  autoAecOnly,
   onSearch,
   onConfirm,
   onReject,
@@ -310,6 +313,7 @@ export default function MobileAppLayout({
                 onSelect={onSelectRecommendation}
                 onManufacturerClick={onManufacturerClick}
                 isEnrichingFC={isEnrichingFC}
+                autoAecOnly={autoAecOnly}
               />
             ) : (
               <Box

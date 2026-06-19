@@ -26,7 +26,12 @@ export async function GET(
       ? sourceParam
       : undefined;
 
-    const attributes = await getAttributes(decodeURIComponent(mpn), undefined, user?.id, {
+    // Next.js App Router already URL-decodes route params. A second
+    // decodeURIComponent here throws on MPNs containing a literal '%' (e.g.
+    // tolerance-encoded "1%" crosses like CDP060310K1%100PPM/KNP20) and
+    // corrupts valid-looking sequences (%10 -> control char), so we pass mpn
+    // through as-is.
+    const attributes = await getAttributes(mpn, undefined, user?.id, {
       preferredSource,
       manufacturer: manufacturerParam,
     });
