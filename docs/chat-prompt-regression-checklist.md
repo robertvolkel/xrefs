@@ -165,31 +165,63 @@ Origin: Decisions #166 / #203; prompt [481-504](../lib/services/llmOrchestrator.
 
 ---
 
+## Baseline run — findings (2026-06-19, Haiku, current prompt)
+
+**17 PASS · 1 FAIL (A3) · 1 N/A (D1).** Every CRITICAL + HIGH row passed except A3.
+
+**Systemic pattern (the headline finding): the grounding floor holds in *structured* contexts and leaks in
+*free-prose* closings.** Where the prompt hands the model a block to read (source-part block, recs block,
+profile tool result), discipline is rock-solid — A1, A2, A4, A5 all clean. Where the model free-associates
+an elaboration / "My read" sign-off, it reaches for from-memory specifics:
+- **A3 (FAIL)** — searched correctly, then asserted an ungrounded hFE spec ("400–450 @ 100µA–1mA matches
+  your 200–400 spec **exactly**") not present in the returned card data. The #239 floor leaks on Haiku.
+- **A5 (PASS, soft)** — cert audit + listing status perfect, but the read smuggled in "#2 in SPI NOR
+  globally" — an unsourced market ranking stated as fact.
+- **C5 (PASS, soft)** — "Microchip… established, automotive-capable vendor" — MFR characterization with no
+  profile call.
+- **A1 / C4 (PASS, soft)** — grounded but editorial profile-tied sign-offs ("Given your supply resilience
+  priority, Digikey offers stronger continuity").
+Implication: the Phase-3 consolidation should target this directly — a grounding floor that explicitly
+covers *free-prose elaboration*, not just the per-block contexts. A3 is a real pre-existing bug, not just a
+refactor risk.
+
+**Other findings:**
+- **Internal contradiction (surfaced by B1):** [517/581](../lib/services/llmOrchestrator.ts#L517) ("NEVER
+  describe a part's specs in text") vs ASK-mode [454-455](../lib/services/llmOrchestrator.ts#L454)
+  ("answer from the returned data"). On a direct parametric question the model answered in prose with
+  grounded specs — defensible, but the two rules clash. Reorg should reconcile.
+- **Dead/unwired rule (D1):** [591](../lib/services/llmOrchestrator.ts#L591) governs "excluded
+  manufacturers," but Company Settings exposes only *Preferred* Manufacturers — no exclusion input.
+  Verify whether exclusions are captured via the free-form My-Profile extractor or are vestigial; if
+  vestigial, remove the rule in the refactor.
+
 ## Results Log
 
 Record PASS / FAIL / PARTIAL per ID per run. Baseline = current prompt on Haiku (before any edit).
+Notes: P✱ = pass with a noted soft spot (see findings above).
 
 | ID | Rule | Tier | Baseline | Post-Phase-1 (reorg) | Post-Phase-3 (consolidation) |
 |----|------|------|----------|----------------------|------------------------------|
-| A1 | Source-part discipline | CRITICAL | | | |
-| A2 | Pre-recs coverage (JANTXV) | CRITICAL | | | |
-| A3 | Greenfield grounding | CRITICAL | | | |
-| A4 | Post-recs block discipline | CRITICAL | | | |
-| A5 | MFR claim + cert audit | CRITICAL | | | |
-| B1 | Search-first on MPN | HIGH | | | |
-| B2 | No specs in text | HIGH | | | |
-| B3 | Filter calls the tool | HIGH | | | |
-| B4 | No cross-refs in prose | HIGH | | | |
-| B5 | MFR profile tool call | HIGH | | | |
-| B6 | New MPN → search | HIGH | | | |
-| C1 | Off-topic deflection | MED | | | |
-| C2 | Meta-question | MED | | | |
-| C3 | Theory + pivot | MED | | | |
-| C4 | Answer-and-stop | MED | | | |
-| C5 | Answer-first | MED | | | |
-| C6 | Single-match message | MED | | | |
-| D1 | Excluded/preferred MFR | MED | | | |
-| D2 | Unsupported family | MED | | | |
+| A1 | Source-part discipline | CRITICAL | P✱ (trailing AEC-verify advisory) | | |
+| A2 | Pre-recs coverage (JANTXV) | CRITICAL | P | | |
+| A3 | Greenfield grounding | CRITICAL | **FAIL** (ungrounded hFE spec) | | |
+| A4 | Post-recs block discipline | CRITICAL | P | | |
+| A5 | MFR claim + cert audit | CRITICAL | P✱ ("#2 in SPI NOR" unsourced) | | |
+| B1 | Search-first on MPN | HIGH | P (surfaced 517↔ASK clash) | | |
+| B2 | No specs in text | HIGH | P | | |
+| B3 | Filter calls the tool | HIGH | P | | |
+| B4 | No cross-refs in prose | HIGH | P | | |
+| B5 | MFR profile tool call | HIGH | P | | |
+| B6 | New MPN → search | HIGH | P | | |
+| C1 | Off-topic deflection | MED | P | | |
+| C2 | Meta-question | MED | P | | |
+| C3 | Theory + pivot | MED | P✱ (soft pivot) | | |
+| C4 | Answer-and-stop | MED | P✱ (editorial closing) | | |
+| C5 | Answer-first | MED | P✱ (verbose; unsourced MFR claim) | | |
+| C6 | Single-match message | MED | P | | |
+| D1 | Excluded/preferred MFR | MED | N/A (no exclusion UI) | | |
+| D2 | Unsupported family | MED | P | | |
 
 **Acceptance gate for the refactor:** every CRITICAL and HIGH row that was PASS at baseline must remain PASS
-after each phase. Any regression on a CRITICAL row → revert that phase's change before proceeding.
+after each phase. Any regression on a CRITICAL row → revert that phase's change before proceeding. (A3 is
+already FAIL at baseline, so it is exempt from the gate — but it is a tracked bug to fix, not ignore.)
