@@ -202,26 +202,51 @@ Notes: P✱ = pass with a noted soft spot (see findings above).
 
 | ID | Rule | Tier | Baseline | Post-Phase-1 (reorg) | Post-Phase-3 (consolidation) |
 |----|------|------|----------|----------------------|------------------------------|
-| A1 | Source-part discipline | CRITICAL | P✱ (trailing AEC-verify advisory) | | |
-| A2 | Pre-recs coverage (JANTXV) | CRITICAL | P | | |
-| A3 | Greenfield grounding | CRITICAL | **FAIL** (ungrounded hFE spec) | | |
-| A4 | Post-recs block discipline | CRITICAL | P | | |
-| A5 | MFR claim + cert audit | CRITICAL | P✱ ("#2 in SPI NOR" unsourced) | | |
-| B1 | Search-first on MPN | HIGH | P (surfaced 517↔ASK clash) | | |
-| B2 | No specs in text | HIGH | P | | |
-| B3 | Filter calls the tool | HIGH | P | | |
-| B4 | No cross-refs in prose | HIGH | P | | |
-| B5 | MFR profile tool call | HIGH | P | | |
-| B6 | New MPN → search | HIGH | P | | |
-| C1 | Off-topic deflection | MED | P | | |
-| C2 | Meta-question | MED | P | | |
-| C3 | Theory + pivot | MED | P✱ (soft pivot) | | |
-| C4 | Answer-and-stop | MED | P✱ (editorial closing) | | |
-| C5 | Answer-first | MED | P✱ (verbose; unsourced MFR claim) | | |
-| C6 | Single-match message | MED | P | | |
-| D1 | Excluded/preferred MFR | MED | N/A (no exclusion UI) | | |
-| D2 | Unsupported family | MED | P | | |
+| A1 | Source-part discipline | CRITICAL | P✱ (trailing AEC-verify advisory) | P✱ (same trailing AEC advisory) | |
+| A2 | Pre-recs coverage (JANTXV) | CRITICAL | P | P | |
+| A3 | Greenfield grounding | CRITICAL | **FAIL** (ungrounded hFE spec) | **FAIL** (grounds primary part now; leaks from-memory 2N3904 compare + ~15nA + automotive claims) | |
+| A4 | Post-recs block discipline | CRITICAL | P | P✱ (named from-memory MMBT2222A as "automotive alt") | |
+| A5 | MFR claim + cert audit | CRITICAL | P✱ ("#2 in SPI NOR" unsourced) | P (no market-ranking leak this run — cleaner) | |
+| B1 | Search-first on MPN | HIGH | P (surfaced 517↔ASK clash) | P (reconciliation working: search-first + grounded ASK answer) | |
+| B2 | No specs in text | HIGH | P | P | |
+| B3 | Filter calls the tool | HIGH | P | P | |
+| B4 | No cross-refs in prose | HIGH | P | P (deterministic path fired) | |
+| B5 | MFR profile tool call | HIGH | P | P | |
+| B6 | New MPN → search | HIGH | P | P (minor: volunteered AEC compare, partly unverifiable) | |
+| C1 | Off-topic deflection | MED | P | P | |
+| C2 | Meta-question | MED | P | P (omitted Mouser as non-primary; defensible) | |
+| C3 | Theory + pivot | MED | P✱ (soft pivot) | P (clean capability-tied pivot) | |
+| C4 | Answer-and-stop | MED | P✱ (editorial closing) | P✱ (grounded editorial closing; no button pitch) | |
+| C5 | Answer-first | MED | P✱ (verbose; unsourced MFR claim) | P✱ (verbose; but grounded — no unsourced MFR claim) | |
+| C6 | Single-match message | MED | P | P (multi-match path; no post-click promises) | |
+| D1 | Excluded/preferred MFR | MED | N/A (no exclusion UI) | N/A | |
+| D2 | Unsupported family | MED | P | P✱ (clean on 1st ask; repeat-ask improvised supplier advice — §11 unchanged, edge case) | |
 
 **Acceptance gate for the refactor:** every CRITICAL and HIGH row that was PASS at baseline must remain PASS
 after each phase. Any regression on a CRITICAL row → revert that phase's change before proceeding. (A3 is
 already FAIL at baseline, so it is exempt from the gate — but it is a tracked bug to fix, not ignore.)
+
+## Post-Phase-1 run — findings (2026-06-21, Haiku, reorganized prompt)
+
+**🟢 GATE PASSED — 17 PASS · 1 FAIL (A3, exempt) · 1 N/A (D1).** Every CRITICAL + HIGH row that was PASS at
+baseline stayed PASS. No correctness regression from the reorg.
+
+- **The two riskiest rows are clean.** B1 (search-first, which lost dedup repetition) and B2 (no-specs-in-text)
+  both pass, and the **517↔ASK reconciliation works on both sides**: the agent answers an explicit parametric
+  question from tool data *after* searching (B1), and does NOT volunteer specs when merely identifying a part
+  (B2). The reorg resolved the contradiction without breaking either behavior.
+- **Net P↔P✱ churn is all the known free-prose-elaboration pattern, not structural breakage.** A5/C3/C5
+  *improved* (P✱→P — the baseline's unsourced market/MFR asides didn't recur). A4 and D2(repeat-ask) each
+  picked up a soft spot of the same leak family (A4 named from-memory MMBT2222A; D2-repeat improvised
+  connector-supplier advice). These are the same systemic leak A3 represents — confirmation that **Phase 3
+  (free-prose grounding floor) is the real fix**, not more reorg.
+- **A3 still FAIL (expected).** The greenfield grounding now grounds the *primary* searched part but still
+  leaks a from-memory comparison (2N3904, ~15 nA, "automotive-grade availability"). Reorg was never going to
+  fix this; it's the canonical Phase-3 target.
+- **D2 caveat:** §11 (unsupported-family) text is verbatim-unchanged by the reorg, and the baseline only tested
+  a single ask. The repeat-ask elaboration is a pre-existing adherence gap surfaced by asking twice — tracked,
+  not attributed to Phase 1.
+
+**Two non-prompt observations (parked for separate investigation):** (1) the right-hand Commercial panel
+*closes* when asking a distribution question (A1) — client panel-visibility logic, not the prompt; (2) the D2
+repeat-ask elaboration above. Neither is a gate-blocker.
