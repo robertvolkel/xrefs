@@ -24,6 +24,7 @@ import { getLogicTableForSubcategory, enrichRectifierAttributes, isFamilySupport
 import { findReplacements } from './matchingEngine';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { sortRecommendationsForDisplay } from './recommendationSort';
+import { looksLikeMpn } from './searchSummary';
 import { computeCompositeScore } from './compositeScore';
 import { getContextQuestionsForFamily } from '../contextQuestions';
 import { applyContextToLogicTable } from './contextModifier';
@@ -207,24 +208,10 @@ const searchCache = new Map<string, { data: SearchResult; timestamp: number }>()
 const SEARCH_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const SEARCH_CACHE_MAX = 100;
 
-/**
- * Lightweight heuristic: does the query look like a part number (MPN) vs a description?
- * Used to decide whether to call MPN-prefix-only APIs (Parts.io, Mouser).
- */
-export function looksLikeMpn(query: string): boolean {
-  const trimmed = query.trim();
-  if (!trimmed) return false;
-  const words = trimmed.split(/\s+/);
-  // 3+ words is almost certainly a description
-  if (words.length >= 3) return false;
-  // Contains common component description terms
-  const descTerms = /\b(capacitor|resistor|inductor|diode|transistor|mosfet|regulator|amplifier|sensor|relay|fuse|crystal|connector|led|switch|filter|oscillator|converter|driver|voltage|current|power|audio|memory|microcontroller)\b/i;
-  if (descTerms.test(trimmed)) return false;
-  // Single word with typical MPN characters (alphanumeric + dashes/dots)
-  if (words.length === 1) return /^[A-Za-z0-9]/.test(trimmed);
-  // 2 words — could be "MFR MPN" (e.g., "TDK CGA5L1X7R2J104K160AC") — allow it
-  return true;
-}
+// looksLikeMpn now lives in ./searchSummary (client-safe — this module is server-only,
+// pulling Digikey/Parts.io/Mouser/FindChips clients + node crypto). Imported above for the
+// internal call site below; re-exported here so existing importers/tests keep working.
+export { looksLikeMpn };
 
 /**
  * Check if a cached search result is from an older cache format and should be
