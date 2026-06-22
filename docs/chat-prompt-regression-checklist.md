@@ -165,6 +165,73 @@ Origin: Decisions #166 / #203; SYSTEM_PROMPT §"Manufacturer Profiles" (claim di
 
 ---
 
+## E. Guided / exploratory part selection (added 2026-06-21 — guided-selection change)
+
+These rows validate the guided-selection carve-out: SYSTEM_PROMPT §"Part-selection-advice discipline"
+(guided-selection bullet), the §"Search result presentation" present_choices rule, and the §"Conversation
+style" when-to-ask carve-out clause. Their baseline is the **Phase-1 (reorg) prompt** — i.e. behavior BEFORE
+this change. All run on Haiku.
+
+**E1 — Vague selection request → guides in ONE turn, no specs leaked.** Tier: HIGH.
+Origin: §"Part-selection-advice discipline" (guided-selection bullet).
+- **Setup:** fresh chat, no part loaded.
+- **Prompt:** "I need to pick a capacitor for a new design, not sure where to start."
+- **PASS:** asks ≤2 discriminators (e.g. dielectric class via present_choices + rail voltage in prose) WITH an
+  "or I'll search now" escape hatch; names no MPN/MFR/spec from memory; does not open with capacitor theory.
+- **FAIL:** recites example part numbers or "typical" values; asks ≥3 questions or omits the escape hatch;
+  opens with a textbook lecture; or searches blind with no narrowing on a genuinely un-searchable request.
+
+**E2 — Concrete request still searches immediately (act-don't-ask no-regression).** Tier: CRITICAL.
+Origin: §"Part-selection-advice discipline" (act-don't-ask bullet). Guards against guided-selection
+cannibalizing the search-now default; re-uses A3's prompt.
+- **Setup:** fresh chat, no part loaded.
+- **Prompt:** "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400." (same as A3)
+- **PASS (gate-relevant):** calls `search_parts` IMMEDIATELY; does NOT drop into a guiding question — a part
+  type + multiple params is well past the STOP condition.
+- **FAIL (gate-relevant):** asks a clarifying/guiding question instead of searching — the regression this
+  change must not introduce.
+- **Note:** the closing-leak sub-check (no from-memory hFE "matches exactly") is the SAME bug as A3 and is
+  exempt from the gate here too — track it under A3, not E2. E2's gate is the **routing**.
+
+**E3 — Single-param request searches, does NOT ask polarity first.** Tier: HIGH.
+Origin: §"Part-selection-advice discipline" (act-don't-ask: "don't ask for a 2nd parameter when one already
+lets you search").
+- **Setup:** fresh chat, no part loaded.
+- **Prompt:** "I need a MOSFET for a 24V motor driver."
+- **PASS:** calls `search_parts` (part type + one searchable param = STOP condition met); N-vs-P, if mentioned
+  at all, is a post-card caveat, not a pre-search question.
+- **FAIL:** asks "N-channel or P-channel?" (or any discriminator) before searching — the over-narrow
+  regression where guided-selection poaches a searchable request.
+
+**E4 — Guiding turn leaks no ungrounded specifics (A3 guard, ask phase).** Tier: CRITICAL.
+Origin: §"Part-selection-advice discipline" (guided-selection bullet, "ask about REQUIREMENTS only"). NEW
+surface introduced by this change.
+- **Setup:** fresh chat, no part loaded.
+- **Prompt:** "help me choose a TVS for a USB port" → inspect the model's guiding turn.
+- **PASS:** asks about requirement categories (working voltage, single-line vs array) as questions; names no
+  MPN/MFR; states no "typical clamp voltage" as fact (hedged at most).
+- **FAIL:** suggests "something like an SP0503BAHT", or asserts "USB TVS usually clamps at 5–6V" as fact — the
+  A3 fabrication moved earlier into the ask phase. This is a NEW leak introduced by guided-selection → must
+  not ship.
+
+**E5 — Opinion question still answer-first (§"Conversation style" no-regression).** Tier: HIGH.
+Origin: §"Conversation style" (answer-first) + the new selection-request carve-out clause.
+- **Setup:** part loaded on screen.
+- **Prompt:** "is this a safe choice?"
+- **PASS:** concise structured read + ONE drill-down offer; does NOT enter the guide loop or open with a
+  clarifying question. (Same as C5 — confirms the §10 carve-out clause did not pull opinion questions into
+  guided-narrowing.)
+- **FAIL:** asks discriminator questions / present_choices instead of answering.
+
+**E6 — STOP condition: guiding turn converts to search once answered.** Tier: HIGH.
+Origin: §"Part-selection-advice discipline" (guided-selection STOP condition + no-second-guiding-turn).
+- **Setup:** continue E1 — after the model's guiding turn, the user supplies the discriminators (e.g.
+  click/answer "X7R", then type "16V, 0603").
+- **PASS:** now has part type + params → calls `search_parts` immediately; does NOT ask a further axis.
+- **FAIL:** asks another question (AEC? tolerance?) instead of searching — the "never stops asking" failure.
+
+---
+
 ## Baseline run — findings (2026-06-19, Haiku, current prompt)
 
 **17 PASS · 1 FAIL (A3) · 1 N/A (D1).** Every CRITICAL + HIGH row passed except A3.
@@ -250,3 +317,64 @@ baseline stayed PASS. No correctness regression from the reorg.
 **Two non-prompt observations (parked for separate investigation):** (1) the right-hand Commercial panel
 *closes* when asking a distribution question (A1) — client panel-visibility logic, not the prompt; (2) the D2
 repeat-ask elaboration above. Neither is a gate-blocker.
+
+## Guided-selection run — Results Log (2026-06-22, Haiku)
+
+The guided-selection change (2026-06-21) adds the §"Part-selection-advice discipline" guided-selection
+carve-out + §9/§10 reconciliation. "Pre-change" = the Phase-1 prompt behavior (the recorded Post-Phase-1
+column for A–D; A3/C5 baselines for the E2/E5 analogues).
+
+**Acceptance gate for this change:** every CRITICAL+HIGH row that was PASS post-Phase-1 stays PASS, AND the
+new **E2 (routing)** and **E4** CRITICAL rows pass. A3's closing-leak remains exempt (tracked, Phase-3 fix).
+
+**🟢 GATE PASSED.** Both CRITICAL rows (E2 routing, E4) passed; E4 (no spec leak in the guiding turn) is the
+result that proves prompt-only is viable — the scary new-surface risk did not materialize. E3 initially FAILED
+(over-narrow), fixed by the §5c routing-examples bullet (commit `318b47a`) and re-tested PASS. No A–D
+regression observed in the walk.
+
+| ID | Rule | Tier | Pre-change (Phase-1) | Post-guided-selection (Haiku) |
+|----|------|------|----------------------|-------------------------------|
+| E1 | Vague request → guides in one turn | HIGH | n/a (new behavior) | ✅ PASS — clean 1-turn guide, ≤2 discriminators + escape hatch; used BMS user-context |
+| E2 | Concrete request still searches (routing) | CRITICAL | ≈A3: routing P, closing-leak FAIL | ✅ PASS (routing) — searched immediately; A3-exempt closing mutated to a *misread* of grounded data (420 ∉ 200–400) |
+| E3 | Single-param searches, no polarity ask | HIGH | n/a (new behavior) | ❌→✅ FAIL pre-fix (asked N-vs-P), **PASS after `318b47a`** (searches immediately). Surfaced A3-family spec-dump leak on broad results (see findings) — exempt, Phase-3 |
+| E4 | Guiding turn leaks no ungrounded specifics | CRITICAL | n/a (new surface) | ✅ PASS — no MPN/MFR/typical-spec leak in the guiding turn (the load-bearing result) |
+| E5 | Opinion question still answer-first | HIGH | ≈C5: P✱ | ✅ PASS — answer-first held (§10 carve-out works); closing leaked A2-family MFR drop-in claims (Phase-3) |
+| E6 | STOP condition converts to search | HIGH | n/a (new behavior) | ✅ PASS — searched after discriminators given, no further question; presentation prose **clean** |
+
+**Findings (the actionable one): the greenfield grounding leak is not uniform — it fires on the
+"curate-a-recommendation" impulse, not on plain search presentation.** E3 (broad/heterogeneous result set —
+"MOSFET for a 24V motor driver") leaked a from-memory named catalog with specs + AEC quals that didn't even
+match the rendered card. E6 (tight/homogeneous set — "X7R 16V 0603") stayed clean ("I found 20, click one").
+So the model reaches into training data when it decides to *editorialize a curated parts list* on a broad
+result, and stays grounded when it simply points at the cards. The strengthened §5c floor ("specifics enter
+prose ONLY after search returns them… holds across the free-prose closing") did NOT hold on Haiku for the
+broad-result curate case — confirming this is the pre-existing **A3-family leak**, squarely the **Phase-3
+(free-prose grounding floor)** target, and telling us *where* Phase-3 must bite: the curate-a-recommendation
+closing on broad greenfield searches. Not a guided-selection regression; not a fallback trigger (E4 clean,
+E6 STOP works). Do NOT whack-a-mole with another lexical ban (cf. ai-prompt-principled-rules-not-lexical-bans).
+
+**Routing-examples fix (`318b47a`) verified both-directions:** it sharpened the SEARCH case (E3 24V→search)
+*and* the GUIDE case held (E1 still guides, ≤2 + escape hatch, no blind search) — and E1's discriminator count
+tightened from a pre-fix 4-question drift to a clean 2.
+
+## Deterministic search-presentation fix — Results Log (2026-06-22, Haiku, commit `e2b200c`)
+
+Structural fix (Decision #173 pattern): greenfield card searches now post a DETERMINISTIC bubble
+(`buildSearchSummary`) instead of the LLM's free prose; MPN lookups keep the LLM message (gated by
+`looksLikeMpn`). Re-ran the leak rows + the MPN-path regression guard on Haiku.
+
+| ID | Check | Result |
+|----|-------|--------|
+| E3 | greenfield broad search — leak gone | ✅ PASS — bubble = "I found **20** parts matching your criteria — click…"; NO from-memory catalog, no specs/quals in prose. The pre-fix spec-dump is gone. |
+| E2 | greenfield concrete search — A3 closing-leak gone | ✅ PASS — searched immediately; deterministic bubble; the "matches your spec exactly" closing leak retired. |
+| C6/B2 | MPN lookup ("find 2N2222AUB") — override must NOT fire | ✅ PASS — kept the LLM confirmation prose (variant categories, no specs); `looksLikeMpn`-gating confirmed. The fix is invisible on the MPN path. |
+| E6 | guide→search STOP | ⚠️ FLAKY (accepted as reasonable) — this re-run ASKED "what capacitance?" after X7R/16V/0603 instead of searching (an earlier run searched broad). **Not caused by the fix** (display-only; step 1 was a guiding turn so no search happened → conversation history is byte-identical to pre-fix; the ask-vs-search decision is purely the LLM's). Haiku STOP-condition non-determinism (same family as the E6-step1 "4 vs 2 questions" variance). **Accepted:** capacitance is the *defining* parameter of a capacitor ("X7R 16V 0603" spans ~1nF–22µF), so asking for it is defensible — no fabrication, no safety issue. Don't whack-a-mole the §5c STOP rule; the deferred structured-fallback (deterministic narrowing) is the proper fix if this ever becomes annoying. |
+| B6 | new-MPN restart | not re-run — MPN path, covered by C6/B2 confirming the override stays out of MPN lookups. |
+
+**Outcome: the A3-family greenfield leak is RETIRED on the search-presentation surface, both directions
+confirmed** — greenfield → deterministic (E3/E2), MPN lookup → LLM message preserved (C6/B2). `npm test`
+2185/2185; `npm run build` green; new `searchSummary.ts` lint-clean.
+
+**Surfaced (separate, pre-existing — logged to BACKLOG):** the greenfield search returned PNP parts (SSM2220)
+for an "NPN" request — a search-RELEVANCE gap (descriptive query doesn't hard-filter polarity). NOT caused by
+the fix; the deterministic surface makes it honestly visible instead of masking it with fabricated prose.

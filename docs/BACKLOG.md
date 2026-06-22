@@ -14,6 +14,32 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Greenfield search doesn't hard-filter polarity / key categorical constraints (P2/P3)
+
+**Context.** Surfaced during the Haiku re-run of the deterministic greenfield search-presentation fix (commit `e2b200c`, the Decision #173 pattern applied to greenfield — see [docs/chat-prompt-regression-checklist.md](chat-prompt-regression-checklist.md)). Prompt: *"I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400"* → the descriptive search returned four **PNP** parts (SSM2220, a famous low-noise audio matched pair) for an **NPN** request. It matched on "low-noise audio transistor" and did NOT enforce the NPN polarity constraint. This was always happening; the old leaky LLM prose masked it (it fabricated NPN parts that "matched perfectly"). The deterministic fix makes it honestly visible (bubble says "I found 4 parts", cards show "2PNP") — strictly better — but the underlying relevance gap remains.
+
+**Root cause.** The greenfield path builds a single descriptive `search_parts` query from the user's prose; the keyword search (Digikey/Atlas) is relevance-ranked, not constraint-filtered, so a strong lexical match ("low-noise audio") can outrank a hard categorical constraint (NPN vs PNP). Polarity, channel type (N/P), dielectric class, etc. are not enforced as hard filters.
+
+**Fix ideas (not yet scoped).** (a) post-search relevance filter: drop candidates whose known categorical attribute contradicts a constraint the user stated (NPN≠PNP, N-ch≠P-ch); (b) stronger query construction that encodes the categorical as a parametric filter where the source supports it; (c) at minimum, when the result set obviously violates a stated hard constraint, surface a one-line honest note. Interacts with the guided-selection taxonomy (Decision #241 follow-on) — polarity is exactly the kind of discriminator the GUIDE branch already reasons about. **Lowish priority:** the deterministic surface already prevents the dangerous failure (confident-but-wrong prose); this is a relevance-quality improvement, not a correctness/safety gap.
+
+---
+
+## Chat-prompt remaining work — grounding leaks + cleanup (follow-ups to Decision #241 + the greenfield deterministic fix) (P2/P3)
+
+**Context.** The chat() SYSTEM_PROMPT refactor (Decision #241) + the deterministic greenfield search-presentation fix (commit `e2b200c`) banked the high-value work — the worst, most-reliable grounding leak (greenfield "curate-a-recommendation" over broad search results) is fixed structurally. These are the remaining, lower-value/higher-risk items, deferred deliberately (not low-risk despite being lower-value; prompt edits are behaviorally risky with manual-only coverage). Full state in [memory/chat-prompt-refactor.md] + [docs/chat-prompt-regression-checklist.md].
+
+**(1) Residual free-prose grounding leaks (the A3-family on non-search surfaces) — P2.** The structural fix only covered the search-presentation surface. Softer, rarer "P✱" leaks remain where the answer is *inherently* free prose (no card-data template to swap in):
+- **A4** — post-recs follow-up Q&A names a from-memory part (e.g. "MMBT2222A as an automotive alt").
+- **A5** — MFR-profile answers smuggle an unsourced market aside ("#2 in SPI NOR globally").
+- **C5 / E5** — opinion-answer closings ("is this a safe choice?") characterize MFRs without a profile call ("Microchip… automotive-capable"; "TI/Nexperia make drop-in automotive NPNs").
+The durable fix is **structural per-surface** (the #173 move applied surface-by-surface) for A4/A5 where some data is on cards; C5/E5 are largely **accept-the-ceiling** (opinion synthesis can't be deterministic-templated, and prompt rules don't hold reliably on Haiku — do NOT whack-a-mole, cf. ai-prompt-principled-rules-not-lexical-bans). These leaks are soft/rare → low urgency.
+
+**(2) Dormant "excluded manufacturers" feature — P3 decision.** `UserPreferences.excludedManufacturers` exists and the **engine enforces it** ([lib/services/partDataService.ts:1603](../lib/services/partDataService.ts#L1603) filters excluded MFRs out of candidates *before* the LLM sees them), but **nothing populates the field**: Company Settings only *clears* it, the profile extractor doesn't extract it, no writer sets a value. The inert prompt rule was removed (this commit). The capability blurb at [llmOrchestrator.ts](../lib/services/llmOrchestrator.ts) §"About This System" still lists "excluded manufacturers" as a personalization option (mildly inaccurate until wired). **Decide:** either (a) **wire up an input** — a Company-Settings field and/or profile-extractor extraction — to make exclusion a real feature (the engine code is ready), or (b) **remove the orphaned engine enforcement** + the meta blurb. Note exclusion is partly redundant with engine pre-filtering anyway.
+
+**(3) Phase 2 / Phase 3 of the prompt refactor (Decision #241) — P3.** **Phase 2:** move thin prompt rules already covered by deterministic code into code (e.g. pre-recs origin routing); keep one-line reminders, never delete unless code-coverage is verified + unit-tested (Med risk, testable). **Phase 3** (consolidate the grounding blocks into one free-prose floor) is now **lower-urgency** — the greenfield surface is handled structurally, and a prompt-only consolidation likely won't fix item (1)'s inherent-free-prose leaks anyway. Highest-risk item; revalidate against the full Haiku checklist and revert per-step on any CRITICAL regression if ever attempted.
+
+---
+
 ## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
 
 **Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:

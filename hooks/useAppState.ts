@@ -21,6 +21,7 @@ import { detectQueryIntent, extractQuantity, extractBestPriceQuantity, PendingIn
 import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from '@/lib/services/filterIntentDetector';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
+import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
@@ -1187,8 +1188,30 @@ export function useAppState() {
 
         if (signal.aborted) return; // conversation switched mid-flight
 
-        // Track assistant response in conversation history
-        conversationRef.current.push({ role: 'assistant', content: response.message });
+        // Extract the search result up-front so presentation is decided BEFORE the
+        // assistant turn is recorded in conversation history (below).
+        const searchResult = response.searchResult;
+
+        // ── Decision #173 structural override (greenfield search presentation) ──
+        // On GREENFIELD (descriptive / no-MPN) card searches, Haiku's free prose recites a
+        // from-memory curated parts list with specs + AEC quals that don't match the rendered
+        // cards (A3-family leak, checklist row E3). Replace the LLM prose with a deterministic
+        // summary built only from SearchResult fields. MPN-lookup searches (looksLikeMpn) keep
+        // the LLM confirmation message (rules C6/B2 — passing).
+        const hasChoices = !!response.choices && response.choices.length > 0;
+        const isGreenfieldCardSearch =
+          !hasChoices &&
+          !!searchResult &&
+          (searchResult.type === 'single' || searchResult.type === 'multiple') &&
+          !looksLikeMpn(query);
+        const presentationMessage = isGreenfieldCardSearch
+          ? buildSearchSummary(searchResult)
+          : response.message;
+
+        // Track assistant response in conversation history. CRITICAL: for greenfield card
+        // searches this is the DETERMINISTIC message, never the leaked prose, so a fabrication
+        // can't poison later turns (mirrors showRecsAndDeferAssessment).
+        conversationRef.current.push({ role: 'assistant', content: presentationMessage });
 
         // Accumulate Atlas MFRs the LLM looked up via get_manufacturer_profile
         // this turn so the chat UI can linkify those names in the assistant's
@@ -1211,9 +1234,6 @@ export function useAppState() {
         setState((prev) => ({ ...prev, llmAvailable: true }));
         setStatus('');
 
-        // Extract search result if the LLM searched
-        const searchResult = response.searchResult;
-
         // When a new search is initiated, clear stale data from previous part
         if (searchResult) {
           contextAskedRef.current = false;
@@ -1235,11 +1255,11 @@ export function useAppState() {
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult: searchResult ?? null }));
         } else if (searchResult && searchResult.type === 'single') {
           // Single match — show as a clickable part card (same as multi-match)
-          const msg = addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          const msg = addMessage('assistant', presentationMessage, { type: 'options', parts: searchResult.matches });
           triggerSearchDistributorEnrichment(msg.id, searchResult.matches);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'multiple') {
-          const msg = addMessage('assistant', response.message, { type: 'options', parts: searchResult.matches });
+          const msg = addMessage('assistant', presentationMessage, { type: 'options', parts: searchResult.matches });
           triggerSearchDistributorEnrichment(msg.id, searchResult.matches);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'none') {
