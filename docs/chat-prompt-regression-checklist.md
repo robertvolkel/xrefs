@@ -318,23 +318,41 @@ baseline stayed PASS. No correctness regression from the reorg.
 *closes* when asking a distribution question (A1) — client panel-visibility logic, not the prompt; (2) the D2
 repeat-ask elaboration above. Neither is a gate-blocker.
 
-## Guided-selection run — Results Log (pending in-app run on Haiku)
+## Guided-selection run — Results Log (2026-06-22, Haiku)
 
 The guided-selection change (2026-06-21) adds the §"Part-selection-advice discipline" guided-selection
-carve-out + §9/§10 reconciliation. Re-run the **whole** A–D list (no CRITICAL/HIGH baseline-PASS row may
-regress) PLUS the new E rows below. "Pre-change" = the Phase-1 prompt behavior (the recorded Post-Phase-1
+carve-out + §9/§10 reconciliation. "Pre-change" = the Phase-1 prompt behavior (the recorded Post-Phase-1
 column for A–D; A3/C5 baselines for the E2/E5 analogues).
 
 **Acceptance gate for this change:** every CRITICAL+HIGH row that was PASS post-Phase-1 stays PASS, AND the
 new **E2 (routing)** and **E4** CRITICAL rows pass. A3's closing-leak remains exempt (tracked, Phase-3 fix).
-If E1/E6 flake (keeps asking / never searches) or E4 leaks specs, that is the signal to escalate to the
-structured fallback — do not paper over with more prompt verbiage.
+
+**🟢 GATE PASSED.** Both CRITICAL rows (E2 routing, E4) passed; E4 (no spec leak in the guiding turn) is the
+result that proves prompt-only is viable — the scary new-surface risk did not materialize. E3 initially FAILED
+(over-narrow), fixed by the §5c routing-examples bullet (commit `318b47a`) and re-tested PASS. No A–D
+regression observed in the walk.
 
 | ID | Rule | Tier | Pre-change (Phase-1) | Post-guided-selection (Haiku) |
 |----|------|------|----------------------|-------------------------------|
-| E1 | Vague request → guides in one turn | HIGH | n/a (new behavior) | |
-| E2 | Concrete request still searches (routing) | CRITICAL | ≈A3: routing P, closing-leak FAIL | |
-| E3 | Single-param searches, no polarity ask | HIGH | n/a (new behavior) | |
-| E4 | Guiding turn leaks no ungrounded specifics | CRITICAL | n/a (new surface) | |
-| E5 | Opinion question still answer-first | HIGH | ≈C5: P✱ | |
-| E6 | STOP condition converts to search | HIGH | n/a (new behavior) | |
+| E1 | Vague request → guides in one turn | HIGH | n/a (new behavior) | ✅ PASS — clean 1-turn guide, ≤2 discriminators + escape hatch; used BMS user-context |
+| E2 | Concrete request still searches (routing) | CRITICAL | ≈A3: routing P, closing-leak FAIL | ✅ PASS (routing) — searched immediately; A3-exempt closing mutated to a *misread* of grounded data (420 ∉ 200–400) |
+| E3 | Single-param searches, no polarity ask | HIGH | n/a (new behavior) | ❌→✅ FAIL pre-fix (asked N-vs-P), **PASS after `318b47a`** (searches immediately). Surfaced A3-family spec-dump leak on broad results (see findings) — exempt, Phase-3 |
+| E4 | Guiding turn leaks no ungrounded specifics | CRITICAL | n/a (new surface) | ✅ PASS — no MPN/MFR/typical-spec leak in the guiding turn (the load-bearing result) |
+| E5 | Opinion question still answer-first | HIGH | ≈C5: P✱ | ✅ PASS — answer-first held (§10 carve-out works); closing leaked A2-family MFR drop-in claims (Phase-3) |
+| E6 | STOP condition converts to search | HIGH | n/a (new behavior) | ✅ PASS — searched after discriminators given, no further question; presentation prose **clean** |
+
+**Findings (the actionable one): the greenfield grounding leak is not uniform — it fires on the
+"curate-a-recommendation" impulse, not on plain search presentation.** E3 (broad/heterogeneous result set —
+"MOSFET for a 24V motor driver") leaked a from-memory named catalog with specs + AEC quals that didn't even
+match the rendered card. E6 (tight/homogeneous set — "X7R 16V 0603") stayed clean ("I found 20, click one").
+So the model reaches into training data when it decides to *editorialize a curated parts list* on a broad
+result, and stays grounded when it simply points at the cards. The strengthened §5c floor ("specifics enter
+prose ONLY after search returns them… holds across the free-prose closing") did NOT hold on Haiku for the
+broad-result curate case — confirming this is the pre-existing **A3-family leak**, squarely the **Phase-3
+(free-prose grounding floor)** target, and telling us *where* Phase-3 must bite: the curate-a-recommendation
+closing on broad greenfield searches. Not a guided-selection regression; not a fallback trigger (E4 clean,
+E6 STOP works). Do NOT whack-a-mole with another lexical ban (cf. ai-prompt-principled-rules-not-lexical-bans).
+
+**Routing-examples fix (`318b47a`) verified both-directions:** it sharpened the SEARCH case (E3 24V→search)
+*and* the GUIDE case held (E1 still guides, ≤2 + escape hatch, no blind search) — and E1's discriminator count
+tightened from a pre-fix 4-question drift to a clean 2.
