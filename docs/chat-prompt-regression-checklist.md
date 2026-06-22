@@ -356,3 +356,25 @@ E6 STOP works). Do NOT whack-a-mole with another lexical ban (cf. ai-prompt-prin
 **Routing-examples fix (`318b47a`) verified both-directions:** it sharpened the SEARCH case (E3 24V→search)
 *and* the GUIDE case held (E1 still guides, ≤2 + escape hatch, no blind search) — and E1's discriminator count
 tightened from a pre-fix 4-question drift to a clean 2.
+
+## Deterministic search-presentation fix — Results Log (2026-06-22, Haiku, commit `e2b200c`)
+
+Structural fix (Decision #173 pattern): greenfield card searches now post a DETERMINISTIC bubble
+(`buildSearchSummary`) instead of the LLM's free prose; MPN lookups keep the LLM message (gated by
+`looksLikeMpn`). Re-ran the leak rows + the MPN-path regression guard on Haiku.
+
+| ID | Check | Result |
+|----|-------|--------|
+| E3 | greenfield broad search — leak gone | ✅ PASS — bubble = "I found **20** parts matching your criteria — click…"; NO from-memory catalog, no specs/quals in prose. The pre-fix spec-dump is gone. |
+| E2 | greenfield concrete search — A3 closing-leak gone | ✅ PASS — searched immediately; deterministic bubble; the "matches your spec exactly" closing leak retired. |
+| C6/B2 | MPN lookup ("find 2N2222AUB") — override must NOT fire | ✅ PASS — kept the LLM confirmation prose (variant categories, no specs); `looksLikeMpn`-gating confirmed. The fix is invisible on the MPN path. |
+| E6 | guide→search STOP | not re-run this round — search-presentation override is the same deterministic message E6 already produced cleanly; mechanism unchanged. |
+| B6 | new-MPN restart | not re-run — MPN path, covered by C6/B2 confirming the override stays out of MPN lookups. |
+
+**Outcome: the A3-family greenfield leak is RETIRED on the search-presentation surface, both directions
+confirmed** — greenfield → deterministic (E3/E2), MPN lookup → LLM message preserved (C6/B2). `npm test`
+2185/2185; `npm run build` green; new `searchSummary.ts` lint-clean.
+
+**Surfaced (separate, pre-existing — logged to BACKLOG):** the greenfield search returned PNP parts (SSM2220)
+for an "NPN" request — a search-RELEVANCE gap (descriptive query doesn't hard-filter polarity). NOT caused by
+the fix; the deterministic surface makes it honestly visible instead of masking it with fabricated prose.

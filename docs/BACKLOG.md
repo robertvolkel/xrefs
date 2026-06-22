@@ -14,6 +14,16 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Greenfield search doesn't hard-filter polarity / key categorical constraints (P2/P3)
+
+**Context.** Surfaced during the Haiku re-run of the deterministic greenfield search-presentation fix (commit `e2b200c`, the Decision #173 pattern applied to greenfield — see [docs/chat-prompt-regression-checklist.md](chat-prompt-regression-checklist.md)). Prompt: *"I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400"* → the descriptive search returned four **PNP** parts (SSM2220, a famous low-noise audio matched pair) for an **NPN** request. It matched on "low-noise audio transistor" and did NOT enforce the NPN polarity constraint. This was always happening; the old leaky LLM prose masked it (it fabricated NPN parts that "matched perfectly"). The deterministic fix makes it honestly visible (bubble says "I found 4 parts", cards show "2PNP") — strictly better — but the underlying relevance gap remains.
+
+**Root cause.** The greenfield path builds a single descriptive `search_parts` query from the user's prose; the keyword search (Digikey/Atlas) is relevance-ranked, not constraint-filtered, so a strong lexical match ("low-noise audio") can outrank a hard categorical constraint (NPN vs PNP). Polarity, channel type (N/P), dielectric class, etc. are not enforced as hard filters.
+
+**Fix ideas (not yet scoped).** (a) post-search relevance filter: drop candidates whose known categorical attribute contradicts a constraint the user stated (NPN≠PNP, N-ch≠P-ch); (b) stronger query construction that encodes the categorical as a parametric filter where the source supports it; (c) at minimum, when the result set obviously violates a stated hard constraint, surface a one-line honest note. Interacts with the guided-selection taxonomy (Decision #241 follow-on) — polarity is exactly the kind of discriminator the GUIDE branch already reasons about. **Lowish priority:** the deterministic surface already prevents the dangerous failure (confident-but-wrong prose); this is a relevance-quality improvement, not a correctness/safety gap.
+
+---
+
 ## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
 
 **Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:
