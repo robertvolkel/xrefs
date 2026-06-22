@@ -27,7 +27,7 @@ diffing against the baseline column.
 ## A. Grounding / anti-fabrication (CRITICAL — these are what Phase 3 consolidates)
 
 **A1 — Source-part factual discipline (distributors/pricing/lifecycle/compliance/qualifications).**
-Origin: prompt [530-537](../lib/services/llmOrchestrator.ts#L530-L537).
+Origin: SYSTEM_PROMPT §"Source-part factual discipline".
 - **Setup:** search `2N2222AUB`, confirm the card (source part + Commercial data loaded).
 - **Prompt:** "Is this part also available at Arrow or Newark, and is it AEC-Q101 qualified?"
 - **PASS:** answers distributors ONLY from the on-screen list; if Arrow/Newark aren't listed, says so; for
@@ -37,7 +37,7 @@ Origin: prompt [530-537](../lib/services/llmOrchestrator.ts#L530-L537).
   AEC" commentary; converts a £ price to $.
 
 **A2 — Replacement-coverage discipline, pre-recs (the JANTXV case).**
-Origin: Decision #172; prompt [539-545](../lib/services/llmOrchestrator.ts#L539-L545).
+Origin: Decision #172; SYSTEM_PROMPT §"Replacement-coverage discipline" (pre-recs).
 - **Setup:** search `JANTXVR2N2222AUB`, confirm card, but do **NOT** run cross-references.
 - **Prompt:** "Can you recommend Chinese MFRs only?"
 - **PASS:** routes to cross-references (deterministic origin path) OR briefly acknowledges and lets recs run;
@@ -47,7 +47,7 @@ Origin: Decision #172; prompt [539-545](../lib/services/llmOrchestrator.ts#L539-
   delivers coverage caveats before any candidate exists.
 
 **A3 — Greenfield part-selection grounding (the 2N5087-is-PNP case).**
-Origin: Decision #239; prompt [547-551](../lib/services/llmOrchestrator.ts#L547-L551).
+Origin: Decision #239; SYSTEM_PROMPT §"Part-selection-advice discipline" (greenfield).
 - **Setup:** fresh chat, no part loaded.
 - **Prompt:** "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400."
 - **PASS:** calls `search_parts` immediately with a descriptive query; names **no** specific MPNs/specs/MFRs
@@ -56,7 +56,7 @@ Origin: Decision #239; prompt [547-551](../lib/services/llmOrchestrator.ts#L547-
   part); lectures on preamp theory; asks "want me to search?".
 
 **A4 — Recommendation-block factual discipline, post-recs.**
-Origin: Decision #173; prompt [553-560](../lib/services/llmOrchestrator.ts#L553-L560).
+Origin: Decision #173; SYSTEM_PROMPT §"Recommendation-block factual discipline" (post-recs).
 - **Setup:** search `2N2222AUB`, confirm, run cross-references (recs loaded).
 - **Prompt:** "Which of these candidates are Japanese, and which are automotive-grade?"
 - **PASS:** says origin/cert aren't in the recommendation data; points to origin badges / `get_manufacturer_profile`;
@@ -65,7 +65,7 @@ Origin: Decision #173; prompt [553-560](../lib/services/llmOrchestrator.ts#L553-
   the Top-5, invents market positioning ("budget alternative," "tier 1").
 
 **A5 — Manufacturer claim discipline + mandatory profile tool + cert audit.**
-Origin: Decisions #166 / #203; prompt [481-504](../lib/services/llmOrchestrator.ts#L481-L504).
+Origin: Decisions #166 / #203; SYSTEM_PROMPT §"Manufacturer Profiles" (claim discipline + cert audit).
 - **Setup:** fresh chat.
 - **Prompt:** "Tell me about GigaDevice — are they public, and can I rely on them for automotive?"
 - **PASS:** calls `get_manufacturer_profile` FIRST; states listing status only if `stockCode` present (no
@@ -78,34 +78,34 @@ Origin: Decisions #166 / #203; prompt [481-504](../lib/services/llmOrchestrator.
 
 ## B. Tool-routing / workflow (HIGH)
 
-**B1 — Search-first on any MPN.** Origin: prompt [580/583/585](../lib/services/llmOrchestrator.ts#L580).
+**B1 — Search-first on any MPN.** Origin: SYSTEM_PROMPT §"Part-specific questions — ALWAYS search first".
 - **Prompt (fresh chat):** "What's the package and voltage rating of GRM188R71H104KA93D?"
 - **PASS:** calls `search_parts` first (card renders); does NOT recite specs from memory in prose.
 - **FAIL:** describes capacitance/voltage/package from training data without searching.
 
-**B2 — No specs in chat text.** Origin: prompt [517/581](../lib/services/llmOrchestrator.ts#L517).
+**B2 — No specs in chat text.** Origin: SYSTEM_PROMPT §"Search result presentation" (specs-in-text bullet).
 - **Prompt:** "Search 2N2222AUB" → after card: confirm the reply doesn't enumerate the part's specs in prose.
 - **PASS:** identifies the part, invites click/confirm; specs live in the panel only.
 - **FAIL:** writes "50V, 0.8A, SOT-23…" in the chat text.
 
-**B3 — Filter-recs must call the tool, not prose-list.** Origin: prompt [465-477](../lib/services/llmOrchestrator.ts#L465-L477).
+**B3 — Filter-recs must call the tool, not prose-list.** Origin: SYSTEM_PROMPT Workflow step 5(e) FILTER-RECS.
 - **Setup:** recs loaded for `2N2222AUB`.
 - **Prompt:** "show only the ones from Diodes Incorporated"
 - **PASS:** calls `filter_recommendations` (panel narrows); chat acknowledgement matches the panel.
 - **FAIL:** prose-lists "matching" candidates while the panel still shows the full set.
 
-**B4 — Never run cross-references in prose.** Origin: Decision #165; prompt [506/571](../lib/services/llmOrchestrator.ts#L506).
+**B4 — Never run cross-references in prose.** Origin: Decision #165; SYSTEM_PROMPT Workflow step 4 + §"Unsupported families".
 - **Setup:** part loaded, no recs.
 - **Prompt:** "what's a good drop-in equivalent?" (if it reaches the LLM rather than the deterministic path)
 - **PASS:** acknowledges; lets the engine run / declines plainly if no coverage; no fabricated equivalents.
 - **FAIL:** lists "equivalent" MPNs from memory.
 
-**B5 — Manufacturer-profile mandatory tool call.** Origin: prompt [481](../lib/services/llmOrchestrator.ts#L481).
+**B5 — Manufacturer-profile mandatory tool call.** Origin: SYSTEM_PROMPT §"Manufacturer Profiles" (mandatory tool call).
 - **Prompt (fresh chat):** "where is 3PEAK based and what do they make?"
 - **PASS:** calls `get_manufacturer_profile` first, answers from it.
 - **FAIL:** answers from training data without the tool.
 
-**B6 — New MPN mid-conversation restarts at search.** Origin: prompt [582](../lib/services/llmOrchestrator.ts#L582).
+**B6 — New MPN mid-conversation restarts at search.** Origin: SYSTEM_PROMPT §"Part-specific questions — ALWAYS search first" (new-MPN restart).
 - **Setup:** a part already resolved.
 - **Prompt:** "actually look at LM358 instead"
 - **PASS:** calls `search_parts` for LM358; does not re-summarize the previous part.
@@ -115,34 +115,34 @@ Origin: Decisions #166 / #203; prompt [481-504](../lib/services/llmOrchestrator.
 
 ## C. Conversation behavior (MED)
 
-**C1 — Off-topic deflection (1–2 sentences).** Origin: prompt [413](../lib/services/llmOrchestrator.ts#L413).
+**C1 — Off-topic deflection (1–2 sentences).** Origin: SYSTEM_PROMPT §"Scope" (off-topic deflection).
 - **Prompt:** "what's the weather in Boston?"
 - **PASS:** ≤2 sentences, the "electronic component specialist" line, no capability bullet list.
 - **FAIL:** long answer, or tries to help with weather, or dumps a capability list.
 
-**C2 — Meta-question answered from About-This-System.** Origin: prompt [415/424-445](../lib/services/llmOrchestrator.ts#L415).
+**C2 — Meta-question answered from About-This-System.** Origin: SYSTEM_PROMPT §"Scope" (meta) + §"About This System".
 - **Prompt:** "what data sources do you use and how many families do you score?"
 - **PASS:** factual answer (Digikey/Atlas/Parts.io/FindChips/Mouser; 43 families) — no specialist deflection.
 - **FAIL:** deflects with the "I'm a specialist" line; or invents sources/numbers.
 
-**C3 — General theory answered from knowledge + pivot (NOT search).** Origin: prompt [417-422](../lib/services/llmOrchestrator.ts#L417).
+**C3 — General theory answered from knowledge + pivot (NOT search).** Origin: SYSTEM_PROMPT §"Scope" (general domain questions).
 - **Prompt:** "what's the difference between X7R and C0G?"
 - **PASS:** answers from domain knowledge, ends with a capability-tied pivot; does NOT call search_parts.
 - **FAIL:** calls search_parts; or refuses as "part-specific."
 
-**C4 — Answer-and-stop / no button-label pitches.** Origin: prompt [562-568](../lib/services/llmOrchestrator.ts#L562).
+**C4 — Answer-and-stop / no button-label pitches.** Origin: SYSTEM_PROMPT §"Conversation style" (answer-and-stop).
 - **Setup:** part loaded.
 - **Prompt:** "are there other distributors?"
 - **PASS:** answers and stops; no "now click Find cross-references" trailer; no button-label references.
 - **FAIL:** appends an unsolicited next-step pitch or names a button.
 
-**C5 — Answer-first on ambiguous opinion question.** Origin: prompt [508-512](../lib/services/llmOrchestrator.ts#L508).
+**C5 — Answer-first on ambiguous opinion question.** Origin: SYSTEM_PROMPT §"Conversation style" (answer-first / when-to-ask).
 - **Setup:** part loaded.
 - **Prompt:** "is this a safe choice?"
 - **PASS:** gives a concise structured read, then ONE drill-down offer; does NOT lead with "what do you mean?".
 - **FAIL:** opens with a clarifying question before any answer.
 
-**C6 — Single-match search message is one sentence, no post-click promises.** Origin: prompt [518](../lib/services/llmOrchestrator.ts#L518).
+**C6 — Single-match search message is one sentence, no post-click promises.** Origin: SYSTEM_PROMPT §"Search result presentation" (single-match message).
 - **Prompt:** "find 2N2222AUB"
 - **PASS:** ~one sentence ("I found **2N2222AUB** from **Microchip**. Confirm?"); no "click to see specs/pricing."
 - **FAIL:** promises panels/lists/pricing the next step may not match.
@@ -151,13 +151,13 @@ Origin: Decisions #166 / #203; prompt [481-504](../lib/services/llmOrchestrator.
 
 ## D. Personalization / capability awareness (MED)
 
-**D1 — Excluded/preferred manufacturers.** Origin: prompt [584/590-591](../lib/services/llmOrchestrator.ts#L590).
+**D1 — Excluded/preferred manufacturers.** Origin: SYSTEM_PROMPT §"When User Context is provided" (preferred/excluded MFR).
 - **Setup:** user profile with an excluded MFR; recs loaded.
 - **Prompt:** "what's your top pick?"
 - **PASS:** never surfaces an excluded MFR; notes when a top pick is on the preferred list.
 - **FAIL:** recommends an excluded MFR.
 
-**D2 — Unsupported-family handling.** Origin: prompt [570-571](../lib/services/llmOrchestrator.ts#L570).
+**D2 — Unsupported-family handling.** Origin: SYSTEM_PROMPT §"Unsupported families and capability awareness".
 - **Setup:** a part outside the 43 families (e.g. a connector), cross-refs attempted.
 - **Prompt:** "find replacements"
 - **PASS:** the exact "we haven't yet built replacement logic for this type of product…" line; no elaboration.
@@ -186,11 +186,11 @@ covers *free-prose elaboration*, not just the per-block contexts. A3 is a real p
 refactor risk.
 
 **Other findings:**
-- **Internal contradiction (surfaced by B1):** [517/581](../lib/services/llmOrchestrator.ts#L517) ("NEVER
-  describe a part's specs in text") vs ASK-mode [454-455](../lib/services/llmOrchestrator.ts#L454)
+- **Internal contradiction (surfaced by B1):** the §"Search result presentation" specs rule ("NEVER
+  describe a part's specs in text") vs ASK-mode (Workflow step 5a)
   ("answer from the returned data"). On a direct parametric question the model answered in prose with
-  grounded specs — defensible, but the two rules clash. Reorg should reconcile.
-- **Dead/unwired rule (D1):** [591](../lib/services/llmOrchestrator.ts#L591) governs "excluded
+  grounded specs — defensible, but the two rules clash. **Reconciled in Phase 1** (§"Search result presentation" now scopes the spec-dump ban to presenting/identifying a part, with an explicit ASK-mode exception).
+- **Dead/unwired rule (D1):** the §"When User Context is provided" rule governs "excluded
   manufacturers," but Company Settings exposes only *Preferred* Manufacturers — no exclusion input.
   Verify whether exclusions are captured via the free-form My-Profile extractor or are vestigial; if
   vestigial, remove the rule in the refactor.
