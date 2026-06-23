@@ -35,7 +35,7 @@ import {
 import { sortRecommendationsForDisplay } from '@/components/RecommendationsPanel';
 import { getLogicTableForSubcategory, isFamilySupported } from '@/lib/logicTables';
 import { detectMissingAttributes } from '@/lib/services/matchingEngine';
-import { getContextQuestionsForFamily } from '@/lib/contextQuestions';
+import { getContextQuestionsForFamily, describeContextAnswers } from '@/lib/contextQuestions';
 import { deriveAutoAnswers } from '@/lib/contextQuestions/autoAnswer';
 import { logSearch } from '@/lib/supabaseLogger';
 
@@ -1947,8 +1947,9 @@ export function useAppState() {
       }
 
       if (filledCount > 0) {
-        const labels = Object.values(filteredAnswers);
-        addMessage('user', `Application context: ${labels.join(', ')}`);
+        const described = describeContextAnswers(familyIdForBlock ?? '', filteredAnswers);
+        const body = described.map((d) => `- ${d.question} → ${d.answer}`).join('\n');
+        addMessage('user', `Your context answers:\n\n${body}`);
       } else {
         addMessage('user', 'Proceeding with default matching.');
       }

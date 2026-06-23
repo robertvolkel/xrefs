@@ -113,6 +113,49 @@ export function getContextQuestionsForFamily(familyId: string): FamilyContextCon
   return configByFamilyId.get(familyId) ?? null;
 }
 
+/** A single answered context question, rendered in human-readable form. */
+export interface DescribedContextAnswer {
+  /** The human-readable question text. */
+  question: string;
+  /** The human-readable option label (or the raw free-text the user typed). */
+  answer: string;
+}
+
+/**
+ * Translate a family's submitted context answers (questionId → answerValue codes)
+ * into human-readable { question, answer } pairs, in question/priority order.
+ *
+ * - Free-text answers (no matching option) fall back to the typed value.
+ * - Unknown family / stray answer keys fall back to "questionId → raw value"
+ *   rather than being dropped, so nothing the user selected goes missing.
+ */
+export function describeContextAnswers(
+  familyId: string,
+  answers: Record<string, string>,
+): DescribedContextAnswer[] {
+  const config = getContextQuestionsForFamily(familyId);
+  const out: DescribedContextAnswer[] = [];
+  const consumed = new Set<string>();
+
+  if (config) {
+    for (const q of config.questions) {
+      const val = answers[q.questionId];
+      if (val === undefined || val.trim() === '') continue;
+      consumed.add(q.questionId);
+      const opt = q.options.find((o) => o.value === val);
+      out.push({ question: q.questionText, answer: opt ? opt.label : val });
+    }
+  }
+
+  // Any answers not matched above (unknown family, conditional strays) — keep, don't drop.
+  for (const [qId, val] of Object.entries(answers)) {
+    if (consumed.has(qId) || val.trim() === '') continue;
+    out.push({ question: qId, answer: val });
+  }
+
+  return out;
+}
+
 /** Get all registered family context configs */
 export function getAllContextConfigs(): FamilyContextConfig[] {
   return allConfigs;
