@@ -9,7 +9,14 @@ import { createClient } from '../supabase/server';
 import { StoredRow } from '../partsListStorage';
 import { getCountryName } from '../constants/profileOptions';
 
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+// Default to Sonnet for all three orchestrators (chat / refinementChat / listChat).
+// The agentic decision these make — "given this turn, which tool do I fire, and when"
+// (notably the SEARCH-NOW vs. ask/prose call on greenfield part-selection requests) — is
+// where model tier matters most; Haiku under-fires search_parts and punts back to the user.
+// The fabrication backstops are deterministic regardless of model (buildSearchSummary /
+// buildRecsSummary), so upgrading buys routing reliability without re-opening prose risk.
+// Override per-environment via ANTHROPIC_MODEL (e.g. set back to Haiku for cost/latency).
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 const MAX_TOOL_LOOPS = 10;
 const CACHE_CONTROL: Anthropic.CacheControlEphemeral = { type: 'ephemeral' };
 

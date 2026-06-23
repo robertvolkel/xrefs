@@ -48,6 +48,24 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 ---
 
+## Conversational query-shape routing — interpreting the messy ways users actually ask (NEW category, P2)
+
+**Thesis.** The engine handles a *clean* query well (a bare MPN, or a part type + one spec). It mishandles the realistic, compound shapes people actually type — refinement turns, "find me something like part X," named exemplars buried in a descriptive ask, multi-part comparisons. The failure here is usually **not** grounding (the model doesn't fabricate) and **not** the vetting math (Decision #243 works once it engages) — it's the **routing/interpretation layer** that decides, for a messy input, *which* search to run, with *what* constraints, and *how* to present the result. This is its own problem space, separate from prose-grounding ("Chat-prompt remaining work") and the synthetic-source mechanics ("Greenfield search relevance #243"). New shapes get appended here as we hit them.
+
+**Related infra change (June 22, 2026):** the chat orchestrator default was flipped **Haiku 4.5 → Sonnet 4.6** ([lib/services/llmOrchestrator.ts](../lib/services/llmOrchestrator.ts), no `ANTHROPIC_MODEL` override in prod) because Haiku under-fired `search_parts` on exactly these shapes — it punted a fully-specified part-need back to the user instead of searching. Sonnet raises the routing floor, but model tier alone does not solve the shapes below; they need explicit handling. (Note: CLAUDE.md still says "Sonnet 4.5"; the real default is now `claude-sonnet-4-6`.)
+
+**Known shapes (observed this session, June 22, 2026):**
+
+- **(1) Refinement turns — pivot on new constraints, don't re-offer stale cards (P2).** A part-need result set is on screen; the user then adds new hard constraints (e.g. after a broad "NPN transistor," they type "low-noise, 9V, 1–2mA, hFE 200–400"). Correct behavior: fire a FRESH logic-vetted `search_parts` with the new constraints — not "click any of the earlier parts, which looks promising?" Original failure (on Haiku): exactly that punt. Mitigated by the Sonnet flip; if the shape still misroutes on Sonnet, add an explicit refinement-pivot rule to the Part-selection-advice block and validate on the Haiku checklist. The existing pivot rule ([llmOrchestrator.ts:529](../lib/services/llmOrchestrator.ts#L529)) covers "actually I need 50V" but not "here are more specs for the same part type."
+
+- **(2) "Like part X" / exemplar-seeded search (P2).** Query names reference MPNs inside a descriptive ask ("a low-noise LDO **like the LT3045 or TPS7A4700**, <10µV noise, >70dB PSRR, for hi-fi audio"). Current behavior: the model passes the named MPNs as the keyword query → Digikey exact-matches "LT3045" and floods the list with its package SKUs; the SECOND named reference (TPS7A4700) doesn't surface; the descriptive specs aren't lifted into `constraints`, so the logic-vetted path never engages (summary read "matching your criteria," not "ranked by how well they fit"). Desired: treat named exemplars as **seeds** — classify the family + harvest representative specs from them — then run ONE descriptive logic-vetted search for comparable parts across MFRs, surfacing all named references + peers, not one part's SKU list.
+
+- **(3) SKU / package-ordering-variant flooding (P2, quick win, model-independent).** Search dedups by **exact MPN only** ([partDataService.ts:1395](../lib/services/partDataService.ts#L1395)), so `LT3045EMSE#TRPBF` / `#PBF` / `EDD#TRPBF` / `EDD#PBF` / `EDD-1#TRPBF` all render as separate "parts" — a "20 results" set that is really ~4 distinct parts padded with tape-vs-tube + Pb-free permutations. On a SELECTION surface that is noise. Collapse ordering permutations to one representative card per distinct part (keep genuine package choices — MSOP vs DFN — distinct). `mpnNormalizer.ts` already strips packaging suffixes for cross-ref lookups; wire it into the search-result merge. Helps EVERY search (MPN or descriptive). Overlaps #243's greenfield section but is broader (also fires on MPN lookups).
+
+**Forward-looking shapes (in-class, not yet hit — capture as they appear):** multi-part comparison ("compare X vs Y"); constraints on **datasheet-only** attributes (noise µV / PSRR dB / CTR) where Digikey lacks the field, so #243 vetting can't gate (missing-data = `pass` invariant — Atlas/parts.io gap-fill or datasheet extraction is the only lever); negation/exclusion ("anything but TI," "not pre-biased"); unit/format variance in stated specs ("2k2," "0R1," "1u").
+
+---
+
 ## Context-question translation completeness + `en` locale redundancy (follow-up to Decision #227) (P3)
 
 **Context.** Decision #227 fixed a translation-layer corruption where a broken extractor clobbered context-question titles and truncated strings at apostrophes. Two structural follow-ups surfaced while fixing it:

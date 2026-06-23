@@ -10,7 +10,7 @@ An AI-powered component intelligence platform for the electronics industry. User
 
 - **Next.js 16** (App Router, Turbopack) + React 19 + TypeScript
 - **MUI v7** with Material Design 3 dark mode (`colorSchemes` API, `enableCssLayer: false`)
-- **Anthropic Claude API** (Sonnet 4.5) for LLM orchestrator with tool calling
+- **Anthropic Claude API** (Sonnet 4.6 default, overridable via `ANTHROPIC_MODEL`) for LLM orchestrator with tool calling
 - **Supabase** for auth, user profiles, conversation persistence
 - **Digikey Product Information API v4** for live part data (OAuth2 client credentials)
 - **Emotion** for CSS-in-JS
