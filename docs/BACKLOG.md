@@ -25,6 +25,11 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 - **(d) Optional hard-hide of over-spec / undersized.** Today everything is kept (sunk). A one-line flip via `filterRecsByMismatchCount` could hide undersized/hard-fails if ever wanted; over-spec hiding would need a new upper-bound rule the logic tables don't have.
 - **(e) Non-Digikey/non-Atlas sources aren't vetted.** Only Digikey + Atlas supply candidate attrs (parts.io isn't even queried on descriptive searches). Fine today; revisit if a descriptive path ever pulls parts.io/Mouser.
 
+**Deferred from the xhigh `/code-review` (June 22, 2026) — review fixed #1/#2/#4/#5; these were left:**
+- **(f) Dormant unit-prefix scale mismatch (latent correctness).** The synthetic source normalizes numericValue via the UNGATED `_applyUnitPrefixCore`, while Atlas candidates go through the GATED `applyUnitPrefix` (`APPLY_UNIT_PREFIX_TO_NUMERIC`, currently `true`). If that kill-switch is ever flipped off, SI-prefixed constraints (mA/kHz/nF) become incomparable to Atlas candidate values (synthetic = base SI, Atlas = raw) → wrong pass/fail + nonsense over-spec penalty for every Atlas candidate. Digikey unaffected (always prefixes). Fix: route the synthetic source through the same gated path as candidates. Dormant while the flag stays on.
+- **(g) Inline vetting sort duplicates `sortRecommendationsForDisplay`.** The vetting block in `partDataService.ts` redefines `statusRank` + a fewest-fails→Active→penalty→match% comparator that mirrors `recommendationSort.ts`'s primary keys. Only genuine delta is the over-spec penalty (which must stay search-only — cross-refs prefer higher-rated parts). Cleaner altitude: parameterize the shared sorter with an optional penalty callback. Low priority.
+- **(h) `SyntheticSourceResult` interface lives in `searchConstraints.ts`, not `lib/types.ts`.** Weak convention deviation (precedent: `AtlasCandidateWidening` in `atlasClient.ts`). Move if/when consolidating types.
+
 ---
 
 ## Chat-prompt remaining work — grounding leaks + cleanup (follow-ups to Decision #241 + the greenfield deterministic fix) (P2/P3)
