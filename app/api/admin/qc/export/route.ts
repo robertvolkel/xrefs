@@ -58,6 +58,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const format = searchParams.get('format') ?? 'csv';
     const requestSource = searchParams.get('request_source');
     const familyId = searchParams.get('family_id');
+    const userId = searchParams.get('user_id');
     const hasFeedback = searchParams.get('has_feedback');
     const search = searchParams.get('search')?.trim();
     const sortBy = searchParams.get('sort_by') ?? 'created_at';
@@ -84,6 +85,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     if (requestSource) query = query.eq('request_source', requestSource);
     if (familyId) query = query.eq('family_id', familyId);
+    if (userId) query = query.eq('user_id', userId);
 
     if (search) {
       const columnFilter = `source_mpn.ilike.%${search}%,family_name.ilike.%${search}%,data_source.ilike.%${search}%`;

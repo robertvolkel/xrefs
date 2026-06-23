@@ -784,6 +784,7 @@
     "overrides": "Attribute Overrides",
     "contextAnswers": "Context Answers",
     "searchPlaceholder": "Search MPN, family, user…",
+    "filterUserPlaceholder": "Filter by user…",
     "tabFeedback": "Logic Feedback",
     "tabLogs": "Logs",
     "type": "Type",

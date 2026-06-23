@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -23,6 +23,7 @@ import {
   CircularProgress,
   Menu,
   MenuItem,
+  Autocomplete,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import FlagIcon from '@mui/icons-material/Flag';
@@ -30,6 +31,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import { useTranslation } from 'react-i18next';
 import {
   RecommendationLogEntry,
@@ -42,6 +44,8 @@ import {
   getAdminQcLogDetail,
   updateFeedback,
   getQcExportUrl,
+  getActiveQcUsers,
+  QcActiveUser,
 } from '@/lib/api';
 import { statusColor } from './qcConstants';
 import QcFeedbackCard from './QcFeedbackCard';
@@ -61,6 +65,10 @@ export default function QcLogsTab() {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [hasFeedbackFilter, setHasFeedbackFilter] = useState(false);
   const [page, setPage] = useState(0);
+
+  // User filter
+  const [users, setUsers] = useState<QcActiveUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // Search + sort
   const [searchTerm, setSearchTerm] = useState('');
@@ -86,6 +94,11 @@ export default function QcLogsTab() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  // Load users with activity for the filter dropdown (once)
+  useEffect(() => {
+    getActiveQcUsers().then(setUsers).catch(() => {});
+  }, []);
+
   // Load logs
   const loadLogs = useCallback(async () => {
     setLogsLoading(true);
@@ -93,6 +106,7 @@ export default function QcLogsTab() {
       const result = await getAdminQcLog({
         requestSource: sourceFilter === 'all' ? undefined : sourceFilter,
         hasFeedback: hasFeedbackFilter || undefined,
+        userId: selectedUserId || undefined,
         search: debouncedSearch || undefined,
         sortBy: sortColumn,
         sortDir: sortDirection,
@@ -106,7 +120,7 @@ export default function QcLogsTab() {
     } finally {
       setLogsLoading(false);
     }
-  }, [sourceFilter, hasFeedbackFilter, debouncedSearch, sortColumn, sortDirection, page]);
+  }, [sourceFilter, hasFeedbackFilter, selectedUserId, debouncedSearch, sortColumn, sortDirection, page]);
 
   useEffect(() => { loadLogs(); }, [loadLogs]);
 
@@ -151,6 +165,7 @@ export default function QcLogsTab() {
       format,
       requestSource: sourceFilter === 'all' ? undefined : sourceFilter,
       hasFeedback: hasFeedbackFilter || undefined,
+      userId: selectedUserId || undefined,
       search: debouncedSearch || undefined,
       sortBy: sortColumn,
       sortDir: sortDirection,
@@ -168,6 +183,16 @@ export default function QcLogsTab() {
     { id: 'feedback', label: t('adminQc.feedback'), sortable: false, align: 'center' as const },
     { id: 'data_source', label: t('adminQc.dataSource'), sortable: true },
   ];
+
+  // User filter dropdown options
+  const userOptions = useMemo(
+    () =>
+      users
+        .map((u) => ({ id: u.id, label: u.full_name || u.email }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [users],
+  );
+  const selectedUserOption = userOptions.find((o) => o.id === selectedUserId) ?? null;
 
   // ── Detail View ──
   if (selectedLog) {
@@ -332,6 +357,38 @@ export default function QcLogsTab() {
             color={hasFeedbackFilter ? 'warning' : 'default'}
             onClick={() => { setHasFeedbackFilter(!hasFeedbackFilter); setPage(0); }}
             sx={{ height: 24, fontSize: '0.72rem' }}
+          />
+          <Autocomplete
+            size="small"
+            options={userOptions}
+            value={selectedUserOption}
+            onChange={(_e, value) => { setSelectedUserId(value?.id ?? null); setPage(0); }}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder={t('adminQc.filterUserPlaceholder')}
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment: (
+                      <>
+                        <InputAdornment position="start">
+                          <PersonOutlineIcon sx={{ fontSize: '1rem', color: 'text.secondary' }} />
+                        </InputAdornment>
+                        {params.InputProps.startAdornment}
+                      </>
+                    ),
+                  },
+                }}
+              />
+            )}
+            sx={{
+              width: 260,
+              '& .MuiInputBase-input': { fontSize: '0.78rem', py: '2px !important' },
+              '& .MuiOutlinedInput-root': { minHeight: 30, py: 0 },
+            }}
+            slotProps={{ paper: { sx: { '& .MuiAutocomplete-option': { fontSize: '0.78rem' } } } }}
           />
           <Box sx={{ flex: 1 }} />
           <Button

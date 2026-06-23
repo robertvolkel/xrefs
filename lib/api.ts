@@ -335,10 +335,23 @@ export async function updateQcSettings(settings: Partial<PlatformSettings>): Pro
   if (!json.success) throw new Error(json.error ?? 'Failed to update settings');
 }
 
+/** A user that appears in the recommendation_log (for the Activity Logs user filter) */
+export interface QcActiveUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+}
+
+/** Get the distinct users that have Activity Logs activity (recommendation_log entries) */
+export async function getActiveQcUsers(): Promise<QcActiveUser[]> {
+  return fetchApi<QcActiveUser[]>(`${BASE}/admin/qc/users`);
+}
+
 /** Get paginated QC log entries */
 export async function getAdminQcLog(params?: {
   requestSource?: string;
   familyId?: string;
+  userId?: string;
   hasFeedback?: boolean;
   search?: string;
   sortBy?: string;
@@ -349,6 +362,7 @@ export async function getAdminQcLog(params?: {
   const searchParams = new URLSearchParams();
   if (params?.requestSource) searchParams.set('request_source', params.requestSource);
   if (params?.familyId) searchParams.set('family_id', params.familyId);
+  if (params?.userId) searchParams.set('user_id', params.userId);
   if (params?.hasFeedback !== undefined) searchParams.set('has_feedback', String(params.hasFeedback));
   if (params?.search) searchParams.set('search', params.search);
   if (params?.sortBy) searchParams.set('sort_by', params.sortBy);
@@ -526,6 +540,7 @@ export function getQcExportUrl(params?: {
   format?: 'csv' | 'json';
   requestSource?: string;
   familyId?: string;
+  userId?: string;
   hasFeedback?: boolean;
   search?: string;
   sortBy?: string;
@@ -535,6 +550,7 @@ export function getQcExportUrl(params?: {
   if (params?.format) sp.set('format', params.format);
   if (params?.requestSource) sp.set('request_source', params.requestSource);
   if (params?.familyId) sp.set('family_id', params.familyId);
+  if (params?.userId) sp.set('user_id', params.userId);
   if (params?.hasFeedback) sp.set('has_feedback', 'true');
   if (params?.search) sp.set('search', params.search);
   if (params?.sortBy) sp.set('sort_by', params.sortBy);

@@ -529,6 +529,7 @@
     "overrides": "Attribut-Überschreibungen",
     "contextAnswers": "Kontextantworten",
     "searchPlaceholder": "MPN, Familie, Benutzer suchen…",
+    "filterUserPlaceholder": "Nach Benutzer filtern…",
     "tabFeedback": "Logik-Feedback",
     "tabLogs": "Protokolle",
     "type": "Typ",
