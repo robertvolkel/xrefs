@@ -1702,10 +1702,11 @@ export function useAppState() {
         return;
       }
 
-      // Show user's choice in chat
-      addMessage('user', choice.label);
-      // Send choice label to LLM as a user message
-      conversationRef.current.push({ role: 'user', content: choice.label });
+      // 'other' / search choice: treat the clicked label as a user turn.
+      // handleSearchWithLLM ALREADY adds the user message to the chat AND pushes
+      // it to conversationRef, so we must NOT do either here — doing both echoed
+      // the click twice in the UI and pushed the turn into LLM history twice
+      // ("NPN\nNPN"), poisoning the conversation and garbling later agent turns.
       await handleSearchWithLLM(choice.label);
     },
     [addMessage, markChoiceSelected, priceAtQuantity, state.searchResult, state.sourcePart, handleConfirmPart, handleFindReplacements, handleSearchWithLLM]
