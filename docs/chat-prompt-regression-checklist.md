@@ -378,3 +378,35 @@ confirmed** — greenfield → deterministic (E3/E2), MPN lookup → LLM message
 **Surfaced (separate, pre-existing — logged to BACKLOG):** the greenfield search returned PNP parts (SSM2220)
 for an "NPN" request — a search-RELEVANCE gap (descriptive query doesn't hard-filter polarity). NOT caused by
 the fix; the deterministic surface makes it honestly visible instead of masking it with fabricated prose.
+
+## Sonnet model-swap spot-check (2026-06-22)
+
+**Why partial, not a full 19-row re-baseline.** The default model flipped Haiku 4.5 → `claude-sonnet-4-6`
+([llmOrchestrator.ts](../lib/services/llmOrchestrator.ts), commit `1b13fd2`). A *model* swap (unlike a prompt
+edit) can only move tool-routing and the grounding rows that were already weak on Haiku — solid grounding rows
+won't regress on a *stronger* model. So this checks the **7 model-sensitive rows** only.
+
+**Method.** `npx tsx scripts/sonnet-spotcheck.ts` calls `chat()` **in-process** (no HTTP — middleware redirects
+cookieless `/api/chat` to `/login`, gating the Bearer path upstream). **Caveat — pessimistic on greenfield
+grounding:** the harness captures `chat()`'s RAW prose, which on greenfield card searches is DISCARDED in the
+app and replaced by the deterministic `buildSearchSummary` bubble (Decision #242). So a prose leak the harness
+shows on A3/E3 is **not** what the user sees.
+
+| ID | Tier | Routing | Result |
+|----|------|---------|--------|
+| A3 | CRITICAL | `search_parts`=multiple ✅ | Routing PASS. Raw prose STILL leaks from-memory curated specs (BC550C "hFE 420 @ 2mA, V_CEO 45V, f_T 300MHz"). **Masked in production** by the #242 deterministic bubble → user-facing clean. |
+| B1 | HIGH | `search_parts`=single ✅ | PASS — answered package/voltage from the returned CARD (ASK-mode), not memory; MPN path keeps LLM prose, grounded. |
+| E3 | HIGH | `search_parts`=multiple ✅ | PASS — searched immediately, did NOT ask N-vs-P (choices=0). Raw prose leaks a curated catalog + an AEC claim; masked by the #242 bubble, same as A3. |
+| A5 | CRITICAL | `get_manufacturer_profile`(GigaDevice) ✅ | PASS — structured breakdown; the Haiku "#2 SPI NOR" leak is now ATTRIBUTED ("Claims… per summary") = grounded. (Cert-audit tail beyond the 650-char capture.) |
+| B5 | HIGH | `get_manufacturer_profile`(3PEAK) ✅ | PASS — Suzhou / 2012 / STAR 688536 + ISO certs, all from the profile. Clean. |
+| C3 | MED | (no search) ✅ | PASS — X7R vs C0G answered from knowledge, no `search_parts` call. |
+| B6 | HIGH | `search_parts`=multiple ✅ | PASS — new MPN restarts at search ("found LM358 variants, click one"); no fabrication, didn't re-summarize the prior part. |
+
+**Conclusion.** All 7 routing/tool-call rows PASS on Sonnet — the swap delivered the routing reliability it was
+for (notably E3 searches without the polarity-ask; B6 clean). **The A3-family grounding leak is NOT fixed at the
+model level** — Sonnet still fabricates curated specs in raw prose (arguably more elaborately than Haiku) — but
+it stays masked on the greenfield surface by the #242 deterministic bubble, exactly as on Haiku. So: **no
+regression vs the Haiku baseline** on the model-sensitive subset; the deterministic layer, not the model, is
+still the real grounding fix. A full 19-row re-baseline is warranted only on the next *prompt* edit. The
+unmasked-prose risk (a part-selection answer rendered WITHOUT a card substitution — refinement / "like part X")
+is exactly the BACKLOG "Conversational query-shape routing" surface — the model swap does not retire it.
