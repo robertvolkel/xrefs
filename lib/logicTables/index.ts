@@ -596,6 +596,43 @@ export function getAllLogicTables(): LogicTable[] {
   return Object.values(logicTableRegistry);
 }
 
+/**
+ * Resolve a free-text part-type hint (e.g. "N-channel MOSFET", "buck converter",
+ * "MLCC capacitor") to a family ID using the subcategory→family map. Used by
+ * logic-vetted descriptive search when candidate-based classification is
+ * inconclusive (see `searchConstraints.ts`). Returns null when nothing matches.
+ *
+ * Matching is case-insensitive: first an exact key hit, then the longest map key
+ * that appears as a WHOLE WORD in the hint (longest-first so "N-Channel MOSFET"
+ * beats the bare "MOSFET" → both map to B5 here, but the longest-first rule
+ * matters for keys like "Bridge Rectifiers" vs "Rectifier").
+ *
+ * Whole-word (not raw substring) matching is load-bearing: many keys are short
+ * acronyms (MOV, ADC, SCR, LDO, PTC, …) that would otherwise match inside
+ * unrelated words ("removable" → "mov" → Varistors, "screw" → "scr" → SCRs). The
+ * boundary is "not adjacent to an alphanumeric"; a trailing plural "s" is allowed
+ * so "MOSFETs"/"transistors" still match a singular key.
+ */
+export function resolveFamilyFromText(text: string | undefined): string | null {
+  if (!text) return null;
+  const hint = text.trim().toLowerCase();
+  if (!hint) return null;
+  // Exact (case-insensitive) key hit first.
+  for (const key of Object.keys(subcategoryToFamily)) {
+    if (key.toLowerCase() === hint) return subcategoryToFamily[key];
+  }
+  // Whole-word match, longest key first to avoid a short key (e.g. "FET") winning
+  // over a more specific one contained in the same hint.
+  const keysByLen = Object.keys(subcategoryToFamily).sort((a, b) => b.length - a.length);
+  for (const key of keysByLen) {
+    const escaped = key.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?<![a-z0-9])${escaped}s?(?![a-z0-9])`).test(hint)) {
+      return subcategoryToFamily[key];
+    }
+  }
+  return null;
+}
+
 /** Check if a subcategory has a logic table */
 export function isFamilySupported(subcategory: string): boolean {
   return subcategory in subcategoryToFamily;

@@ -68,6 +68,21 @@ export default function PartOptionsSelector({ parts, onSelect }: PartOptionsSele
                 {part.status && (
                   <Chip label={part.status} size="small" color={part.status === 'Active' ? 'success' : 'warning'} variant="outlined" />
                 )}
+                {/* Logic-vetted descriptive search: a qualitative fit signal. We show
+                    a fit/below-spec chip (not a raw %) because match % vs a sparse
+                    synthetic spec is ~100 for every valid part — the ranking, not the
+                    number, carries the signal. Present only on vetted searches. */}
+                {typeof part.failCount === 'number' && (
+                  part.hardFail ? (
+                    <Tooltip title="Does not meet one or more of your stated specs — kept for reference, ranked last" arrow>
+                      <Chip label="Below spec" size="small" color="warning" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title="Meets all of your stated specs" arrow>
+                      <Chip label="Fits your specs" size="small" color="success" variant="filled" sx={{ height: 18, fontSize: '0.6rem' }} />
+                    </Tooltip>
+                  )
+                )}
                 {part.qualifications?.map(q => (
                   <Chip key={q} label={q} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.6rem', color: '#4FC3F7', borderColor: '#4FC3F7' }} />
                 ))}

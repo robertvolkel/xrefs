@@ -51,6 +51,13 @@ export function buildSearchSummary(searchResult: SearchResult): string {
     return `I couldn't find any parts matching your criteria. Try adding or relaxing a requirement.`;
   }
 
+  // Vetted descriptive search (logic-vetted): the cards were scored against the
+  // user's stated specs and re-ranked best-fit-first. Say so honestly — "ranked
+  // by fit", NOT "all fit" (we keep below-spec parts at the bottom). Detected by
+  // the presence of the engine-supplied matchScore on a card. Still deterministic
+  // and spec-free (no values in the text).
+  const vetted = matches.some(m => typeof m.matchScore === 'number');
+
   // Single (or a degenerate 'multiple' with one card): identify the part only. One sentence,
   // MPN + MFR (both on the card), no specs, no post-click promise.
   if (searchResult.type === 'single' || n === 1) {
@@ -59,5 +66,8 @@ export function buildSearchSummary(searchResult: SearchResult): string {
   }
 
   // Multiple: count equals the number of rendered cards (deterministic).
+  if (vetted) {
+    return `I found **${n}** parts and ranked them by how well they fit your specs — best match first. Click the one you'd like to use.`;
+  }
   return `I found **${n}** parts matching your criteria — click the one you'd like to use.`;
 }

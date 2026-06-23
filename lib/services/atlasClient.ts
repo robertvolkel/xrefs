@@ -164,7 +164,8 @@ function rowToPartAttributes(row: AtlasProductRow, overrides?: DictOverrideRow[]
 export async function searchAtlasProducts(
   query: string,
   manufacturer?: string,
-): Promise<SearchResult> {
+  buildAttrs = false,
+): Promise<{ result: SearchResult; attrsByMpn: Map<string, PartAttributes> }> {
   try {
     const supabase = await createClient();
 
@@ -221,7 +222,7 @@ export async function searchAtlasProducts(
 
     if (mpnRes.error && mfrRes.error) {
       console.warn('Atlas search error:', mpnRes.error.message || mfrRes.error?.message);
-      return { type: 'none', matches: [] };
+      return { result: { type: 'none', matches: [] }, attrsByMpn: new Map() };
     }
 
     // Merge + dedup by id — replaces the single .or() round trip with two
@@ -232,7 +233,7 @@ export async function searchAtlasProducts(
     const data = [...byId.values()];
 
     if (data.length === 0) {
-      return { type: 'none', matches: [] };
+      return { result: { type: 'none', matches: [] }, attrsByMpn: new Map() };
     }
 
     // Filter out disabled manufacturers, then trim to 50 (matches the merged
@@ -245,7 +246,7 @@ export async function searchAtlasProducts(
     const trimmed = filtered.slice(0, 50);
 
     if (trimmed.length === 0) {
-      return { type: 'none', matches: [] };
+      return { result: { type: 'none', matches: [] }, attrsByMpn: new Map() };
     }
 
     const matches: PartSummary[] = trimmed.map((row) => ({
@@ -257,13 +258,28 @@ export async function searchAtlasProducts(
       dataSource: 'atlas' as const,
     }));
 
+    // Build scorable candidate attributes from the SAME rows (parameters JSONB is
+    // already in hand) for logic-vetted descriptive search — no extra round trip.
+    // Overrides are applied at INGEST time (Decision #199), so the base JSONB keys
+    // are canonical attributeIds; read-time overrides are a refinement we skip on
+    // the hot search path. rowToPartAttributes never throws. Skipped entirely on
+    // non-vetted searches (buildAttrs=false) — the common path discards them.
+    const attrsByMpn = new Map<string, PartAttributes>();
+    if (buildAttrs) {
+      for (const row of trimmed) {
+        const key = row.mpn?.toLowerCase();
+        if (!key || attrsByMpn.has(key)) continue;
+        attrsByMpn.set(key, rowToPartAttributes(row));
+      }
+    }
+
     return {
-      type: trimmed.length === 1 ? 'single' : 'multiple',
-      matches,
+      result: { type: trimmed.length === 1 ? 'single' : 'multiple', matches },
+      attrsByMpn,
     };
   } catch (error) {
     console.warn('Atlas search failed:', error);
-    return { type: 'none', matches: [] };
+    return { result: { type: 'none', matches: [] }, attrsByMpn: new Map() };
   }
 }
 

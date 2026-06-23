@@ -320,6 +320,20 @@ export interface MatchDetail {
 
 export type MatchStatus = 'exact' | 'compatible' | 'better' | 'worse' | 'different';
 
+/** A single user-stated requirement for a descriptive (greenfield) search.
+ *  Emitted by the chat LLM in human terms and resolved to a logic-table
+ *  attributeId server-side (see `searchConstraints.ts`). Numeric requirements
+ *  carry an optional `unit`; categorical identity requirements (channel type,
+ *  polarity, technology) carry a string `value` and no unit. */
+export interface SearchConstraint {
+  /** Human term, e.g. "drain-source voltage", "current", "channel type". */
+  attribute: string;
+  /** 12, "5", or "N-Channel". */
+  value: string | number;
+  /** "V", "A", "MHz" — omitted for categorical values. */
+  unit?: string;
+}
+
 /** Lightweight part info for search results / selection */
 export interface PartSummary {
   mpn: string;
@@ -336,6 +350,14 @@ export interface PartSummary {
    *  data only (no live API calls during search). Undefined when not cached —
    *  badge is suppressed in that case rather than triggering a fetch. */
   distributorCount?: number;
+  /** ── Logic-vetted descriptive search (greenfield) fields ──
+   *  Populated ONLY when the chat passed `SearchConstraint`s AND the family was
+   *  classifiable — the candidate was scored by the matching engine against a
+   *  synthetic source built from the user's stated specs. Absent on MPN lookups
+   *  and unvetted searches. Display/ranking only. */
+  matchScore?: number;   // 0-100 vs the synthetic spec (most valid parts ≈100 — spec is sparse, so use ordering not the raw %)
+  failCount?: number;    // real mismatches (candidate value known & disagrees) — 0 = fits all stated specs
+  hardFail?: boolean;    // failCount > 0 — below spec or wrong identity (kept, but sunk)
 }
 
 export type SearchDataSource = 'digikey' | 'atlas' | 'partsio' | 'mouser';

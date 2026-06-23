@@ -1746,3 +1746,27 @@ export function mapKeywordResponseToSearchResult(
   if (unique.length === 1) return { type: 'single', matches: unique };
   return { type: 'multiple', matches: unique };
 }
+
+/**
+ * Build a `mpn(lowercased) → PartAttributes` map from the SAME keyword response
+ * `mapKeywordResponseToSearchResult` consumes. The full `Parameters[]` are
+ * already in the payload, so reconstructing scorable candidate attributes for
+ * logic-vetted descriptive search (Decision: logic-vetted search) costs ZERO
+ * extra API calls. First-write-wins on duplicate MPNs (mirrors the SearchResult
+ * dedup: ExactMatches before Products).
+ */
+export function mapKeywordResponseToAttributesByMpn(
+  response: DigikeyKeywordResponse
+): Map<string, PartAttributes> {
+  const out = new Map<string, PartAttributes>();
+  const allProducts = [
+    ...(response.ExactMatches ?? []),
+    ...(response.Products ?? []),
+  ];
+  for (const product of allProducts) {
+    const key = product.ManufacturerProductNumber?.toLowerCase();
+    if (!key || out.has(key)) continue;
+    out.set(key, mapDigikeyProductToAttributes(product));
+  }
+  return out;
+}

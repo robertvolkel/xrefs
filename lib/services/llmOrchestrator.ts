@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
+import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
@@ -445,7 +445,7 @@ The matching engine runs after part confirmation (the user clicks a part card or
 Part-selection-advice discipline (CRITICAL — applies to greenfield/no-MPN requests):
 This covers the shape where the user describes a NEW component need without naming an MPN — whether fully specified ("I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400", "recommend a buck converter for a 5V→3.3V rail at 2A") or under-specified ("I need a transistor", "help me pick a capacitor for a new design, not sure where to start").
 - The floor (non-negotiable): NEVER state a specific, checkable fact from your own knowledge. Do NOT name part numbers, do NOT cite numeric spec values for a part (no "~100 nV/√Hz", no "hFE 400 at 1mA"), do NOT attribute a part to a manufacturer, do NOT claim availability, pricing, or qualification. Training-data specifics are frequently wrong (e.g. naming a PNP when the user asked for NPN) and read to the user identically to tool-grounded facts. Specific MPNs, specs, and MFR names enter your prose ONLY after search_parts returns them. This floor holds across the ENTIRE interaction — the guiding questions, the search call, AND the free-prose closing after cards render. The most common leak is the closing sentence ("this matches your spec exactly"): a from-memory spec stated as fact is a fabrication even when the part itself is real.
-- Act, don't ask (the default — do this whenever you can): When the user states a part type plus at least ONE searchable parameter (a spec, value, package, polarity, topology, voltage/current, or qualification), call search_parts IMMEDIATELY with a descriptive query built from those constraints (e.g. "low-noise NPN transistor small signal audio"). Do NOT ask "want me to search?" — the user stated a need; go fill it. Do NOT ask for a second parameter when ONE already lets you search — an unstated discriminator (e.g. N- vs P-channel when the application implies it) becomes a grounded caveat AFTER cards render, not a pre-search question.
+- Act, don't ask (the default — do this whenever you can): When the user states a part type plus at least ONE searchable parameter (a spec, value, package, polarity, topology, voltage/current, or qualification), call search_parts IMMEDIATELY with a descriptive query built from those constraints (e.g. "low-noise NPN transistor small signal audio"). Do NOT ask "want me to search?" — the user stated a need; go fill it. Do NOT ask for a second parameter when ONE already lets you search — an unstated discriminator (e.g. N- vs P-channel when the application implies it) becomes a grounded caveat AFTER cards render, not a pre-search question. **On these descriptive searches ALSO pass partType (the component type in plain words) and constraints (one entry per spec the user actually stated — numeric specs as value+unit, categorical specs like channel type as a string value).** This lets the engine rank parts that genuinely fit first and sink the ones that don't (e.g. a 1200V part for a 12V ask). Pass ONLY specs the user gave — never invent a value to fill a slot.
 - Guided selection (NARROW carve-out — only when you genuinely cannot search yet): Reserve this for forward-looking selection requests that lack a part type + a searchable parameter — e.g. "I need to pick a capacitor for a new design, not sure where to start." When it fires, run a SINGLE consolidated guiding turn, then search:
   - State the 1–2 discriminators you need to narrow effectively, and offer an immediate-search escape hatch: e.g. "To narrow this: [axis A] and [axis B]? Or tell me your priority and I'll search now with sensible defaults." Walk axes in order — device family → function/sub-type → key electrical discriminator → (rarely) application/environment — but SKIP any axis already known, derivable, or already in the conversation / user-context block. STOP and call search_parts the instant you have a part type + ≥1 searchable parameter.
   - For closed discriminator sets (device family, N- vs P-channel, dielectric class, package family) use present_choices (always with an explanatory text message); for open-ended values (voltages, currents, frequencies) ask in prose.
@@ -687,6 +687,23 @@ const tools: Anthropic.Tool[] = [
           type: 'string',
           description: 'Optional manufacturer filter. **Pass this whenever the user names a manufacturer alongside an MPN** (e.g. "GD25B127D from Gigadevice" → manufacturer: "Gigadevice"). Critical for generic MPNs like LM358, 555, 2N2222 that ship from multiple vendors. Aliases are resolved canonically — "TI", "Texas Instruments", "Texas Instr." all match. Omit when the user gives only an MPN with no vendor mentioned.',
         },
+        partType: {
+          type: 'string',
+          description: 'For DESCRIPTIVE (greenfield) searches only — the component type in plain words, e.g. "N-channel MOSFET", "buck converter", "X7R MLCC capacitor". Omit for MPN lookups. Lets the backend vet results against the right family\'s matching rules.',
+        },
+        constraints: {
+          type: 'array',
+          description: 'For DESCRIPTIVE searches only — the user\'s stated requirements, so results that genuinely fit are ranked first and parts that don\'t (e.g. a 1200V part for a 12V ask, or a P-channel for an N-channel ask) sink. Emit ONE entry per spec the user gave. Use the spec\'s common name for `attribute` (e.g. "drain-source voltage", "continuous drain current", "channel type"). Numeric specs carry a number `value` + `unit`; categorical specs (channel type, polarity, technology) carry a string `value` and no unit. Omit entirely for MPN lookups, and omit any spec the user did not state — do NOT invent values.',
+          items: {
+            type: 'object',
+            properties: {
+              attribute: { type: 'string', description: 'The spec\'s common name, e.g. "drain-source voltage", "current", "channel type".' },
+              value: { type: ['string', 'number'], description: 'Numeric (12) for ratings, or a string ("N-Channel") for categorical specs.' },
+              unit: { type: 'string', description: 'Unit for numeric specs, e.g. "V", "A", "MHz". Omit for categorical values.' },
+            },
+            required: ['attribute', 'value'],
+          },
+        },
       },
       required: ['query'],
     },
@@ -841,13 +858,17 @@ async function executeTool(
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
-      const args = input as { query: string; manufacturer?: string };
+      const args = input as { query: string; manufacturer?: string; partType?: string; constraints?: SearchConstraint[] };
       // Pass manufacturer through to the Atlas-side filter so generic MPNs
       // (LM358, 555, 1.5KE10) shared across many MFRs don't silently lose the
       // target MFR's rows at the per-source trim boundary. The post-filter
       // below still runs for Digikey/Parts.io results.
+      // partType + constraints drive logic-vetted ranking on descriptive searches
+      // (absent on MPN lookups → behavior unchanged).
       const result = await searchParts(args.query, undefined, userId, {
         manufacturer: args.manufacturer,
+        partType: args.partType,
+        constraints: Array.isArray(args.constraints) ? args.constraints : undefined,
       });
 
       // MFR filter: when the user named a manufacturer, narrow results to

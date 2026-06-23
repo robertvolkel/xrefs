@@ -7,16 +7,18 @@
  * All functions are async and server-side only.
  */
 
-import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, AcceptanceCriteria } from '../types';
+import { SearchResult, SearchDataSource, PartAttributes, XrefRecommendation, ApplicationContext, RecommendationResult, UserPreferences, LifecycleInfo, ComplianceData, CertificationSource, ReplacementPriorities, DEFAULT_REPLACEMENT_PRIORITIES, isCertifiedCross, filterRecsByMismatchCount, countRealMismatches, AcceptanceCriteria, SearchConstraint } from '../types';
 import { keywordSearch, getProductDetails, warmCacheFromSearchResults, getCategoryParametricFacets, parametricFilterSearch, type DigikeyProduct } from './digikeyClient';
 import {
   mapKeywordResponseToSearchResult,
+  mapKeywordResponseToAttributesByMpn,
   mapDigikeyProductToAttributes,
   mapCategory,
   mapSubcategory,
   findFacetForAttribute,
   extractNumericValue,
 } from './digikeyMapper';
+import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
@@ -412,19 +414,30 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipFindchips?: boolean; manufacturer?: string },
+  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
   const longEnough = trimmed.length >= 3;
   const mfrHint = options?.manufacturer?.trim() || undefined;
+  const constraints = options?.constraints?.length ? options.constraints : undefined;
+
+  // Stable signature of the vetting inputs (constraints + partType) so a
+  // logic-vetted search doesn't collide with a constraint-less search of the
+  // same query/MFR. Constraints sorted canonically; absent → empty string.
+  const vettingKey = constraints
+    ? `${(options?.partType ?? '').toLowerCase()}|${[...constraints]
+        .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}`)
+        .sort()
+        .join(',')}`
+    : '';
 
   // ── Search cache: L1 in-memory ──
   // MFR hint participates in the cache key so "1.5KE10" and "1.5KE10 from
   // Galaxy" don't poison each other's results. SEARCH_CACHE_SCHEMA_VERSION
   // is a prefix so old-shape entries are unreachable when merge semantics
   // change (bump it in partDataCache.ts, not here).
-  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}`;
+  const cacheKey = `${SEARCH_CACHE_SCHEMA_VERSION}__${trimmed.toLowerCase()}__${currency ?? 'USD'}__${options?.skipFindchips ? '1' : '0'}__${mfrHint?.toLowerCase() ?? ''}__${vettingKey}`;
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     if (!shouldBypassSearchCache(cached.data)) {
@@ -446,28 +459,38 @@ export async function searchParts(
     console.log(`[perf] searchParts L2 BYPASS — legacy entry (${cacheKey})`);
   }
 
-  // Always search: Digikey (keyword search handles both MPNs and descriptions) + Atlas
-  type LabeledSearch = { source: SearchDataSource; promise: Promise<SearchResult> };
+  // Always search: Digikey (keyword search handles both MPNs and descriptions) + Atlas.
+  // Each source resolves to its SearchResult plus an optional `attrsByMpn` map of
+  // scorable candidate PartAttributes (built from data already in the payload — no
+  // extra API calls), consumed by the logic-vetting pass below.
+  type SourcePayload = { result: SearchResult; attrsByMpn?: Map<string, PartAttributes> };
+  type LabeledSearch = { source: SearchDataSource; promise: Promise<SourcePayload> };
   const searches: LabeledSearch[] = [
     // Digikey
     {
       source: 'digikey',
-      promise: (async (): Promise<SearchResult> => {
-        if (!isDigikeyConfigured()) return { type: 'none', matches: [] };
+      promise: (async (): Promise<SourcePayload> => {
+        if (!isDigikeyConfigured()) return { result: { type: 'none', matches: [] } };
         try {
           const response = await keywordSearch(trimmed, { limit: 20 }, currency, userId);
-          return mapKeywordResponseToSearchResult(response);
+          return {
+            result: mapKeywordResponseToSearchResult(response),
+            // Only build scorable candidate attributes when the search is
+            // logic-vetted (constraints present). On plain MPN/keyword lookups
+            // — the common hot path — this work would be discarded.
+            attrsByMpn: constraints ? mapKeywordResponseToAttributesByMpn(response) : undefined,
+          };
         } catch (error) {
           console.warn('Digikey search failed:', error);
           reportServiceFailure('digikey', 'unavailable', 'Search failed');
-          return { type: 'none', matches: [] };
+          return { result: { type: 'none', matches: [] } };
         }
       })(),
     },
-    // Atlas
+    // Atlas — build scorable attrs only on logic-vetted (constraints) searches.
     {
       source: 'atlas',
-      promise: searchAtlasProducts(trimmed, mfrHint).catch(() => ({ type: 'none' as const, matches: [] })),
+      promise: searchAtlasProducts(trimmed, mfrHint, !!constraints).catch(() => ({ result: { type: 'none' as const, matches: [] }, attrsByMpn: new Map() })),
     },
   ];
 
@@ -475,7 +498,7 @@ export async function searchParts(
   if (isMpn && longEnough) {
     searches.push({
       source: 'partsio',
-      promise: searchPartsioProducts(trimmed).catch(() => ({ type: 'none' as const, matches: [] })),
+      promise: searchPartsioProducts(trimmed).then(result => ({ result })).catch(() => ({ result: { type: 'none' as const, matches: [] } })),
     });
   }
 
@@ -511,12 +534,22 @@ export async function searchParts(
   // Merge in priority order: Digikey → Atlas → Parts.io
   const seenMpns = new Set<string>();
   const mergedMatches = [];
+  // Scorable candidate attributes keyed by lowercased MPN, accumulated across
+  // sources in the same priority order (Digikey wins on key collision). Used by
+  // the logic-vetting pass below; empty when no source supplied attrs.
+  const candidateAttrsByMpn = new Map<string, PartAttributes>();
 
   for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status !== 'fulfilled') continue;
+    const settledResult = settled[i];
+    if (settledResult.status !== 'fulfilled') continue;
     sourcesContributed.push(searches[i].source);
-    const matches = result.value.matches ?? [];
+    const { result, attrsByMpn } = settledResult.value;
+    if (attrsByMpn) {
+      for (const [k, v] of attrsByMpn) {
+        if (!candidateAttrsByMpn.has(k)) candidateAttrsByMpn.set(k, v);
+      }
+    }
+    const matches = result.matches ?? [];
     for (const part of matches) {
       if (!matchesMfrHint(part.manufacturer)) continue;
       const key = part.mpn.toLowerCase();
@@ -536,6 +569,78 @@ export async function searchParts(
   // buried below obsolete ones.
   const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
   mergedMatches.sort((a, b) => orderableRank(a) - orderableRank(b));
+
+  // ── Logic-vetted descriptive search ──
+  // When the chat passed user-stated specs (constraints), re-rank the merged set
+  // by running each candidate through the matching engine against a SYNTHETIC
+  // source built from those specs. Parts that FAIL a rule (undersized voltage,
+  // wrong channel) sink to the bottom; over-spec-but-valid parts sink via a
+  // closeness tiebreak; nothing is dropped (rank, keep all). Degrades to the
+  // unvetted order whenever the family can't be classified or no spec resolves.
+  if (constraints && mergedMatches.length > 1 && candidateAttrsByMpn.size > 0) {
+    try {
+      // Restrict to the parts actually displayed (mergedMatches is already
+      // MFR-hint-filtered). Classify the family AND score over the SAME set, so
+      // an MFR hint that selects a minority family can't be vetted against the
+      // unfiltered majority's logic table.
+      const scorable: PartAttributes[] = [];
+      for (const m of mergedMatches) {
+        const a = candidateAttrsByMpn.get(m.mpn.toLowerCase());
+        if (a) scorable.push(a);
+      }
+      const synthetic = scorable.length > 0
+        ? buildSyntheticSource(constraints, options?.partType, scorable)
+        : null;
+      if (synthetic) {
+        const logicTable = await applyRuleOverrides(synthetic.logicTable);
+        const recs = findReplacements(logicTable, synthetic.source, scorable);
+          const penaltyByMpn = new Map<string, number>();
+          for (const a of scorable) {
+            penaltyByMpn.set(a.part.mpn.toLowerCase(), computeOverSpecPenalty(logicTable, synthetic.source, a));
+          }
+          // Search-vetting order: fewest real mismatches → Active-first →
+          // closest fit (least over-spec) → match %. Self-contained (greenfield
+          // has no certified buckets / composite scores, so the shared
+          // sortRecommendationsForDisplay's later keys don't apply).
+          const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
+          recs.sort((a, b) => {
+            const fd = countRealMismatches(a) - countRealMismatches(b);
+            if (fd !== 0) return fd;
+            const sd = statusRank(a.part.status) - statusRank(b.part.status);
+            if (sd !== 0) return sd;
+            const pd = (penaltyByMpn.get(a.part.mpn.toLowerCase()) ?? 0) - (penaltyByMpn.get(b.part.mpn.toLowerCase()) ?? 0);
+            if (pd !== 0) return pd;
+            return b.matchPercentage - a.matchPercentage;
+          });
+
+          // Annotate the matching cards + rebuild mergedMatches in rec order,
+          // appending any unscorable matches (no attrs) after, original order.
+          const summaryByMpn = new Map(mergedMatches.map(m => [m.mpn.toLowerCase(), m]));
+          const reordered: typeof mergedMatches = [];
+          const placed = new Set<string>();
+          for (const rec of recs) {
+            const key = rec.part.mpn.toLowerCase();
+            const summary = summaryByMpn.get(key);
+            if (!summary || placed.has(key)) continue;
+            const fails = countRealMismatches(rec);
+            summary.matchScore = rec.matchPercentage;
+            summary.failCount = fails;
+            summary.hardFail = fails > 0;
+            reordered.push(summary);
+            placed.add(key);
+          }
+          for (const m of mergedMatches) {
+            if (!placed.has(m.mpn.toLowerCase())) reordered.push(m);
+          }
+          mergedMatches.length = 0;
+          mergedMatches.push(...reordered);
+          console.log(`[search-vetting] family=${synthetic.familyId} scored=${recs.length} constraints=${constraints.length}`);
+      }
+    } catch (err) {
+      // Vetting is a ranking enhancement — never fail the search on it.
+      console.warn('[search-vetting] skipped:', err);
+    }
+  }
 
   if (mergedMatches.length > 0) {
     // Populate distributor counts from L2 cache (no live FC calls). Cache is
