@@ -21,7 +21,7 @@ const rec = (
   ...(certifiedBy ? { certifiedBy } : {}),
 });
 
-describe('sortRecommendationsForDisplay — Active-first within bucket (Decision #227)', () => {
+describe('sortRecommendationsForDisplay — Active is the top-level key (Jun 2026 policy)', () => {
   it('floats Active parts above non-Active within the same (logic) bucket', () => {
     const out = sortRecommendationsForDisplay([
       rec('OBS_HIGH', 95, 'Obsolete'),
@@ -31,13 +31,24 @@ describe('sortRecommendationsForDisplay — Active-first within bucket (Decision
     expect(out.map((r) => r.part.mpn)).toEqual(['ACT_LOW', 'OBS_HIGH']);
   });
 
-  it('keeps certification bucket order ahead of status (Accuris bucket before Logic)', () => {
+  it('Active outranks a non-Active certified cross (status is the top key, above bucket)', () => {
     const out = sortRecommendationsForDisplay([
-      rec('LOGIC_ACTIVE', 99, 'Active'),
       rec('ACCURIS_OBSOLETE', 50, 'Obsolete', ['partsio_fff']),
+      rec('LOGIC_ACTIVE', 99, 'Active'),
     ]);
-    // Bucket (Accuris) outranks status — but within each bucket Active would lead.
-    expect(out.map((r) => r.part.mpn)).toEqual(['ACCURIS_OBSOLETE', 'LOGIC_ACTIVE']);
+    // Active first — always — regardless of certification. This is the fix for
+    // obsolete Accuris crosses topping the list over live logic matches.
+    expect(out.map((r) => r.part.mpn)).toEqual(['LOGIC_ACTIVE', 'ACCURIS_OBSOLETE']);
+  });
+
+  it('within the same lifecycle tier, certification bucket leads (Accuris before Logic)', () => {
+    const out = sortRecommendationsForDisplay([
+      rec('LOGIC_ACTIVE_HIGH', 99, 'Active'),
+      rec('ACCURIS_ACTIVE_LOW', 50, 'Active', ['partsio_fff']),
+    ]);
+    // Both Active → Accuris bucket outranks Logic even at a lower match %
+    // (certified is human-verified; sparse data is penalized only within a bucket).
+    expect(out.map((r) => r.part.mpn)).toEqual(['ACCURIS_ACTIVE_LOW', 'LOGIC_ACTIVE_HIGH']);
   });
 
   it('within a bucket, Active sorts ahead regardless of match %, then match % orders the rest', () => {

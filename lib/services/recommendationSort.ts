@@ -1,4 +1,4 @@
-import { ApplicationContext, XrefRecommendation, deriveRecommendationBucket, countRealMismatches } from '@/lib/types';
+import { ApplicationContext, XrefRecommendation, deriveRecommendationBucket } from '@/lib/types';
 import { contextExpectedDomains } from './qualificationDomain';
 
 /** Logic-bucket recs within this match % band are considered parametrically equivalent,
@@ -6,36 +6,38 @@ import { contextExpectedDomains } from './qualificationDomain';
 const MATCH_PERCENT_TIE_BAND = 2;
 
 /**
- * Display-priority sort for recommendations. **Primary key: fewest real mismatches
- * first** (`countRealMismatches` — fail rules where the replacement has a value that
- * disagrees; missing-data fails don't count). A clean logic match therefore outranks
- * a high-fail Accuris/MFR certified cross — the user-chosen "least fails first" policy
- * (Decision #236). Certified status no longer floats high-fail crosses to the top; it's
- * only a tiebreak among candidates with the same real-mismatch count.
+ * Display-priority sort for recommendations. Ordering (Jun 2026 policy):
  *
- * Tiebreaks (within equal real-mismatch count): Accuris Certified → MFR Certified →
- * Logic Driven bucket, then **Active-first WITHIN each bucket** (Decision #232 — the
- * panel shows all lifecycle statuses and surfaces Active parts by ranking, not hiding),
- * then pin-to-pin > functional within category.
+ *   1. **Active first — always.** Every Active part ranks above every non-Active
+ *      part (Obsolete/Discontinued/NRND/…), regardless of bucket or score. You're
+ *      recommending a *replacement*; a dead part rarely belongs on top.
+ *   2. **Certification bucket:** Accuris → MFR → Logic, within each lifecycle tier.
+ *      A human-verified cross outranks an inferred logic match.
+ *   3. pin-to-pin > functional equivalence, then qualification-domain match.
+ *   4. **Match % desc** (compositeScore breaks ties within ±MATCH_PERCENT_TIE_BAND).
  *
- * Qualification-domain tiebreak (Decision #155): within each bucket, candidates
- * are ordered `context-matched > unknown > deviation` when the user's context
- * activates a domain filter. Rationale (documented here so future readers don't
- * "fix" it): `unknown` candidates MAY be AEC-qualified — we just haven't built
- * the classifier for their MFR yet (Phase 2 coverage), so they have positive
- * expected value. A confirmed `deviation` (e.g. classifier says
- * `industrial_harsh`, context is `automotive`) is definitely not AEC today.
- * Expected-value ranking therefore puts `unknown` ahead of `deviation` even
- * though "unknown" feels weaker than "known-anything" in isolation.
+ * Why match % rather than raw fail-count is the final key (supersedes the
+ * "fewest real mismatches first" primary of Decision #236): a candidate with little
+ * parametric data has *zero* real fails simply because every rule scores 'review'
+ * (missing) instead of 'fail' — which let sparse, obsolete, even wrong-polarity
+ * crosses float to the top. Match % is data-aware: 'review' earns only 50% credit
+ * (see matchingEngine scoring), so an under-characterized part is dragged toward 50%
+ * while a fully-spec'd part with one real fail (full weight lost on that rule) stays
+ * higher. This implements the "penalize sparse data / don't reward no-data"
+ * requirement directly. Raw fail-count survives only as a *display filter*
+ * (`filterRecsByMismatchCount`), not as a sort key.
  *
- * Final tiebreak:
- *   - Certified buckets: compositeScore desc (match % is hidden for certified).
- *   - Logic bucket: match % primary as a parametric floor; compositeScore breaks ties
- *     within ±MATCH_PERCENT_TIE_BAND (Decision #145).
+ * Qualification-domain tiebreak (Decision #155): `context-matched > unknown >
+ * deviation` when the user's context activates a domain filter. Rationale (so future
+ * readers don't "fix" it): `unknown` candidates MAY be AEC-qualified — we just haven't
+ * built the classifier for their MFR yet (Phase 2 coverage), so they have positive
+ * expected value. A confirmed `deviation` (classifier says `industrial_harsh`, context
+ * is `automotive`) is definitely not AEC today, so `unknown` ranks ahead of it.
  *
  * Called both server-side (in `getRecommendations()` before cache write) AND client-side
  * (in `RecommendationsPanel`) so `row.replacement` (persisted from `recs[0]` during
- * validation) agrees with the modal's top card.
+ * validation) agrees with the modal's top card. The client re-sorts, so sort-policy
+ * changes take effect without a cache-version bump.
  */
 export function sortRecommendationsForDisplay(
   recommendations: XrefRecommendation[],
@@ -48,10 +50,10 @@ export function sortRecommendationsForDisplay(
     if (bucket === 'manufacturer') return 1;
     return 2;
   };
-  // Active-first within each bucket. Decision #227: nothing is filtered out by
-  // status anymore, so Active parts are surfaced by ranking rather than by hiding
-  // the rest. Only literal 'Active' is top-tier; every other lifecycle status
-  // (Obsolete, Discontinued, NRND, LastTimeBuy, Transferred, …) sinks below.
+  // Active is the TOP-LEVEL key (Jun 2026, supersedes Decision #232's within-bucket
+  // placement): every Active part ranks above every non-Active part, regardless of
+  // certification or score. Only literal 'Active' is top-tier; every other lifecycle
+  // status (Obsolete, Discontinued, NRND, LastTimeBuy, Transferred, …) sinks below.
   const statusRank = (rec: XrefRecommendation): number => (rec.part.status === 'Active' ? 0 : 1);
   const mfrEqRank = (rec: XrefRecommendation): number => {
     if (rec.mfrEquivalenceType === 'pin_to_pin') return 0;
@@ -67,26 +69,27 @@ export function sortRecommendationsForDisplay(
     return 2; // deviation — known mismatch
   };
   const byCategoryThenScore = [...recommendations].sort((a, b) => {
-    // Primary key: fewest real mismatches first (least-fails-first policy).
-    const failDiff = countRealMismatches(a) - countRealMismatches(b);
-    if (failDiff !== 0) return failDiff;
-
-    const catDiff = categoryPriority(a) - categoryPriority(b);
-    if (catDiff !== 0) return catDiff;
+    // 1. Active first — always (a dead part rarely belongs above a live one).
     const statusDiff = statusRank(a) - statusRank(b);
     if (statusDiff !== 0) return statusDiff;
+
+    // 2. Certification bucket: Accuris → MFR → Logic, within the lifecycle tier.
+    const catDiff = categoryPriority(a) - categoryPriority(b);
+    if (catDiff !== 0) return catDiff;
+
+    // 3. pin-to-pin > functional, then qualification-domain match.
     const mfrDiff = mfrEqRank(a) - mfrEqRank(b);
     if (mfrDiff !== 0) return mfrDiff;
     const domainDiff = domainRank(a) - domainRank(b);
     if (domainDiff !== 0) return domainDiff;
 
-    // Logic bucket: match % primary floor; composite breaks ties within a small band.
-    // Certified buckets: composite is the only tiebreak (match % is hidden anyway).
-    const bucket = deriveRecommendationBucket(a);
-    if (bucket === 'logic') {
-      const matchDiff = b.matchPercentage - a.matchPercentage;
-      if (Math.abs(matchDiff) > MATCH_PERCENT_TIE_BAND) return matchDiff;
-    }
+    // 4. Match % desc — the data-aware key. Missing attributes score 'review' = 50%
+    //    credit (not skipped), so under-characterized candidates are dragged toward
+    //    50% and can't masquerade as a flawless match the way a raw fail-count let
+    //    them. Applied to EVERY bucket so sparse certified crosses lose to
+    //    fully-spec'd ones. compositeScore breaks near-ties (within ±band).
+    const matchDiff = b.matchPercentage - a.matchPercentage;
+    if (Math.abs(matchDiff) > MATCH_PERCENT_TIE_BAND) return matchDiff;
     return (b.compositeScore ?? 0) - (a.compositeScore ?? 0);
   });
   if (!preferredMpn) return byCategoryThenScore;
