@@ -117,8 +117,14 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  post-filtered out). v2→v3 on 2026-06-22 for logic-vetted descriptive search
  *  (Decision #243): the cached SearchResult now carries vetted ranking + new
  *  matchScore/failCount/hardFail fields, and the cache key gained a vetting
- *  signature segment. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v3';
+ *  signature segment. v3→v4 on 2026-06-24 for greenfield parametric pool filtering
+ *  (Decision #248 Phase B): the Digikey candidate pool is now parametric-filtered by
+ *  the stated numeric specs, so a cached v3 entry holds a different (keyword-only) pool.
+ *  v4→v5 on 2026-06-24 for identity-categorical injection (Decision #248): the vetting
+ *  pass now derives a gating categorical (polarity / channel_type / dielectric / …) from
+ *  the part-type noun, changing the cached vetted ORDER for the same key (e.g. PNP parts
+ *  no longer top an "NPN" request), so v4 entries hold a stale ranking. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v5';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

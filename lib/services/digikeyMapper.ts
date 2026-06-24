@@ -28,8 +28,10 @@ function getDeepestCategoryName(category: DigikeyCategory | undefined): string {
   return current.Name;
 }
 
-/** Traverse Digikey's hierarchical category to find the most specific (deepest) CategoryId */
-function getDeepestCategoryId(category: DigikeyCategory | undefined): number | undefined {
+/** Traverse Digikey's hierarchical category to find the most specific (deepest) CategoryId.
+ *  Exported so the greenfield spec-search can bootstrap a categoryId from a keyword-search
+ *  result's `Category` tree (no extra round-trip) to drive parametric filtering. */
+export function getDeepestCategoryId(category: DigikeyCategory | undefined): number | undefined {
   if (!category) return undefined;
   let current = category;
   while (current.ChildCategories && current.ChildCategories.length > 0) {

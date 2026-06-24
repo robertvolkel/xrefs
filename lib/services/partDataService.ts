@@ -17,8 +17,9 @@ import {
   mapSubcategory,
   findFacetForAttribute,
   extractNumericValue,
+  getDeepestCategoryId,
 } from './digikeyMapper';
-import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
+import { buildSyntheticSource, computeOverSpecPenalty, pickFetchBand, type FetchBand } from './searchConstraints';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
@@ -465,6 +466,18 @@ export async function searchParts(
   // extra API calls), consumed by the logic-vetting pass below.
   type SourcePayload = { result: SearchResult; attrsByMpn?: Map<string, PartAttributes> };
   type LabeledSearch = { source: SearchDataSource; promise: Promise<SourcePayload> };
+
+  // Phase B (greenfield pool relevance): derive the single most-selective numeric band to
+  // PARAMETRIC-FILTER the Digikey pool on — built from partType (→ family) + the raw
+  // constraints BEFORE the fetch, so it shapes WHICH parts are fetched, not just the ranking.
+  // Null (no partType / no family / no numeric spec mapping to a band) → keyword-only pool,
+  // byte-identical to Phase A. The vetting pass below still re-ranks whatever is fetched.
+  let fetchBand: FetchBand | null = null;
+  if (constraints && options?.partType) {
+    const earlySynthetic = buildSyntheticSource(constraints, options.partType, []);
+    if (earlySynthetic) fetchBand = pickFetchBand(constraints, earlySynthetic.logicTable);
+  }
+
   const searches: LabeledSearch[] = [
     // Digikey
     {
@@ -472,7 +485,24 @@ export async function searchParts(
       promise: (async (): Promise<SourcePayload> => {
         if (!isDigikeyConfigured()) return { result: { type: 'none', matches: [] } };
         try {
-          const response = await keywordSearch(trimmed, { limit: 20 }, currency, userId);
+          const base = await keywordSearch(trimmed, { limit: 20 }, currency, userId);
+          let response = base;
+          // Phase B: parametric-filter the pool by the picked band. Bootstrap the
+          // categoryId from the keyword result's OWN Category tree (no extra round-trip),
+          // discover the category facets, then UNION the in-band parts into the pool.
+          // Falls back to the keyword-only pool on any miss (no category / no facet / no
+          // in-band values), so it never returns fewer parts than the plain search.
+          if (fetchBand) {
+            const sampleCat = (base.ExactMatches?.[0] ?? base.Products?.[0])?.Category;
+            const categoryId = getDeepestCategoryId(sampleCat);
+            if (typeof categoryId === 'number') {
+              const discover = await getCategoryParametricFacets('', categoryId, currency, userId).catch(() => null);
+              if (discover) {
+                const params = await applyParametricFilter(categoryId, fetchBand, discover, currency, userId);
+                if (params.length) response = { ...base, Products: [...(base.Products ?? []), ...params] };
+              }
+            }
+          }
           return {
             result: mapKeywordResponseToSearchResult(response),
             // Only build scorable candidate attributes when the search is
@@ -1897,6 +1927,52 @@ const MAX_WIDENED_CANDIDATES = 60;
  *  could otherwise build an oversized request body. The 60-candidate post-cap bounds output. */
 const MAX_PARAMETRIC_VALUES = 25;
 
+/**
+ * Phase B (greenfield pool relevance): for ONE numeric band, select a category's in-band
+ * facet values and fetch the parts filtered to them. Pure extraction of the Decision #238
+ * APPLY block (mirrored inline in `fetchDigikeyCandidates`) so the greenfield spec-search
+ * can reuse it WITHOUT touching the shipped acceptance-widening path. Returns the in-band
+ * products (re-verified), or [] when the attr has no facet / no in-band values / the apply
+ * call fails.
+ * TODO(post-validate): converge this with the inline copy in fetchDigikeyCandidates.
+ */
+async function applyParametricFilter(
+  categoryId: number,
+  band: { attrId: string; lo: number; hi: number },
+  discover: Awaited<ReturnType<typeof getCategoryParametricFacets>>,
+  currency?: string,
+  userId?: string,
+): Promise<DigikeyProduct[]> {
+  const facet = findFacetForAttribute(band.attrId, discover.facets, discover.products[0]);
+  if (!facet) return [];
+  const { lo, hi } = band;
+  const inBand = (valueStr: string | undefined): boolean => {
+    if (!valueStr) return false;
+    // Compound facet values like "200 @ 2mA, 5V" (e.g. hFE @ test conditions, Vce(sat) @ Ib,Ic):
+    // the SPEC value is the leading token before "@" — extractNumericValue would otherwise grab
+    // the unit-bearing test-condition number (the 2mA). Plain "5.1 V" values are unaffected.
+    const head = valueStr.split('@')[0];
+    // extractNumericValue handles SI-prefixed unit-bearing values ("5.1 V", "2.2 kΩ"); it returns
+    // undefined for a UNITLESS value (hFE gain = "200"), so fall back to parseFloat for those.
+    const ev = extractNumericValue(head).numericValue;
+    const n = typeof ev === 'number' ? ev : parseFloat(head);
+    return Number.isFinite(n) && n >= lo && n <= hi;
+  };
+  const inBandValueIds = facet.FilterValues
+    .filter(fv => inBand(fv.ValueName))
+    .sort((a, b) => (b.ProductCount ?? 0) - (a.ProductCount ?? 0))
+    .slice(0, MAX_PARAMETRIC_VALUES)
+    .map(fv => fv.ValueId);
+  if (!inBandValueIds.length) return [];
+  const applyRes = await parametricFilterSearch(categoryId, facet.ParameterId, inBandValueIds, { limit: 25 }, currency, userId)
+    .catch((error) => { console.warn('Digikey parametric apply failed:', error); return null; });
+  if (!applyRes) return [];
+  const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
+  return raw.filter(p =>
+    inBand(p.Parameters?.find(x => x.ParameterText === facet.ParameterName)?.ValueText),
+  );
+}
+
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,
   currency?: string,
@@ -2003,6 +2079,8 @@ async function fetchDigikeyCandidates(
   ]);
 
   // Phase 2: parametric APPLY (~1 round-trip) — select the in-band facet values, fetch them.
+  // TODO(post-validate): converge this inline block with applyParametricFilter() (extracted
+  // for the greenfield spec path). Kept inline here to leave the shipped #238 path untouched.
   let parametricProducts: DigikeyProduct[] = [];
   if (parametricBand && discover) {
     const facet = findFacetForAttribute(parametricBand.attr, discover.facets, discover.products[0]);
