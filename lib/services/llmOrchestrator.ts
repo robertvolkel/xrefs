@@ -8,6 +8,7 @@ import { logTokenUsage } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
 import { StoredRow } from '../partsListStorage';
 import { getCountryName } from '../constants/profileOptions';
+import { describeContextAnswers } from '../contextQuestions';
 
 // Default to Sonnet for all three orchestrators (chat / refinementChat / listChat).
 // The agentic decision these make — "given this turn, which tool do I fire, and when"
@@ -1428,7 +1429,14 @@ General electronics domain questions:
     prompt += `\n\nUser-provided attribute overrides:\n${JSON.stringify(overrides, null, 2)}`;
   }
   if (applicationContext) {
-    prompt += `\n\nApplication context answers:\n${JSON.stringify(applicationContext.answers, null, 2)}`;
+    // Resolve raw answer codes (questionId → value) to human-readable
+    // question + label pairs so the model reads the actual application context
+    // instead of decoding codes like "low_lt_10khz" / a bare "yes".
+    const described = describeContextAnswers(applicationContext.familyId, applicationContext.answers);
+    if (described.length > 0) {
+      const body = described.map((d) => `- ${d.question} → ${d.answer}`).join('\n');
+      prompt += `\n\nApplication context answers:\n${body}`;
+    }
   }
   if (recommendations && recommendations.length > 0) {
     prompt += summarizeRecommendations(recommendations);
