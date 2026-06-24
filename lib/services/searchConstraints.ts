@@ -42,6 +42,19 @@ const SYNONYMS: Record<string, Record<string, string>> = {
 
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/** Normalize a phrase to space-separated lowercase alphanumerics for whole-phrase,
+ *  token-bounded matching (so "N-Channel" ≡ "n channel" and matches "…N-channel MOSFET"). */
+const normPhrase = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** True when `phrase` appears as a token-bounded run inside `text` (both normalized),
+ *  so "npn" matches "small-signal NPN" but not "PNP", and a ≥2-char floor avoids
+ *  trivial single-letter hits. */
+function phraseInText(phrase: string, text: string): boolean {
+  const p = normPhrase(phrase);
+  if (p.length < 2) return false;
+  return ` ${normPhrase(text)} `.includes(` ${p} `);
+}
+
 /** Resolve a human attribute term to a logic-table attributeId for this family.
  *  Order: family synonym → exact attrId/attrName → attrName-contains-term →
  *  term-contains-attrId. Returns null when nothing matches (caller drops it). */
@@ -173,6 +186,43 @@ export function buildSyntheticSource(
       sortOrder: sortOrder++,
     });
     seen.add(attrId);
+  }
+
+  // Inject identity-defining categoricals stated in the part-type NOUN (the "NPN"
+  // in "small-signal NPN", the "N-channel" in "N-channel MOSFET", the "X7R" in
+  // "X7R capacitor") that the user did NOT also pass as a numeric constraint.
+  // Without this, the family's hard identity gate (polarity / channel_type /
+  // dielectric / topology) sees a MISSING source value and PASSES every candidate
+  // — so a PNP can top an NPN request. General by construction: we learn each
+  // gate's categorical vocabulary from the candidate pool (no per-family table),
+  // then inject the single value whose token appears in partType. Any new
+  // identity-gated categorical across the 43 families is covered for free.
+  const ptText = (partType ?? '').trim();
+  if (ptText && candidateAttrs.length > 0) {
+    for (const rule of logicTable.rules) {
+      if (rule.logicType !== 'identity' && rule.logicType !== 'identity_upgrade') continue;
+      if (seen.has(rule.attributeId)) continue;
+      // Distinct CATEGORICAL values candidates carry for this gate. Skip
+      // number-leading values (capacitance "10 µF", package code "0805") so a
+      // numeric identity attr can't be matched out of the part-type text.
+      const distinct = new Map<string, string>();
+      for (const cand of candidateAttrs) {
+        const v = cand.parameters.find(p => p.parameterId === rule.attributeId)?.value?.trim();
+        if (!v || /^[\d.]/.test(v)) continue;
+        distinct.set(normPhrase(v), v);
+      }
+      // Inject only when EXACTLY ONE of those values is named in the part type
+      // (ambiguous or absent → leave the gate relaxed; vetting never mis-vets).
+      const matched = [...distinct.values()].filter(v => phraseInText(v, ptText));
+      if (matched.length !== 1) continue;
+      params.push({
+        parameterId: rule.attributeId,
+        parameterName: rule.attributeName,
+        value: matched[0],
+        sortOrder: sortOrder++,
+      });
+      seen.add(rule.attributeId);
+    }
   }
 
   if (params.length === 0) return null;

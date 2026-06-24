@@ -40,6 +40,29 @@ const MOSFET_CONSTRAINTS: SearchConstraint[] = [
   { attribute: 'current', value: 5, unit: 'A' },
 ];
 
+const B6 = getLogicTable('B6')!;
+
+function bjt(
+  mpn: string,
+  opts: { polarity: string; vceo: number; status?: PartAttributes['part']['status'] },
+): PartAttributes {
+  return {
+    part: {
+      mpn,
+      manufacturer: 'Test',
+      description: 'BJT',
+      detailedDescription: 'BJT',
+      category: 'Discrete Semiconductors' as PartAttributes['part']['category'],
+      subcategory: 'Bipolar Transistor',
+      status: opts.status ?? 'Active',
+    },
+    parameters: [
+      { parameterId: 'polarity', parameterName: 'Polarity (NPN / PNP)', value: opts.polarity, sortOrder: 1 },
+      { parameterId: 'vceo_max', parameterName: 'Vceo Max', value: `${opts.vceo} V`, numericValue: opts.vceo, unit: 'V', sortOrder: 2 },
+    ],
+  };
+}
+
 describe('resolveFamilyFromText', () => {
   it('maps a descriptive part-type hint to a family ID', () => {
     expect(resolveFamilyFromText('N-channel MOSFET')).toBe('B5');
@@ -115,6 +138,66 @@ describe('buildSyntheticSource', () => {
     );
     expect(out!.source.parameters).toHaveLength(1);
     expect(out!.source.parameters[0].parameterId).toBe('vds_max');
+  });
+});
+
+describe('buildSyntheticSource — identity-categorical injection from partType', () => {
+  const npnCand = bjt('BC847B', { polarity: 'NPN', vceo: 45 });
+  const pnpCand = bjt('BC857B', { polarity: 'PNP', vceo: 45 });
+  const pool = [npnCand, pnpCand];
+  // A single resolvable numeric constraint (no polarity) so the source is non-null;
+  // the polarity must come from the part-type noun, not a constraint.
+  const VCEO_ONLY: SearchConstraint[] = [{ attribute: 'vceo', value: 45, unit: 'V' }];
+
+  it('injects the polarity named in the part-type noun (NPN) as a gating constraint', () => {
+    const out = buildSyntheticSource(VCEO_ONLY, 'small-signal NPN', pool)!;
+    expect(out.familyId).toBe('B6');
+    expect(out.source.parameters.find(p => p.parameterId === 'polarity')?.value).toBe('NPN');
+  });
+
+  it('learns the vocabulary from the candidate pool — injects PNP for a PNP request', () => {
+    const out = buildSyntheticSource(VCEO_ONLY, 'PNP transistor', pool)!;
+    expect(out.source.parameters.find(p => p.parameterId === 'polarity')?.value).toBe('PNP');
+  });
+
+  it('does NOT inject when the part type names no polarity (gate stays relaxed)', () => {
+    const out = buildSyntheticSource(VCEO_ONLY, 'small-signal transistor', pool)!;
+    expect(out.source.parameters.find(p => p.parameterId === 'polarity')).toBeUndefined();
+  });
+
+  it('does NOT inject without a candidate pool to learn the vocabulary from', () => {
+    // Part type resolves the family on its own ("bipolar transistor") so the
+    // source is non-null; with no pool there is no vocabulary, so polarity stays
+    // un-injected even though the noun says NPN.
+    const out = buildSyntheticSource(VCEO_ONLY, 'bipolar transistor NPN', [])!;
+    expect(out.familyId).toBe('B6');
+    expect(out.source.parameters.find(p => p.parameterId === 'polarity')).toBeUndefined();
+  });
+
+  it('end-to-end: a PNP candidate becomes a real mismatch for an NPN request', () => {
+    const out = buildSyntheticSource(VCEO_ONLY, 'small-signal NPN', pool)!;
+    const recs = findReplacements(B6, out.source, pool);
+    const byMpn = new Map(recs.map(r => [r.part.mpn, r]));
+    expect(countRealMismatches(byMpn.get('BC847B')!)).toBe(0);            // NPN passes the gate
+    expect(countRealMismatches(byMpn.get('BC857B')!)).toBeGreaterThan(0); // PNP fails it → sinks
+  });
+
+  it('B5: injects channel type from the part-type noun even without a channel constraint', () => {
+    const out = buildSyntheticSource(
+      [{ attribute: 'drain-source voltage', value: 12, unit: 'V' }], // no channel constraint
+      'N-channel MOSFET',
+      [mosfet('N1', { channel: 'N-Channel', vds: 60, id: 10 }), mosfet('P1', { channel: 'P-Channel', vds: 60, id: 10 })],
+    )!;
+    expect(out.source.parameters.find(p => p.parameterId === 'channel_type')?.value).toBe('N-Channel');
+  });
+
+  it('an explicit channel constraint wins over a conflicting part-type noun (seen-guard)', () => {
+    // MOSFET_CONSTRAINTS already carries channel_type=N-Channel; a "P-channel"
+    // part type must not duplicate or clobber it.
+    const out = buildSyntheticSource(MOSFET_CONSTRAINTS, 'P-channel MOSFET', [mosfet('X', { channel: 'P-Channel', vds: 60, id: 10 })])!;
+    const channels = out.source.parameters.filter(p => p.parameterId === 'channel_type');
+    expect(channels).toHaveLength(1);
+    expect(channels[0].value).toBe('N-Channel');
   });
 });
 
