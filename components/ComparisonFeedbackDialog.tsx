@@ -20,7 +20,8 @@ import {
   Alert,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { PartAttributes, MatchStatus, RuleResult } from '@/lib/types';
+import { PartAttributes, RuleResult } from '@/lib/types';
+import type { AlignedSpecRow } from '@/lib/services/comparisonRows';
 import { submitFeedback } from '@/lib/api';
 
 const DOT_GREEN = '#69F0AE';
@@ -37,22 +38,13 @@ function resultDotColor(result?: RuleResult): string {
   }
 }
 
-export interface ComparisonRow {
-  parameterId: string;
-  parameterName: string;
-  sourceValue: string;
-  replacementValue: string;
-  matchStatus: MatchStatus;
-  ruleResult?: RuleResult;
-  note?: string;
-}
-
 interface ComparisonFeedbackDialogProps {
   open: boolean;
   onClose: () => void;
   sourceAttributes: PartAttributes;
   replacementAttributes: PartAttributes | null;
-  rows: ComparisonRow[];
+  /** Shared aligned comparison rows (nullable values render as "—"). */
+  rows: AlignedSpecRow[];
 }
 
 export default function ComparisonFeedbackDialog({
@@ -155,10 +147,10 @@ export default function ComparisonFeedbackDialog({
                         {row.parameterName}
                       </TableCell>
                       <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', borderColor: 'divider', borderRight: 1, borderRightColor: 'divider' }}>
-                        {row.sourceValue}
+                        {row.sourceValue ?? '—'}
                       </TableCell>
                       <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', borderColor: 'divider' }}>
-                        {row.replacementValue}
+                        {row.replacementValue ?? '—'}
                       </TableCell>
                       <TableCell sx={{ borderColor: 'divider' }}>
                         {row.ruleResult && (

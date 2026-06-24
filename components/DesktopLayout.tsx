@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Skeleton, Stack, Typography } from '@mui/material';
 import { AppPhase, AttributesTab, ChatMessage, ConversationSummary, ManufacturerProfile, PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion } from '@/lib/types';
+import { buildComparisonRows } from '@/lib/services/comparisonRows';
 
 export type { AttributesTab };
 import ChatInterface from './ChatInterface';
@@ -215,6 +216,19 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   }, [sourceAttributes?.part.mpn]);
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
+
+  // Single shared, unioned row set for the comparison Specs tab — computed once
+  // and handed by reference to BOTH the source (AttributesPanel) and replacement
+  // (ComparisonView) panels so every attribute lines up at the same row index.
+  // Only present while comparing; null otherwise (panels fall back to their
+  // standalone rendering). Rebuilds when the replacement attrs finish loading.
+  const comparisonRows = useMemo(
+    () =>
+      phase === 'comparing' && selectedRecommendation && sourceAttributes
+        ? buildComparisonRows(sourceAttributes, comparisonAttributes, selectedRecommendation)
+        : null,
+    [phase, sourceAttributes, comparisonAttributes, selectedRecommendation],
+  );
   // Spot quantity is forwarded straight through to the panels — CommercialContent
   // owns a local fallback when these are absent, so the control works even when a
   // consumer (mobile / parts-list modal) doesn't wire the shared state.
@@ -370,6 +384,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             onAcceptanceChange={onAcceptanceChange}
             spotQuantity={spotQuantity}
             onSpotQuantityChange={onSpotQuantityChange}
+            comparisonRows={comparisonRows ?? undefined}
           />
         </Box>
 
@@ -397,6 +412,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               sourceAttributes={sourceAttributes}
               replacementAttributes={comparisonAttributes}
               recommendation={selectedRecommendation!}
+              rows={comparisonRows}
               onBack={onBackToRecommendations}
               onManufacturerClick={onManufacturerClick}
               activeTab={attributesTab}

@@ -27,6 +27,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, RecommendationCategory, XrefRecommendation, AcceptanceCriteria, AcceptanceCriterion, MatchingRule, ParametricAttribute } from '@/lib/types';
 import { getLogicTableForSubcategory } from '@/lib/logicTables';
+import type { AlignedSpecRow } from '@/lib/services/comparisonRows';
 import { normalize as normalizeMatchValue } from '@/lib/services/matchingEngine';
 import { RANGE_FETCH_ATTRS } from '@/lib/services/fetchWidening';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
@@ -59,6 +60,11 @@ interface AttributesPanelProps {
    *  Defaults to 1 when not wired (e.g. modal-chat reuse). */
   spotQuantity?: number;
   onSpotQuantityChange?: (qty: number) => void;
+  /** When comparing, the shared aligned row set (same array ComparisonView
+   *  renders). Present → the Specs source column renders from this list so rows
+   *  line up with the replacement panel, with a blank for replacement-only attrs.
+   *  Absent → standalone recognized/extras rendering (unchanged). */
+  comparisonRows?: AlignedSpecRow[];
 }
 
 /** Maximum ± band offered by the range slider. */
@@ -296,7 +302,7 @@ export function CommercialSkeleton() {
   );
 }
 
-export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange }: AttributesPanelProps) {
+export default function AttributesPanel({ attributes, loading, title, activeTab, onTabChange, allRecommendations, onManufacturerClick, xrefCategory, xrefMfr, onSelectXrefCategory, onSelectXrefMfr, acceptanceCriteria, onAcceptanceChange, spotQuantity = 1, onSpotQuantityChange, comparisonRows }: AttributesPanelProps) {
   const { t } = useTranslation();
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
   const [showExtras, setShowExtras] = useState(false);
@@ -341,6 +347,41 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
       extras: sorted.filter((p) => p.recognized === false),
     };
   }, [attributes?.parameters]);
+
+  // Source params by id — lets comparison mode recover the ParametricAttribute
+  // for a row (acceptance logic needs numericValue), and distinguishes real
+  // source rows (editable, badged) from replacement-only rows (blank, inert).
+  const paramById = useMemo(
+    () => new Map((attributes?.parameters ?? []).map((p) => [p.parameterId, p])),
+    [attributes?.parameters],
+  );
+
+  // Unified Specs row view-model. In comparison mode the source column is driven
+  // by the shared aligned rows (so it lines up with the replacement panel and
+  // includes blank rows for replacement-only attrs); otherwise it's the standalone
+  // recognized list. `param` present ⇒ a real source attribute (acceptance + badge).
+  const specRows = useMemo(() => {
+    if (comparisonRows) {
+      return comparisonRows.map((r) => {
+        const param = paramById.get(r.parameterId);
+        return {
+          parameterId: r.parameterId,
+          parameterName: r.parameterName,
+          value: r.sourceValue ?? '—',
+          source: param ? r.sourceParamSource : undefined,
+          param,
+        };
+      });
+    }
+    return recognized.map((p) => ({
+      parameterId: p.parameterId,
+      parameterName: p.parameterName,
+      value: p.value,
+      source: p.source,
+      param: p as ParametricAttribute | undefined,
+    }));
+  }, [comparisonRows, recognized, paramById]);
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header — taller to include pill bar */}
@@ -453,27 +494,31 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                       </TableRow>
                     ))
                   : <>
-                      {recognized.map((param) => {
-                        const rule = ruleByAttribute.get(param.parameterId);
-                        const kind = onAcceptanceChange ? getAcceptanceKind(param, rule) : null;
+                      {specRows.map((vm) => {
+                        // `param` present ⇒ a real source attribute (gets acceptance
+                        // controls + D/P/A badge). Absent ⇒ a replacement-only row
+                        // present only to hold the aligned slot (inert, blank-ish).
+                        const param = vm.param;
+                        const rule = param ? ruleByAttribute.get(param.parameterId) : undefined;
+                        const kind = onAcceptanceChange && param ? getAcceptanceKind(param, rule) : null;
                         const eligible = kind !== null;
-                        const criterion = acceptanceCriteria?.[param.parameterId];
+                        const criterion = acceptanceCriteria?.[vm.parameterId];
                         const active = criterion != null;
                         const chipLabel = criterion?.kind === 'range'
                           ? `±${criterion.percent}%`
                           : criterion?.kind === 'set'
                             ? `+${criterion.values.length}`
                             : null;
-                        const isOpen = expandedAcceptance === param.parameterId;
+                        const isOpen = expandedAcceptance === vm.parameterId;
                         // 'set' checklist options: candidate values deduped by the
                         // engine's normalize() (so case/whitespace variants collapse to
                         // one box that matches how scoring compares) and excluding the
                         // source value (always accepted). First raw form shown.
                         const setOptions: string[] = [];
-                        if (kind === 'set') {
+                        if (kind === 'set' && param) {
                           const srcNorm = normalizeMatchValue(param.value);
                           const seen = new Set<string>([srcNorm]);
-                          for (const v of candidateValuesByAttribute.get(param.parameterId) ?? []) {
+                          for (const v of candidateValuesByAttribute.get(vm.parameterId) ?? []) {
                             const n = normalizeMatchValue(v);
                             if (seen.has(n)) continue;
                             seen.add(n);
@@ -481,7 +526,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                           }
                         }
                         return (
-                        <Fragment key={param.parameterId}>
+                        <Fragment key={vm.parameterId}>
                         <TableRow
                           hover
                           sx={{
@@ -502,7 +547,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                               py: { xs: ROW_PY_MOBILE, md: ROW_PY },
                             }}
                           >
-                            {param.parameterName}
+                            {vm.parameterName}
                           </TableCell>
                           <TableCell
                             sx={{
@@ -514,7 +559,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                             }}
                           >
                             <Stack direction="row" alignItems="center" spacing={0.75}>
-                              <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{param.value}</Box>
+                              <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(!param && { color: 'text.disabled' }) }}>{vm.value}</Box>
                               {chipLabel != null && (
                                 <Tooltip title={criterion?.kind === 'set' ? `${criterion.values.length} additional value(s) accepted` : 'Tolerance band applied'} arrow>
                                   <Chip
@@ -536,9 +581,9 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                                     className="acc-trigger"
                                     role="button"
                                     tabIndex={0}
-                                    aria-label={`Set acceptance criteria for ${param.parameterName}`}
-                                    onClick={(e) => { e.stopPropagation(); setExpandedAcceptance(isOpen ? null : param.parameterId); }}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedAcceptance(isOpen ? null : param.parameterId); } }}
+                                    aria-label={`Set acceptance criteria for ${vm.parameterName}`}
+                                    onClick={(e) => { e.stopPropagation(); setExpandedAcceptance(isOpen ? null : vm.parameterId); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedAcceptance(isOpen ? null : vm.parameterId); } }}
                                     sx={{
                                       display: 'inline-flex',
                                       alignItems: 'center',
@@ -554,9 +599,9 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                                   </Box>
                                 </Tooltip>
                               )}
-                              {param.source && (
+                              {vm.source && (
                                 <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', border: '1px solid', borderColor: 'text.disabled', fontSize: '0.5rem', color: 'text.disabled', fontWeight: 600, fontFamily: 'sans-serif', flexShrink: 0 }}>
-                                  {param.source === 'digikey' ? 'D' : param.source === 'partsio' ? 'P' : 'A'}
+                                  {vm.source === 'digikey' ? 'D' : vm.source === 'partsio' ? 'P' : 'A'}
                                 </Box>
                               )}
                             </Stack>
@@ -565,7 +610,7 @@ export default function AttributesPanel({ attributes, loading, title, activeTab,
                         {/* Acceptance editor — expands directly beneath the selected
                             attribute. Range slider for continuous attrs, checklist for
                             discrete sets. Remounts per attribute via the Fragment key. */}
-                        {isOpen && eligible && onAcceptanceChange && (
+                        {isOpen && eligible && param && onAcceptanceChange && (
                           <TableRow>
                             <TableCell colSpan={2} sx={{ p: 0, borderColor: 'divider' }}>
                               <Collapse in timeout="auto" unmountOnExit>

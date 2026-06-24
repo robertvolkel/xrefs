@@ -14,6 +14,14 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Comparison Specs — acceptance-editor expansion breaks row alignment transiently (follow-up to Decision #246) (P3)
+
+**Context.** Decision #246 aligned the source (left `AttributesPanel`) and replacement (right `ComparisonView`) Specs tables to a single shared row set so rows line up 1:1. The left panel's per-attribute acceptance-tune editor injects a transient `<Collapse>` row beneath the expanded attribute, which pushes every left row below it down relative to the right — so alignment is temporarily lost until the user closes the editor. Accepted as-is at ship: user-triggered, transient, one row at a time.
+
+**Fix (if ever wanted).** Mirror an empty same-height spacer row on the right when an acceptance editor is open. Requires lifting `expandedAcceptance` state from `AttributesPanel` up to `DesktopLayout` (so `ComparisonView` can read it) — non-trivial state plumbing for a cosmetic, transient glitch. Low priority.
+
+---
+
 ## Greenfield search relevance — follow-ups to logic-vetted search (Decision #243) (P3)
 
 **Largely addressed by Decision #243** (June 22, 2026). Descriptive searches that carry stated specs now run candidates through the matching engine via a synthetic source: a candidate whose known categorical attribute contradicts a stated constraint (NPN≠PNP, N-ch≠P-ch) is a real `fail` → **sinks to the bottom**; wildly over-spec parts (1700V for a 12V ask) sink via the over-spec closeness penalty. This is "rank, keep all" (the original ask said *hard-filter*; we sink instead of hide — deliberate, so the list never empties). The SSM2220-PNP-for-NPN case is now handled for any family where the polarity/channel constraint resolves to an attributeId.

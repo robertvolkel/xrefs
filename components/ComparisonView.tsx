@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -20,6 +20,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useTranslation } from 'react-i18next';
 import { PartAttributes, XrefRecommendation, MatchStatus, RuleResult, CertificationSource, deriveRecommendationCategories } from '@/lib/types';
+import { buildComparisonRows, type AlignedSpecRow } from '@/lib/services/comparisonRows';
 import { ATTRIBUTES_HEADER_HEIGHT, ATTRIBUTES_HEADER_HEIGHT_MOBILE, ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE, ROW_PY, ROW_PY_MOBILE, ROW_HEIGHT, ROW_HEIGHT_MOBILE } from '@/lib/layoutConstants';
 import { useScrollIndicators } from '@/hooks/useScrollIndicators';
 import ComparisonFeedbackDialog from './ComparisonFeedbackDialog';
@@ -36,6 +37,11 @@ interface ComparisonViewProps {
   sourceAttributes: PartAttributes;
   replacementAttributes: PartAttributes | null;
   recommendation: XrefRecommendation;
+  /** Shared aligned row set (computed in DesktopLayout and also fed to the source
+   *  AttributesPanel) so both Specs tables line up row-for-row. Optional: when not
+   *  supplied (mobile / parts-list modal, which have no side-by-side source panel
+   *  to align with) ComparisonView builds the same rows internally. */
+  rows?: AlignedSpecRow[] | null;
   onBack: () => void;
   onManufacturerClick?: (manufacturer: string) => void;
   activeTab: AttributesTab;
@@ -126,6 +132,7 @@ export default function ComparisonView({
   sourceAttributes,
   replacementAttributes,
   recommendation,
+  rows: rowsProp,
   onBack,
   onManufacturerClick,
   activeTab,
@@ -139,11 +146,6 @@ export default function ComparisonView({
   const { t } = useTranslation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const { ref: scrollRef, canScrollUp, canScrollDown } = useScrollIndicators<HTMLDivElement>();
-  const matchMap = new Map(
-    recommendation.matchDetails.map((d) => [d.parameterId, d])
-  );
-
-  const sourceParamIds = new Set(sourceAttributes.parameters.map((p) => p.parameterId));
 
   // Resolve the family the engine used so admin "Propose alias" buttons can
   // attach overrides to the right rule. Falls back to base family for variants.
@@ -151,44 +153,13 @@ export default function ComparisonView({
     getLogicTableForSubcategory(sourceAttributes.part.subcategory, sourceAttributes)?.familyId
     ?? null;
 
-  const rowsFromSource = sourceAttributes.parameters
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((sourceParam) => {
-      const replParam = replacementAttributes?.parameters.find(
-        (p) => p.parameterId === sourceParam.parameterId
-      );
-      const matchDetail = matchMap.get(sourceParam.parameterId);
-
-      return {
-        parameterId: sourceParam.parameterId,
-        parameterName: sourceParam.parameterName,
-        sourceValue: sourceParam.value,
-        replacementValue: replParam?.value ?? matchDetail?.replacementValue ?? '—',
-        matchStatus: matchDetail?.matchStatus ?? ('different' as MatchStatus),
-        ruleResult: matchDetail?.ruleResult,
-        note: matchDetail?.note,
-        replSource: replParam?.source,
-      };
-    })
-    .filter((row) => !(row.matchStatus === 'different' && !row.ruleResult));
-
-  // Add matchDetails not already covered by source parameters (e.g. application_review
-  // rules for datasheet-only specs like SOA, or threshold rules like Vbe(sat) when
-  // the parametric data doesn't include them)
-  const extraRows = recommendation.matchDetails
-    .filter((d) => !sourceParamIds.has(d.parameterId) && d.ruleResult && d.ruleResult !== 'pass')
-    .map((d) => ({
-      parameterId: d.parameterId,
-      parameterName: d.parameterName,
-      sourceValue: d.sourceValue,
-      replacementValue: d.replacementValue,
-      matchStatus: d.matchStatus,
-      ruleResult: d.ruleResult,
-      note: d.note,
-      replSource: undefined as 'digikey' | 'partsio' | 'atlas' | undefined,
-    }));
-
-  const rows = [...rowsFromSource, ...extraRows];
+  // Shared aligned rows (unioned source + replacement). Prefer the prop from
+  // DesktopLayout (same array the left AttributesPanel renders, so they line up);
+  // fall back to building them here for surfaces that don't pass it.
+  const rows: AlignedSpecRow[] = useMemo(
+    () => rowsProp ?? buildComparisonRows(sourceAttributes, replacementAttributes, recommendation),
+    [rowsProp, sourceAttributes, replacementAttributes, recommendation],
+  );
   const replPart = (replacementAttributes ?? recommendation).part;
 
   return (
@@ -359,7 +330,7 @@ export default function ComparisonView({
                           }}
                         >
                           <Stack direction="row" alignItems="center" spacing={0.75}>
-                            <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.replacementValue}</Box>
+                            <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(row.replacementValue == null && { color: 'text.disabled' }) }}>{row.replacementValue ?? '—'}</Box>
                             {row.replSource && (
                               <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', border: '1px solid', borderColor: 'text.disabled', fontSize: '0.5rem', color: 'text.disabled', fontWeight: 600, fontFamily: 'sans-serif', flexShrink: 0 }}>
                                 {row.replSource === 'digikey' ? 'D' : row.replSource === 'partsio' ? 'P' : 'A'}
@@ -382,8 +353,8 @@ export default function ComparisonView({
                               familyId={familyId}
                               attributeId={row.parameterId}
                               attributeName={row.parameterName}
-                              sourceValue={row.sourceValue}
-                              replacementValue={row.replacementValue}
+                              sourceValue={row.sourceValue ?? ''}
+                              replacementValue={row.replacementValue ?? ''}
                               ruleResult={row.ruleResult}
                             />
                           </Stack>
