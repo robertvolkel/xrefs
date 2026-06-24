@@ -11,7 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS part_data_cache (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  service       TEXT NOT NULL CHECK (service IN ('digikey', 'partsio', 'mouser', 'search')),
+  service       TEXT NOT NULL CHECK (service IN ('digikey', 'partsio', 'mouser', 'search', 'findchips')),
   mpn_lower     TEXT NOT NULL,              -- lowercase MPN (or search cache key) for case-insensitive lookup
   variant       TEXT NOT NULL DEFAULT 'default', -- sub-key: 'parametric', 'lifecycle', 'commercial:USD', etc.
   cache_tier    TEXT NOT NULL CHECK (cache_tier IN ('parametric', 'lifecycle', 'commercial', 'search', 'recommendations')),
@@ -68,3 +68,16 @@ ALTER TABLE part_data_cache
   DROP CONSTRAINT IF EXISTS part_data_cache_cache_tier_check,
   ADD CONSTRAINT part_data_cache_cache_tier_check
     CHECK (cache_tier IN ('parametric', 'lifecycle', 'commercial', 'search', 'recommendations'));
+
+-- ============================================================
+-- Migration: Add 'search' + 'findchips' to the service CHECK constraint.
+-- Run on existing deployments. 'search' backs the SearchResult + recommendations
+-- caches (variant='rec:...'); 'findchips' backs the Decision #164 distributor-count
+-- cache (persistMergedCount → variant='fc-distributors', cache_tier='lifecycle').
+-- Without 'findchips', every search silently fails N distributor-count upserts
+-- (one per result MPN) — the count is then re-fetched live each time.
+-- ============================================================
+ALTER TABLE part_data_cache
+  DROP CONSTRAINT IF EXISTS part_data_cache_service_check,
+  ADD CONSTRAINT part_data_cache_service_check
+    CHECK (service IN ('digikey', 'partsio', 'mouser', 'search', 'findchips'));
