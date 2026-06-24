@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
+import { looksLikeMpn } from './searchSummary';
+import { buildGreenfieldQuery, isThinConstraints } from './searchConstraints';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
@@ -854,6 +856,115 @@ interface ToolResultData {
   mentionedAtlasManufacturers?: Set<string>;
 }
 
+// ==============================================================
+// Greenfield search determinism (Phase A — Decision #248)
+// ==============================================================
+//
+// A descriptive (non-MPN) turn used to return a DIFFERENT part family every run:
+// the model fires 4-6 `search_parts` calls in one turn, each a part number recalled
+// from training memory, and they race in Promise.all with last-completes-wins. The
+// server now owns the search: it runs exactly ONE search per greenfield turn (the
+// first search_parts by array order) and drives that search off the STRUCTURED part
+// type + constraints rather than whichever MPN the model recalled — so the result is
+// stable by construction. The SYSTEM_PROMPT is untouched (the reliability comes from
+// a tool-forced extraction call, not prompt tuning).
+
+/** Context passed to executeTool so the search_parts handler can canonicalize the
+ *  query and run forced extraction on a greenfield turn. */
+interface GreenfieldCtx {
+  client: Anthropic;
+  isGreenfield: boolean;
+  userText: string;
+}
+
+/** Steering result returned for the SUPPRESSED (deduped) search_parts blocks on a
+ *  greenfield turn. Honors the Anthropic contract (one tool_result per tool_use id)
+ *  without a second API call, and tells the model not to keep searching. */
+const DEDUPED_SEARCH_TOOL_RESULT = JSON.stringify({
+  deduped: true,
+  note: 'A single search already ran for this request from the structured part type and constraints. Use those results; do not issue more searches this turn.',
+});
+
+/** Decide which tool_use blocks execute for real this turn. On a greenfield turn,
+ *  keep only the FIRST `search_parts` (by array order — deterministic, unlike the
+ *  Promise.all resolution order) and suppress the rest; every other tool (and every
+ *  search on a non-greenfield/MPN turn) always runs. Returns a parallel run-flag
+ *  array. Pure + exported for unit testing. */
+export function partitionToolUses(
+  blocks: { name: string }[],
+  isGreenfield: boolean,
+): boolean[] {
+  let keptSearch = false;
+  return blocks.map(b => {
+    if (isGreenfield && b.name === 'search_parts') {
+      if (!keptSearch) { keptSearch = true; return true; }
+      return false;
+    }
+    return true;
+  });
+}
+
+/** Forced structured extraction of {partType, constraints} from the user's own
+ *  words. Fired only when the kept greenfield search_parts call lacks a part type
+ *  or usable constraints (the determinism-critical gap — the model's from-memory
+ *  MPN searches carry no structured intent). One small tool-forced call over ONLY
+ *  the raw user text (not the history, so it can't inherit from-memory guesses). */
+const EXTRACT_SPECS_TOOL: Anthropic.Tool = {
+  name: 'extract_part_specs',
+  description: 'Extract the component type and the specs the user explicitly stated from their request.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      partType: {
+        type: 'string',
+        description: 'The component type in plain words, e.g. "N-channel MOSFET", "small-signal NPN transistor", "buck converter". Empty string if the user named no component type.',
+      },
+      constraints: {
+        type: 'array',
+        description: 'One entry per spec the user ACTUALLY stated. Numeric specs carry a number value + unit; categorical specs (channel type, polarity, technology) carry a string value and no unit. Do NOT invent specs the user did not state.',
+        items: {
+          type: 'object',
+          properties: {
+            attribute: { type: 'string' },
+            value: { type: ['string', 'number'] },
+            unit: { type: 'string' },
+          },
+          required: ['attribute', 'value'],
+        },
+      },
+    },
+    required: ['partType', 'constraints'],
+  },
+};
+
+async function forceExtractSpecs(
+  client: Anthropic,
+  userText: string,
+): Promise<{ partType?: string; constraints?: SearchConstraint[] } | null> {
+  try {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 512,
+      tools: [EXTRACT_SPECS_TOOL],
+      tool_choice: { type: 'tool', name: 'extract_part_specs' },
+      messages: [{
+        role: 'user',
+        content: `Extract the component type and the specs the user stated from this request:\n\n"${userText}"`,
+      }],
+    });
+    const block = resp.content.find(b => b.type === 'tool_use');
+    if (!block || block.type !== 'tool_use') return null;
+    const inp = block.input as { partType?: string; constraints?: SearchConstraint[] };
+    return {
+      partType: inp.partType?.trim() || undefined,
+      constraints: Array.isArray(inp.constraints) ? inp.constraints : undefined,
+    };
+  } catch (err) {
+    console.warn('[chat] extract_part_specs failed, falling back to model query', err);
+    return null;
+  }
+}
+
 /** Execute a tool call and return the result + parsed data */
 async function executeTool(
   name: string,
@@ -863,20 +974,45 @@ async function executeTool(
   userId?: string,
   _userPreferences?: UserPreferences,
   currentSearchResult?: SearchResult,
+  ctx?: GreenfieldCtx,
 ): Promise<string> {
   switch (name) {
     case 'search_parts': {
       const args = input as { query: string; manufacturer?: string; partType?: string; constraints?: SearchConstraint[] };
+      let partType = args.partType?.trim() || undefined;
+      let constraints = Array.isArray(args.constraints) ? args.constraints : undefined;
+      let effectiveQuery = args.query;
+
+      // Greenfield: make the search a function of structured intent, not the
+      // model's free-text query (which may be a from-memory MPN that varies run to
+      // run). Recover {partType, constraints} via a forced extraction when the model
+      // gave none, then drive the keyword search off the part type.
+      if (ctx?.isGreenfield) {
+        if (!partType || isThinConstraints(constraints)) {
+          const extracted = await forceExtractSpecs(ctx.client, ctx.userText);
+          if (extracted) {
+            partType = partType || extracted.partType;
+            if (isThinConstraints(constraints) && !isThinConstraints(extracted.constraints)) {
+              constraints = extracted.constraints;
+            }
+          }
+        }
+        // Canonical query — ignore the model's recalled MPN. When no part type can
+        // be resolved (truly vague), fall through to the model's query (today's
+        // behavior; the model has typically already chosen to guide instead).
+        if (partType) effectiveQuery = buildGreenfieldQuery(partType, constraints);
+      }
+
       // Pass manufacturer through to the Atlas-side filter so generic MPNs
       // (LM358, 555, 1.5KE10) shared across many MFRs don't silently lose the
       // target MFR's rows at the per-source trim boundary. The post-filter
       // below still runs for Digikey/Parts.io results.
       // partType + constraints drive logic-vetted ranking on descriptive searches
       // (absent on MPN lookups → behavior unchanged).
-      const result = await searchParts(args.query, undefined, userId, {
+      const result = await searchParts(effectiveQuery, undefined, userId, {
         manufacturer: args.manufacturer,
-        partType: args.partType,
-        constraints: Array.isArray(args.constraints) ? args.constraints : undefined,
+        partType,
+        constraints,
       });
 
       // MFR filter: when the user named a manufacturer, narrow results to
@@ -1229,6 +1365,14 @@ export async function chat(
     content: m.content,
   }));
 
+  // Capture the raw last user message BEFORE context blocks are prepended (below),
+  // so greenfield detection + forced spec-extraction see the user's own words only.
+  const lastUser = [...messages].reverse().find(m => m.role === 'user');
+  const userText = (typeof lastUser?.content === 'string' ? lastUser.content : '').trim();
+  // Greenfield = a descriptive (non-MPN) turn. On these the server owns the search
+  // (one stable spec-driven search) — see partitionToolUses / the search_parts branch.
+  const isGreenfield = userText.length > 0 && !looksLikeMpn(userText);
+
   // Collect structured data from tool calls
   const toolData: ToolResultData = {
     attributes: {},
@@ -1301,8 +1445,21 @@ export async function chat(
       content: response.content,
     });
 
+    // Dedupe racing greenfield searches: keep only the first search_parts (by array
+    // order), suppress the rest with a canned steering result. Decided before the
+    // Promise.all so "first" can't be a resolution-order race.
+    const runFlags = partitionToolUses(toolUseBlocks, isGreenfield);
+    const greenfieldCtx: GreenfieldCtx = { client, isGreenfield, userText };
+
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-      toolUseBlocks.map(async (toolUse) => {
+      toolUseBlocks.map(async (toolUse, i) => {
+        if (!runFlags[i]) {
+          return {
+            type: 'tool_result' as const,
+            tool_use_id: toolUse.id,
+            content: DEDUPED_SEARCH_TOOL_RESULT,
+          };
+        }
         console.time(`[perf] tool:${toolUse.name}`);
         const result = await executeTool(
           toolUse.name,
@@ -1312,6 +1469,7 @@ export async function chat(
           userId,
           userPreferences,
           currentSearchResult,
+          greenfieldCtx,
         );
         console.timeEnd(`[perf] tool:${toolUse.name}`);
         return {

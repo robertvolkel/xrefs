@@ -1198,13 +1198,17 @@ export function useAppState() {
         // cards (A3-family leak, checklist row E3). Replace the LLM prose with a deterministic
         // summary built only from SearchResult fields. MPN-lookup searches (looksLikeMpn) keep
         // the LLM confirmation message (rules C6/B2 — passing).
+        // Phase A broadened this to also cover `type==='none'`: a greenfield no-match
+        // turn now renders the deterministic "couldn't find" line (via buildSearchSummary)
+        // instead of falling through to free LLM prose — closing the last prose-leak path.
+        // hasChoices stays excluded so a guiding turn keeps its prose.
         const hasChoices = !!response.choices && response.choices.length > 0;
-        const isGreenfieldCardSearch =
+        const isGreenfieldSearchPresentation =
           !hasChoices &&
           !!searchResult &&
-          (searchResult.type === 'single' || searchResult.type === 'multiple') &&
+          (searchResult.type === 'single' || searchResult.type === 'multiple' || searchResult.type === 'none') &&
           !looksLikeMpn(query);
-        const presentationMessage = isGreenfieldCardSearch
+        const presentationMessage = isGreenfieldSearchPresentation
           ? buildSearchSummary(searchResult)
           : response.message;
 
@@ -1263,7 +1267,8 @@ export function useAppState() {
           triggerSearchDistributorEnrichment(msg.id, searchResult.matches);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'resolving', searchResult }));
         } else if (searchResult && searchResult.type === 'none') {
-          addMessage('assistant', response.message);
+          // Greenfield no-match → deterministic line; MPN-lookup no-match keeps LLM prose.
+          addMessage('assistant', presentationMessage);
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'idle', searchResult: null }));
         } else {
           // No search performed — check if LLM returned filtered recommendations
