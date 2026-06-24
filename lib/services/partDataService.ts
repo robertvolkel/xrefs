@@ -19,7 +19,7 @@ import {
   extractNumericValue,
   getDeepestCategoryId,
 } from './digikeyMapper';
-import { buildSyntheticSource, computeOverSpecPenalty, pickFetchBand, type FetchBand } from './searchConstraints';
+import { buildSyntheticSource, computeOverSpecPenalty, pickFetchBand, toBaseSI, type FetchBand } from './searchConstraints';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
@@ -1949,14 +1949,14 @@ async function applyParametricFilter(
   const inBand = (valueStr: string | undefined): boolean => {
     if (!valueStr) return false;
     // Compound facet values like "200 @ 2mA, 5V" (e.g. hFE @ test conditions, Vce(sat) @ Ib,Ic):
-    // the SPEC value is the leading token before "@" — extractNumericValue would otherwise grab
-    // the unit-bearing test-condition number (the 2mA). Plain "5.1 V" values are unaffected.
+    // the SPEC value is the leading token before "@" — parsing the whole string would otherwise
+    // grab the unit-bearing test-condition number (the 2mA). Plain "5.1 V" values are unaffected.
     const head = valueStr.split('@')[0];
-    // extractNumericValue handles SI-prefixed unit-bearing values ("5.1 V", "2.2 kΩ"); it returns
-    // undefined for a UNITLESS value (hFE gain = "200"), so fall back to parseFloat for those.
-    const ev = extractNumericValue(head).numericValue;
-    const n = typeof ev === 'number' ? ev : parseFloat(head);
-    return Number.isFinite(n) && n >= lo && n <= hi;
+    // Parse via toBaseSI — the SAME engine pickFetchBand used to build lo/hi — so both sides of
+    // the comparison agree on sign and SI prefix (incl. G/T and negatives, which digikeyMapper's
+    // extractNumericValue silently drops). It already falls back to parseFloat for unitless gains.
+    const n = toBaseSI(head);
+    return n != null && n >= lo && n <= hi;
   };
   const inBandValueIds = facet.FilterValues
     .filter(fv => inBand(fv.ValueName))

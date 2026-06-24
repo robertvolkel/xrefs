@@ -3,6 +3,7 @@ import {
   computeOverSpecPenalty,
   buildGreenfieldQuery,
   pickFetchBand,
+  toBaseSI,
   SYNTHETIC_SOURCE_MPN,
 } from '@/lib/services/searchConstraints';
 import { getLogicTable, resolveFamilyFromText } from '@/lib/logicTables';
@@ -379,10 +380,57 @@ describe('pickFetchBand', () => {
     expect(band!.attrId).toBe('vds_max'); // the range wins
   });
 
+  it('widens a NEGATIVE two-sided band OUTWARD, not toward zero (sign-agnostic margin)', () => {
+    // -40°C..125°C operating range: a multiplicative `lo *= 0.85` would raise -40
+    // toward zero (-34), NARROWING the band and dropping the -40 boundary parts.
+    const band = pickFetchBand(
+      [
+        { attribute: 'operating temp min', value: -40, unit: '°C' },
+        { attribute: 'operating temp max', value: 125, unit: '°C' },
+      ],
+      getLogicTable('52')!,
+    );
+    expect(band!.attrId).toBe('operating_temp');
+    expect(band!.lo).toBeCloseTo(-40 - 40 * 0.15, 5); // -46, more negative
+    expect(band!.hi).toBeCloseTo(125 + 125 * 0.15, 5); // 143.75
+    expect(band!.lo).toBeLessThan(-40);                // moved DOWN, not toward zero
+  });
+
   it('returns null when nothing maps to a numeric band', () => {
     expect(pickFetchBand([{ attribute: 'channel type', value: 'N-Channel' }], B5)).toBeNull(); // categorical
     expect(pickFetchBand([{ attribute: 'warp core flux', value: 42 }], B5)).toBeNull();        // unresolvable
     expect(pickFetchBand([], B5)).toBeNull();
     expect(pickFetchBand(undefined, B5)).toBeNull();
+  });
+});
+
+// ── toBaseSI: facet/band SI normalization (Decision #248 review fix) ──
+// applyParametricFilter now parses Digikey facet values through toBaseSI so both
+// sides of the in-band comparison use ONE engine. These pin the two gaps that the
+// old digikeyMapper.extractNumericValue had: no G/T prefixes, and a dropped sign.
+describe('toBaseSI', () => {
+  it('applies G and T prefixes (extractNumericValue did not → GHz/THz bands were dead)', () => {
+    expect(toBaseSI('2.4 GHz')).toBeCloseTo(2.4e9, 0);
+    expect(toBaseSI('1.5', 'THz')).toBeCloseTo(1.5e12, 0);
+  });
+
+  it('preserves a leading negative sign (extractNumericValue dropped it → -40°C parsed as +40)', () => {
+    expect(toBaseSI('-40 °C')).toBe(-40);
+    expect(toBaseSI('-55', '°C')).toBe(-55);
+  });
+
+  it('passes a unitless value through (hFE gain "200")', () => {
+    expect(toBaseSI('200')).toBe(200);
+  });
+
+  it('agrees with the band builder on common prefixes', () => {
+    expect(toBaseSI('5.1 V')).toBeCloseTo(5.1, 5);
+    expect(toBaseSI('2.2 kΩ')).toBeCloseTo(2200, 5);
+    expect(toBaseSI('100 mA')).toBeCloseTo(0.1, 5);
+  });
+
+  it('returns null for an unparseable value', () => {
+    expect(toBaseSI('')).toBeNull();
+    expect(toBaseSI('abc')).toBeNull();
   });
 });

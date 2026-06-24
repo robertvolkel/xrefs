@@ -323,8 +323,11 @@ const FETCH_BAND_MARGIN = 0.15;
 const RANGE_RE = /(-?\d[\d.]*)\s*(?:-|–|~|to)\s*(-?\d[\d.]*)/i;
 
 /** Parse a number(+unit) to base SI the SAME way buildSyntheticSource + the candidate
- *  mappers do, so the band is comparable to Digikey's always-base-SI facet values. */
-function toBaseSI(numStr: string, unit?: string): number | null {
+ *  mappers do, so the band is comparable to Digikey's always-base-SI facet values.
+ *  Exported so `applyParametricFilter` parses facet values through the SAME engine
+ *  (sign-aware, full G/T prefix coverage) — `digikeyMapper.extractNumericValue` drops
+ *  the leading minus and omits G/T, which silently breaks GHz/THz and negative bands. */
+export function toBaseSI(numStr: string, unit?: string): number | null {
   const s = numStr.trim();
   if (!s) return null;
   const parsed = extractNumericWithPrefix(unit ? `${s}${unit}` : s);
@@ -415,7 +418,15 @@ export function pickFetchBand(
       else { lo = v; hi = v; twoSided = true; }                                             // identity → exact-ish
     }
     if (lo == null || hi == null || !Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) continue;
-    if (twoSided) { lo *= (1 - FETCH_BAND_MARGIN); hi *= (1 + FETCH_BAND_MARGIN); }
+    // Widen a two-sided band OUTWARD by |bound| × margin (sign-agnostic). For
+    // positive bounds this equals the old `lo *= 1-m` / `hi *= 1+m`; for a NEGATIVE
+    // bound a multiplicative form would move it the WRONG way (toward zero, or
+    // invert a degenerate negative identity band) — subtracting/adding |bound|×m
+    // always pushes lo down and hi up.
+    if (twoSided) {
+      lo -= Math.abs(lo) * FETCH_BAND_MARGIN;
+      hi += Math.abs(hi) * FETCH_BAND_MARGIN;
+    }
     bands.push({ attrId, lo, hi, sourceNv: sourceNv ?? lo, twoSided, weight });
   }
 
