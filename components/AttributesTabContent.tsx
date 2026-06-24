@@ -21,7 +21,7 @@ import { Part, SupplierQuote, XrefRecommendation, RecommendationCategory, derive
 import { ROW_FONT_SIZE, ROW_FONT_SIZE_MOBILE } from '@/lib/layoutConstants';
 import { logDistributorClick } from '@/lib/supabaseLogger';
 import { isDomainCoveredQualification, humanReadable } from '@/lib/services/qualificationDomain';
-import { computeBestPrice, formatPrice } from '@/lib/services/bestPriceCalculator';
+import { computeBestPrice, formatPrice, comparePriceTone, type PriceTone } from '@/lib/services/bestPriceCalculator';
 import { QUANTITY_PRESETS, parseQuantity } from '@/lib/constants/quantityPresets';
 import QuantityPresetButtons from './QuantityPresetButtons';
 
@@ -36,6 +36,28 @@ export { formatPrice };
 /* ── "Good/certified" green, shared with the manufacturer_certified chip below ── */
 const SUCCESS_GREEN = '#69F0AE';
 const SUCCESS_GREEN_BG = 'rgba(105, 240, 174, 0.12)';
+
+/* ── Best-price crown tones (Commercial tab) ──
+ *  The source part's crown is NEUTRAL grey (nothing to compare against). A
+ *  replacement's crown turns GREEN when its best spot price beats the source's
+ *  and RED when it's pricier — a direct "cheaper or costlier than what I have"
+ *  signal. `worse` reuses the same red as the insufficient-stock flag below. */
+const HIGHLIGHT_TONES: Record<PriceTone, { fg: string; bg: string }> = {
+  neutral: { fg: '#B0BEC5', bg: 'rgba(176, 190, 197, 0.14)' },
+  better: { fg: SUCCESS_GREEN, bg: SUCCESS_GREEN_BG },
+  worse: { fg: '#FF5252', bg: 'rgba(255, 82, 82, 0.12)' },
+};
+
+/** Best fulfillable spot price at `qty`: crown the cheapest distributor that can
+ *  actually cover the qty (sufficient stock); only when nobody can do we fall
+ *  back to the overall cheapest. Shared by a part's own crown and the source
+ *  baseline used to tone a replacement's crown, so both sides use identical
+ *  semantics at the same quantity. */
+function bestFulfillablePrice(quotes: SupplierQuote[] | undefined, qty: number) {
+  if (!quotes || quotes.length === 0) return computeBestPrice(quotes, qty);
+  const inStock = quotes.filter((q) => q.quantityAvailable != null && q.quantityAvailable >= qty);
+  return computeBestPrice(inStock.length > 0 ? inStock : quotes, qty);
+}
 
 /* ── Always-editable quantity control for the Commercial tab header.
  *  Unlike chat's QuantityPrompt (one-shot submit + lock), this stays live so
@@ -559,6 +581,7 @@ export function SupplierCard({
   highlightTierQty = null,
   highlightCurrency = null,
   bestLabel,
+  highlightTone = 'neutral',
 }: {
   quote: SupplierQuote;
   t: T;
@@ -566,17 +589,25 @@ export function SupplierCard({
   manufacturer?: string;
   /** Spot quantity the user needs. Stock below this is flagged red. */
   requiredQty?: number;
-  /** When true, crown this card as the best spot price (green border + tint + chip). */
+  /** When true, crown this card as the best spot price (toned chip + winning row). */
   isBestPrice?: boolean;
-  /** The price-break tier qty to highlight green inside this card's table. */
+  /** The price-break tier qty to highlight inside this card's table. */
   highlightTierQty?: number | null;
   /** Currency of the winning tier — disambiguates rare mixed-currency suppliers. */
   highlightCurrency?: string | null;
   /** Header chip label for a crowned card (e.g. "Best @ qty 100" / "Min qty 250"). */
   bestLabel?: string;
+  /** Crown color: neutral grey (source / no comparison), green (cheaper than
+   *  source), or red (pricier than source). Only used when `isBestPrice`. */
+  highlightTone?: PriceTone;
 }) {
   const supplierLabel = _SUPPLIER_DISPLAY[quote.supplier] ?? quote.supplier.charAt(0).toUpperCase() + quote.supplier.slice(1);
   const currency = quote.priceBreaks[0]?.currency;
+  const tone = HIGHLIGHT_TONES[highlightTone];
+  const toneTooltip =
+    highlightTone === 'better' ? "Lower than the source part's best price"
+    : highlightTone === 'worse' ? "Higher than the source part's best price"
+    : 'Cheapest distributor for this part';
   // Flag when the distributor's available stock can't cover the requested qty.
   // Unknown stock (null) isn't flagged — we can't assert "less than".
   const isInsufficientStock = quote.quantityAvailable != null && quote.quantityAvailable < requiredQty;
@@ -598,11 +629,13 @@ export function SupplierCard({
             {supplierLabel}
           </Typography>
           {isBestPrice && bestLabel && (
-            <Chip
-              label={bestLabel}
-              size="small"
-              sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: SUCCESS_GREEN, bgcolor: SUCCESS_GREEN_BG, border: `1px solid ${SUCCESS_GREEN}`, '& .MuiChip-label': { px: 0.6 } }}
-            />
+            <Tooltip title={toneTooltip}>
+              <Chip
+                label={bestLabel}
+                size="small"
+                sx={{ height: 16, fontSize: '0.55rem', fontWeight: 700, color: tone.fg, bgcolor: tone.bg, border: `1px solid ${tone.fg}`, '& .MuiChip-label': { px: 0.6 } }}
+              />
+            </Tooltip>
           )}
           {quote.authorized && (
             <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'success.main', fontWeight: 500 }}>Auth</Typography>
@@ -686,9 +719,9 @@ export function SupplierCard({
                 pb.quantity === highlightTierQty &&
                 (highlightCurrency == null || (pb.currency || '').toUpperCase() === highlightCurrency.toUpperCase());
               return (
-                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: SUCCESS_GREEN_BG } : undefined}>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? SUCCESS_GREEN : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
+                <TableRow key={pb.quantity} sx={isWinningRow ? { bgcolor: tone.bg } : undefined}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? tone.fg : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{pb.quantity.toLocaleString()}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: ROW_FONT_SIZE, borderColor: 'divider', py: 0.25, color: isWinningRow ? tone.fg : undefined, fontWeight: isWinningRow ? 700 : undefined }}>{formatPrice(pb.unitPrice, pb.currency)}</TableCell>
                 </TableRow>
               );
             })}
@@ -702,12 +735,17 @@ export function SupplierCard({
 /* ── Commercial tab content ── */
 export function CommercialContent({
   part,
+  sourcePart,
   t,
   spotQuantity = 1,
   onSpotQuantityChange,
   isEnriching = false,
 }: {
   part: Part;
+  /** When set, this panel renders a REPLACEMENT — its best-price crown is toned
+   *  green/red against the source part's best price. Absent → source/standalone
+   *  view → neutral grey crown. */
+  sourcePart?: Part;
   t: T;
   /** Shared spot-pricing quantity. Drives the best-price crown + reorder. */
   spotQuantity?: number;
@@ -734,12 +772,22 @@ export function CommercialContent({
   // can actually FULFILL the qty (sufficient stock) — a "best price" you can't
   // buy isn't useful. Only when nobody has enough stock do we fall back to the
   // overall cheapest so a crown still appears.
-  const bestPrice = useMemo(() => {
-    const all = part.supplierQuotes;
-    if (!all || all.length === 0) return computeBestPrice(all, qty);
-    const inStock = all.filter((q) => q.quantityAvailable != null && q.quantityAvailable >= qty);
-    return computeBestPrice(inStock.length > 0 ? inStock : all, qty);
-  }, [part.supplierQuotes, qty]);
+  const bestPrice = useMemo(() => bestFulfillablePrice(part.supplierQuotes, qty), [part.supplierQuotes, qty]);
+
+  // Source-part best price at the same qty, used only to tone a REPLACEMENT's
+  // crown (green = cheaper than source, red = pricier). Null on the source's own
+  // panel (no `sourcePart`) → neutral grey crown.
+  // Read only the inner `supplierQuotes` (no bare `sourcePart` deref) so the memo
+  // keys on the same granularity as the sibling `bestPrice` memo above — an
+  // in-place source-quote enrichment would still re-tone the crown. (Reading
+  // `sourcePart` directly here would force the dep up to the whole object.)
+  const sourceBaseline = useMemo(() => {
+    const quotes = sourcePart?.supplierQuotes;
+    if (!quotes) return null;
+    const r = bestFulfillablePrice(quotes, qty);
+    const w = r.kind === 'match' ? r.top : r.kind === 'fallback' ? r.minOption : null;
+    return w ? { unitPrice: w.unitPrice, currency: w.currency } : null;
+  }, [sourcePart?.supplierQuotes, qty]);
 
   if (!hasQuotes) {
     // Distinguish "still loading pricing" from "genuinely no data". Inline
@@ -779,6 +827,14 @@ export function CommercialContent({
   const winnerSupplier = winner?.supplier ?? null;
   const winnerTierQty = winner?.appliedTierQty ?? null;
   const winnerCurrency = winner?.currency ?? null;
+  // Crown tone: neutral on the source (no baseline), else green/red vs the
+  // source's best price at the same qty (same-currency only — no FX).
+  const highlightTone = comparePriceTone(
+    winner?.unitPrice,
+    winnerCurrency,
+    sourceBaseline?.unitPrice,
+    sourceBaseline?.currency,
+  );
   const bestLabel =
     bestPrice.kind === 'match' ? `Best @ qty ${qty.toLocaleString()}`
     : bestPrice.kind === 'fallback' ? `Min qty ${winner?.minOrderQty.toLocaleString()}`
@@ -844,6 +900,7 @@ export function CommercialContent({
           highlightTierQty={isWinner ? winnerTierQty : null}
           highlightCurrency={isWinner ? winnerCurrency : null}
           bestLabel={isWinner ? bestLabel : undefined}
+          highlightTone={highlightTone}
         />
       ))}
       {!showAll && hiddenCount > 0 && (

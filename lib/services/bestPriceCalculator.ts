@@ -41,6 +41,40 @@ export type BestPriceResult =
     };
 
 /**
+ * How a replacement candidate's best spot price compares to the source part's,
+ * for the Commercial-tab crown highlight:
+ *   - `better`  → replacement is cheaper than the source (green)
+ *   - `worse`   → replacement is pricier than the source (red)
+ *   - `neutral` → no honest comparison (no baseline, exact tie, or different
+ *                 currencies — we have no FX rate, so we don't claim either way)
+ * On the source part itself there is no baseline → always `neutral` (grey).
+ */
+export type PriceTone = 'neutral' | 'better' | 'worse';
+
+/**
+ * Decide the crown tone by comparing a replacement's best unit price against the
+ * source part's best unit price at the same quantity. Pure + side-effect free so
+ * the green/red/grey decision is unit-testable without rendering.
+ *
+ * Currency-gated on purpose: comparing prices across currencies without an FX
+ * rate would be dishonest, so a mismatch (or any missing input) falls back to
+ * `neutral` — the same no-FX limitation the best-price crown already carries.
+ */
+export function comparePriceTone(
+  replUnitPrice: number | null | undefined,
+  replCurrency: string | null | undefined,
+  sourceUnitPrice: number | null | undefined,
+  sourceCurrency: string | null | undefined,
+): PriceTone {
+  if (replUnitPrice == null || sourceUnitPrice == null) return 'neutral';
+  if (!replCurrency || !sourceCurrency) return 'neutral';
+  if (replCurrency.toUpperCase() !== sourceCurrency.toUpperCase()) return 'neutral';
+  if (replUnitPrice < sourceUnitPrice) return 'better';
+  if (replUnitPrice > sourceUnitPrice) return 'worse';
+  return 'neutral'; // exact tie — no savings, no penalty
+}
+
+/**
  * Compute the best per-unit spot price across supplier quotes at a requested
  * quantity. For each supplier, we apply the highest price-break tier whose
  * `quantity` floor is ≤ the requested qty (standard distributor pricing semantics).

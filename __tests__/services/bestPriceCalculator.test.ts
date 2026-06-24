@@ -1,4 +1,4 @@
-import { computeBestPrice, formatPrice } from '@/lib/services/bestPriceCalculator';
+import { computeBestPrice, formatPrice, comparePriceTone } from '@/lib/services/bestPriceCalculator';
 import type { SupplierQuote } from '@/lib/types';
 
 const quote = (
@@ -239,5 +239,35 @@ describe('formatPrice', () => {
   });
   it('falls back gracefully on bad currency', () => {
     expect(formatPrice(1.23, '')).toMatch(/1\.23/);
+  });
+});
+
+describe('comparePriceTone', () => {
+  it('is "better" when the replacement is cheaper than the source (same currency)', () => {
+    expect(comparePriceTone(0.28, 'USD', 0.3, 'USD')).toBe('better');
+  });
+
+  it('is "worse" when the replacement is pricier than the source (same currency)', () => {
+    expect(comparePriceTone(0.42, 'USD', 0.3, 'USD')).toBe('worse');
+  });
+
+  it('is "neutral" on an exact tie', () => {
+    expect(comparePriceTone(0.3, 'USD', 0.3, 'USD')).toBe('neutral');
+  });
+
+  it('is "neutral" across different currencies (no FX rate)', () => {
+    // Replacement number is lower, but currencies differ — we cannot honestly compare.
+    expect(comparePriceTone(0.2, 'EUR', 0.3, 'USD')).toBe('neutral');
+  });
+
+  it('is case-insensitive on the currency match', () => {
+    expect(comparePriceTone(0.28, 'usd', 0.3, 'USD')).toBe('better');
+  });
+
+  it('is "neutral" when either price or currency is missing', () => {
+    expect(comparePriceTone(null, 'USD', 0.3, 'USD')).toBe('neutral');
+    expect(comparePriceTone(0.28, 'USD', undefined, 'USD')).toBe('neutral');
+    expect(comparePriceTone(0.28, null, 0.3, 'USD')).toBe('neutral');
+    expect(comparePriceTone(0.28, 'USD', 0.3, '')).toBe('neutral');
   });
 });

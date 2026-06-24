@@ -462,7 +462,7 @@ export default function ComparisonView({
             </Typography>
           </Box>
         ) : (
-          <CommercialContent part={replPart} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} isEnriching={isEnrichingFC} />
+          <CommercialContent part={replPart} sourcePart={sourceAttributes.part} t={t} spotQuantity={spotQuantity} onSpotQuantityChange={onSpotQuantityChange} isEnriching={isEnrichingFC} />
         )
       )}
 
