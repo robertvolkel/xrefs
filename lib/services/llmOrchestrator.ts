@@ -905,10 +905,14 @@ export function partitionToolUses(
 }
 
 /** Forced structured extraction of {partType, constraints} from the user's own
- *  words. Fired only when the kept greenfield search_parts call lacks a part type
- *  or usable constraints (the determinism-critical gap — the model's from-memory
- *  MPN searches carry no structured intent). One small tool-forced call over ONLY
- *  the raw user text (not the history, so it can't inherit from-memory guesses). */
+ *  words. Fired on EVERY greenfield search turn at **temperature 0** so it returns the
+ *  SAME constraint set run-to-run. Its constraints are UNIONed into vetting (not used
+ *  for the query/partType — the agentic call's are cleaner there) to backfill any spec
+ *  the agentic call dropped (e.g. a stated "1–2mA"), which is what kept the ranking
+ *  stable across runs. One small tool-forced call over ONLY the raw user text (not the
+ *  history, so it can't inherit from-memory guesses). Temp 0 is right HERE (a narrow
+ *  extraction task) even though it failed for open-ended part *selection* — different
+ *  problem. */
 const EXTRACT_SPECS_TOOL: Anthropic.Tool = {
   name: 'extract_part_specs',
   description: 'Extract the component type and the specs the user explicitly stated from their request.',
@@ -917,7 +921,7 @@ const EXTRACT_SPECS_TOOL: Anthropic.Tool = {
     properties: {
       partType: {
         type: 'string',
-        description: 'The component type in plain words, e.g. "N-channel MOSFET", "small-signal NPN transistor", "buck converter". Empty string if the user named no component type.',
+        description: 'The component CLASS in 2-4 words — type + polarity/channel only, e.g. "NPN transistor", "N-channel MOSFET", "buck converter". EXCLUDE adjectives ("low-noise") and the end application ("audio preamp") — those are not searchable keywords. Empty string if the user named no component type.',
       },
       constraints: {
         type: 'array',
@@ -945,6 +949,7 @@ async function forceExtractSpecs(
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 512,
+      temperature: 0, // narrow extraction → greedy decoding for run-to-run consistency
       tools: [EXTRACT_SPECS_TOOL],
       tool_choice: { type: 'tool', name: 'extract_part_specs' },
       messages: [{
@@ -985,22 +990,34 @@ async function executeTool(
 
       // Greenfield: make the search a function of structured intent, not the
       // model's free-text query (which may be a from-memory MPN that varies run to
-      // run). Recover {partType, constraints} via a forced extraction when the model
-      // gave none, then drive the keyword search off the part type.
+      // run). ALWAYS run the dedicated temp-0 spec extraction so partType + the specs
+      // that drive ranking are captured CONSISTENTLY run-to-run — the agentic inline
+      // extraction is variable (it dropped a stated "1–2mA" on one run, reshuffling
+      // the ranking). The extraction is authoritative when it yields something usable;
+      // we fall back to the model's inline values only where it doesn't.
       if (ctx?.isGreenfield) {
-        if (!partType || isThinConstraints(constraints)) {
-          const extracted = await forceExtractSpecs(ctx.client, ctx.userText);
-          if (extracted) {
-            partType = partType || extracted.partType;
-            if (isThinConstraints(constraints) && !isThinConstraints(extracted.constraints)) {
-              constraints = extracted.constraints;
-            }
-          }
-        }
-        // Canonical query — ignore the model's recalled MPN. When no part type can
+        // The agentic call's partType + constraints are clean and well-named, but it
+        // occasionally DROPS a stated spec (e.g. "1–2mA"), reshuffling the ranking
+        // run-to-run (residual #1). Run the dedicated temp-0 extraction every greenfield
+        // turn and UNION its constraints into VETTING ONLY, so a dropped spec is always
+        // recovered → consistent ranking. The extraction never touches partType or the
+        // query: its output is verbose ("low-noise NPN transistor") and carries
+        // application descriptors ("audio preamp") that zero out keyword search. In
+        // vetting the noise is harmless — buildSyntheticSource resolves each entry to a
+        // logic-table attributeId, dedups (model naming wins, first), and drops anything
+        // unmappable. Fallback: if the model gave NO partType (its from-memory MPN-search
+        // path), use the extraction's so the search is still family-stable.
+        const modelConstraints = constraints;
+        const extracted = await forceExtractSpecs(ctx.client, ctx.userText);
+        if (!partType && extracted?.partType) partType = extracted.partType;
+        // Canonical query — model's clean partType + model's clean categoricals (the
+        // proven keyword pool); ignore the model's recalled MPN. When no part type can
         // be resolved (truly vague), fall through to the model's query (today's
         // behavior; the model has typically already chosen to guide instead).
-        if (partType) effectiveQuery = buildGreenfieldQuery(partType, constraints);
+        if (partType) effectiveQuery = buildGreenfieldQuery(partType, modelConstraints);
+        // Vetting: union model + extraction (completeness → stable ranking).
+        const merged = [...(modelConstraints ?? []), ...(extracted?.constraints ?? [])];
+        constraints = merged.length ? merged : undefined;
       }
 
       // Pass manufacturer through to the Atlas-side filter so generic MPNs
