@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
-import { searchParts, getAttributes, getRecommendations } from './partDataService';
+import { searchParts, getAttributes, getRecommendations, looksLikeMpn } from './partDataService';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
@@ -18,6 +18,11 @@ import { describeContextAnswers } from '../contextQuestions';
 // buildRecsSummary), so upgrading buys routing reliability without re-opening prose risk.
 // Override per-environment via ANTHROPIC_MODEL (e.g. set back to Haiku for cost/latency).
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+// Greedy decoding so the same turn forms the same tool call run-to-run — fixes
+// the greenfield search drift (same query → BC847 one run, 2N5089 the next).
+// Not a hard determinism guarantee (Anthropic isn't bit-exact at 0), but with
+// the 7-day search cache, repeat queries reliably return the same set.
+const TEMPERATURE = 0;
 const MAX_TOOL_LOOPS = 10;
 const CACHE_CONTROL: Anthropic.CacheControlEphemeral = { type: 'ephemeral' };
 
@@ -912,6 +917,23 @@ async function executeTool(
         }
       }
 
+      // Descriptive (greenfield) searches: hide end-of-life parts so the list
+      // stays clean. "Orderable" mirrors the active-first sink set — keep only
+      // Active / unknown-status; drop Obsolete/Discontinued/NRND/LastTimeBuy.
+      // MPN lookups are EXEMPT (searching a specific obsolete MPN should still
+      // surface it). Guard against emptying the list: if a search returns only
+      // obsolete parts, keep them rather than show nothing.
+      if (!looksLikeMpn(args.query) && filtered.matches?.length) {
+        const orderable = filtered.matches.filter((m) => !m.status || m.status === 'Active');
+        if (orderable.length > 0 && orderable.length < filtered.matches.length) {
+          filtered = {
+            ...filtered,
+            type: orderable.length === 1 ? 'single' : 'multiple',
+            matches: orderable,
+          };
+        }
+      }
+
       data.searchResult = filtered;
       return JSON.stringify(filtered);
     }
@@ -1281,6 +1303,7 @@ export async function chat(
   console.time(`[perf] LLM call #${llmCallCount}`);
   let response = await client.messages.create({
     model: MODEL,
+    temperature: TEMPERATURE,
     max_tokens: 2048,
     system: systemBlocks,
     tools: toolsWithCache,
@@ -1331,6 +1354,7 @@ export async function chat(
     console.time(`[perf] LLM call #${llmCallCount}`);
     response = await client.messages.create({
       model: MODEL,
+      temperature: TEMPERATURE,
       max_tokens: 2048,
       system: systemBlocks,
       tools: toolsWithCache,
@@ -1522,6 +1546,7 @@ export async function refinementChat(
   let totalCachedTokens = 0;
   let response = await client.messages.create({
     model: MODEL,
+    temperature: TEMPERATURE,
     max_tokens: 2048,
     system: systemBlocks,
     tools: toolsWithCache,
@@ -1640,6 +1665,7 @@ export async function refinementChat(
     refinementLoopCount++;
     response = await client.messages.create({
       model: MODEL,
+      temperature: TEMPERATURE,
       max_tokens: 2048,
       system: systemBlocks,
       tools: toolsWithCache,
@@ -2035,6 +2061,7 @@ export async function listChat(
   llmCallCount++;
   let response = await client.messages.create({
     model: MODEL,
+    temperature: TEMPERATURE,
     max_tokens: 2048,
     system: systemBlocks,
     tools: toolsWithCache,
@@ -2117,6 +2144,7 @@ export async function listChat(
     llmCallCount++;
     response = await client.messages.create({
       model: MODEL,
+      temperature: TEMPERATURE,
       max_tokens: 2048,
       system: systemBlocks,
       tools: toolsWithCache,
