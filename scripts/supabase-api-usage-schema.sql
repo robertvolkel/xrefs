@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS api_usage_log (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  service       TEXT NOT NULL CHECK (service IN ('anthropic', 'digikey', 'mouser', 'partsio')),
+  service       TEXT NOT NULL CHECK (service IN ('anthropic', 'digikey', 'mouser', 'partsio', 'findchips')),
   model         TEXT,                   -- 'sonnet-4.5' | 'haiku-4.5' | null for non-Claude
   operation     TEXT NOT NULL,          -- 'chat' | 'refinement_chat' | 'profile_extract' | 'qc_analysis' | 'keyword_search' | 'product_details' | 'batch_search' | 'gap_fill'
   input_tokens  INTEGER,               -- Claude only
@@ -32,3 +32,15 @@ CREATE POLICY "Admins can read api usage logs"
 
 -- Service role inserts (server-side only, bypasses RLS)
 -- No INSERT policy needed — inserts use service role client
+
+-- ============================================================
+-- Migration: Add 'findchips' to the service CHECK constraint.
+-- Run on existing deployments. FindChips replaced the per-distributor Mouser
+-- integration (Decision #131) and logApiCall({service:'findchips'}) was never
+-- added here, so every FindChips API call silently failed to log (the admin
+-- data-sources panel under-counts FindChips usage). Idempotent.
+-- ============================================================
+ALTER TABLE api_usage_log
+  DROP CONSTRAINT IF EXISTS api_usage_log_service_check,
+  ADD CONSTRAINT api_usage_log_service_check
+    CHECK (service IN ('anthropic', 'digikey', 'mouser', 'partsio', 'findchips'));
