@@ -218,3 +218,34 @@ export function computeOverSpecPenalty(
   }
   return penalty;
 }
+
+/**
+ * Build a STABLE keyword query for a greenfield search from the structured part
+ * type + the user's categorical constraints — NOT from the model's free-text
+ * `query` (which on greenfield is whichever MPN the model recalled from memory,
+ * and so varies run-to-run; that variance is the root of "different family every
+ * run"). Numeric specs are deliberately excluded — keyword search ignores numbers,
+ * so they belong to the vetting pass, not the query. Categorical tokens are
+ * lower-cased, de-duped, and sorted so the same (partType, constraints) always
+ * yields byte-identical text. A token already present in `partType` is skipped to
+ * avoid redundant keywords.
+ */
+export function buildGreenfieldQuery(
+  partType: string | undefined,
+  constraints: SearchConstraint[] | undefined,
+): string {
+  const base = (partType ?? '').trim();
+  const baseLower = base.toLowerCase();
+  const tokens: string[] = [];
+  for (const c of constraints ?? []) {
+    if (typeof c.value === 'number') continue;        // numeric → vetting only
+    if (c.unit && c.unit.trim()) continue;            // has a unit → numeric spec
+    const v = (c.value ?? '').toString().trim();
+    if (!v || /^[\d.]/.test(v)) continue;             // blank or number-like → skip
+    const lower = v.toLowerCase();
+    if (baseLower.includes(lower)) continue;          // already in the part type
+    tokens.push(lower);
+  }
+  const uniqSorted = [...new Set(tokens)].sort();
+  return [base, ...uniqSorted].filter(Boolean).join(' ').trim();
+}

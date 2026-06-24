@@ -45,8 +45,10 @@ export function buildSearchSummary(searchResult: SearchResult): string {
   const matches = searchResult.matches ?? [];
   const n = matches.length;
 
-  // Defensive: no cards to point at. The greenfield caller gates 'none' out (it keeps the
-  // LLM message), but keep this safe for any direct caller/test.
+  // No cards to point at — a greenfield `type==='none'` turn. Phase A routes this
+  // here too (the caller no longer keeps the LLM message on greenfield no-matches),
+  // so a no-result descriptive turn renders this deterministic line instead of free
+  // prose. Also safe for any direct caller/test.
   if (n === 0) {
     return `I couldn't find any parts matching your criteria. Try adding or relaxing a requirement.`;
   }

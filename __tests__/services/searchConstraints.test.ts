@@ -1,6 +1,7 @@
 import {
   buildSyntheticSource,
   computeOverSpecPenalty,
+  buildGreenfieldQuery,
   SYNTHETIC_SOURCE_MPN,
 } from '@/lib/services/searchConstraints';
 import { getLogicTable, resolveFamilyFromText } from '@/lib/logicTables';
@@ -176,5 +177,47 @@ describe('computeOverSpecPenalty', () => {
       return pa - pb;
     });
     expect(recs[0].part.mpn).toBe('CLOSE');
+  });
+});
+
+// ── Greenfield determinism (Phase A — Decision #248) ──────────
+describe('buildGreenfieldQuery', () => {
+  it('is a pure, stable function of (partType, categorical constraints) — order/case independent', () => {
+    const a = buildGreenfieldQuery('NPN transistor', [
+      { attribute: 'channel type', value: 'N-Channel' },
+      { attribute: 'technology', value: 'Silicon' },
+    ]);
+    const b = buildGreenfieldQuery('NPN transistor', [
+      { attribute: 'technology', value: 'silicon' },   // different order + case
+      { attribute: 'channel type', value: 'n-channel' },
+    ]);
+    expect(a).toBe(b);
+    expect(a).toBe('NPN transistor n-channel silicon'); // base first, then sorted unique tokens
+  });
+
+  it('excludes numeric specs — keyword search ignores numbers (those are vetting-only)', () => {
+    const q = buildGreenfieldQuery('MOSFET', [
+      { attribute: 'drain-source voltage', value: 12, unit: 'V' },
+      { attribute: 'current', value: '5', unit: 'A' },
+      { attribute: 'channel type', value: 'N-Channel' },
+    ]);
+    expect(q).toBe('MOSFET n-channel');
+  });
+
+  it('skips a categorical token already present in the part type (no redundant keywords)', () => {
+    const q = buildGreenfieldQuery('N-Channel MOSFET', [
+      { attribute: 'channel type', value: 'N-Channel' },
+    ]);
+    expect(q).toBe('N-Channel MOSFET');
+  });
+
+  it('returns the bare part type when there are no categorical constraints', () => {
+    expect(buildGreenfieldQuery('buck converter', [])).toBe('buck converter');
+    expect(buildGreenfieldQuery('buck converter', undefined)).toBe('buck converter');
+  });
+
+  it('returns empty string when no part type is given', () => {
+    expect(buildGreenfieldQuery(undefined, [{ attribute: 'channel type', value: 'N-Channel' }])).toBe('n-channel');
+    expect(buildGreenfieldQuery('', undefined)).toBe('');
   });
 });
