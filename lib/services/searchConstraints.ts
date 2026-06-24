@@ -220,23 +220,6 @@ export function computeOverSpecPenalty(
 }
 
 /**
- * Deterministic greenfield-search determinism (Phase A).
- *
- * A constraint set is "thin" when it carries no usable spec to vet against —
- * empty, or every entry has a blank value. Drives the greenfield forced-extraction
- * fallback in the orchestrator: when the model searched without handing us specs
- * (its from-memory MPN guesses carry a raw MPN as the query and no constraints),
- * recover them from the user's own words so ranking is stable AND grounded.
- */
-export function isThinConstraints(constraints: SearchConstraint[] | undefined): boolean {
-  if (!constraints || constraints.length === 0) return true;
-  return constraints.every(c => {
-    const v = typeof c.value === 'number' ? String(c.value) : (c.value ?? '').trim();
-    return v === '';
-  });
-}
-
-/**
  * Build a STABLE keyword query for a greenfield search from the structured part
  * type + the user's categorical constraints — NOT from the model's free-text
  * `query` (which on greenfield is whichever MPN the model recalled from memory,

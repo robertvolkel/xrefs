@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { looksLikeMpn } from './searchSummary';
-import { buildGreenfieldQuery, isThinConstraints } from './searchConstraints';
+import { buildGreenfieldQuery } from './searchConstraints';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
@@ -888,13 +888,17 @@ const DEDUPED_SEARCH_TOOL_RESULT = JSON.stringify({
 /** Decide which tool_use blocks execute for real this turn. On a greenfield turn,
  *  keep only the FIRST `search_parts` (by array order — deterministic, unlike the
  *  Promise.all resolution order) and suppress the rest; every other tool (and every
- *  search on a non-greenfield/MPN turn) always runs. Returns a parallel run-flag
- *  array. Pure + exported for unit testing. */
+ *  search on a non-greenfield/MPN turn) always runs. `alreadySearched` carries the
+ *  "a greenfield search already ran earlier THIS TURN" state across `chat()`'s tool
+ *  loop iterations, so a model that pivots and searches again in a later iteration is
+ *  also suppressed — the dedup is per-turn, not per-iteration. Returns a parallel
+ *  run-flag array. Pure + exported for unit testing. */
 export function partitionToolUses(
   blocks: { name: string }[],
   isGreenfield: boolean,
+  alreadySearched = false,
 ): boolean[] {
-  let keptSearch = false;
+  let keptSearch = alreadySearched;
   return blocks.map(b => {
     if (isGreenfield && b.name === 'search_parts') {
       if (!keptSearch) { keptSearch = true; return true; }
@@ -960,9 +964,14 @@ async function forceExtractSpecs(
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return null;
     const inp = block.input as { partType?: string; constraints?: SearchConstraint[] };
+    // Drop malformed entries (missing/blank `attribute`) — downstream resolveAttributeId
+    // assumes a string attribute, and a bad entry would silently disable vetting.
+    const constraints = Array.isArray(inp.constraints)
+      ? inp.constraints.filter(c => c && typeof c.attribute === 'string' && c.attribute.trim().length > 0)
+      : undefined;
     return {
       partType: inp.partType?.trim() || undefined,
-      constraints: Array.isArray(inp.constraints) ? inp.constraints : undefined,
+      constraints: constraints && constraints.length ? constraints : undefined,
     };
   } catch (err) {
     console.warn('[chat] extract_part_specs failed, falling back to model query', err);
@@ -1452,6 +1461,12 @@ export async function chat(
   totalOutputTokens += response.usage?.output_tokens ?? 0;
   totalCachedTokens += ((response.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0;
 
+  // Tracks whether a greenfield search has already run THIS TURN, across tool-loop
+  // iterations — so a model that searches in one iteration then pivots and searches
+  // again in the next is also deduped (the guarantee is one search per turn, not per
+  // iteration). See partitionToolUses.
+  let greenfieldSearchRan = false;
+
   while (response.stop_reason === 'tool_use' && llmCallCount < MAX_TOOL_LOOPS) {
     const toolUseBlocks = response.content.filter(
       (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
@@ -1464,8 +1479,13 @@ export async function chat(
 
     // Dedupe racing greenfield searches: keep only the first search_parts (by array
     // order), suppress the rest with a canned steering result. Decided before the
-    // Promise.all so "first" can't be a resolution-order race.
-    const runFlags = partitionToolUses(toolUseBlocks, isGreenfield);
+    // Promise.all so "first" can't be a resolution-order race, and carries
+    // greenfieldSearchRan across iterations so the dedup spans the whole turn.
+    const runFlags = partitionToolUses(toolUseBlocks, isGreenfield, greenfieldSearchRan);
+    if (isGreenfield) {
+      greenfieldSearchRan = greenfieldSearchRan
+        || toolUseBlocks.some((b, i) => runFlags[i] && b.name === 'search_parts');
+    }
     const greenfieldCtx: GreenfieldCtx = { client, isGreenfield, userText };
 
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(

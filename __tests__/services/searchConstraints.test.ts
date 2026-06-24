@@ -2,7 +2,6 @@ import {
   buildSyntheticSource,
   computeOverSpecPenalty,
   buildGreenfieldQuery,
-  isThinConstraints,
   SYNTHETIC_SOURCE_MPN,
 } from '@/lib/services/searchConstraints';
 import { getLogicTable, resolveFamilyFromText } from '@/lib/logicTables';
@@ -182,22 +181,6 @@ describe('computeOverSpecPenalty', () => {
 });
 
 // ── Greenfield determinism (Phase A — Decision #248) ──────────
-describe('isThinConstraints', () => {
-  it('is thin when undefined or empty', () => {
-    expect(isThinConstraints(undefined)).toBe(true);
-    expect(isThinConstraints([])).toBe(true);
-  });
-  it('is thin when every entry has a blank value', () => {
-    expect(isThinConstraints([{ attribute: 'voltage', value: '' }])).toBe(true);
-    expect(isThinConstraints([{ attribute: 'voltage', value: '  ' }])).toBe(true);
-  });
-  it('is NOT thin when at least one entry carries a usable value', () => {
-    expect(isThinConstraints([{ attribute: 'voltage', value: 12, unit: 'V' }])).toBe(false);
-    expect(isThinConstraints([{ attribute: 'channel type', value: 'N-Channel' }])).toBe(false);
-    expect(isThinConstraints([{ attribute: 'voltage', value: 0 }])).toBe(false); // 0 is a stated value
-  });
-});
-
 describe('buildGreenfieldQuery', () => {
   it('is a pure, stable function of (partType, categorical constraints) — order/case independent', () => {
     const a = buildGreenfieldQuery('NPN transistor', [

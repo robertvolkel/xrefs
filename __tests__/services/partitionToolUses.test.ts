@@ -52,4 +52,18 @@ describe('partitionToolUses', () => {
     expect(partitionToolUses([{ name: 'search_parts' }], true)).toEqual([true]);
     expect(partitionToolUses([], true)).toEqual([]);
   });
+
+  it('suppresses ALL greenfield searches when one already ran earlier this turn (per-turn dedup across loop iterations)', () => {
+    // alreadySearched=true models a prior tool-loop iteration that already ran a search.
+    expect(partitionToolUses([{ name: 'search_parts' }], true, true)).toEqual([false]);
+    expect(partitionToolUses(
+      [{ name: 'search_parts' }, { name: 'present_choices' }, { name: 'search_parts' }],
+      true,
+      true,
+    )).toEqual([false, true, false]);
+  });
+
+  it('alreadySearched is ignored on a non-greenfield turn (MPN multi-lookup still runs all)', () => {
+    expect(partitionToolUses([{ name: 'search_parts' }, { name: 'search_parts' }], false, true)).toEqual([true, true]);
+  });
 });
