@@ -117,8 +117,10 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  post-filtered out). v2→v3 on 2026-06-22 for logic-vetted descriptive search
  *  (Decision #243): the cached SearchResult now carries vetted ranking + new
  *  matchScore/failCount/hardFail fields, and the cache key gained a vetting
- *  signature segment. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v3';
+ *  signature segment. v3→v4 on 2026-06-24 for greenfield parametric pool filtering
+ *  (Decision #248 Phase B): the Digikey candidate pool is now parametric-filtered by
+ *  the stated numeric specs, so a cached v3 entry holds a different (keyword-only) pool. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v4';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

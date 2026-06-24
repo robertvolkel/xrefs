@@ -2,6 +2,7 @@ import {
   buildSyntheticSource,
   computeOverSpecPenalty,
   buildGreenfieldQuery,
+  pickFetchBand,
   SYNTHETIC_SOURCE_MPN,
 } from '@/lib/services/searchConstraints';
 import { getLogicTable, resolveFamilyFromText } from '@/lib/logicTables';
@@ -219,5 +220,86 @@ describe('buildGreenfieldQuery', () => {
   it('returns empty string when no part type is given', () => {
     expect(buildGreenfieldQuery(undefined, [{ attribute: 'channel type', value: 'N-Channel' }])).toBe('n-channel');
     expect(buildGreenfieldQuery('', undefined)).toBe('');
+  });
+});
+
+// ── Phase B: parametric pool filtering ────────────────────────
+describe('pickFetchBand', () => {
+  it('builds a two-sided band from a "lo-hi" range value (±15% inclusive margin)', () => {
+    const band = pickFetchBand([{ attribute: 'drain-source voltage', value: '12-30', unit: 'V' }], B5);
+    expect(band).not.toBeNull();
+    expect(band!.attrId).toBe('vds_max');
+    expect(band!.lo).toBeCloseTo(12 * 0.85, 5);
+    expect(band!.hi).toBeCloseTo(30 * 1.15, 5);
+  });
+
+  it('builds a two-sided band from separate min/max constraints (strips the min/max label before resolving)', () => {
+    const band = pickFetchBand(
+      [
+        { attribute: 'drain current min', value: 1, unit: 'A' },
+        { attribute: 'drain current max', value: 5, unit: 'A' },
+      ],
+      B5,
+    );
+    expect(band!.attrId).toBe('id_max');
+    expect(band!.lo).toBeCloseTo(1 * 0.85, 5);
+    expect(band!.hi).toBeCloseTo(5 * 1.15, 5);
+  });
+
+  it('detects underscore-delimited min/max labels (hFE_min / hFE_max), not just spaces', () => {
+    const band = pickFetchBand(
+      [
+        { attribute: 'hFE_min', value: 200 },
+        { attribute: 'hFE_max', value: 400 },
+      ],
+      getLogicTable('B6')!,
+    );
+    expect(band!.attrId).toBe('hfe');
+    expect(band!.lo).toBeCloseTo(200 * 0.85, 5);
+    expect(band!.hi).toBeCloseTo(400 * 1.15, 5);
+  });
+
+  it('treats two plain values for the same attr as an implicit range', () => {
+    const band = pickFetchBand(
+      [
+        { attribute: 'drain-source voltage', value: 12, unit: 'V' },
+        { attribute: 'drain-source voltage', value: 30, unit: 'V' },
+      ],
+      B5,
+    );
+    expect(band!.attrId).toBe('vds_max');
+    expect(band!.lo).toBeCloseTo(12 * 0.85, 5);
+    expect(band!.hi).toBeCloseTo(30 * 1.15, 5);
+  });
+
+  it('builds a one-sided gte band [v, v×10] from a single threshold value (no margin)', () => {
+    const band = pickFetchBand([{ attribute: 'drain-source voltage', value: 30, unit: 'V' }], B5);
+    expect(band!.attrId).toBe('vds_max');
+    expect(band!.lo).toBe(30);
+    expect(band!.hi).toBe(300);
+  });
+
+  it('normalizes SI prefixes to base units (5000 mA == 5 A floor)', () => {
+    const band = pickFetchBand([{ attribute: 'drain current', value: 5000, unit: 'mA' }], B5);
+    expect(band!.attrId).toBe('id_max');
+    expect(band!.lo).toBe(5); // gte floor, base-SI
+  });
+
+  it('prefers a two-sided band over a one-sided one (more selective)', () => {
+    const band = pickFetchBand(
+      [
+        { attribute: 'drain-source voltage', value: '12-30', unit: 'V' }, // two-sided
+        { attribute: 'drain current', value: 5, unit: 'A' },              // one-sided gte
+      ],
+      B5,
+    );
+    expect(band!.attrId).toBe('vds_max'); // the range wins
+  });
+
+  it('returns null when nothing maps to a numeric band', () => {
+    expect(pickFetchBand([{ attribute: 'channel type', value: 'N-Channel' }], B5)).toBeNull(); // categorical
+    expect(pickFetchBand([{ attribute: 'warp core flux', value: 42 }], B5)).toBeNull();        // unresolvable
+    expect(pickFetchBand([], B5)).toBeNull();
+    expect(pickFetchBand(undefined, B5)).toBeNull();
   });
 });

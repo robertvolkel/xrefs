@@ -249,3 +249,132 @@ export function buildGreenfieldQuery(
   const uniqSorted = [...new Set(tokens)].sort();
   return [base, ...uniqSorted].filter(Boolean).join(' ').trim();
 }
+
+// ── Phase B: parametric pool filtering ────────────────────────
+// A base-SI numeric band used to parametric-filter the Digikey candidate POOL by a
+// stated spec (so e.g. "NPN hFE 200–400" fetches the hFE-band parts, not generic
+// 3904s). Distinct from the vetting pass, which only re-ranks whatever was fetched.
+export interface FetchBand {
+  attrId: string;
+  lo: number;
+  hi: number;
+  sourceNv: number;
+}
+
+/** gte band upper = lo × this. ProductCount-DESC + the MAX_PARAMETRIC_VALUES cap
+ *  keep the selected values common, and the vetting over-spec penalty sinks the tail,
+ *  so a generous upper is safe (it just keeps the pool inclusive). */
+const OVERSPEC_FETCH_FACTOR = 10;
+/** Inclusive ± margin on a two-sided band so boundary parts survive the FETCH (e.g. an
+ *  hFE-420 part for a 200–400 ask, or the exact E-series neighbor for an identity value).
+ *  The fetch is a relevance NET; the vetting pass does the precise ranking. */
+const FETCH_BAND_MARGIN = 0.15;
+
+const RANGE_RE = /(-?\d[\d.]*)\s*(?:-|–|~|to)\s*(-?\d[\d.]*)/i;
+
+/** Parse a number(+unit) to base SI the SAME way buildSyntheticSource + the candidate
+ *  mappers do, so the band is comparable to Digikey's always-base-SI facet values. */
+function toBaseSI(numStr: string, unit?: string): number | null {
+  const s = numStr.trim();
+  if (!s) return null;
+  const parsed = extractNumericWithPrefix(unit ? `${s}${unit}` : s);
+  const baseUnit = parsed.parsedUnit ?? unit;
+  const baseNum = parsed.numericValue ?? parseFloat(s);
+  if (!Number.isFinite(baseNum)) return null;
+  return _applyUnitPrefixCore(baseNum, baseUnit) ?? null;
+}
+
+/**
+ * Pick the SINGLE most-selective numeric band to parametric-filter the Digikey pool on
+ * (greenfield Phase B). Reads the RAW constraints — not the deduped synthetic source —
+ * so a two-sided range expressed as a `"200-400"` value OR as separate min/max
+ * constraints (e.g. the extractor's `current min` / `current max`) yields BOTH bounds.
+ * Returns base-SI `{attrId, lo, hi, sourceNv}`, or null when nothing maps to a numeric band.
+ *
+ * Band shape by rule: two-sided (range / identity) → [lo, hi] widened ±FETCH_BAND_MARGIN;
+ * threshold gte → [v, v×OVERSPEC_FETCH_FACTOR] (strict floor); threshold lte → [0, v].
+ * Selection: two-sided beats one-sided (more selective), then higher logic-rule weight,
+ * then attributeId lexicographic — deterministic.
+ */
+export function pickFetchBand(
+  constraints: SearchConstraint[] | undefined,
+  logicTable: LogicTable,
+): FetchBand | null {
+  if (!constraints || constraints.length === 0) return null;
+  const ruleById = new Map(logicTable.rules.map(r => [r.attributeId, r]));
+
+  // Accumulate per-attr values across constraints. The LLM labels bounds
+  // inconsistently — "hFE max", "hFE_max", or just two separate "IC" entries — so we
+  // collect explicit min/max-labelled values AND plain values, and infer the band below.
+  type Acc = { mins: number[]; maxs: number[]; plains: number[] };
+  const acc = new Map<string, Acc>();
+
+  for (const c of constraints) {
+    const rawValue = (typeof c.value === 'number' ? String(c.value) : c.value ?? '').trim();
+    if (!rawValue || !/\d/.test(rawValue)) continue; // numeric constraints only
+    const unit = c.unit?.trim() || undefined;
+
+    // A "min"/"max" label marks a one-sided bound. Normalize separators (_ - ) to spaces
+    // FIRST so "hFE_max" / "hfe-min" are detected AND stripped like "hFE max" — `\b` does
+    // not break between `_` and a letter, so the raw form would slip past both.
+    const normAttr = c.attribute.replace(/[_-]+/g, ' ');
+    const isMin = /\bmin(imum)?\b/i.test(normAttr);
+    const isMax = /\bmax(imum)?\b/i.test(normAttr);
+    const term = normAttr.replace(/\b(min|max|minimum|maximum)\b/gi, ' ').replace(/\s+/g, ' ').trim() || c.attribute;
+    const attrId = resolveAttributeId(term, logicTable);
+    if (!attrId) continue;
+
+    const e = acc.get(attrId) ?? { mins: [], maxs: [], plains: [] };
+    const m = rawValue.match(RANGE_RE);
+    if (m) {
+      const a = toBaseSI(m[1], unit);
+      const b = toBaseSI(m[2], unit);
+      if (a != null && b != null) { e.mins.push(Math.min(a, b)); e.maxs.push(Math.max(a, b)); }
+    } else {
+      const v = toBaseSI(rawValue, unit);
+      if (v != null) {
+        if (isMin) e.mins.push(v);
+        else if (isMax) e.maxs.push(v);
+        else e.plains.push(v);
+      }
+    }
+    acc.set(attrId, e);
+  }
+
+  const bands: Array<FetchBand & { twoSided: boolean; weight: number }> = [];
+  for (const [attrId, e] of acc) {
+    const rule = ruleById.get(attrId);
+    const weight = rule?.weight ?? 0;
+    const explicitLo = e.mins.length ? Math.min(...e.mins) : undefined;
+    const explicitHi = e.maxs.length ? Math.max(...e.maxs) : undefined;
+    let lo: number | undefined;
+    let hi: number | undefined;
+    let twoSided = false;
+    let sourceNv: number | undefined;
+
+    if (explicitLo != null && explicitHi != null) { lo = explicitLo; hi = explicitHi; twoSided = true; sourceNv = explicitLo; }
+    else if (explicitLo != null) { lo = explicitLo; hi = explicitLo * OVERSPEC_FETCH_FACTOR; sourceNv = explicitLo; } // min-only → gte
+    else if (explicitHi != null) { lo = 0; hi = explicitHi; sourceNv = explicitHi; }                                 // max-only → lte
+    else if (e.plains.length >= 2) { lo = Math.min(...e.plains); hi = Math.max(...e.plains); twoSided = true; sourceNv = lo; } // implicit range
+    else if (e.plains.length === 1) {
+      const v = e.plains[0];
+      sourceNv = v;
+      const dir = rule?.thresholdDirection ?? 'gte';
+      if (rule?.logicType === 'threshold' && dir === 'lte') { lo = 0; hi = v; }
+      else if (rule?.logicType === 'threshold') { lo = v; hi = v * OVERSPEC_FETCH_FACTOR; } // gte
+      else { lo = v; hi = v; twoSided = true; }                                             // identity → exact-ish
+    }
+    if (lo == null || hi == null || !Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) continue;
+    if (twoSided) { lo *= (1 - FETCH_BAND_MARGIN); hi *= (1 + FETCH_BAND_MARGIN); }
+    bands.push({ attrId, lo, hi, sourceNv: sourceNv ?? lo, twoSided, weight });
+  }
+
+  if (bands.length === 0) return null;
+  bands.sort((a, b) => {
+    if (a.twoSided !== b.twoSided) return a.twoSided ? -1 : 1;
+    if (a.weight !== b.weight) return b.weight - a.weight;
+    return a.attrId < b.attrId ? -1 : a.attrId > b.attrId ? 1 : 0;
+  });
+  const top = bands[0];
+  return { attrId: top.attrId, lo: top.lo, hi: top.hi, sourceNv: top.sourceNv };
+}
