@@ -44,6 +44,7 @@ import { resolve } from 'path';
 import { openSync, readFileSync, existsSync } from 'fs';
 import { requireAdmin } from '@/lib/supabase/auth-guard';
 import { createServiceClient } from '@/lib/supabase/service';
+import { invalidateManufacturersListCache } from '@/app/api/admin/manufacturers/route';
 
 const STATUS_KEY = 'atlas-backfill-status';
 
@@ -197,6 +198,15 @@ export async function POST(): Promise<NextResponse> {
           logPath,
           exitCode: code,
         });
+        // Refresh the admin manufacturers/coverage stats now that the backfill
+        // re-translated parameters. Use the same SWR helper the proceed/revert
+        // routes use (background recompute that keeps serving the prior payload
+        // until fresh lands) — NOT a synchronous force-refresh, which can hang
+        // under post-burst load and surface "Stats failed to refresh". Only when
+        // something actually changed; a 0-change run leaves coverage untouched.
+        if ((parsed?.changed ?? 0) > 0) {
+          invalidateManufacturersListCache();
+        }
       } catch (err) {
         console.error('[atlas-backfill] status write failed:', err);
       }

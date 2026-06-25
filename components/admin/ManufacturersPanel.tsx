@@ -230,7 +230,12 @@ export default function ManufacturersPanel() {
         );
         sawInFlightRef.current = false;
       }
-      void loadData(true);
+      // Serve the cached stats (which always exist) rather than forcing a
+      // synchronous cold recompute (?refresh=1) that can hang under post-backfill
+      // load and surface "Stats failed to refresh". The backfill route already
+      // kicked a background SWR recompute (invalidateManufacturersListCache), so
+      // fresh coverage lands shortly and shows on the next read.
+      void loadData(false);
     }
     prevFinishedAtRef.current = cur;
   }, [backfillStatus?.lastFinishedAt, backfillStatus, loadData]);
