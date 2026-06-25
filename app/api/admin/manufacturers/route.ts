@@ -22,10 +22,14 @@ const MEM_CACHE_TTL_MS = 60_000;
 // Bumping the suffix forces persisted rows from the previous schema to be
 // recomputed so they pick up new fields. v3: added summary.triageAvailable +
 // summary.avgCoveragePct, plus the cold-triage self-heal. v4: added per-row
-// atlasId (the source MFR identity, surfaced as the Atlas ID column). Bumping
-// discards stale rows so the first post-deploy read recomputes with the new
-// fields populated.
-const CACHE_KEY = 'manufacturers-list-v4';
+// atlasId (the source MFR identity, surfaced as the Atlas ID column). v5: the
+// get_manufacturer_product_stats RPC was un-truncated (RETURNS TABLE → jsonb,
+// see scripts/supabase-mfr-stats-rpc.sql) + the atlas_manufacturers select was
+// paginated; the v4 row holds the pre-fix truncated counts (265 MFRs / 272,691
+// products) which looksPoisoned() does NOT reject (it's nonzero), so the bump is
+// the only thing that discards it. Bumping discards stale rows so the first
+// post-deploy read recomputes with the corrected (uncapped) counts.
+const CACHE_KEY = 'manufacturers-list-v5';
 
 export function invalidateManufacturersListCache() {
   memCache = null;
@@ -125,15 +129,39 @@ async function computeStats(): Promise<object> {
   // the registered compute (~1-3s) so the column doesn't stay blank after a triage
   // invalidation. It returns null only if the compute is unregistered or throws —
   // in which case the column falls back to "—" rather than blocking the page.
-  const [{ data: mfrRows, error: mfrErr }, rpcResult, { data: xrefCounts }, triageData] = await Promise.all([
-    supabase
-      .from('atlas_manufacturers')
-      .select('name_display, name_en, name_zh, aliases, slug, id, atlas_id, enabled, website_url, updated_at')
-      .order('name_en'),
+  const [mfrResult, rpcResult, { data: xrefCounts }, triageData] = await Promise.all([
+    // Paginate past PostgREST's 1000-row cap. atlas_manufacturers crossed 1000
+    // identity rows (1014 as of Jun 2026), so a plain .select() silently dropped
+    // the alphabetical tail — those MFRs vanished from the admin list and any
+    // products folded onto them disappeared too. Order by (name_en, id) so page
+    // boundaries are stable when name_en has ties.
+    (async (): Promise<{ data: MfrRow[] | null; error: { message: string } | null }> => {
+      const PAGE = 1000;
+      const rows: MfrRow[] = [];
+      let offset = 0;
+      for (;;) {
+        const { data, error } = await supabase
+          .from('atlas_manufacturers')
+          .select('name_display, name_en, name_zh, aliases, slug, id, atlas_id, enabled, website_url, updated_at')
+          .order('name_en')
+          .order('id')
+          .range(offset, offset + PAGE - 1);
+        if (error) return { data: null, error };
+        if (!data || data.length === 0) break;
+        rows.push(...(data as MfrRow[]));
+        if (data.length < PAGE) break;
+        offset += PAGE;
+      }
+      return { data: rows, error: null };
+    })(),
     supabase.rpc('get_manufacturer_product_stats'),
     supabase.rpc('get_cross_ref_counts'),
     getOrComputeTriageData().catch(() => null),
   ]);
+  const { data: mfrRows, error: mfrErr } = mfrResult;
+  // get_manufacturer_product_stats now RETURNS jsonb (a single array) instead of
+  // RETURNS TABLE — see scripts/supabase-mfr-stats-rpc.sql for why (1000-row cap).
+  // supabase-js returns the parsed array directly on `data`.
   const statsRows = rpcResult.data as StatsRow[] | null;
   const statsErr = rpcResult.error;
 
