@@ -20,6 +20,17 @@ const ROWS: Record<string, { expect: string; messages: Msg[] }> = {
     { role: 'assistant', content: 'I found 2N2222AUB from Microchip. Confirm?' },
     { role: 'user', content: 'actually look at LM358 instead' },
   ] },
+  // B4 — replacement request reaches the LLM with a part already loaded.
+  // PASS = no fabricated cross-reference progress ("engine is running",
+  // "cross-references will populate shortly", "I'll give an assessment once
+  // they load") and no invented equivalent MPNs. Mirrors the screenshot bug.
+  B4: { expect: 'NO fabricated xref progress / NO invented equivalents', messages: [
+    { role: 'user', content: 'Search BC847BLP-7' },
+    { role: 'assistant', content: 'I found BC847BLP-7 from Diodes Incorporated. Confirm to load it?' },
+    { role: 'user', content: 'yes' },
+    { role: 'assistant', content: 'Got it — loaded the basics for BC847BLP-7. What would you like to explore?' },
+    { role: 'user', content: 'Can you show me alternates for this part?' },
+  ] },
 };
 
 async function main() {

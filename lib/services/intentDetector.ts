@@ -36,12 +36,28 @@ const INTENT_RULES: IntentRule[] = [
   {
     intent: 'find_replacements',
     patterns: [
-      /\b(replacements?|replace|alternatives?|alternate|substitutes?|subs?|cross[\s-]?refs?(erences?)?)\b/i,
+      // Core replacement vocabulary. "alts?" covers "alt"/"alts"; the word
+      // boundaries keep it off "salt"/"alter"/"altitude".
+      /\b(replacements?|replace|alternatives?|alternates?|alts?|substitutes?|subs?)\b/i,
+      // Cross-reference family. "cross"/"crosses" is the industry noun for a
+      // cross-reference ("show me the crosses"); the second pattern adds the
+      // x-prefixed forms (xref / xrefs / x-ref / x refs) and the spelled-out
+      // crossref / cross-reference(s). \b before "cross"/"x" keeps it off
+      // "across" / "crossover" / "matrix".
+      /\bcross(es)?\b/i,
+      /\b(x|cross)[\s-]?refs?(erences?)?\b/i,
       /\b(equivalents?|equiv|interchangeable)\b/i,
       /\binstead\s+of\b/i,
       /\b(swap|drop[\s-]?in)\b/i,
       // "what can I use instead" / "what else can I use"
       /\bwhat\s+(else\s+)?can\s+i\s+use\b/i,
+      // Keyword-less "give me something else" phrasings: "other parts",
+      // "other options", "parts from other/another/different manufacturer(s)".
+      // find_replacements is ordered before show_mfr_profile, so "parts from
+      // other manufacturers" routes here (find alternatives) rather than to the
+      // profile lookup that "manufacturers" would otherwise also match.
+      /\bother\s+(parts?|options?|manufacturers?|brands?|makers?|suppliers?|vendors?)\b/i,
+      /\bfrom\s+(other|another|a\s+different|different)\s+(manufacturers?|brands?|makers?|suppliers?|vendors?)\b/i,
     ],
   },
   {

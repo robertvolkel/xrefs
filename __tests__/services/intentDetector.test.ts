@@ -23,9 +23,23 @@ describe('detectQueryIntent — find_replacements', () => {
     'cross reference for LM358',
     'cross-ref ABC123',
     'alternatives to this part',
+    'alternate parts',
+    'can you show me alternates for this part?',
     'is there an equivalent?',
+    'equivalent parts for LM358',
     'drop-in substitute for ABC',
     'subs for ABC',
+    // Industry vocabulary for cross-references (Decision: alias expansion)
+    'show me the crosses',
+    'what are the crosses for this part?',
+    'xrefs for STM32L431RBT6',
+    'x-refs please',
+    'any alts?',
+    'show me alts',
+    // Keyword-less "something else" phrasings
+    'show me other parts',
+    'parts from other manufacturers',
+    'anything from a different manufacturer?',
   ];
   it.each(cases)('matches: "%s"', (q) => {
     expect(detectQueryIntent(q)).toBe('find_replacements');
