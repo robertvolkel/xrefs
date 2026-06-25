@@ -355,14 +355,20 @@ Why this hasn't bitten yet: zero MFRs are currently disabled in either table. As
 **Trigger to flip:** when concurrent user load grows enough that throttle contention becomes routine (multi-user sessions, large BOM validations), OR the first user report of "prices/distributors randomly missing."
 
 ## Audit other TABLE-returning RPCs for PostgREST 1000-row cap
-**Status:** Not started
-**Priority:** P3 (preventive; no known caller is currently affected)
-**Cost:** ~30 min (grep + audit)
-**Trigger:** Decision #206 found `get_atlas_coverage_aggregates` was silently truncated by PostgREST's `max-rows=1000` cap once it grew past ~1000 group tuples. The growth, triage, and explorer RPCs already use `RETURNS jsonb` (Decisions #179, #180, #183, #189) and are immune. The coverage RPC was the last holdout, but the codebase may have other table-returning RPCs that haven't crossed the 1000-row threshold yet.
+**Status:** Sweep DONE June 25 2026 — one latent RPC remains (`get_cross_ref_counts`)
+**Priority:** P3 (preventive; the remaining holdout is 5 rows today)
+**Cost:** ~15 min when `get_cross_ref_counts` approaches the cap
+**Trigger:** Decision #206 found `get_atlas_coverage_aggregates` was silently truncated by PostgREST's `max-rows=1000` cap. Recurred June 25 2026 (branch `fix/manufacturers-1000-row-cap`): `get_manufacturer_product_stats` (RETURNS TABLE, 1457 groups) capped at 1000 → admin Manufacturers panel read 265 MFRs / 272,691 products vs true 379 / 411,468. Migrated to `RETURNS jsonb`; also paginated the now-1014-row `atlas_manufacturers` plain selects in `app/api/admin/manufacturers/route.ts` + `app/api/admin/atlas/route.ts`.
 
-**Build:** `grep -rn "RETURNS TABLE\b" scripts/*.sql` to enumerate. For each, check whether the consuming TS route either (a) paginates explicitly or (b) is bounded to ≤1000 tuples by design. Convert any unprotected aggregator to `RETURNS jsonb` proactively.
+**Sweep results (June 25 2026, `grep -rn "RETURNS TABLE\|RETURNS SETOF" scripts/*.sql`):**
+- ✅ `get_manufacturer_product_stats` — FIXED (→ jsonb).
+- ✅ `get_atlas_coverage_aggregates` — already jsonb (#179).
+- ✅ `search_atlas_products_admin` — RETURNS TABLE but bounded by `lim` param (≤50). Safe.
+- ✅ grounding RPCs (`get_atlas_family_mfr_grounding` / `_grounding_counts` / `_all_family_grounding_counts`) — top-N / one-row-per-family (~43 max). Safe.
+- ✅ `atlas_ingest_cleanup_expired` — returns one row. Safe.
+- ⚠️ **`get_cross_ref_counts` — RETURNS TABLE, one row per MFR-slug with active cross-refs. 5 rows today. The ONLY remaining unprotected aggregator.** Migrate to `RETURNS jsonb` (wrap in `jsonb_agg(row_to_json(t))`) before distinct cross-ref'd MFRs cross ~1000. Defined in [scripts/supabase-mfr-xref-counts-rpc.sql](scripts/supabase-mfr-xref-counts-rpc.sql); consumed by `app/api/admin/manufacturers/route.ts`.
 
-**Why deferred:** No known caller affected today; the coverage RPC was the lone surfaced victim. Worth doing as a preventive sweep before the next aggregation RPC silently truncates.
+**Also confirmed:** the lesson generalizes to plain `.from(table).select()` whole-result reads (Decision #232 + this fix) — a stale "~N small rows" code comment is the tell that an assumption went stale under growth.
 
 ## CT MICRO opto-SCRs misclassified as B8 (~89 products) — pre-existing data drift
 **Status:** Not started
