@@ -233,6 +233,15 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   // owns a local fallback when these are absent, so the control works even when a
   // consumer (mobile / parts-list modal) doesn't wire the shared state.
 
+  // When the layout collapses all the way back to the bare landing state (e.g.
+  // "New chat" or the logo reset fired from inside a conversation), snap the grid
+  // instead of animating it. Animating the chat column from a narrow conversation
+  // width to full width makes the centered landing input visibly slide from left
+  // to center. Snapping makes it appear centered immediately — matching the logo
+  // reset from the home screen. Expansion (idle → panels) still uses the 0.8s
+  // ease because the browser reads the transition from the after-change style.
+  const isBareIdle = !showAttributesPanel && !showRightPanel && !mfrOpen && !chatCollapsed;
+
   // Clicking a source-panel chip while comparing returns to the (now filtered)
   // recommendations list so the result is actually visible.
   const handleSelectXrefCategory = (cat: RecommendationCategory | 'all') => {
@@ -277,7 +286,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
             gridTemplateColumns: getGridColumns(showAttributesPanel, showRightPanel, chatCollapsed, mfrOpen),
             flex: 1,
             overflow: 'hidden',
-            transition: 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+            transition: isBareIdle
+              ? 'grid-template-columns 0s'
+              : 'grid-template-columns 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
             '@media (max-width: 900px)': {
               gridTemplateColumns: '1fr !important',
               gridTemplateRows: showRightPanel
