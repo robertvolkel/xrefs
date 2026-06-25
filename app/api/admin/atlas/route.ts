@@ -78,7 +78,10 @@ async function computeAtlasCoverage(): Promise<object> {
   //    fetchAllPages walks). The function returns one row per
   //    (manufacturer, family_id, category, subcategory) tuple, with
   //    coverage stats already summed in Postgres. ~5K rows, a few KB.
-  // ── Manufacturer identity rows: small (~115), no aggregation needed.
+  // ── Manufacturer identity rows: now 1014 — crossed PostgREST's 1000-row cap
+  //    (the old "~115" assumption went stale), so the select is paginated. A
+  //    plain .select() silently dropped the alphabetical tail, undercounting
+  //    targetManufacturers and missing disabled-state for the dropped MFRs.
   // ── Legacy settings table: tiny fallback when atlas_manufacturers is empty.
   const [aggResult, mfrRecordsResult, mfrSettingsResult] = await Promise.all([
     // RPC returns a single jsonb array (one element per
@@ -86,7 +89,27 @@ async function computeAtlasCoverage(): Promise<object> {
     // TABLE, which made PostgREST's max-rows cap (1000 on Supabase) silently
     // truncate the result once atlas_products grew past ~120 MFRs.
     supabase.rpc('get_atlas_coverage_aggregates', { family_attrs: familyAttrs }),
-    supabase.from('atlas_manufacturers').select('name_display, name_en, name_zh, slug, id, enabled'),
+    (async (): Promise<{
+      data: Array<{ name_display: string; name_en: string; name_zh: string | null; slug: string; id: number; enabled: boolean }> | null;
+      error: { message: string } | null;
+    }> => {
+      const PAGE = 1000;
+      const rows: Array<{ name_display: string; name_en: string; name_zh: string | null; slug: string; id: number; enabled: boolean }> = [];
+      let offset = 0;
+      for (;;) {
+        const { data, error } = await supabase
+          .from('atlas_manufacturers')
+          .select('name_display, name_en, name_zh, slug, id, enabled')
+          .order('id')
+          .range(offset, offset + PAGE - 1);
+        if (error) return { data: null, error };
+        if (!data || data.length === 0) break;
+        rows.push(...data);
+        if (data.length < PAGE) break;
+        offset += PAGE;
+      }
+      return { data: rows, error: null };
+    })(),
     supabase.from('atlas_manufacturer_settings').select('manufacturer, enabled'),
   ]);
 
