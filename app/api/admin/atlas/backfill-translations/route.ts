@@ -57,6 +57,14 @@ type BackfillStatus = {
   errors: number;
   logPath: string;
   exitCode: number | null;
+  // Live progress fields — written by the script's throttled heartbeat while
+  // in-flight (lastFinishedAt === null). All optional/additive: pre-progress
+  // rows and the final write (close listener) simply omit them.
+  totalFiles?: number;
+  processedFiles?: number;
+  currentMfr?: string | null;
+  recentMfrs?: Array<{ name: string; changed: number; unchanged: number; missing: number }>;
+  heartbeatAt?: string;
 };
 
 async function readStatus(): Promise<BackfillStatus | null> {
@@ -157,7 +165,15 @@ export async function POST(): Promise<NextResponse> {
     const scriptArgs = ['--backfill-translations'];
     const child = spawn('node', [scriptPath, ...scriptArgs], {
       cwd,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        // Opt the script into writing live progress heartbeats to the same
+        // admin_stats_cache status row this route manages. Absent for terminal
+        // runs, so a manual `npm run atlas:backfill` never touches the row.
+        BACKFILL_EMIT_STATUS: '1',
+        BACKFILL_STARTED_AT: startedAt,
+        BACKFILL_LOG_PATH: logPath,
+      },
       detached: true,
       stdio: ['ignore', logFd, logFd],
     });
