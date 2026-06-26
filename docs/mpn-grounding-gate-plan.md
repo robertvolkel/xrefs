@@ -53,11 +53,13 @@ Good news from the audit: **nothing streams** — all three chat replies are ass
 - **Strip before persistence.** Saved conversations replay without re-gating, so the gate must act before a reply is stored — and observe-only must not permanently bake pre-enforcement fabrications into history.
 
 ## Rollout (revised order)
-1. **Foundation + observe-only detector** — accumulated server-side verified set (MPNs + MFR names) and logging. Zero user impact; measures the real fabrication rate and tunes the allowlist.
-2. **Deterministic comparison-table rendering** — kills the highest-density fabrication surface (the screenshot case).
-3. **Scoped backstop gate** on the on-screen-reference prose residue, with recovery actions (look-up / regenerate / safe message).
-4. **Extend** to remaining prose surfaces (refine modal, list agent) once their verified-set plumbing exists.
+1. ✅ **Foundation + observe-only detector** — accumulated server-side verified set (MPNs + MFR names) and logging. Zero user impact; measures the real fabrication rate and tunes the allowlist. *(SHIPPED on branch; observe-logging silently no-ops until the `mpn_grounding_observations` table + `SUPABASE_SERVICE_ROLE_KEY` exist in the deployed env.)*
+2. ✅ **Deterministic comparison-table rendering** — kills the highest-density fabrication surface (the screenshot case). *(SHIPPED + verified e2e; `present_comparison` tool → `buildComparisonTable` → `ComparisonTable` UI. Handles cold-start + not-carried parts.)*
+3. ✅ **Scoped backstop gate** on the prose residue, with recovery actions (regenerate-once → deterministic safe message; user-typed parts are mentionable, never stripped). *(SHIPPED in `chat()` behind `GROUNDING_GATE_ENABLED`, **default OFF**; `lib/services/grounding/groundingGate.ts`. Enforces HIGH-confidence findings only. Verified e2e with the flag forced on. **Enable only after** the observe-only data confirms the dual threshold below.)*
+4. **Extend** to remaining prose surfaces (refine modal, list agent) once their verified-set plumbing exists. *(Pending — see BACKLOG "Grounded-MPN gate — follow-ups" (C)/(D), plus cross-turn accumulation (B).)*
 5. **Spec-commentary**: keep observe-only; revisit enforcement only if the data justifies it.
+
+**Activation lever:** `GROUNDING_GATE_ENABLED=true` flips the backstop from dormant to enforcing in `chat()`. Leave OFF until the observe-only measurement (step 1) confirms the dual threshold (below). The comparison-table renderer (step 2) and observe-logging (step 1) are always on, independent of this flag.
 
 ## Open product decisions to confirm
 - **Strict catalog + auto-recover.** Confirm the stance: never suggest a part from memory; when an unverified part comes up, *look it up* rather than delete. (This is the materially-better version of v1's "strict + strip.")
