@@ -85,6 +85,8 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 **(F) Spec-commentary stays observe-only — by design, not a TODO.** Per plan §"Commentary": stripping a true datasheet spec is the inverse error economics of the MPN gate (it cripples usefulness). Spec values tied to a named part are logged/observed only; revisit enforcement only if the data justifies it.
 
+**(G) Recovery follow-through is clunky when the user says "search it" — P3 (surfaced during gate testing June 26).** With the gate ON, the assistant correctly withholds an un-looked-up part (e.g. alludes to "a classic general-purpose NPN BJT" without naming 2N2222). But when the user then says "Ok search it," the assistant asks for an MPN ("I need a part number or description to search") instead of just running a descriptive/category search for the thing it described and showing real cards. It even *offers* the right move ("shall I search for general-purpose NPN transistors?") — it just asks instead of acting. This is **not the gate misfiring** (the reply contains no part number, so the gate correctly leaves it alone) and **not a regression** (it's existing "act, don't ask" + grounding-caution behavior the test surfaced). Fix is a careful prompt nudge: after the assistant alludes to a part it wouldn't name, a "search it" turn should run a **category/descriptive search** (the description it already has), not re-ask for an MPN. Risk: over-correcting back toward naming-from-memory — validate against the grounding behavior before/after. Related to "Conversational query-shape routing" (messy follow-ups). Low urgency — one extra turn, not a dead end.
+
 ---
 
 ## Informative chat "thinking" status — stream the agent's real tool steps to the UI (P3)
