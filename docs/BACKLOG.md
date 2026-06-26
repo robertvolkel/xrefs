@@ -66,6 +66,27 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 ---
 
+## Grounded-MPN gate — follow-ups (branch `feat/grounded-mpn-detection`, plan `docs/mpn-grounding-gate-plan.md`)
+
+**Context.** The grounded-MPN effort guarantees the chat assistant never serves a part number it didn't pull from the catalog. Foundation (accumulated verified set), observe-only measurement, and the deterministic comparison-table renderer are built (steps 1–4). The backstop gate (step 5) follows. Items below are deferred/known, captured during the pre-backstop code review (commit `4acf54d`).
+
+**(A) Activation — measurement is dormant until IT provisions it (BLOCKER for the management report, P1-when-ready).** The observe-only logger silently no-ops until (1) the `mpn_grounding_observations` table exists (`scripts/supabase-mpn-grounding-observations-schema.sql`) AND (2) `SUPABASE_SERVICE_ROLE_KEY` is set in the deployed env (IT-managed, post-Vercel). Nothing records before then, and the backstop gate's enforce-flip is gated on this data (dual-threshold per the plan §"Open product decisions"). Once live: build the management report (fabrication rate + example catches).
+
+**(B) Cross-turn verified-set accumulation — P2.** The live wiring builds the verified set PER-TURN (`buildVerifiedSetFromContext` called with no `base`), so parts seen in earlier turns aren't remembered. Effect today: medium-confidence over-counting in the measurement (HIGH family-pattern catches are unaffected). Effect once the gate enforces: a part the user saw 3 turns ago could be wrongly flagged. Fix: persist the set keyed on conversation id (like recommendation snapshots) and pass it as `base`. `extendVerifiedSet` is already immutable-union for exactly this. Required before enforcement is trustworthy across multi-turn chats.
+
+**(C) Manufacturer-name coverage in the gate — P2.** `isVerifiedMfr` + MFR harvesting exist, but the detector/gate currently only flag MPNs, not manufacturer names in prose ("BC846 from Vishay" = real part, wrong maker — same damage class per plan §4). Extend detection to MFR names against the verified-MFR set once the MPN gate is proven.
+
+**(D) Extend the gate to the refine modal + list agent — P3.** `present_comparison` and the backstop gate land in `chat()` first (rollout step 4). `refinementChat()` / `listChat()` get observe-only logging today but no comparison renderer and no gate; extend once their verified-set plumbing is richer.
+
+**(E) Minor polish from the review — P3.**
+- Cold-start comparison-table MPNs aren't clickable — `MessageBubble` gates clickability on `knownMpns.has(row.mpn)`, and freshly-compared parts (not from a prior search) aren't in `knownMpns`. No dead clicks (the gate prevents them); just less interactive. Fix: union the comparison parts into `knownMpns` (and ensure `handleMpnClick` can resolve a not-on-screen MPN).
+- `persistObservation` builds a fresh Supabase service client per call. Harmless (fire-and-forget, ~1/turn) — memoize if volume ever matters.
+- A single-part comparison (e.g. when the other part wasn't found) renders only identity columns, no specs (auto-select threshold = 2). By design; could special-case "1 resolved part → show its key specs."
+
+**(F) Spec-commentary stays observe-only — by design, not a TODO.** Per plan §"Commentary": stripping a true datasheet spec is the inverse error economics of the MPN gate (it cripples usefulness). Spec values tied to a named part are logged/observed only; revisit enforcement only if the data justifies it.
+
+---
+
 ## Informative chat "thinking" status — stream the agent's real tool steps to the UI (P3)
 
 **Context.** The chat loading indicator is a static **"Thinking…"** — a spinner + one fixed string ([components/ChatInterface.tsx:154-176](../components/ChatInterface.tsx#L154-L176), driven by `statusText` in [hooks/useAppState.ts](../hooks/useAppState.ts), set to `'Thinking...'` at line 1171 of `handleSearchWithLLM`). A user asked whether it could instead show **what the agent is actually doing** ("Searching components…", "Looking up manufacturer profile…", "Filtering replacements…"). It's very doable — the codebase already has the pieces — but deferred (nice-to-have UX polish, not a correctness/coverage lever). The reason it isn't trivial: `/api/chat` runs the **entire** agent tool-loop server-side and returns one JSON blob at the end ([app/api/chat/route.ts](../app/api/chat/route.ts) → `NextResponse.json({ success, data })`), so the UI never hears intermediate steps. Real per-step status **requires streaming** — there's no shortcut around the single request/response.

@@ -4,6 +4,8 @@ import { searchParts, getAttributes, getRecommendations } from './partDataServic
 import { looksLikeMpn } from './searchSummary';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
+import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
+import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
 import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
@@ -1688,9 +1690,10 @@ export async function chat(
     result.comparison = toolData.comparison;
   }
 
-  // Observe-only grounded-MPN measurement: log what a gate WOULD catch in this reply.
-  // Never alters `result` (docs/mpn-grounding-gate-plan.md, step 3).
-  observeAndLogGrounding(message, {
+  // Grounded-MPN measurement + backstop (docs/mpn-grounding-gate-plan.md, steps 3 & 5).
+  // ONE shared grounding context feeds both the observe-only logger (always on, scanning
+  // the RAW draft) and the backstop gate (default OFF — see isGroundingGateEnabled).
+  const groundingCtx: ChatGroundingContext = {
     searchMatches: [
       ...(currentSearchResult?.matches ?? []),
       ...(toolData.searchResult?.matches ?? []),
@@ -1706,14 +1709,41 @@ export async function chat(
       // BOTH the requested key AND the canonical resolved mpn. Digikey/parts.io/Atlas
       // canonicalize (e.g. "BC847B" → "BC847BLT1G"), and the comparison table + the
       // model's takeaway name the CANONICAL form — so it must be in the verified set,
-      // else the measurement flags a real looked-up part as a fabrication (and the
-      // future backstop would wrongly block it).
+      // else the measurement/gate would treat a real looked-up part as a fabrication.
       ...Object.keys(toolData.attributes),
       ...Object.values(toolData.attributes).map((a) => a?.part?.mpn).filter((m): m is string => !!m),
     ],
     mfrNames: toolData.mentionedAtlasManufacturers ? [...toolData.mentionedAtlasManufacturers] : undefined,
     userMpns: extractUserMpnCandidates(messages),
-  }, { surface: 'chat', userId: userId ?? null, model: MODEL });
+  };
+
+  // Observe-only: log what a gate WOULD catch in the RAW draft, decoupled from
+  // enforcement (plan §"Measurement"). Never alters `result`.
+  observeAndLogGrounding(message, groundingCtx, { surface: 'chat', userId: userId ?? null, model: MODEL });
+
+  // Backstop gate (step 5): only when explicitly enabled. Acts on HIGH-confidence
+  // unverified parts in the prose; recovers via regenerate-once → deterministic safe
+  // message, never strips or dangles. The comparison table (result.comparison) is
+  // grounded by construction and is left untouched regardless of what the prose does.
+  if (isGroundingGateEnabled()) {
+    const verifiedSet = buildVerifiedSetFromContext(groundingCtx);
+    const gated = await applyGroundingGate(message, verifiedSet, async (correction) => {
+      const resp = await client.messages.create({
+        model: MODEL,
+        max_tokens: 1024,
+        system: 'You revise a chat reply to remove any part number that was not retrieved from the catalog. Output only the revised reply text, nothing else.',
+        messages: [{ role: 'user', content: `DRAFT REPLY:\n${message}\n\n${correction}` }],
+      });
+      return resp.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map(b => b.text)
+        .join('\n');
+    });
+    if (gated.action !== 'allow') {
+      console.log(`[grounding-gate] ${gated.action} — unverified: ${gated.evaluation.enforceable.map(f => f.token).join(', ')}`);
+    }
+    result.message = gated.message;
+  }
 
   return result;
 }
