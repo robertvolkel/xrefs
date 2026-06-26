@@ -15,6 +15,7 @@ import MissingAttributesForm from './MissingAttributesForm';
 import ApplicationContextForm from './ApplicationContextForm';
 import ListActionConfirmation from './parts-list/ListActionConfirmation';
 import QuantityPrompt from './QuantityPrompt';
+import ComparisonTable from './ComparisonTable';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -327,6 +328,14 @@ export default function MessageBubble({
             status={message.interactiveElement.status}
             submittedQty={message.interactiveElement.submittedQty}
             onSelect={(qty) => onQuantitySubmit(message.id, qty)}
+          />
+        )}
+
+        {message.interactiveElement?.type === 'comparison' && (
+          <ComparisonTable
+            table={message.interactiveElement.table}
+            knownMpns={knownMpns}
+            onMpnClick={onMpnClick}
           />
         )}
       </Box>

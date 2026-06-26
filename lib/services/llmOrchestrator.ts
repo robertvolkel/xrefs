@@ -4,6 +4,7 @@ import { searchParts, getAttributes, getRecommendations } from './partDataServic
 import { looksLikeMpn } from './searchSummary';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
+import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
@@ -533,6 +534,7 @@ Workflow:
 
    **(a) ASK** — parametric question about the current cards.
    Single MPN: call get_part_attributes. Multi-MPN or compound query (e.g. "which of these are AEC-Q200 AND ≤ 30mm AND active?"): call get_batch_attributes (max 10 MPNs). Answer from the returned data, then end with a brief offer to refine ("Want me to show just those?") so the user can iterate.
+   **Side-by-side comparison / a table across several parts** (e.g. "compare these", "show hFE and noise across the BC847 variants", "put their specs next to each other"): call **present_comparison** with the MPNs and the spec terms the user asked about. The system renders the table from live catalog data — NEVER hand-write a markdown comparison table (a typed table can carry a wrong value or an invented part number). After it renders, add only a brief 1–2 sentence takeaway; do not restate the table.
 
    **(b) REFINE** — narrow the current cards to a chosen subset.
    When the user says "show me just those", "filter to V-0", "which of these...", call present_part_options with the matching MPNs from the search-result context. Cards re-render in chat. If you need to evaluate parameters not in the lightweight context, call get_batch_attributes first, then present_part_options on the qualifiers.
@@ -754,6 +756,26 @@ const tools: Anthropic.Tool[] = [
       required: ['mpns'],
     },
   },
+  {
+    name: 'present_comparison',
+    description: 'Render a side-by-side comparison TABLE of parts as an interactive element. Use this WHENEVER the user wants to compare parts or see specs across multiple parts (e.g. "compare these", "show hFE and noise across the BC847 variants", "which has the lowest Rds(on)?"). The SYSTEM builds the table from live catalog data — you MUST use this instead of hand-writing a markdown table, because a typed table can contain a wrong value or a fabricated part number. After it renders, write only a brief 1–2 sentence takeaway; do NOT repeat the table in text. MPNs must come from the current search-result / recommendation context.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        mpns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'MPNs to compare (max 10). Must come from the current search-result / recommendation context.',
+        },
+        attributes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional: the spec terms the user asked about (e.g. ["hFE", "Vce(max)", "package"]). Drives which columns appear. Omit to auto-select shared specs.',
+        },
+      },
+      required: ['mpns'],
+    },
+  },
   GET_MFR_PROFILE_TOOL,
   {
     name: 'present_choices',
@@ -859,6 +881,8 @@ interface ToolResultData {
   /** Filter spec when the LLM applied one via filter_recommendations — lets the
    *  client register it as the active panel filter (currentFilter/Label). */
   appliedFilter?: { filterInput: FilterInput; label: string };
+  /** System-built comparison table from present_comparison (grounding plan step 4). */
+  comparison?: ComparisonTable;
 }
 
 // ==============================================================
@@ -1125,6 +1149,43 @@ async function executeTool(
         }));
       }
       return JSON.stringify({ results });
+    }
+    case 'present_comparison': {
+      const inp = input as { mpns: string[]; attributes?: string[] };
+      const mpns = (inp.mpns ?? []).slice(0, 10);
+      if (mpns.length === 0) return JSON.stringify({ error: 'No MPNs supplied' });
+      // Fetch each part the same way get_batch_attributes does (Digikey/parts.io/
+      // Atlas/FindChips per MPN), then let the SYSTEM build the table — the model
+      // never types the cells, so nothing can be fabricated (grounding plan step 4).
+      const CONCURRENCY = 5;
+      const parts: ComparisonPartInput[] = [];
+      for (let i = 0; i < mpns.length; i += CONCURRENCY) {
+        const chunk = mpns.slice(i, i + CONCURRENCY);
+        const fetched = await Promise.all(chunk.map(async (mpn) => {
+          const attrs = await getAttributes(mpn, undefined, userId);
+          if (!attrs) return null;
+          data.attributes[mpn] = attrs;
+          return {
+            mpn: attrs.part.mpn,
+            manufacturer: attrs.part.manufacturer,
+            status: attrs.part.status,
+            qualifications: attrs.part.qualifications ?? [],
+            distributorCount: attrs.part.supplierQuotes?.length ?? 0,
+            parameters: attrs.parameters.map(p => ({ name: p.parameterName, value: p.value })),
+          } as ComparisonPartInput;
+        }));
+        for (const f of fetched) if (f) parts.push(f);
+      }
+      if (parts.length === 0) {
+        return JSON.stringify({ error: 'None of the requested MPNs could be looked up — no table rendered.' });
+      }
+      data.comparison = buildComparisonTable(parts, { preferredAttributes: inp.attributes });
+      return JSON.stringify({
+        rendered: true,
+        parts: parts.map(p => p.mpn),
+        columns: data.comparison.columns.map(c => c.label),
+        note: 'Comparison table rendered to the user as an interactive element. Do NOT repeat the table in text — write only a brief 1-2 sentence takeaway.',
+      });
     }
     case 'get_manufacturer_profile': {
       const inp = input as { name: string };
@@ -1596,6 +1657,9 @@ export async function chat(
   }
   if (toolData.appliedFilter) {
     result.appliedFilter = toolData.appliedFilter;
+  }
+  if (toolData.comparison) {
+    result.comparison = toolData.comparison;
   }
 
   // Observe-only grounded-MPN measurement: log what a gate WOULD catch in this reply.

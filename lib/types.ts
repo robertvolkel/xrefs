@@ -437,7 +437,8 @@ export type InteractiveElement =
   | { type: 'attribute-query'; missingAttributes: MissingAttributeInfo[]; partMpn: string }
   | { type: 'context-questions'; questions: ContextQuestion[]; familyId: string; initialAnswers?: Record<string, string> }
   | { type: 'list-action'; action: PendingListAction; status: 'pending' | 'confirmed' | 'cancelled' }
-  | { type: 'quantity-prompt'; presets: number[]; status: 'pending' | 'submitted'; submittedQty?: number };
+  | { type: 'quantity-prompt'; presets: number[]; status: 'pending' | 'submitted'; submittedQty?: number }
+  | { type: 'comparison'; table: import('./services/comparisonTable').ComparisonTable };
 
 // ── List Agent Types ─────────────────────────────────────────
 
@@ -873,6 +874,10 @@ export interface OrchestratorResponse {
    *  LLM-applied filter is invisible to the panel + chat "show all" path and is
    *  silently undone by the next background enrichment pass. */
   appliedFilter?: { filterInput: import('./services/recommendationFilter').FilterInput; label: string };
+  /** A system-built comparison table rendered when the LLM calls present_comparison.
+   *  Built from real catalog lookups (lib/services/comparisonTable) — the model never
+   *  hand-types the table, so no cell can be fabricated (grounding plan, step 4). */
+  comparison?: import('./services/comparisonTable').ComparisonTable;
 }
 
 // ============================================================

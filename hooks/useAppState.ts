@@ -1351,7 +1351,8 @@ export function useAppState() {
           setState((prev) => ({ ...prev, ...partResetFields, phase: 'idle', searchResult: null }));
         } else {
           // No search performed — check if LLM returned filtered recommendations
-          addMessage('assistant', response.message);
+          // or a system-built comparison table (present_comparison, grounding step 4).
+          addMessage('assistant', response.message, response.comparison ? { type: 'comparison', table: response.comparison } : undefined);
           const updatedRecs = response.recommendations
             ? Object.values(response.recommendations)[0]
             : undefined;
