@@ -11,7 +11,7 @@ create table if not exists mpn_grounding_observations (
   created_at         timestamptz not null default now(),
   surface            text not null,          -- 'chat' | 'refine' | 'list'
   conversation_id    text,
-  user_id            uuid,
+  user_id            text,                   -- text (not uuid): the API-key service-user id isn't a uuid
   model              text,
   message_length     integer not null,
   verified_mpn_count integer not null,       -- size of the verified set the message was checked against

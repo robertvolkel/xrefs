@@ -3,6 +3,7 @@ import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, 
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { looksLikeMpn } from './searchSummary';
 import { buildGreenfieldQuery } from './searchConstraints';
+import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { logRecommendation } from './recommendationLogger';
@@ -1597,6 +1598,25 @@ export async function chat(
     result.appliedFilter = toolData.appliedFilter;
   }
 
+  // Observe-only grounded-MPN measurement: log what a gate WOULD catch in this reply.
+  // Never alters `result` (docs/mpn-grounding-gate-plan.md, step 3).
+  observeAndLogGrounding(message, {
+    searchMatches: [
+      ...(currentSearchResult?.matches ?? []),
+      ...(toolData.searchResult?.matches ?? []),
+    ],
+    recommendations: [
+      ...(currentRecommendations ?? []),
+      ...Object.values(toolData.recommendations).flat(),
+    ].map(r => ({ mpn: r.part.mpn, manufacturer: r.part.manufacturer })),
+    sourcePart: currentSourceAttributes
+      ? { mpn: currentSourceAttributes.part.mpn, manufacturer: currentSourceAttributes.part.manufacturer }
+      : null,
+    attributeMpns: Object.keys(toolData.attributes),
+    mfrNames: toolData.mentionedAtlasManufacturers ? [...toolData.mentionedAtlasManufacturers] : undefined,
+    userMpns: extractUserMpnCandidates(messages),
+  }, { surface: 'chat', userId: userId ?? null, model: MODEL });
+
   return result;
 }
 
@@ -1885,6 +1905,17 @@ export async function refinementChat(
   if (toolData.mentionedAtlasManufacturers && toolData.mentionedAtlasManufacturers.size > 0) {
     result.mentionedAtlasManufacturers = [...toolData.mentionedAtlasManufacturers];
   }
+
+  // Observe-only grounded-MPN measurement (see docs/mpn-grounding-gate-plan.md).
+  observeAndLogGrounding(message, {
+    sourcePart: { mpn },
+    recommendations: [
+      ...(currentRecommendations ?? []),
+      ...Object.values(toolData.recommendations).flat(),
+    ].map(r => ({ mpn: r.part.mpn, manufacturer: r.part.manufacturer })),
+    mfrNames: toolData.mentionedAtlasManufacturers ? [...toolData.mentionedAtlasManufacturers] : undefined,
+    userMpns: extractUserMpnCandidates(messages),
+  }, { surface: 'refine', userId: userId ?? null, model: MODEL });
 
   return result;
 }
@@ -2358,6 +2389,19 @@ export async function listChat(
     (block): block is Anthropic.TextBlock => block.type === 'text'
   );
   const message = textBlocks.map(b => b.text).join('\n');
+
+  // Observe-only grounded-MPN measurement (see docs/mpn-grounding-gate-plan.md).
+  observeAndLogGrounding(message, {
+    recommendations: rows.flatMap(row => [
+      ...(row.resolvedPart ? [{ mpn: row.resolvedPart.mpn, manufacturer: row.resolvedPart.manufacturer }] : []),
+      ...(row.replacement ? [{ mpn: row.replacement.part.mpn, manufacturer: row.replacement.part.manufacturer }] : []),
+      ...(row.replacementAlternates ?? []).map(alt => ({ mpn: alt.part.mpn, manufacturer: alt.part.manufacturer })),
+    ]),
+    userMpns: [
+      ...rows.map(row => row.rawMpn).filter(Boolean),
+      ...extractUserMpnCandidates(messages),
+    ],
+  }, { surface: 'list', userId: userId ?? null, model: MODEL });
 
   return {
     message,
