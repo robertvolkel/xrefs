@@ -115,6 +115,10 @@ export interface DesktopLayoutProps {
   showRightPanel: boolean;
   isLoadingRecs: boolean;
   isEnrichingFC: boolean;
+  /** Whether distributor price/stock is shown on the recs panel. Off by default
+   *  per load; the panel's toggle flips it and launches the deferred FindChips fetch. */
+  commercialEnabled: boolean;
+  onToggleCommercial: () => void;
   // Manufacturer profile
   chatCollapsed: boolean;
   mfrOpen: boolean;
@@ -188,6 +192,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     isLoadingComparison = false, comparisonError = false,
     recommendations, allRecommendations, selectedRecommendation, conversationId,
     showAttributesPanel, showRightPanel, isLoadingRecs, isEnrichingFC,
+    commercialEnabled, onToggleCommercial,
     chatCollapsed, mfrOpen, mfrProfile, mfrSource, mfrLoading,
     historyOpen, conversations, convoLoading,
     onSearch, onConfirm, onReject, onReset,
@@ -447,6 +452,8 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
               onSelect={onSelectRecommendation}
               onManufacturerClick={onManufacturerClick}
               isEnrichingFC={isEnrichingFC}
+              commercialEnabled={commercialEnabled}
+              onToggleCommercial={onToggleCommercial}
               categoryFilter={xrefCategory}
               onCategoryFilterChange={setXrefCategory}
               mfrFilter={xrefMfr}

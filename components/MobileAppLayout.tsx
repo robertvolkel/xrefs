@@ -67,6 +67,9 @@ interface MobileAppLayoutProps {
   showRightPanel: boolean;
   isLoadingRecs: boolean;
   isEnrichingFC: boolean;
+  /** Price/stock visibility — off by default per load; toggle launches the FindChips fetch. */
+  commercialEnabled?: boolean;
+  onToggleCommercial?: () => void;
   /** Auto-check the "AEC-qualified only" Replacements filter on automotive AEC context. */
   autoAecOnly?: boolean;
   // Handlers
@@ -104,6 +107,8 @@ export default function MobileAppLayout({
   showRightPanel,
   isLoadingRecs,
   isEnrichingFC,
+  commercialEnabled,
+  onToggleCommercial,
   autoAecOnly,
   onSearch,
   onConfirm,
@@ -313,6 +318,8 @@ export default function MobileAppLayout({
                 onSelect={onSelectRecommendation}
                 onManufacturerClick={onManufacturerClick}
                 isEnrichingFC={isEnrichingFC}
+                commercialEnabled={commercialEnabled}
+                onToggleCommercial={onToggleCommercial}
                 autoAecOnly={autoAecOnly}
               />
             ) : (

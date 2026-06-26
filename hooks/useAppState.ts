@@ -54,6 +54,13 @@ interface AppState {
   comparisonAttributes: PartAttributes | null;
   llmAvailable: boolean | null; // null = not yet checked
   isEnrichingFC: boolean; // true while FindChips batch enrichment is in flight
+  /** Whether the user has opted into showing distributor price & stock on the
+   *  recommendations panel. We no longer auto-call FindChips when recs land —
+   *  the user clicks the "Price & stock" toggle to launch that fetch, so we
+   *  don't hammer the FindChips API on every part. This is a REMEMBERED
+   *  preference (persisted to localStorage): once on, it stays on for subsequent
+   *  parts and across reloads until the user turns it off (Decision #251). */
+  commercialEnabled: boolean;
   /** Active tab on the source-part attributes panel — lifted up from
    *  DesktopLayout so chat-message handlers (e.g., Best Spot Price) can
    *  programmatically switch tabs after computing a result. */
@@ -111,6 +118,7 @@ const initialState: AppState = {
   comparisonAttributes: null,
   llmAvailable: null,
   isEnrichingFC: false,
+  commercialEnabled: false,
   activeAttributesTab: 'overview',
   spotQuantity: 1,
   pendingIntent: null,
@@ -126,6 +134,20 @@ const initialState: AppState = {
 function buildUnsupportedMessage(mpn: string, subcategory: string): string {
   return `The application's cross-reference logic currently doesn't support **${subcategory}** components. ` +
     `I was able to load the attributes for **${mpn}**, but I can't evaluate replacements without a matching rules table for this category.`;
+}
+
+// Price/stock visibility is a remembered user preference (the user asked it to
+// be sticky). Persist it in localStorage so it survives across parts, resets,
+// AND page reloads. Defaults to OFF — we never auto-call FindChips until the
+// user has opted in at least once.
+const COMMERCIAL_PREF_KEY = 'xrefs:show-commercial';
+function readCommercialPref(): boolean {
+  if (typeof window === 'undefined') return false;
+  try { return window.localStorage.getItem(COMMERCIAL_PREF_KEY) === '1'; } catch { return false; }
+}
+function writeCommercialPref(value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(COMMERCIAL_PREF_KEY, value ? '1' : '0'); } catch { /* storage blocked — pref is best-effort */ }
 }
 
 export function useAppState() {
@@ -165,6 +187,15 @@ export function useAppState() {
   // bands without a render-time read. Unlike pendingOverridesRef, this is NOT
   // cleared after each search — a set band persists for the session.
   const acceptanceCriteriaRef = useRef<AcceptanceCriteria>({});
+  // Commercial (FindChips price/stock) display is opt-in and a REMEMBERED
+  // preference — once the user enables it, it stays on for subsequent parts and
+  // across reloads (persisted in localStorage). `commercialEnabledRef` mirrors
+  // state.commercialEnabled for async gating (recs-load auto-fetch + parts.io
+  // re-merge); `commercialFetchedRef` tracks whether we've already fetched FC
+  // for the CURRENT rec set, so toggling off/on doesn't re-hit the API (it
+  // resets on each new recs load so a sticky-on pref re-fetches for the new set).
+  const commercialEnabledRef = useRef(false);
+  const commercialFetchedRef = useRef(false);
   // Track whether context questions have been asked (ref avoids stale closure)
   const contextAskedRef = useRef(false);
   // Track whether the missing-attributes prompt has already been shown this xref cycle
@@ -193,6 +224,19 @@ export function useAppState() {
   useEffect(() => {
     searchResultRef.current = state.searchResult;
   }, [state.searchResult]);
+  useEffect(() => {
+    commercialEnabledRef.current = state.commercialEnabled;
+  }, [state.commercialEnabled]);
+  // Hydrate the remembered price/stock preference once on mount (client-only —
+  // initialState is OFF to keep SSR deterministic). No recs exist yet at mount,
+  // so this just primes the toggle's default for the first recs load.
+  useEffect(() => {
+    const pref = readCommercialPref();
+    if (pref) {
+      commercialEnabledRef.current = true;
+      setState((prev) => ({ ...prev, commercialEnabled: true }));
+    }
+  }, []);
   useEffect(() => {
     sourceAttributesRef.current = state.sourceAttributes;
   }, [state.sourceAttributes]);
@@ -471,6 +515,26 @@ export function useAppState() {
     []
   );
 
+  /** Opt-in commercial display, remembered as a preference. Flips the panel's
+   *  price/stock visibility, persists the choice, and — the first time it's
+   *  enabled for the current rec set — fires the deferred FindChips fetch.
+   *  Re-enabling after a hide is free: the data is already merged into the recs,
+   *  so we don't re-hit the API (commercialFetchedRef guards that). */
+  const handleToggleCommercial = useCallback(() => {
+    const willEnable = !commercialEnabledRef.current;
+    if (willEnable && !commercialFetchedRef.current && allRecsRef.current.length > 0) {
+      commercialFetchedRef.current = true;
+      // Reuse the active signal so a reset/new-search cancels this fetch too;
+      // if none is live, start a fresh controller (freshAbort no-ops the abort
+      // when abortRef is already null).
+      const signal = abortRef.current?.signal ?? freshAbort();
+      triggerFCEnrichment(allRecsRef.current, signal);
+    }
+    commercialEnabledRef.current = willEnable;
+    writeCommercialPref(willEnable);
+    setState((prev) => ({ ...prev, commercialEnabled: willEnable }));
+  }, [triggerFCEnrichment, freshAbort]);
+
   /** Background distributor-count enrichment for chat-search picker cards.
    *  Cards render immediately from `searchParts()` with `distributorCount` populated only
    *  for MPNs warm in the L2 cache. This helper closes the gap: fires FC for the
@@ -557,8 +621,12 @@ export function useAppState() {
             recsRef.current = visible;
             return { ...prev, recommendations: visible, allRecommendations: enrichedRecs };
           });
-          // Re-merge FC commercial data into the replaced recs (cache hit → instant).
-          triggerFCEnrichment(enrichedRecs, signal);
+          // Re-merge FC commercial data into the replaced recs (cache hit → instant)
+          // — only if the user has opted into commercial display. We don't auto-call
+          // FindChips anymore; the parts.io rescore must not silently re-trigger it.
+          if (commercialEnabledRef.current) {
+            triggerFCEnrichment(enrichedRecs, signal);
+          }
         })
         .catch(() => { /* parts.io down → keep Digikey-only recs */ });
     },
@@ -631,6 +699,10 @@ export function useAppState() {
       // active filter — a fresh recs load is a clean slate.
       recsRef.current = recs;
       allRecsRef.current = recs;
+      // Price/stock visibility is a REMEMBERED preference — it does NOT reset per
+      // load. A fresh recs set carries no FindChips data yet, so reset only the
+      // per-load fetched guard; if the preference is ON we re-fetch below.
+      commercialFetchedRef.current = false;
       setState((prev) => ({
         ...prev,
         phase: 'viewing',
@@ -693,8 +765,15 @@ export function useAppState() {
         }
         setStatus('');
 
-        // Background: FindChips candidate enrichment (pricing / lifecycle / risk).
-        triggerFCEnrichment(recs, signal);
+        // FindChips commercial enrichment (pricing / lifecycle / risk) is gated
+        // behind the panel's "Price & stock" toggle so we don't call FindChips on
+        // every part. But the toggle is a REMEMBERED preference — if the user
+        // already turned pricing on, honor it for this fresh recs set and fetch
+        // immediately. Otherwise it stays deferred until they click.
+        if (commercialEnabledRef.current) {
+          commercialFetchedRef.current = true;
+          triggerFCEnrichment(recs, signal);
+        }
 
         // Background: parts.io candidate enrichment (parametric gap-fill + rescore).
         if (opts?.deferredPartsio) {
@@ -1825,8 +1904,11 @@ export function useAppState() {
     allRecsRef.current = [];
     sourceAttributesRef.current = null;
     acceptanceCriteriaRef.current = {};
+    // Price/stock visibility is a remembered preference — preserve it across a
+    // reset (only the per-load fetched guard clears, since there are no recs).
+    commercialFetchedRef.current = false;
     setStatus('');
-    setState(initialState);
+    setState({ ...initialState, commercialEnabled: commercialEnabledRef.current });
   }, [setStatus]);
 
   // ============================================================
@@ -2063,6 +2145,7 @@ export function useAppState() {
     const llmWasUsed = snapshot.orchestratorMessages.length > 0;
 
     acceptanceCriteriaRef.current = {}; // acceptance criteria are session-only, not persisted
+    commercialFetchedRef.current = false; // remembered pref preserved; only the per-load fetched guard clears
     setState({
       conversationId: snapshot.id,
       phase,
@@ -2078,6 +2161,7 @@ export function useAppState() {
       comparisonAttributes: snapshot.comparisonAttributes,
       llmAvailable: llmWasUsed ? true : null,
       isEnrichingFC: false,
+      commercialEnabled: commercialEnabledRef.current, // remembered preference, not reset on hydrate
       activeAttributesTab: 'overview',
       spotQuantity: 1,
       pendingIntent: null,
@@ -2089,7 +2173,16 @@ export function useAppState() {
       chatAtlasMfrs: new Set<string>(),
       acceptanceCriteria: {},
     });
-  }, []);
+
+    // If the remembered price/stock preference is ON, fetch FindChips for the
+    // hydrated recs so the (already-visible) toggle has data behind it. The
+    // cache is warm if these recs were enriched before the conversation was
+    // saved, so this is cheap.
+    if (commercialEnabledRef.current && snapshot.recommendations.length > 0) {
+      commercialFetchedRef.current = true;
+      triggerFCEnrichment(snapshot.recommendations, freshAbort());
+    }
+  }, [triggerFCEnrichment, freshAbort]);
 
   /** Resolve an MPN typed inline by the assistant (or referenced anywhere
    *  the chat surfaces them) back to a PartSummary, then run the same
@@ -2141,6 +2234,7 @@ export function useAppState() {
     handleSkipContext,
     handleMpnClick,
     clearChatFilterSilently,
+    handleToggleCommercial,
     handleAcceptanceChange,
     setActiveAttributesTab,
     setSpotQuantity,

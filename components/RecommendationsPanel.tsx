@@ -1,9 +1,8 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Badge, Box, Checkbox, Chip, FormControlLabel, IconButton, LinearProgress, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
+import { Badge, Box, Button, Checkbox, Chip, CircularProgress, FormControlLabel, IconButton, LinearProgress, MenuItem, Popover, Select, Skeleton, Tooltip, Typography } from '@mui/material';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
-import AttachMoneyOutlinedIcon from '@mui/icons-material/MoneyOffOutlined';
 import { useTranslation } from 'react-i18next';
 import { XrefRecommendation, RecommendationCategory, PartStatus, deriveRecommendationCategories } from '@/lib/types';
 import { isAecQualified } from '@/lib/services/recommendationFilter';
@@ -67,16 +66,32 @@ interface RecommendationsPanelProps {
   /** When true (automotive-AEC context was selected), auto-check the
    *  "AEC-qualified only" filter once. The user can still uncheck it. */
   autoAecOnly?: boolean;
+  /** Controlled price/stock visibility. When provided (single-part view), the
+   *  "Price & stock" toggle reads this and calls `onToggleCommercial` — which
+   *  also launches the deferred FindChips fetch on first enable. We don't
+   *  auto-call FindChips on load, so price/stock is hidden until the user opts
+   *  in. Omit (modal chat / parts-list modal, where data is already fetched) to
+   *  fall back to local display-only state. */
+  commercialEnabled?: boolean;
+  onToggleCommercial?: () => void;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange, fullRecommendations, chatFilterLabel, onClearChatFilter, autoAecOnly = false }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange, fullRecommendations, chatFilterLabel, onClearChatFilter, autoAecOnly = false, commercialEnabled, onToggleCommercial }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
     [recommendations, preferredMpn],
   );
   const [showCnOnly, setShowCnOnly] = useState(false);
-  const [showCommercial, setShowCommercial] = useState(true);
+  // Price/stock display is controlled-with-fallback. In the single-part view the
+  // parent owns it (`commercialEnabled`/`onToggleCommercial`) so the toggle also
+  // launches the deferred FindChips fetch. Surfaces with no parent wiring (modal
+  // chat / parts-list modal) fall back to local state — there the data is already
+  // fetched, so it defaults to shown.
+  const commercialControlled = onToggleCommercial !== undefined;
+  const [localShowCommercial, setLocalShowCommercial] = useState(true);
+  const showCommercial = commercialControlled ? !!commercialEnabled : localShowCommercial;
+  const toggleCommercial = commercialControlled ? onToggleCommercial : () => setLocalShowCommercial((prev) => !prev);
   // Manufacturer + cross-ref-source filters are controlled-with-fallback: when the
   // parent passes them (single-part view, shared with the source-panel chips) we
   // read/write the parent's state; otherwise we fall back to local state (modal chat).
@@ -320,14 +335,39 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
 
         <Box sx={{ flex: 1 }} />
 
-        <Tooltip title={showCommercial ? 'Hide price & stock' : 'Show price & stock'}>
-          <IconButton
+        {/* Price & stock toggle. Distributor pricing/stock comes from FindChips,
+            which we DON'T auto-fetch on load — the user clicks here to launch it.
+            A labeled, outlined-vs-filled button is far more discoverable than a
+            bare $ icon while staying compact in the 45px filter row. */}
+        <Tooltip
+          title={showCommercial
+            ? 'Hide distributor price & stock'
+            : 'Show distributor price & stock (fetches live pricing from distributors)'}
+        >
+          <Button
             size="small"
-            onClick={() => setShowCommercial(prev => !prev)}
-            sx={{ p: 0.5, color: showCommercial ? 'primary.main' : 'text.secondary' }}
+            variant={showCommercial ? 'contained' : 'outlined'}
+            color="primary"
+            onClick={toggleCommercial}
+            startIcon={
+              showCommercial && isEnrichingFC
+                ? <CircularProgress size={12} color="inherit" />
+                : <AttachMoneyIcon sx={{ fontSize: 15 }} />
+            }
+            sx={{
+              height: 26,
+              px: 1,
+              minWidth: 0,
+              flexShrink: 0,
+              textTransform: 'none',
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              '& .MuiButton-startIcon': { mr: 0.5 },
+            }}
           >
-            {showCommercial ? <AttachMoneyIcon sx={{ fontSize: 18 }} /> : <AttachMoneyOutlinedIcon sx={{ fontSize: 18 }} />}
-          </IconButton>
+            {showCommercial && isEnrichingFC ? 'Loading…' : 'Price & stock'}
+          </Button>
         </Tooltip>
       </Box>
 

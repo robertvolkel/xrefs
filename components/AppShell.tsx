@@ -120,6 +120,8 @@ export default function AppShell() {
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
         isEnrichingFC={appState.isEnrichingFC}
+        commercialEnabled={appState.commercialEnabled}
+        onToggleCommercial={appState.handleToggleCommercial}
         autoAecOnly={appState.autoAecOnly}
         onSearch={appState.handleSearch}
         onConfirm={appState.handleConfirmPart}
@@ -160,6 +162,8 @@ export default function AppShell() {
         showRightPanel={panels.showRightPanel}
         isLoadingRecs={panels.isLoadingRecs}
         isEnrichingFC={appState.isEnrichingFC}
+        commercialEnabled={appState.commercialEnabled}
+        onToggleCommercial={appState.handleToggleCommercial}
         chatCollapsed={effectiveChatCollapsed}
         mfrOpen={mfr.mfrOpen}
         mfrProfile={mfr.mfrProfile}
