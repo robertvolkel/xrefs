@@ -534,7 +534,7 @@ Workflow:
 
    **(a) ASK** — parametric question about the current cards.
    Single MPN: call get_part_attributes. Multi-MPN or compound query (e.g. "which of these are AEC-Q200 AND ≤ 30mm AND active?"): call get_batch_attributes (max 10 MPNs). Answer from the returned data, then end with a brief offer to refine ("Want me to show just those?") so the user can iterate.
-   **Side-by-side comparison / a table across several parts** (e.g. "compare these", "show hFE and noise across the BC847 variants", "put their specs next to each other"): call **present_comparison** with the MPNs and the spec terms the user asked about. The system renders the table from live catalog data — NEVER hand-write a markdown comparison table (a typed table can carry a wrong value or an invented part number). After it renders, keep your text to at most 1–2 sentences that POINT TO the table. Do NOT restate specific values and do NOT assert which part is higher/lower/better on a spec — the table shows the numbers, and a restated ranking can contradict it (a real failure mode). Frame any guidance by what to look at, e.g. "for higher-voltage rails, compare the Vce column," NOT "the BC847B is rated higher."
+   **Side-by-side comparison / a table across several parts** (e.g. "compare these", "compare BC847B and BC846B", "show hFE and noise across the BC847 variants", "put their specs next to each other"): call **present_comparison** with the MPNs and the spec terms the user asked about. The system renders the table from live catalog data — NEVER hand-write a markdown comparison table (a typed table can carry a wrong value or an invented part number). This works from a cold start too: if the user NAMES the part numbers to compare, call present_comparison directly with those MPNs even when nothing is currently on screen — it looks them up itself, so do NOT run a search_parts first. If the tool reports some MPNs in its "notFound" list, say so plainly in your takeaway ("I couldn't find <MPN> in our catalog") and do NOT describe those parts from memory. After it renders, keep your text to at most 1–2 sentences that POINT TO the table. Do NOT restate specific values and do NOT assert which part is higher/lower/better on a spec — the table shows the numbers, and a restated ranking can contradict it (a real failure mode). Frame any guidance by what to look at, e.g. "for higher-voltage rails, compare the Vce column," NOT "the BC847B is rated higher."
 
    **(b) REFINE** — narrow the current cards to a chosen subset.
    When the user says "show me just those", "filter to V-0", "which of these...", call present_part_options with the matching MPNs from the search-result context. Cards re-render in chat. If you need to evaluate parameters not in the lightweight context, call get_batch_attributes first, then present_part_options on the qualifiers.
@@ -758,7 +758,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: 'present_comparison',
-    description: 'Render a side-by-side comparison TABLE of parts as an interactive element. Use this WHENEVER the user wants to compare parts or see specs across multiple parts (e.g. "compare these", "show hFE and noise across the BC847 variants", "which has the lowest Rds(on)?"). The SYSTEM builds the table from live catalog data — you MUST use this instead of hand-writing a markdown table, because a typed table can contain a wrong value or a fabricated part number. After it renders, write at most a brief 1–2 sentence takeaway that POINTS TO the table; do NOT repeat the table and do NOT assert which part is higher/lower/better on a spec (the table shows the numbers; a restated ranking can contradict it). MPNs must come from the current search-result / recommendation context.',
+    description: 'Render a side-by-side comparison TABLE of parts as an interactive element. Use this WHENEVER the user wants to compare parts or see specs across multiple parts (e.g. "compare these", "compare BC847B and BC846B", "show hFE and noise across the BC847 variants", "which has the lowest Rds(on)?"). The SYSTEM builds the table from live catalog data — you MUST use this instead of hand-writing a markdown table, because a typed table can contain a wrong value or a fabricated part number. After it renders, write at most a brief 1–2 sentence takeaway that POINTS TO the table; do NOT repeat the table and do NOT assert which part is higher/lower/better on a spec (the table shows the numbers; a restated ranking can contradict it). MPNs may come from the current search-result / recommendation context OR be part numbers the user names directly in their message — this tool looks each one up itself, so do NOT call search_parts first when the user already gave you the MPNs to compare. It reports any MPN it could not find (a "notFound" list) so you can tell the user plainly we don\'t carry it — never invent specs for a part that wasn\'t found.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -1152,39 +1152,65 @@ async function executeTool(
     }
     case 'present_comparison': {
       const inp = input as { mpns: string[]; attributes?: string[] };
-      const mpns = (inp.mpns ?? []).slice(0, 10);
-      if (mpns.length === 0) return JSON.stringify({ error: 'No MPNs supplied' });
+      const requested = (inp.mpns ?? []).slice(0, 10);
+      if (requested.length === 0) return JSON.stringify({ error: 'No MPNs supplied' });
       // Fetch each part the same way get_batch_attributes does (Digikey/parts.io/
       // Atlas/FindChips per MPN), then let the SYSTEM build the table — the model
       // never types the cells, so nothing can be fabricated (grounding plan step 4).
+      // Per-MPN failures (not carried, or a transient source error) are isolated:
+      // the part is recorded as not-found and reported back so the model can plainly
+      // say which parts aren't in the catalog (product decision #1) — never crashing
+      // the whole comparison and never dropping a miss silently.
       const CONCURRENCY = 5;
       const parts: ComparisonPartInput[] = [];
-      for (let i = 0; i < mpns.length; i += CONCURRENCY) {
-        const chunk = mpns.slice(i, i + CONCURRENCY);
+      const notFound: string[] = [];
+      for (let i = 0; i < requested.length; i += CONCURRENCY) {
+        const chunk = requested.slice(i, i + CONCURRENCY);
         const fetched = await Promise.all(chunk.map(async (mpn) => {
-          const attrs = await getAttributes(mpn, undefined, userId);
-          if (!attrs) return null;
-          data.attributes[mpn] = attrs;
-          return {
-            mpn: attrs.part.mpn,
-            manufacturer: attrs.part.manufacturer,
-            status: attrs.part.status,
-            qualifications: attrs.part.qualifications ?? [],
-            distributorCount: attrs.part.supplierQuotes?.length ?? 0,
-            parameters: attrs.parameters.map(p => ({ name: p.parameterName, value: p.value })),
-          } as ComparisonPartInput;
+          try {
+            const attrs = await getAttributes(mpn, undefined, userId);
+            if (!attrs) return { mpn, part: null };
+            data.attributes[mpn] = attrs;
+            return {
+              mpn,
+              part: {
+                mpn: attrs.part.mpn,
+                manufacturer: attrs.part.manufacturer,
+                status: attrs.part.status,
+                qualifications: attrs.part.qualifications ?? [],
+                distributorCount: attrs.part.supplierQuotes?.length ?? 0,
+                parameters: attrs.parameters.map(p => ({ name: p.parameterName, value: p.value })),
+              } as ComparisonPartInput,
+            };
+          } catch {
+            // Transient source failure (e.g. a parts.io fetch error) — treat as
+            // not-found for this part rather than failing the whole table.
+            return { mpn, part: null };
+          }
         }));
-        for (const f of fetched) if (f) parts.push(f);
+        for (const f of fetched) {
+          if (f.part) parts.push(f.part);
+          else notFound.push(f.mpn);
+        }
       }
       if (parts.length === 0) {
-        return JSON.stringify({ error: 'None of the requested MPNs could be looked up — no table rendered.' });
+        // Nothing resolved — no table. Tell the model plainly so it states we don't
+        // carry these and offers to search, never inventing specs for them.
+        return JSON.stringify({
+          rendered: false,
+          notFound,
+          error: `None of the requested part numbers were found in the catalog: ${notFound.join(', ')}. Tell the user plainly that we don't carry ${notFound.length > 1 ? 'these parts' : 'this part'}, and offer to search if they'd like. Do NOT describe specs for them from memory.`,
+        });
       }
       data.comparison = buildComparisonTable(parts, { preferredAttributes: inp.attributes });
       return JSON.stringify({
         rendered: true,
         parts: parts.map(p => p.mpn),
+        notFound,
         columns: data.comparison.columns.map(c => c.label),
-        note: 'Comparison table rendered to the user as an interactive element. Do NOT repeat the table in text — write only a brief 1-2 sentence takeaway.',
+        note: notFound.length > 0
+          ? `Comparison table rendered for the parts we carry (${parts.map(p => p.mpn).join(', ')}). NOT in our catalog: ${notFound.join(', ')} — say so plainly in your 1-2 sentence takeaway (e.g. "I couldn't find ${notFound[0]} in our catalog") and do NOT invent specs for it. Do NOT repeat the table.`
+          : 'Comparison table rendered to the user as an interactive element. Do NOT repeat the table in text — write only a brief 1-2 sentence takeaway.',
       });
     }
     case 'get_manufacturer_profile': {
