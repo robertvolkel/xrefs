@@ -1702,7 +1702,15 @@ export async function chat(
     sourcePart: currentSourceAttributes
       ? { mpn: currentSourceAttributes.part.mpn, manufacturer: currentSourceAttributes.part.manufacturer }
       : null,
-    attributeMpns: Object.keys(toolData.attributes),
+    attributeMpns: [
+      // BOTH the requested key AND the canonical resolved mpn. Digikey/parts.io/Atlas
+      // canonicalize (e.g. "BC847B" → "BC847BLT1G"), and the comparison table + the
+      // model's takeaway name the CANONICAL form — so it must be in the verified set,
+      // else the measurement flags a real looked-up part as a fabrication (and the
+      // future backstop would wrongly block it).
+      ...Object.keys(toolData.attributes),
+      ...Object.values(toolData.attributes).map((a) => a?.part?.mpn).filter((m): m is string => !!m),
+    ],
     mfrNames: toolData.mentionedAtlasManufacturers ? [...toolData.mentionedAtlasManufacturers] : undefined,
     userMpns: extractUserMpnCandidates(messages),
   }, { surface: 'chat', userId: userId ?? null, model: MODEL });
