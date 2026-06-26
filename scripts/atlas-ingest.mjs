@@ -3704,6 +3704,34 @@ async function fetchExistingProducts(mfrName) {
   return map;
 }
 
+// Lighter projection used ONLY by the translation backfill. It reads just
+// id + parameters (the diff inputs) + category (the one NOT-NULL-without-default
+// column the bulk-upsert payload needs); mpn is the Map key and upsert conflict
+// key. Dropping the heavy atlas_raw JSONB (and the other unused columns) roughly
+// halves the per-row read payload across the whole ~198K-row table. Do NOT fold
+// this into fetchExistingProducts — its report/proceed callers use
+// subcategory/family_id/etc. from the existing row.
+async function fetchExistingForBackfill(mfrName) {
+  const map = new Map();
+  let from = 0;
+  const PAGE = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('atlas_products')
+      .select('id, mpn, category, parameters')
+      .eq('manufacturer', mfrName)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`fetchExistingForBackfill: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const row of data) {
+      map.set(row.mpn, row);
+    }
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return map;
+}
+
 // ─── Markdown report writer ───────────────────────────────
 function writeMarkdownReport(report, batchId, mfrName, sourceFile, risk) {
   const safeName = mfrName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
@@ -4578,7 +4606,59 @@ async function runBackfillTranslations(mfrFilter) {
 
   let grandTotal = { scanned: 0, changed: 0, unchanged: 0, missing: 0, errors: 0 };
 
+  // ── Live progress heartbeat (admin-button runs only) ──────
+  // Gated on BACKFILL_EMIT_STATUS so terminal runs (npm run atlas:backfill,
+  // --mfr, --dry-run) never write to or lock the admin status row. The route
+  // passes the run's startedAt + logPath via env so we write a complete payload
+  // (matching the route's BackfillStatus shape) without a read-back. lastFinishedAt
+  // stays null here — the route's child 'close' listener owns finalization.
+  const EMIT_STATUS = process.env.BACKFILL_EMIT_STATUS === '1';
+  const STATUS_KEY = 'atlas-backfill-status';
+  const statusStartedAt = process.env.BACKFILL_STARTED_AT || new Date().toISOString();
+  const statusLogPath = process.env.BACKFILL_LOG_PATH || '';
+  const recentMfrs = [];       // last ~20 processed, newest first — the panel feed
+  let processedFiles = 0;
+  let currentMfr = null;
+  let lastEmitMs = 0;
+
+  async function emitStatus(force = false) {
+    if (!EMIT_STATUS || !supabase) return;
+    const now = Date.now();
+    // Throttle to <=1 write/sec: writing every MFR would be ~382 sequential
+    // round-trips and become the new bottleneck (defeating the speed fix).
+    if (!force && now - lastEmitMs < 1000) return;
+    lastEmitMs = now;
+    try {
+      await supabase.from('admin_stats_cache').upsert({
+        key: STATUS_KEY,
+        payload: {
+          lastStartedAt: statusStartedAt,
+          lastFinishedAt: null,
+          scanned: grandTotal.scanned,
+          changed: grandTotal.changed,
+          unchanged: grandTotal.unchanged,
+          missing: grandTotal.missing,
+          errors: grandTotal.errors,
+          logPath: statusLogPath,
+          exitCode: null,
+          totalFiles: filtered.length,
+          processedFiles,
+          currentMfr,
+          recentMfrs,
+          heartbeatAt: new Date().toISOString(),
+        },
+        computed_at: new Date().toISOString(),
+      }, { onConflict: 'key' });
+    } catch (err) {
+      // Best-effort — never fail the backfill over a status write.
+      console.error(`  [status] heartbeat write failed: ${err.message}`);
+    }
+  }
+
+  await emitStatus(true);   // initial: totalFiles known, 0 processed
+
   for (const filePath of filtered) {
+    processedFiles++;
     let mapResult;
     try {
       mapResult = mapManufacturerProducts(filePath);
@@ -4597,11 +4677,12 @@ async function runBackfillTranslations(mfrFilter) {
       continue;
     }
 
-    // Pull existing atlas_products for this MFR. fetchExistingProducts
-    // already paginates around the 1000-row PostgREST limit.
+    // Pull existing atlas_products for this MFR via the lighter backfill-only
+    // projection (id, mpn, category, parameters) — drops the heavy atlas_raw
+    // column the backfill never reads. Paginates around the 1000-row limit.
     let existingMap;
     try {
-      existingMap = await fetchExistingProducts(mfrName);
+      existingMap = await fetchExistingForBackfill(mfrName);
     } catch (err) {
       console.error(`  ${mfrName}: fetch failed — ${err.message}`);
       grandTotal.errors++;
@@ -4609,6 +4690,7 @@ async function runBackfillTranslations(mfrFilter) {
     }
 
     let mfrChanged = 0, mfrUnchanged = 0, mfrMissing = 0;
+    const toUpdate = [];   // minimal upsert rows for this MFR's changed products
 
     for (const np of mappedProducts) {
       grandTotal.scanned++;
@@ -4651,21 +4733,63 @@ async function runBackfillTranslations(mfrFilter) {
         }
       }
 
-      if (!dryRun) {
+      // Minimal upsert payload: conflict keys (mpn,manufacturer) + the only other
+      // NOT-NULL-without-default column (category) + the two columns we actually
+      // change. ON CONFLICT DO UPDATE touches only provided columns, so unprovided
+      // ones (atlas_raw, clean_description, …) stay intact — identical to the old
+      // per-row .update({ parameters, updated_at }). Excluding atlas_raw keeps each
+      // request body small (the Decision #193 statement_timeout trap).
+      toUpdate.push({
+        mpn: np.mpn,
+        manufacturer: mfrName,
+        category: existing.category,
+        parameters: merged,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // Bulk-upsert this MFR's changed rows — one round-trip per CHUNK instead of one
+    // per row. The speed fix: a full run's ~37K per-row UPDATEs (the dominant cost,
+    // ~1-2h) collapse to ~185 chunk round-trips. onConflict matches the unique index
+    // idx_atlas_products_mpn_mfr; every row already exists so the UPDATE branch always
+    // fires. Mirrors the --proceed path (CHUNK sizing per Decision #193).
+    if (!dryRun && toUpdate.length) {
+      const CHUNK = 200;
+      for (let i = 0; i < toUpdate.length; i += CHUNK) {
+        const chunk = toUpdate.slice(i, i + CHUNK);
         const { error } = await supabase
           .from('atlas_products')
-          .update({ parameters: merged, updated_at: new Date().toISOString() })
-          .eq('id', existing.id);
-        if (error) {
-          console.error(`    UPDATE ${np.mpn} failed: ${error.message}`);
-          grandTotal.errors++;
+          .upsert(chunk, { onConflict: 'mpn,manufacturer', ignoreDuplicates: false });
+        if (!error) continue;
+        // A chunk upsert is atomic: one bad row — or a statement_timeout on the
+        // whole chunk (the Decision #193 trap) — rolls back ALL rows in it. Retry
+        // row-by-row so a single offender can't sink the other ~199 valid rows,
+        // name the failing MPN in the log (the old per-row path did this), and
+        // count only the rows that truly fail rather than the whole chunk.
+        console.error(`    UPSERT chunk (${chunk.length} rows) failed: ${error.message} — retrying row-by-row`);
+        for (const row of chunk) {
+          const { error: rowErr } = await supabase
+            .from('atlas_products')
+            .upsert(row, { onConflict: 'mpn,manufacturer', ignoreDuplicates: false });
+          if (rowErr) {
+            console.error(`      UPSERT ${row.mpn} failed: ${rowErr.message}`);
+            grandTotal.errors++;
+          }
         }
       }
     }
 
     const verb = dryRun ? 'would change' : 'changed';
     console.log(`  ${mfrName.padEnd(35)} ${mfrChanged.toString().padStart(5)} ${verb} / ${mfrUnchanged} same / ${mfrMissing} missing`);
+
+    // Progress heartbeat (throttled; no-op unless admin-triggered).
+    currentMfr = mfrName;
+    recentMfrs.unshift({ name: mfrName, changed: mfrChanged, unchanged: mfrUnchanged, missing: mfrMissing });
+    if (recentMfrs.length > 20) recentMfrs.pop();
+    await emitStatus();
   }
+
+  await emitStatus(true);   // final flush so the last MFRs + counts show before the route finalizes
 
   console.log('─'.repeat(60));
   console.log(`Scanned ${grandTotal.scanned} / Changed ${grandTotal.changed} / Unchanged ${grandTotal.unchanged} / Missing ${grandTotal.missing} / Errors ${grandTotal.errors}`);

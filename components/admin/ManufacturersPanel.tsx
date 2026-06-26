@@ -23,6 +23,9 @@ import {
   Skeleton,
   InputAdornment,
   IconButton,
+  Collapse,
+  LinearProgress,
+  Paper,
 } from '@mui/material';
 import SearchOutlinedIcon from '@mui/icons-material/SearchOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -108,9 +111,20 @@ export default function ManufacturersPanel() {
     missing: number;
     errors: number;
     exitCode: number | null;
+    // Live progress (present only while in-flight; written by the script heartbeat)
+    totalFiles?: number;
+    processedFiles?: number;
+    currentMfr?: string | null;
+    recentMfrs?: Array<{ name: string; changed: number; unchanged: number; missing: number }>;
+    heartbeatAt?: string;
   } | null>(null);
   const [backfillSubmitting, setBackfillSubmitting] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  // Optimistic flag: keeps the progress panel open the instant the button is
+  // clicked (before the POST returns / the route compiles in dev), so the user
+  // gets immediate feedback instead of a dead 10-20s wait. Cleared once the run
+  // resolves (real status takes over) or the start fails.
+  const [backfillStarting, setBackfillStarting] = useState(false);
 
   useEffect(() => {
     getAtlasFlags('open').then((resp) => setFlaggedCount(resp.flags.length)).catch(() => {});
@@ -184,7 +198,7 @@ export default function ManufacturersPanel() {
       // worth it here. Instead let the next render's effect re-evaluate
       // `inFlight` and tear down on the next cycle.
       void before;
-    }, 10_000);
+    }, 1_500);
     return () => clearInterval(interval);
   }, [backfillStatus, fetchBackfillStatus]);
 
@@ -194,25 +208,64 @@ export default function ManufacturersPanel() {
   // just kicks the UI fetch. Tracked via ref so the transition detection
   // doesn't fire on every render.
   const prevFinishedAtRef = useRef<string | null>(null);
+  // Tracks whether we observed this run while it was in-flight, so we only show
+  // the "complete" toast for a run that finished WHILE the user watched — not for
+  // a pre-existing finished row that's simply present on mount. Set in render
+  // (see backfillInFlight below).
+  const sawInFlightRef = useRef(false);
+  // Holds the data the progress panel renders: an optimistic placeholder the
+  // instant the button is clicked, then live heartbeat snapshots, then the last
+  // in-flight snapshot retained through the Collapse exit animation.
+  const backfillProgressRef = useRef<typeof backfillStatus>(null);
   useEffect(() => {
     const cur = backfillStatus?.lastFinishedAt ?? null;
     if (cur && cur !== prevFinishedAtRef.current) {
-      void loadData(true);
+      // Run just finished. If we watched it run, replace the stale "started…"
+      // banner with an explicit completion message (the badge alone is too quiet).
+      if (sawInFlightRef.current) {
+        const changed = backfillStatus?.changed ?? 0;
+        const errors = backfillStatus?.errors ?? 0;
+        setBackfillMessage(
+          `Backfill complete — ${changed.toLocaleString()} product${changed === 1 ? '' : 's'} updated${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}.`,
+        );
+        sawInFlightRef.current = false;
+      }
+      // Serve the cached stats (which always exist) rather than forcing a
+      // synchronous cold recompute (?refresh=1) that can hang under post-backfill
+      // load and surface "Stats failed to refresh". The backfill route already
+      // kicked a background SWR recompute (invalidateManufacturersListCache), so
+      // fresh coverage lands shortly and shows on the next read.
+      void loadData(false);
     }
     prevFinishedAtRef.current = cur;
-  }, [backfillStatus?.lastFinishedAt, loadData]);
+  }, [backfillStatus?.lastFinishedAt, backfillStatus, loadData]);
 
   const handleRunBackfill = useCallback(async () => {
     setBackfillSubmitting(true);
     setBackfillMessage(null);
+    // Optimistic: render the panel immediately with a "Starting…" placeholder so
+    // the user gets instant feedback during the POST + script cold-start window.
+    // This placeholder has lastFinishedAt: null and no progress fields, so the
+    // panel shows "Starting…" + indeterminate bar until the first real heartbeat
+    // (or a real in-flight status) replaces it. It deliberately does NOT set
+    // backfillStatus, so the completion-toast logic (keyed on real status) is
+    // untouched.
+    backfillProgressRef.current = {
+      lastStartedAt: new Date().toISOString(),
+      lastFinishedAt: null,
+      scanned: 0, changed: 0, unchanged: 0, missing: 0, errors: 0,
+      exitCode: null,
+    };
+    setBackfillStarting(true);
     try {
       const res = await fetch('/api/admin/atlas/backfill-translations', { method: 'POST' });
       const json = await res.json();
       if (res.status === 202) {
-        setBackfillMessage('Backfill started — coverage will update in ~5 min.');
+        setBackfillMessage('Backfill started — coverage will update in a few minutes.');
         await fetchBackfillStatus();
       } else if (res.status === 409) {
         setBackfillMessage('A backfill is already running — please wait.');
+        await fetchBackfillStatus(); // sync the panel to the run that's actually going
       } else {
         setBackfillMessage(`Start failed: ${json?.error ?? `HTTP ${res.status}`}`);
       }
@@ -220,6 +273,7 @@ export default function ManufacturersPanel() {
       setBackfillMessage(`Start failed: ${err instanceof Error ? err.message : 'network error'}`);
     } finally {
       setBackfillSubmitting(false);
+      setBackfillStarting(false); // real status (if any) now drives the panel
     }
   }, [fetchBackfillStatus]);
 
@@ -328,6 +382,19 @@ export default function ManufacturersPanel() {
     });
     return list;
   }, [data, sortKey, sortDir, search]);
+
+  // Snapshot the last in-flight backfill status so the progress panel keeps its
+  // content (currentMfr/recentMfrs/totalFiles) through the Collapse EXIT
+  // animation. On completion the route's `close` write drops those progress-only
+  // fields, so rendering straight from `backfillStatus` would blank the panel
+  // before it could animate closed. Render-phase ref capture is the standard
+  // "remember previous value" pattern.
+  const backfillInFlight = !!(backfillStatus && !backfillStatus.lastFinishedAt);
+  if (backfillInFlight) {
+    backfillProgressRef.current = backfillStatus;
+    sawInFlightRef.current = true; // so the completion effect knows to toast "complete"
+  }
+  const backfillProgress = backfillProgressRef.current;
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -477,6 +544,66 @@ export default function ManufacturersPanel() {
                   {backfillMessage}
                 </Alert>
               )}
+
+              {/* Live backfill progress — inline panel while a run is in-flight.
+                  Fed by the script's throttled heartbeats on the admin_stats_cache
+                  status row (polled every 1.5s above). Collapses on completion;
+                  the badge then shows the summary. */}
+              <Collapse in={backfillStarting || backfillInFlight} unmountOnExit>
+                {backfillProgress && (() => {
+                  const total = backfillProgress.totalFiles ?? 0;
+                  const done = backfillProgress.processedFiles ?? 0;
+                  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                  const stalled = backfillProgress.heartbeatAt
+                    ? Date.now() - Date.parse(backfillProgress.heartbeatAt) > 30_000
+                    : false;
+                  return (
+                    <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 2, mb: 0.5 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                          {backfillProgress.currentMfr ? `Now: ${backfillProgress.currentMfr}` : 'Starting…'}
+                          {' · '}
+                          {backfillProgress.changed.toLocaleString()} changed / {backfillProgress.scanned.toLocaleString()} scanned
+                          {backfillProgress.errors > 0 ? ` · ${backfillProgress.errors} errors` : ''}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                          {total > 0 ? `${done} / ${total} manufacturers` : `${done} manufacturers`}
+                        </Typography>
+                      </Box>
+                      <LinearProgress
+                        variant={total > 0 ? 'determinate' : 'indeterminate'}
+                        value={pct}
+                        sx={{ height: 6, borderRadius: 1, mb: stalled ? 0.5 : 1 }}
+                      />
+                      {stalled && (
+                        <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 1 }}>
+                          No update in 30s+ — likely a large manufacturer, or the run stalled.
+                        </Typography>
+                      )}
+                      {!!backfillProgress.recentMfrs?.length && (
+                        <Box
+                          sx={{
+                            maxHeight: 160,
+                            overflowY: 'auto',
+                            fontFamily: 'monospace',
+                            fontSize: '0.7rem',
+                            lineHeight: 1.6,
+                            bgcolor: 'background.paper',
+                            borderRadius: 1,
+                            p: 1,
+                          }}
+                        >
+                          {backfillProgress.recentMfrs.map((m) => (
+                            <Box key={m.name} sx={{ whiteSpace: 'pre', color: 'text.secondary' }}>
+                              {`${m.name.padEnd(28).slice(0, 28)} ${String(m.changed).padStart(6)} changed / ${m.unchanged} same / ${m.missing} missing`}
+                            </Box>
+                          ))}
+                        </Box>
+                      )}
+                    </Paper>
+                  );
+                })()}
+              </Collapse>
 
               <TextField
                 size="small"
