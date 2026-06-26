@@ -50,16 +50,42 @@ const MISSING = '—';
 
 const norm = (s: string) => s.trim().toLowerCase();
 
-/** First parameter name in the data that loosely matches `term` (case-insensitive
- *  substring either direction, so "hFE" matches "DC Current Gain (hFE)"). */
+// Tokens that don't pin a concept (qualifiers/fillers) — ignored when token-matching a
+// requested spec term against a data param name.
+const GENERIC_TOKENS = new Set([
+  'max', 'min', 'typ', 'typical', 'maximum', 'minimum', 'rating', 'value', 'the', 'at', 'of', 'a',
+]);
+
+const tokenize = (s: string) => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+
+// Two tokens match if one is a prefix of the other (len ≥ 2) — so "vce" ≈ "vceo".
+const tokenPrefixMatch = (a: string, b: string) =>
+  a.length >= 2 && b.length >= 2 && (a.startsWith(b) || b.startsWith(a));
+
+/**
+ * First parameter name in the data that matches a requested `term`. Tries, in order:
+ * exact, substring either direction, then a token match where EVERY significant
+ * (non-generic) term token has a prefix-matching token in the name — so "Vce(max)"
+ * resolves to "Vceo Max (Collector-Emitter Voltage)" while "Vce(sat)" does not.
+ */
 function matchParamName(term: string, allNames: string[]): string | null {
   const t = norm(term);
   if (!t) return null;
+
   const exact = allNames.find((n) => norm(n) === t);
   if (exact) return exact;
-  return allNames.find((n) => {
+
+  const substr = allNames.find((n) => {
     const nn = norm(n);
     return nn.includes(t) || t.includes(nn);
+  });
+  if (substr) return substr;
+
+  const termToks = tokenize(term).filter((tok) => !GENERIC_TOKENS.has(tok));
+  if (termToks.length === 0) return null;
+  return allNames.find((n) => {
+    const nameToks = tokenize(n);
+    return termToks.every((tt) => nameToks.some((nt) => tokenPrefixMatch(tt, nt)));
   }) ?? null;
 }
 

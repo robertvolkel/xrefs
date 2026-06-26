@@ -84,4 +84,17 @@ describe('buildComparisonTable', () => {
     expect(t.rows[1].cells.qualifications).toBe('—');
     expect(t.rows[1].cells.distributors).toBe('11');
   });
+
+  it('token-matches a requested term to a differently-worded param ("Vce(max)" → "Vceo Max ...")', () => {
+    const parts: ComparisonPartInput[] = [
+      { mpn: 'BC847B', parameters: [{ name: 'Vceo Max (Collector-Emitter Voltage)', value: '45 V' }] },
+    ];
+    const matched = buildComparisonTable(parts, { preferredAttributes: ['Vce(max)'] });
+    expect(labels(matched)).toContain('Vceo Max (Collector-Emitter Voltage)');
+    expect(matched.rows[0].cells['p:Vceo Max (Collector-Emitter Voltage)']).toBe('45 V');
+
+    // But a genuinely different spec must NOT collide with it.
+    const notMatched = buildComparisonTable(parts, { preferredAttributes: ['Vce(sat)'] });
+    expect(labels(notMatched)).not.toContain('Vceo Max (Collector-Emitter Voltage)');
+  });
 });
