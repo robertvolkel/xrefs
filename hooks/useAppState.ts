@@ -1278,8 +1278,24 @@ export function useAppState() {
             : undefined;
 
           if (updatedRecs && updatedRecs.length > 0) {
-            // filter_recommendations tool returned results — update the list
-            setState((prev) => ({ ...prev, phase: 'viewing', recommendations: updatedRecs }));
+            // filter_recommendations tool returned results — narrow the panel AND
+            // register the filter (currentFilter/Label) when the server surfaced
+            // its spec. Without registering it, the narrowing is invisible to the
+            // chat "show all" path + the panel's active-filter pill, and the next
+            // background enrichment pass silently restores the full set (the
+            // enrichment re-apply at the top of this hook keys off currentFilter).
+            recsRef.current = updatedRecs;
+            setState((prev) => ({
+              ...prev,
+              phase: 'viewing',
+              recommendations: updatedRecs,
+              ...(response.appliedFilter
+                ? {
+                    currentFilter: response.appliedFilter.filterInput,
+                    currentFilterLabel: response.appliedFilter.label,
+                  }
+                : {}),
+            }));
           } else {
             // No search, no filtered recs — stay in viewing if we have recs, else idle
             setState((prev) => ({

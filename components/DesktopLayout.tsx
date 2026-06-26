@@ -155,8 +155,12 @@ export interface DesktopLayoutProps {
   onManufacturerClick: (manufacturer: string) => void;
   /** Silently clear any active chat-driven recommendation filter. Called when a
    *  source-panel cross-reference chip is clicked so those chips filter from the
-   *  part's full inventory rather than the agent's narrowed subset. */
+   *  part's full inventory rather than the agent's narrowed subset. Also drives
+   *  the Replacements panel's active-filter pill ✕ and its MFR-dropdown switch. */
   onClearChatFilter?: () => void;
+  /** Label of the active chat-driven filter (e.g. "onsemi") — surfaced as a
+   *  removable pill in the Replacements panel. Null when no chat filter is active. */
+  currentFilterLabel?: string | null;
   onExpandChat: () => void;
 
   // Handlers — history
@@ -190,7 +194,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
     onAttributeResponse, onSkipAttributes, onContextResponse, onSkipContext, onChoiceSelect,
     onQuantitySubmit,
     onSelectRecommendation, onBackToRecommendations,
-    onManufacturerClick, onClearChatFilter, onExpandChat,
+    onManufacturerClick, onClearChatFilter, currentFilterLabel, onExpandChat,
     onToggleHistory, onCloseHistory,
     onSelectConversation, onNewChat, onDeleteConversation, onClearAllConversations,
     knownMpns, onMpnClick,
@@ -437,6 +441,9 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
           ) : recommendations.length > 0 ? (
             <RecommendationsPanel
               recommendations={recommendations}
+              fullRecommendations={allRecommendations}
+              chatFilterLabel={currentFilterLabel}
+              onClearChatFilter={onClearChatFilter}
               onSelect={onSelectRecommendation}
               onManufacturerClick={onManufacturerClick}
               isEnrichingFC={isEnrichingFC}

@@ -307,7 +307,7 @@ const presentPartOptionsTool: Anthropic.Tool = {
   },
 };
 
-import { applyRecommendationFilter, type FilterInput } from './recommendationFilter';
+import { applyRecommendationFilter, describeFilterInput, type FilterInput } from './recommendationFilter';
 
 // applyRecommendationFilter + types moved to lib/services/recommendationFilter.ts
 // so the client-side filter-intent interception path can apply the same filter
@@ -855,6 +855,9 @@ interface ToolResultData {
   choices?: ChoiceOption[];
   /** Atlas-MFR canonical names looked up via get_manufacturer_profile this turn. */
   mentionedAtlasManufacturers?: Set<string>;
+  /** Filter spec when the LLM applied one via filter_recommendations — lets the
+   *  client register it as the active panel filter (currentFilter/Label). */
+  appliedFilter?: { filterInput: FilterInput; label: string };
 }
 
 // ==============================================================
@@ -1190,6 +1193,10 @@ async function executeTool(
       // Store the first MPN key we find, or use 'filtered'
       const key = Object.keys(data.recommendations)[0] ?? 'filtered';
       data.recommendations[key] = filtered;
+      // Surface the filter spec so the client can register it as the active
+      // panel filter — without this the narrowing is invisible to "show all"
+      // and gets wiped by the next enrichment pass.
+      data.appliedFilter = { filterInput, label: describeFilterInput(filterInput) };
       return JSON.stringify({
         total: sourceRecs.length,
         filtered: filtered.length,
@@ -1585,6 +1592,9 @@ export async function chat(
   }
   if (toolData.mentionedAtlasManufacturers && toolData.mentionedAtlasManufacturers.size > 0) {
     result.mentionedAtlasManufacturers = [...toolData.mentionedAtlasManufacturers];
+  }
+  if (toolData.appliedFilter) {
+    result.appliedFilter = toolData.appliedFilter;
   }
 
   return result;

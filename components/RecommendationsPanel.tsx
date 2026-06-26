@@ -48,12 +48,28 @@ interface RecommendationsPanelProps {
   /** Controlled manufacturer filter (shared with the source-panel MFR chips). */
   mfrFilter?: string;
   onMfrFilterChange?: (mfr: string) => void;
+  /** The part's FULL replacement inventory, BEFORE any agent-applied chat filter.
+   *  When provided (single-part view), the filter UI — manufacturer dropdown,
+   *  CN/AEC/category/status counts — is built from this so a chat filter that
+   *  narrowed the visible cards can't strand the dropdown on a single MFR. Cards
+   *  still render the (possibly narrowed) `recommendations`. Omit (modal chat /
+   *  mobile) to derive the filter UI from `recommendations` as before. */
+  fullRecommendations?: XrefRecommendation[];
+  /** Human-readable label of the active agent/chat filter (e.g. "onsemi"), if any.
+   *  Renders a removable pill so the narrowing is visible and clearable AT the
+   *  panel — independent of whatever the chat LLM believes is applied. */
+  chatFilterLabel?: string | null;
+  /** Clears the active agent/chat filter (restores the full inventory). Invoked by
+   *  the active-filter pill's ✕ and before switching manufacturers in the dropdown
+   *  (the dropdown and a chat manufacturer-filter are the same axis — they must
+   *  not compound, or picking a different MFR yields zero cards). */
+  onClearChatFilter?: () => void;
   /** When true (automotive-AEC context was selected), auto-check the
    *  "AEC-qualified only" filter once. The user can still uncheck it. */
   autoAecOnly?: boolean;
 }
 
-export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange, autoAecOnly = false }: RecommendationsPanelProps) {
+export default function RecommendationsPanel({ recommendations, onSelect, onManufacturerClick, loading, preferredMpn, onTogglePreferred, isEnrichingFC, hideZeroStock = false, compactHeader = false, categoryFilter, onCategoryFilterChange, mfrFilter, onMfrFilterChange, fullRecommendations, chatFilterLabel, onClearChatFilter, autoAecOnly = false }: RecommendationsPanelProps) {
   const { t } = useTranslation();
   const sorted = useMemo(
     () => sortRecommendationsForDisplay(recommendations, preferredMpn),
@@ -88,20 +104,29 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   // all shown (Decision #232 default). A status is only listed if some rec carries it.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<PartStatus>>(new Set());
 
-  const manufacturers = [...new Set(sorted.map(r => r.part.manufacturer))].sort();
-  const cnManufacturers = useMemo(() => new Set(sorted.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [sorted]);
+  // The filter UI (MFR dropdown, CN/AEC/category/status counts) is derived from
+  // the part's FULL inventory when supplied, so an agent-applied chat filter that
+  // narrowed the visible cards can't strand the dropdown on the single surviving
+  // MFR. Falls back to the rendered set (modal chat / mobile have no chat filter).
+  const filterSource = useMemo(
+    () => sortRecommendationsForDisplay(fullRecommendations ?? recommendations, preferredMpn),
+    [fullRecommendations, recommendations, preferredMpn],
+  );
+
+  const manufacturers = useMemo(() => [...new Set(filterSource.map(r => r.part.manufacturer))].sort(), [filterSource]);
+  const cnManufacturers = useMemo(() => new Set(filterSource.filter(r => r.dataSource === 'atlas').map(r => r.part.manufacturer)), [filterSource]);
   const displayedManufacturers = showCnOnly ? manufacturers.filter(m => cnManufacturers.has(m)) : manufacturers;
 
-  const cnCount = useMemo(() => sorted.filter(r => r.dataSource === 'atlas').length, [sorted]);
-  const aecCount = useMemo(() => sorted.filter(isAecQualified).length, [sorted]);
+  const cnCount = useMemo(() => filterSource.filter(r => r.dataSource === 'atlas').length, [filterSource]);
+  const aecCount = useMemo(() => filterSource.filter(isAecQualified).length, [filterSource]);
 
-  // Per-status counts over the FULL set (mirrors aecCount/cnCount) — used to label the
-  // checkboxes and decide which statuses to surface at all.
+  // Per-status counts over the full inventory — used to label the checkboxes and
+  // decide which statuses to surface at all.
   const statusCounts = useMemo(() => {
     const m = new Map<PartStatus, number>();
-    for (const r of sorted) m.set(r.part.status, (m.get(r.part.status) ?? 0) + 1);
+    for (const r of filterSource) m.set(r.part.status, (m.get(r.part.status) ?? 0) + 1);
     return m;
-  }, [sorted]);
+  }, [filterSource]);
   const presentStatuses = useMemo(() => STATUS_ORDER.filter(s => statusCounts.has(s)), [statusCounts]);
   // Hidden statuses that are actually present (guards against a stale hidden entry for a
   // status the current part has no candidates in — keeps the chip/filter count honest).
@@ -126,6 +151,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
     setSelectedCategory('all');
     setAecOnly(false);
     setHiddenStatuses(new Set());
+    onClearChatFilter?.();
   };
 
   const handleToggleStatus = (status: PartStatus, checked: boolean) => {
@@ -147,12 +173,12 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   // Category counts
   const categoryCounts = useMemo(() => {
     const counts = { logic_driven: 0, manufacturer_certified: 0, third_party_certified: 0 };
-    for (const rec of sorted) {
+    for (const rec of filterSource) {
       const cats = deriveRecommendationCategories(rec);
       for (const c of cats) counts[c]++;
     }
     return counts;
-  }, [sorted]);
+  }, [filterSource]);
   const hasMultipleCategories = Object.values(categoryCounts).filter(c => c > 0).length > 1
     || categoryCounts.manufacturer_certified > 0 || categoryCounts.third_party_certified > 0;
 
@@ -247,6 +273,20 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
             </Badge>
           </IconButton>
         </Tooltip>
+
+        {/* Active agent/chat filter — rendered as a removable pill so the
+            narrowing is visible and clearable AT the panel, even when the chat
+            LLM has lost track of it. Filled primary to distinguish it from the
+            panel-local outlined chips below. */}
+        {chatFilterLabel && onClearChatFilter && (
+          <Chip
+            label={chatFilterLabel}
+            size="small"
+            color="primary"
+            onDelete={onClearChatFilter}
+            sx={{ height: 20, fontSize: '0.68rem', '& .MuiChip-deleteIcon': { fontSize: 14 } }}
+          />
+        )}
 
         {/* Inline dismissible chips for active (user-initiated) filters */}
         {selectedMfr && (
@@ -348,7 +388,14 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
         )}
         <Select
           value={selectedMfr}
-          onChange={(e) => setSelectedMfr(e.target.value)}
+          onChange={(e) => {
+            // Switching manufacturers must clear any active chat filter first —
+            // the dropdown is built from the FULL inventory, so without clearing,
+            // picking an MFR that the chat filter excluded would intersect to zero
+            // cards. (No-op when no chat filter is active.)
+            onClearChatFilter?.();
+            setSelectedMfr(e.target.value);
+          }}
           displayEmpty
           variant="outlined"
           size="small"

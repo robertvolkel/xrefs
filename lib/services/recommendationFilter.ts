@@ -35,6 +35,31 @@ export interface FilterInput {
   aec_qualified_only?: boolean;
 }
 
+/** Human-readable label for a FilterInput, matching the conventions in
+ *  filterIntentDetector's sub-detectors. Used to populate `currentFilterLabel`
+ *  when the LLM applies a filter via its tool (the deterministic path already
+ *  carries a label). Compound filters join their parts with " + ". */
+export function describeFilterInput(f: FilterInput): string {
+  const parts: string[] = [];
+  if (f.manufacturer_filter) parts.push(f.manufacturer_filter);
+  if (f.mfr_origin_filter) parts.push(f.mfr_origin_filter === 'atlas' ? 'Chinese MFRs' : 'Western MFRs');
+  if (f.category_filter) {
+    parts.push(
+      f.category_filter === 'third_party_certified' ? 'Accuris-certified'
+        : f.category_filter === 'manufacturer_certified' ? 'MFR-certified'
+        : 'logic-driven',
+    );
+  }
+  if (typeof f.min_match_percentage === 'number') parts.push(`≥${f.min_match_percentage}% match`);
+  if (f.aec_qualified_only) parts.push('AEC-qualified');
+  if (f.exclude_obsolete) parts.push('active parts');
+  if (f.exclude_failing_parameters?.length) parts.push('no failing params');
+  if (f.attribute_filters?.length) {
+    for (const a of f.attribute_filters) parts.push(`${a.parameter} ${a.operator} ${a.value}`);
+  }
+  return parts.length > 0 ? parts.join(' + ') : 'filtered';
+}
+
 const AEC_ATTRIBUTE_IDS = new Set(['aec_q200', 'aec_q101', 'aec_q100']);
 
 /** Whether a recommendation is explicitly AEC-qualified — via an AEC matchDetail that

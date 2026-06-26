@@ -187,6 +187,7 @@ export default function AppShell() {
         onBackToRecommendations={appState.handleBackToRecommendations}
         onManufacturerClick={mfr.handleManufacturerClick}
         onClearChatFilter={appState.clearChatFilterSilently}
+        currentFilterLabel={appState.currentFilterLabel}
         onExpandChat={mfr.handleExpandChat}
         onToggleHistory={() => persistence.setHistoryOpen(!persistence.historyOpen)}
         onCloseHistory={() => persistence.setHistoryOpen(false)}

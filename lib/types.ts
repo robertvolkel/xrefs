@@ -866,6 +866,13 @@ export interface OrchestratorResponse {
    *  can linkify those names in the assistant's prose without waiting for the
    *  user to click anything. Decision #203 (clickable Atlas-MFR mentions). */
   mentionedAtlasManufacturers?: string[];
+  /** Set when the LLM applied a panel filter via the `filter_recommendations`
+   *  tool. The server pre-applies the filter and returns the narrowed recs in
+   *  `recommendations`; this carries the *spec* so the client can register it as
+   *  the active filter (`currentFilter`/`currentFilterLabel`). Without it, an
+   *  LLM-applied filter is invisible to the panel + chat "show all" path and is
+   *  silently undone by the next background enrichment pass. */
+  appliedFilter?: { filterInput: import('./services/recommendationFilter').FilterInput; label: string };
 }
 
 // ============================================================
