@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
-import { looksLikeMpn } from './searchSummary';
+import { looksLikeMpn, mentionsMpn } from './searchSummary';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
@@ -1090,6 +1090,14 @@ async function executeTool(
         // Vetting: union model + extraction (completeness → stable ranking).
         const merged = [...(modelConstraints ?? []), ...(extracted?.constraints ?? [])];
         constraints = merged.length ? merged : undefined;
+      } else {
+        // MPN lookup (the turn names a specific part). Spec-vetting is a
+        // greenfield-only feature; drop any partType/constraints the model
+        // attached so a part-number request can never be scored against
+        // fabricated specs and tagged "Below spec" — independent of whatever
+        // query string the model chose to send.
+        partType = undefined;
+        constraints = undefined;
       }
 
       // Pass manufacturer through to the Atlas-side filter so generic MPNs
@@ -1558,7 +1566,11 @@ export async function chat(
   const userText = (typeof lastUser?.content === 'string' ? lastUser.content : '').trim();
   // Greenfield = a descriptive (non-MPN) turn. On these the server owns the search
   // (one stable spec-driven search) — see partitionToolUses / the search_parts branch.
-  const isGreenfield = userText.length > 0 && !looksLikeMpn(userText);
+  // `mentionsMpn` guards the sentence case: "I need replacements for BC847CLT3G from
+  // On Semi" is multi-word (so !looksLikeMpn) yet names a specific part — it must NOT
+  // be greenfield, or it would run spec-vetting and tag the part's neighbours
+  // "Below spec".
+  const isGreenfield = userText.length > 0 && !looksLikeMpn(userText) && !mentionsMpn(userText);
 
   // Collect structured data from tool calls
   const toolData: ToolResultData = {

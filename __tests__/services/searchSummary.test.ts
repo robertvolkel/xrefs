@@ -1,4 +1,4 @@
-import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
+import { buildSearchSummary, looksLikeMpn, mentionsMpn } from '@/lib/services/searchSummary';
 import type { PartSummary, SearchResult } from '@/lib/types';
 
 function part(overrides: Partial<PartSummary> = {}): PartSummary {
@@ -112,5 +112,31 @@ describe('looksLikeMpn (relocated — behavior preserved)', () => {
 
   it('returns false for empty input', () => {
     expect(looksLikeMpn('   ')).toBe(false);
+  });
+});
+
+describe('mentionsMpn (greenfield-vs-part-specific classifier)', () => {
+  it('detects a specific part number named inside a natural-language sentence', () => {
+    expect(mentionsMpn('I need replacements for BC847CLT3G from On Semi')).toBe(true);
+    expect(mentionsMpn('cross reference LM358 please')).toBe(true);
+    expect(mentionsMpn('find me alternatives to 2N2222')).toBe(true);
+    expect(mentionsMpn('what can I use instead of IRF540N?')).toBe(true);
+    expect(mentionsMpn('replacements for 1.5KE10 and similar')).toBe(true);
+    expect(mentionsMpn('subs for MMUN2233LT1G')).toBe(true);
+  });
+
+  it('does NOT flag genuine descriptive (greenfield) searches', () => {
+    expect(mentionsMpn('12V 5A N-channel MOSFET')).toBe(false);
+    expect(mentionsMpn('low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400')).toBe(false);
+    expect(mentionsMpn('X7R 10uF 25V 0805 capacitor')).toBe(false);
+    expect(mentionsMpn('buck converter 5V to 3.3V at 2A')).toBe(false);
+    expect(mentionsMpn('NPN transistor in SOT-23, 45V 100mA')).toBe(false);
+    expect(mentionsMpn('100MHz crystal 18pF')).toBe(false);
+    expect(mentionsMpn('automotive AEC-Q200 MLCC 1uF')).toBe(false);
+    expect(mentionsMpn('I need a transistor')).toBe(false);
+  });
+
+  it('returns false for empty input', () => {
+    expect(mentionsMpn('   ')).toBe(false);
   });
 });

@@ -26,6 +26,44 @@ export function looksLikeMpn(query: string): boolean {
 }
 
 /**
+ * Does the text MENTION a specific part number anywhere inside a longer phrase?
+ *
+ * Distinct from `looksLikeMpn`, which asks whether the WHOLE string is an MPN.
+ * A natural-language request can name a specific part inside a sentence —
+ * "I need replacements for BC847CLT3G from On Semi" — and that is NOT a
+ * greenfield (describe-what-you-want) turn: the user named the exact part. The
+ * greenfield classifier used `!looksLikeMpn(userText)` alone, which is true for
+ * any multi-word sentence, so an MPN buried in prose was wrongly treated as
+ * greenfield → it ran spec-vetting and tagged the named part's neighbours
+ * "Below spec".
+ *
+ * We scan tokens for one that looks like a real MPN while EXCLUDING the
+ * value / range / size / package / qualification tokens that legitimately
+ * appear in descriptive searches (12V, 0.1A, 1–2mA, 0805, X7R, SOT-23,
+ * AEC-Q200), so genuine greenfield queries stay greenfield. The asymmetry is
+ * deliberate: a false positive only costs the (mild) loss of fit-ranking on a
+ * descriptive search, whereas a false negative reintroduces the wrong
+ * "Below spec" labels — so the detector leans toward catching MPNs.
+ */
+export function mentionsMpn(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  for (const raw of trimmed.split(/\s+/)) {
+    // Strip surrounding punctuation; keep internal - . / which appear in MPNs.
+    const tok = raw.replace(/^[^A-Za-z0-9]+/, '').replace(/[^A-Za-z0-9]+$/, '');
+    if (tok.length < 5) continue;                               // too short: X7R, 12V, 5A
+    if (!/[A-Za-z]/.test(tok) || !/\d/.test(tok)) continue;     // need BOTH a letter and a digit
+    if (/^\d+(\.\d+)?[a-zµΩ%]{1,4}$/i.test(tok)) continue;      // value+unit: 470uF, 4.7kohm, 250mw
+    if (/^\d+(\.\d+)?[-–—~]\d+(\.\d+)?[a-zµΩ%]*$/i.test(tok)) continue; // range: 1–2mA, 200-400, 9-12v
+    if (/^\d+$/.test(tok)) continue;                            // pure number / size code: 0805, 1206
+    if (/^(sot|soic|tssop|msop|qfn|qfp|tqfp|lqfp|bga|dpak|d2pak|to|do|sod|son|dfn|wlcsp|sip|dip|pdip|sc)-?\d/i.test(tok)) continue; // package family: SOT-23, TO220, DO-214
+    if (/^aec-?q\d/i.test(tok)) continue;                       // qualification: AEC-Q200
+    return true;                                                // looks like a real part number
+  }
+  return false;
+}
+
+/**
  * Deterministic chat message for GREENFIELD (descriptive / no-MPN) search presentation —
  * replaces the orchestrator's free prose on this surface.
  *
