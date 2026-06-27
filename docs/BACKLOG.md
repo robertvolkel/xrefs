@@ -82,6 +82,12 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 ---
 
+## ~~`present_choices` button labels are unreconciled LLM free text (audit follow-up to Decision #255)~~ COMPLETED June 27, 2026
+
+Fixed in the Decision #255 follow-up: [choiceGuard.ts](../lib/services/choiceGuard.ts) `sanitizeChoiceOptions` (wired into the `present_choices` handler) deterministically strips `mpn`/`manufacturer`, neuters `confirm_part`→`other`, and drops any choice whose label names a part (`mentionsMpn`); tool schema tightened to remove the `confirm_part`/`mpn`/`manufacturer` affordances. Residual accepted ceiling: a categorical label could still embed a *spec value* in prose (e.g. "the low-noise option") — not distinguishable from legitimate category text and not the concrete fabrication vector the audit flagged. 5 unit tests.
+
+---
+
 ## Grounded-MPN gate — follow-ups (branch `feat/grounded-mpn-detection`, plan `docs/mpn-grounding-gate-plan.md`)
 
 **Context.** The grounded-MPN effort guarantees the chat assistant never serves a part number it didn't pull from the catalog. Foundation (accumulated verified set), observe-only measurement, and the deterministic comparison-table renderer are built (steps 1–4). The backstop gate (step 5) follows. Items below are deferred/known, captured during the pre-backstop code review (commit `4acf54d`).

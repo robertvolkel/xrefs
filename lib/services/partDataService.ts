@@ -421,7 +421,12 @@ export async function searchParts(
   const isMpn = looksLikeMpn(trimmed);
   const longEnough = trimmed.length >= 3;
   const mfrHint = options?.manufacturer?.trim() || undefined;
-  const constraints = options?.constraints?.length ? options.constraints : undefined;
+  // Ignore spec constraints on MPN lookups. The chat LLM sometimes attaches invented
+  // specs to a part-number request (e.g. "replacements for BC847CLT3G"), which would
+  // wrongly trigger the logic-vetted descriptive path — scoring the part's own keyword
+  // neighbors against fabricated specs and tagging them "Below spec". Constraints are
+  // only meaningful for genuine descriptive (greenfield) searches.
+  const constraints = !isMpn && options?.constraints?.length ? options.constraints : undefined;
 
   // Stable signature of the vetting inputs (constraints + partType) so a
   // logic-vetted search doesn't collide with a constraint-less search of the
