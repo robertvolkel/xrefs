@@ -1410,9 +1410,27 @@ export function useAppState() {
         { text: 'Checking price and availability...', delayMs: 2800 },
         { text: 'Analyzing supply risk...', delayMs: 4500 },
       ]);
-      // New part confirmed — drop any acceptance criteria set against the previous part.
+      // New part confirmed — drop acceptance criteria AND every field DERIVED from the
+      // PREVIOUS part. Without this, the bottom "Cross References" section (which reads
+      // allRecommendations — Decision #229) keeps showing the old part's crosses: the LLM
+      // confirm path doesn't auto-recompute replacements (button-driven), so the stale set
+      // lingers indefinitely; the deterministic path would otherwise flash them until
+      // loadAttributesAndRecommendations repopulates. Mirrors the search-reset (the path
+      // that already cleared these), closing the divergence that caused the bug.
       acceptanceCriteriaRef.current = {};
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
+      setState((prev) => ({
+        ...prev,
+        phase: 'loading-attributes',
+        sourcePart: part,
+        acceptanceCriteria: {},
+        recommendations: [],
+        allRecommendations: [],
+        selectedRecommendation: null,
+        comparisonAttributes: null,
+        applicationContext: null,
+        currentFilter: null,
+        currentFilterLabel: null,
+      }));
 
       // Tell the LLM the user confirmed
       conversationRef.current.push({
@@ -1542,9 +1560,27 @@ export function useAppState() {
 
   const handleConfirmDeterministic = useCallback(
     async (part: PartSummary) => {
-      // New part confirmed — drop any acceptance criteria set against the previous part.
+      // New part confirmed — drop acceptance criteria AND every field DERIVED from the
+      // PREVIOUS part. Without this, the bottom "Cross References" section (which reads
+      // allRecommendations — Decision #229) keeps showing the old part's crosses: the LLM
+      // confirm path doesn't auto-recompute replacements (button-driven), so the stale set
+      // lingers indefinitely; the deterministic path would otherwise flash them until
+      // loadAttributesAndRecommendations repopulates. Mirrors the search-reset (the path
+      // that already cleared these), closing the divergence that caused the bug.
       acceptanceCriteriaRef.current = {};
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
+      setState((prev) => ({
+        ...prev,
+        phase: 'loading-attributes',
+        sourcePart: part,
+        acceptanceCriteria: {},
+        recommendations: [],
+        allRecommendations: [],
+        selectedRecommendation: null,
+        comparisonAttributes: null,
+        applicationContext: null,
+        currentFilter: null,
+        currentFilterLabel: null,
+      }));
       await loadAttributesAndRecommendations(part);
     },
     [addMessage, loadAttributesAndRecommendations]
