@@ -249,11 +249,24 @@ function isFcObsolete(results: FCDistributorResult[] | null): boolean {
 }
 
 // ============================================================
-// RATE LIMITER (60/min, 5000/day — adjust based on FC API docs)
+// RATE LIMITER
 // ============================================================
+// FindChips is our INTERNAL aggregator API with no published per-minute/daily
+// quota, so these caps are high SAFETY CEILINGS (a backstop against a runaway
+// loop), NOT a throttle on normal use. They were previously 60/min, 5000/day —
+// which serialized a single ~70-candidate part's price/stock fetch into >1
+// minute (60 calls go through, then a forced ~60s wait, then the remainder).
+// All three knobs are env-tunable so production can adjust without a code change.
 
-const PER_MINUTE_CAP = 60;
-const DAILY_CAP = 5000;
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const PER_MINUTE_CAP = envInt('FINDCHIPS_PER_MINUTE_CAP', 1200);
+const DAILY_CAP = envInt('FINDCHIPS_DAILY_CAP', 200_000);
 
 let callsThisMinute = 0;
 let callsToday = 0;
@@ -495,7 +508,9 @@ export async function getCachedDistributorCounts(
 // PUBLIC API — Batch MPNs
 // ============================================================
 
-const BATCH_CONCURRENCY = 5;
+// Concurrent in-flight FindChips fetches. Raised 5 → 20 (internal API): a
+// ~70-candidate part now fans out in ~4 rounds instead of 14. Env-tunable.
+const BATCH_CONCURRENCY = envInt('FINDCHIPS_BATCH_CONCURRENCY', 20);
 
 export interface GetFindchipsBatchOptions {
   /** Lowercase MPNs that should fire OEMS in parallel with FC (Chinese MFRs). */
@@ -517,7 +532,7 @@ async function runConcurrent<T>(items: T[], concurrency: number, fn: (item: T) =
  * Fetch FindChips results for multiple MPNs in parallel.
  *
  * Two-phase fetch when OEMS gating is in play:
- *   Phase 1: fan out FC for every MPN (concurrency = 5).
+ *   Phase 1: fan out FC for every MPN (concurrency = BATCH_CONCURRENCY).
  *   Phase 2: for each MPN that's (a) flagged Chinese, (b) FC empty, or
  *            (c) FC reports obsolete/EOL — fan out OEMS, merge into result.
  *
