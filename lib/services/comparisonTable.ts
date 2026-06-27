@@ -63,30 +63,50 @@ const tokenPrefixMatch = (a: string, b: string) =>
   a.length >= 2 && b.length >= 2 && (a.startsWith(b) || b.startsWith(a));
 
 /**
- * First parameter name in the data that matches a requested `term`. Tries, in order:
- * exact, substring either direction, then a token match where EVERY significant
- * (non-generic) term token has a prefix-matching token in the name — so "Vce(max)"
- * resolves to "Vceo Max (Collector-Emitter Voltage)" while "Vce(sat)" does not.
+ * Score how well a data param `name` matches a requested `term` (higher = better,
+ * null = no match). Tiers: exact > whole-word token > substring > token-prefix. Within a
+ * tier, prefer the TIGHTER name (fewer extra words) and a name whose HEAD noun (last
+ * token) matches the term's last token — so "current" picks "Continuous Collector
+ * Current" over "DC Current Gain (hFE)" instead of grabbing whichever appears first
+ * (review finding #1). The token tiers require EVERY significant (non-generic) term
+ * token to match, so "Vce(sat)" still won't collide with "Vceo Max (...)".
  */
-function matchParamName(term: string, allNames: string[]): string | null {
+function scoreParamMatch(term: string, name: string): number | null {
   const t = norm(term);
   if (!t) return null;
-
-  const exact = allNames.find((n) => norm(n) === t);
-  if (exact) return exact;
-
-  const substr = allNames.find((n) => {
-    const nn = norm(n);
-    return nn.includes(t) || t.includes(nn);
-  });
-  if (substr) return substr;
+  const nn = norm(name);
+  if (nn === t) return 1000;
 
   const termToks = tokenize(term).filter((tok) => !GENERIC_TOKENS.has(tok));
-  if (termToks.length === 0) return null;
-  return allNames.find((n) => {
-    const nameToks = tokenize(n);
-    return termToks.every((tt) => nameToks.some((nt) => tokenPrefixMatch(tt, nt)));
-  }) ?? null;
+  const nameToks = tokenize(name);
+  const isSubstr = nn.includes(t) || t.includes(nn);
+  const wholeWord = termToks.length > 0 && termToks.every((tt) => nameToks.includes(tt));
+  const tokenPrefix =
+    termToks.length > 0 && termToks.every((tt) => nameToks.some((nt) => tokenPrefixMatch(tt, nt)));
+
+  if (!isSubstr && !wholeWord && !tokenPrefix) return null;
+
+  let score = wholeWord ? 600 : isSubstr ? 400 : 200;
+  score -= nameToks.length; // tighter (fewer extra words) wins ties
+  // Head-noun bonus: a spec's subject is usually its last word.
+  const lastName = nameToks[nameToks.length - 1];
+  const lastTerm = termToks[termToks.length - 1];
+  if (lastName && lastTerm && tokenPrefixMatch(lastTerm, lastName)) score += 5;
+  return score;
+}
+
+/** Best parameter name in the data for a requested `term` (see scoreParamMatch). */
+function matchParamName(term: string, allNames: string[]): string | null {
+  let best: string | null = null;
+  let bestScore = -Infinity;
+  for (const name of allNames) {
+    const s = scoreParamMatch(term, name);
+    if (s !== null && s > bestScore) {
+      bestScore = s;
+      best = name;
+    }
+  }
+  return best;
 }
 
 /**
@@ -130,6 +150,11 @@ export function buildComparisonTable(
   // Choose parameter columns.
   let paramNames: string[];
   if (opts.preferredAttributes && opts.preferredAttributes.length > 0) {
+    // The user named specs — show exactly those that resolve, and nothing else. If NONE
+    // resolve, leave the table spec-less rather than auto-filling UNRELATED specs the
+    // user didn't ask for: showing "Vceo Max" for a "Vce(sat)" request misrepresents
+    // relevance, which is worse than an honest gap (review finding #5 — the honest
+    // resolution; the model's takeaway can note the spec isn't available).
     const chosen: string[] = [];
     for (const term of opts.preferredAttributes) {
       const m = matchParamName(term, firstSeen);
@@ -138,9 +163,12 @@ export function buildComparisonTable(
     paramNames = chosen;
   } else {
     const cap = opts.maxParamColumns ?? DEFAULT_MAX_PARAM_COLUMNS;
-    // Include params shared by at least half the parts; order by frequency desc, then
-    // first-seen. Comparable specs (shared across parts) surface first.
-    const threshold = Math.max(2, Math.ceil(uniqueParts.length / 2));
+    // For 1-2 parts, surface the UNION (threshold 1) so a spec only ONE part carries —
+    // the actual point of difference — isn't hidden, and a lone resolved part still
+    // shows its specs (review finding S7 + the single-part case of #5). For larger sets,
+    // require a spec to be shared by at least half the parts to keep it legible. Order
+    // by frequency desc, then first-seen.
+    const threshold = uniqueParts.length <= 2 ? 1 : Math.max(2, Math.ceil(uniqueParts.length / 2));
     paramNames = firstSeen
       .filter((n) => (freq.get(n) ?? 0) >= threshold)
       .sort((a, b) => (freq.get(b)! - freq.get(a)!) || firstSeen.indexOf(a) - firstSeen.indexOf(b))

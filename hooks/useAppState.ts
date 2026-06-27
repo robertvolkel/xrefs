@@ -1332,6 +1332,12 @@ export function useAppState() {
           applicationContext: null as AppState['applicationContext'],
         } : {};
 
+        // A system-built comparison table (present_comparison) must survive even when
+        // the same turn also searched or offered choices — those branches own the
+        // message's single interactiveElement, so the table rides a follow-up message
+        // instead of being silently dropped (grounding review finding #2).
+        let comparisonRendered = false;
+
         if (response.choices && response.choices.length > 0) {
           // LLM declared custom choices — render them instead of generic confirm/options
           addMessage('assistant', response.message, { type: 'choices', choices: response.choices });
@@ -1353,6 +1359,7 @@ export function useAppState() {
           // No search performed — check if LLM returned filtered recommendations
           // or a system-built comparison table (present_comparison, grounding step 4).
           addMessage('assistant', response.message, response.comparison ? { type: 'comparison', table: response.comparison } : undefined);
+          comparisonRendered = !!response.comparison;
           const updatedRecs = response.recommendations
             ? Object.values(response.recommendations)[0]
             : undefined;
@@ -1383,6 +1390,14 @@ export function useAppState() {
               phase: prev.recommendations.length > 0 ? 'viewing' : 'idle',
             }));
           }
+        }
+
+        // If the model built a comparison table but a search/choices branch above owned
+        // the message element, render the table on its own follow-up message so it's
+        // never lost (grounding review finding #2). Rare — the prompt steers compares
+        // away from same-turn searches — but a guaranteed catch-all.
+        if (response.comparison && !comparisonRendered) {
+          addMessage('assistant', '', { type: 'comparison', table: response.comparison });
         }
       } catch {
         // LLM not available — mark it and fall back

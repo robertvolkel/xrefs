@@ -1180,7 +1180,12 @@ async function executeTool(
                 manufacturer: attrs.part.manufacturer,
                 status: attrs.part.status,
                 qualifications: attrs.part.qualifications ?? [],
-                distributorCount: attrs.part.supplierQuotes?.length ?? 0,
+                // Only carry a distributor count when there ARE supplier quotes. `?? 0`
+                // made every part report a number, so the table always rendered a
+                // "Distributors: 0" column for parts whose FindChips data wasn't
+                // enriched — a misleading "we checked, found zero" on a surface the user
+                // is told to trust (review finding #3). undefined → column suppressed.
+                distributorCount: attrs.part.supplierQuotes?.length || undefined,
                 parameters: attrs.parameters.map(p => ({ name: p.parameterName, value: p.value })),
               } as ComparisonPartInput,
             };
