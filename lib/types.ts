@@ -878,6 +878,13 @@ export interface OrchestratorResponse {
    *  Built from real catalog lookups (lib/services/comparisonTable) — the model never
    *  hand-types the table, so no cell can be fabricated (grounding plan, step 4). */
   comparison?: import('./services/comparisonTable').ComparisonTable;
+  /** Set when the LLM narrowed the on-screen SEARCH-RESULT cards via the
+   *  `filter_search_results` tool (distinct from `appliedFilter`, which is for the
+   *  recommendations panel). The server pre-applies the filter across ALL matches
+   *  and returns the narrowed set in `searchResult`; this carries a human label so
+   *  the client renders a deterministic "filtered to N (label)" message instead of
+   *  the fresh-search "I found N parts" wording (Decision #242 substitution). */
+  searchFilterLabel?: string;
 }
 
 // ============================================================

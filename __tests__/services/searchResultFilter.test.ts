@@ -1,0 +1,88 @@
+import { applySearchResultFilter, describeSearchFilterInput } from '@/lib/services/searchResultFilter';
+import type { PartSummary } from '@/lib/types';
+
+function part(overrides: Partial<PartSummary>): PartSummary {
+  return {
+    mpn: 'TEST',
+    manufacturer: 'Generic',
+    description: 'test part',
+    category: 'Transistors',
+    ...overrides,
+  };
+}
+
+// A vetted-search result set: each card scored by the engine, so failCount /
+// hardFail are populated. Two "Below spec" (hardFail) parts + three green ones.
+const vetted: PartSummary[] = [
+  part({ mpn: 'BC847B', manufacturer: 'Nexperia', failCount: 0, hardFail: false, status: 'Active', qualifications: ['AEC-Q101'] }),
+  part({ mpn: 'MMBT3904', manufacturer: 'onsemi', failCount: 0, hardFail: false, status: 'Active' }),
+  part({ mpn: 'BC817', manufacturer: 'Diodes Inc', failCount: 0, hardFail: false, status: 'Obsolete' }),
+  part({ mpn: '2N2222', manufacturer: 'STMicro', failCount: 2, hardFail: true, status: 'Active' }),
+  part({ mpn: 'PN2222', manufacturer: 'onsemi', failCount: 1, hardFail: true, status: 'Active' }),
+];
+
+describe('applySearchResultFilter', () => {
+  it('returns all matches when no predicate is set', () => {
+    expect(applySearchResultFilter(vetted, {})).toHaveLength(5);
+  });
+
+  it('meets_spec keeps EVERY green card and drops only the below-spec ones', () => {
+    const result = applySearchResultFilter(vetted, { meets_spec: true });
+    // This is the headline guarantee: all three failCount===0 cards survive,
+    // the two hardFail cards are removed — no subset, no cap.
+    expect(result.map(p => p.mpn).sort()).toEqual(['BC817', 'BC847B', 'MMBT3904']);
+  });
+
+  it('meets_spec keeps parts with no verdict (unscored / unvetted search)', () => {
+    const unscored = [
+      part({ mpn: 'A', failCount: 0, hardFail: false }),
+      part({ mpn: 'B' }), // no failCount/hardFail — engine did not score it
+      part({ mpn: 'C', failCount: 3, hardFail: true }),
+    ];
+    // Missing data never causes rejection: B (unknown) is kept, only C drops.
+    expect(applySearchResultFilter(unscored, { meets_spec: true }).map(p => p.mpn)).toEqual(['A', 'B']);
+  });
+
+  it('manufacturer_filter matches case-insensitive substring', () => {
+    const result = applySearchResultFilter(vetted, { manufacturer_filter: 'onsemi' });
+    expect(result.map(p => p.mpn).sort()).toEqual(['MMBT3904', 'PN2222']);
+  });
+
+  it('exclude_obsolete drops Obsolete parts only', () => {
+    const result = applySearchResultFilter(vetted, { exclude_obsolete: true });
+    expect(result.map(p => p.mpn)).not.toContain('BC817');
+    expect(result).toHaveLength(4);
+  });
+
+  it('aec_qualified_only keeps parts with an AEC badge', () => {
+    const result = applySearchResultFilter(vetted, { aec_qualified_only: true });
+    expect(result.map(p => p.mpn)).toEqual(['BC847B']);
+  });
+
+  it('ANDs multiple predicates', () => {
+    // meets spec AND active AND from onsemi → MMBT3904 only (PN2222 is hardFail).
+    const result = applySearchResultFilter(vetted, {
+      meets_spec: true,
+      exclude_obsolete: true,
+      manufacturer_filter: 'onsemi',
+    });
+    expect(result.map(p => p.mpn)).toEqual(['MMBT3904']);
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = [...vetted];
+    applySearchResultFilter(vetted, { meets_spec: true });
+    expect(vetted).toEqual(copy);
+  });
+});
+
+describe('describeSearchFilterInput', () => {
+  it('joins active predicates with +', () => {
+    expect(describeSearchFilterInput({ meets_spec: true, manufacturer_filter: 'Vishay' }))
+      .toBe('meets your specs + Vishay');
+  });
+
+  it('falls back to "filtered" when empty', () => {
+    expect(describeSearchFilterInput({})).toBe('filtered');
+  });
+});
