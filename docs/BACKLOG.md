@@ -82,6 +82,12 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 ---
 
+## `present_choices` button labels are unreconciled LLM free text (audit follow-up to Decision #255) (P3)
+
+**Context.** The Decision #255 audit swept every chat tool for the pattern "LLM-supplied input reaches a user-visible label/list/ranking without a deterministic resolve-or-drop guard." The chat is well-guarded overall — MPN lookups resolve against the catalog and drop non-existent parts; summaries / comparison tables / filter chips are deterministically rebuilt. **One comparable soft spot:** [ChoiceButtons.tsx](../components/ChoiceButtons.tsx) renders `choice.label` — **free text authored by the LLM** via `present_choices` — as-is, with no reconciliation against catalog data. Today these are simple categorical narrowing choices ("N-channel" vs "P-channel", dielectric class), so current risk is low, and a `confirm_part` choice re-verifies the MPN against the catalog on click (an invented MPN fails to load — it can't surface wrong *data*). But in principle the LLM could embed an invented MPN or spec in a button's *text* — same class as the Decision #255 "Below spec" issue (a misleading label, not a false data load). **Fix options:** (a) build `confirm_part` button labels from the resolved catalog part rather than free text; and/or (b) run choice labels through the same grounding check as prose (cf. the grounded-MPN gate below). Low urgency.
+
+---
+
 ## Grounded-MPN gate — follow-ups (branch `feat/grounded-mpn-detection`, plan `docs/mpn-grounding-gate-plan.md`)
 
 **Context.** The grounded-MPN effort guarantees the chat assistant never serves a part number it didn't pull from the catalog. Foundation (accumulated verified set), observe-only measurement, and the deterministic comparison-table renderer are built (steps 1–4). The backstop gate (step 5) follows. Items below are deferred/known, captured during the pre-backstop code review (commit `4acf54d`).
