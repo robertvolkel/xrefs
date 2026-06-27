@@ -4,6 +4,22 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Double FindChips fetch per single-part recs load (follow-up to Decisions #252 / #254) (P3)
+
+**Context.** Surfaced in the PR #10 review. On a single-part load that carries deferred parts.io enrichment, `triggerFCEnrichment` fires **twice**: once in `showRecsAndDeferAssessment` ([hooks/useAppState.ts](../hooks/useAppState.ts) ~line 755) on the initial Digikey-scored recs, then again in the `triggerPartsioEnrichment` tail after the parts.io rescore **replaces** `allRecommendations` with FC-less recs (discarding the first merge). This is a pre-existing pattern (Decision #163 deferred parts.io enrichment) that Decision #252 made universal-by-default by removing the opt-in gate. Net cost: a redundant fan-out + a brief chip flicker (pricing appears → vanishes on rescore → reappears). With Decision #254's raised caps the second fetch is cheap (L1 warm) and fast, so impact is low.
+
+**Fix (if wanted).** When `opts.deferredPartsio` is set, skip the FC fetch at the initial `showRecsAndDeferAssessment` site and let the parts.io tail fire it once after rescore — single fetch, no flicker. Trade-off: pricing appears after the ~500-1500ms rescore instead of immediately on Digikey-only recs. Alternative: have the parts.io rescore **preserve** already-merged `supplierQuotes` rather than overwriting with FC-less recs. Low priority.
+
+---
+
+## RecommendationCard not memoized — off-screen re-renders while comparing (follow-up to Decision #253) (P3)
+
+**Context.** Surfaced in the PR #10 review. Decision #253 keeps `RecommendationsPanel` mounted (hidden via `display:none`) while a replacement's detail (`ComparisonView`) is open, so its filters + scroll survive going back. Side effect: while hidden the panel still re-renders on every state change — notably each FC enrichment chunk merge (Decision #252 always-on) re-creates the `recommendations` array, so the panel's `.map` rebuilds all ~50-70 `RecommendationCard` elements **off-screen**. `RecommendationCard` ([components/RecommendationCard.tsx](../components/RecommendationCard.tsx)) is not `React.memo`'d and `inferContextActive(recommendations)` is recomputed inline per render, so React reconciles the full card subtree on each invisible re-render. Bounded to the brief enrichment window; no visual glitch, just wasted CPU.
+
+**Fix (if wanted).** Wrap `RecommendationCard` in `React.memo` and hoist `inferContextActive` into a `useMemo`. Largely neutralizes the off-screen cost without lifting filter state (the alternative #253 deliberately rejected). Low priority.
+
+---
+
 ## Triage route doesn't scale past ~1k rows — server-side filter/pagination needed (follow-up to Decision #231) (P2, NEXT)
 
 **Context.** Decision #231's triage RPC `RETURNS jsonb` fix removed the PostgREST 1000-row cap (Decision #206) that was silently hiding ~13.7k of the true **14,413** unmapped params. Now the full classified set (**~4.25 MB**, ~13.5k OPEN) ships to the client, and `components/admin/AtlasDictTriagePanel.tsx` filters it client-side + paginates render to 100 (Decision #182). That client-everything model was fine at ~1k rows but doesn't scale to 14k — and the pending **full 102-file legacy discovery** pushes it to ~20k / ~6 MB. The user explicitly chose to harden this **before** running full discovery.
