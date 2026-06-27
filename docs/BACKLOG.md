@@ -82,9 +82,9 @@ The durable fix is **structural per-surface** (the #173 move applied surface-by-
 
 ---
 
-## `present_choices` button labels are unreconciled LLM free text (audit follow-up to Decision #255) (P3)
+## ~~`present_choices` button labels are unreconciled LLM free text (audit follow-up to Decision #255)~~ COMPLETED June 27, 2026
 
-**Context.** The Decision #255 audit swept every chat tool for the pattern "LLM-supplied input reaches a user-visible label/list/ranking without a deterministic resolve-or-drop guard." The chat is well-guarded overall — MPN lookups resolve against the catalog and drop non-existent parts; summaries / comparison tables / filter chips are deterministically rebuilt. **One comparable soft spot:** [ChoiceButtons.tsx](../components/ChoiceButtons.tsx) renders `choice.label` — **free text authored by the LLM** via `present_choices` — as-is, with no reconciliation against catalog data. Today these are simple categorical narrowing choices ("N-channel" vs "P-channel", dielectric class), so current risk is low, and a `confirm_part` choice re-verifies the MPN against the catalog on click (an invented MPN fails to load — it can't surface wrong *data*). But in principle the LLM could embed an invented MPN or spec in a button's *text* — same class as the Decision #255 "Below spec" issue (a misleading label, not a false data load). **Fix options:** (a) build `confirm_part` button labels from the resolved catalog part rather than free text; and/or (b) run choice labels through the same grounding check as prose (cf. the grounded-MPN gate below). Low urgency.
+Fixed in the Decision #255 follow-up: [choiceGuard.ts](../lib/services/choiceGuard.ts) `sanitizeChoiceOptions` (wired into the `present_choices` handler) deterministically strips `mpn`/`manufacturer`, neuters `confirm_part`→`other`, and drops any choice whose label names a part (`mentionsMpn`); tool schema tightened to remove the `confirm_part`/`mpn`/`manufacturer` affordances. Residual accepted ceiling: a categorical label could still embed a *spec value* in prose (e.g. "the low-noise option") — not distinguishable from legitimate category text and not the concrete fabrication vector the audit flagged. 5 unit tests.
 
 ---
 

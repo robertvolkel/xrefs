@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
 import { looksLikeMpn, mentionsMpn } from './searchSummary';
+import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
@@ -821,10 +822,8 @@ const tools: Anthropic.Tool[] = [
             type: 'object',
             properties: {
               id: { type: 'string', description: 'Unique key for this choice' },
-              label: { type: 'string', description: 'Button text shown to the user' },
-              action: { type: 'string', enum: ['confirm_part', 'search', 'other'], description: 'What this choice does. Use confirm_part when this choice confirms a specific part.' },
-              mpn: { type: 'string', description: 'Part MPN if this choice confirms a specific part' },
-              manufacturer: { type: 'string', description: 'Manufacturer of the part (if mpn is set)' },
+              label: { type: 'string', description: 'Button text shown to the user — a requirement CATEGORY or workflow action, NEVER a specific part number or manufacturer' },
+              action: { type: 'string', enum: ['search', 'other'], description: 'Workflow action only. "other" (default) round-trips the label as a new user turn; "search" runs a search. A choice NEVER names or confirms a specific part — parts are picked by clicking a rendered card.' },
             },
             required: ['id', 'label'],
           },
@@ -1371,7 +1370,11 @@ async function executeTool(
     }
     case 'present_choices': {
       const { choices } = input as { choices: ChoiceOption[] };
-      data.choices = choices;
+      // Deterministically enforce the prompt's hard line: a choice button NEVER
+      // names or confirms a specific part. Strips mpn/manufacturer, neuters
+      // confirm_part, and drops any label that names a part — so a model slip
+      // can't render a fabricated part number on a button. See choiceGuard.ts.
+      data.choices = sanitizeChoiceOptions(choices);
       return JSON.stringify({ presented: true });
     }
     // ── History tools ──────────────────────────────────────────
