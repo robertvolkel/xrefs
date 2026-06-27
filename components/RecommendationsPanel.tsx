@@ -84,10 +84,11 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
   );
   const [showCnOnly, setShowCnOnly] = useState(false);
   // Price/stock display is controlled-with-fallback. In the single-part view the
-  // parent owns it (`commercialEnabled`/`onToggleCommercial`) so the toggle also
-  // launches the deferred FindChips fetch. Surfaces with no parent wiring (modal
-  // chat / parts-list modal) fall back to local state — there the data is already
-  // fetched, so it defaults to shown.
+  // parent owns it (`commercialEnabled`/`onToggleCommercial`). FindChips data is
+  // always loaded in the background when recs land, so this toggle is display-only
+  // — it shows/hides the price chips on the cards (never launches the fetch).
+  // Surfaces with no parent wiring (modal chat / parts-list modal) fall back to
+  // local state — there the data is already fetched, so it defaults to shown.
   const commercialControlled = onToggleCommercial !== undefined;
   const [localShowCommercial, setLocalShowCommercial] = useState(true);
   const showCommercial = commercialControlled ? !!commercialEnabled : localShowCommercial;
@@ -335,14 +336,15 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
 
         <Box sx={{ flex: 1 }} />
 
-        {/* Price & stock toggle. Distributor pricing/stock comes from FindChips,
-            which we DON'T auto-fetch on load — the user clicks here to launch it.
+        {/* Price & stock toggle. Distributor pricing/stock from FindChips is
+            always loaded in the background when recs land, so this button only
+            shows/hides the price chips on the cards — it doesn't trigger a fetch.
             A labeled, outlined-vs-filled button is far more discoverable than a
             bare $ icon while staying compact in the 45px filter row. */}
         <Tooltip
           title={showCommercial
-            ? 'Hide distributor price & stock'
-            : 'Show distributor price & stock (fetches live pricing from distributors)'}
+            ? 'Hide distributor price & stock on the cards'
+            : 'Show distributor price & stock on the cards'}
         >
           <Button
             size="small"
@@ -366,7 +368,7 @@ export default function RecommendationsPanel({ recommendations, onSelect, onManu
               '& .MuiButton-startIcon': { mr: 0.5 },
             }}
           >
-            {showCommercial && isEnrichingFC ? 'Loading…' : 'Price & stock'}
+            {showCommercial && isEnrichingFC ? 'Loading Price & Stock' : 'Price & stock'}
           </Button>
         </Tooltip>
       </Box>

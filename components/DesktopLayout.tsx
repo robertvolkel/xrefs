@@ -226,6 +226,12 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
   const attributesTab = activeAttributesTab ?? localTab;
   const setAttributesTab = onAttributesTabChange ?? setLocalTab;
 
+  // True while a replacement card's detail (ComparisonView) is open. The
+  // recommendations panel stays MOUNTED behind it (hidden) rather than being
+  // torn down and rebuilt — so all its filters (Chinese-only, AEC, lifecycle
+  // status) and scroll position survive when the user clicks back.
+  const isComparing = phase === 'comparing' && !!selectedRecommendation && !!sourceAttributes;
+
   // Single shared, unioned row set for the comparison Specs tab — computed once
   // and handed by reference to BOTH the source (AttributesPanel) and replacement
   // (ComparisonView) panels so every attribute lines up at the same row index.
@@ -425,60 +431,72 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         >
           {isLoadingRecs ? (
             <RecommendationsSkeleton />
-          ) : phase === 'comparing' &&
-            selectedRecommendation &&
-            sourceAttributes ? (
-            <ComparisonView
-              sourceAttributes={sourceAttributes}
-              replacementAttributes={comparisonAttributes}
-              recommendation={selectedRecommendation!}
-              rows={comparisonRows}
-              onBack={onBackToRecommendations}
-              onManufacturerClick={onManufacturerClick}
-              activeTab={attributesTab}
-              onTabChange={setAttributesTab}
-              isLoadingReplacement={isLoadingComparison}
-              replacementError={comparisonError}
-              spotQuantity={spotQuantity}
-              onSpotQuantityChange={onSpotQuantityChange}
-              isEnrichingFC={isEnrichingFC}
-            />
-          ) : recommendations.length > 0 ? (
-            <RecommendationsPanel
-              recommendations={recommendations}
-              fullRecommendations={allRecommendations}
-              chatFilterLabel={currentFilterLabel}
-              onClearChatFilter={onClearChatFilter}
-              onSelect={onSelectRecommendation}
-              onManufacturerClick={onManufacturerClick}
-              isEnrichingFC={isEnrichingFC}
-              commercialEnabled={commercialEnabled}
-              onToggleCommercial={onToggleCommercial}
-              categoryFilter={xrefCategory}
-              onCategoryFilterChange={setXrefCategory}
-              mfrFilter={xrefMfr}
-              onMfrFilterChange={setXrefMfr}
-              autoAecOnly={autoAecOnly}
-            />
-          ) : showRightPanel ? (
-            <Box
-              sx={{
-                height: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                p: 4,
-              }}
-            >
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}
-              >
-                No replacements found for this part. It might be one of a kind... or our database just needs a coffee break.
-              </Typography>
-            </Box>
-          ) : null}
+          ) : (
+            <>
+              {/* Comparison view overlays the list when a card is open. The
+                  RecommendationsPanel below stays MOUNTED the whole time (hidden
+                  via display:none while comparing) so its filters and scroll
+                  position survive when the user clicks back — instead of being
+                  rebuilt from scratch. `display:contents` keeps the wrapper
+                  layout-transparent when visible, so the panel renders exactly
+                  as if it were a direct child of the cell. */}
+              {isComparing && (
+                <ComparisonView
+                  sourceAttributes={sourceAttributes}
+                  replacementAttributes={comparisonAttributes}
+                  recommendation={selectedRecommendation!}
+                  rows={comparisonRows}
+                  onBack={onBackToRecommendations}
+                  onManufacturerClick={onManufacturerClick}
+                  activeTab={attributesTab}
+                  onTabChange={setAttributesTab}
+                  isLoadingReplacement={isLoadingComparison}
+                  replacementError={comparisonError}
+                  spotQuantity={spotQuantity}
+                  onSpotQuantityChange={onSpotQuantityChange}
+                  isEnrichingFC={isEnrichingFC}
+                />
+              )}
+              {recommendations.length > 0 ? (
+                <Box sx={{ display: isComparing ? 'none' : 'contents' }}>
+                  <RecommendationsPanel
+                    recommendations={recommendations}
+                    fullRecommendations={allRecommendations}
+                    chatFilterLabel={currentFilterLabel}
+                    onClearChatFilter={onClearChatFilter}
+                    onSelect={onSelectRecommendation}
+                    onManufacturerClick={onManufacturerClick}
+                    isEnrichingFC={isEnrichingFC}
+                    commercialEnabled={commercialEnabled}
+                    onToggleCommercial={onToggleCommercial}
+                    categoryFilter={xrefCategory}
+                    onCategoryFilterChange={setXrefCategory}
+                    mfrFilter={xrefMfr}
+                    onMfrFilterChange={setXrefMfr}
+                    autoAecOnly={autoAecOnly}
+                  />
+                </Box>
+              ) : isComparing ? null : showRightPanel ? (
+                <Box
+                  sx={{
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    p: 4,
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}
+                  >
+                    No replacements found for this part. It might be one of a kind... or our database just needs a coffee break.
+                  </Typography>
+                </Box>
+              ) : null}
+            </>
+          )}
         </Box>
 
         {/* Far right panel: Manufacturer Profile — slides in from right */}
