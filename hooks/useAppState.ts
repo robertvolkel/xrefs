@@ -1287,7 +1287,17 @@ export function useAppState() {
           !!searchResult &&
           (searchResult.type === 'single' || searchResult.type === 'multiple' || searchResult.type === 'none') &&
           !looksLikeMpn(query);
-        const presentationMessage = isGreenfieldSearchPresentation
+        // A search-result FILTER (filter_search_results tool) returns a narrowed
+        // searchResult + a label. Render a deterministic "filtered to N (label)"
+        // line — the fresh-search "I found N parts" wording from buildSearchSummary
+        // would misrepresent a narrowing (and after meets_spec there are no
+        // below-spec cards left to "rank below"). Deterministic, so it can't
+        // fabricate, and it overrides the greenfield substitution above.
+        const searchFilterLabel = response.searchFilterLabel;
+        const filteredCount = searchResult?.matches?.length ?? 0;
+        const presentationMessage = searchFilterLabel && searchResult && filteredCount > 0
+          ? `Filtered to ${filteredCount} ${filteredCount === 1 ? 'part' : 'parts'} — ${searchFilterLabel}. Click the one you'd like to use.`
+          : isGreenfieldSearchPresentation
           ? buildSearchSummary(searchResult)
           : response.message;
 

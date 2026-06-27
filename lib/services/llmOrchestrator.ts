@@ -307,7 +307,34 @@ const presentPartOptionsTool: Anthropic.Tool = {
   },
 };
 
+const filterSearchResultsTool: Anthropic.Tool = {
+  name: 'filter_search_results',
+  description: 'Deterministically narrow the CURRENT search-result cards by a PROPERTY, applied across ALL results (not just the ~25 shown in your context). Use this — NOT present_part_options — whenever the user wants to filter by a characteristic rather than hand-pick specific MPNs: "only the ones that meet my specs", "hide the below-spec ones", "just <manufacturer> parts", "drop the obsolete ones", "automotive-qualified only". The matching engine already tagged each card meets-spec vs below-spec; meets_spec uses that exact verdict, so it returns EVERY qualifying part (present_part_options can only echo the handful of MPNs you can see, which silently drops the rest — never use it to filter by spec-fit). The filtered cards re-render in chat. Reserve present_part_options for an arbitrary hand-picked subset of named MPNs; use search_parts to start a brand-new search with different requirements.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      meets_spec: {
+        type: 'boolean',
+        description: 'Keep only parts that pass all the user\'s stated specs (the green "Fits your specs" cards), dropping the "Below spec" ones. Only meaningful when the current search included specs/constraints.',
+      },
+      manufacturer_filter: {
+        type: 'string',
+        description: 'Keep only parts whose manufacturer name contains this string (case-insensitive).',
+      },
+      exclude_obsolete: {
+        type: 'boolean',
+        description: 'Drop parts whose lifecycle status is Obsolete.',
+      },
+      aec_qualified_only: {
+        type: 'boolean',
+        description: 'Keep only parts carrying an AEC-Q100/Q101/Q200 automotive qualification.',
+      },
+    },
+  },
+};
+
 import { applyRecommendationFilter, describeFilterInput, type FilterInput } from './recommendationFilter';
+import { applySearchResultFilter, describeSearchFilterInput, type SearchFilterInput } from './searchResultFilter';
 
 // applyRecommendationFilter + types moved to lib/services/recommendationFilter.ts
 // so the client-side filter-intent interception path can apply the same filter
@@ -533,8 +560,11 @@ Workflow:
    **(a) ASK** — parametric question about the current cards.
    Single MPN: call get_part_attributes. Multi-MPN or compound query (e.g. "which of these are AEC-Q200 AND ≤ 30mm AND active?"): call get_batch_attributes (max 10 MPNs). Answer from the returned data, then end with a brief offer to refine ("Want me to show just those?") so the user can iterate.
 
-   **(b) REFINE** — narrow the current cards to a chosen subset.
-   When the user says "show me just those", "filter to V-0", "which of these...", call present_part_options with the matching MPNs from the search-result context. Cards re-render in chat. If you need to evaluate parameters not in the lightweight context, call get_batch_attributes first, then present_part_options on the qualifiers.
+   **(b) REFINE** — narrow the current cards. TWO tools, and choosing right matters:
+   - **Filtering by a PROPERTY** ("only the ones that meet my specs", "hide the below-spec ones", "just Vishay parts", "drop the obsolete ones", "automotive-qualified only"): call **filter_search_results**. It applies the predicate deterministically across ALL results — not just the ~25 you can see — and for spec-fit it uses the engine's own meets-spec/below-spec verdict, so it returns EVERY qualifying card. This is MANDATORY for "show me the ones that meet spec" and similar: do NOT hand-list MPNs for a property filter, because you only see a slice of the results and would silently drop the rest (the exact bug this tool exists to prevent).
+   - **Hand-picking a specific named subset** ("show me just the BC847B and BC847C", "compare these three"): call **present_part_options** with those exact MPNs from the search-result context.
+   - If you need a property that isn't in filter_search_results' inputs and isn't in the lightweight context, call get_batch_attributes first to evaluate it, then present_part_options on the MPNs that qualify.
+   After either tool, keep your text to one short sentence stating what's now shown (e.g. "Showing the 18 that meet your specs.").
 
    **(c) PIVOT** — change a requirement, conduct a NEW search.
    When the user changes voltage, dielectric, package, family, or says "actually I need...", "forget that, show me...", "what about 50V versions?": call search_parts with a fresh query that incorporates the new requirements. Do NOT try to filter the existing list when the needed value isn't in it (e.g. user wants 50V but original search was 25V — only a fresh search can surface it). Pivots replace the card list and reset the right-side panels — that is the intended UX.
@@ -858,6 +888,8 @@ interface ToolResultData {
   /** Filter spec when the LLM applied one via filter_recommendations — lets the
    *  client register it as the active panel filter (currentFilter/Label). */
   appliedFilter?: { filterInput: FilterInput; label: string };
+  /** Human label when the LLM narrowed search-result cards via filter_search_results. */
+  searchFilterLabel?: string;
 }
 
 // ==============================================================
@@ -1185,6 +1217,32 @@ async function executeTool(
         results: matches.map(m => ({ mpn: m.mpn, manufacturer: m.manufacturer })),
       });
     }
+    case 'filter_search_results': {
+      const filterInput = input as SearchFilterInput;
+      const pool = currentSearchResult?.matches ?? [];
+      if (pool.length === 0) {
+        return JSON.stringify({ error: 'No current search-result list to filter. Use search_parts to start a new search.' });
+      }
+      const filtered = applySearchResultFilter(pool, filterInput);
+      if (filtered.length === 0) {
+        // Don't emit an empty searchResult — that would collapse the right panels
+        // for a zero-result filter. Let the model fall back to prose ("nothing in
+        // the current results matches that").
+        return JSON.stringify({ matched: 0, total: pool.length, note: 'No parts in the current results match that filter.' });
+      }
+      data.searchResult = {
+        type: filtered.length === 1 ? 'single' : 'multiple',
+        matches: filtered,
+        sourcesContributed: currentSearchResult?.sourcesContributed,
+      };
+      data.searchFilterLabel = describeSearchFilterInput(filterInput);
+      return JSON.stringify({
+        matched: filtered.length,
+        total: pool.length,
+        label: data.searchFilterLabel,
+        results: filtered.slice(0, 30).map(m => ({ mpn: m.mpn, manufacturer: m.manufacturer })),
+      });
+    }
     // find_replacements case removed — cross-references are button-driven now.
     case 'filter_recommendations': {
       const filterInput = input as FilterInput;
@@ -1426,6 +1484,7 @@ export async function chat(
   if (currentSearchResult && (currentSearchResult.matches?.length ?? 0) > 0) {
     contextBlocks.push(summarizeSearchResults(currentSearchResult));
     activeTools.push(presentPartOptionsTool);
+    activeTools.push(filterSearchResultsTool);
   }
   if (currentRecommendations && currentRecommendations.length > 0) {
     contextBlocks.push(summarizeRecommendations(currentRecommendations));
@@ -1595,6 +1654,9 @@ export async function chat(
   }
   if (toolData.appliedFilter) {
     result.appliedFilter = toolData.appliedFilter;
+  }
+  if (toolData.searchFilterLabel) {
+    result.searchFilterLabel = toolData.searchFilterLabel;
   }
 
   return result;

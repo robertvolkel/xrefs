@@ -873,6 +873,13 @@ export interface OrchestratorResponse {
    *  LLM-applied filter is invisible to the panel + chat "show all" path and is
    *  silently undone by the next background enrichment pass. */
   appliedFilter?: { filterInput: import('./services/recommendationFilter').FilterInput; label: string };
+  /** Set when the LLM narrowed the on-screen SEARCH-RESULT cards via the
+   *  `filter_search_results` tool (distinct from `appliedFilter`, which is for the
+   *  recommendations panel). The server pre-applies the filter across ALL matches
+   *  and returns the narrowed set in `searchResult`; this carries a human label so
+   *  the client renders a deterministic "filtered to N (label)" message instead of
+   *  the fresh-search "I found N parts" wording (Decision #242 substitution). */
+  searchFilterLabel?: string;
 }
 
 // ============================================================
