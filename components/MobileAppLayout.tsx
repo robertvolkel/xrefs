@@ -132,6 +132,9 @@ export default function MobileAppLayout({
   const [badges, setBadges] = useState<Record<number, boolean>>({});
   const [attributesTab, setAttributesTab] = useState<AttributesTab>('overview');
   const prevTabCountRef = useRef(1);
+  // Detail (ComparisonView) open. Keep the recommendations panel MOUNTED behind
+  // it (hidden) so its filters + scroll survive "back" instead of being rebuilt.
+  const isComparing = phase === 'comparing' && !!comparisonAttributes && !!sourceAttributes;
   // Reset attributes tab when source part changes
   useEffect(() => { setAttributesTab('overview'); }, [sourceAttributes?.part.mpn]);
 
@@ -300,46 +303,55 @@ export default function MobileAppLayout({
           >
             {isLoadingRecs ? (
               <RecommendationsSkeleton />
-            ) : phase === 'comparing' &&
-              comparisonAttributes &&
-              sourceAttributes ? (
-              <ComparisonView
-                sourceAttributes={sourceAttributes}
-                replacementAttributes={comparisonAttributes}
-                recommendation={selectedRecommendation!}
-                onBack={onBackToRecommendations}
-                onManufacturerClick={onManufacturerClick}
-                activeTab={attributesTab}
-                onTabChange={setAttributesTab}
-              />
-            ) : recommendations.length > 0 ? (
-              <RecommendationsPanel
-                recommendations={recommendations}
-                onSelect={onSelectRecommendation}
-                onManufacturerClick={onManufacturerClick}
-                isEnrichingFC={isEnrichingFC}
-                commercialEnabled={commercialEnabled}
-                onToggleCommercial={onToggleCommercial}
-                autoAecOnly={autoAecOnly}
-              />
             ) : (
-              <Box
-                sx={{
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  p: 4,
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}
-                >
-                  No replacements found for this part.
-                </Typography>
-              </Box>
+              <>
+                {/* Comparison overlays the list when a card is open. The panel
+                    below stays MOUNTED (hidden via display:none while comparing)
+                    so its filters + scroll survive "back". display:contents keeps
+                    the wrapper layout-transparent when visible. */}
+                {isComparing && (
+                  <ComparisonView
+                    sourceAttributes={sourceAttributes}
+                    replacementAttributes={comparisonAttributes}
+                    recommendation={selectedRecommendation!}
+                    onBack={onBackToRecommendations}
+                    onManufacturerClick={onManufacturerClick}
+                    activeTab={attributesTab}
+                    onTabChange={setAttributesTab}
+                  />
+                )}
+                {recommendations.length > 0 ? (
+                  <Box sx={{ display: isComparing ? 'none' : 'contents' }}>
+                    <RecommendationsPanel
+                      recommendations={recommendations}
+                      onSelect={onSelectRecommendation}
+                      onManufacturerClick={onManufacturerClick}
+                      isEnrichingFC={isEnrichingFC}
+                      commercialEnabled={commercialEnabled}
+                      onToggleCommercial={onToggleCommercial}
+                      autoAecOnly={autoAecOnly}
+                    />
+                  </Box>
+                ) : isComparing ? null : (
+                  <Box
+                    sx={{
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      p: 4,
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: 280 }}
+                    >
+                      No replacements found for this part.
+                    </Typography>
+                  </Box>
+                )}
+              </>
             )}
           </Box>
         )}
