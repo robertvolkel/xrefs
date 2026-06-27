@@ -1735,10 +1735,14 @@ export async function chat(
     const gated = await applyGroundingGate(message, verifiedSet, async (correction) => {
       const resp = await client.messages.create({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: 2048, // match the main reply budget so a normal-length reply fits
         system: 'You revise a chat reply to remove any part number that was not retrieved from the catalog. Output only the revised reply text, nothing else.',
         messages: [{ role: 'user', content: `DRAFT REPLY:\n${message}\n\n${correction}` }],
       });
+      // A truncated rewrite (hit the token cap) would dangle mid-sentence; treat it as a
+      // failed regenerate so applyGroundingGate falls back to the deterministic safe
+      // message rather than sending a cut-off reply (review finding #9).
+      if (resp.stop_reason === 'max_tokens') return '';
       return resp.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
         .map(b => b.text)
