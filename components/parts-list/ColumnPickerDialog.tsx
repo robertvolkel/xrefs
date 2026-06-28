@@ -500,7 +500,9 @@ export default function ColumnPickerDialog({
                               <PortableBadge colId={col.id} viewScope={viewScope} columnMeta={initialView?.columnMeta} />
                             </Box>
                           }
+                          secondary={col.description}
                           primaryTypographyProps={{ fontSize: '0.82rem' }}
+                          secondaryTypographyProps={{ fontSize: '0.7rem', sx: { lineHeight: 1.25 } }}
                         />
                       </ListItem>
                     ))}

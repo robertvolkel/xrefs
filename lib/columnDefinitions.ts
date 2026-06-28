@@ -45,6 +45,8 @@ export interface ColumnDefinition {
   calculatedField?: CalculatedFieldDef;
   /** Whether this cell can be edited inline (only ss:* columns) */
   editable?: boolean;
+  /** Plain-language explanation of what this column shows/computes; rendered as a header tooltip. */
+  description?: string;
 }
 
 /**
@@ -96,18 +98,18 @@ export const SYSTEM_COLUMNS: ColumnDefinition[] = [
   { id: 'sys:row_number', label: '#', source: 'system', group: 'System', defaultWidth: '40px', align: 'center' },
   { id: 'sys:status', label: 'Status', source: 'system', group: 'System', defaultWidth: '90px' },
   { id: 'sys:partType', label: 'Type', source: 'system', group: 'System', defaultWidth: '110px' },
-  { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center' },
-  { id: 'sys:logicBasedCount', label: 'Logic-Based', source: 'system', group: 'Replacements', defaultWidth: '85px', align: 'center', isNumeric: true },
-  { id: 'sys:mfrCertifiedCount', label: 'MFR Certified', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'center', isNumeric: true },
-  { id: 'sys:accurisCertifiedCount', label: 'Accuris Certified', source: 'system', group: 'Replacements', defaultWidth: '110px', align: 'center', isNumeric: true },
-  { id: 'sys:top_suggestion', label: 'Repl. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px' },
-  { id: 'sys:top_suggestion_mfr', label: 'Repl. MFR', source: 'system', group: 'Replacements', defaultWidth: '130px' },
-  { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true, dataSource: 'findchips' },
-  { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips' },
-  { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px', dataSource: 'findchips' },
-  { id: 'sys:priceDelta', label: 'Top Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true },
-  { id: 'sys:cheapest_viable_price', label: 'Lowest Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips' },
-  { id: 'sys:maxPriceDelta', label: 'Max Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'sys:hits', label: 'Xrefs', source: 'system', group: 'Replacements', defaultWidth: '50px', align: 'center', description: 'Shows YES when we found any replacement parts for this line. Click to view them.' },
+  { id: 'sys:logicBasedCount', label: 'Logic-Based', source: 'system', group: 'Replacements', defaultWidth: '85px', align: 'center', isNumeric: true, description: 'How many replacements our engine found by matching the part’s specifications.' },
+  { id: 'sys:mfrCertifiedCount', label: 'MFR Certified', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'center', isNumeric: true, description: 'How many replacements the manufacturer officially cross-references as equivalents.' },
+  { id: 'sys:accurisCertifiedCount', label: 'Accuris Certified', source: 'system', group: 'Replacements', defaultWidth: '110px', align: 'center', isNumeric: true, description: 'How many replacements come from Accuris’s certified equivalence data.' },
+  { id: 'sys:top_suggestion', label: 'Repl. MPN', source: 'system', group: 'Replacements', defaultWidth: '160px', description: 'Part number of the best-ranked replacement we recommend for this line.' },
+  { id: 'sys:top_suggestion_mfr', label: 'Repl. MFR', source: 'system', group: 'Replacements', defaultWidth: '130px', description: 'Manufacturer of the recommended replacement.' },
+  { id: 'sys:top_suggestion_price', label: 'Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '70px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Lowest unit price for the recommended replacement across all distributors.' },
+  { id: 'sys:top_suggestion_stock', label: 'Repl. Stock', source: 'system', group: 'Replacements', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Total quantity in stock for the recommended replacement across all distributors.' },
+  { id: 'sys:top_suggestion_supplier', label: 'Repl. Distributor', source: 'system', group: 'Replacements', defaultWidth: '110px', dataSource: 'findchips', description: 'Distributor offering the best price for the recommended replacement.' },
+  { id: 'sys:priceDelta', label: 'Top Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, description: 'Your current price minus the recommended replacement’s price. Needs a unit-cost column in your upload. Green = savings.' },
+  { id: 'sys:cheapest_viable_price', label: 'Lowest Repl. Price', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Lowest price among all suitable replacements, not just the top pick.' },
+  { id: 'sys:maxPriceDelta', label: 'Max Repl. Savings', source: 'system', group: 'Replacements', defaultWidth: '95px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Your current price minus the cheapest suitable replacement. Needs a unit-cost column in your upload. Green = savings.' },
   { id: 'sys:row_actions', label: '', source: 'system', group: 'System', defaultWidth: '44px', align: 'right' },
 ];
 
@@ -245,14 +247,14 @@ const PRODUCT_COLUMNS: ColumnDefinition[] = [
   { id: 'dk:eccnCode', label: 'ECCN Code', source: 'digikey-product', enrichedField: 'eccnCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '90px' },
   { id: 'dk:htsCode', label: 'HTS Code', source: 'digikey-product', enrichedField: 'htsCode', group: 'Trade & Export', dataSource: 'partsio', defaultWidth: '100px' },
   // Multi-supplier summary (aggregated from FindChips N-distributor quotes)
-  { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips' },
-  { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true, dataSource: 'findchips' },
+  { id: 'commercial:bestPrice', label: 'Best Price', source: 'digikey-product', group: 'Commercial', defaultWidth: '80px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Cheapest unit price for this part across all distributors.' },
+  { id: 'commercial:totalStock', label: 'Total Stock', source: 'digikey-product', group: 'Commercial', defaultWidth: '90px', align: 'right', isNumeric: true, dataSource: 'findchips', description: 'Total quantity available for this part across all distributors.' },
   // FindChips Risk & Lifecycle
-  { id: 'fc:lifecycle', label: 'Lifecycle', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '100px' },
-  { id: 'fc:riskRank', label: 'Risk Rank', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'fc:designRisk', label: 'Design Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true },
-  { id: 'fc:productionRisk', label: 'Production Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true },
-  { id: 'fc:longTermRisk', label: 'Long-term Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true },
+  { id: 'fc:lifecycle', label: 'Lifecycle', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '100px', description: 'Where the part is in its life: active, not recommended for new designs, obsolete, etc.' },
+  { id: 'fc:riskRank', label: 'Risk Rank', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true, description: 'Overall supply-risk score from 0 (low risk) to 10 (high risk).' },
+  { id: 'fc:designRisk', label: 'Design Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '80px', align: 'right', isNumeric: true, description: 'Risk of designing this part in now — how close it is to end-of-life (0 low to 10 high).' },
+  { id: 'fc:productionRisk', label: 'Production Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true, description: 'Risk of supply gaps during production — availability and sourcing (0 low to 10 high).' },
+  { id: 'fc:longTermRisk', label: 'Long-term Risk', source: 'digikey-product', group: 'Risk & Lifecycle', dataSource: 'findchips', defaultWidth: '90px', align: 'right', isNumeric: true, description: 'Risk to long-term availability over the years ahead (0 low to 10 high).' },
 ];
 
 /** Standalone definition for the auto-appended row actions column */
@@ -326,7 +328,7 @@ export function buildAvailableColumns(
     { id: 'mapped:description', label: 'Description', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '200px' },
     { id: 'mapped:cpn', label: 'CPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
     { id: 'mapped:ipn', label: 'IPN', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '120px' },
-    { id: 'mapped:unitCost', label: 'Unit Cost', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '100px', align: 'right', isNumeric: true },
+    { id: 'mapped:unitCost', label: 'Unit Cost', source: 'spreadsheet' as const, group: 'Your Data', defaultWidth: '100px', align: 'right', isNumeric: true, description: 'Your current unit cost, read from your uploaded file. Powers the savings columns.' },
   );
 
   // Spreadsheet columns (from the original upload)

@@ -33,6 +33,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, SupplierQuote, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
 import SupplierBreakdownPopover from './SupplierBreakdownPopover';
 import CheapestViablePopover from './CheapestViablePopover';
@@ -1078,6 +1079,23 @@ export default function PartsListTable({
               {columns.map(col => {
                 const isSortable = onSort && col.label && col.id !== 'sys:row_number' && col.id !== 'sys:action' && col.id !== 'sys:row_actions';
                 const isActive = sortColumnId === col.id;
+                // Trailing header adornments (shared by sortable + non-sortable branches):
+                // a "matched from your data" sparkle for portable columns, and an info
+                // tooltip explaining what a calculated/derived column shows.
+                const adornments = (
+                  <>
+                    {portableColumnIds?.has(col.id) && (
+                      <Tooltip title="Matched from your data" arrow>
+                        <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
+                      </Tooltip>
+                    )}
+                    {col.description && (
+                      <Tooltip title={col.description} arrow>
+                        <InfoOutlinedIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled', verticalAlign: 'middle' }} />
+                      </Tooltip>
+                    )}
+                  </>
+                );
                 return (
                   <TableCell
                     key={col.id}
@@ -1108,20 +1126,12 @@ export default function PartsListTable({
                         }}
                       >
                         {getColumnDisplayLabel(col)}
-                        {portableColumnIds?.has(col.id) && (
-                          <Tooltip title="Matched from your data" arrow>
-                            <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
-                          </Tooltip>
-                        )}
+                        {adornments}
                       </TableSortLabel>
                     ) : (
                       <>
                         {getColumnDisplayLabel(col)}
-                        {portableColumnIds?.has(col.id) && (
-                          <Tooltip title="Matched from your data" arrow>
-                            <AutoAwesomeIcon sx={{ fontSize: 12, ml: 0.25, color: 'text.disabled' }} />
-                          </Tooltip>
-                        )}
+                        {adornments}
                       </>
                     )}
                   </TableCell>

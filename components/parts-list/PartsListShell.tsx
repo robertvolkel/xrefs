@@ -24,11 +24,12 @@ import {
   ColumnDefinition,
   getCellValue,
   getSortValue,
+  getColumnDisplayLabel,
   ROW_ACTIONS_COLUMN,
 } from '@/lib/columnDefinitions';
 import { type ResolvedView, isBuiltinView, remapSpreadsheetColumns, remapCalcFieldRefs, sanitizeTemplateColumns, sanitizeTemplateCalcFields, reverseMapKnownColumns } from '@/lib/viewConfigStorage';
 import PromoteViewDialog, { viewNeedsPromoteDialog, buildFastPathPromoteResult } from './PromoteViewDialog';
-import type { CalculatedFieldDef } from '@/lib/calculatedFields';
+import { describeFormula, type ColumnRef } from '@/lib/calculatedFields';
 import type { PartsListRow } from '@/lib/types';
 import AddIcon from '@mui/icons-material/Add';
 import PostAddIcon from '@mui/icons-material/PostAdd';
@@ -411,6 +412,13 @@ export default function PartsListShell() {
   const calcColumnDefs = useMemo(() => {
     const fields = activeView.calculatedFields;
     if (!fields || fields.length === 0) return new Map<string, ColumnDefinition>();
+    // Resolve a formula operand to its human-readable label for the header tooltip.
+    const colById = new Map(availableColumns.map(c => [c.id, c]));
+    const labelForRef = (ref: ColumnRef): string => {
+      const col = colById.get(ref.columnId);
+      if (col) return getColumnDisplayLabel(col);
+      return ref.headerHint ?? ref.columnId;
+    };
     const map = new Map<string, ColumnDefinition>();
     for (const cf of fields) {
       const id = `calc:${cf.id}`;
@@ -422,10 +430,11 @@ export default function PartsListShell() {
         align: cf.align ?? 'right',
         isNumeric: true,
         calculatedField: cf,
+        description: `Your formula: ${describeFormula(cf.formula, labelForRef)}`,
       });
     }
     return map;
-  }, [activeView.calculatedFields]);
+  }, [activeView.calculatedFields, availableColumns]);
 
   const activeColumns: ColumnDefinition[] = useMemo(() => {
     const colMap = new Map(availableColumns.map(c => [c.id, c]));

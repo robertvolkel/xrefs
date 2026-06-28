@@ -121,6 +121,22 @@ export const OPERATOR_LABELS: Record<FormulaExpression['op'], string> = {
   subtract: '−',
 };
 
+/**
+ * Render a formula as a human-readable string for tooltips, e.g. "Quantity × Price".
+ * `resolveLabel` turns a column reference into its display label (caller supplies it
+ * since this module must not depend on columnDefinitions).
+ */
+export function describeFormula(
+  formula: FormulaExpression,
+  resolveLabel: (ref: ColumnRef) => string,
+): string {
+  const left = resolveLabel(formula.left);
+  const right = isLiteralRef(formula.right)
+    ? String(formula.right.literal)
+    : resolveLabel(formula.right);
+  return `${left} ${OPERATOR_LABELS[formula.op]} ${right}`;
+}
+
 /** Format display labels for the UI */
 export const FORMAT_LABELS: Record<NonNullable<CalculatedFieldDef['format']>, string> = {
   number: 'Number',
