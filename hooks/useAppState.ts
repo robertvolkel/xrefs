@@ -1474,10 +1474,11 @@ export function useAppState() {
         return;
       }
 
-      // Attributes failed — full fallback
+      // Attributes failed — full fallback. loadAttributesAndRecommendations flips
+      // sourceAttrsReadyRef true on its own SUCCESS path and leaves it false on
+      // error (so a failed load can't open the gate against the partial preview).
       if (!sourceAttrs) {
         await loadAttributesAndRecommendations(part);
-        sourceAttrsReadyRef.current = true;
       }
     },
     [addMessage, setStatus, presentNextStepChoices, tryAutoFireIntent]
@@ -1557,6 +1558,7 @@ export function useAppState() {
           manufacturer: part.manufacturer,
         });
         stopRotation();
+        sourceAttrsReadyRef.current = true; // canonical attrs obtained — preview superseded, gate lifted (stays false if the fetch above threw → catch)
 
         // Mirror the LLM-flow shortcut — if pendingIntent is set, skip the
         // generic action menu and fire what the user asked for.
@@ -1600,8 +1602,9 @@ export function useAppState() {
         currentFilter: null,
         currentFilterLabel: null,
       }));
+      // loadAttributesAndRecommendations flips sourceAttrsReadyRef true on success
+      // and leaves it false on error — gating stays correct without forcing it.
       await loadAttributesAndRecommendations(part);
-      sourceAttrsReadyRef.current = true;
     },
     [addMessage, loadAttributesAndRecommendations]
   );
@@ -1698,7 +1701,7 @@ export function useAppState() {
       // recs land (same post-recs mechanism as a bundled find_replacements,
       // Decision #172). If recs already exist, the filter shortcut above handled
       // it, so this only fires on a cold panel.
-      if (!intent && sourceAttrs && sourcePart && currentRecs.length === 0 && detectOriginIntent(query)) {
+      if (!intent && sourceAttrs && sourcePart && sourceAttrsReadyRef.current && currentRecs.length === 0 && detectOriginIntent(query)) {
         pendingPostRecsFilterRef.current = query;
         addMessage('user', query);
         conversationRef.current.push({ role: 'user', content: query });
