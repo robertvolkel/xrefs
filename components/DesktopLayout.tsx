@@ -396,7 +396,7 @@ export default function DesktopLayout(props: DesktopLayoutProps) {
         >
           <AttributesPanel
             attributes={sourceAttributes}
-            loading={phase === 'loading-attributes'}
+            loading={phase === 'loading-attributes' && !sourceAttributes}
             title="Source Part"
             activeTab={attributesTab}
             onTabChange={setAttributesTab}

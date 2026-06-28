@@ -22,6 +22,7 @@ import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from 
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
+import { buildOptimisticFromRec, buildOptimisticFromSummary } from '@/lib/services/optimisticAttributes';
 import { formatSupplierName } from '@/lib/constants/suppliers';
 import { QUANTITY_PRESETS } from '@/lib/constants/quantityPresets';
 import { isAutomotiveAecContext } from '@/lib/services/automotiveAecEnforcement';
@@ -169,6 +170,10 @@ export function useAppState() {
   // summarizeSourcePart()). Without this the LLM fabricates supplier names
   // and prices on follow-up turns.
   const sourceAttributesRef = useRef<PartAttributes | null>(null);
+  // True once the FULL source attributes are committed to state. Flips false while
+  // a confirm is showing the instant optimistic PREVIEW and the canonical fetch is
+  // still in flight — gates replacement-finding so we never score a partial preview.
+  const sourceAttrsReadyRef = useRef(true);
   // When the user's find-replacements query also contains a filter predicate
   // ("show me replacements from Wurth"), stash the original query here so the
   // filter can be auto-applied AFTER recs land — even if the flow detoured
@@ -1402,7 +1407,7 @@ export function useAppState() {
   );
 
   const handleConfirmWithLLM = useCallback(
-    async (part: PartSummary) => {
+    async (part: PartSummary, preview?: PartAttributes) => {
       const signal = freshAbort();
       const stopRotation = startStatusRotation([
         { text: 'Checking all data sources...', delayMs: 0 },
@@ -1410,9 +1415,33 @@ export function useAppState() {
         { text: 'Checking price and availability...', delayMs: 2800 },
         { text: 'Analyzing supply risk...', delayMs: 4500 },
       ]);
-      // New part confirmed — drop any acceptance criteria set against the previous part.
+      // New part confirmed — drop acceptance criteria AND every field DERIVED from the
+      // PREVIOUS part. Without this, the bottom "Cross References" section (which reads
+      // allRecommendations — Decision #229) keeps showing the old part's crosses: the LLM
+      // confirm path doesn't auto-recompute replacements (button-driven), so the stale set
+      // lingers indefinitely; the deterministic path would otherwise flash them until
+      // loadAttributesAndRecommendations repopulates. Mirrors the search-reset (the path
+      // that already cleared these), closing the divergence that caused the bug.
       acceptanceCriteriaRef.current = {};
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
+      sourceAttrsReadyRef.current = false; // canonical attrs not loaded yet — gate replacement-finding
+      setState((prev) => ({
+        ...prev,
+        phase: 'loading-attributes',
+        sourcePart: part,
+        // Optimistic preview: paint the panel INSTANTLY from data already in memory
+        // (the rec/search card) instead of a blank skeleton; the background fetch
+        // below replaces it with the canonical full attributes. `?? null` clears the
+        // previous part and falls back to the skeleton when there's nothing to show.
+        sourceAttributes: preview ?? null,
+        acceptanceCriteria: {},
+        recommendations: [],
+        allRecommendations: [],
+        selectedRecommendation: null,
+        comparisonAttributes: null,
+        applicationContext: null,
+        currentFilter: null,
+        currentFilterLabel: null,
+      }));
 
       // Tell the LLM the user confirmed
       conversationRef.current.push({
@@ -1434,6 +1463,7 @@ export function useAppState() {
       if (signal.aborted) return; // conversation switched mid-flight
 
       if (sourceAttrs) {
+        sourceAttrsReadyRef.current = true; // canonical attrs in hand — preview superseded, gate lifted
         // If the user's original query telegraphed an intent (e.g., "lowest
         // price for X"), skip the generic action menu and fire that action
         // directly. tryAutoFireIntent returns false when the intent can't be
@@ -1444,7 +1474,9 @@ export function useAppState() {
         return;
       }
 
-      // Attributes failed — full fallback
+      // Attributes failed — full fallback. loadAttributesAndRecommendations flips
+      // sourceAttrsReadyRef true on its own SUCCESS path and leaves it false on
+      // error (so a failed load can't open the gate against the partial preview).
       if (!sourceAttrs) {
         await loadAttributesAndRecommendations(part);
       }
@@ -1526,6 +1558,7 @@ export function useAppState() {
           manufacturer: part.manufacturer,
         });
         stopRotation();
+        sourceAttrsReadyRef.current = true; // canonical attrs obtained — preview superseded, gate lifted (stays false if the fetch above threw → catch)
 
         // Mirror the LLM-flow shortcut — if pendingIntent is set, skip the
         // generic action menu and fire what the user asked for.
@@ -1541,10 +1574,36 @@ export function useAppState() {
   );
 
   const handleConfirmDeterministic = useCallback(
-    async (part: PartSummary) => {
-      // New part confirmed — drop any acceptance criteria set against the previous part.
+    async (part: PartSummary, preview?: PartAttributes) => {
+      // New part confirmed — drop acceptance criteria AND every field DERIVED from the
+      // PREVIOUS part. Without this, the bottom "Cross References" section (which reads
+      // allRecommendations — Decision #229) keeps showing the old part's crosses: the LLM
+      // confirm path doesn't auto-recompute replacements (button-driven), so the stale set
+      // lingers indefinitely; the deterministic path would otherwise flash them until
+      // loadAttributesAndRecommendations repopulates. Mirrors the search-reset (the path
+      // that already cleared these), closing the divergence that caused the bug.
       acceptanceCriteriaRef.current = {};
-      setState((prev) => ({ ...prev, phase: 'loading-attributes', sourcePart: part, acceptanceCriteria: {} }));
+      sourceAttrsReadyRef.current = false; // canonical attrs not loaded yet — gate replacement-finding
+      setState((prev) => ({
+        ...prev,
+        phase: 'loading-attributes',
+        sourcePart: part,
+        // Optimistic preview: paint the panel INSTANTLY from data already in memory
+        // (the rec/search card) instead of a blank skeleton; the background fetch
+        // below replaces it with the canonical full attributes. `?? null` clears the
+        // previous part and falls back to the skeleton when there's nothing to show.
+        sourceAttributes: preview ?? null,
+        acceptanceCriteria: {},
+        recommendations: [],
+        allRecommendations: [],
+        selectedRecommendation: null,
+        comparisonAttributes: null,
+        applicationContext: null,
+        currentFilter: null,
+        currentFilterLabel: null,
+      }));
+      // loadAttributesAndRecommendations flips sourceAttrsReadyRef true on success
+      // and leaves it false on error — gating stays correct without forcing it.
       await loadAttributesAndRecommendations(part);
     },
     [addMessage, loadAttributesAndRecommendations]
@@ -1591,7 +1650,7 @@ export function useAppState() {
       // types a message that pattern-matches a known capability ("show me
       // replacements", "best price", "tell me about the manufacturer"),
       // dispatch the action client-side and skip the LLM round-trip entirely.
-      if (intent && sourceAttrs && sourcePart) {
+      if (intent && sourceAttrs && sourcePart && sourceAttrsReadyRef.current) {
         // Stash the query for deferred filter application BEFORE dispatching.
         // For find_replacements, the dispatched flow may detour through context
         // questions / missing-attribute prompts before recs actually load —
@@ -1642,7 +1701,7 @@ export function useAppState() {
       // recs land (same post-recs mechanism as a bundled find_replacements,
       // Decision #172). If recs already exist, the filter shortcut above handled
       // it, so this only fires on a cold panel.
-      if (!intent && sourceAttrs && sourcePart && currentRecs.length === 0 && detectOriginIntent(query)) {
+      if (!intent && sourceAttrs && sourcePart && sourceAttrsReadyRef.current && currentRecs.length === 0 && detectOriginIntent(query)) {
         pendingPostRecsFilterRef.current = query;
         addMessage('user', query);
         conversationRef.current.push({ role: 'user', content: query });
@@ -1670,11 +1729,16 @@ export function useAppState() {
   );
 
   const handleConfirmPart = useCallback(
-    async (part: PartSummary) => {
+    async (part: PartSummary, optimistic?: PartAttributes) => {
+      // Render the source panel INSTANTLY: use the caller's richer preview (built
+      // from a recommendation on screen) when provided, else synthesize a basic one
+      // from the PartSummary so EVERY confirm path — any source — skips the
+      // blank-skeleton wait while the canonical attributes load in the background.
+      const preview = optimistic ?? buildOptimisticFromSummary(part);
       if (state.llmAvailable === false) {
-        await handleConfirmDeterministic(part);
+        await handleConfirmDeterministic(part, preview);
       } else {
-        await handleConfirmWithLLM(part);
+        await handleConfirmWithLLM(part, preview);
       }
     },
     [state.llmAvailable, handleConfirmWithLLM, handleConfirmDeterministic]
@@ -2206,8 +2270,18 @@ export function useAppState() {
         category: fromRecs.part.category,
         status: fromRecs.part.status,
         qualifications: fromRecs.part.qualifications,
+        // Route Atlas (Chinese-MFR) parts straight to Atlas on confirm. Without
+        // this hint the confirm flow runs the Digikey-first gauntlet — two
+        // sequential ~10s product-details + keyword-search timeouts for a part
+        // Digikey doesn't carry — before falling back to Atlas, which is the bulk
+        // of the 20–30s click latency. The part's specs were already shown from
+        // rec.part; this just stops the wasted Digikey round-trips. Mirrors the
+        // rec-CARD path's `mfrOrigin === 'atlas'` skip (handleSelectRecommendation).
+        dataSource: fromRecs.part.mfrOrigin === 'atlas' ? 'atlas' : undefined,
       };
-      await handleConfirmPart(part);
+      // Pass the rich preview (rec.part has Overview data; matchDetails seed Specs)
+      // so the panel paints instantly instead of waiting on the background fetch.
+      await handleConfirmPart(part, buildOptimisticFromRec(fromRecs));
       return;
     }
     if (state.sourcePart && state.sourcePart.mpn.toLowerCase() === lower) {
