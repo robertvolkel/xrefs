@@ -6,6 +6,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import {
   DEFAULT_REPLACEMENT_PRIORITIES,
+  type BuyableRequirement,
   type RecommendationBucket,
   type ReplacementAxis,
   type ReplacementPriorities,
@@ -161,6 +162,47 @@ export default function ReplacementPrioritiesField({ value, onChange }: Replacem
           }
           sx={{ ml: 0, alignItems: 'flex-start', mb: 2 }}
         />
+
+        {/* Prefer a buyable replacement as the top pick */}
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={value.preferBuyable ?? true}
+              onChange={(e) => onChange({ ...value, preferBuyable: e.target.checked })}
+              sx={{ p: 0.5 }}
+            />
+          }
+          label={
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>Prefer a buyable replacement as the top pick</Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', lineHeight: 1.3 }}>
+                When the best-matching replacement has no distributor availability, promote the closest one you can actually buy into the top slot. The original match stays visible just below.
+              </Typography>
+            </Box>
+          }
+          sx={{ ml: 0, alignItems: 'flex-start', mb: (value.preferBuyable ?? true) ? 1 : 2 }}
+        />
+        {(value.preferBuyable ?? true) && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, ml: 3.5 }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>A replacement counts as buyable when it has</Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', lineHeight: 1.3 }}>
+                Choose whether a price alone is enough, or it must also be in stock.
+              </Typography>
+            </Box>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <Select
+                value={value.buyableRequires ?? 'price_and_stock'}
+                onChange={(e) => onChange({ ...value, buyableRequires: e.target.value as BuyableRequirement })}
+                inputProps={{ 'aria-label': 'Buyable requirement' }}
+              >
+                <MenuItem value="price">A price</MenuItem>
+                <MenuItem value="price_and_stock">A price and stock</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+        )}
 
         {/* Max suggestions per row */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>

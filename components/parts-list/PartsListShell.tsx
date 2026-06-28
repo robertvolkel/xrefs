@@ -589,6 +589,8 @@ export default function PartsListShell() {
           hideZeroStock={replacementPriorities?.hideZeroStock ?? false}
           buckets={replacementPriorities?.buckets ?? replacementPriorities?.suggestionBuckets}
           maxReplacements={replacementPriorities?.maxReplacements ?? replacementPriorities?.maxSuggestions}
+          preferBuyable={replacementPriorities?.preferBuyable ?? true}
+          buyableRequires={replacementPriorities?.buyableRequires ?? 'price_and_stock'}
           onAmbiguousClick={handleOpenAmbiguousPicker}
           columnMapping={inferredMapping}
         />

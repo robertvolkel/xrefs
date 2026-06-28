@@ -34,11 +34,12 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import StarIcon from '@mui/icons-material/Star';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, SupplierQuote, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
+import { PartsListRow, XrefRecommendation, PartType, RecommendationBucket, ColumnMapping, SupplierQuote, BuyableRequirement, computeRecommendationCounts, deriveRecommendationBucket } from '@/lib/types';
 import SupplierBreakdownPopover from './SupplierBreakdownPopover';
 import CheapestViablePopover from './CheapestViablePopover';
 import { SUPPLIER_DISPLAY } from '@/components/AttributesTabContent';
 import { ColumnDefinition, getCellValue, computePriceDelta, computeMaxPriceDelta, getColumnDisplayLabel, resolveBestRecPrice, pickCheapestViableRecs } from '@/lib/columnDefinitions';
+import { isBuyable, getCandidatePool } from '@/lib/services/buyableSelection';
 
 // Column IDs that display replacement data
 const REPLACEMENT_COLUMN_IDS = new Set([
@@ -59,6 +60,8 @@ function getAlternateReplacements(
   hideZeroStock = false,
   buckets?: RecommendationBucket[],
   maxReplacements = 3,
+  preferBuyable = false,
+  buyableRequires: BuyableRequirement = 'price_and_stock',
 ): XrefRecommendation[] {
   let base: XrefRecommendation[];
   if (row.allRecommendations && row.allRecommendations.length >= 2) {
@@ -67,17 +70,18 @@ function getAlternateReplacements(
     // If a preferred MPN is set, exclude it from alternates (it's the top replacement)
     base = row.preferredMpn
       ? nonFailing.filter(rec => rec.part.mpn !== row.preferredMpn)
-      : nonFailing.slice(1); // Skip #1 (already the top replacement)
+      : nonFailing;
   } else {
-    // Fallback: persisted alternates (up to 4 positions #2–#5)
-    base = row.replacementAlternates ?? [];
+    // Reload path (allRecommendations is dropped on save): the persisted candidate pool —
+    // top + alternates + cheapest-viable — so a demoted top and the cheapest buyable crosses
+    // both appear as alternates.
+    base = getCandidatePool(row);
   }
 
-  // If an alternate was promoted to effective top, exclude it from sub-rows
-  const effectiveTop = pickEffectiveTopRec(row, hideZeroStock, buckets);
-  if (effectiveTop && effectiveTop.part.mpn !== row.replacement?.part.mpn) {
-    base = base.filter(r => r.part.mpn !== effectiveTop.part.mpn);
-  }
+  // Whatever became the effective top occupies the parent row; exclude it from the sub-rows.
+  const effectiveTop = pickEffectiveTopRec(row, hideZeroStock, buckets, preferBuyable, buyableRequires);
+  const topMpn = effectiveTop?.part.mpn.toLowerCase();
+  if (topMpn) base = base.filter(r => r.part.mpn.toLowerCase() !== topMpn);
 
   // Apply filters: bucket match + zero-stock
   base = base.filter(r => recPassesFilters(r, hideZeroStock, buckets));
@@ -122,6 +126,10 @@ interface PartsListTableProps {
   buckets?: RecommendationBucket[];
   /** Max number of total replacements (top + alternates) rendered per row. */
   maxReplacements?: number;
+  /** When on, promote a buyable candidate into the #1 slot if the best match isn't buyable. */
+  preferBuyable?: boolean;
+  /** What counts as buyable for `preferBuyable`: 'price' | 'price_and_stock'. */
+  buyableRequires?: BuyableRequirement;
   /** Called when user clicks the status chip on a row with status='ambiguous',
    *  to open the row-identity picker with the row's candidateMatches. */
   onAmbiguousClick?: (rowIndex: number) => void;
@@ -272,6 +280,23 @@ function OverflowTooltip({
         {children}
       </Typography>
     </Tooltip>
+  );
+}
+
+/** Manufacturer name with an optional 🇨🇳 flag (Chinese MFR from Atlas) pinned to its right.
+ *  The name ellipsizes; the flag never truncates so it's always visible. Mirrors the flag on
+ *  the single-part recommendation cards (Decision #161). */
+function MfrWithFlag({ name, isChinese }: { name: string; isChinese: boolean }) {
+  if (!isChinese) return <OverflowTooltip>{name}</OverflowTooltip>;
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+      <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
+        <OverflowTooltip>{name}</OverflowTooltip>
+      </Box>
+      <Tooltip title="Chinese manufacturer" arrow>
+        <Box component="span" sx={{ ml: 0.5, flexShrink: 0, fontSize: 11, lineHeight: 1, verticalAlign: 'middle' }}>&#127464;&#127475;</Box>
+      </Tooltip>
+    </Box>
   );
 }
 
@@ -491,18 +516,29 @@ function recPassesFilters(
   return recMatchesBuckets(rec, buckets);
 }
 
-/** Promote the first filter-passing candidate from [top, ...subs] to be the displayed top.
- *  Falls back to the original top if nothing in the persisted set passes. */
+/** Pick the displayed top rec from the row's candidate pool.
+ *  Honors hideZeroStock + bucket filters. When `preferBuyable` is on and the best-eligible
+ *  pick isn't buyable, promotes the first buyable candidate (the original best match stays
+ *  visible as an alternate). Reorders, never hides — falls back to the original top when
+ *  nothing qualifies, so a row with no buyable candidate keeps its current pick. An explicit
+ *  user-preferred MPN is never overridden for buyability. */
 function pickEffectiveTopRec(
   row: PartsListRow,
   hideZeroStock: boolean,
   buckets?: RecommendationBucket[],
+  preferBuyable: boolean = false,
+  buyableRequires: BuyableRequirement = 'price_and_stock',
 ): XrefRecommendation | undefined {
   const base = row.replacement;
   if (!base) return base;
-  if (recPassesFilters(base, hideZeroStock, buckets)) return base;
-  const passingAlt = row.replacementAlternates?.find(r => recPassesFilters(r, hideZeroStock, buckets));
-  return passingAlt ?? base;
+  const eligible = getCandidatePool(row).filter(r => recPassesFilters(r, hideZeroStock, buckets));
+  if (eligible.length === 0) return base;
+  const baseIsPreferred = !!row.preferredMpn && base.part.mpn === row.preferredMpn;
+  if (preferBuyable && !baseIsPreferred && !isBuyable(eligible[0], buyableRequires)) {
+    const buyable = eligible.find(r => isBuyable(r, buyableRequires));
+    if (buyable) return buyable;
+  }
+  return eligible[0];
 }
 
 function CellRenderer({
@@ -520,6 +556,8 @@ function CellRenderer({
   onSetPartType,
   hideZeroStock,
   buckets,
+  preferBuyable,
+  buyableRequires,
   onAmbiguousClick,
   columnMapping,
   onSupplierBreakdownClick,
@@ -539,6 +577,8 @@ function CellRenderer({
   onSetPartType?: (rowIndex: number, partType: PartType) => void;
   hideZeroStock?: boolean;
   buckets?: RecommendationBucket[];
+  preferBuyable?: boolean;
+  buyableRequires?: BuyableRequirement;
   onAmbiguousClick?: (rowIndex: number) => void;
   columnMapping?: ColumnMapping | null;
   /** Click handler for FC-aggregated price/stock cells. Opens a popover
@@ -568,7 +608,7 @@ function CellRenderer({
     const recCount = row.allRecommendations?.length ?? row.recommendationCount ?? (row.replacement ? 1 : 0);
     // For parent rows, honor the list-level hideZeroStock filter by picking the first
     // stocked candidate from persisted recs (replacement + replacementAlternates).
-    const effectiveTop = recommendation ?? pickEffectiveTopRec(row, !!hideZeroStock, buckets);
+    const effectiveTop = recommendation ?? pickEffectiveTopRec(row, !!hideZeroStock, buckets, preferBuyable, buyableRequires);
     const topRec = effectiveTop;
 
     switch (column.id) {
@@ -729,9 +769,7 @@ function CellRenderer({
 
       case 'sys:top_suggestion_mfr':
         return topRec?.part.manufacturer ? (
-          <OverflowTooltip>
-            {topRec.part.manufacturer}
-          </OverflowTooltip>
+          <MfrWithFlag name={topRec.part.manufacturer} isChinese={topRec.part.mfrOrigin === 'atlas'} />
         ) : null;
 
       case 'sys:top_suggestion_price': {
@@ -932,6 +970,13 @@ function CellRenderer({
     return <>{formatted}</>;
   }
 
+  // Source manufacturer columns get the 🇨🇳 flag when the source part comes from Atlas.
+  // Source rows surface origin via resolvedPart.dataSource (mfrOrigin isn't resolved for
+  // sources in the list flow — see usePartsListState), so "from Atlas" is the signal here.
+  if (column.id === 'mapped:manufacturer' || column.id === 'dk:manufacturer') {
+    return <MfrWithFlag name={String(value)} isChinese={row.resolvedPart?.dataSource === 'atlas'} />;
+  }
+
   // Default: text with ellipsis
   return (
     <OverflowTooltip>
@@ -970,6 +1015,8 @@ export default function PartsListTable({
   hideZeroStock,
   buckets,
   maxReplacements,
+  preferBuyable,
+  buyableRequires,
   onAmbiguousClick,
   columnMapping,
 }: PartsListTableProps) {
@@ -1142,7 +1189,7 @@ export default function PartsListTable({
           <TableBody>
             {rows.map((row) => {
               const alternates = hasReplacementColumns
-                ? getAlternateReplacements(row, hideZeroStock, buckets, maxReplacements)
+                ? getAlternateReplacements(row, hideZeroStock, buckets, maxReplacements, preferBuyable, buyableRequires)
                 : [];
               const hasSubRows = alternates.length > 0;
 
@@ -1198,6 +1245,8 @@ export default function PartsListTable({
                           onSetPartType={onSetPartType}
                           hideZeroStock={hideZeroStock}
                           buckets={buckets}
+                          preferBuyable={preferBuyable}
+                          buyableRequires={buyableRequires}
                           onAmbiguousClick={onAmbiguousClick}
                           columnMapping={columnMapping}
                           onSupplierBreakdownClick={handleSupplierBreakdownClick}

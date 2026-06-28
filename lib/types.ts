@@ -293,11 +293,21 @@ export interface ReplacementPriorities {
   maxReplacements?: number;
   /** Which buckets are eligible for display (multi-select). Empty / undefined = all. */
   buckets?: RecommendationBucket[];
+  /** When true (default), if the best-matching #1 replacement has no live distributor
+   *  availability, promote the closest *buyable* equivalent into the top slot (the original
+   *  stays visible as an alternate). Absent ⇒ on. Display-time only — does not affect scoring
+   *  or caching. See `buyableRequires` for what counts as buyable. */
+  preferBuyable?: boolean;
+  /** What "buyable" means for `preferBuyable`: `'price'` = has a distributor price;
+   *  `'price_and_stock'` (default) = has a price AND is in stock. */
+  buyableRequires?: 'price' | 'price_and_stock';
   /** @deprecated legacy alias of `maxReplacements` — read-only back-compat for rows saved before Apr 2026. Never written. */
   maxSuggestions?: number;
   /** @deprecated legacy alias of `buckets` — read-only back-compat for rows saved before Apr 2026. Never written. */
   suggestionBuckets?: RecommendationBucket[];
 }
+
+export type BuyableRequirement = NonNullable<ReplacementPriorities['buyableRequires']>;
 
 export const DEFAULT_REPLACEMENT_PRIORITIES: ReplacementPriorities = {
   order: ['lifecycle', 'compliance', 'cost', 'stock'],
@@ -305,6 +315,8 @@ export const DEFAULT_REPLACEMENT_PRIORITIES: ReplacementPriorities = {
   hideZeroStock: false,
   maxReplacements: 3,
   buckets: ['accuris', 'manufacturer', 'logic'],
+  preferBuyable: true,
+  buyableRequires: 'price_and_stock',
 };
 
 /** Per-parameter match detail for comparison */

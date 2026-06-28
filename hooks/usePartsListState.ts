@@ -1613,6 +1613,20 @@ export function usePartsListState() {
           }
         }
       }
+      // Cheapest-viable crosses feed the "prefer buyable" #1-pick promotion — enrich them so
+      // their stock is known under the 'price_and_stock' rule. Gated on the preference (default
+      // on); MPNs mostly overlap the alternates above, so the Set keeps this near-free.
+      if ((listPrioritiesRef.current?.preferBuyable ?? true)) {
+        for (const cv of r.cheapestViableRecs ?? []) {
+          if (cv.part.mpn && !cv.part.supplierQuotes?.length) {
+            mpnsToEnrich.add(cv.part.mpn);
+            rowsWithRecNeed.add(r.rowIndex);
+            if (cv.part.mfrOrigin === 'atlas') {
+              chineseMpnSet.add(cv.part.mpn.toLowerCase());
+            }
+          }
+        }
+      }
     }
 
     if (mpnsToEnrich.size === 0) return { requested: 0, enriched: 0 };
@@ -1686,6 +1700,26 @@ export function usePartsListState() {
                       ...(fc.quotes.length > 0 ? { supplierQuotes: fc.quotes } : {}),
                       ...(fc.lifecycle ? { lifecycleInfo: [...(sub.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
                       ...(fc.compliance ? { complianceData: [...(sub.part.complianceData ?? []), fc.compliance] } : {}),
+                    },
+                  };
+                }),
+              };
+            }
+            // Same enrichment for the cheapest-viable crosses (source for the buyable #1-pick
+            // promotion); gives them the stock data the 'price_and_stock' rule needs.
+            if (next.cheapestViableRecs?.length) {
+              next = {
+                ...next,
+                cheapestViableRecs: next.cheapestViableRecs.map(cv => {
+                  const fc = results[cv.part.mpn.toLowerCase()];
+                  if (!fc || (fc.quotes.length === 0 && !fc.lifecycle && !fc.compliance)) return cv;
+                  return {
+                    ...cv,
+                    part: {
+                      ...cv.part,
+                      ...(fc.quotes.length > 0 ? { supplierQuotes: fc.quotes } : {}),
+                      ...(fc.lifecycle ? { lifecycleInfo: [...(cv.part.lifecycleInfo ?? []), fc.lifecycle] } : {}),
+                      ...(fc.compliance ? { complianceData: [...(cv.part.complianceData ?? []), fc.compliance] } : {}),
                     },
                   };
                 }),
