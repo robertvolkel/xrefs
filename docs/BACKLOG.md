@@ -4,6 +4,14 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Manufacturer profile pull should open the right-hand panel, not re-type the profile in chat (P3)
+
+**Context.** When a user asks the chat agent to pull a manufacturer profile — or accepts the agent's own "want me to pull a company profile?" offer — `get_manufacturer_profile` runs and the LLM renders the profile **inline in the chat bubble** as a markdown table + cert-audit + risk-read. It does **not** open the dedicated right-hand `ManufacturerProfilePanel` (Decisions #161 / #203), which today only opens on a manufacturer-name **click** (`handleManufacturerClick`). Net: the same data has two presentations depending on click-vs-ask, and the nicer structured panel is bypassed on the conversational path. Verified on a 3PEAK profile (June 2026) that the inline answer is **fully grounded** against the stored Atlas record (dual HQ, STAR Market listing, ISO 26262 + IATF 16949 certs all real; AEC-Q honestly flagged "not in our profile") — so this is a UX/consistency gap, **not** a correctness one. User chose to leave behavior **as-is** for now.
+
+**Fix (if wanted).** Have the chat orchestrator signal the client to open the panel when `get_manufacturer_profile` resolves to a real profile — surface the resolved canonical MFR name (already captured in `OrchestratorResponse.mentionedAtlasManufacturers`, the Decision #203 wire) as an "open profile panel" hint the client consumes the same way `handleManufacturerClick` does, then let the agent keep a short **1–2 line tailored take** (the cert-audit / risk-read commentary the panel doesn't show) in the chat alongside it. Recommended shape: **panel + brief commentary**, not a duplicated full table. Scope: `chat()` (arguably `listChat` / `refinementChat` too). No DB change. Low priority.
+
+---
+
 ## Double FindChips fetch per single-part recs load (follow-up to Decisions #252 / #254) (P3)
 
 **Context.** Surfaced in the PR #10 review. On a single-part load that carries deferred parts.io enrichment, `triggerFCEnrichment` fires **twice**: once in `showRecsAndDeferAssessment` ([hooks/useAppState.ts](../hooks/useAppState.ts) ~line 755) on the initial Digikey-scored recs, then again in the `triggerPartsioEnrichment` tail after the parts.io rescore **replaces** `allRecommendations` with FC-less recs (discarding the first merge). This is a pre-existing pattern (Decision #163 deferred parts.io enrichment) that Decision #252 made universal-by-default by removing the opt-in gate. Net cost: a redundant fan-out + a brief chip flicker (pricing appears → vanishes on rescore → reappears). With Decision #254's raised caps the second fetch is cheap (L1 warm) and fast, so impact is low.
