@@ -1826,6 +1826,15 @@ export async function chat(
   }
   if (toolData.choices && toolData.choices.length > 0) {
     result.choices = toolData.choices;
+    // Deterministic backstop: buttons must never render without a sentence of
+    // context. The system prompt requires accompanying text, but the model
+    // sometimes emits a bare present_choices call with an empty message —
+    // leaving the user staring at unexplained buttons. Inject a neutral lead-in
+    // so the bubble is never empty; the model's own (better) sentence wins
+    // whenever it provides one.
+    if (!result.message || !result.message.trim()) {
+      result.message = 'Which of these would you like?';
+    }
   }
   if (toolData.mentionedAtlasManufacturers && toolData.mentionedAtlasManufacturers.size > 0) {
     result.mentionedAtlasManufacturers = [...toolData.mentionedAtlasManufacturers];
