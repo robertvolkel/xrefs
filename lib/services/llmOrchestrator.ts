@@ -10,6 +10,7 @@ import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundin
 import { buildComparisonTable, ComparisonTable, ComparisonPartInput } from './comparisonTable';
 import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
+import { resolveDiscoveryScope, listManufacturersForScope } from './atlasManufacturerDiscovery';
 import { logRecommendation } from './recommendationLogger';
 import { logTokenUsage } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
@@ -441,7 +442,7 @@ const SYSTEM_PROMPT = `You are Agent, a component intelligence assistant for the
 - **Technical specs & datasheets** — parametric data, package, ratings, qualifications
 - **Commercial intelligence** — multi-distributor pricing, stock, lead times, authorization
 - **Lifecycle & compliance** — active / EOL / suggested-replacement status, RoHS, REACH, AEC qualifications
-- **Manufacturer profiles** — company background, certifications, product lines (Atlas-resolved for ~115 Chinese MFRs and a handful of Western majors)
+- **Manufacturer profiles** — company background, certifications, product lines (Atlas-resolved for our Chinese-manufacturer dataset and a handful of Western majors)
 - **Cross-reference replacements** — equivalent parts from any manufacturer, scored by a deterministic rule engine (43 component families)
 
 Cross-references are ONE of these capabilities, not the headline activity. Many user sessions never run a cross-reference at all — they look up a part, check pricing, ask about a manufacturer, and leave. Treat each user query as the question it actually is. Do NOT funnel every interaction toward cross-references.
@@ -508,7 +509,7 @@ Acceptable assessment shape: "Top match is X (Y%) — passes all rules. Z is the
 About This System (use these facts when answering meta-questions):
 - Data sources:
   - **Digikey** (primary): live OAuth2 API providing parametric specs, pricing, and availability for the active Digikey catalog (millions of parts).
-  - **Atlas** (Chinese manufacturers): curated dataset of ~115 Chinese component manufacturers and ~55,000 products (~38,000 with enough parametric data to be scored). Used for cost-down alternatives and access to Asia-region supply.
+  - **Atlas** (Chinese manufacturers): curated dataset of Chinese component manufacturers and their products (the subset with enough parametric data is scored). Used for cost-down alternatives and access to Asia-region supply.
   - **Parts.io** (Accuris): datasheet-derived parametric gap-fill across 17 component classes — fills specs Digikey doesn't publish (e.g., relay coil details, thyristor dv/dt, LDO dropout, fuse I²t).
   - **FindChips**: aggregator covering ~80 distributors (Digikey, Mouser, Arrow, LCSC, Farnell, RS Components, TME, etc.) in a single call — used for multi-distributor pricing, stock, and lifecycle/risk data.
   - **Mouser**: queried for manufacturer-published "Suggested Replacement" cross-references that get fed into the recommendation pipeline as certified candidates.
@@ -531,9 +532,11 @@ About This System (use these facts when answering meta-questions):
 Manufacturer Profiles:
 **Manufacturer profile questions — MANDATORY tool call.** ANY question about a manufacturer's identity, history, location, founding, ownership, certifications, products, contact info, financial position, business profile, or general background → call get_manufacturer_profile FIRST. Non-negotiable. Trigger phrases include "tell me about X", "what is X", "where is X based?", "when was X founded?", "is X public/private?", "what does X make?", "is X ISO/AEC/IATF certified?", "who owns X?", "what's X's website?", "how big is X?", and any sourcing-fitness question implying an industry. Do NOT answer from training data. Do NOT pre-emptively say "I don't have that" before calling the tool. Always call first, answer second.
 
+**Manufacturer DISCOVERY questions — use find_component_manufacturers.** When the user asks WHICH or WHETHER manufacturers make a component type — "are there manufacturers that make BJTs?", "who makes MLCCs?", "which Chinese manufacturers make capacitors?", "list suppliers of voltage regulators", "any makers of passive components?" — call find_component_manufacturers with the component type. It accepts ANY grain: a specific family ("BJT", "tantalum capacitor"), a broad type ("capacitors", "diodes"), or a whole group ("passive components", "discrete semiconductors", "ICs"). This is DISTINCT from get_manufacturer_profile (one named company) and from search_parts (specific parts): a "which/who makes X" question asks to DISCOVER a manufacturer roster, so do NOT run search_parts for it — an empty part search falsely implies no manufacturers exist. SCOPE: covers only Chinese manufacturers in our Atlas dataset — when you present the answer, say so explicitly (e.g. "Among the Chinese manufacturers in our Atlas dataset, N make BJTs"). If the result has truncated:true, state the TOTAL count and note you're listing the top N by product volume — never imply only N exist. If it returns unresolved:true, do NOT search; ask the user to name the component type more specifically. List the manufacturer names in prose (they auto-link to profiles) — do NOT use present_choices for them.
+
 **Reading the tool result.** The profile contains: name, country, headquarters, foundedYear, summary, logoUrl, isSecondSource, productCategories, certifications, designResources, manufacturingLocations, authorizedDistributors, complianceFlags, distributorCount, catalogSize, familyCount, stockCode, websiteUrl, contactInfo, partsioName. Optional fields are explicitly null when we have no data (the key is always present) — treat a null value as "not in our profile". Do NOT infer that null means a missing query. The summary field is free-form prose and often carries specifics (founding month, IPO date and exchange, secondary offices, product lines, business milestones) that aren't in dedicated structured fields — ALWAYS read it carefully before claiming a fact is unavailable. The stockCode field's presence indicates publicly listed on the corresponding exchange; absence means listing status is UNKNOWN — do NOT assume private. The partsioName field is the legal entity name on Parts.io (e.g. "GigaDevice Semiconductor (Beijing) Inc"), useful for reconciling supplier records.
 
-**Coverage caveat.** Rich profile data is available for ~115 Chinese manufacturers (Atlas dataset) plus a few Western majors as fallback. For most Western manufacturers (Texas Instruments, ADI, ON Semi, Vishay, Murata, etc.) the tool returns notFound: true. ONLY in that case, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Do NOT use this fallback when the tool DID return a profile.
+**Coverage caveat.** Rich profile data is available for Chinese manufacturers in our Atlas dataset plus a few Western majors as fallback. For most Western manufacturers (Texas Instruments, ADI, ON Semi, Vishay, Murata, etc.) the tool returns notFound: true. ONLY in that case, tell the user plainly: "We currently maintain detailed company profiles only for Chinese manufacturers in our Atlas dataset. For [MFR], I can still pull part data, specs, and multi-distributor pricing via search — want me to do that instead?" Do NOT use this fallback when the tool DID return a profile.
 
 **GENERAL CLAIM DISCIPLINE — applies to every factual claim about the manufacturer.** For every specific factual claim, you MUST be able to point to a backing field in the tool result, or to a verbatim quote from the summary text. If you can't, you have two options: **(a) downgrade** to "not in our profile — verify with the manufacturer directly", or **(b) phrase as hedged interpretation** with one of {*suggests, likely, typically, often, appears to, my read is*}. There is no third option. Asserting specifics without a backing source — certifications, dates, ownership, financials, headcount, products, partnerships, locations, leadership, IPO status, supplier relationships, foundry partners — is a fabrication. Fabrication on a sourcing decision is the highest-cost error this system can make.
 
@@ -652,13 +655,13 @@ const MFR_CLAIM_DISCIPLINE_MINI = `
 
 Manufacturer questions — mandatory tool call:
 - ANY question about a manufacturer's identity, history, location, founding, ownership, certifications, products, contact info, financials, or general background → call get_manufacturer_profile FIRST. Do NOT answer from training data.
-- If the tool returns { notFound: true }, tell the user plainly: "We currently maintain detailed company profiles only for ~115 Chinese manufacturers (Atlas dataset). For [MFR], I can still pull parts, specs, and multi-distributor pricing via search." Do NOT volunteer training-data facts about that manufacturer.
+- If the tool returns { notFound: true }, tell the user plainly: "We currently maintain detailed company profiles only for Chinese manufacturers in our Atlas dataset. For [MFR], I can still pull parts, specs, and multi-distributor pricing via search." Do NOT volunteer training-data facts about that manufacturer.
 - When the tool returns a profile, every factual claim must back to a tool field or use hedged language (suggests, likely, typically, appears to). Optional fields are explicitly null when we have no data — treat null as "not in our profile — verify with the manufacturer directly". No fabrication.`;
 
 /** Tool definition for get_manufacturer_profile — shared by chat(), refinementChat(), listChat(). */
 const GET_MFR_PROFILE_TOOL: Anthropic.Tool = {
   name: 'get_manufacturer_profile',
-  description: 'Look up rich company-profile data for a manufacturer (description, headquarters, country, founded year, certifications, core products, contact info, website, logo). Coverage: ~115 Chinese component manufacturers from our Atlas dataset have full profiles; a handful of major Western manufacturers have partial mock profiles. For non-Chinese / non-Atlas manufacturers (e.g. Texas Instruments, Analog Devices, ON Semiconductor), this tool returns notFound — when that happens, tell the user we currently only have rich profile data for Chinese manufacturers in our Atlas dataset, and offer what we DO have via search/attributes (parts, descriptions, parametric data, distributor pricing).',
+  description: 'Look up rich company-profile data for a manufacturer (description, headquarters, country, founded year, certifications, core products, contact info, website, logo). Coverage: Chinese component manufacturers in our Atlas dataset have full profiles; a handful of major Western manufacturers have partial mock profiles. For non-Chinese / non-Atlas manufacturers (e.g. Texas Instruments, Analog Devices, ON Semiconductor), this tool returns notFound — when that happens, tell the user we currently only have rich profile data for Chinese manufacturers in our Atlas dataset, and offer what we DO have via search/attributes (parts, descriptions, parametric data, distributor pricing).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -681,7 +684,7 @@ async function executeGetManufacturerProfile(rawName: string): Promise<string> {
       return JSON.stringify({
         notFound: true,
         queriedName: name,
-        note: 'No rich profile data for this manufacturer. We currently maintain detailed company profiles only for ~115 Chinese manufacturers in our Atlas dataset, plus a handful of major Western manufacturers in fallback data. For others, parts/specs/pricing are still available via search.',
+        note: 'No rich profile data for this manufacturer. We currently maintain detailed company profiles only for Chinese manufacturers in our Atlas dataset, plus a handful of major Western manufacturers in fallback data. For others, parts/specs/pricing are still available via search.',
       });
     }
     const { profile, source } = result;
@@ -717,6 +720,26 @@ async function executeGetManufacturerProfile(rawName: string): Promise<string> {
     return JSON.stringify({ error: 'Failed to fetch profile' });
   }
 }
+
+/**
+ * Tool definition for find_component_manufacturers — manufacturer DISCOVERY by
+ * component family/category/group. Distinct from get_manufacturer_profile (one
+ * named company) and search_parts (specific parts). chat() only.
+ */
+const FIND_COMPONENT_MFRS_TOOL: Anthropic.Tool = {
+  name: 'find_component_manufacturers',
+  description: 'List the Chinese manufacturers that make a given component type. Use this for DISCOVERY questions — "which/who/are there manufacturers that make X", "Chinese manufacturers of X", "list suppliers of X" — at ANY grain: a specific family ("BJTs", "MLCC", "tantalum capacitors"), a broad component type ("capacitors", "diodes", "voltage regulators"), or a whole group ("passive components", "discrete semiconductors", "ICs"). This is NOT get_manufacturer_profile (that looks up ONE named company) and NOT search_parts (that finds specific parts) — never run a part search to answer a "which manufacturers make X" question. SCOPE: returns only manufacturers in our Atlas dataset of Chinese component makers — say so when presenting. Returns the TRUE total distinct manufacturer count plus the top makers by product volume. If the component type cannot be mapped, returns { unresolved: true } — then ask the user to name the component type more specifically.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      component: {
+        type: 'string',
+        description: 'The component type in plain words — a family ("BJT", "bipolar transistor", "tantalum capacitor"), a broad type ("capacitors", "diodes", "voltage regulators"), or a group ("passive components", "discrete semiconductors", "ICs"). Plural/casual phrasings accepted.',
+      },
+    },
+    required: ['component'],
+  },
+};
 
 /** Tool definitions for Claude */
 const tools: Anthropic.Tool[] = [
@@ -810,6 +833,7 @@ const tools: Anthropic.Tool[] = [
     },
   },
   GET_MFR_PROFILE_TOOL,
+  FIND_COMPONENT_MFRS_TOOL,
   {
     name: 'present_choices',
     description: 'Present interactive choices to the user as clickable buttons. Use this ONLY for non-part workflow decisions — e.g., choosing between actions like "get attributes" vs "search for alternatives", or "continue" vs "start over". Do NOT use this for part selection or confirmation — the UI renders clickable part cards automatically from search results.',
@@ -1272,6 +1296,49 @@ async function executeTool(
         }
       } catch { /* projection always emits valid JSON */ }
       return content;
+    }
+    case 'find_component_manufacturers': {
+      const inp = input as { component: string };
+      const scope = resolveDiscoveryScope(inp.component);
+      if (scope.kind === 'unresolved') {
+        return JSON.stringify({
+          unresolved: true,
+          queried: (inp.component ?? '').trim(),
+          note: 'Could not map this to a known component type. Ask the user to name the component type more specifically (e.g. "BJT", "capacitors", "voltage regulators", "passive components"). Do NOT run a part search.',
+        });
+      }
+      try {
+        const listing = await listManufacturersForScope(scope);
+        if (listing.totalManufacturerCount === 0) {
+          return JSON.stringify({
+            scope: scope.label,
+            totalManufacturerCount: 0,
+            manufacturers: [],
+            note: `No Chinese (Atlas) manufacturers in our dataset make ${scope.label}. Tell the user plainly; do not invent names.`,
+          });
+        }
+        // Register names so the chat UI linkifies them to profiles (Decision #203).
+        data.mentionedAtlasManufacturers ??= new Set<string>();
+        for (const m of listing.manufacturers) data.mentionedAtlasManufacturers.add(m.manufacturer);
+
+        const showing = listing.manufacturers.length;
+        const truncated = listing.totalManufacturerCount > showing;
+        return JSON.stringify({
+          scope: scope.label,
+          coverage: 'Chinese manufacturers in our Atlas dataset only',
+          totalManufacturerCount: listing.totalManufacturerCount,
+          totalProductCount: listing.totalProductCount,
+          showing,
+          truncated,
+          manufacturers: listing.manufacturers,
+          note: truncated
+            ? `We carry ${listing.totalManufacturerCount} distinct Chinese manufacturers making ${scope.label}; listing the top ${showing} by product volume. State the TOTAL count AND that this is the top ${showing} — do NOT imply only ${showing} exist. Frame as "Chinese manufacturers in our Atlas dataset".`
+            : `These are all ${listing.totalManufacturerCount} Chinese manufacturers we carry making ${scope.label}. Frame as "Chinese manufacturers in our Atlas dataset".`,
+        });
+      } catch (err) {
+        console.warn('[orchestrator] find_component_manufacturers failed:', err);
+        return JSON.stringify({ error: 'Failed to fetch manufacturers' });
+      }
     }
     case 'present_part_options': {
       const inp = input as { mpns: string[] };
