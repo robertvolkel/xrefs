@@ -29,6 +29,7 @@ import {
   computePartsioCoverage,
   getAllPartsioFields,
 } from '@/lib/services/partsioParamMap';
+import { getSelectionTier } from '@/lib/services/selectionQuestions';
 
 /** Data for L2 display-only rendering */
 export interface L2ParamMapData {
@@ -277,6 +278,8 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
               const dkField = dkReverse.get(rule.attributeId);
               const pioField = pioReverse.get(rule.attributeId);
               const hasSources = !!dkField || !!pioField;
+              // Read-only marker: does the greenfield agent ask about this spec?
+              const selTier = table ? getSelectionTier(table.familyId, rule.attributeId) : null;
 
               return (
                 <TableRow
@@ -297,7 +300,20 @@ function L3View({ table, t }: { table: LogicTable | null; t: ReturnType<typeof u
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2">{rule.attributeName}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                      <Typography variant="body2">{rule.attributeName}</Typography>
+                      {selTier && (
+                        <Chip
+                          label={selTier === 'tier2'
+                            ? t('admin.tierRequired', 'Required to search')
+                            : t('admin.tierNarrows', 'Narrows results')}
+                          size="small"
+                          color={selTier === 'tier2' ? 'primary' : 'default'}
+                          variant="outlined"
+                          sx={{ height: 18, fontSize: '0.6rem' }}
+                        />
+                      )}
+                    </Box>
                   </TableCell>
                   <TableCell sx={{ textAlign: 'center' }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>

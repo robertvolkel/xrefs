@@ -802,6 +802,24 @@ export interface MatchingRule {
   valueAliases?: string[][];
 }
 
+/**
+ * One attribute the agent should ask about during greenfield part selection.
+ * Derived from a family's logic-table rule; see lib/services/selectionQuestions.ts.
+ *
+ * `input` describes how the USER supplies the value (NOT how the engine scores it —
+ * many numeric specs are scored by `identity` exact-match yet are typed values):
+ *   - 'choice' → a closed set of `options` (rendered as buttons/chips).
+ *   - 'value'  → a typed value (number, package code, etc.) asked for in prose.
+ */
+export interface SelectionAttr {
+  attributeId: string;
+  /** Human label (the rule's attributeName). */
+  label: string;
+  input: 'choice' | 'value';
+  /** The closed option set — present iff `input === 'choice'`. */
+  options?: string[];
+}
+
 /** A complete logic table for a component family */
 export interface LogicTable {
   familyId: string;

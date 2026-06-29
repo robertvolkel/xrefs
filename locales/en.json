@@ -332,6 +332,8 @@
     "title": "Data & Logic",
     "dataSources": "Data Sources",
     "paramMappings": "Attribute Templates",
+    "tierRequired": "Required to search",
+    "tierNarrows": "Narrows results",
     "logicRules": "Logic - Replacements",
     "atlas": "Atlas",
     "atlasCoverageNav": "Atlas Coverage",
