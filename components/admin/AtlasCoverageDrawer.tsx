@@ -111,7 +111,7 @@ export default function AtlasCoverageDrawer({
         {/* Summary */}
         {data && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('admin.coverageSummary', { products: data.totalProducts, coverage: avgCoverage, rules: data.attributes.length })}
+            {t('admin.atlasCoverageSummary', { products: data.totalProducts, coverage: avgCoverage, rules: data.attributes.length })}
           </Typography>
         )}
 
