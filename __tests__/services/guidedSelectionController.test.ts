@@ -39,10 +39,11 @@ describe('deterministic disambiguation', () => {
   it('flags known-ambiguous heads, ignores single-family heads', () => {
     expect(detectAmbiguity('I need a voltage regulator')?.map(o => o.familyId)).toEqual(['C1', 'C2']);
     expect(detectAmbiguity('I need a transistor')?.map(o => o.familyId)).toEqual(['B5', 'B6', 'B9']);
+    expect(detectAmbiguity('I need a capacitor')?.map(o => o.familyId)).toEqual(['12', '58', '59', '64', '60']);
     expect(detectAmbiguity('I need an NTC thermistor')).toBeNull();
   });
   it('every disambiguation label resolves back to its intended family (clicked chip re-pins)', () => {
-    for (const text of ['I need a regulator', 'I need a transistor']) {
+    for (const text of ['I need a regulator', 'I need a transistor', 'I need a capacitor']) {
       for (const opt of detectAmbiguity(text)!) {
         expect(resolveFamilyFromText(opt.label)).toBe(opt.familyId);
       }
@@ -61,6 +62,29 @@ describe('entry/theory heuristics', () => {
 describe('decideGuidedTurn — turn ownership', () => {
   it('defers (null) on a part-number turn', async () => {
     expect(await decideGuidedTurn([u('BC847BLT1G')], noAnswers)).toBeNull();
+  });
+
+  it('ENTRY: bare "capacitor" → 5-way disambiguation (not punted to the LLM)', async () => {
+    const out = await decideGuidedTurn([u('I need a capacitor')], noAnswers);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message).toBe(renderDisambiguationQuestion());
+      expect(out.choices?.map(c => c.label)).toEqual(['MLCC', 'Aluminum electrolytic', 'Tantalum', 'Film', 'Aluminum polymer']);
+    }
+  });
+
+  it('REGRESSION: a fresh type word that looksLikeMpn ("Tantalum pls") is OWNED, not bailed to the LLM', async () => {
+    // The live capacitor bug: after the LLM clarified the type, "Tantalum pls" hit the
+    // MPN gate (looksLikeMpn true) and bailed → the LLM ran the whole flow. The fix:
+    // a message that names a part type is never treated as an MPN lookup.
+    const convo = [
+      u('I need a capacitor'),
+      a('What type of capacitor are you looking for? For example: MLCC, Tantalum, …'), // LLM prose, NOT a system question
+      u('Tantalum pls'),
+    ];
+    const out = await decideGuidedTurn(convo, noAnswers);
+    expect(out?.kind).toBe('ask'); // system takes over with the first tantalum spec
+    if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
   });
 
   it('defers (null) on a theory question even though it names a family', async () => {

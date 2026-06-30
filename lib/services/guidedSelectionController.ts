@@ -87,6 +87,19 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
       { familyId: 'B9', label: 'JFET' },
     ],
   },
+  {
+    // Bare "capacitor" spans five common families. A qualified name ("tantalum
+    // capacitor", "MLCC") resolves to its family in pinFamily BEFORE this runs, so
+    // only the unqualified word reaches here. Labels must resolve back to their id.
+    test: /\bcapacitors?\b/i,
+    options: [
+      { familyId: '12', label: 'MLCC' },
+      { familyId: '58', label: 'Aluminum electrolytic' },
+      { familyId: '59', label: 'Tantalum' },
+      { familyId: '64', label: 'Film' },
+      { familyId: '60', label: 'Aluminum polymer' },
+    ],
+  },
 ];
 
 export function detectAmbiguity(text: string): AmbiguityOption[] | null {
@@ -163,12 +176,15 @@ export async function decideGuidedTurn(
   const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
   const inProgress = !!lastAssistant && isSystemGuidedQuestion(lastAssistant.content);
 
-  // MPN gate — ONLY for a FRESH turn. A part number (whole-string or named in a
-  // sentence) starts a normal lookup, never a guided selection. But a CONTINUATION
-  // answer to our question can be a single token that looksLikeMpn flags as a part
-  // number ("Fixed", "Buck", "Schottky") — so we must NOT bail on those. pinFamily
-  // still anchors the family from the original part-type message regardless.
-  if (!inProgress && (looksLikeMpn(userText) || mentionsMpn(userText))) return null;
+  // MPN gate — ONLY for a FRESH turn, and ONLY when the message doesn't name a part
+  // type. A part NUMBER lookup ("BC847B") defers to normal search. But `looksLikeMpn`
+  // false-positives on ordinary type words ("Tantalum", "MLCC", "Film", "Fixed"), so
+  // a fresh "Tantalum pls" would wrongly bail — unless we first check it names a
+  // family / known ambiguous head, in which case it's a TYPE request, not a lookup.
+  // (A continuation answer is exempt anyway via !inProgress — its family is anchored
+  // from the original part-type message.)
+  const namesPartType = !!resolveFamilyFromText(userText) || !!detectAmbiguity(userText);
+  if (!inProgress && !namesPartType && (looksLikeMpn(userText) || mentionsMpn(userText))) return null;
 
   // Only ENTER a fresh guided selection from a clean screen. Once cards/recs/a source
   // part are showing, post-results turns (refine, filter, compare, pivot, a 2nd
