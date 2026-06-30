@@ -79,14 +79,24 @@ export const SELECTION_TIERS: Record<string, { tier2: string[]; tier3: string[] 
  * Source order: an explicit upgrade hierarchy, else a slash-delimited list inside the
  * rule's attributeName parenthetical (e.g. "Output Type (Fixed / Adjustable / Tracking /
  * Negative)"). Rejects:
+ *   - numeric-scored rules — a `threshold`/`fit`/`identity_range`/`vref_check` spec is a
+ *     TYPED value, never a pick-list, so a slashed parenthetical on one is always a
+ *     unit/symbol synonym, NOT choices ("VDRM / VRRM", "(AC/DC)", "Supply Voltage Range
+ *     (Single/Dual)"). This is the reliable half of the logicType signal: numeric-scored
+ *     ⇒ always typed. (The converse isn't reliable — numeric IDENTITY specs like
+ *     output_voltage are exact-match yet typed — which is why every genuine choice below
+ *     is identity / identity_upgrade and the gate only excludes the numeric types.)
  *   - non-parenthetical slashes ("Package / Footprint" — an open set, type it in prose),
  *   - single-character tokens ("Channel Type (N/P)", "Safety Rating (X/Y Class)" → the
  *     parse would invent cryptic/garbage chips like "X", "N"),
  *   - parentheticals carrying a unit/symbol rather than choices ("(Vin Max)", "(Iout Max)").
  * A surviving option must be ≥2 chars and contain a letter.
  */
+const NUMERIC_LOGIC_TYPES = new Set(['threshold', 'fit', 'identity_range', 'vref_check']);
+
 function parseOptions(rule: MatchingRule): string[] | undefined {
   if (rule.upgradeHierarchy && rule.upgradeHierarchy.length >= 2) return [...rule.upgradeHierarchy];
+  if (NUMERIC_LOGIC_TYPES.has(rule.logicType)) return undefined;
   const paren = rule.attributeName.match(/\(([^)]*)\)/);
   if (!paren || !paren[1].includes('/')) return undefined;
   const opts = paren[1].split('/').map(s => s.trim()).filter(Boolean);

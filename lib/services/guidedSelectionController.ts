@@ -66,6 +66,42 @@ export function isSystemGuidedQuestion(text: string): boolean {
   return CHOICE_Q_RE.test(t) || VALUES_Q_RE.test(t);
 }
 
+/** A SPEC question (a per-attribute choice/values question), as opposed to the
+ *  disambiguation question. The user message that ANSWERS a spec question is a spec
+ *  answer — a part-type noun inside it ("16V, for an LDO") is incidental and must not
+ *  re-pin the family. The disambiguation answer, by contrast, DOES name the family. */
+function isSpecQuestion(text: string): boolean {
+  const t = (text ?? '').trim();
+  return isSystemGuidedQuestion(t) && t !== renderDisambiguationQuestion();
+}
+
+/** The nearest assistant message before index `beforeIdx` (the question a user message
+ *  at `beforeIdx` is answering), or null. */
+function prevAssistant(messages: OrchestratorMessage[], beforeIdx: number): OrchestratorMessage | null {
+  for (let i = beforeIdx - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') return messages[i];
+  }
+  return null;
+}
+
+/** The user message that STARTED the current guided run — the one just before the
+ *  earliest system question in the trailing run of system questions. Used to recover a
+ *  classifier-entered family on a continuation turn (the spec answer doesn't name a type,
+ *  so keyword-pinning can't). Returns null when there is no trailing guided run. */
+function findGuidedEntryUserText(messages: OrchestratorMessage[]): string | null {
+  let firstSysQIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'assistant') continue;
+    if (isSystemGuidedQuestion(messages[i].content)) firstSysQIdx = i;
+    else break; // a non-system assistant message ends the trailing guided run
+  }
+  if (firstSysQIdx <= 0) return null;
+  for (let i = firstSysQIdx - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content;
+  }
+  return null;
+}
+
 // ── Ambiguous part-type heads (deterministic disambiguation) ──
 // Only heads that DON'T resolve to a single family via resolveFamilyFromText. Labels
 // MUST resolve back to their familyId (guard test pins this) so a clicked chip re-pins
@@ -138,7 +174,11 @@ export function resolvePartTypeFamily(text: string): string | null {
 
 // ── Entry heuristics (only gate the FIRST turn; continuation is unconditional) ──
 
-const INTENT_RE = /\b(need|want|looking|find|recommend|suggest|pick|choos|select|sourc|require|build|design|get me|show me|help me|after a|after an)\b/i;
+// Inflection-tolerant on purpose: a bare `\b` AFTER a stem sits BETWEEN two letters
+// (e.g. /choos\b/ never matches "choosing" — `s`→`i` is not a word boundary), so each
+// verb carries its real suffix set. Suffix groups stay precise to avoid false friends
+// ("needle" ⊄ need, "designate" ⊄ design).
+const INTENT_RE = /\b(need(?:s|ed|ing)?|want(?:s|ed|ing)?|look(?:ing|s)?|find(?:s|ing)?|recommend(?:s|ed|ing|ation)?|suggest(?:s|ed|ing|ion)?|pick(?:s|ed|ing)?|choos(?:e|es|ing)|select(?:s|ed|ing|ion)?|sourc(?:e|es|ed|ing)|requir(?:e|es|ed|ing|ement|ements)?|build(?:s|ing)?|design(?:s|ed|ing)?|get me|show me|help me|after an?)\b/i;
 const THEORY_RE = /\b(difference|differ|versus|vs\b|what is|what's|whats|how (do|does|to)|why|explain|tell me about|compare|pros|cons|when (should|do)|which is better)\b/i;
 
 export function hasSelectionIntent(text: string): boolean {
@@ -159,13 +199,18 @@ function isBareNounPhrase(text: string): boolean {
 
 interface Pinned { familyId: string; partType: string }
 
-/** The active family = the NEWEST user message that names a specific supported family.
- *  Mid-flow spec answers ("10 Ω, 3500K") don't resolve, so the family stays pinned to
- *  the original part-type mention; naming a new type re-pins (a pivot). */
+/** The active family = the NEWEST type-declaring user message (the flow entry, or a
+ *  disambiguation answer). SPEC answers are skipped: a part-type noun inside "16V, for an
+ *  LDO" is incidental and must not re-pin the family mid-flow — so the family stays
+ *  anchored to where it was actually declared. (A spec answer is a user message whose
+ *  immediately-preceding assistant message is a spec question; the disambiguation answer
+ *  is preceded by the disambiguation question, so it still pins.) */
 function pinFamily(messages: OrchestratorMessage[]): Pinned | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== 'user') continue;
+    const prev = prevAssistant(messages, i);
+    if (prev && isSpecQuestion(prev.content)) continue; // a spec ANSWER — don't re-pin from it
     const familyId = resolvePartTypeFamily(m.content);
     if (familyId && getSelectionQuestions(familyId)) {
       // Use the clean family name as the search part-type (deterministic keywords),
@@ -204,15 +249,22 @@ export async function decideGuidedTurn(
   const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
   const inProgress = !!lastAssistant && isSystemGuidedQuestion(lastAssistant.content);
 
-  // MPN gate — ONLY for a FRESH turn, and ONLY when the message doesn't name a part
-  // type. A part NUMBER lookup ("BC847B") defers to normal search. But `looksLikeMpn`
-  // false-positives on ordinary type words ("Tantalum", "MLCC", "Film", "Fixed"), so
-  // a fresh "Tantalum pls" would wrongly bail — unless we first check it names a
-  // family / known ambiguous head, in which case it's a TYPE request, not a lookup.
-  // (A continuation answer is exempt anyway via !inProgress — its family is anchored
-  // from the original part-type message.)
+  // ESCAPE 1 — a specific part NUMBER referenced anywhere defers to the normal
+  // search/lookup path, even mid-flow ("actually look up BC847B", "an LDO like AMS1117").
+  // `mentionsMpn` excludes value/range/size/package/qualification tokens and never fires
+  // on a spec answer ("10kΩ, 3500K, 0805"), so this is safe to run unconditionally.
+  if (mentionsMpn(userText)) return null;
+
+  // ESCAPE 2 — a theory/explanation question mid-flow ("what's a B-value?") defers so the
+  // LLM can answer it; the user can restate their spec to resume.
+  if (inProgress && isLikelyTheory(userText)) return null;
+
+  // MPN gate (whole-message heuristic) — ONLY for a FRESH turn that does NOT name a part
+  // type. `looksLikeMpn` false-positives on ordinary type words ("Tantalum", "MLCC",
+  // "Fixed"), so a part-type message is exempt (we want to pin its family, not bail to an
+  // MPN lookup). A real part NUMBER was already handled by ESCAPE 1 above.
   const namesPartType = !!resolvePartTypeFamily(userText) || !!detectAmbiguity(userText);
-  if (!inProgress && !namesPartType && (looksLikeMpn(userText) || mentionsMpn(userText))) return null;
+  if (!inProgress && !namesPartType && looksLikeMpn(userText)) return null;
 
   // Only ENTER a fresh guided selection from a clean screen. Once cards/recs/a source
   // part are showing, post-results turns (refine, filter, compare, pivot, a 2nd
@@ -224,39 +276,53 @@ export async function decideGuidedTurn(
   let pinned = pinFamily(messages);
   let viaClassifier = false;
 
-  // No specific family yet (deterministic recognizer missed) → an ENTRY turn may
-  // disambiguate a curated supertype, else fall back to the registry-backed classifier.
+  // No specific family yet (deterministic recognizer missed) → disambiguate a curated
+  // supertype, else recover via the registry-backed classifier.
   if (!pinned) {
-    if (inProgress) return null; // safety: can't be mid-flow without a pinned family
-    const options = detectAmbiguity(userText);
-    if (options && hasSelectionIntent(userText)) {
-      return {
-        kind: 'ask',
-        message: renderDisambiguationQuestion(),
-        choices: options.map(o => ({ id: o.familyId, label: o.label })),
-      };
+    // ENTRY disambiguation: a curated ambiguous supertype ("regulator", "capacitor",
+    // "diode", "transistor") shows sub-family chips BEFORE any single-family guess.
+    // Fires whenever this reads as a sourcing turn (explicit intent OR a bare type noun)
+    // and is not a theory question — so a bare "regulator" disambiguates too (the old
+    // intent-only gate let a bare supertype fall through to a single-family classifier
+    // guess). Continuation never reaches here (a continuation has a pinned family, or the
+    // classifier-recovery below supplies one).
+    if (!inProgress) {
+      const options = detectAmbiguity(userText);
+      if (options && !isLikelyTheory(userText) && (hasSelectionIntent(userText) || isBareNounPhrase(userText))) {
+        return {
+          kind: 'ask',
+          message: renderDisambiguationQuestion(),
+          choices: options.map(o => ({ id: o.familyId, label: o.label })),
+        };
+      }
     }
-    // Classifier fallback: the deterministic recognizer (keyword map + curated
-    // disambiguation) doesn't cover every phrasing ("low-dropout reg", "a schottky",
-    // "an op amp"). Rather than hand-extending a keyword list forever — and rather than
-    // deferring the flow to the chat loop (which freelances) — ask the bounded,
-    // registry-backed classifier. It returns a real familyId or null, so it recognizes
-    // the long tail without ever authoring prose. Gated to plausible sourcing turns so
-    // it doesn't fire on theory questions or burn a call on obvious non-sourcing text.
-    if (classify && !isLikelyTheory(userText) && (hasSelectionIntent(userText) || isBareNounPhrase(userText))) {
-      const fam = await classify(userText);
-      if (fam && getSelectionQuestions(fam)) {
-        pinned = { familyId: fam, partType: getLogicTable(fam)?.familyName ?? userText.trim() };
-        viaClassifier = true;
+    // Classifier: the deterministic recognizer doesn't cover every phrasing ("low-dropout
+    // reg", "a schottky", "an op amp"). The bounded, registry-backed classifier returns a
+    // real familyId or null, so it recognizes the long tail without authoring prose. On a
+    // FRESH turn classify the user's text; on a CONTINUATION of a classifier-entered flow
+    // (the spec answer doesn't name a type, so keyword-pinning failed) re-classify the
+    // flow's ENTRY message to recover the family — without this, turn 2 of a long-tail
+    // flow would abandon to the LLM.
+    if (classify) {
+      const target = inProgress ? (findGuidedEntryUserText(messages) ?? userText) : userText;
+      const gateOk = inProgress || (!isLikelyTheory(target) && (hasSelectionIntent(target) || isBareNounPhrase(target)));
+      if (gateOk) {
+        const fam = await classify(target);
+        if (fam && getSelectionQuestions(fam)) {
+          pinned = { familyId: fam, partType: getLogicTable(fam)?.familyName ?? target.trim() };
+          viaClassifier = true;
+        }
       }
     }
     if (!pinned) return null; // genuinely unknown / not a sourcing request → LLM
   }
 
   // Entry gate (continuation is unconditional — the user is answering our question;
-  // skipped too when the classifier already judged this a sourcing request).
+  // skipped too when the classifier already judged this a sourcing request). Theory wins
+  // on a fresh entry even when intent is also present ("I need help understanding the
+  // difference between an LDO and a switching regulator").
   if (!inProgress && !viaClassifier) {
-    if (isLikelyTheory(userText) && !hasSelectionIntent(userText)) return null;
+    if (isLikelyTheory(userText)) return null;
     if (!hasSelectionIntent(userText) && !isBareNounPhrase(userText)) return null;
   }
 

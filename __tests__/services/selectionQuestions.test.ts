@@ -91,6 +91,29 @@ describe('getSelectionQuestions', () => {
     expect(b5chan.options).toEqual(['N-Channel', 'P-Channel']);
   });
 
+  it('numeric-scored specs never become choice buttons (the unit/symbol-parenthetical bug)', () => {
+    // These three Tier 2 specs are scored numerically (threshold) but carry a slashed
+    // parenthetical that the old parser split into garbage chips:
+    //   C4 supply_voltage  "Supply Voltage Range (Single/Dual)" → ["Single","Dual"]
+    //   B8 vdrm            "Peak Repetitive Off-State Voltage (VDRM / VRRM)" → ["VDRM","VRRM"]
+    //   65 max_continuous_voltage "Maximum Continuous Voltage (AC/DC)" → ["AC","DC"]
+    // A numeric-scored rule is a TYPED value — never a pick-list.
+    const cases: Array<[string, string]> = [
+      ['C4', 'supply_voltage'],
+      ['B8', 'vdrm'],
+      ['65', 'max_continuous_voltage'],
+    ];
+    for (const [fam, id] of cases) {
+      const attr = getSelectionQuestions(fam)!.tier2.find(a => a.attributeId === id)!;
+      expect(attr.input).toBe('value');
+      expect(attr.options).toBeUndefined();
+    }
+    // And a genuine categorical (B8 device_type, identity) still produces real buttons.
+    const devType = getSelectionQuestions('B8')!.tier2.find(a => a.attributeId === 'device_type')!;
+    expect(devType.input).toBe('choice');
+    expect(devType.options).toEqual(['SCR', 'TRIAC', 'DIAC']);
+  });
+
   it('every choice has options and every value has none (all families)', () => {
     for (const familyId of Object.keys(SELECTION_TIERS)) {
       const q = getSelectionQuestions(familyId)!;

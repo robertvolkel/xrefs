@@ -214,3 +214,94 @@ describe('decideGuidedTurn — turn ownership', () => {
     if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
   });
 });
+
+describe('hasSelectionIntent — inflected verb stems (the trailing-\\b bug, #5)', () => {
+  it.each([
+    'choosing a capacitor',
+    'help me choose an LDO',
+    'sourcing a regulator',
+    'source a MOSFET',
+    'designing a board',
+    'I want to select a diode',
+    'requires a buck converter',
+  ])('recognizes sourcing intent in "%s"', (t) => {
+    expect(hasSelectionIntent(t)).toBe(true);
+  });
+  it('does not over-match a bare theory question', () => {
+    expect(hasSelectionIntent('what is a capacitor?')).toBe(false);
+    expect(hasSelectionIntent("what's the difference between NTC and PTC?")).toBe(false);
+  });
+});
+
+describe('decideGuidedTurn — review-fix regressions', () => {
+  it('#3: a bare ambiguous supertype (no intent word) still disambiguates', async () => {
+    const out = await decideGuidedTurn([u('regulator')], noAnswers);
+    expect(out?.kind).toBe('ask');
+    if (out?.kind === 'ask') {
+      expect(out.message).toBe(renderDisambiguationQuestion());
+      expect(out.choices?.map(c => c.id)).toEqual(['C1', 'C2']);
+    }
+  });
+
+  it('#11: theory + intent together (names a family) defers to the LLM', async () => {
+    const out = await decideGuidedTurn(
+      [u('I need help understanding the difference between an LDO and a switching regulator')],
+      noAnswers,
+    );
+    expect(out).toBeNull();
+  });
+
+  it('#12: a part number referenced inside a typed request defers (lookup, not a checklist)', async () => {
+    expect(await decideGuidedTurn([u('I need an LDO like AMS1117')], noAnswers)).toBeNull();
+  });
+
+  it('#4: a part-number pivot mid-flow escapes to lookup (not re-asked)', async () => {
+    const convo = [
+      u('I need an LDO'),
+      a('Which output type do you need?'),
+      u('actually look up AMS1117 instead'),
+    ];
+    expect(await decideGuidedTurn(convo, noAnswers)).toBeNull();
+  });
+
+  it('#4: a theory question mid-flow defers so the LLM can answer it', async () => {
+    const convo = [
+      u('I need an NTC thermistor'),
+      a(renderValuesQuestion(['Resistance @ 25°C (R25)', 'B-Value (B-Constant)', 'Package / Case'])),
+      u('what is a B-value?'),
+    ];
+    expect(await decideGuidedTurn(convo, noAnswers)).toBeNull();
+  });
+
+  it('#8: an incidental part-type noun in a spec answer does NOT re-pin the family', async () => {
+    const convo = [
+      u('I need an NTC thermistor'),
+      a(renderValuesQuestion(['Resistance @ 25°C (R25)', 'B-Value (B-Constant)', 'Package / Case'])),
+      u('10kΩ, 3500K, any package — it feeds an LDO'),
+    ];
+    const parse = async (): Promise<GuidedAnswerMap> => ({
+      resistance_r25: { value: 10000, unit: 'ohm' },
+      b_value: { value: 3500, unit: 'K' },
+      package_case: { value: null },
+    });
+    const out = await decideGuidedTurn(convo, parse);
+    expect(out?.kind).toBe('search');
+    // The "LDO" mention is incidental; the family stays anchored to the NTC entry.
+    if (out?.kind === 'search') expect(out.partType).toBe('NTC Thermistors');
+  });
+
+  it('CLASSIFIER CONTINUATION: turn 2 of a classifier-entered flow recovers the family via the ENTRY message', async () => {
+    const convo = [
+      u('I need a doohickey for my board'),       // unresolvable by the keyword recognizer
+      a('Which device type do you need?'),         // a system spec question (C4 device_type)
+      u('comparator'),
+    ];
+    let classifiedWith: string | null = null;
+    const classify = async (text: string): Promise<string | null> => { classifiedWith = text; return 'C4'; };
+    const parse = async (): Promise<GuidedAnswerMap> => ({ device_type: { value: 'Comparator' } });
+    const out = await decideGuidedTurn(convo, parse, false, classify);
+    expect(out?.kind).toBe('ask');                 // system asks C4's next spec, not abandoned to the LLM
+    // Recovery classifies the flow ENTRY, not the spec answer "comparator".
+    expect(classifiedWith).toBe('I need a doohickey for my board');
+  });
+});

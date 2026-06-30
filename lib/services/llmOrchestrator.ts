@@ -16,7 +16,7 @@ import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { resolveDiscoveryScope, listManufacturersForScope } from './atlasManufacturerDiscovery';
 import { logRecommendation } from './recommendationLogger';
-import { logTokenUsage } from './apiUsageLogger';
+import { logTokenUsage, type ApiOperation } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
 import { StoredRow } from '../partsListStorage';
 import { getCountryName } from '../constants/profileOptions';
@@ -602,7 +602,7 @@ Search result presentation:
 - NEVER describe a part's specifications (capacitance, voltage, package, etc.) in your text when presenting or identifying a part (search results, a confirmation message, a card) — the card and attributes panel handle that; your text should only identify the part and invite the user to click. This bans *unsolicited* spec-dumping. It does NOT override ASK mode (Workflow step 5a): when the user explicitly asks a parametric question ("what's its V_DS?", "is it AEC-Q200?"), answer the specific value(s) they asked for from the tool data — just don't volunteer the rest of the datasheet.
 - For a single match: write a SHORT message — at most one sentence. Format: "I found **MPN** from **manufacturer**. Can you confirm this is the part?" — and stop there. Do NOT add a second sentence telling the user what they'll see after clicking ("Click the card below to see full specs and pricing", etc.). Do NOT promise lists, panels, distributors, or live pricing — the post-click flow speaks for itself, and any promise you make may not match what actually happens (e.g., the user asked for price → the next step is a quantity prompt, not a panel; the user asked about a manufacturer → the next step opens a profile panel, not a spec list). Discrepancy variant is fine: "I found the kit version of this part. Can you confirm that's what you need?"
 - For multiple matches: "I found [N] similar parts. Click the one you're looking for." — nothing more. The cards show the rest.
-- Do NOT use present_choices for part SELECTION — clickable part cards handle that. Use present_choices for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search") AND for pre-search scope/category narrowing during guided selection (device family, N- vs P-channel, dielectric class, package family — see the Part-selection-advice discipline section). The hard line: a present_choices option may name a requirement CATEGORY or a workflow action, NEVER a specific part — no option carries an mpn/manufacturer or otherwise proposes a candidate. Picking a part is always done by clicking a rendered card.
+- Do NOT use present_choices for part SELECTION — clickable part cards handle that. Use present_choices for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search"). Greenfield spec-narrowing is SYSTEM-OWNED (see the Part-selection-advice discipline section) — do NOT use present_choices to drive it. The hard line: a present_choices option may name a requirement CATEGORY or a workflow action, NEVER a specific part — no option carries an mpn/manufacturer or otherwise proposes a candidate. Picking a part is always done by clicking a rendered card.
 - IMPORTANT: When using present_choices, you MUST still write a text message explaining the situation. The buttons appear below your text. Never call present_choices without also providing a text response — an empty message with only buttons is confusing.
 
 Conversation style:
@@ -1076,6 +1076,24 @@ function buildTranscript(conversation: OrchestratorMessage[]): string {
 }
 
 /**
+ * Fire-and-forget token-usage logging for the guided-selection helper calls. These run
+ * BEFORE chat()'s main agentic loop and return early, so their spend never reaches the
+ * loop's accumulator — log it here so cost telemetry isn't undercounted.
+ */
+function logGuidedUsage(userId: string | undefined, resp: Anthropic.Message, op: ApiOperation): void {
+  if (!userId) return;
+  void logTokenUsage({
+    userId,
+    model: MODEL,
+    operation: op,
+    inputTokens: resp.usage?.input_tokens ?? 0,
+    outputTokens: resp.usage?.output_tokens ?? 0,
+    cachedTokens: ((resp.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0,
+    llmCalls: 1,
+  }).catch(() => {});
+}
+
+/**
  * SYSTEM-DRIVEN guided selection: reconstruct which of a family's Tier 2 specs the
  * user has already answered, by reading the whole conversation. This is what makes
  * the flow converge — the checklist is held by the system (re-derived each turn at
@@ -1087,6 +1105,7 @@ async function extractAnsweredSpecs(
   client: Anthropic,
   conversation: OrchestratorMessage[],
   familyId: string,
+  userId?: string,
 ): Promise<GuidedAnswerMap> {
   const questions = getSelectionQuestions(familyId);
   if (!questions || questions.tier2.length === 0) return {};
@@ -1131,6 +1150,7 @@ async function extractAnsweredSpecs(
         content: `Specs for this component family:\n${specLines}\n\nConversation so far:\n${buildTranscript(conversation)}\n\nReport which specs the user has already provided.`,
       }],
     });
+    logGuidedUsage(userId, resp, 'chat_guided_extract');
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return {};
     const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string }> };
@@ -1138,7 +1158,11 @@ async function extractAnsweredSpecs(
     const map: GuidedAnswerMap = {};
     for (const a of inp.answers ?? []) {
       if (!a || typeof a.attributeId !== 'string' || !valid.has(a.attributeId)) continue;
-      map[a.attributeId] = { value: a.value ?? null, ...(a.unit ? { unit: a.unit } : {}) };
+      // An empty string means the model reported the spec as addressed but gave no value
+      // (treat as "any / not sure"): coerce to null so it's answered-but-not-a-constraint,
+      // rather than a "" that counts as answered yet silently drops from the constraints.
+      const value = a.value === '' ? null : a.value ?? null;
+      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}) };
     }
     return map;
   } catch (err) {
@@ -1163,7 +1187,7 @@ async function extractAnsweredSpecs(
  * return null (→ the caller defers to the normal chat path, which is correct for those).
  * temp-0 + forced tool, mirroring extractAnsweredSpecs / forceExtractSpecs.
  */
-async function classifyPartTypeFamily(client: Anthropic, userText: string): Promise<string | null> {
+async function classifyPartTypeFamily(client: Anthropic, userText: string, userId?: string): Promise<string | null> {
   const families = Object.values(logicTableRegistry).map(t => ({ id: t.familyId, name: t.familyName, category: t.category }));
   const familyLines = families.map(f => `- ${f.id}: ${f.name} (${f.category})`).join('\n');
   const tool: Anthropic.Tool = {
@@ -1193,6 +1217,7 @@ async function classifyPartTypeFamily(client: Anthropic, userText: string): Prom
         content: `This is a component-sourcing app. A user wants help picking a component. Classify their message into ONE of these component families (or "none" if they are NOT trying to source a specific component type — e.g. a how-does-X-work question, a comparison, a part-number lookup, or anything unclear).\n\nFamilies:\n${familyLines}\n\nUser message: "${userText}"\n\nReturn the single best family id, or "none".`,
       }],
     });
+    logGuidedUsage(userId, resp, 'chat_guided_classify');
     const block = resp.content.find(b => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return null;
     const fam = (block.input as { familyId?: string }).familyId;
@@ -1807,9 +1832,9 @@ export async function chat(
   );
   const guidedTurn = await decideGuidedTurn(
     messages,
-    fam => extractAnsweredSpecs(client, messages, fam),
+    fam => extractAnsweredSpecs(client, messages, fam, userId),
     hasOnScreenContext,
-    text => classifyPartTypeFamily(client, text),
+    text => classifyPartTypeFamily(client, text, userId),
   );
   if (guidedTurn) {
     if (guidedTurn.kind === 'ask') {
