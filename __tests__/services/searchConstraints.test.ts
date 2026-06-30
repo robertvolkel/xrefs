@@ -312,6 +312,28 @@ describe('buildGreenfieldQuery', () => {
     expect(pkg?.numericValue).toBeUndefined();        // categorical → no spurious 805
   });
 
+  it('bridges a count WORD (Dual) to the catalog DIGIT (2) so a dual part is not "Below spec"', () => {
+    // The LLM emits "Dual" for channel count; Digikey stores "2" → the identity rule
+    // fails on every op-amp (even genuinely-dual ones). canonicalizeCategorical must adopt
+    // the catalog's "2" so a real dual part scores a pass.
+    const dual: PartAttributes = {
+      part: { mpn: 'TLV272', manufacturer: 'TI', description: 'IC CMOS 2 CIRCUIT 8SO', detailedDescription: '',
+        category: 'Integrated Circuits' as PartAttributes['part']['category'],
+        subcategory: 'Instrumentation, OP Amps, Buffer Amps', status: 'Active' },
+      parameters: [
+        { parameterId: 'channels', parameterName: 'Number of Channels', value: '2', sortOrder: 1 },
+        { parameterId: 'input_type', parameterName: 'Input Stage Technology', value: 'CMOS', sortOrder: 2 },
+      ],
+    };
+    const syn = buildSyntheticSource(
+      [{ attribute: 'number of channels', value: 'Dual' }, { attribute: 'input stage technology', value: 'CMOS' }],
+      'op-amp',
+      [dual],
+    );
+    expect(syn?.familyId).toBe('C4');
+    expect(syn?.source.parameters.find(p => p.parameterId === 'channels')?.value).toBe('2'); // adopted the digit
+  });
+
   it('KEEPS a categorical size/package CODE (0805) so the fetch is shaped by it', () => {
     // The all-below-spec bug: a fully-specified MLCC fetched zero 0805 parts because the
     // size code was stripped as "number-like". Package/size codes are stable Digikey

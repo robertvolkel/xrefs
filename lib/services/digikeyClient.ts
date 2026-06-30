@@ -337,6 +337,62 @@ export async function parametricFilterSearch(
   return data;
 }
 
+/** One parameter constraint for a multi-parameter parametric filter. `valueIds` are the
+ *  facet `ValueId` STRINGS from the discover step (same encoding as `parametricFilterSearch`). */
+export interface ParametricFilterSpec {
+  parameterId: number;
+  valueIds: string[];
+}
+
+/**
+ * Multi-parameter variant of `parametricFilterSearch` — fetch the parts in a category that
+ * satisfy ALL of `filters` at once. Digikey ANDs multiple `ParameterFilters` entries, so this
+ * returns the intersection directly (no client-side join, no per-spec cap truncation). This is
+ * the foundation of keyword-free greenfield spec search: instead of guessing a keyword, we ask
+ * the catalog for the parts matching the user's actual specs. Empty `filters` → category-only
+ * fetch. Bounds the result to `limit`.
+ */
+export async function parametricFilterSearchMulti(
+  categoryId: number,
+  filters: ParametricFilterSpec[],
+  options: { limit?: number } = {},
+  currency?: string,
+  userId?: string,
+): Promise<DigikeyKeywordResponse> {
+  const t0 = performance.now();
+  const token = await getAccessToken();
+
+  const body = {
+    Keywords: '',
+    Limit: options.limit ?? 50,
+    Offset: 0,
+    FilterOptionsRequest: {
+      ParameterFilterRequest: {
+        CategoryFilter: { Id: String(categoryId) },
+        ParameterFilters: filters.map(f => ({
+          ParameterId: f.parameterId,
+          FilterValues: f.valueIds.map(id => ({ Id: id })),
+        })),
+      },
+    },
+  };
+
+  const res = await digikeyFetch(SEARCH_URL, {
+    method: 'POST',
+    headers: buildHeaders(token, currency),
+    body: JSON.stringify(body),
+  }, currency);
+
+  const data = await res.json();
+  console.log(`[perf] digikey:parametricFilterSearchMulti ${(performance.now() - t0).toFixed(0)}ms (${filters.length} params)`);
+
+  if (userId) {
+    await logApiCall({ userId, service: 'digikey', operation: 'parametric_filter_search' });
+  }
+
+  return data;
+}
+
 /** Commercial fields extracted from a DigikeyProduct for short-TTL caching */
 interface DigikeyCommercialData {
   UnitPrice: number;

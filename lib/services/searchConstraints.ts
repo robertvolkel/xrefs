@@ -96,12 +96,26 @@ function resolveAttributeId(term: string, logicTable: LogicTable): string | null
   return null;
 }
 
+/** Count-word ↔ digit equivalence (Single/Dual/Quad ↔ 1/2/4) — a closed, family-agnostic
+ *  electronics vocabulary. The LLM emits the WORD ("Dual"), Digikey stores the DIGIT ("2"),
+ *  so a bare identity compare on a "Number of Channels/Circuits/Elements" spec fails on every
+ *  candidate (even the genuinely-dual ones). Bridging both directions lets canonicalization
+ *  adopt whichever form the catalog uses. */
+const COUNT_WORD_DIGIT: Record<string, string> = {
+  single: '1', '1': 'single',
+  dual: '2', double: '2', '2': 'dual',
+  triple: '3', '3': 'triple',
+  quad: '4', quadruple: '4', '4': 'quad',
+  hex: '6', '6': 'hex',
+  octal: '8', '8': 'octal',
+};
+
 /** Adopt the catalog's OWN wording for a categorical code, learned from the candidate
  *  pool, so a user's terse value ("0805") byte-matches the catalog's verbose value
- *  ("0805 (2012 Metric)") in the identity comparison. Prefers an exact normalized hit;
- *  else the most common candidate whose FIRST token is the user's code. Returns null
- *  when nothing in the pool matches (the original value is kept — it simply won't match
- *  anything, which is correct: the pool genuinely has no such code). */
+ *  ("0805 (2012 Metric)") in the identity comparison. Also bridges count-word ↔ digit
+ *  ("Dual" → catalog "2"). Prefers an exact normalized hit; else the most common candidate
+ *  whose FIRST token is the user's code (or its count equivalent). Returns null when nothing
+ *  in the pool matches (the original value is kept — correct: the pool has no such code). */
 function canonicalizeCategorical(
   userValue: string,
   attrId: string,
@@ -109,12 +123,16 @@ function canonicalizeCategorical(
 ): string | null {
   const target = norm(userValue);
   if (!target) return null;
+  // Acceptable normalized forms: the value itself + its count-word/digit equivalent.
+  const targets = new Set([target]);
+  const alt = COUNT_WORD_DIGIT[target];
+  if (alt) targets.add(norm(alt));
   const leadCounts = new Map<string, number>();
   for (const cand of candidateAttrs) {
     const v = cand.parameters.find(p => p.parameterId === attrId)?.value?.trim();
     if (!v) continue;
-    if (norm(v) === target) return v;                         // catalog uses the same form
-    if (norm(v.split(/\s+/)[0]) === target) {                 // verbose: "0805 (2012 Metric)"
+    if (targets.has(norm(v))) return v;                       // catalog uses one of the forms
+    if (targets.has(norm(v.split(/\s+/)[0]))) {               // verbose: "0805 (2012 Metric)"
       leadCounts.set(v, (leadCounts.get(v) ?? 0) + 1);
     }
   }

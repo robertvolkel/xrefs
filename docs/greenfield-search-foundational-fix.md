@@ -44,7 +44,52 @@ discover facets; (3) per constraint, map attributeId→facet via `findFacetForAt
 options (categorical = facet ValueText matching user value, apply canonicalization; numeric = in-band
 ValueIds); (4) multi-parameter `ParameterFilterRequest` fetch; (5) vet/rank.
 
-## VERIFY FIRST (before changing any app code) — this is step 1, user-approved approach
+## ✅ VERIFICATION DONE (2026-06-30) — proven on the live catalog
+Ran throwaway diagnostics against live Digikey for op-amp (C4, the 0-keyword case) + capacitor (12).
+Result: **approach works**, but the predicted blocker was WRONG and a different one surfaced.
+
+1. **Category resolution is keyword-free and works.** `getTaxonomyPatternsForFamily(familyId)` → category
+   NAMES → walk `getCategories()` tree leaves → CategoryId. C4 → 687 (Op Amps) + 692/773 (Comparators);
+   family 12 → 60 (Ceramic Capacitors). The op-amp "0-keyword" fear is GONE.
+2. **Multi-parameter AND filter works.** Added `parametricFilterSearchMulti(categoryId, filters[], …)` to
+   digikeyClient (additive, nothing in prod calls it yet). Capacitor 4-spec AND (capacitance+voltage+
+   dielectric+package) → 20 EXACT 1µF/25V/X7R/0805 parts.
+3. **THE REAL BLOCKER (caught by verify-first): facet ValueIds.** Human label = `fv.ValueName`, filter key =
+   `fv.ValueId`. Most facets use an OPAQUE numeric ValueId ("25 V"→"132007") and filter fine. BUT **bare-
+   integer count facets** ("Number of Circuits" 2→"2", "Number of Elements") silently return **0** even though
+   their ProductCount says 10k parts exist. Confirmed the distinguisher: **bare-integer facet values fail;
+   unit-bearing literal values ("400 Hz", "1 µF", "10 nV") AND opaque values WORK.** So the only un-filterable
+   facets are count facets — exactly the specs we never need to parametric-filter (channel count is cheap via
+   keyword "dual" + the vetting pass).
+4. **Multi-category families:** facets split across leaves (Op Amps has Amplifier Type but not supply;
+   Comparators has supply but not type). → filter EACH category, UNION the parts.
+
+**THE RULE FOR THE BUILD (general, data-driven, no per-family table):**
+> Build a ParameterFilter for every mapped spec EXCEPT facets whose selected ValueNames are bare integers
+> (no unit/letter). Resolve category(ies) from family taxonomy (keyword-free). Filter each category, union.
+> UNION the parametric pool with today's keyword pool. If category doesn't resolve / no specs map → fall back
+> to today's keyword pool (byte-identical, never regress). Vetting (Decision #243) ranks the union.
+
+End-to-end proof: op-amp CMOS filter → 20 real CMOS op-amps (TLV271/TLV9001/TLV272/TLV9061…); today returns 0.
+Capacitor → 20 exact 1µF/25V/X7R/0805. Building now.
+
+## ✅ BUILT (2026-06-30) — verified through the REAL `searchParts` path
+- New module `lib/services/greenfieldParametricFetch.ts`: `resolveCategoryIdsForFamily` (keyword-free) +
+  `fetchGreenfieldParametricProducts` (multi-spec, multi-category union, bare-int facet skip) + exported pure
+  pickers. `parametricFilterSearchMulti` added to digikeyClient.
+- Wired into `searchParts` greenfield branch (`partDataService.ts`): keyword search + parametric spec-fetch in
+  PARALLEL, union deduped by MPN (keyword wins). Removed the old keyword-bootstrapped single-band block +
+  standalone `applyParametricFilter` (greenfield-only; cross-ref widening path untouched). Fallback = keyword
+  pool when family/category/specs don't resolve → never regresses.
+- Count-word↔digit bridge in `canonicalizeCategorical` (searchConstraints.ts): "Dual" → catalog "2" so a real
+  dual op-amp scores a PASS (was: every op-amp `fail=1` on Dual-vs-2, all "Below spec"). General closed vocab.
+- `SEARCH_CACHE_SCHEMA_VERSION` v6→v7. Unit tests: `greenfieldParametricFetch.test.ts` (11, incl. the
+  bare-int-skip trap) + count-word test in `searchConstraints.test.ts`. 2812 jest pass, changed files
+  lint-clean, tsc baseline 92 unchanged.
+- Live `searchParts` result: op-amp "dual CMOS" → 50 matches, 28 Fits (all dual CMOS) / 22 Below; capacitor
+  "1µF 25V X7R 0805" → 50 matches, 50 Fits (all exact). NEXT: user UI test + #14 prompt checklist before merge.
+
+## (historical) VERIFY FIRST (before changing any app code) — this is step 1, user-approved approach
 Prove end-to-end on op-amp + capacitor via a throwaway live diagnostic. Pattern (tsx top-level await is
 unsupported — wrap in async main):
 ```
