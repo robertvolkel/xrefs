@@ -123,8 +123,12 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  v4→v5 on 2026-06-24 for identity-categorical injection (Decision #248): the vetting
  *  pass now derives a gating categorical (polarity / channel_type / dielectric / …) from
  *  the part-type noun, changing the cached vetted ORDER for the same key (e.g. PNP parts
- *  no longer top an "NPN" request), so v4 entries hold a stale ranking. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v5';
+ *  no longer top an "NPN" request), so v4 entries hold a stale ranking.
+ *  v5→v6 on 2026-06-30: greenfield query now keeps categorical size/package CODES (0805)
+ *  AND the synthetic source adopts the catalog's own wording for a categorical code
+ *  ("0805" → "0805 (2012 Metric)"), so an exact part scores 0 real fails instead of a
+ *  spurious package mismatch — v5 entries hold a stale pool AND stale fit labels. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v6';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
