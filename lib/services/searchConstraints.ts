@@ -181,15 +181,21 @@ export interface SyntheticSourceResult {
  * Returns null (→ skip vetting, keep today's keyword behavior) when: no
  * constraints, the family can't be classified, no logic table, or no constraint
  * resolves to a real attribute.
+ *
+ * `familyIdOverride` is the AUTHORITATIVE family when the caller already knows it
+ * (the guided-selection flow). It bypasses pool-based classification — a keyword pool
+ * polluted with a wrong-but-classifiable family (gate-driver ICs in a MOSFET search)
+ * must not be allowed to flip the scoring family.
  */
 export function buildSyntheticSource(
   constraints: SearchConstraint[] | undefined,
   partType: string | undefined,
   candidateAttrs: PartAttributes[],
+  familyIdOverride?: string,
 ): SyntheticSourceResult | null {
   if (!constraints || constraints.length === 0) return null;
 
-  const familyId = classifyFamilyFromCandidates(candidateAttrs) ?? resolveFamilyFromText(partType);
+  const familyId = familyIdOverride ?? classifyFamilyFromCandidates(candidateAttrs) ?? resolveFamilyFromText(partType);
   if (!familyId) return null;
 
   const logicTable = getLogicTable(familyId);

@@ -19,7 +19,7 @@ import {
   extractNumericValue,
 } from './digikeyMapper';
 import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
-import { fetchGreenfieldParametricProducts } from './greenfieldParametricFetch';
+import { fetchGreenfieldParametricProducts, resolveCategoryIdsForFamily } from './greenfieldParametricFetch';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
@@ -415,7 +415,7 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string },
+  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string; familyId?: string },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
@@ -432,7 +432,7 @@ export async function searchParts(
   // logic-vetted search doesn't collide with a constraint-less search of the
   // same query/MFR. Constraints sorted canonically; absent → empty string.
   const vettingKey = constraints
-    ? `${(options?.partType ?? '').toLowerCase()}|${[...constraints]
+    ? `${(options?.familyId ?? '').toLowerCase()}|${(options?.partType ?? '').toLowerCase()}|${[...constraints]
         .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}`)
         .sort()
         .join(',')}`
@@ -481,6 +481,16 @@ export async function searchParts(
   // the live catalog — docs/greenfield-search-foundational-fix.md.
   const wantGreenfieldParametric = !!constraints && !!options?.partType;
 
+  // The guided-selection flow knows the family AUTHORITATIVELY and passes its id. When present
+  // we resolve its Digikey categories ONCE and use them to (a) SCOPE the keyword search to the
+  // right category — so a verbose family display name ("MOSFETs — N-Channel & P-Channel") can't
+  // pull a wrong-but-classifiable family (gate-driver ICs) into the pool — and (b) force the
+  // parametric fetch + the vetting family below. Absent (the LLM search_parts path) → behaviour
+  // is byte-identical to before (no scoping, family derived from candidates/partType).
+  const guidedFamilyId = constraints ? options?.familyId : undefined;
+  const guidedCategoryIds = guidedFamilyId ? await resolveCategoryIdsForFamily(guidedFamilyId) : [];
+  const keywordCategoryId = guidedCategoryIds[0];
+
   const searches: LabeledSearch[] = [
     // Digikey
     {
@@ -490,11 +500,12 @@ export async function searchParts(
         try {
           // Keyword search + parametric spec-fetch run in PARALLEL — the parametric path
           // resolves its category from the family taxonomy, so it no longer waits on (or needs)
-          // the keyword result to bootstrap a category.
+          // the keyword result to bootstrap a category. The keyword search is category-scoped
+          // when the guided flow supplied a family (no wrong-family pollution).
           const [base, parametricProducts] = await Promise.all([
-            keywordSearch(trimmed, { limit: 20 }, currency, userId),
+            keywordSearch(trimmed, { limit: 20, categoryId: keywordCategoryId }, currency, userId),
             wantGreenfieldParametric
-              ? fetchGreenfieldParametricProducts(constraints, options!.partType, currency, userId).catch(() => [] as DigikeyProduct[])
+              ? fetchGreenfieldParametricProducts(constraints, options!.partType, currency, userId, guidedFamilyId, guidedFamilyId ? guidedCategoryIds : undefined).catch(() => [] as DigikeyProduct[])
               : Promise.resolve([] as DigikeyProduct[]),
           ]);
           let response = base;
@@ -627,7 +638,7 @@ export async function searchParts(
         if (a) scorable.push(a);
       }
       const synthetic = scorable.length > 0
-        ? buildSyntheticSource(constraints, options?.partType, scorable)
+        ? buildSyntheticSource(constraints, options?.partType, scorable, guidedFamilyId)
         : null;
       if (synthetic) {
         const logicTable = await applyRuleOverrides(synthetic.logicTable);
@@ -636,16 +647,34 @@ export async function searchParts(
           for (const a of scorable) {
             penaltyByMpn.set(a.part.mpn.toLowerCase(), computeOverSpecPenalty(logicTable, synthetic.source, a));
           }
-          // Search-vetting order: fewest real mismatches → Active-first →
-          // closest fit (least over-spec) → match %. Self-contained (greenfield
-          // has no certified buckets / composite scores, so the shared
-          // sortRecommendationsForDisplay's later keys don't apply).
+          // How many of the user's CONSTRAINED specs a candidate actually CONFIRMS (the rule
+          // for that attr passed on a REAL value — not a missing-data "review"). A part whose
+          // specs are merely unknown ("missing data never fails") otherwise dodges both a fail
+          // AND the over-spec penalty, floating a 30V part above honest 60V parts for a "60V"
+          // ask. Preferring more-confirmed specs sinks unknown-spec parts below ones that
+          // genuinely meet the request — without rejecting anything (Decision #243 invariant).
+          const constrainedIds = new Set(synthetic.source.parameters.map(p => p.parameterId));
+          const confirmedByMpn = new Map<string, number>();
+          for (const rec of recs) {
+            let n = 0;
+            for (const d of rec.matchDetails ?? []) {
+              if (!constrainedIds.has(d.parameterId)) continue;
+              const v = (d.replacementValue ?? '').toString().trim();
+              if (d.ruleResult === 'pass' && v && v !== 'N/A' && v !== '-') n++;
+            }
+            confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
+          }
+          // Search-vetting order: fewest real mismatches → Active-first → most CONFIRMED specs →
+          // closest fit (least over-spec) → match %. Self-contained (greenfield has no certified
+          // buckets / composite scores, so the shared sort's later keys don't apply).
           const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
           recs.sort((a, b) => {
             const fd = countRealMismatches(a) - countRealMismatches(b);
             if (fd !== 0) return fd;
             const sd = statusRank(a.part.status) - statusRank(b.part.status);
             if (sd !== 0) return sd;
+            const cd = (confirmedByMpn.get(b.part.mpn.toLowerCase()) ?? 0) - (confirmedByMpn.get(a.part.mpn.toLowerCase()) ?? 0);
+            if (cd !== 0) return cd;
             const pd = (penaltyByMpn.get(a.part.mpn.toLowerCase()) ?? 0) - (penaltyByMpn.get(b.part.mpn.toLowerCase()) ?? 0);
             if (pd !== 0) return pd;
             return b.matchPercentage - a.matchPercentage;

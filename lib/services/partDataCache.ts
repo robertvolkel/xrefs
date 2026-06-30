@@ -131,8 +131,11 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  v6→v7 on 2026-06-30: greenfield candidate POOL is now fetched by parametric-filtering the
  *  catalog on ALL stated specs (keyword-free category resolution + multi-spec AND), replacing
  *  the keyword-bootstrapped single-numeric-band fetch. A v6 entry holds a narrower keyword-only
- *  pool (verbose family names returned 0), so its vetted set + fit labels differ. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v7';
+ *  pool (verbose family names returned 0), so its vetted set + fit labels differ.
+ *  v7→v8 on 2026-06-30: the guided-selection flow now passes its AUTHORITATIVE familyId, which
+ *  category-scopes the keyword pool + forces the scoring family. A v7 guided entry could hold a
+ *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits". */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v8';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

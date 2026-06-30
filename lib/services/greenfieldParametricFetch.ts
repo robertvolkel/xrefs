@@ -164,16 +164,20 @@ export async function fetchGreenfieldParametricProducts(
   partType: string | undefined,
   currency?: string,
   userId?: string,
+  familyIdOverride?: string,
+  categoryIdsOverride?: number[],
 ): Promise<DigikeyProduct[]> {
-  if (!constraints || constraints.length === 0 || !partType) return [];
+  if (!constraints || constraints.length === 0 || (!partType && !familyIdOverride)) return [];
 
   // Resolve family + the constraint→attributeId mapping via the same synthetic-source builder
-  // the vetting pass uses (empty candidate pool → family from partType, raw values kept).
-  const synth = buildSyntheticSource(constraints, partType, []);
+  // the vetting pass uses (empty candidate pool → family from override/partType, raw values kept).
+  const synth = buildSyntheticSource(constraints, partType, [], familyIdOverride);
   if (!synth) return [];
   const { logicTable, familyId, source } = synth;
 
-  const categoryIds = await resolveCategoryIdsForFamily(familyId);
+  // Caller may pass pre-resolved categories (guided flow resolves them once for both the
+  // category-scoped keyword search and this fetch) — avoids a duplicate category-tree walk.
+  const categoryIds = categoryIdsOverride ?? await resolveCategoryIdsForFamily(familyId);
   if (categoryIds.length === 0) return [];
 
   // Filter every resolved category in parallel; facets split across leaves for multi-category

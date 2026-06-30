@@ -226,7 +226,7 @@ function pinFamily(messages: OrchestratorMessage[]): Pinned | null {
 
 export type GuidedTurnDecision =
   | { kind: 'ask'; message: string; choices?: ChoiceOption[] }
-  | { kind: 'search'; query: string; partType: string; constraints: SearchConstraint[] };
+  | { kind: 'search'; query: string; partType: string; familyId: string; constraints: SearchConstraint[] };
 
 /**
  * Decide whether the SYSTEM should own this turn, and if so what to do. Returns null
@@ -343,10 +343,14 @@ export async function decideGuidedTurn(
   }
   // step.type === 'search' — required set complete. The system runs the search with
   // the tracked specs attached so off-spec parts sink and the fit labels compute.
+  // familyId is passed AUTHORITATIVELY: the verbose family display name is a poor keyword
+  // (Digikey returns gate-driver ICs for "MOSFETs — N-Channel & P-Channel"), so the search
+  // scopes the pool + the scoring family to this id rather than re-deriving from the string.
   return {
     kind: 'search',
     query: buildGreenfieldQuery(partType, step.constraints),
     partType,
+    familyId,
     constraints: step.constraints,
   };
 }

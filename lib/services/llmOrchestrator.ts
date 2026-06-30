@@ -1847,6 +1847,7 @@ export async function chat(
     // kind === 'search' — run it ourselves with the tracked specs attached.
     const result = await searchParts(guidedTurn.query, undefined, userId, {
       partType: guidedTurn.partType,
+      familyId: guidedTurn.familyId,
       constraints: guidedTurn.constraints,
     });
     return { message: buildSearchSummary(result), searchResult: result };
