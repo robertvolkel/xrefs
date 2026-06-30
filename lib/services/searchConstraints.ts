@@ -96,6 +96,34 @@ function resolveAttributeId(term: string, logicTable: LogicTable): string | null
   return null;
 }
 
+/** Adopt the catalog's OWN wording for a categorical code, learned from the candidate
+ *  pool, so a user's terse value ("0805") byte-matches the catalog's verbose value
+ *  ("0805 (2012 Metric)") in the identity comparison. Prefers an exact normalized hit;
+ *  else the most common candidate whose FIRST token is the user's code. Returns null
+ *  when nothing in the pool matches (the original value is kept — it simply won't match
+ *  anything, which is correct: the pool genuinely has no such code). */
+function canonicalizeCategorical(
+  userValue: string,
+  attrId: string,
+  candidateAttrs: PartAttributes[],
+): string | null {
+  const target = norm(userValue);
+  if (!target) return null;
+  const leadCounts = new Map<string, number>();
+  for (const cand of candidateAttrs) {
+    const v = cand.parameters.find(p => p.parameterId === attrId)?.value?.trim();
+    if (!v) continue;
+    if (norm(v) === target) return v;                         // catalog uses the same form
+    if (norm(v.split(/\s+/)[0]) === target) {                 // verbose: "0805 (2012 Metric)"
+      leadCounts.set(v, (leadCounts.get(v) ?? 0) + 1);
+    }
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [v, n] of leadCounts) if (n > bestN) { best = v; bestN = n; }
+  return best;
+}
+
 /** Tally candidate families via their subcategory + the variant-aware classifier.
  *  Returns the plurality family ONLY when it's a real majority of scorable
  *  candidates — a mixed-bag result (no clear winner) returns null so the caller
@@ -161,6 +189,28 @@ export function buildSyntheticSource(
     if (!rawValue) continue;
 
     const unit = c.unit?.trim() || undefined;
+    const rule = ruleById.get(attrId);
+    const categorical = !!rule && (rule.logicType === 'identity' || rule.logicType === 'identity_upgrade' || rule.logicType === 'identity_flag');
+
+    // CATEGORICAL codes (package "0805", channel "N-Channel", dielectric "X7R") are
+    // compared as STRINGS against the candidates. The catalog often writes a verbose
+    // form of the user's terse code — "0805 (2012 Metric)" for "0805" — so a bare-code
+    // source fails the identity check on pure formatting (the exact-match-reads-Below-
+    // spec bug). Adopt the catalog's OWN value for this attribute, learned from the
+    // candidate pool, so the comparison byte-matches. Pool-learned ⇒ general (no
+    // per-attribute table); numeric specs (unit-bearing) keep the numeric path below.
+    if (categorical && !unit) {
+      const canon = canonicalizeCategorical(rawValue, attrId, candidateAttrs);
+      params.push({
+        parameterId: attrId,
+        parameterName: rule!.attributeName,
+        value: canon ?? rawValue,
+        sortOrder: sortOrder++,
+      });
+      seen.add(attrId);
+      continue;
+    }
+
     const looksNumeric = /\d/.test(rawValue) && !Number.isNaN(parseFloat(rawValue));
 
     let numericValue: number | undefined;
@@ -176,7 +226,6 @@ export function buildSyntheticSource(
       valueStr = unit ? `${rawValue} ${unit}` : rawValue;
     }
 
-    const rule = ruleById.get(attrId);
     params.push({
       parameterId: attrId,
       parameterName: rule?.attributeName ?? attrId,
@@ -286,14 +335,33 @@ export function buildGreenfieldQuery(
 ): string {
   const base = (partType ?? '').trim();
   const baseLower = base.toLowerCase();
+  // Resolve the family so we can tell a categorical CODE (package "0805", size "1206")
+  // from a MEASURED numeric (capacitance, voltage). Package/size codes are stable,
+  // highly-discriminating tokens in Digikey part descriptions ("CAP CER 1UF 25V X7R
+  // 0805") and strongly shape WHICH parts get fetched — dropping them (the old
+  // number-leading skip) returned an all-wrong pool for a fully-specified passive, so
+  // nothing could match the user's size. Measured numerics stay out (the model passes a
+  // unit / a number type for those, and the fetch band + vetting handle them).
+  const familyId = resolveFamilyFromText(partType);
+  const table = familyId ? getLogicTable(familyId) : null;
   const tokens: string[] = [];
   for (const c of constraints ?? []) {
     if (typeof c.value === 'number') continue;        // numeric → vetting only
     if (c.unit && c.unit.trim()) continue;            // has a unit → numeric spec
     const v = (c.value ?? '').toString().trim();
-    if (!v || /^[\d.]/.test(v)) continue;             // blank or number-like → skip
+    if (!v) continue;                                 // blank → skip
     const lower = v.toLowerCase();
     if (baseLower.includes(lower)) continue;          // already in the part type
+    if (/^[\d.]/.test(lower)) {
+      // A number-leading, unit-less value is a useful keyword ONLY when it's a
+      // categorical CODE (package/size) ≥3 chars. Anything else number-leading is a
+      // measured spec whose unit the model dropped (vetting-only), or a stray short
+      // number — skip it. Without the family table we keep the old conservative skip.
+      const attrId = table ? resolveAttributeId(c.attribute, table) : null;
+      const rule = attrId ? table!.rules.find(r => r.attributeId === attrId) : null;
+      const categorical = !!rule && (rule.logicType === 'identity' || rule.logicType === 'identity_upgrade' || rule.logicType === 'identity_flag');
+      if (!categorical || lower.length < 3) continue;
+    }
     tokens.push(lower);
   }
   const uniqSorted = [...new Set(tokens)].sort();
