@@ -1194,7 +1194,13 @@ export function useAppState() {
       addMessage('user', query);
       conversationRef.current.push({ role: 'user', content: query });
 
-      const fullMatches = searchFullMatchesRef.current;
+      // Narrow from the FULL set when we captured it (so sequential Chinese →
+      // Western each see the complete result), but fall back to the cards
+      // currently on screen if the full-set ref was never populated (cache hit,
+      // dev reload, etc.). Never let an empty ref turn this into a no-op.
+      const fullMatches = (searchFullMatchesRef.current.length > 0
+        ? searchFullMatchesRef.current
+        : searchResultRef.current?.matches) ?? [];
       const filtered = applySearchResultFilter(fullMatches, { mfr_origin_filter: origin });
 
       if (filtered.length === 0) {
@@ -1706,7 +1712,10 @@ export function useAppState() {
       // its "never assert MFR origin" discipline wins over the tool instruction.
       // detectSearchOriginRefinement returns null when the message names a part
       // type ("Chinese MLCCs" → a NEW search), so a pivot still reaches the LLM.
-      if (currentRecs.length === 0 && searchFullMatchesRef.current.length > 0) {
+      const haveSearchCards =
+        searchFullMatchesRef.current.length > 0 ||
+        (searchResultRef.current?.matches?.length ?? 0) > 0;
+      if (currentRecs.length === 0 && haveSearchCards) {
         const originRefine = detectSearchOriginRefinement(query);
         if (originRefine) {
           dispatchSearchOriginFilter(originRefine.origin, originRefine.label, query);

@@ -33,6 +33,16 @@ const mixedOrigin: PartSummary[] = [
   part({ mpn: 'LM358MYST', manufacturer: 'Mystery Co', dataSource: 'digikey', mfrOrigin: 'unknown' }),
 ];
 
+// Cached search result from before mfrOrigin was resolved: the cards carry only the
+// `dataSource` tag the UI uses to render the 🇨🇳 flag. The Chinese filter MUST mirror
+// that flag (dataSource==='atlas') so a card the user can SEE is flagged Chinese is
+// never silently dropped. This is the exact case that produced "0 results are Chinese".
+const cachedNoOrigin: PartSummary[] = [
+  part({ mpn: 'LM358N', manufacturer: 'HGSEMI', dataSource: 'atlas' }),       // flagged 🇨🇳, no mfrOrigin
+  part({ mpn: 'LM358S', manufacturer: 'Slkor', dataSource: 'atlas' }),         // flagged 🇨🇳, no mfrOrigin
+  part({ mpn: 'LM358DR', manufacturer: 'Texas Instruments', dataSource: 'digikey' }), // not flagged
+];
+
 describe('applySearchResultFilter', () => {
   it('returns all matches when no predicate is set', () => {
     expect(applySearchResultFilter(vetted, {})).toHaveLength(5);
@@ -101,6 +111,22 @@ describe('applySearchResultFilter', () => {
   it('mfr_origin_filter drops unresolved (unknown) origin on an explicit origin ask', () => {
     const result = applySearchResultFilter(mixedOrigin, { mfr_origin_filter: 'atlas' });
     expect(result.map(p => p.mpn)).not.toContain('LM358MYST');
+  });
+
+  it('mfr_origin_filter=atlas catches Atlas-sourced cards that have no resolved mfrOrigin (cached)', () => {
+    // The regression: a card flagged 🇨🇳 via dataSource==='atlas' must survive the
+    // Chinese filter even when mfrOrigin was never set. Old predicate dropped them → "0 Chinese".
+    const result = applySearchResultFilter(cachedNoOrigin, { mfr_origin_filter: 'atlas' });
+    expect(result.map(p => p.manufacturer).sort()).toEqual(['HGSEMI', 'Slkor']);
+  });
+
+  it('mfr_origin_filter=western never counts an Atlas-sourced card', () => {
+    // Without a resolved mfrOrigin we cannot prove a card is Western, and an
+    // Atlas-sourced card is definitively NOT Western — so it must be excluded.
+    const result = applySearchResultFilter(cachedNoOrigin, { mfr_origin_filter: 'western' });
+    expect(result.map(p => p.mpn)).toEqual([]); // TI card has no mfrOrigin in this cached set
+    const resolvedWestern = applySearchResultFilter(mixedOrigin, { mfr_origin_filter: 'western' });
+    expect(resolvedWestern.map(p => p.manufacturer).sort()).toEqual(['Texas Instruments', 'onsemi']);
   });
 });
 

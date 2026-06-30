@@ -82,11 +82,21 @@ export function applySearchResultFilter(
     filtered = filtered.filter(partIsAecQualified);
   }
   if (input.mfr_origin_filter) {
-    // Keep only parts whose resolved origin matches. Parts with no resolved origin
-    // ('unknown' / undefined) are dropped for an explicit origin ask — the user wants a
-    // definite Chinese/Western set, and an unresolved maker isn't a confirmed member.
     const target = input.mfr_origin_filter;
-    filtered = filtered.filter(p => p.mfrOrigin === target);
+    if (target === 'atlas') {
+      // Chinese = exactly what the card's 🇨🇳 flag shows. The flag (PartOptionsSelector)
+      // renders on `dataSource === 'atlas'`, so the filter MUST accept that too —
+      // otherwise an Atlas-sourced card the user can SEE is flagged Chinese gets
+      // silently dropped because its `mfrOrigin` was never resolved (cache, etc.).
+      // `mfrOrigin === 'atlas'` additionally catches a Chinese maker whose part
+      // arrived via Digikey (flag still shows via resolved origin).
+      filtered = filtered.filter(p => p.mfrOrigin === 'atlas' || p.dataSource === 'atlas');
+    } else {
+      // Western = resolved non-Chinese. We can't infer this from dataSource alone
+      // (a Digikey part may be Chinese), so require the resolved origin, and never
+      // count an Atlas-sourced card as Western.
+      filtered = filtered.filter(p => p.mfrOrigin === 'western' && p.dataSource !== 'atlas');
+    }
   }
 
   return filtered;
