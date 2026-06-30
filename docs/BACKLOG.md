@@ -4,6 +4,14 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Chinese-origin chat filter is partial — misses Chinese makers not tagged Atlas (P2)
+
+**Context.** Found June 30, 2026 while spot-checking chat behaviors. After an MPN search ("LM358"), "show me only the Chinese ones" returned only a SUBSET of the Chinese parts visible in the unfiltered list — it caught parts explicitly flagged `dataSource/mfrOrigin === 'atlas'` (3PEAK, ChipNobo, ElecSuper) but MISSED other Chinese makers present in the same result set (HGSEMI, Slkor, LX 灵星芯微, TDSEMIC). Pre-existing: the chat filter pipeline (`recommendationFilter.ts`, `filterIntentDetector.ts`, `useAppState.ts`) is untouched by the guided-selection/greenfield-search branch — reproduces on main. The `mfr_origin_filter: 'atlas'` predicate keys off an origin tag that isn't resolved for every Chinese-made part on a SEARCH result (vs the recommendations path where `mfrOrigin` is resolved per unique MFR).
+
+**Fix (if wanted).** Resolve `mfrOrigin` for search-result matches the way `getRecommendations` does (per-unique-MFR via the alias resolver, 5-min cached) so the origin filter sees every Chinese maker, OR widen the filter predicate to also consult a manufacturer→country lookup rather than relying solely on the source tag. Fixture: LM358 (mixed-origin variants). Medium priority — affects trust in the "Chinese options" feature.
+
+---
+
 ## Manufacturer profile pull should open the right-hand panel, not re-type the profile in chat (P3)
 
 **Context.** When a user asks the chat agent to pull a manufacturer profile — or accepts the agent's own "want me to pull a company profile?" offer — `get_manufacturer_profile` runs and the LLM renders the profile **inline in the chat bubble** as a markdown table + cert-audit + risk-read. It does **not** open the dedicated right-hand `ManufacturerProfilePanel` (Decisions #161 / #203), which today only opens on a manufacturer-name **click** (`handleManufacturerClick`). Net: the same data has two presentations depending on click-vs-ask, and the nicer structured panel is bypassed on the conversational path. Verified on a 3PEAK profile (June 2026) that the inline answer is **fully grounded** against the stored Atlas record (dual HQ, STAR Market listing, ISO 26262 + IATF 16949 certs all real; AEC-Q honestly flagged "not in our profile") — so this is a UX/consistency gap, **not** a correctness one. User chose to leave behavior **as-is** for now.
