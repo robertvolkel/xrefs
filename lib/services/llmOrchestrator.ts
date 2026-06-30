@@ -1,12 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
-import { looksLikeMpn, mentionsMpn } from './searchSummary';
+import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
+import { decideGuidedTurn } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
-import { resolveFamilyFromText, getLogicTable } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
-import { nextGuidedStep, GuidedAnswerMap } from './guidedSelection';
+import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
 import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
@@ -492,17 +492,8 @@ Part-selection-advice discipline (CRITICAL — applies to greenfield/no-MPN requ
 This covers the shape where the user describes a NEW component need without naming an MPN — whether fully specified ("I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400", "recommend a buck converter for a 5V→3.3V rail at 2A") or under-specified ("I need a transistor", "help me pick a capacitor for a new design, not sure where to start").
 - The floor (non-negotiable): NEVER state a specific, checkable fact from your own knowledge. Do NOT name part numbers, do NOT cite numeric spec values for a part (no "~100 nV/√Hz", no "hFE 400 at 1mA"), do NOT attribute a part to a manufacturer, do NOT claim availability, pricing, or qualification. Training-data specifics are frequently wrong (e.g. naming a PNP when the user asked for NPN) and read to the user identically to tool-grounded facts. Specific MPNs, specs, and MFR names enter your prose ONLY after search_parts returns them. This floor holds across the ENTIRE interaction — the guiding questions, the search call, AND the free-prose closing after cards render. The most common leak is the closing sentence ("this matches your spec exactly"): a from-memory spec stated as fact is a fabrication even when the part itself is real.
 - Act, don't ask (the default — do this whenever you can): When the user states a part type plus at least ONE searchable parameter (a spec, value, package, polarity, topology, voltage/current, or qualification), call search_parts IMMEDIATELY with a descriptive query built from those constraints (e.g. "low-noise NPN transistor small signal audio"). Do NOT ask "want me to search?" — the user stated a need; go fill it. Do NOT ask for a second parameter when ONE already lets you search — an unstated discriminator (e.g. N- vs P-channel when the application implies it) becomes a grounded caveat AFTER cards render, not a pre-search question. **On these descriptive searches ALSO pass partType (the component type in plain words) and constraints (one entry per spec the user actually stated — numeric specs as value+unit, categorical specs like channel type as a string value).** This lets the engine rank parts that genuinely fit first and sink the ones that don't (e.g. a 1200V part for a 12V ask). Pass ONLY specs the user gave — never invent a value to fill a slot.
-- Guided selection (NARROW carve-out — only when there is NO searchable parameter yet): for forward-looking selection requests like "I need a voltage regulator" or "help me pick a capacitor for a new design", the SYSTEM drives the questions — you only relay one step at a time. Do NOT decide which specs to ask, the order, or when to search; do NOT improvise spec questions.
-  - First pin the SPECIFIC part type. If the request is ambiguous across sub-families (e.g. "voltage regulator" → linear/LDO vs switching; "transistor" → MOSFET vs BJT vs JFET; "thermistor" → NTC vs PTC), ask ONE disambiguation question with present_choices, nothing else, then continue.
-  - Then call guided_select(partType) — and call it AGAIN at the start of every following turn of the selection. Do exactly what its directive says and NOTHING more:
-    - action "ask_choice": the system has already attached the answer buttons. Write ONE short plain question for the named spec only. Do not add other spec questions, do not restate options in prose.
-    - action "ask_values": ask ONE short plain question for the listed typed specs together (no buttons). If a package is included, mention they can say "any".
-    - action "search": immediately call search_parts with the given partType and constraints. Ask nothing else.
-  - You MAY add one brief, genuinely useful sanity note when a value the user gave looks physically off (e.g. "30V output is high for a linear regulator — did you mean a lower output?") — but never invent specs and never ask beyond the current directive.
-  - If guided_select returns resolved:false, the part type is still too vague — ask ONE disambiguation question, then call guided_select again with the specific type. Never improvise a spec list of your own.
-  - Phrase questions as plain prose — do NOT number them ("1." / "2.") or format them as an ordered list.
-  - Ask about REQUIREMENTS only. Do NOT name an example part, manufacturer, or "typical" spec value while guiding — that is the same fabrication the floor bans, just earlier in the flow.
-- Routing examples (hold the boundary — when in doubt SEARCH beats ASK, and ANSWER beats ASK): "I need a MOSFET for a 24V motor driver" → SEARCH NOW (24V is a searchable parameter — query e.g. "N-channel MOSFET 24V motor drive"; do NOT ask N- vs P-channel first, that is a post-card caveat). "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400" → SEARCH NOW (multiple parameters; just search). "I need to pick a capacitor for a new design, not sure where to start" → GUIDE (no searchable parameter yet — pin the specific type if ambiguous, then let the system drive via guided_select: relay one step per turn until it says search). "what should I think about when choosing a gate driver?" → ANSWER-FIRST (theory question, not a sourcing request — answer from knowledge, no search).
+- Guided selection (SYSTEM-OWNED — you normally won't see these turns): when the user describes a forward-looking need with NO searchable parameter yet ("I need a voltage regulator", "help me pick a capacitor for a new design"), the SYSTEM runs the step-by-step make-or-break spec questions AND the search automatically, before you — those turns never reach you. The ONLY case you handle here is when you CANNOT tell the SPECIFIC component type from the request (e.g. bare "capacitor" — could be MLCC, tantalum, film, electrolytic): ask ONE short plain-language question to clarify which component they mean, then stop. Once the specific type is named, the system takes over. Never improvise a spec checklist, never name an example part / manufacturer / "typical" value while clarifying — that is the same fabrication the floor bans.
+- Routing examples (hold the boundary — when in doubt SEARCH beats ASK, and ANSWER beats ASK): "I need a MOSFET for a 24V motor driver" → SEARCH NOW (24V is a searchable parameter — query e.g. "N-channel MOSFET 24V motor drive"; do NOT ask N- vs P-channel first, that is a post-card caveat). "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400" → SEARCH NOW (multiple parameters; just search). "I need to pick a capacitor for a new design, not sure where to start" → the system drives the spec questions automatically; you step in ONLY to clarify the specific capacitor type if it's still unclear. "what should I think about when choosing a gate driver?" → ANSWER-FIRST (theory question, not a sourcing request — answer from knowledge, no search).
 - Grounded caveats only, no preamble: Do NOT lead with a textbook lecture, and do NOT restate the user's own stated constraints back to them as insight. After candidates render you may add one or two genuinely useful, SPECIFIC caveats — ideally tied to the real parts (e.g. "confirm each part's hFE is specced near your 1–2mA operating point, not at 10mA"). Generic theory and packaging trivia are noise; leave them out.
 
 Recommendation-block factual discipline (CRITICAL — applies post-recs):
@@ -863,20 +854,6 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ['choices'],
-    },
-  },
-  {
-    name: 'guided_select',
-    description: 'GREENFIELD part selection (the user is describing a NEW component need with no MPN). Call this EVERY turn of a guided selection once you know the SPECIFIC part type — the system decides the single next step and you just relay it. It reads the whole conversation, figures out which required specs are already answered, and returns a `directive` with `action`: "ask_choice" (ask the named spec; the system has ALREADY attached its buttons — write one short question for THAT spec and nothing else), "ask_values" (ask one short prose question for the listed typed specs together — no buttons), or "search" (all required specs are in — call search_parts with the given partType and constraints). Follow the directive EXACTLY: ask only what it names, never add other spec questions, never reorder. If `resolved` is false the part type is still too vague (e.g. bare "voltage regulator" → LDO vs switching) — ask ONE disambiguation question, then call this again with the specific type.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        partType: {
-          type: 'string',
-          description: 'The specific component type in plain words, e.g. "LDO", "buck converter", "N-channel MOSFET", "X7R MLCC capacitor", "electromechanical relay". Use the most specific term the conversation supports.',
-        },
-      },
-      required: ['partType'],
     },
   },
 ];
@@ -1553,55 +1530,10 @@ async function executeTool(
       data.choices = sanitizeChoiceOptions(choices);
       return JSON.stringify({ presented: true });
     }
-    case 'guided_select': {
-      // SYSTEM-DRIVEN guided selection. The system owns every decision; the model
-      // relays ONE step. Family resolution + answered-spec reconstruction + the
-      // next-step choice are all deterministic/server-side (see guidedSelection.ts +
-      // selectionQuestions.ts, guarded against the live logic tables). Fails open: an
-      // unresolvable/ambiguous part type returns { resolved: false } so the model asks
-      // a disambiguation question first rather than improvising specs.
-      const { partType } = input as { partType?: string };
-      const familyId = resolveFamilyFromText(partType);
-      if (!familyId || !getSelectionQuestions(familyId)) {
-        return JSON.stringify({ resolved: false, reason: 'ambiguous_or_unknown_part_type' });
-      }
-      const table = getLogicTable(familyId);
-      const familyName = table?.familyName ?? familyId;
-      // Reconstruct what the user has already answered (system-held checklist → no looping).
-      const answered = ctx?.conversation
-        ? await extractAnsweredSpecs(ctx.client, ctx.conversation, familyId)
-        : {};
-      const step = nextGuidedStep(familyId, answered);
-      if (!step) return JSON.stringify({ resolved: false, reason: 'no_selection_set_for_family' });
-
-      if (step.type === 'ask_choice') {
-        // System attaches the buttons deterministically; the model writes the sentence
-        // for THIS spec only — so buttons can never mismatch the question.
-        data.choices = sanitizeChoiceOptions((step.attr.options ?? []).map(o => ({ id: o, label: o })));
-        return JSON.stringify({
-          resolved: true, familyId, familyName,
-          action: 'ask_choice',
-          spec: { id: step.attr.attributeId, label: step.attr.label },
-          directive: `Ask the user about "${step.attr.label}" for their ${familyName}. The answer buttons are ALREADY attached — write ONE short, plain question for this spec only, and ask nothing else this turn.`,
-        });
-      }
-      if (step.type === 'ask_values') {
-        return JSON.stringify({
-          resolved: true, familyId, familyName,
-          action: 'ask_values',
-          specs: step.attrs.map(a => ({ id: a.attributeId, label: a.label })),
-          directive: `Ask the user, in ONE short plain-language question, for these typed values together: ${step.attrs.map(a => a.label).join('; ')}. No buttons. If a package/footprint is among them, note they can answer "any". Ask nothing else.`,
-        });
-      }
-      // step.type === 'search'
-      return JSON.stringify({
-        resolved: true, familyId, familyName,
-        action: 'search',
-        partType: partType?.trim(),
-        constraints: step.constraints,
-        directive: `All required specs are gathered. Call search_parts NOW with partType="${partType?.trim()}" and these constraints: ${JSON.stringify(step.constraints)}. Do not ask any more questions.`,
-      });
-    }
+    // NOTE: guided part selection is no longer a tool. The SYSTEM owns those turns
+    // deterministically before the LLM loop runs — see decideGuidedTurn() wired at the
+    // top of chat() (Decision #262). The model never phrases a guided question or fires
+    // the guided search.
     // ── History tools ──────────────────────────────────────────
     case 'get_my_recent_searches': {
       if (!userId) return JSON.stringify({ error: 'Not authenticated' });
@@ -1799,6 +1731,42 @@ export async function chat(
   // be greenfield, or it would run spec-vetting and tag the part's neighbours
   // "Below spec".
   const isGreenfield = userText.length > 0 && !looksLikeMpn(userText) && !mentionsMpn(userText);
+
+  // ── System-driven guided part selection (Decision #262) ──
+  // When the user is describing a NEW component need with no part number, the SYSTEM
+  // owns the whole turn deterministically: it asks the family's make-or-break specs
+  // in a FIXED order/wording and runs the search itself once the required set is in.
+  // The model is bypassed entirely on these turns (no phrasing, no freelancing, no
+  // value-swaps), so the flow is identical run-to-run and the fit labels always
+  // compute (the search carries the tracked specs as constraints). decideGuidedTurn
+  // returns null to DEFER to the normal LLM path (MPN lookups, theory questions,
+  // manufacturer questions, comparisons, unknown part types). The only model call on
+  // a guided turn is the injected temp-0 spec-extractor.
+  const hasOnScreenContext = !!(
+    (currentSearchResult?.matches?.length ?? 0) > 0 ||
+    (currentRecommendations?.length ?? 0) > 0 ||
+    currentSourceAttributes
+  );
+  const guidedTurn = await decideGuidedTurn(
+    messages,
+    fam => extractAnsweredSpecs(client, messages, fam),
+    hasOnScreenContext,
+  );
+  if (guidedTurn) {
+    if (guidedTurn.kind === 'ask') {
+      const resp: OrchestratorResponse = { message: guidedTurn.message };
+      if (guidedTurn.choices && guidedTurn.choices.length > 0) {
+        resp.choices = sanitizeChoiceOptions(guidedTurn.choices);
+      }
+      return resp;
+    }
+    // kind === 'search' — run it ourselves with the tracked specs attached.
+    const result = await searchParts(guidedTurn.query, undefined, userId, {
+      partType: guidedTurn.partType,
+      constraints: guidedTurn.constraints,
+    });
+    return { message: buildSearchSummary(result), searchResult: result };
+  }
 
   // Collect structured data from tool calls
   const toolData: ToolResultData = {
