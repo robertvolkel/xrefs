@@ -5,6 +5,7 @@ import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
 import { decideGuidedTurn } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
+import { logicTableRegistry } from '../logicTables';
 import { getSelectionQuestions } from './selectionQuestions';
 import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
@@ -1146,6 +1147,63 @@ async function extractAnsweredSpecs(
   }
 }
 
+/**
+ * Registry-backed part-type classifier — the FALLBACK for guided selection when the
+ * deterministic recognizer (keyword map + curated disambiguation) doesn't pin a family.
+ *
+ * The enum is derived from the live logic-table registry (all 43 families), so coverage
+ * is COMPLETE by construction — adding a family to the registry extends recognition for
+ * free, with no hand-maintained keyword list to fall out of date. Crucially the output
+ * is BOUNDED to a valid familyId or 'none': the model acts as a pure classifier, never a
+ * free-prose author, so it cannot reintroduce the freelancing (numbered questions,
+ * ungrounded MFR/ESR prose) that deferring a guided turn to the chat loop produced.
+ *
+ * Returns a familyId only when the message reads as wanting to SOURCE/SELECT a component
+ * of that type; theory/comparison questions, part-number lookups, and unclear messages
+ * return null (→ the caller defers to the normal chat path, which is correct for those).
+ * temp-0 + forced tool, mirroring extractAnsweredSpecs / forceExtractSpecs.
+ */
+async function classifyPartTypeFamily(client: Anthropic, userText: string): Promise<string | null> {
+  const families = Object.values(logicTableRegistry).map(t => ({ id: t.familyId, name: t.familyName, category: t.category }));
+  const familyLines = families.map(f => `- ${f.id}: ${f.name} (${f.category})`).join('\n');
+  const tool: Anthropic.Tool = {
+    name: 'classify_part_type',
+    description: 'Map the user message to the component family they want to source, or "none".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        familyId: {
+          type: 'string',
+          enum: [...families.map(f => f.id), 'none'],
+          description: 'The family id the user wants to source a part from, or "none" if the message is a general/theory/comparison question, a specific part-number lookup, or does not clearly request a component type.',
+        },
+      },
+      required: ['familyId'],
+    },
+  };
+  try {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 256,
+      temperature: 0,
+      tools: [tool],
+      tool_choice: { type: 'tool', name: 'classify_part_type' },
+      messages: [{
+        role: 'user',
+        content: `This is a component-sourcing app. A user wants help picking a component. Classify their message into ONE of these component families (or "none" if they are NOT trying to source a specific component type — e.g. a how-does-X-work question, a comparison, a part-number lookup, or anything unclear).\n\nFamilies:\n${familyLines}\n\nUser message: "${userText}"\n\nReturn the single best family id, or "none".`,
+      }],
+    });
+    const block = resp.content.find(b => b.type === 'tool_use');
+    if (!block || block.type !== 'tool_use') return null;
+    const fam = (block.input as { familyId?: string }).familyId;
+    if (!fam || fam === 'none' || !logicTableRegistry[fam]) return null;
+    return fam;
+  } catch (err) {
+    console.warn('[chat] classify_part_type failed; deferring to chat path', err);
+    return null;
+  }
+}
+
 /** Execute a tool call and return the result + parsed data */
 async function executeTool(
   name: string,
@@ -1751,6 +1809,7 @@ export async function chat(
     messages,
     fam => extractAnsweredSpecs(client, messages, fam),
     hasOnScreenContext,
+    text => classifyPartTypeFamily(client, text),
   );
   if (guidedTurn) {
     if (guidedTurn.kind === 'ask') {

@@ -173,6 +173,32 @@ describe('decideGuidedTurn — turn ownership', () => {
     }
   });
 
+  it('CLASSIFIER FALLBACK: an unrecognized sourcing phrase is OWNED via the classifier', async () => {
+    const out = await decideGuidedTurn([u('I need a gizmo for my board')], noAnswers, false, async () => 'C4');
+    expect(out?.kind).toBe('ask'); // system asks C4's first spec
+    if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
+  });
+
+  it('CLASSIFIER FALLBACK: returns null (not a component) → defers to the chat path', async () => {
+    expect(await decideGuidedTurn([u('I need a gizmo for my board')], noAnswers, false, async () => null)).toBeNull();
+  });
+
+  it('CLASSIFIER is NOT called for a deterministically-recognized type (no wasted LLM call)', async () => {
+    let called = false;
+    const spy = async () => { called = true; return 'C4'; };
+    const out = await decideGuidedTurn([u('I need a BJT')], noAnswers, false, spy);
+    expect(called).toBe(false); // pinFamily already resolved B6
+    expect(out?.kind).toBe('ask');
+  });
+
+  it('CLASSIFIER is NOT called for a theory question (stays with the chat path)', async () => {
+    let called = false;
+    const spy = async () => { called = true; return 'C4'; };
+    const out = await decideGuidedTurn([u('what is a capacitor?')], noAnswers, false, spy);
+    expect(called).toBe(false);
+    expect(out).toBeNull();
+  });
+
   it('CONTINUATION: partial answers → asks only the remaining required spec', async () => {
     const convo = [
       u('I need an NTC thermistor'),

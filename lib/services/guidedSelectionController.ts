@@ -195,6 +195,7 @@ export async function decideGuidedTurn(
   messages: OrchestratorMessage[],
   parse: (familyId: string) => Promise<GuidedAnswerMap>,
   hasOnScreenContext = false,
+  classify?: (text: string) => Promise<string | null>,
 ): Promise<GuidedTurnDecision | null> {
   const lastUser = [...messages].reverse().find(m => m.role === 'user');
   const userText = (lastUser?.content ?? '').trim();
@@ -220,9 +221,11 @@ export async function decideGuidedTurn(
   // true and there's no on-screen context mid-questions.
   if (!inProgress && hasOnScreenContext) return null;
 
-  const pinned = pinFamily(messages);
+  let pinned = pinFamily(messages);
+  let viaClassifier = false;
 
-  // No specific family yet → only an ENTRY turn may disambiguate a known-ambiguous head.
+  // No specific family yet (deterministic recognizer missed) → an ENTRY turn may
+  // disambiguate a curated supertype, else fall back to the registry-backed classifier.
   if (!pinned) {
     if (inProgress) return null; // safety: can't be mid-flow without a pinned family
     const options = detectAmbiguity(userText);
@@ -233,12 +236,26 @@ export async function decideGuidedTurn(
         choices: options.map(o => ({ id: o.familyId, label: o.label })),
       };
     }
-    return null; // unknown / theory → LLM
+    // Classifier fallback: the deterministic recognizer (keyword map + curated
+    // disambiguation) doesn't cover every phrasing ("low-dropout reg", "a schottky",
+    // "an op amp"). Rather than hand-extending a keyword list forever — and rather than
+    // deferring the flow to the chat loop (which freelances) — ask the bounded,
+    // registry-backed classifier. It returns a real familyId or null, so it recognizes
+    // the long tail without ever authoring prose. Gated to plausible sourcing turns so
+    // it doesn't fire on theory questions or burn a call on obvious non-sourcing text.
+    if (classify && !isLikelyTheory(userText) && (hasSelectionIntent(userText) || isBareNounPhrase(userText))) {
+      const fam = await classify(userText);
+      if (fam && getSelectionQuestions(fam)) {
+        pinned = { familyId: fam, partType: getLogicTable(fam)?.familyName ?? userText.trim() };
+        viaClassifier = true;
+      }
+    }
+    if (!pinned) return null; // genuinely unknown / not a sourcing request → LLM
   }
 
-  // Entry gate (continuation is unconditional — the user is answering our question):
-  // take over a fresh turn only when it reads as a selection request, not theory.
-  if (!inProgress) {
+  // Entry gate (continuation is unconditional — the user is answering our question;
+  // skipped too when the classifier already judged this a sourcing request).
+  if (!inProgress && !viaClassifier) {
     if (isLikelyTheory(userText) && !hasSelectionIntent(userText)) return null;
     if (!hasSelectionIntent(userText) && !isBareNounPhrase(userText)) return null;
   }
