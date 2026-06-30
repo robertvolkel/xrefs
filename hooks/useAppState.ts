@@ -18,7 +18,8 @@ import {
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, extractQuantity, extractBestPriceQuantity, PendingIntent } from '@/lib/services/intentDetector';
-import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from '@/lib/services/filterIntentDetector';
+import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent, detectSearchOriginRefinement } from '@/lib/services/filterIntentDetector';
+import { applySearchResultFilter } from '@/lib/services/searchResultFilter';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
@@ -165,6 +166,11 @@ export function useAppState() {
   // Mirrors state.searchResult so async callbacks can pass the current cards
   // on screen to the LLM orchestrator without needing a render-time read.
   const searchResultRef = useRef<SearchResult | null>(null);
+  // The FULL match set of the current search (set on a fresh search, NOT on a
+  // filter). The deterministic origin-filter intercept narrows from this, so
+  // sequential origin asks ("the Chinese ones" then "the Western ones") each
+  // filter the complete set rather than stacking on the prior narrowed view.
+  const searchFullMatchesRef = useRef<PartSummary[]>([]);
   // Mirrors state.sourceAttributes so the orchestrator gets the canonical
   // supplier/lifecycle/compliance snapshot on every turn (drives
   // summarizeSourcePart()). Without this the LLM fabricates supplier names
@@ -1176,6 +1182,47 @@ export function useAppState() {
     [addMessage],
   );
 
+  /** Apply a Chinese/Western origin filter to the CURRENT search-result cards,
+   *  DETERMINISTICALLY. The LLM is unreliable here — its "never assert MFR origin"
+   *  discipline makes it prose-answer ("none are Chinese") instead of calling the
+   *  origin filter. Narrows from the FULL match set (searchFullMatchesRef) so
+   *  sequential "Chinese ones" → "Western ones" each filter the complete result,
+   *  and keys off the resolved PartSummary.mfrOrigin so every Chinese maker is
+   *  caught (not just Atlas-sourced rows). */
+  const dispatchSearchOriginFilter = useCallback(
+    (origin: 'atlas' | 'western', label: string, query: string) => {
+      addMessage('user', query);
+      conversationRef.current.push({ role: 'user', content: query });
+
+      const fullMatches = searchFullMatchesRef.current;
+      const filtered = applySearchResultFilter(fullMatches, { mfr_origin_filter: origin });
+
+      if (filtered.length === 0) {
+        const note = `None of the current ${fullMatches.length} results are from ${label}.`;
+        addMessage('assistant', note);
+        conversationRef.current.push({ role: 'assistant', content: note });
+        return;
+      }
+
+      const newResult: SearchResult = {
+        type: filtered.length === 1 ? 'single' : 'multiple',
+        matches: filtered,
+        sourcesContributed: searchResultRef.current?.sourcesContributed,
+      };
+      searchResultRef.current = newResult;
+      setState((prev) => ({ ...prev, searchResult: newResult }));
+
+      const headline = `Filtered to ${filtered.length} ${filtered.length === 1 ? 'part' : 'parts'} — ${label}. Click the one you'd like to use.`;
+      const msg = addMessage('assistant', headline, { type: 'options', parts: filtered });
+      triggerSearchDistributorEnrichment(msg.id, filtered);
+      conversationRef.current.push({
+        role: 'assistant',
+        content: `Filtered the search-result cards to ${filtered.length} ${label} (from ${fullMatches.length}). The user can see the narrowed cards now.`,
+      });
+    },
+    [addMessage, triggerSearchDistributorEnrichment],
+  );
+
   /** Clear the active filter on the recommendations panel — restores the
    *  full set. No-op (with a friendly chat note) when no filter is active. */
   const dispatchClearFilter = useCallback((query: string) => {
@@ -1315,6 +1362,12 @@ export function useAppState() {
         if (searchResult) {
           contextAskedRef.current = false;
           attributesAskedRef.current = false;
+        }
+        // Capture the FULL match set of a FRESH search (a filter carries a
+        // searchFilterLabel) so the deterministic origin-filter intercept narrows
+        // from the complete set — sequential "Chinese ones" → "Western ones" both work.
+        if (searchResult && !searchFilterLabel && (searchResult.matches?.length ?? 0) > 0) {
+          searchFullMatchesRef.current = searchResult.matches;
         }
         const partResetFields = searchResult ? {
           sourcePart: null as AppState['sourcePart'],
@@ -1646,6 +1699,21 @@ export function useAppState() {
         }
       }
 
+      // Search-result origin filter: when search-result cards are on screen (no
+      // recs) and the user asks a PURE origin refinement ("show me the Chinese
+      // ones", "western only"), apply it DETERMINISTICALLY. The LLM otherwise
+      // prose-answers ("none are Chinese") instead of calling the origin filter —
+      // its "never assert MFR origin" discipline wins over the tool instruction.
+      // detectSearchOriginRefinement returns null when the message names a part
+      // type ("Chinese MLCCs" → a NEW search), so a pivot still reaches the LLM.
+      if (currentRecs.length === 0 && searchFullMatchesRef.current.length > 0) {
+        const originRefine = detectSearchOriginRefinement(query);
+        if (originRefine) {
+          dispatchSearchOriginFilter(originRefine.origin, originRefine.label, query);
+          return;
+        }
+      }
+
       // Follow-up intent shortcut: when a part is already loaded and the user
       // types a message that pattern-matches a known capability ("show me
       // replacements", "best price", "tell me about the manufacturer"),
@@ -1725,7 +1793,7 @@ export function useAppState() {
         await handleSearchWithLLM(query);
       }
     },
-    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, handleSearchWithLLM, handleSearchDeterministic, priceAtQuantity]
+    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchOriginFilter, handleSearchWithLLM, handleSearchDeterministic, priceAtQuantity]
   );
 
   const handleConfirmPart = useCallback(

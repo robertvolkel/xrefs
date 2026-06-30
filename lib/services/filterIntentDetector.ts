@@ -144,6 +144,31 @@ export function detectOriginIntent(query: string): FilterIntent | null {
   return null;
 }
 
+/** Origin words + refinement filler. Stripped from a query to tell a PURE origin
+ *  refinement of the current cards ("show me the Chinese ones") from a NEW search
+ *  that names a component ("find Chinese MLCCs") — the latter must NOT be hijacked
+ *  as a filter. Anything that survives the strip is a content word (a part type). */
+const ORIGIN_FILLER_RE = /\b(show|me|us|the|a|an|any|these|those|all|of|only|just|now|then|please|can|could|you|i|want|need|like|see|view|display|give|find|get|filter|narrow|down|to|by|results?|parts?|products?|cards?|items?|ones?|stuff|from|made|sourced|with|manufacturers?|makers?|mfrs?|mfg|vendors?|suppliers?|companies?|brands?|chinese|china|prc|mainland|asian?|asia|western|america|american|europe|european|eu|non|alternatives?|alternative|options?|option|equivalents?|equivalent|subs?|substitutes?|replacements?)\b/gi;
+
+/**
+ * Detect a PURE origin refinement of the current search-result cards: an origin
+ * ask ("the Chinese ones", "western only", "non-Chinese") that does NOT also name
+ * a part type. Used by the search-result filter intercept so origin narrowing runs
+ * DETERMINISTICALLY (the LLM's "never assert MFR origin" discipline otherwise makes
+ * it prose-answer instead of calling the origin filter). Returns null when the
+ * message names a component ("Chinese MLCCs") — that's a new search, not a refine.
+ */
+export function detectSearchOriginRefinement(
+  query: string,
+): { origin: 'atlas' | 'western'; label: string } | null {
+  const intent = detectOriginIntent(query);
+  const origin = intent?.filterInput.mfr_origin_filter;
+  if (!origin) return null;
+  const residual = query.toLowerCase().replace(ORIGIN_FILLER_RE, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+  if (residual.split(/\s+/).some(w => w.length >= 3)) return null; // a part type was named → new search
+  return { origin, label: intent!.label };
+}
+
 /** Detect a manufacturer filter — needs both a verb and a manufacturer name
  *  recognizable in the current recs set. */
 function detectManufacturerIntent(query: string, recs: XrefRecommendation[]): FilterIntent | null {
