@@ -1,9 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { SearchResult, PartAttributes, XrefRecommendation, OrchestratorMessage, OrchestratorResponse, ApplicationContext, UserPreferences, ListAgentContext, ListAgentResponse, PendingListAction, ListClientAction, ChoiceOption, SearchConstraint, deriveRecommendationBucket, deriveRecommendationCategories, RecommendationCategory } from '../types';
 import { searchParts, getAttributes, getRecommendations } from './partDataService';
-import { looksLikeMpn, mentionsMpn } from './searchSummary';
+import { looksLikeMpn, mentionsMpn, buildSearchSummary } from './searchSummary';
+import { decideGuidedTurn } from './guidedSelectionController';
 import { sanitizeChoiceOptions } from './choiceGuard';
 import { buildGreenfieldQuery } from './searchConstraints';
+import { logicTableRegistry } from '../logicTables';
+import { getSelectionQuestions } from './selectionQuestions';
+import { GuidedAnswerMap } from './guidedSelection';
 import { observeAndLogGrounding, extractUserMpnCandidates } from './grounding/groundingLogger';
 import { ChatGroundingContext, buildVerifiedSetFromContext } from './grounding/observeGrounding';
 import { applyGroundingGate, isGroundingGateEnabled } from './grounding/groundingGate';
@@ -12,7 +16,7 @@ import { getProfileForManufacturer } from './manufacturerProfileService';
 import { resolveManufacturerAlias } from './manufacturerAliasResolver';
 import { resolveDiscoveryScope, listManufacturersForScope } from './atlasManufacturerDiscovery';
 import { logRecommendation } from './recommendationLogger';
-import { logTokenUsage } from './apiUsageLogger';
+import { logTokenUsage, type ApiOperation } from './apiUsageLogger';
 import { createClient } from '../supabase/server';
 import { StoredRow } from '../partsListStorage';
 import { getCountryName } from '../constants/profileOptions';
@@ -489,13 +493,8 @@ Part-selection-advice discipline (CRITICAL — applies to greenfield/no-MPN requ
 This covers the shape where the user describes a NEW component need without naming an MPN — whether fully specified ("I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400", "recommend a buck converter for a 5V→3.3V rail at 2A") or under-specified ("I need a transistor", "help me pick a capacitor for a new design, not sure where to start").
 - The floor (non-negotiable): NEVER state a specific, checkable fact from your own knowledge. Do NOT name part numbers, do NOT cite numeric spec values for a part (no "~100 nV/√Hz", no "hFE 400 at 1mA"), do NOT attribute a part to a manufacturer, do NOT claim availability, pricing, or qualification. Training-data specifics are frequently wrong (e.g. naming a PNP when the user asked for NPN) and read to the user identically to tool-grounded facts. Specific MPNs, specs, and MFR names enter your prose ONLY after search_parts returns them. This floor holds across the ENTIRE interaction — the guiding questions, the search call, AND the free-prose closing after cards render. The most common leak is the closing sentence ("this matches your spec exactly"): a from-memory spec stated as fact is a fabrication even when the part itself is real.
 - Act, don't ask (the default — do this whenever you can): When the user states a part type plus at least ONE searchable parameter (a spec, value, package, polarity, topology, voltage/current, or qualification), call search_parts IMMEDIATELY with a descriptive query built from those constraints (e.g. "low-noise NPN transistor small signal audio"). Do NOT ask "want me to search?" — the user stated a need; go fill it. Do NOT ask for a second parameter when ONE already lets you search — an unstated discriminator (e.g. N- vs P-channel when the application implies it) becomes a grounded caveat AFTER cards render, not a pre-search question. **On these descriptive searches ALSO pass partType (the component type in plain words) and constraints (one entry per spec the user actually stated — numeric specs as value+unit, categorical specs like channel type as a string value).** This lets the engine rank parts that genuinely fit first and sink the ones that don't (e.g. a 1200V part for a 12V ask). Pass ONLY specs the user gave — never invent a value to fill a slot.
-- Guided selection (NARROW carve-out — only when you genuinely cannot search yet): Reserve this for forward-looking selection requests that lack a part type + a searchable parameter — e.g. "I need to pick a capacitor for a new design, not sure where to start." When it fires, run a SINGLE consolidated guiding turn, then search:
-  - State the 1–2 discriminators you need to narrow effectively, and offer an immediate-search escape hatch: e.g. "To narrow this: [axis A] and [axis B]? Or tell me your priority and I'll search now with sensible defaults." Walk axes in order — device family → function/sub-type → key electrical discriminator → (rarely) application/environment — but SKIP any axis already known, derivable, or already in the conversation / user-context block. STOP and call search_parts the instant you have a part type + ≥1 searchable parameter.
-  - For closed discriminator sets (device family, N- vs P-channel, dielectric class, package family) use present_choices (always with an explanatory text message); for open-ended values (voltages, currents, frequencies) ask in prose.
-  - Phrase the guiding question(s) as plain prose — do NOT number them (no "1." / "2." lead-ins) and do NOT format them as an ordered/numbered list, even when you ask for two discriminators. If you ask for two things, join them with prose ("…, and what's your…?") or as separate sentences. Numbered lead-ins read as a broken step counter to the user — especially when one discriminator is rendered as buttons and only the other remains as text, leaving an orphaned "2." with no visible "1.".
-  - Ask about REQUIREMENTS only. Do NOT name an example part, manufacturer, or "typical" spec value while guiding — that is the same fabrication the floor bans, just earlier in the flow.
-  - NEVER run a second consecutive guiding turn just to collect more parameters. After one turn, search on whatever you have with a broad descriptive query — a broad candidate set the user can react to beats an interrogation. Over-asking is the opposite failure of "act, don't ask", and equally unwanted.
-- Routing examples (hold the boundary — when in doubt SEARCH beats ASK, and ANSWER beats ASK): "I need a MOSFET for a 24V motor driver" → SEARCH NOW (24V is a searchable parameter — query e.g. "N-channel MOSFET 24V motor drive"; do NOT ask N- vs P-channel first, that is a post-card caveat). "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400" → SEARCH NOW (multiple parameters; just search). "I need to pick a capacitor for a new design, not sure where to start" → GUIDE (no searchable parameter yet — ask AT MOST TWO discriminators, e.g. dielectric class + rail voltage, with the escape hatch). "what should I think about when choosing a gate driver?" → ANSWER-FIRST (theory question, not a sourcing request — answer from knowledge, no search).
+- Guided selection (SYSTEM-OWNED — you normally won't see these turns): when the user describes a forward-looking need with NO searchable parameter yet ("I need a voltage regulator", "help me pick a capacitor for a new design"), the SYSTEM runs the step-by-step make-or-break spec questions AND the search automatically, before you — those turns never reach you. The ONLY case you handle here is when you CANNOT tell the SPECIFIC component type from the request (e.g. bare "capacitor" — could be MLCC, tantalum, film, electrolytic): ask ONE short plain-language question to clarify which component they mean, then stop. Once the specific type is named, the system takes over. Never improvise a spec checklist, never name an example part / manufacturer / "typical" value while clarifying — that is the same fabrication the floor bans.
+- Routing examples (hold the boundary — when in doubt SEARCH beats ASK, and ANSWER beats ASK): "I need a MOSFET for a 24V motor driver" → SEARCH NOW (24V is a searchable parameter — query e.g. "N-channel MOSFET 24V motor drive"; do NOT ask N- vs P-channel first, that is a post-card caveat). "I need a low-noise NPN for an audio preamp, 9V, 1–2mA, hFE 200–400" → SEARCH NOW (multiple parameters; just search). "I need to pick a capacitor for a new design, not sure where to start" → the system drives the spec questions automatically; you step in ONLY to clarify the specific capacitor type if it's still unclear. "what should I think about when choosing a gate driver?" → ANSWER-FIRST (theory question, not a sourcing request — answer from knowledge, no search).
 - Grounded caveats only, no preamble: Do NOT lead with a textbook lecture, and do NOT restate the user's own stated constraints back to them as insight. After candidates render you may add one or two genuinely useful, SPECIFIC caveats — ideally tied to the real parts (e.g. "confirm each part's hFE is specced near your 1–2mA operating point, not at 10mA"). Generic theory and packaging trivia are noise; leave them out.
 
 Recommendation-block factual discipline (CRITICAL — applies post-recs):
@@ -603,7 +602,7 @@ Search result presentation:
 - NEVER describe a part's specifications (capacitance, voltage, package, etc.) in your text when presenting or identifying a part (search results, a confirmation message, a card) — the card and attributes panel handle that; your text should only identify the part and invite the user to click. This bans *unsolicited* spec-dumping. It does NOT override ASK mode (Workflow step 5a): when the user explicitly asks a parametric question ("what's its V_DS?", "is it AEC-Q200?"), answer the specific value(s) they asked for from the tool data — just don't volunteer the rest of the datasheet.
 - For a single match: write a SHORT message — at most one sentence. Format: "I found **MPN** from **manufacturer**. Can you confirm this is the part?" — and stop there. Do NOT add a second sentence telling the user what they'll see after clicking ("Click the card below to see full specs and pricing", etc.). Do NOT promise lists, panels, distributors, or live pricing — the post-click flow speaks for itself, and any promise you make may not match what actually happens (e.g., the user asked for price → the next step is a quantity prompt, not a panel; the user asked about a manufacturer → the next step opens a profile panel, not a spec list). Discrepancy variant is fine: "I found the kit version of this part. Can you confirm that's what you need?"
 - For multiple matches: "I found [N] similar parts. Click the one you're looking for." — nothing more. The cards show the rest.
-- Do NOT use present_choices for part SELECTION — clickable part cards handle that. Use present_choices for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search") AND for pre-search scope/category narrowing during guided selection (device family, N- vs P-channel, dielectric class, package family — see the Part-selection-advice discipline section). The hard line: a present_choices option may name a requirement CATEGORY or a workflow action, NEVER a specific part — no option carries an mpn/manufacturer or otherwise proposes a candidate. Picking a part is always done by clicking a rendered card.
+- Do NOT use present_choices for part SELECTION — clickable part cards handle that. Use present_choices for non-part workflow decisions (e.g., "get full attributes" vs "search for alternatives", or "continue with this part" vs "start a new search"). Greenfield spec-narrowing is SYSTEM-OWNED (see the Part-selection-advice discipline section) — do NOT use present_choices to drive it. The hard line: a present_choices option may name a requirement CATEGORY or a workflow action, NEVER a specific part — no option carries an mpn/manufacturer or otherwise proposes a candidate. Picking a part is always done by clicking a rendered card.
 - IMPORTANT: When using present_choices, you MUST still write a text message explaining the situation. The buttons appear below your text. Never call present_choices without also providing a text response — an empty message with only buttons is confusing.
 
 Conversation style:
@@ -962,6 +961,9 @@ interface GreenfieldCtx {
   client: Anthropic;
   isGreenfield: boolean;
   userText: string;
+  /** Full conversation so the system-driven guided_select handler can reconstruct
+   *  which required specs have already been answered. */
+  conversation: OrchestratorMessage[];
 }
 
 /** Steering result returned for the SUPPRESSED (deduped) search_parts blocks on a
@@ -1066,6 +1068,167 @@ async function forceExtractSpecs(
   }
 }
 
+/** Render the conversation as a plain transcript for the answer-extraction call. */
+function buildTranscript(conversation: OrchestratorMessage[]): string {
+  return conversation
+    .map(m => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.content}`)
+    .join('\n');
+}
+
+/**
+ * Fire-and-forget token-usage logging for the guided-selection helper calls. These run
+ * BEFORE chat()'s main agentic loop and return early, so their spend never reaches the
+ * loop's accumulator — log it here so cost telemetry isn't undercounted.
+ */
+function logGuidedUsage(userId: string | undefined, resp: Anthropic.Message, op: ApiOperation): void {
+  if (!userId) return;
+  void logTokenUsage({
+    userId,
+    model: MODEL,
+    operation: op,
+    inputTokens: resp.usage?.input_tokens ?? 0,
+    outputTokens: resp.usage?.output_tokens ?? 0,
+    cachedTokens: ((resp.usage ?? {}) as unknown as Record<string, number>).cache_read_input_tokens ?? 0,
+    llmCalls: 1,
+  }).catch(() => {});
+}
+
+/**
+ * SYSTEM-DRIVEN guided selection: reconstruct which of a family's Tier 2 specs the
+ * user has already answered, by reading the whole conversation. This is what makes
+ * the flow converge — the checklist is held by the system (re-derived each turn at
+ * temp 0), not tracked by the model (which lost the thread in testing). A structured,
+ * constrained classification — NOT free generation. Returns {} on any failure (the
+ * caller then asks the first spec; never blocks).
+ */
+async function extractAnsweredSpecs(
+  client: Anthropic,
+  conversation: OrchestratorMessage[],
+  familyId: string,
+  userId?: string,
+): Promise<GuidedAnswerMap> {
+  const questions = getSelectionQuestions(familyId);
+  if (!questions || questions.tier2.length === 0) return {};
+  const specLines = questions.tier2.map(a => {
+    const opts = a.input === 'choice' && a.options ? ` (choices: ${a.options.join(', ')})` : '';
+    return `- ${a.attributeId}: ${a.label}${opts}`;
+  }).join('\n');
+
+  const tool: Anthropic.Tool = {
+    name: 'report_answered_specs',
+    description: 'Report which of the listed specs the user has already provided a value for (or explicitly said does not matter / any).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        answers: {
+          type: 'array',
+          description: 'One entry ONLY for specs the user has actually addressed. Omit specs the user has not mentioned.',
+          items: {
+            type: 'object',
+            properties: {
+              attributeId: { type: 'string', enum: questions.tier2.map(a => a.attributeId), description: 'The spec id from the list.' },
+              value: { type: ['string', 'number', 'null'], description: 'The value the user gave (number for numeric specs, the chosen label for choices). Use null ONLY if the user explicitly said it does not matter / any / not sure.' },
+              unit: { type: 'string', description: 'Unit for numeric values, e.g. "V", "A", "MHz". Omit for choices.' },
+            },
+            required: ['attributeId', 'value'],
+          },
+        },
+      },
+      required: ['answers'],
+    },
+  };
+
+  try {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      temperature: 0,
+      tools: [tool],
+      tool_choice: { type: 'tool', name: 'report_answered_specs' },
+      messages: [{
+        role: 'user',
+        content: `Specs for this component family:\n${specLines}\n\nConversation so far:\n${buildTranscript(conversation)}\n\nReport which specs the user has already provided.`,
+      }],
+    });
+    logGuidedUsage(userId, resp, 'chat_guided_extract');
+    const block = resp.content.find(b => b.type === 'tool_use');
+    if (!block || block.type !== 'tool_use') return {};
+    const inp = block.input as { answers?: Array<{ attributeId?: string; value?: string | number | null; unit?: string }> };
+    const valid = new Set(questions.tier2.map(a => a.attributeId));
+    const map: GuidedAnswerMap = {};
+    for (const a of inp.answers ?? []) {
+      if (!a || typeof a.attributeId !== 'string' || !valid.has(a.attributeId)) continue;
+      // An empty string means the model reported the spec as addressed but gave no value
+      // (treat as "any / not sure"): coerce to null so it's answered-but-not-a-constraint,
+      // rather than a "" that counts as answered yet silently drops from the constraints.
+      const value = a.value === '' ? null : a.value ?? null;
+      map[a.attributeId] = { value, ...(a.unit ? { unit: a.unit } : {}) };
+    }
+    return map;
+  } catch (err) {
+    console.warn('[chat] report_answered_specs failed; treating as no answers yet', err);
+    return {};
+  }
+}
+
+/**
+ * Registry-backed part-type classifier — the FALLBACK for guided selection when the
+ * deterministic recognizer (keyword map + curated disambiguation) doesn't pin a family.
+ *
+ * The enum is derived from the live logic-table registry (all 43 families), so coverage
+ * is COMPLETE by construction — adding a family to the registry extends recognition for
+ * free, with no hand-maintained keyword list to fall out of date. Crucially the output
+ * is BOUNDED to a valid familyId or 'none': the model acts as a pure classifier, never a
+ * free-prose author, so it cannot reintroduce the freelancing (numbered questions,
+ * ungrounded MFR/ESR prose) that deferring a guided turn to the chat loop produced.
+ *
+ * Returns a familyId only when the message reads as wanting to SOURCE/SELECT a component
+ * of that type; theory/comparison questions, part-number lookups, and unclear messages
+ * return null (→ the caller defers to the normal chat path, which is correct for those).
+ * temp-0 + forced tool, mirroring extractAnsweredSpecs / forceExtractSpecs.
+ */
+async function classifyPartTypeFamily(client: Anthropic, userText: string, userId?: string): Promise<string | null> {
+  const families = Object.values(logicTableRegistry).map(t => ({ id: t.familyId, name: t.familyName, category: t.category }));
+  const familyLines = families.map(f => `- ${f.id}: ${f.name} (${f.category})`).join('\n');
+  const tool: Anthropic.Tool = {
+    name: 'classify_part_type',
+    description: 'Map the user message to the component family they want to source, or "none".',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        familyId: {
+          type: 'string',
+          enum: [...families.map(f => f.id), 'none'],
+          description: 'The family id the user wants to source a part from, or "none" if the message is a general/theory/comparison question, a specific part-number lookup, or does not clearly request a component type.',
+        },
+      },
+      required: ['familyId'],
+    },
+  };
+  try {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 256,
+      temperature: 0,
+      tools: [tool],
+      tool_choice: { type: 'tool', name: 'classify_part_type' },
+      messages: [{
+        role: 'user',
+        content: `This is a component-sourcing app. A user wants help picking a component. Classify their message into ONE of these component families (or "none" if they are NOT trying to source a specific component type — e.g. a how-does-X-work question, a comparison, a part-number lookup, or anything unclear).\n\nFamilies:\n${familyLines}\n\nUser message: "${userText}"\n\nReturn the single best family id, or "none".`,
+      }],
+    });
+    logGuidedUsage(userId, resp, 'chat_guided_classify');
+    const block = resp.content.find(b => b.type === 'tool_use');
+    if (!block || block.type !== 'tool_use') return null;
+    const fam = (block.input as { familyId?: string }).familyId;
+    if (!fam || fam === 'none' || !logicTableRegistry[fam]) return null;
+    return fam;
+  } catch (err) {
+    console.warn('[chat] classify_part_type failed; deferring to chat path', err);
+    return null;
+  }
+}
+
 /** Execute a tool call and return the result + parsed data */
 async function executeTool(
   name: string,
@@ -1077,6 +1240,11 @@ async function executeTool(
   currentSearchResult?: SearchResult,
   ctx?: GreenfieldCtx,
 ): Promise<string> {
+  // Observability: which tools the model actually called, with their input. Makes
+  // "did guided_select fire / what partType did it pass" answerable from the logs.
+  try {
+    console.log(`[chat] tool:${name} input=${JSON.stringify(input).slice(0, 300)}`);
+  } catch { /* non-serializable input — ignore */ }
   switch (name) {
     case 'search_parts': {
       const args = input as { query: string; manufacturer?: string; partType?: string; constraints?: SearchConstraint[] };
@@ -1445,6 +1613,10 @@ async function executeTool(
       data.choices = sanitizeChoiceOptions(choices);
       return JSON.stringify({ presented: true });
     }
+    // NOTE: guided part selection is no longer a tool. The SYSTEM owns those turns
+    // deterministically before the LLM loop runs — see decideGuidedTurn() wired at the
+    // top of chat() (Decision #262). The model never phrases a guided question or fires
+    // the guided search.
     // ── History tools ──────────────────────────────────────────
     case 'get_my_recent_searches': {
       if (!userId) return JSON.stringify({ error: 'Not authenticated' });
@@ -1643,6 +1815,44 @@ export async function chat(
   // "Below spec".
   const isGreenfield = userText.length > 0 && !looksLikeMpn(userText) && !mentionsMpn(userText);
 
+  // ── System-driven guided part selection (Decision #262) ──
+  // When the user is describing a NEW component need with no part number, the SYSTEM
+  // owns the whole turn deterministically: it asks the family's make-or-break specs
+  // in a FIXED order/wording and runs the search itself once the required set is in.
+  // The model is bypassed entirely on these turns (no phrasing, no freelancing, no
+  // value-swaps), so the flow is identical run-to-run and the fit labels always
+  // compute (the search carries the tracked specs as constraints). decideGuidedTurn
+  // returns null to DEFER to the normal LLM path (MPN lookups, theory questions,
+  // manufacturer questions, comparisons, unknown part types). The only model call on
+  // a guided turn is the injected temp-0 spec-extractor.
+  const hasOnScreenContext = !!(
+    (currentSearchResult?.matches?.length ?? 0) > 0 ||
+    (currentRecommendations?.length ?? 0) > 0 ||
+    currentSourceAttributes
+  );
+  const guidedTurn = await decideGuidedTurn(
+    messages,
+    fam => extractAnsweredSpecs(client, messages, fam, userId),
+    hasOnScreenContext,
+    text => classifyPartTypeFamily(client, text, userId),
+  );
+  if (guidedTurn) {
+    if (guidedTurn.kind === 'ask') {
+      const resp: OrchestratorResponse = { message: guidedTurn.message };
+      if (guidedTurn.choices && guidedTurn.choices.length > 0) {
+        resp.choices = sanitizeChoiceOptions(guidedTurn.choices);
+      }
+      return resp;
+    }
+    // kind === 'search' — run it ourselves with the tracked specs attached.
+    const result = await searchParts(guidedTurn.query, undefined, userId, {
+      partType: guidedTurn.partType,
+      familyId: guidedTurn.familyId,
+      constraints: guidedTurn.constraints,
+    });
+    return { message: buildSearchSummary(result), searchResult: result };
+  }
+
   // Collect structured data from tool calls
   const toolData: ToolResultData = {
     attributes: {},
@@ -1731,7 +1941,7 @@ export async function chat(
       greenfieldSearchRan = greenfieldSearchRan
         || toolUseBlocks.some((b, i) => runFlags[i] && b.name === 'search_parts');
     }
-    const greenfieldCtx: GreenfieldCtx = { client, isGreenfield, userText };
+    const greenfieldCtx: GreenfieldCtx = { client, isGreenfield, userText, conversation: messages };
 
     const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
       toolUseBlocks.map(async (toolUse, i) => {

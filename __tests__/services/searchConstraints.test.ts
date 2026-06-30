@@ -289,6 +289,74 @@ describe('buildGreenfieldQuery', () => {
     expect(q).toBe('MOSFET n-channel');
   });
 
+  it('adopts the catalog wording for a categorical code so an exact part is not "Below spec"', () => {
+    // The exact-match-reads-Below-spec bug: user types "0805", Digikey stores
+    // "0805 (2012 Metric)" → identity check fails on formatting. The synthetic source
+    // must adopt the catalog's own value (learned from the pool) so it byte-matches.
+    const candidate: PartAttributes = {
+      part: { mpn: 'CL21B105KAFNNNE', manufacturer: 'Samsung', description: 'CAP CER 1UF 25V X7R 0805',
+        detailedDescription: '', category: 'Passives' as PartAttributes['part']['category'],
+        subcategory: 'Ceramic Capacitors – MLCC (Surface Mount)', status: 'Active' },
+      parameters: [
+        { parameterId: 'package_case', parameterName: 'Package / Case', value: '0805 (2012 Metric)', sortOrder: 1 },
+        { parameterId: 'dielectric', parameterName: 'Dielectric', value: 'X7R', sortOrder: 2 },
+      ],
+    };
+    const syn = buildSyntheticSource(
+      [{ attribute: 'package_case', value: '0805' }, { attribute: 'dielectric', value: 'X7R' }],
+      'Ceramic Capacitors – MLCC (Surface Mount)',
+      [candidate],
+    );
+    const pkg = syn?.source.parameters.find(p => p.parameterId === 'package_case');
+    expect(pkg?.value).toBe('0805 (2012 Metric)');   // adopted the catalog's verbose form
+    expect(pkg?.numericValue).toBeUndefined();        // categorical → no spurious 805
+  });
+
+  it('bridges a count WORD (Dual) to the catalog DIGIT (2) so a dual part is not "Below spec"', () => {
+    // The LLM emits "Dual" for channel count; Digikey stores "2" → the identity rule
+    // fails on every op-amp (even genuinely-dual ones). canonicalizeCategorical must adopt
+    // the catalog's "2" so a real dual part scores a pass.
+    const dual: PartAttributes = {
+      part: { mpn: 'TLV272', manufacturer: 'TI', description: 'IC CMOS 2 CIRCUIT 8SO', detailedDescription: '',
+        category: 'Integrated Circuits' as PartAttributes['part']['category'],
+        subcategory: 'Instrumentation, OP Amps, Buffer Amps', status: 'Active' },
+      parameters: [
+        { parameterId: 'channels', parameterName: 'Number of Channels', value: '2', sortOrder: 1 },
+        { parameterId: 'input_type', parameterName: 'Input Stage Technology', value: 'CMOS', sortOrder: 2 },
+      ],
+    };
+    const syn = buildSyntheticSource(
+      [{ attribute: 'number of channels', value: 'Dual' }, { attribute: 'input stage technology', value: 'CMOS' }],
+      'op-amp',
+      [dual],
+    );
+    expect(syn?.familyId).toBe('C4');
+    expect(syn?.source.parameters.find(p => p.parameterId === 'channels')?.value).toBe('2'); // adopted the digit
+  });
+
+  it('KEEPS a categorical size/package CODE (0805) so the fetch is shaped by it', () => {
+    // The all-below-spec bug: a fully-specified MLCC fetched zero 0805 parts because the
+    // size code was stripped as "number-like". Package/size codes are stable Digikey
+    // description tokens → keep them; measured numerics (1µF, 25V) still drop out.
+    const q = buildGreenfieldQuery('Ceramic Capacitors – MLCC (Surface Mount)', [
+      { attribute: 'capacitance', value: 1, unit: 'µF' },
+      { attribute: 'voltage_rated', value: 25, unit: 'V' },
+      { attribute: 'dielectric', value: 'X7R' },
+      { attribute: 'package_case', value: '0805' },
+    ]);
+    expect(q).toBe('Ceramic Capacitors – MLCC (Surface Mount) 0805 x7r');
+  });
+
+  it('does NOT keyword a measured numeric even when the model dropped its unit', () => {
+    // voltage is a THRESHOLD attr → its value is vetting-only even if it arrives unit-less;
+    // only the categorical package code survives.
+    const q = buildGreenfieldQuery('Ceramic Capacitors – MLCC (Surface Mount)', [
+      { attribute: 'voltage_rated', value: '25' },
+      { attribute: 'package_case', value: '0805' },
+    ]);
+    expect(q).toBe('Ceramic Capacitors – MLCC (Surface Mount) 0805');
+  });
+
   it('skips a categorical token already present in the part type (no redundant keywords)', () => {
     const q = buildGreenfieldQuery('N-Channel MOSFET', [
       { attribute: 'channel type', value: 'N-Channel' },

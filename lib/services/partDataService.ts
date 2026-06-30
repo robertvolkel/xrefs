@@ -17,9 +17,9 @@ import {
   mapSubcategory,
   findFacetForAttribute,
   extractNumericValue,
-  getDeepestCategoryId,
 } from './digikeyMapper';
-import { buildSyntheticSource, computeOverSpecPenalty, pickFetchBand, toBaseSI, type FetchBand } from './searchConstraints';
+import { buildSyntheticSource, computeOverSpecPenalty } from './searchConstraints';
+import { fetchGreenfieldParametricProducts, resolveCategoryIdsForFamily } from './greenfieldParametricFetch';
 import { searchAtlasProducts, getAtlasAttributes, fetchAtlasCandidates, type AtlasCandidateWidening } from './atlasClient';
 import { reportServiceFailure } from './serviceStatusTracker';
 import { AUTOMOTIVE_AEC_ENFORCEMENT, getAutomotiveAecEnforcementTable, hasAutomotiveAecEnforcement } from './automotiveAecEnforcement';
@@ -415,7 +415,7 @@ export async function searchParts(
   query: string,
   currency?: string,
   userId?: string,
-  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string },
+  options?: { skipFindchips?: boolean; manufacturer?: string; constraints?: SearchConstraint[]; partType?: string; familyId?: string },
 ): Promise<SearchResult> {
   const trimmed = query.trim();
   const isMpn = looksLikeMpn(trimmed);
@@ -432,7 +432,7 @@ export async function searchParts(
   // logic-vetted search doesn't collide with a constraint-less search of the
   // same query/MFR. Constraints sorted canonically; absent → empty string.
   const vettingKey = constraints
-    ? `${(options?.partType ?? '').toLowerCase()}|${[...constraints]
+    ? `${(options?.familyId ?? '').toLowerCase()}|${(options?.partType ?? '').toLowerCase()}|${[...constraints]
         .map(c => `${c.attribute.toLowerCase()}=${String(c.value).toLowerCase()}${(c.unit ?? '').toLowerCase()}`)
         .sort()
         .join(',')}`
@@ -472,16 +472,24 @@ export async function searchParts(
   type SourcePayload = { result: SearchResult; attrsByMpn?: Map<string, PartAttributes> };
   type LabeledSearch = { source: SearchDataSource; promise: Promise<SourcePayload> };
 
-  // Phase B (greenfield pool relevance): derive the single most-selective numeric band to
-  // PARAMETRIC-FILTER the Digikey pool on — built from partType (→ family) + the raw
-  // constraints BEFORE the fetch, so it shapes WHICH parts are fetched, not just the ranking.
-  // Null (no partType / no family / no numeric spec mapping to a band) → keyword-only pool,
-  // byte-identical to Phase A. The vetting pass below still re-ranks whatever is fetched.
-  let fetchBand: FetchBand | null = null;
-  if (constraints && options?.partType) {
-    const earlySynthetic = buildSyntheticSource(constraints, options.partType, []);
-    if (earlySynthetic) fetchBand = pickFetchBand(constraints, earlySynthetic.logicTable);
-  }
+  // Greenfield pool relevance: when the search carries stated specs + a part type, fetch the
+  // candidate pool by PARAMETRIC-FILTERING the catalog on those specs (keyword-free category
+  // resolution + a multi-spec AND), so the right parts are GUARANTEED in the pool even when the
+  // family's name is a poor keyword (e.g. "Op-Amps / Comparators / …" → 0 keyword results). The
+  // vetting pass below re-ranks the union. No specs / no partType / family or category can't be
+  // resolved → keyword-only pool, byte-identical to a plain search (never regresses). Proven on
+  // the live catalog — docs/greenfield-search-foundational-fix.md.
+  const wantGreenfieldParametric = !!constraints && !!options?.partType;
+
+  // The guided-selection flow knows the family AUTHORITATIVELY and passes its id. When present
+  // we resolve its Digikey categories ONCE and use them to (a) SCOPE the keyword search to the
+  // right category — so a verbose family display name ("MOSFETs — N-Channel & P-Channel") can't
+  // pull a wrong-but-classifiable family (gate-driver ICs) into the pool — and (b) force the
+  // parametric fetch + the vetting family below. Absent (the LLM search_parts path) → behaviour
+  // is byte-identical to before (no scoping, family derived from candidates/partType).
+  const guidedFamilyId = constraints ? options?.familyId : undefined;
+  const guidedCategoryIds = guidedFamilyId ? await resolveCategoryIdsForFamily(guidedFamilyId) : [];
+  const keywordCategoryId = guidedCategoryIds[0];
 
   const searches: LabeledSearch[] = [
     // Digikey
@@ -490,23 +498,29 @@ export async function searchParts(
       promise: (async (): Promise<SourcePayload> => {
         if (!isDigikeyConfigured()) return { result: { type: 'none', matches: [] } };
         try {
-          const base = await keywordSearch(trimmed, { limit: 20 }, currency, userId);
+          // Keyword search + parametric spec-fetch run in PARALLEL — the parametric path
+          // resolves its category from the family taxonomy, so it no longer waits on (or needs)
+          // the keyword result to bootstrap a category. The keyword search is category-scoped
+          // when the guided flow supplied a family (no wrong-family pollution).
+          const [base, parametricProducts] = await Promise.all([
+            keywordSearch(trimmed, { limit: 20, categoryId: keywordCategoryId }, currency, userId),
+            wantGreenfieldParametric
+              ? fetchGreenfieldParametricProducts(constraints, options!.partType, currency, userId, guidedFamilyId, guidedFamilyId ? guidedCategoryIds : undefined).catch(() => [] as DigikeyProduct[])
+              : Promise.resolve([] as DigikeyProduct[]),
+          ]);
           let response = base;
-          // Phase B: parametric-filter the pool by the picked band. Bootstrap the
-          // categoryId from the keyword result's OWN Category tree (no extra round-trip),
-          // discover the category facets, then UNION the in-band parts into the pool.
-          // Falls back to the keyword-only pool on any miss (no category / no facet / no
-          // in-band values), so it never returns fewer parts than the plain search.
-          if (fetchBand) {
-            const sampleCat = (base.ExactMatches?.[0] ?? base.Products?.[0])?.Category;
-            const categoryId = getDeepestCategoryId(sampleCat);
-            if (typeof categoryId === 'number') {
-              const discover = await getCategoryParametricFacets('', categoryId, currency, userId).catch(() => null);
-              if (discover) {
-                const params = await applyParametricFilter(categoryId, fetchBand, discover, currency, userId);
-                if (params.length) response = { ...base, Products: [...(base.Products ?? []), ...params] };
-              }
-            }
+          if (parametricProducts.length) {
+            // Union the parametric pool into the keyword pool, deduped by MPN (keyword wins).
+            const seen = new Set(
+              [...(base.ExactMatches ?? []), ...(base.Products ?? [])]
+                .map(p => p.ManufacturerProductNumber?.toLowerCase())
+                .filter(Boolean),
+            );
+            const fresh = parametricProducts.filter(p => {
+              const k = p.ManufacturerProductNumber?.toLowerCase();
+              return k && !seen.has(k);
+            });
+            if (fresh.length) response = { ...base, Products: [...(base.Products ?? []), ...fresh] };
           }
           return {
             result: mapKeywordResponseToSearchResult(response),
@@ -624,7 +638,7 @@ export async function searchParts(
         if (a) scorable.push(a);
       }
       const synthetic = scorable.length > 0
-        ? buildSyntheticSource(constraints, options?.partType, scorable)
+        ? buildSyntheticSource(constraints, options?.partType, scorable, guidedFamilyId)
         : null;
       if (synthetic) {
         const logicTable = await applyRuleOverrides(synthetic.logicTable);
@@ -633,16 +647,34 @@ export async function searchParts(
           for (const a of scorable) {
             penaltyByMpn.set(a.part.mpn.toLowerCase(), computeOverSpecPenalty(logicTable, synthetic.source, a));
           }
-          // Search-vetting order: fewest real mismatches → Active-first →
-          // closest fit (least over-spec) → match %. Self-contained (greenfield
-          // has no certified buckets / composite scores, so the shared
-          // sortRecommendationsForDisplay's later keys don't apply).
+          // How many of the user's CONSTRAINED specs a candidate actually CONFIRMS (the rule
+          // for that attr passed on a REAL value — not a missing-data "review"). A part whose
+          // specs are merely unknown ("missing data never fails") otherwise dodges both a fail
+          // AND the over-spec penalty, floating a 30V part above honest 60V parts for a "60V"
+          // ask. Preferring more-confirmed specs sinks unknown-spec parts below ones that
+          // genuinely meet the request — without rejecting anything (Decision #243 invariant).
+          const constrainedIds = new Set(synthetic.source.parameters.map(p => p.parameterId));
+          const confirmedByMpn = new Map<string, number>();
+          for (const rec of recs) {
+            let n = 0;
+            for (const d of rec.matchDetails ?? []) {
+              if (!constrainedIds.has(d.parameterId)) continue;
+              const v = (d.replacementValue ?? '').toString().trim();
+              if (d.ruleResult === 'pass' && v && v !== 'N/A' && v !== '-') n++;
+            }
+            confirmedByMpn.set(rec.part.mpn.toLowerCase(), n);
+          }
+          // Search-vetting order: fewest real mismatches → Active-first → most CONFIRMED specs →
+          // closest fit (least over-spec) → match %. Self-contained (greenfield has no certified
+          // buckets / composite scores, so the shared sort's later keys don't apply).
           const statusRank = (s?: string) => (!s || s === 'Active' ? 0 : 1);
           recs.sort((a, b) => {
             const fd = countRealMismatches(a) - countRealMismatches(b);
             if (fd !== 0) return fd;
             const sd = statusRank(a.part.status) - statusRank(b.part.status);
             if (sd !== 0) return sd;
+            const cd = (confirmedByMpn.get(b.part.mpn.toLowerCase()) ?? 0) - (confirmedByMpn.get(a.part.mpn.toLowerCase()) ?? 0);
+            if (cd !== 0) return cd;
             const pd = (penaltyByMpn.get(a.part.mpn.toLowerCase()) ?? 0) - (penaltyByMpn.get(b.part.mpn.toLowerCase()) ?? 0);
             if (pd !== 0) return pd;
             return b.matchPercentage - a.matchPercentage;
@@ -1931,52 +1963,6 @@ const MAX_WIDENED_CANDIDATES = 60;
  *  (Decision #238 Step 3) — a dense facet (e.g. Zener Vz had 541 values) under a wide band
  *  could otherwise build an oversized request body. The 60-candidate post-cap bounds output. */
 const MAX_PARAMETRIC_VALUES = 25;
-
-/**
- * Phase B (greenfield pool relevance): for ONE numeric band, select a category's in-band
- * facet values and fetch the parts filtered to them. Pure extraction of the Decision #238
- * APPLY block (mirrored inline in `fetchDigikeyCandidates`) so the greenfield spec-search
- * can reuse it WITHOUT touching the shipped acceptance-widening path. Returns the in-band
- * products (re-verified), or [] when the attr has no facet / no in-band values / the apply
- * call fails.
- * TODO(post-validate): converge this with the inline copy in fetchDigikeyCandidates.
- */
-async function applyParametricFilter(
-  categoryId: number,
-  band: { attrId: string; lo: number; hi: number },
-  discover: Awaited<ReturnType<typeof getCategoryParametricFacets>>,
-  currency?: string,
-  userId?: string,
-): Promise<DigikeyProduct[]> {
-  const facet = findFacetForAttribute(band.attrId, discover.facets, discover.products[0]);
-  if (!facet) return [];
-  const { lo, hi } = band;
-  const inBand = (valueStr: string | undefined): boolean => {
-    if (!valueStr) return false;
-    // Compound facet values like "200 @ 2mA, 5V" (e.g. hFE @ test conditions, Vce(sat) @ Ib,Ic):
-    // the SPEC value is the leading token before "@" — parsing the whole string would otherwise
-    // grab the unit-bearing test-condition number (the 2mA). Plain "5.1 V" values are unaffected.
-    const head = valueStr.split('@')[0];
-    // Parse via toBaseSI — the SAME engine pickFetchBand used to build lo/hi — so both sides of
-    // the comparison agree on sign and SI prefix (incl. G/T and negatives, which digikeyMapper's
-    // extractNumericValue silently drops). It already falls back to parseFloat for unitless gains.
-    const n = toBaseSI(head);
-    return n != null && n >= lo && n <= hi;
-  };
-  const inBandValueIds = facet.FilterValues
-    .filter(fv => inBand(fv.ValueName))
-    .sort((a, b) => (b.ProductCount ?? 0) - (a.ProductCount ?? 0))
-    .slice(0, MAX_PARAMETRIC_VALUES)
-    .map(fv => fv.ValueId);
-  if (!inBandValueIds.length) return [];
-  const applyRes = await parametricFilterSearch(categoryId, facet.ParameterId, inBandValueIds, { limit: 25 }, currency, userId)
-    .catch((error) => { console.warn('Digikey parametric apply failed:', error); return null; });
-  if (!applyRes) return [];
-  const raw = [...(applyRes.ExactMatches ?? []), ...(applyRes.Products ?? [])];
-  return raw.filter(p =>
-    inBand(p.Parameters?.find(x => x.ParameterText === facet.ParameterName)?.ValueText),
-  );
-}
 
 async function fetchDigikeyCandidates(
   sourceAttrs: PartAttributes,

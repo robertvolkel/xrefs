@@ -16,6 +16,8 @@ export type ApiService = 'anthropic' | 'digikey' | 'mouser' | 'partsio';
 
 export type ApiOperation =
   | 'chat'
+  | 'chat_guided_extract'
+  | 'chat_guided_classify'
   | 'refinement_chat'
   | 'profile_extract'
   | 'qc_analysis'

@@ -277,6 +277,8 @@
     "atlasGroup": "Atlas",
     "attrLogicGroup": "Attribute & Logik",
     "paramMappings": "Attribut-Vorlagen",
+    "tierRequired": "Für Suche erforderlich",
+    "tierNarrows": "Grenzt Ergebnisse ein",
     "logicRules": "Logik – Ersatzteile",
     "manufacturers": "Hersteller",
     "atlas": "Atlas",

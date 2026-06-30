@@ -275,6 +275,8 @@
     "title": "数据与逻辑",
     "dataSources": "数据源",
     "paramMappings": "属性模板",
+    "tierRequired": "搜索必需",
+    "tierNarrows": "缩小结果",
     "logicRules": "逻辑 - 替换",
     "atlas": "Atlas",
     "atlasCoverageNav": "Atlas 覆盖",

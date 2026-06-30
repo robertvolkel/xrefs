@@ -123,8 +123,19 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  v4→v5 on 2026-06-24 for identity-categorical injection (Decision #248): the vetting
  *  pass now derives a gating categorical (polarity / channel_type / dielectric / …) from
  *  the part-type noun, changing the cached vetted ORDER for the same key (e.g. PNP parts
- *  no longer top an "NPN" request), so v4 entries hold a stale ranking. */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v5';
+ *  no longer top an "NPN" request), so v4 entries hold a stale ranking.
+ *  v5→v6 on 2026-06-30: greenfield query now keeps categorical size/package CODES (0805)
+ *  AND the synthetic source adopts the catalog's own wording for a categorical code
+ *  ("0805" → "0805 (2012 Metric)"), so an exact part scores 0 real fails instead of a
+ *  spurious package mismatch — v5 entries hold a stale pool AND stale fit labels.
+ *  v6→v7 on 2026-06-30: greenfield candidate POOL is now fetched by parametric-filtering the
+ *  catalog on ALL stated specs (keyword-free category resolution + multi-spec AND), replacing
+ *  the keyword-bootstrapped single-numeric-band fetch. A v6 entry holds a narrower keyword-only
+ *  pool (verbose family names returned 0), so its vetted set + fit labels differ.
+ *  v7→v8 on 2026-06-30: the guided-selection flow now passes its AUTHORITATIVE familyId, which
+ *  category-scopes the keyword pool + forces the scoring family. A v7 guided entry could hold a
+ *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits". */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v8';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;
