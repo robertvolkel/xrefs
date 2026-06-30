@@ -619,6 +619,30 @@ export async function searchParts(
   const orderableRank = (p: { status?: string }) => (!p.status || p.status === 'Active' ? 0 : 1);
   mergedMatches.sort((a, b) => orderableRank(a) - orderableRank(b));
 
+  // Resolve canonical manufacturer origin per unique MFR (mirrors getRecommendations,
+  // Decision #161) so the search-result "Chinese only" filter keys off identity, not the
+  // `dataSource` tag — a Chinese maker's part can arrive via Digikey (3PEAK, GOODWORK) and
+  // must still read as Chinese. Belt-and-suspenders: a row sourced FROM Atlas is Chinese even
+  // if the alias index misses the name. Cheap: the alias resolver is an in-memory index after
+  // a 5-min-cached load (~2ms for a full result set), so this adds no meaningful latency, and
+  // it caches with the search result. Failures leave mfrOrigin undefined (filter falls open).
+  {
+    const uniqueMfrs = [...new Set(mergedMatches.map(m => m.manufacturer).filter(Boolean))];
+    const originByMfr = new Map<string, 'atlas' | 'western' | 'unknown'>();
+    await Promise.all(uniqueMfrs.map(async mfr => {
+      try {
+        const alias = await resolveManufacturerAlias(mfr);
+        originByMfr.set(mfr.toLowerCase(), alias?.source ?? 'unknown');
+      } catch {
+        originByMfr.set(mfr.toLowerCase(), 'unknown');
+      }
+    }));
+    for (const m of mergedMatches) {
+      const resolved = originByMfr.get(m.manufacturer?.toLowerCase() ?? '');
+      m.mfrOrigin = m.dataSource === 'atlas' ? 'atlas' : (resolved ?? 'unknown');
+    }
+  }
+
   // ── Logic-vetted descriptive search ──
   // When the chat passed user-stated specs (constraints), re-rank the merged set
   // by running each candidate through the matching engine against a SYNTHETIC

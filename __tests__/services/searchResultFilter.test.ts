@@ -21,6 +21,18 @@ const vetted: PartSummary[] = [
   part({ mpn: 'PN2222', manufacturer: 'onsemi', failCount: 1, hardFail: true, status: 'Active' }),
 ];
 
+// Mixed-origin set: resolved mfrOrigin populated by searchParts. The "3PEAK" row is the
+// load-bearing case — a Chinese maker whose part arrived via Digikey (dataSource !== atlas)
+// must still be caught by the origin filter (keys off resolved mfrOrigin, not the source tag).
+const mixedOrigin: PartSummary[] = [
+  part({ mpn: 'LM358A', manufacturer: '3PEAK', dataSource: 'digikey', mfrOrigin: 'atlas' }),
+  part({ mpn: 'LM358DR-CN', manufacturer: 'ChipNobo', dataSource: 'atlas', mfrOrigin: 'atlas' }),
+  part({ mpn: 'LM358AM/TR', manufacturer: 'HGSEMI', dataSource: 'atlas', mfrOrigin: 'atlas' }),
+  part({ mpn: 'LM358DR', manufacturer: 'Texas Instruments', dataSource: 'digikey', mfrOrigin: 'western' }),
+  part({ mpn: 'LM358DR2G', manufacturer: 'onsemi', dataSource: 'digikey', mfrOrigin: 'western' }),
+  part({ mpn: 'LM358MYST', manufacturer: 'Mystery Co', dataSource: 'digikey', mfrOrigin: 'unknown' }),
+];
+
 describe('applySearchResultFilter', () => {
   it('returns all matches when no predicate is set', () => {
     expect(applySearchResultFilter(vetted, {})).toHaveLength(5);
@@ -74,12 +86,33 @@ describe('applySearchResultFilter', () => {
     applySearchResultFilter(vetted, { meets_spec: true });
     expect(vetted).toEqual(copy);
   });
+
+  it('mfr_origin_filter=atlas keeps every Chinese maker — incl. one sourced via Digikey', () => {
+    const result = applySearchResultFilter(mixedOrigin, { mfr_origin_filter: 'atlas' });
+    // 3PEAK (Digikey-sourced) is the case the old dataSource-only approach missed.
+    expect(result.map(p => p.manufacturer).sort()).toEqual(['3PEAK', 'ChipNobo', 'HGSEMI']);
+  });
+
+  it('mfr_origin_filter=western keeps only non-Chinese makers', () => {
+    const result = applySearchResultFilter(mixedOrigin, { mfr_origin_filter: 'western' });
+    expect(result.map(p => p.manufacturer).sort()).toEqual(['Texas Instruments', 'onsemi']);
+  });
+
+  it('mfr_origin_filter drops unresolved (unknown) origin on an explicit origin ask', () => {
+    const result = applySearchResultFilter(mixedOrigin, { mfr_origin_filter: 'atlas' });
+    expect(result.map(p => p.mpn)).not.toContain('LM358MYST');
+  });
 });
 
 describe('describeSearchFilterInput', () => {
   it('joins active predicates with +', () => {
     expect(describeSearchFilterInput({ meets_spec: true, manufacturer_filter: 'Vishay' }))
       .toBe('meets your specs + Vishay');
+  });
+
+  it('labels the origin filter', () => {
+    expect(describeSearchFilterInput({ mfr_origin_filter: 'atlas' })).toBe('Chinese MFRs');
+    expect(describeSearchFilterInput({ mfr_origin_filter: 'western' })).toBe('Western MFRs');
   });
 
   it('falls back to "filtered" when empty', () => {

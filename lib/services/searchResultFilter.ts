@@ -8,10 +8,11 @@ import { PartSummary } from '../types';
  * so the chat never has to hand-pick (and drop) MPNs the way present_part_options
  * forced it to.
  *
- * Only dimensions that `PartSummary` reliably carries are supported. Notably
- * absent vs. the recommendations filter: per-attribute value filters (search
- * cards carry only ~3 lightweight keyParameters, not full matchDetails) and
- * mfr_origin (origin is resolved per-recommendation, not on PartSummary).
+ * Only dimensions that `PartSummary` reliably carries are supported. Per-attribute
+ * value filters remain absent (search cards carry only ~3 lightweight keyParameters,
+ * not full matchDetails). `mfr_origin_filter` IS supported as of June 2026: searchParts
+ * now resolves `PartSummary.mfrOrigin` per-MFR via the alias resolver (Decision #161),
+ * the same canonical-identity signal the recommendations filter uses.
  */
 export interface SearchFilterInput {
   /** Keep only parts that pass every stated spec — the green "Fits your specs"
@@ -24,6 +25,10 @@ export interface SearchFilterInput {
   exclude_obsolete?: boolean;
   /** Keep only parts carrying an AEC-Q100/Q101/Q200 automotive qualification. */
   aec_qualified_only?: boolean;
+  /** Narrow by canonical manufacturer origin. 'atlas' = Chinese makers, 'western' =
+   *  US/EU/JP and other non-Chinese. Keys off the resolved `mfrOrigin`, so a Chinese
+   *  maker's part that arrived via Digikey (untagged Atlas) is still caught. */
+  mfr_origin_filter?: 'atlas' | 'western';
 }
 
 const AEC_BADGE_RE = /AEC-?Q\s?(?:100|101|200)(?![0-9])/i;
@@ -41,6 +46,7 @@ export function describeSearchFilterInput(f: SearchFilterInput): string {
   const parts: string[] = [];
   if (f.meets_spec) parts.push('meets your specs');
   if (f.manufacturer_filter) parts.push(f.manufacturer_filter);
+  if (f.mfr_origin_filter) parts.push(f.mfr_origin_filter === 'atlas' ? 'Chinese MFRs' : 'Western MFRs');
   if (f.aec_qualified_only) parts.push('AEC-qualified');
   if (f.exclude_obsolete) parts.push('active parts');
   return parts.length > 0 ? parts.join(' + ') : 'filtered';
@@ -74,6 +80,13 @@ export function applySearchResultFilter(
   }
   if (input.aec_qualified_only) {
     filtered = filtered.filter(partIsAecQualified);
+  }
+  if (input.mfr_origin_filter) {
+    // Keep only parts whose resolved origin matches. Parts with no resolved origin
+    // ('unknown' / undefined) are dropped for an explicit origin ask — the user wants a
+    // definite Chinese/Western set, and an unresolved maker isn't a confirmed member.
+    const target = input.mfr_origin_filter;
+    filtered = filtered.filter(p => p.mfrOrigin === target);
   }
 
   return filtered;

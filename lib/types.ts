@@ -355,6 +355,12 @@ export interface PartSummary {
   status?: PartStatus;
   qualifications?: string[];
   dataSource?: 'digikey' | 'atlas' | 'partsio' | 'mouser';
+  /** Canonical manufacturer origin, resolved per-MFR via the alias resolver (NOT
+   *  `dataSource` — a Chinese maker's part can arrive via Digikey). Mirrors
+   *  `XrefRecommendation.part.mfrOrigin` (Decision #161) so the search-result
+   *  origin filter ("show me the Chinese ones") catches every Chinese maker,
+   *  not just Atlas-sourced rows. `undefined` on unresolved search paths. */
+  mfrOrigin?: 'atlas' | 'western' | 'unknown';
   /** Lightweight parametrics already present in the search response (no extra
    *  API call). Used to disambiguate when sibling results share descriptions. */
   keyParameters?: Array<{ name: string; value: string }>;
