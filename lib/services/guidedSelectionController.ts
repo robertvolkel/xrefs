@@ -90,7 +90,7 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
   {
     // Bare "capacitor" spans five common families. A qualified name ("tantalum
     // capacitor", "MLCC") resolves to its family in pinFamily BEFORE this runs, so
-    // only the unqualified word reaches here. Labels must resolve back to their id.
+    // only the unqualified word reaches here.
     test: /\bcapacitors?\b/i,
     options: [
       { familyId: '12', label: 'MLCC' },
@@ -100,6 +100,17 @@ const AMBIGUOUS_HEADS: Array<{ test: RegExp; options: AmbiguityOption[] }> = [
       { familyId: '60', label: 'Aluminum polymer' },
     ],
   },
+  {
+    // Bare "diode". B2 Schottky + B4 TVS are VARIANT families not reachable via
+    // resolveFamilyFromText, so the chip labels re-pin through LABEL_TO_FAMILY below.
+    test: /\bdiodes?\b/i,
+    options: [
+      { familyId: 'B1', label: 'Rectifier' },
+      { familyId: 'B2', label: 'Schottky' },
+      { familyId: 'B3', label: 'Zener' },
+      { familyId: 'B4', label: 'TVS' },
+    ],
+  },
 ];
 
 export function detectAmbiguity(text: string): AmbiguityOption[] | null {
@@ -107,6 +118,22 @@ export function detectAmbiguity(text: string): AmbiguityOption[] | null {
     if (head.test.test(text)) return head.options;
   }
   return null;
+}
+
+// Reverse index of every disambiguation chip label → its family, so a clicked chip
+// re-pins even when the label doesn't resolve through resolveFamilyFromText (variant
+// families like B2 Schottky / B4 TVS). Built once from AMBIGUOUS_HEADS — the single
+// source of truth — so adding a head can't drift from its label resolution.
+const LABEL_TO_FAMILY: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const head of AMBIGUOUS_HEADS) for (const o of head.options) m[o.label.toLowerCase()] = o.familyId;
+  return m;
+})();
+
+/** Resolve a part-type term to a family: a disambiguation chip label first (covers
+ *  variant families), then the general keyword resolver. */
+export function resolvePartTypeFamily(text: string): string | null {
+  return LABEL_TO_FAMILY[text.trim().toLowerCase()] ?? resolveFamilyFromText(text);
 }
 
 // ── Entry heuristics (only gate the FIRST turn; continuation is unconditional) ──
@@ -139,7 +166,7 @@ function pinFamily(messages: OrchestratorMessage[]): Pinned | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== 'user') continue;
-    const familyId = resolveFamilyFromText(m.content);
+    const familyId = resolvePartTypeFamily(m.content);
     if (familyId && getSelectionQuestions(familyId)) {
       // Use the clean family name as the search part-type (deterministic keywords),
       // not the raw user sentence ("i need an…" would pollute the query).
@@ -183,7 +210,7 @@ export async function decideGuidedTurn(
   // family / known ambiguous head, in which case it's a TYPE request, not a lookup.
   // (A continuation answer is exempt anyway via !inProgress — its family is anchored
   // from the original part-type message.)
-  const namesPartType = !!resolveFamilyFromText(userText) || !!detectAmbiguity(userText);
+  const namesPartType = !!resolvePartTypeFamily(userText) || !!detectAmbiguity(userText);
   if (!inProgress && !namesPartType && (looksLikeMpn(userText) || mentionsMpn(userText))) return null;
 
   // Only ENTER a fresh guided selection from a clean screen. Once cards/recs/a source

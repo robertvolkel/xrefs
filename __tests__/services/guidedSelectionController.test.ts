@@ -5,10 +5,10 @@ import {
   renderDisambiguationQuestion,
   isSystemGuidedQuestion,
   detectAmbiguity,
+  resolvePartTypeFamily,
   hasSelectionIntent,
   isLikelyTheory,
 } from '@/lib/services/guidedSelectionController';
-import { resolveFamilyFromText } from '@/lib/logicTables';
 import type { OrchestratorMessage } from '@/lib/types';
 import type { GuidedAnswerMap } from '@/lib/services/guidedSelection';
 
@@ -40,12 +40,15 @@ describe('deterministic disambiguation', () => {
     expect(detectAmbiguity('I need a voltage regulator')?.map(o => o.familyId)).toEqual(['C1', 'C2']);
     expect(detectAmbiguity('I need a transistor')?.map(o => o.familyId)).toEqual(['B5', 'B6', 'B9']);
     expect(detectAmbiguity('I need a capacitor')?.map(o => o.familyId)).toEqual(['12', '58', '59', '64', '60']);
+    expect(detectAmbiguity('I need a diode')?.map(o => o.familyId)).toEqual(['B1', 'B2', 'B3', 'B4']);
     expect(detectAmbiguity('I need an NTC thermistor')).toBeNull();
   });
-  it('every disambiguation label resolves back to its intended family (clicked chip re-pins)', () => {
-    for (const text of ['I need a regulator', 'I need a transistor', 'I need a capacitor']) {
+  it('every disambiguation label re-pins to its intended family (incl. variant families B2/B4)', () => {
+    for (const text of ['I need a regulator', 'I need a transistor', 'I need a capacitor', 'I need a diode']) {
       for (const opt of detectAmbiguity(text)!) {
-        expect(resolveFamilyFromText(opt.label)).toBe(opt.familyId);
+        // resolvePartTypeFamily (chip-label map → keyword resolver) is what pinFamily
+        // uses; resolveFamilyFromText alone fails for B2 "Schottky" / B4 "TVS".
+        expect(resolvePartTypeFamily(opt.label)).toBe(opt.familyId);
       }
     }
   });
@@ -71,6 +74,17 @@ describe('decideGuidedTurn — turn ownership', () => {
       expect(out.message).toBe(renderDisambiguationQuestion());
       expect(out.choices?.map(c => c.label)).toEqual(['MLCC', 'Aluminum electrolytic', 'Tantalum', 'Film', 'Aluminum polymer']);
     }
+  });
+
+  it('DIODE: clicking a variant-family chip ("Schottky") is OWNED by the system', async () => {
+    const convo = [
+      u('I need a diode'),
+      a('Which type do you need?'),
+      u('Schottky'), // B2 — not reachable via resolveFamilyFromText, only via the chip-label map
+    ];
+    const out = await decideGuidedTurn(convo, noAnswers);
+    expect(out?.kind).toBe('ask'); // system asks B2's first spec, not the LLM
+    if (out?.kind === 'ask') expect(isSystemGuidedQuestion(out.message)).toBe(true);
   });
 
   it('REGRESSION: a fresh type word that looksLikeMpn ("Tantalum pls") is OWNED, not bailed to the LLM', async () => {
