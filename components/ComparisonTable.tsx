@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Box, Paper, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material';
 import type { ComparisonTable as ComparisonTableData } from '@/lib/services/comparisonTable';
 
@@ -18,6 +19,17 @@ interface ComparisonTableProps {
  * is provided. Horizontally scrollable for wide tables.
  */
 export default function ComparisonTable({ table, knownMpns, onMpnClick }: ComparisonTableProps) {
+  // Case-INSENSITIVE membership: knownMpns mixes case-preserved forms (search
+  // cards / recs / source) with lower-cased ones (chatMentionedParts, Decision
+  // #264), while row.mpn is the case-preserved canonical MPN. A raw Set.has()
+  // would miss the lower-cased entries — the exact source that makes a cold-start
+  // present_comparison part clickable. Compare lower-cased, mirroring the prose
+  // linkify (gi regex) and handleMpnClick conventions.
+  const knownLower = useMemo(
+    () => (knownMpns ? new Set([...knownMpns].map((m) => m.toLowerCase())) : undefined),
+    [knownMpns],
+  );
+
   if (!table.columns.length || !table.rows.length) return null;
 
   return (
@@ -33,7 +45,7 @@ export default function ComparisonTable({ table, knownMpns, onMpnClick }: Compar
           </TableHead>
           <TableBody>
             {table.rows.map((row) => {
-              const clickable = !!onMpnClick && (!knownMpns || knownMpns.has(row.mpn));
+              const clickable = !!onMpnClick && (!knownLower || knownLower.has(row.mpn.toLowerCase()));
               return (
                 <TableRow key={row.mpn} hover>
                   {table.columns.map((col) => {
