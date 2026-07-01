@@ -4,11 +4,9 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
-## Chinese-origin chat filter is partial — misses Chinese makers not tagged Atlas (P2)
+## ~~Chinese-origin chat filter is partial — misses Chinese makers not tagged Atlas (P2)~~ — RESOLVED June 30, 2026 (Decision #263)
 
-**Context.** Found June 30, 2026 while spot-checking chat behaviors. After an MPN search ("LM358"), "show me only the Chinese ones" returned only a SUBSET of the Chinese parts visible in the unfiltered list — it caught parts explicitly flagged `dataSource/mfrOrigin === 'atlas'` (3PEAK, ChipNobo, ElecSuper) but MISSED other Chinese makers present in the same result set (HGSEMI, Slkor, LX 灵星芯微, TDSEMIC). Pre-existing: the chat filter pipeline (`recommendationFilter.ts`, `filterIntentDetector.ts`, `useAppState.ts`) is untouched by the guided-selection/greenfield-search branch — reproduces on main. The `mfr_origin_filter: 'atlas'` predicate keys off an origin tag that isn't resolved for every Chinese-made part on a SEARCH result (vs the recommendations path where `mfrOrigin` is resolved per unique MFR).
-
-**Fix (if wanted).** Resolve `mfrOrigin` for search-result matches the way `getRecommendations` does (per-unique-MFR via the alias resolver, 5-min cached) so the origin filter sees every Chinese maker, OR widen the filter predicate to also consult a manufacturer→country lookup rather than relying solely on the source tag. Fixture: LM358 (mixed-origin variants). Medium priority — affects trust in the "Chinese options" feature.
+Fixed and merged to main. `searchParts` now resolves `PartSummary.mfrOrigin` per unique MFR (mirrors `getRecommendations`); a deterministic client-side intercept (`detectSearchOriginRefinement` + `dispatchSearchOriginFilter`) applies the origin filter without depending on the model (which refused to call the tool over its "never assert MFR origin" discipline); the filter predicate mirrors the card's 🇨🇳 flag (`mfrOrigin === 'atlas' || dataSource === 'atlas'`); and `getRecommendations` was aligned to force `'atlas'` on Atlas-sourced candidates so the flag agrees across the search + recs panels. See Decision #263 for the full trace.
 
 ---
 
