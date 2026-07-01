@@ -97,6 +97,17 @@ interface AppState {
    *  chat UI can linkify mentions of those MFRs in assistant prose without
    *  the user having to first click anything. Decision #203. */
   chatAtlasMfrs: ReadonlySet<string>;
+  /** Parts the LLM has RESOLVED via tools (get_batch_attributes /
+   *  present_comparison / get_part_attributes) across the current session,
+   *  carried on `OrchestratorResponse.attributes`. Accumulated so the chat UI
+   *  can linkify those MPNs in assistant prose (e.g. a ranked "which has the
+   *  lowest Vos" table) AND resolve a click on them — even when they were never
+   *  in the search cards / recommendations / source part. Keyed by lower-cased
+   *  MPN, with entries for BOTH the requested form and the canonical
+   *  `part.mpn` (catalogs canonicalize, e.g. BC847B → BC847BLT1G). Only
+   *  tool-resolved (real catalog) parts land here, so a fabricated MPN can
+   *  never become clickable. Mirrors the [[chatAtlasMfrs]] lifecycle. */
+  chatMentionedParts: ReadonlyMap<string, PartAttributes>;
   /** Per-attribute acceptance criteria the user set from the Source Part Specs
    *  panel — attributeId → ± percent (e.g. `{ resistance: 5 }`). Loosens the
    *  matching engine's identity rule for that attribute so candidates within
@@ -130,6 +141,7 @@ const initialState: AppState = {
   currentFilter: null,
   currentFilterLabel: null,
   chatAtlasMfrs: new Set<string>(),
+  chatMentionedParts: new Map<string, PartAttributes>(),
   acceptanceCriteria: {},
 };
 
@@ -166,6 +178,9 @@ export function useAppState() {
   // Mirrors state.searchResult so async callbacks can pass the current cards
   // on screen to the LLM orchestrator without needing a render-time read.
   const searchResultRef = useRef<SearchResult | null>(null);
+  // Mirrors state.chatMentionedParts so handleMpnClick (a useCallback) can
+  // resolve an MPN the LLM surfaced via tools without widening its deps.
+  const chatMentionedPartsRef = useRef<ReadonlyMap<string, PartAttributes>>(new Map());
   // The FULL match set of the current search (set on a fresh search, NOT on a
   // filter). The deterministic origin-filter intercept narrows from this, so
   // sequential origin asks ("the Chinese ones" then "the Western ones") each
@@ -236,6 +251,9 @@ export function useAppState() {
   useEffect(() => {
     searchResultRef.current = state.searchResult;
   }, [state.searchResult]);
+  useEffect(() => {
+    chatMentionedPartsRef.current = state.chatMentionedParts;
+  }, [state.chatMentionedParts]);
   useEffect(() => {
     commercialEnabledRef.current = state.commercialEnabled;
   }, [state.commercialEnabled]);
@@ -1360,6 +1378,34 @@ export function useAppState() {
           });
         }
 
+        // Accumulate the parts the LLM RESOLVED via tools this turn (carried on
+        // response.attributes: a Record<requestedMPN, PartAttributes>). Feeds
+        // knownMpns so those MPNs linkify in prose, and handleMpnClick so a click
+        // on them loads the part. Key by BOTH the requested form (what the model
+        // typically writes) AND the canonical part.mpn (what the catalog resolved
+        // to / what ComparisonTable renders) — catalogs canonicalize, e.g.
+        // BC847B → BC847BLT1G. Only tool-resolved (real) parts arrive here, so a
+        // fabricated MPN never becomes clickable. Map identity preserved when
+        // nothing new arrived. Mirrors the chatAtlasMfrs accumulation above.
+        if (response.attributes && Object.keys(response.attributes).length > 0) {
+          setState((prev) => {
+            const incoming = response.attributes ?? {};
+            let next: Map<string, PartAttributes> | null = null;
+            const add = (key: string | undefined, attrs: PartAttributes) => {
+              const k = key?.trim().toLowerCase();
+              if (!k || prev.chatMentionedParts.has(k)) return;
+              if (!next) next = new Map(prev.chatMentionedParts);
+              next.set(k, attrs);
+            };
+            for (const [requested, attrs] of Object.entries(incoming)) {
+              if (!attrs?.part) continue;
+              add(requested, attrs);
+              add(attrs.part.mpn, attrs);
+            }
+            return next ? { ...prev, chatMentionedParts: next } : prev;
+          });
+        }
+
         // Mark LLM as available
         setState((prev) => ({ ...prev, llmAvailable: true }));
         setStatus('');
@@ -2323,6 +2369,7 @@ export function useAppState() {
       currentFilter: null,
       currentFilterLabel: null,
       chatAtlasMfrs: new Set<string>(),
+      chatMentionedParts: new Map<string, PartAttributes>(),
       acceptanceCriteria: {},
     });
 
@@ -2372,6 +2419,29 @@ export function useAppState() {
     }
     if (state.sourcePart && state.sourcePart.mpn.toLowerCase() === lower) {
       await handleConfirmPart(state.sourcePart);
+      return;
+    }
+    // Fourth source: a part the LLM surfaced in prose via a tool lookup this
+    // session (e.g. a ranked "lowest Vos" table) that was never a search card,
+    // recommendation, or the source part. We already hold its full PartAttributes
+    // — build a thin PartSummary and pass those attrs as the optimistic preview so
+    // the panel paints the real specs instantly (Decision #257), with the canonical
+    // fetch confirming in the background. Only tool-RESOLVED parts are stored, so
+    // this can't load a fabricated MPN.
+    const mentioned = chatMentionedPartsRef.current.get(lower);
+    if (mentioned?.part) {
+      const part: PartSummary = {
+        mpn: mentioned.part.mpn,
+        manufacturer: mentioned.part.manufacturer,
+        description: mentioned.part.description ?? '',
+        category: mentioned.part.category,
+        status: mentioned.part.status,
+        qualifications: mentioned.part.qualifications,
+        // Atlas fetch-routing hint — skip the Digikey-first gauntlet for Chinese
+        // parts (same rationale as the recommendation branch above).
+        dataSource: mentioned.dataSource === 'atlas' ? 'atlas' : undefined,
+      };
+      await handleConfirmPart(part, mentioned);
     }
   }, [handleConfirmPart, state.sourcePart]);
 

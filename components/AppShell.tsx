@@ -49,16 +49,21 @@ export default function AppShell() {
   const isMobile = useIsMobile();
 
   // MPNs the assistant might mention in prose that should auto-link in chat.
-  // Source: current search-result cards + visible recommendations + selected
-  // source. Built as a Set for fast membership lookup; case-preserved so the
-  // regex anchors match the model's output spellings.
+  // Sources: current search-result cards + visible recommendations + selected
+  // source + parts the LLM resolved via tools this session (chatMentionedParts,
+  // e.g. a ranked "lowest Vos" table whose parts were never search cards). Built
+  // as a Set for fast membership lookup. chatMentionedParts is keyed by BOTH the
+  // requested and canonical MPN forms (lower-cased) — the linkify regex is
+  // case-insensitive and displays the prose's own casing, so lower-cased entries
+  // match correctly.
   const knownMpns = useMemo(() => {
     const set = new Set<string>();
     for (const p of appState.searchResult?.matches ?? []) set.add(p.mpn);
     for (const r of appState.allRecommendations ?? []) set.add(r.part.mpn);
     if (appState.sourcePart?.mpn) set.add(appState.sourcePart.mpn);
+    for (const k of appState.chatMentionedParts.keys()) set.add(k);
     return set;
-  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart]);
+  }, [appState.searchResult, appState.allRecommendations, appState.sourcePart, appState.chatMentionedParts]);
 
   // Atlas-MFR names the assistant might mention in prose that should auto-link
   // in chat → opens the side profile panel. Scope is intentionally Atlas-only
