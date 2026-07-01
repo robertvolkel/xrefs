@@ -13,9 +13,9 @@ export async function PATCH(
 
     const { id } = await params;
     const { content } = await request.json();
-    if (!content || typeof content !== 'string' || content.trim().length === 0 || content.length > 1000) {
+    if (!content || typeof content !== 'string' || content.trim().length === 0 || content.length > 2000) {
       return NextResponse.json(
-        { success: false, error: 'Content required (max 1000 chars)' },
+        { success: false, error: 'Content required (max 2000 chars)' },
         { status: 400 },
       );
     }

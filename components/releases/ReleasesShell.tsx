@@ -139,10 +139,10 @@ export default function ReleasesShell() {
                 minRows={2}
                 placeholder="What's new..."
                 value={newContent}
-                onChange={(e) => setNewContent(e.target.value.slice(0, 1000))}
+                onChange={(e) => setNewContent(e.target.value.slice(0, 2000))}
                 size="small"
                 fullWidth
-                slotProps={{ htmlInput: { maxLength: 1000 } }}
+                slotProps={{ htmlInput: { maxLength: 2000 } }}
                 sx={{ '& .MuiInputBase-root': { fontSize: '0.85rem' } }}
               />
               <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
@@ -185,10 +185,10 @@ export default function ReleasesShell() {
                     minRows={1}
                     maxRows={4}
                     value={editContent}
-                    onChange={(e) => setEditContent(e.target.value.slice(0, 1000))}
+                    onChange={(e) => setEditContent(e.target.value.slice(0, 2000))}
                     size="small"
                     fullWidth
-                    slotProps={{ htmlInput: { maxLength: 1000 } }}
+                    slotProps={{ htmlInput: { maxLength: 2000 } }}
                     sx={{ '& .MuiInputBase-root': { fontSize: '0.85rem' } }}
                   />
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
