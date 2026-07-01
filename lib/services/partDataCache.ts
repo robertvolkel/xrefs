@@ -107,8 +107,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       bypassed for certified crosses (Decision #221 follow-up) — an automotive
  *       context now drops non-AEC Accuris/MFR crosses. Cached v17 automotive
  *       results still include those crosses. (Full-result tier only — keyed on
- *       context; the base-payload tier runs before this post-scoring filter.) */
-export const RECS_CACHE_SCHEMA_VERSION = 'v18';
+ *       context; the base-payload tier runs before this post-scoring filter.)
+ *  v19: recommendation mfrOrigin now forces 'atlas' when the candidate's dataSource
+ *       is 'atlas' (mirrors searchParts), so an Atlas-sourced Chinese maker whose
+ *       name the alias index misses reads 🇨🇳 consistently across the search + recs
+ *       panels. Cached v18 recs carry the old 'unknown' origin for those parts.
+ *       (Full-result tier only — mfrOrigin is resolved after the base payload.) */
+export const RECS_CACHE_SCHEMA_VERSION = 'v19';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
@@ -134,8 +139,11 @@ export const RECS_CACHE_SCHEMA_VERSION = 'v18';
  *  pool (verbose family names returned 0), so its vetted set + fit labels differ.
  *  v7→v8 on 2026-06-30: the guided-selection flow now passes its AUTHORITATIVE familyId, which
  *  category-scopes the keyword pool + forces the scoring family. A v7 guided entry could hold a
- *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits". */
-export const SEARCH_CACHE_SCHEMA_VERSION = 'v8';
+ *  wrong-family pool (gate-driver ICs for a MOSFET search) mislabelled "Fits".
+ *  v8→v9 on 2026-06-30: searchParts now resolves PartSummary.mfrOrigin per match (atlas/western/
+ *  unknown) so the deterministic Chinese/Western search-card filter works. A v8 entry's matches
+ *  lack mfrOrigin, so the Western filter would wrongly come back empty. */
+export const SEARCH_CACHE_SCHEMA_VERSION = 'v9';
 
 /** Not-found sentinel: 24 hours */
 export const TTL_NOT_FOUND_MS = 24 * 60 * 60 * 1000;

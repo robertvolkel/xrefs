@@ -1,4 +1,4 @@
-import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent } from '@/lib/services/filterIntentDetector';
+import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent, detectSearchOriginRefinement } from '@/lib/services/filterIntentDetector';
 import type { XrefRecommendation } from '@/lib/types';
 
 const rec = (
@@ -237,6 +237,49 @@ describe('detectOriginIntent — recs-independent (used pre-recs)', () => {
     '',
   ])('returns null for: "%s"', (q) => {
     expect(detectOriginIntent(q)).toBeNull();
+  });
+});
+
+describe('detectSearchOriginRefinement — pure origin refine vs new search', () => {
+  // Fires (refinement of the CURRENT search cards) only when the message is about
+  // origin AND names no part type. Drives the deterministic search-result origin
+  // filter that fixes the LLM prose-answering "none are Chinese".
+  it.each([
+    ['show me only the Chinese ones', 'atlas'],
+    ['Show me only products from Chinese manufacturers', 'atlas'],
+    ['just the Chinese ones', 'atlas'],
+    ['Chinese only', 'atlas'],
+    ['now the Western ones', 'western'],
+    ['western only', 'western'],
+    ['non-Chinese alternatives', 'western'],
+  ])('"%s" -> refinement (%s)', (q, origin) => {
+    expect(detectSearchOriginRefinement(q)?.origin).toBe(origin);
+  });
+
+  // Descriptor-laden origin refinements that the OLD word-list heuristic leaked to
+  // the LLM (any ≥3-char leftover word was treated as a part type) — they must now
+  // resolve as refinements so origin narrowing stays deterministic.
+  it.each([
+    ['show me only PRC-based options', 'atlas'],
+    ['Chinese firms only', 'atlas'],
+    ['the reputable Chinese ones', 'atlas'],
+    ['show me the good Chinese ones', 'atlas'],
+    ['the better western ones', 'western'],
+  ])('"%s" -> refinement (%s) [descriptor, not a part type]', (q, origin) => {
+    expect(detectSearchOriginRefinement(q)?.origin).toBe(origin);
+  });
+
+  it.each([
+    'find Chinese MLCCs',           // names a part type → new search
+    'I need a Chinese op amp',
+    'Chinese capacitor',
+    'show me a chinese tantalum',   // material qualifier names a part type
+    'chinese diodes',
+    'western mosfets',
+    'find me a 3.3V LDO',           // not an origin ask at all
+    'show me the cheapest ones',    // a different (non-origin) refinement
+  ])('"%s" -> null (new search or non-origin)', (q) => {
+    expect(detectSearchOriginRefinement(q)).toBeNull();
   });
 });
 

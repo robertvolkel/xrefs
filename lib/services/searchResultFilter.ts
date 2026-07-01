@@ -8,10 +8,11 @@ import { PartSummary } from '../types';
  * so the chat never has to hand-pick (and drop) MPNs the way present_part_options
  * forced it to.
  *
- * Only dimensions that `PartSummary` reliably carries are supported. Notably
- * absent vs. the recommendations filter: per-attribute value filters (search
- * cards carry only ~3 lightweight keyParameters, not full matchDetails) and
- * mfr_origin (origin is resolved per-recommendation, not on PartSummary).
+ * Only dimensions that `PartSummary` reliably carries are supported. Per-attribute
+ * value filters remain absent (search cards carry only ~3 lightweight keyParameters,
+ * not full matchDetails). `mfr_origin_filter` IS supported as of June 2026: searchParts
+ * now resolves `PartSummary.mfrOrigin` per-MFR via the alias resolver (Decision #161),
+ * the same canonical-identity signal the recommendations filter uses.
  */
 export interface SearchFilterInput {
   /** Keep only parts that pass every stated spec — the green "Fits your specs"
@@ -24,6 +25,10 @@ export interface SearchFilterInput {
   exclude_obsolete?: boolean;
   /** Keep only parts carrying an AEC-Q100/Q101/Q200 automotive qualification. */
   aec_qualified_only?: boolean;
+  /** Narrow by canonical manufacturer origin. 'atlas' = Chinese makers, 'western' =
+   *  US/EU/JP and other non-Chinese. Keys off the resolved `mfrOrigin`, so a Chinese
+   *  maker's part that arrived via Digikey (untagged Atlas) is still caught. */
+  mfr_origin_filter?: 'atlas' | 'western';
 }
 
 const AEC_BADGE_RE = /AEC-?Q\s?(?:100|101|200)(?![0-9])/i;
@@ -41,6 +46,7 @@ export function describeSearchFilterInput(f: SearchFilterInput): string {
   const parts: string[] = [];
   if (f.meets_spec) parts.push('meets your specs');
   if (f.manufacturer_filter) parts.push(f.manufacturer_filter);
+  if (f.mfr_origin_filter) parts.push(f.mfr_origin_filter === 'atlas' ? 'Chinese MFRs' : 'Western MFRs');
   if (f.aec_qualified_only) parts.push('AEC-qualified');
   if (f.exclude_obsolete) parts.push('active parts');
   return parts.length > 0 ? parts.join(' + ') : 'filtered';
@@ -74,6 +80,23 @@ export function applySearchResultFilter(
   }
   if (input.aec_qualified_only) {
     filtered = filtered.filter(partIsAecQualified);
+  }
+  if (input.mfr_origin_filter) {
+    const target = input.mfr_origin_filter;
+    if (target === 'atlas') {
+      // Chinese = exactly what the card's 🇨🇳 flag shows. The flag (PartOptionsSelector)
+      // renders on `dataSource === 'atlas'`, so the filter MUST accept that too —
+      // otherwise an Atlas-sourced card the user can SEE is flagged Chinese gets
+      // silently dropped because its `mfrOrigin` was never resolved (cache, etc.).
+      // `mfrOrigin === 'atlas'` additionally catches a Chinese maker whose part
+      // arrived via Digikey (flag still shows via resolved origin).
+      filtered = filtered.filter(p => p.mfrOrigin === 'atlas' || p.dataSource === 'atlas');
+    } else {
+      // Western = resolved non-Chinese. We can't infer this from dataSource alone
+      // (a Digikey part may be Chinese), so require the resolved origin, and never
+      // count an Atlas-sourced card as Western.
+      filtered = filtered.filter(p => p.mfrOrigin === 'western' && p.dataSource !== 'atlas');
+    }
   }
 
   return filtered;

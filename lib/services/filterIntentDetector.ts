@@ -1,5 +1,6 @@
 import type { XrefRecommendation, RecommendationCategory } from '../types';
 import type { FilterInput } from './recommendationFilter';
+import { namesComponentType } from './componentVocabulary';
 
 /**
  * Pattern-detect a "narrow the recommendations panel" intent on a follow-up
@@ -142,6 +143,31 @@ export function detectOriginIntent(query: string): FilterIntent | null {
     return { filterInput: { mfr_origin_filter: 'atlas' }, label: 'Chinese MFRs' };
   }
   return null;
+}
+
+/**
+ * Detect a PURE origin refinement of the current search-result cards: an origin
+ * ask ("the Chinese ones", "western only", "non-Chinese", "PRC-based firms") that
+ * does NOT also name a part type. Used by the search-result filter intercept so
+ * origin narrowing runs DETERMINISTICALLY (the LLM's "never assert MFR origin"
+ * discipline otherwise makes it prose-answer instead of calling the origin filter).
+ *
+ * The refine-vs-new-search decision keys off a real component vocabulary
+ * (`namesComponentType`), NOT "any leftover word". The old word-list heuristic
+ * treated every ≥3-char residual as a part type, so descriptor phrasings —
+ * "PRC-based", "Chinese firms only", "the reputable Chinese ones" — leaked through
+ * to the LLM and reproduced the exact "none are Chinese" prose bug this exists to
+ * prevent. Now: only a named component ("Chinese MLCCs", "find Chinese capacitors")
+ * is a new search; everything else is a refine.
+ */
+export function detectSearchOriginRefinement(
+  query: string,
+): { origin: 'atlas' | 'western'; label: string } | null {
+  const intent = detectOriginIntent(query);
+  const origin = intent?.filterInput.mfr_origin_filter;
+  if (!origin) return null;
+  if (namesComponentType(query)) return null; // a part type was named → new search
+  return { origin, label: intent!.label };
 }
 
 /** Detect a manufacturer filter — needs both a verb and a manufacturer name
