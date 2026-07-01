@@ -256,11 +256,26 @@ describe('detectSearchOriginRefinement — pure origin refine vs new search', ()
     expect(detectSearchOriginRefinement(q)?.origin).toBe(origin);
   });
 
+  // Descriptor-laden origin refinements that the OLD word-list heuristic leaked to
+  // the LLM (any ≥3-char leftover word was treated as a part type) — they must now
+  // resolve as refinements so origin narrowing stays deterministic.
+  it.each([
+    ['show me only PRC-based options', 'atlas'],
+    ['Chinese firms only', 'atlas'],
+    ['the reputable Chinese ones', 'atlas'],
+    ['show me the good Chinese ones', 'atlas'],
+    ['the better western ones', 'western'],
+  ])('"%s" -> refinement (%s) [descriptor, not a part type]', (q, origin) => {
+    expect(detectSearchOriginRefinement(q)?.origin).toBe(origin);
+  });
+
   it.each([
     'find Chinese MLCCs',           // names a part type → new search
     'I need a Chinese op amp',
     'Chinese capacitor',
-    'show me a chinese tantalum',
+    'show me a chinese tantalum',   // material qualifier names a part type
+    'chinese diodes',
+    'western mosfets',
     'find me a 3.3V LDO',           // not an origin ask at all
     'show me the cheapest ones',    // a different (non-origin) refinement
   ])('"%s" -> null (new search or non-origin)', (q) => {

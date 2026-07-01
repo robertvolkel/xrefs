@@ -21,7 +21,7 @@
 
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveFamilyFromText, getAllLogicTables } from '@/lib/logicTables';
-import type { ComponentCategory } from '@/lib/types';
+import { GROUP_SYNONYMS, SUPERTYPE_SYNONYMS } from './componentVocabulary';
 
 export type DiscoveryScopeKind = 'family' | 'supertype' | 'group' | 'all' | 'unresolved';
 
@@ -46,106 +46,10 @@ export interface ManufacturerListing {
   manufacturers: ManufacturerListItem[];
 }
 
-/**
- * High-level group synonyms → registry `LogicTable.category` value. The family
- * set is derived from the registry at call time so it stays correct as families
- * are added. Sorted longest-first at match time so "discrete semiconductors"
- * wins over bare "discrete".
- */
-const GROUP_SYNONYMS: Record<string, string> = {
-  'passive': 'Passives',
-  'passives': 'Passives',
-  'passive component': 'Passives',
-  'passive components': 'Passives',
-  'discrete': 'Discrete Semiconductors',
-  'discretes': 'Discrete Semiconductors',
-  'discrete semiconductor': 'Discrete Semiconductors',
-  'discrete semiconductors': 'Discrete Semiconductors',
-  'integrated circuit': 'Integrated Circuits',
-  'integrated circuits': 'Integrated Circuits',
-  'ic': 'Integrated Circuits',
-  'ics': 'Integrated Circuits',
-};
-
-/**
- * Component-supertype synonyms → ComponentCategory value (the atlas_products.category
- * grain). Covers the L3 supertypes plus the common L0 categories (MCUs, sensors,
- * LEDs, …) — a category filter answers "who makes X" even where we have no logic
- * table. Multi-word synonyms (e.g. "voltage regulator") are matched longest-first.
- */
-const SUPERTYPE_SYNONYMS: Record<string, ComponentCategory> = {
-  // L3 supertypes
-  'capacitor': 'Capacitors',
-  'capacitors': 'Capacitors',
-  'cap': 'Capacitors',
-  'caps': 'Capacitors',
-  'resistor': 'Resistors',
-  'resistors': 'Resistors',
-  'inductor': 'Inductors',
-  'inductors': 'Inductors',
-  'diode': 'Diodes',
-  'diodes': 'Diodes',
-  'transistor': 'Transistors',
-  'transistors': 'Transistors',
-  'thyristor': 'Thyristors',
-  'thyristors': 'Thyristors',
-  'voltage regulator': 'Voltage Regulators',
-  'voltage regulators': 'Voltage Regulators',
-  'regulator': 'Voltage Regulators',
-  'regulators': 'Voltage Regulators',
-  'gate driver': 'Gate Drivers',
-  'gate drivers': 'Gate Drivers',
-  'amplifier': 'Amplifiers',
-  'amplifiers': 'Amplifiers',
-  'op-amp': 'Amplifiers',
-  'op-amps': 'Amplifiers',
-  'op amp': 'Amplifiers',
-  'op amps': 'Amplifiers',
-  'opamp': 'Amplifiers',
-  'opamps': 'Amplifiers',
-  'comparator': 'Amplifiers',
-  'comparators': 'Amplifiers',
-  'logic ic': 'Logic ICs',
-  'logic ics': 'Logic ICs',
-  'logic gate': 'Logic ICs',
-  'logic gates': 'Logic ICs',
-  'voltage reference': 'Voltage References',
-  'voltage references': 'Voltage References',
-  'interface ic': 'Interface ICs',
-  'interface ics': 'Interface ICs',
-  'timer': 'Timers and Oscillators',
-  'timers': 'Timers and Oscillators',
-  'oscillator': 'Timers and Oscillators',
-  'oscillators': 'Timers and Oscillators',
-  'adc': 'ADCs',
-  'adcs': 'ADCs',
-  'dac': 'DACs',
-  'dacs': 'DACs',
-  'crystal': 'Crystals',
-  'crystals': 'Crystals',
-  'optocoupler': 'Optocouplers',
-  'optocouplers': 'Optocouplers',
-  'photocoupler': 'Optocouplers',
-  'photocouplers': 'Optocouplers',
-  'relay': 'Relays',
-  'relays': 'Relays',
-  // Common L0 categories (no logic table, but category filter still answers "who makes X")
-  'microcontroller': 'Microcontrollers',
-  'microcontrollers': 'Microcontrollers',
-  'mcu': 'Microcontrollers',
-  'mcus': 'Microcontrollers',
-  'memory': 'Memory',
-  'sensor': 'Sensors',
-  'sensors': 'Sensors',
-  'led': 'LEDs and Optoelectronics',
-  'leds': 'LEDs and Optoelectronics',
-  'connector': 'Connectors',
-  'connectors': 'Connectors',
-  'switch': 'Switches',
-  'switches': 'Switches',
-  'transformer': 'Transformers',
-  'transformers': 'Transformers',
-};
+// GROUP_SYNONYMS + SUPERTYPE_SYNONYMS now live in the client-safe
+// componentVocabulary module (imported above) so the chat search-result
+// origin-filter detector shares the exact same component vocabulary and the two
+// can't drift. Behavior here is unchanged — same maps, relocated.
 
 /** Phrases meaning "everything" — list all manufacturers regardless of family. */
 const ALL_SYNONYMS = ['all components', 'all parts', 'everything', 'all manufacturers', 'any component', 'all your parts'];

@@ -1562,6 +1562,12 @@ export function useAppState() {
         const result = await searchParts(query);
         setStatus('');
 
+        // Capture the fresh full match set so the origin-filter intercept + the
+        // sequential Chinese→Western flip narrow from the COMPLETE result (mirrors
+        // the LLM path at ~L1376). Deterministic mode never set this before, so its
+        // flip fell back to the already-filtered subset and came back empty.
+        searchFullMatchesRef.current = result.type === 'none' ? [] : result.matches;
+
         if (result.type === 'none') {
           addMessage(
             'assistant',
@@ -1712,9 +1718,12 @@ export function useAppState() {
       // its "never assert MFR origin" discipline wins over the tool instruction.
       // detectSearchOriginRefinement returns null when the message names a part
       // type ("Chinese MLCCs" → a NEW search), so a pivot still reaches the LLM.
-      const haveSearchCards =
-        searchFullMatchesRef.current.length > 0 ||
-        (searchResultRef.current?.matches?.length ?? 0) > 0;
+      // "Are there search-result cards on screen RIGHT NOW?" — key off the current
+      // view (searchResultRef), NOT the persistent full-set ref. searchFullMatchesRef
+      // survives a part-confirm/reset (it's only overwritten on the next fresh
+      // search), so reading it here would let an origin ask resurrect a PRIOR
+      // search's cards when the current view has none.
+      const haveSearchCards = (searchResultRef.current?.matches?.length ?? 0) > 0;
       if (currentRecs.length === 0 && haveSearchCards) {
         const originRefine = detectSearchOriginRefinement(query);
         if (originRefine) {
