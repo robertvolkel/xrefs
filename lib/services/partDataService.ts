@@ -1709,7 +1709,13 @@ export async function getRecommendations(
         domain.domain !== 'unknown' &&
         expectedDomains.size > 0 &&
         !expectedDomains.has(domain.domain);
-      const origin = mfrOriginMap.get(rec.part.manufacturer?.toLowerCase() ?? '') ?? 'unknown';
+      // Mirror searchParts (~L642): a candidate sourced FROM the Chinese (Atlas)
+      // dataset IS Chinese even when the alias index misses its maker name. Without
+      // the dataSource override, such a part resolved to 'unknown' here while the
+      // search card showed 🇨🇳 — the same maker's flag disagreed between the two
+      // panels. Forcing 'atlas' on Atlas-sourced candidates makes them agree.
+      const resolvedOrigin = mfrOriginMap.get(rec.part.manufacturer?.toLowerCase() ?? '') ?? 'unknown';
+      const origin = dataSourceMap.get(key) === 'atlas' ? 'atlas' : resolvedOrigin;
       const partWithDomain = domain ? { ...rec.part, qualificationDomain: domain } : rec.part;
       return {
         ...rec,

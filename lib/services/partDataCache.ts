@@ -107,8 +107,13 @@ export const TTL_RECOMMENDATIONS_MS = 30 * 24 * 60 * 60 * 1000;
  *       bypassed for certified crosses (Decision #221 follow-up) — an automotive
  *       context now drops non-AEC Accuris/MFR crosses. Cached v17 automotive
  *       results still include those crosses. (Full-result tier only — keyed on
- *       context; the base-payload tier runs before this post-scoring filter.) */
-export const RECS_CACHE_SCHEMA_VERSION = 'v18';
+ *       context; the base-payload tier runs before this post-scoring filter.)
+ *  v19: recommendation mfrOrigin now forces 'atlas' when the candidate's dataSource
+ *       is 'atlas' (mirrors searchParts), so an Atlas-sourced Chinese maker whose
+ *       name the alias index misses reads 🇨🇳 consistently across the search + recs
+ *       panels. Cached v18 recs carry the old 'unknown' origin for those parts.
+ *       (Full-result tier only — mfrOrigin is resolved after the base payload.) */
+export const RECS_CACHE_SCHEMA_VERSION = 'v19';
 
 /** Bump this when search merge/dedup/MFR-filter semantics change. v1→v2 on
  *  2026-06-02 to invalidate entries cached by the pre-MFR-filter merge that
