@@ -305,9 +305,8 @@ export default function ListsDashboard() {
               borderColor: 'divider',
               transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
               '&:focus-within': {
-                borderColor: 'primary.main',
-                boxShadow: (theme) =>
-                  `0 0 0 2px ${theme.palette.primary.main}25`,
+                borderColor: 'text.primary',
+                boxShadow: '0 0 0 2px rgba(255,255,255,0.18)',
               },
             }}
           >

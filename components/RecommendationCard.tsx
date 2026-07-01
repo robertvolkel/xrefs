@@ -7,6 +7,7 @@ import { computePriceRange, formatPrice } from './AttributesTabContent';
 import DomainChip from './DomainChip';
 import { isDomainCoveredQualification } from '@/lib/services/qualificationDomain';
 import MatchPercentageBadge from './MatchPercentageBadge';
+import { useColorScheme } from '@mui/material/styles';
 
 interface RecommendationCardProps {
   recommendation: XrefRecommendation;
@@ -39,6 +40,10 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
   const failCount = matchDetails.filter(d => d.ruleResult === 'fail').length;
   const reviewCount = matchDetails.filter(d => d.ruleResult === 'review').length;
   const showSummary = failCount > 0 || reviewCount > 0;
+  // Dark-mode colors are fine as-is; light mode needs readable substitutes
+  // (white price/stock is invisible on a light card; the review amber washes out).
+  const { mode, systemMode } = useColorScheme();
+  const isDarkMode = (mode === 'system' ? systemMode : mode) === 'dark';
 
   return (
     <Card
@@ -46,7 +51,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
       sx={{
         position: 'relative',
         bgcolor: 'background.default',
-        '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
+        '&:hover': { borderColor: 'text.primary', bgcolor: 'action.hover' },
         transition: 'border-color 0.2s ease, background-color 0.2s ease',
       }}
     >
@@ -185,14 +190,14 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                   <Box sx={{ mt: 0.5 }}>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: '0.78rem', color: 'common.white' }}
+                      sx={{ fontSize: '0.78rem', color: isDarkMode ? 'common.white' : 'text.secondary' }}
                       noWrap
                     >
                       Price Range: {priceText} ({distributorCount} Distributor{distributorCount === 1 ? '' : 's'})
                     </Typography>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: '0.78rem', color: 'common.white' }}
+                      sx={{ fontSize: '0.78rem', color: isDarkMode ? 'common.white' : 'text.secondary' }}
                       noWrap
                     >
                       Total Stock: {totalStock.toLocaleString()}
@@ -214,7 +219,7 @@ export default function RecommendationCard({ recommendation, onClick, onManufact
                       <Box component="span" sx={{ color: 'text.secondary' }}> · </Box>
                     )}
                     {reviewCount > 0 && (
-                      <Box component="span" sx={{ color: '#FFD54F' }}>
+                      <Box component="span" sx={{ color: isDarkMode ? '#FFD54F' : '#A15C00' }}>
                         {reviewCount} need review
                       </Box>
                     )}
