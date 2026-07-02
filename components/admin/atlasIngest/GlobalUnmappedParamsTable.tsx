@@ -25,9 +25,6 @@
 
 import { Fragment, useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -40,6 +37,7 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Paper,
   Popover,
   Stack,
   Table,
@@ -53,7 +51,6 @@ import {
   Typography,
   LinearProgress,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckIcon from '@mui/icons-material/Check';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -583,9 +580,10 @@ const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
 export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false }: Props) {
-  // Default expanded so users see the AI-triage flow without an extra click —
-  // this is the most-used panel of the page when there are unmapped params.
-  const [expanded, setExpanded] = useState(true);
+  // The panel is always open (no longer collapsible) — this drives the
+  // hydrate-from-cache effect below, which keys off it. Kept as a constant so
+  // that effect's dependency list is unchanged.
+  const expanded = true;
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
   // Cancel flag for the bulk AI Generate run. Set true by the Stop button;
@@ -773,7 +771,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // "Show more" advances the render window first; once that's exhausted it
   // fetches the next server page (and bumps the window so the new rows show).
   const renderHidden = Math.max(0, orderedRows.length - visibleRows.length);
-  const hasMore = renderHidden > 0 || serverRemaining > 0;
+  // Server-side "Load more" only helps when freshly-fetched rows can actually
+  // appear in the current view. Under an Accept/Defer filter, new rows arrive
+  // with NO verdict yet, so they can never match — fetching just spins with no
+  // visible change. Suppress the server-load path there. The client-side
+  // "Show more" (revealing already-loaded matching rows) still works.
+  const allowServerLoad = aiVerdictFilter !== 'accept' && aiVerdictFilter !== 'defer';
+  const hasMore = renderHidden > 0 || (serverRemaining > 0 && allowServerLoad);
   // Total for the "X of Y" footer — the server's filtered total when present
   // (so it reflects rows not yet loaded), else the loaded count.
   const displayTotal = serverTotal ?? orderedRows.length;
@@ -785,7 +789,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const handleShowMore = () => {
     if (renderHidden > 0) {
       startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE));
-    } else if (serverRemaining > 0 && onLoadMore) {
+    } else if (serverRemaining > 0 && onLoadMore && allowServerLoad) {
       // Fetch + append the next server page; bump the window so the incoming
       // rows render (they're beyond the current visibleCount).
       onLoadMore();
@@ -1150,11 +1154,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // ─── Pending-suggestion accounting ──────────────────────
   // Rows that don't have a suggestion AND aren't auto-flagged AND aren't
   // currently loading are eligible for the bulk Generate button. Computed
-  // each render against the current `states` snapshot — cheap (string lookup
-  // per row).
+  // over `orderedRows` (the rows matching the CURRENT view) — NOT all loaded
+  // `rows` — so the "Generate N" count always reflects what's on screen:
+  //   • Accept / Defer filter → those rows all have a verdict already, so this
+  //     is empty and the banner disappears (nothing blank is visible).
+  //   • None filter → counts exactly the blank rows the filter is showing.
+  //   • No filter → counts the blank rows in the loaded set, as before.
+  // Without this it counted blank rows hidden by the active filter, so under
+  // an Accept filter it read "Generate 499" while every visible row was mapped.
   const pendingSuggestionRows = useMemo(
-    () => rows.filter((r) => !r.autoFlag && !states[r.paramName]?.suggestion && !states[r.paramName]?.loadingSuggestion),
-    [rows, states],
+    () => orderedRows.filter((r) => !r.autoFlag && !states[r.paramName]?.suggestion && !states[r.paramName]?.loadingSuggestion),
+    [orderedRows, states],
   );
 
   const generateAllPending = useCallback(() => {
@@ -2118,21 +2128,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     : `across ${pendingBatchCount} pending batches`;
 
   return (
-    <Accordion
-      expanded={expanded}
-      onChange={(_, x) => setExpanded(x)}
-      sx={{ mb: 2 }}
-      // unmountOnExit drops the (potentially 200-row) table body from the DOM
-      // while collapsed. Without this, MUI keeps it mounted hidden — fine for
-      // small lists, but for large unmapped-params queues on the Triage page
-      // the row tree alone (Tooltips, Chips, TextFields per row) takes seconds
-      // to render even hidden, freezing the page on initial load.
-      slotProps={{ transition: { unmountOnExit: true } }}
-    >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-        {/* Header is rendered as MUI's internal <button>; cannot contain a <Button>
-            child or React will throw a nested-button hydration error. The bulk
-            "Accept all" action lives inside AccordionDetails below instead. */}
+    // Always-open panel (previously a collapsible Accordion). The whole point of
+    // this page is to work the unmapped-params list, so there's no reason to
+    // collapse it — no chevron, no toggle. Kept as a Paper for the card look.
+    <Paper variant="outlined" sx={{ mb: 2 }}>
+      <Box sx={{ px: 2, py: 1.5 }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1 }}>
           <Typography sx={{ fontWeight: 600 }}>Unmapped parameters</Typography>
           <Typography variant="caption" color="text.secondary">
@@ -2147,8 +2147,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             </Stack>
           )}
         </Stack>
-      </AccordionSummary>
-      <AccordionDetails>
+      </Box>
+      <Box sx={{ px: 2, pb: 2 }}>
         <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="body2" color="text.secondary">
             {allFlagged ? (
@@ -2159,10 +2159,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </>
             ) : (
               <>
-                Each row can be enriched with an AI-suggested mapping + <strong>Accept</strong>/<strong>Defer</strong> suggestion
-                (Claude Sonnet 4.6, schema-aware). Suggestions are <strong>not auto-generated on page load</strong> — click
-                the Generate button below (or the per-row Generate link) to spend tokens only when you want them.
-                Cached suggestions persist 7 days locally, 24h server-side. The suggestion is advisory — you decide.
+                AI can suggest a mapping for each row, but only when you ask — click <strong>Generate</strong> (it uses tokens).
+                Every suggestion is advisory; you decide.
               </>
             )}
           </Typography>
@@ -3156,8 +3154,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               onClick={handleShowMore}
             >
               {renderHidden > 0
+                // Client-side: we're just revealing already-loaded rows, so the
+                // exact count is truthful.
                 ? `Show ${Math.min(ROW_BATCH_SIZE, renderHidden)} more`
-                : `Load ${Math.min(ROW_BATCH_SIZE, serverRemaining)} more`}
+                // Server-side: one click fetches a whole page (100, or 500 when
+                // an AI filter is active), NOT ROW_BATCH_SIZE. Don't print a
+                // number we won't honor — just say "Load more".
+                : 'Load more'}
             </Button>
             {/* "Show all" intentionally removed — for queues with hundreds
                 of rows it triggered browser unresponsiveness. Use the
@@ -3165,7 +3168,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 narrow the visible set instead. */}
           </Stack>
         )}
-      </AccordionDetails>
+      </Box>
 
       {/* Bulk-refresh confirm dialog. Per-call cost: ~$0.005 (Sonnet
           4.6 /suggest) or ~$0.05 (Sonnet 4.6 /investigate). Total
@@ -3398,7 +3401,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           Mark Unmappable
         </MenuItem>
       </Menu>
-    </Accordion>
+    </Paper>
   );
 }
 

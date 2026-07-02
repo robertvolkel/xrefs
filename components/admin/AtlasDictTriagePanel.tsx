@@ -18,11 +18,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress, Tooltip } from '@mui/material';
+import { Box, Alert, Stack, Typography, Chip, Button, Skeleton, CircularProgress, Tooltip, LinearProgress } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSearchParams, useRouter } from 'next/navigation';
 import GlobalUnmappedParamsTable from './atlasIngest/GlobalUnmappedParamsTable';
-import RecentDictAcceptsPanel from './atlasIngest/RecentDictAcceptsPanel';
 import TriageFilterBar, { EMPTY_FILTERS, type TriageFilters, type TriageMode } from './atlasIngest/TriageFilterBar';
 import type { NoteRecord } from './atlasIngest/UnmappedParamNoteCell';
 import type { BatchListResponse, StatusFilter, GlobalUnmappedParam } from './atlasIngest/types';
@@ -66,9 +65,6 @@ export default function AtlasDictTriagePanel() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Bumps after every queue refresh so the Recently Accepted panel re-fetches
-  // (Accept → regen → queue refresh → recent list refresh, in one chain).
-  const [recentRefreshSignal, setRecentRefreshSignal] = useState(0);
   // Page-level filter state (search/MFR/family/min-prods/has-note). Pure
   // client-side slicing of the in-memory queue — no extra fetches.
   //
@@ -184,7 +180,6 @@ export default function AtlasDictTriagePanel() {
       setData(json);
       setAccumRows((prev) => (append ? [...prev, ...rows] : rows));
       setPage(pageNum);
-      setRecentRefreshSignal((n) => n + 1);
     } catch (err) {
       if (!append) setError(err instanceof Error ? err.message : 'Failed to load triage queue');
     } finally {
@@ -247,8 +242,7 @@ export default function AtlasDictTriagePanel() {
   // onRowAccepted below) already shows the new "Accepted" state, and a
   // refetch would invalidate the server-side cache (the Accept POST bumps
   // it) and force a 30+s cold reload with a skeleton screen, which was the
-  // user's biggest pain point. The Recently Accepted panel re-fetches via
-  // recentRefreshSignal so it picks up the new override too.
+  // user's biggest pain point.
   const onRegenerateAffected = useCallback(async (batchIds: string[]) => {
     if (batchIds.length > 0) {
       setPendingRegenIds((prev) => {
@@ -257,7 +251,6 @@ export default function AtlasDictTriagePanel() {
         return next;
       });
     }
-    setRecentRefreshSignal((n) => n + 1);
   }, []);
 
   // Optimistic in-place mutation of a row's acceptedOverride after a
@@ -558,6 +551,15 @@ export default function AtlasDictTriagePanel() {
   // table's "Show more" server-fetch affordance.
   const serverRemaining = Math.max(0, viewTotal - accumRows.length);
 
+  // ── Simplified-header progress numbers (server-computed statusCounts) ──
+  const sc = data?.statusCounts;
+  const mappedCount = sc?.accepted ?? 0;
+  const leftCount = sc?.open ?? 0;
+  const undoneCount = sc?.undone ?? 0;
+  const deferredCount = sc?.deferred ?? 0;
+  const unmappableCount = sc?.unmappable ?? 0;
+  const mappedPct = grandTotal > 0 ? Math.round((mappedCount / grandTotal) * 100) : 0;
+
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
@@ -578,14 +580,23 @@ export default function AtlasDictTriagePanel() {
           </Stack>
         )}
         {!batchFilter && data && (
-          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            {(data.triageCounts?.total ?? 0).toLocaleString()} unresolved param{(data.triageCounts?.total ?? 0) === 1 ? '' : 's'} across all manufacturers
-            {data.triageCounts && data.triageCounts.autoFlagged > 0 && (
-              <Box component="span" sx={{ ml: 1, color: 'error.light', fontWeight: 600 }}>
-                · {data.triageCounts.autoFlagged} auto-flagged misclassification{data.triageCounts.autoFlagged === 1 ? '' : 's'}
-              </Box>
-            )}
-          </Typography>
+          <Stack direction="row" spacing={3} alignItems="baseline" flexWrap="wrap" sx={{ rowGap: 0.5 }}>
+            <Box>
+              <Typography component="span" variant="h6" sx={{ fontWeight: 700, color: 'success.main' }}>{mappedCount.toLocaleString()}</Typography>
+              <Typography component="span" variant="body2" sx={{ ml: 0.75, color: 'text.secondary' }}>mapped</Typography>
+            </Box>
+            <Box>
+              <Typography component="span" variant="h6" sx={{ fontWeight: 700, color: 'warning.main' }}>{leftCount.toLocaleString()}</Typography>
+              <Typography component="span" variant="body2" sx={{ ml: 0.75, color: 'text.secondary' }}>left to map</Typography>
+            </Box>
+            <Box>
+              <Typography component="span" variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>{grandTotal.toLocaleString()}</Typography>
+              <Typography component="span" variant="body2" sx={{ ml: 0.75, color: 'text.secondary' }}>total</Typography>
+            </Box>
+            {/* auto-flagged count intentionally not repeated here — the
+                "Auto-flagged misclassifications" chip in the filter bar below
+                already shows it and is clickable. */}
+          </Stack>
         )}
 
         {/* Deferred-regen flush control — appears once an Accept has queued
@@ -619,10 +630,9 @@ export default function AtlasDictTriagePanel() {
           </Stack>
         )}
 
-        {/* Refresh button — forces a fresh server compute (bypasses L1+L2).
-            Use after a major upload to see new MFRs in the filter, or any
-            time you want to skip cache and recompute from source. Always
-            visible; pinned right with ml: 'auto'. */}
+        {/* Refresh forces a fresh server compute (bypasses L1+L2). Pinned to the
+            far right of the header row; white outline to read as a neutral
+            utility action (not a primary/green CTA). */}
         <Tooltip title="Force a fresh fetch from the database (bypasses cache, ~10–30s)">
           <span style={{ marginLeft: 'auto' }}>
             <Button
@@ -631,12 +641,31 @@ export default function AtlasDictTriagePanel() {
               startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon fontSize="small" />}
               onClick={() => refresh(true)}
               disabled={loading}
+              sx={{ color: 'common.white', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: 'common.white' } }}
             >
               Refresh
             </Button>
           </span>
         </Tooltip>
       </Stack>
+
+      {/* Progress bar under the numbers — mapped share of the whole queue. */}
+      {!loading && !batchFilter && data && grandTotal > 0 && (
+        <Box sx={{ mb: 2, mt: -0.5 }}>
+          <LinearProgress
+            variant="determinate"
+            value={mappedPct}
+            color="success"
+            sx={{ height: 6, borderRadius: 3 }}
+          />
+          <Typography variant="caption" sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}>
+            {mappedPct}% mapped
+            {undoneCount > 0 && ` · ${undoneCount.toLocaleString()} undone`}
+            {deferredCount > 0 && ` · ${deferredCount.toLocaleString()} set aside`}
+            {unmappableCount > 0 && ` · ${unmappableCount.toLocaleString()} can't map`}
+          </Typography>
+        </Box>
+      )}
 
       {loading && (
         <Box sx={{ mt: 1 }}>
@@ -649,13 +678,6 @@ export default function AtlasDictTriagePanel() {
       )}
 
       {error && <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>}
-
-      {!loading && (
-        <RecentDictAcceptsPanel
-          refreshSignal={recentRefreshSignal}
-          onUndone={refresh}
-        />
-      )}
 
       {/* Globally empty: 0 rows in EVERY mode/status (grandTotal). Hide the
           filter bar entirely and surface a green success state. */}

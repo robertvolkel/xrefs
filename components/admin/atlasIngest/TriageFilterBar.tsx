@@ -105,11 +105,14 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
 
   return (
     <Box sx={{ mb: 2, p: 1.5, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-      {/* View mode chip group — switches the queue between the synonym
-          mapping workflow (default) and the auto-flagged misclassification
-          review queue. Modes are server-side: changing the mode triggers
-          a refetch via the parent's URL contract. */}
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5, flexWrap: 'wrap' }}>
+      {/* Mode + status selectors share ONE row. Two INDEPENDENT single-select
+          groups — mode picks which KIND of row (synonym queue vs auto-flagged
+          misclassifications vs both); status picks the lifecycle state
+          (open/accepted/…). Kept as separate ToggleButtonGroups so choosing
+          one never clears the other. Mode is server-side (a change refetches);
+          status filters client-side. Gap between them signals they're two
+          distinct controls. */}
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
         <ToggleButtonGroup
           size="small"
           value={mode}
@@ -128,12 +131,12 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
           </ToggleButton>
           <ToggleButton value="auto_flagged" aria-label="Auto-flagged misclassifications">
             <Tooltip
-              title="Rows where the param name belongs to a different family — almost certainly upstream misclassification. Click Confirm to flag for investigation, Revert if it's actually correct here."
+              title="Auto-flagged misclassifications — rows where the param name belongs to a different family — almost certainly upstream misclassification. Click Confirm to flag for investigation, Revert if it's actually correct here."
               placement="top"
             >
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <FlagOutlinedIcon fontSize="small" sx={{ color: autoFlaggedCount > 0 ? 'error.main' : undefined }} />
-                <Box component="span" sx={{ fontSize: '0.75rem' }}>Auto-flagged misclassifications</Box>
+                <Box component="span" sx={{ fontSize: '0.75rem' }}>Auto-flagged</Box>
                 <Chip
                   size="small"
                   label={autoFlaggedCount}
@@ -152,18 +155,13 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             <Tooltip title="Both modes combined — diagnostic view." placement="top">
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <VisibilityOutlinedIcon fontSize="small" />
-                <Box component="span" sx={{ fontSize: '0.75rem' }}>All</Box>
+                <Box component="span" sx={{ fontSize: '0.75rem' }}>Both</Box>
                 <Chip size="small" label={allCount} sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
               </Stack>
             </Tooltip>
           </ToggleButton>
         </ToggleButtonGroup>
-      </Stack>
 
-      {/* Status filter — orthogonal to mode. 'Open' is the working queue
-          (no override yet); 'Accepted' / 'Undone' surface the audit trail
-          of past Accepts; 'All' shows everything. */}
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5, flexWrap: 'wrap' }}>
         <ToggleButtonGroup
           size="small"
           value={status}
