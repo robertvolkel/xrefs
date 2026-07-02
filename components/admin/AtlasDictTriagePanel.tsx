@@ -32,6 +32,13 @@ import type { BatchListResponse, StatusFilter, GlobalUnmappedParam } from './atl
 // batch), so 3 keeps the dev server responsive while still scaling well.
 const REGEN_CONCURRENCY = 3;
 
+// Feature flag — hide the "Regen affected batches" control on the Triage page
+// (user request, July 2026). It confused the mapping workflow and duplicated
+// the per-batch regen that already lives on the Ingest page (BatchCard). The
+// underlying pendingRegenIds / flushPendingRegens machinery is left wired so
+// flipping this back to `true` fully restores the button — nothing was deleted.
+const SHOW_TRIAGE_REGEN = false;
+
 // Server-side pagination (Decision #231). The route returns one page; the
 // client accumulates pages ("Show more"). Default page is small to keep the
 // payload + render cheap. When a localStorage-bound client filter is active
@@ -584,8 +591,10 @@ export default function AtlasDictTriagePanel() {
         {/* Deferred-regen flush control — appears once an Accept has queued
             affected batches. Tooltip explains why this exists separate from
             Accept (so the user understands their accepted overrides are
-            already live; this only refreshes batch report metrics). */}
-        {pendingRegenIds.size > 0 && (
+            already live; this only refreshes batch report metrics).
+            HIDDEN on Triage via SHOW_TRIAGE_REGEN (July 2026) — regen still
+            available per-batch on the Ingest page. Flip the flag to restore. */}
+        {SHOW_TRIAGE_REGEN && pendingRegenIds.size > 0 && (
           <Stack direction="row" spacing={1} alignItems="center">
             <Chip
               size="small"

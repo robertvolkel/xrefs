@@ -321,7 +321,16 @@ const SUGGESTION_CONCURRENCY = 4;
 // signals (left-border stripe + receded verdict chip + ↻ icon) instead
 // of silently orphaning the entry.
 const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest-v7:';
-const SUGGEST_LS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+// Long, bounded storage-hygiene backstop — NOT a regeneration trigger. Regenerating a
+// cached suggestion whose family domain card / logic rules haven't changed produces the
+// same verdict and just re-spends tokens, so the OLD 7-day timer made already-generated
+// rows re-nag as "needs AI suggestions" every week for no real reason. Regeneration is now
+// driven solely by the card/schema version staleness comparison (computeStaleness) — the
+// amber "N suggestions are stale — refresh" banner fires only when a domain card or matching
+// rule actually changes. A finite year bounds localStorage growth; writeSuggestionCache /
+// writeInvestigateCache already degrade to no-cache on quota overflow. Shared by both the
+// suggestion cache and the investigation cache (readInvestigateCache uses this constant).
+const SUGGEST_LS_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 year (storage backstop, not a regen clock)
 type CachedSuggestion = {
   suggestion: DictSuggestion;
   cachedAt: number;
@@ -1984,6 +1993,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     if (!deferPopover) return;
     const row = deferPopover.row;
     const reason = deferReason.trim();
+    // Close the popover FIRST — before the optimistic flip below. The flip
+    // drops this row from the OPEN view, which unmounts the Defer button this
+    // Popover is anchored to. If we left the Popover open across the async
+    // PUT, MUI would lose the (now-detached) anchor's position and re-render
+    // the whole overlay at the viewport's top-left for the duration of the
+    // fetch. Closing first keeps the action optimistic and avoids the stray
+    // overlay. (Mirrors the Mark-Unmappable path, which closes its menu first.)
+    setDeferPopover(null);
+    setDeferReason('');
     setDeferSubmitting(true);
     // Optimistic — flip the row's noteStatus + parent chip counts.
     onRowFlagged?.(row.paramName, 'deferred', 'engineer');
@@ -2007,8 +2025,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       if ((json as { item?: NoteRecord }).item) {
         onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
       }
-      setDeferPopover(null);
-      setDeferReason('');
     } catch {
       // Roll back optimistic chip-count update on error.
       const fallback = notesByParam[row.paramName];
@@ -2120,7 +2136,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flex: 1 }}>
           <Typography sx={{ fontWeight: 600 }}>Unmapped parameters</Typography>
           <Typography variant="caption" color="text.secondary">
-            {total} unique {scopeLabel} &middot; {totalParamMentions.toLocaleString()} total mentions
+            {displayTotal.toLocaleString()} unique {scopeLabel} &middot; {totalParamMentions.toLocaleString()} mentions in loaded rows
           </Typography>
           {fetchInFlight && (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 1 }}>
@@ -2240,8 +2256,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               {staleSuggestionRows.length > 0 && staleInvestigationRows.length > 0 && <> and </>}
               {staleInvestigationRows.length > 0 && <strong>{staleInvestigationRows.length} investigation{staleInvestigationRows.length === 1 ? '' : 's'}</strong>}
               {' '}in this view {staleSuggestionRows.length + staleInvestigationRows.length === 1 ? 'is' : 'are'} stale —
-              the AI verdict was generated before recent domain card or schema changes.
-              Refresh to see updated AI verdicts that reflect the current context.
+              the AI verdict was generated before a domain card or matching rule was updated.
+              Refresh to regenerate these with the current context.
             </Typography>
           </Alert>
         )}
