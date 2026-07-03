@@ -77,9 +77,8 @@ import { ClusterPreviewModal } from './ClusterPreviewModal';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
 
-/** Compact relative time format used in accept-audit chips/tooltips.
- *  Mirrors the helper in RecentDictAcceptsPanel.tsx; if a third surface
- *  needs it, lift to a shared util. */
+/** Compact relative time format used in accept-audit chips/tooltips. If a
+ *  second surface needs it, lift to a shared util. */
 function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();
   const now = Date.now();
@@ -580,10 +579,6 @@ const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
 export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false }: Props) {
-  // The panel is always open (no longer collapsible) — this drives the
-  // hydrate-from-cache effect below, which keys off it. Kept as a constant so
-  // that effect's dependency list is unchanged.
-  const expanded = true;
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
   // Cancel flag for the bulk AI Generate run. Set true by the Stop button;
@@ -771,13 +766,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // "Show more" advances the render window first; once that's exhausted it
   // fetches the next server page (and bumps the window so the new rows show).
   const renderHidden = Math.max(0, orderedRows.length - visibleRows.length);
-  // Server-side "Load more" only helps when freshly-fetched rows can actually
-  // appear in the current view. Under an Accept/Defer filter, new rows arrive
-  // with NO verdict yet, so they can never match — fetching just spins with no
-  // visible change. Suppress the server-load path there. The client-side
-  // "Show more" (revealing already-loaded matching rows) still works.
-  const allowServerLoad = aiVerdictFilter !== 'accept' && aiVerdictFilter !== 'defer';
-  const hasMore = renderHidden > 0 || (serverRemaining > 0 && allowServerLoad);
+  const hasMore = renderHidden > 0 || serverRemaining > 0;
+  // Under an Accept/Defer verdict filter, "Load more" fetches the next server
+  // page and can surface previously-generated (localStorage-cached) accept/defer
+  // rows that rank beyond what's loaded — hydrateFromCache runs on the appended
+  // rows. It just WON'T add rows the engineer hasn't generated yet (those have
+  // no verdict), so a fetch can visibly do nothing. We keep the button (hiding
+  // it stranded cached matches on deeper pages) and set expectations with a
+  // caption in the footer instead. Only Accept/Defer need the caption — under
+  // None/All every fetched row is visible.
+  const verdictFilterActive = aiVerdictFilter === 'accept' || aiVerdictFilter === 'defer';
   // Total for the "X of Y" footer — the server's filtered total when present
   // (so it reflects rows not yet loaded), else the loaded count.
   const displayTotal = serverTotal ?? orderedRows.length;
@@ -789,7 +787,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const handleShowMore = () => {
     if (renderHidden > 0) {
       startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE));
-    } else if (serverRemaining > 0 && onLoadMore && allowServerLoad) {
+    } else if (serverRemaining > 0 && onLoadMore) {
       // Fetch + append the next server page; bump the window so the incoming
       // rows render (they're beyond the current visibleCount).
       onLoadMore();
@@ -1145,11 +1143,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     setSuggestionProgress(null);
   }, []);
 
+  // Panel is always open (no longer collapsible), so hydrate whenever rows load.
   useEffect(() => {
-    if (expanded && rows.length > 0) {
+    if (rows.length > 0) {
       hydrateFromCache();
     }
-  }, [expanded, rows, hydrateFromCache]);
+  }, [rows, hydrateFromCache]);
 
   // ─── Pending-suggestion accounting ──────────────────────
   // Rows that don't have a suggestion AND aren't auto-flagged AND aren't
@@ -1980,7 +1979,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // have to retype context they already saw.
   const [deferPopover, setDeferPopover] = useState<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>(null);
   const [deferReason, setDeferReason] = useState('');
-  const [deferSubmitting, setDeferSubmitting] = useState(false);
   const [parkedMenuAnchor, setParkedMenuAnchor] = useState<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>(null);
 
   const openDeferPopover = useCallback((row: GlobalUnmappedParam, anchor: HTMLElement) => {
@@ -2012,7 +2010,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // overlay. (Mirrors the Mark-Unmappable path, which closes its menu first.)
     setDeferPopover(null);
     setDeferReason('');
-    setDeferSubmitting(true);
     // Optimistic — flip the row's noteStatus + parent chip counts.
     onRowFlagged?.(row.paramName, 'deferred', 'engineer');
     try {
@@ -2039,8 +2036,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // Roll back optimistic chip-count update on error.
       const fallback = notesByParam[row.paramName];
       onRowFlagged?.(row.paramName, fallback?.status ?? null, fallback?.flaggedBy ?? null);
-    } finally {
-      setDeferSubmitting(false);
     }
   }, [deferPopover, deferReason, notesByParam, onRowFlagged, onNoteChange]);
 
@@ -3140,32 +3135,43 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             up front to avoid freezing the browser on 400+ row mount;
             subsequent batches are opt-in. */}
         {hasMore && (
-          <Stack direction="row" spacing={2} alignItems="center" justifyContent="center" sx={{ mt: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
-            <Typography variant="caption" color="text.secondary">
-              {pendingShowMore || loadingMore
-                ? 'Loading more rows…'
-                : `Showing ${visibleRows.length.toLocaleString()} of ${displayTotal.toLocaleString()} rows`}
-            </Typography>
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={pendingShowMore || loadingMore}
-              startIcon={(pendingShowMore || loadingMore) ? <CircularProgress size={12} color="inherit" /> : undefined}
-              onClick={handleShowMore}
-            >
-              {renderHidden > 0
-                // Client-side: we're just revealing already-loaded rows, so the
-                // exact count is truthful.
-                ? `Show ${Math.min(ROW_BATCH_SIZE, renderHidden)} more`
-                // Server-side: one click fetches a whole page (100, or 500 when
-                // an AI filter is active), NOT ROW_BATCH_SIZE. Don't print a
-                // number we won't honor — just say "Load more".
-                : 'Load more'}
-            </Button>
-            {/* "Show all" intentionally removed — for queues with hundreds
-                of rows it triggered browser unresponsiveness. Use the
-                page-level filters (search, MFR, family, min-prods) to
-                narrow the visible set instead. */}
+          <Stack direction="column" spacing={0.5} alignItems="center" sx={{ mt: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
+            <Stack direction="row" spacing={2} alignItems="center" justifyContent="center">
+              <Typography variant="caption" color="text.secondary">
+                {pendingShowMore || loadingMore
+                  ? 'Loading more rows…'
+                  : `Showing ${visibleRows.length.toLocaleString()} of ${displayTotal.toLocaleString()} rows`}
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={pendingShowMore || loadingMore}
+                startIcon={(pendingShowMore || loadingMore) ? <CircularProgress size={12} color="inherit" /> : undefined}
+                onClick={handleShowMore}
+              >
+                {renderHidden > 0
+                  // Client-side: we're just revealing already-loaded rows, so the
+                  // exact count is truthful.
+                  ? `Show ${Math.min(ROW_BATCH_SIZE, renderHidden)} more`
+                  // Server-side: one click fetches a whole page (100, or 500 when
+                  // an AI filter is active), NOT ROW_BATCH_SIZE. Don't print a
+                  // number we won't honor — just say "Load more".
+                  : 'Load more'}
+              </Button>
+              {/* "Show all" intentionally removed — for queues with hundreds
+                  of rows it triggered browser unresponsiveness. Use the
+                  page-level filters (search, MFR, family, min-prods) to
+                  narrow the visible set instead. */}
+            </Stack>
+            {/* Under an Accept/Defer filter, "Load more" searches deeper for
+                already-suggested rows — it won't add rows you haven't generated
+                yet (those have no verdict). Set that expectation so the button
+                doesn't read as broken when a fetch adds nothing visible. */}
+            {verdictFilterActive && renderHidden === 0 && !pendingShowMore && !loadingMore && (
+              <Typography variant="caption" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+                Searches deeper for already-suggested {aiVerdictFilter} rows — won&apos;t add ones you haven&apos;t generated yet.
+              </Typography>
+            )}
           </Stack>
         )}
       </Box>
@@ -3364,14 +3370,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             }}
           />
           <Stack direction="row" spacing={1} justifyContent="flex-end">
-            <Button size="small" onClick={closeDeferPopover} disabled={deferSubmitting}>Cancel</Button>
+            {/* No in-flight disabled/spinner: submitDefer closes this popover
+                optimistically before the PUT resolves, so the buttons are never
+                on screen during the request. */}
+            <Button size="small" onClick={closeDeferPopover}>Cancel</Button>
             <Button
               size="small"
               variant="contained"
               color="warning"
               onClick={() => void submitDefer()}
-              disabled={deferSubmitting}
-              startIcon={deferSubmitting ? <CircularProgress size={10} color="inherit" /> : <PauseCircleOutlineIcon sx={{ fontSize: 14 }} />}
+              startIcon={<PauseCircleOutlineIcon sx={{ fontSize: 14 }} />}
             >
               Defer
             </Button>
