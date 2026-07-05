@@ -2404,6 +2404,7 @@ const skipParams = new Set([
   '包装',        // packaging format
   '包装形式',    // packaging form (longer variant — blister/tube/box buyer concern, not parametric)
   '元件生命周期', // component lifecycle
+  '生命周期',    // lifecycle — Galaxy's bare-form variant of 元件生命周期; procurement metadata, not a spec (values are all "Active" + leaked header, no Obsolete signal)
   '零件状态',    // part status (use 状态/Status instead)
   '原产国家',    // country of origin
   'country of origin',    // English variant (APSEMI)
