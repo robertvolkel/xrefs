@@ -2550,6 +2550,7 @@ const L2_PARAMS = {
 // Parameters to skip (metadata, not parametric)
 const SKIP_PARAMS = new Set([
   'description', '品牌', '原始制造商', '最小包装', '包装', '包装形式', '元件生命周期',
+  '生命周期', // lifecycle — Galaxy's bare-form variant of 元件生命周期; metadata, not a spec (all "Active" + leaked header)
   '零件状态', '原产国家', 'country of origin', '是否无铅', '安装类型', '引脚数', '卷盘尺寸',
   '脚间距', '长x宽/尺寸', '高度', '存储温度', '印字代码', '成分', '认证信息',
   '商品目录', '系列', '系列名称', '等级', '特性', '应用领域', '应用', '封装技术',
