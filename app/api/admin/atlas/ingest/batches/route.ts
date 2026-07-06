@@ -52,6 +52,14 @@ import {
   type GlobalUnmapped,
 } from '@/lib/services/triageQueueCompute';
 import { queryTriage } from '@/lib/services/triageQueueQuery';
+import {
+  fetchVerdictMap,
+  fetchSuggestionDetails,
+  scopeKeyForRow,
+  normalizeParamKey,
+  verdictMapKey,
+} from '@/lib/services/atlasParamSuggestionStore';
+import type { AiVerdictFilter } from '@/lib/services/atlasParamSuggestionTypes';
 
 // Force the route to run dynamically on every request (no Next.js auto-caching).
 // We have our own L1+L2 cache layer with explicit invalidation; we don't want
@@ -65,6 +73,7 @@ const VALID_INCLUDE = new Set(['synonyms', 'auto_flagged', 'all']);
 type IncludeMode = 'synonyms' | 'auto_flagged' | 'all';
 const VALID_STATUS_FILTER = new Set(['open', 'accepted', 'undone', 'deferred', 'unmappable', 'all']);
 type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
+const VALID_AI_VERDICT = new Set(['all', 'accept', 'defer', 'none']);
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -98,10 +107,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const minProdsParam = searchParams.get('min_prods');
     const flaggedParam = searchParams.get('flagged');
     const hasNoteParam = searchParams.get('has_note');
+    const aiVerdictRaw = searchParams.get('ai_verdict');
+    const aiVerdict: AiVerdictFilter = aiVerdictRaw && VALID_AI_VERDICT.has(aiVerdictRaw)
+      ? (aiVerdictRaw as AiVerdictFilter)
+      : 'all';
     const usePagedPath =
       pageParam !== null || pageSizeParam !== null || searchParam !== null ||
       mfrParam.length > 0 || familyParam.length > 0 || minProdsParam !== null ||
-      flaggedParam !== null || hasNoteParam !== null;
+      flaggedParam !== null || hasNoteParam !== null || aiVerdictRaw !== null;
 
     if (!VALID_STATUSES.includes(statusParam)) {
       return NextResponse.json({ success: false, error: `Invalid status: ${statusParam}` }, { status: 400 });
@@ -287,7 +300,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // mfr / family accept repeatable params AND comma-separated values.
       const splitCsv = (vals: string[]) =>
         vals.flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
-      const result = queryTriage(classified, {
+
+      // Attach durable AI verdicts (whole-queue map, cap-safe jsonb RPC) so
+      // queryTriage can filter + count by verdict. Spread ONLY generated rows
+      // into fresh objects; the rest pass by reference — NEVER mutate the cached
+      // `classified` array (shared with the manufacturers route).
+      const verdictMap = await fetchVerdictMap();
+      const classifiedWithVerdicts: Classified[] = verdictMap.size === 0
+        ? classified
+        : classified.map((r) => {
+            const v = verdictMap.get(verdictMapKey(scopeKeyForRow(r), normalizeParamKey(r.paramName)));
+            return v ? { ...r, suggestion: { verdict: v } } : r;
+          });
+
+      const result = queryTriage(classifiedWithVerdicts, {
         batchFilter,
         include,
         statusFilter,
@@ -297,10 +323,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         minProds: Math.max(0, parseInt(minProdsParam ?? '0', 10) || 0),
         flaggedOnly: flaggedParam === '1',
         hasNoteOnly: hasNoteParam === '1',
+        aiVerdict,
         sort: 'impact',
         page,
         pageSize,
       });
+
+      // Hydrate the current page's generated rows with full suggestion detail
+      // (bounded query, cap-safe) so the Accept card renders even in a fresh
+      // browser with no localStorage. result.rows are fresh (effective-stripped)
+      // objects, so mutating .suggestion here never touches the cached array.
+      const detailPairs = result.rows
+        .filter((r) => r.suggestion?.verdict)
+        .map((r) => ({ familyId: scopeKeyForRow(r), paramName: normalizeParamKey(r.paramName) }));
+      if (detailPairs.length > 0) {
+        const detailMap = await fetchSuggestionDetails(detailPairs);
+        for (const r of result.rows) {
+          if (!r.suggestion?.verdict) continue;
+          const detail = detailMap.get(verdictMapKey(scopeKeyForRow(r), normalizeParamKey(r.paramName)));
+          if (detail) r.suggestion = { ...r.suggestion, detail };
+        }
+      }
+
       return NextResponse.json({
         success: true,
         batches,
@@ -308,6 +352,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         unmappedParamsGlobal: result.rows,
         triageCounts: result.triageCounts,
         statusCounts: result.statusCounts,
+        verdictCounts: result.verdictCounts,
         totalFiltered: result.totalFiltered,
         page,
         pageSize,

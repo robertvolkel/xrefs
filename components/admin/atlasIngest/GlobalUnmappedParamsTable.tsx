@@ -273,6 +273,10 @@ interface Props {
   serverTotal?: number;
   onLoadMore?: () => void;
   loadingMore?: boolean;
+  /** Called when a bulk Generate run completes, with the batch's verdict tally.
+   *  Parent optimistically bumps the "generated so far" counter + verdict chips
+   *  so the headline number reflects the batch without waiting for a refetch. */
+  onBatchGenerated?: (t: { generated: number; accept: number; defer: number }) => void;
 }
 
 interface RowState {
@@ -578,7 +582,20 @@ function writeFamilySchemaCache(
 const INITIAL_VISIBLE_ROWS = 50;
 const ROW_BATCH_SIZE = 50;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false }: Props) {
+// Max rows a single bulk Generate can fire (headline #2 batch box). Sonnet 4.6
+// is ~$0.005/row, so 500 ≈ $2.50/click — a deliberate ceiling.
+const MAX_BATCH_GENERATE = 500;
+
+// Auto-load (infinite scroll): once the loaded-but-unrendered buffer runs below
+// this, the sentinel advances the render window / fetches the next server page,
+// so the engineer stops clicking "Show more".
+const AUTO_LOAD_MAX_VISIBLE = 600;
+
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated }: Props) {
+  // Stable ref so generateSuggestionsForRows (deps []) can notify the parent
+  // without re-creating the callback.
+  const onBatchGeneratedRef = useRef(onBatchGenerated);
+  useEffect(() => { onBatchGeneratedRef.current = onBatchGenerated; }, [onBatchGenerated]);
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
   // Cancel flag for the bulk AI Generate run. Set true by the Stop button;
@@ -589,6 +606,13 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Mirror of the cancel ref for UI feedback (button label/disabled). Ref
   // alone won't re-render the Stop button when clicked.
   const [generateStopping, setGenerateStopping] = useState(false);
+  // Batch-size control for the bulk Generate (headline #2). Typed number, capped
+  // at MAX_BATCH_GENERATE. Generates the first N un-generated rows in view.
+  const [batchSize, setBatchSize] = useState(100);
+  // Per-batch verdict tally shown after a Generate run completes (headline
+  // feedback: "This batch → 28 Accept · 41 Defer · 31 none"). Cleared when a new
+  // run starts.
+  const [lastBatchTally, setLastBatchTally] = useState<{ accept: number; defer: number; none: number; total: number } | null>(null);
   // Per-paramName hydration guard. Previously a single bool ref ("did we
   // hydrate at all yet?") — that fired once on first mount and short-circuited
   // every subsequent filter change, so switching Status filter from Open to
@@ -717,14 +741,16 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // fresh group, source order preserved. Off by default — preserves the
   // parent panel's intentional ordering.
   const orderedRows = useMemo(() => {
-    // Apply AI verdict filter first — reduces work for the stale partition
-    // and pagination. Filter reads each row's cached suggestion verdict
-    // from `states`. 'none' = rows with no AI suggestion yet (cold rows).
+    // Apply AI verdict filter. The SERVER already filtered by ai_verdict (whole
+    // queue), so this is a thin client-side re-confirm over loaded rows that also
+    // makes optimistic updates immediate: a row just generated this session leaves
+    // the 'none' view without a refetch. Verdict source = this-session state first
+    // (captures the optimistic result), then the server-attached row.suggestion
+    // (avoids a first-render flash before states hydrate). 'none' = not generated.
     let filtered: GlobalUnmappedParam[] = rows;
     if (aiVerdictFilter && aiVerdictFilter !== 'all') {
       filtered = rows.filter((r) => {
-        const st = states[r.paramName];
-        const verdict = st?.suggestion?.suggestion ?? null;
+        const verdict = states[r.paramName]?.suggestion?.suggestion ?? r.suggestion?.verdict ?? null;
         if (aiVerdictFilter === 'none') return verdict === null;
         return verdict === aiVerdictFilter;
       });
@@ -794,6 +820,40 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       setVisibleCount((n) => n + ROW_BATCH_SIZE);
     }
   };
+
+  // ── Infinite scroll: auto-load as the engineer scrolls (kills "Show more" clicking) ──
+  // A bottom sentinel drives two automatic behaviors as the list-end nears the
+  // viewport: reveal already-loaded rows (client-side, capped at
+  // AUTO_LOAD_MAX_VISIBLE so the DOM can't grow without bound), and — when the
+  // render window is exhausted — fetch the next server page. The manual button
+  // below stays as a fallback. Values are read through a ref so the observer
+  // stays stable and never fires on a stale closure.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const autoLoadRef = useRef({
+    renderHidden: 0, serverRemaining: 0, visibleCount: INITIAL_VISIBLE_ROWS,
+    loadingMore: false, pendingShowMore: false, hasLoadMore: false,
+  });
+  autoLoadRef.current = {
+    renderHidden, serverRemaining, visibleCount,
+    loadingMore, pendingShowMore, hasLoadMore: !!onLoadMore,
+  };
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries[0]?.isIntersecting) return;
+      const s = autoLoadRef.current;
+      if (s.pendingShowMore || s.loadingMore) return;
+      if (s.renderHidden > 0 && s.visibleCount < AUTO_LOAD_MAX_VISIBLE) {
+        startShowMore(() => setVisibleCount((n) => n + ROW_BATCH_SIZE));
+      } else if (s.renderHidden === 0 && s.serverRemaining > 0 && s.hasLoadMore && s.visibleCount < AUTO_LOAD_MAX_VISIBLE) {
+        onLoadMore?.();
+        setVisibleCount((n) => n + ROW_BATCH_SIZE);
+      }
+    }, { rootMargin: '900px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, onLoadMore]);
 
   // Notes (notesByParam, onNoteChange) come from the parent panel via props
   // so the filter bar can scope rows by has-note. See AtlasDictTriagePanel.
@@ -872,7 +932,24 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         continue;
       }
       const cachedRecord = readSuggestionCacheRecord(row.paramName, scopeKey);
-      const cached = cachedRecord?.suggestion ?? null;
+      // Server-attached durable suggestion (from atlas_param_suggestions). Used
+      // when localStorage has nothing (fresh browser / different machine) so the
+      // verdict chip + AI card render everywhere the row is loaded — the whole
+      // point of persisting suggestions. localStorage still wins when present
+      // (it may carry newer at-write versions for the staleness signal).
+      const serverDetail: DictSuggestion | null = row.suggestion?.detail
+        ? {
+            translation: row.suggestion.detail.translation,
+            suggestedAttributeId: row.suggestion.detail.suggestedAttributeId,
+            suggestedAttributeName: row.suggestion.detail.suggestedAttributeName,
+            suggestedUnit: row.suggestion.detail.suggestedUnit,
+            confidence: (row.suggestion.detail.confidence as 'high' | 'medium' | 'low') ?? 'low',
+            reasoning: row.suggestion.detail.reasoning,
+            suggestion: row.suggestion.verdict,
+            explanation: row.suggestion.detail.explanation,
+          }
+        : null;
+      const cached = cachedRecord?.suggestion ?? serverDetail;
       const cachedDeep = readInvestigateCache(row.paramName, scopeKey);
       // For already-accepted rows (active OR reverted override), seed the
       // edit fields from the override so the Accepted / Undone status views
@@ -1035,10 +1112,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       return next;
     });
     setSuggestionProgress({ done: 0, total: queue.length });
+    setLastBatchTally(null);
     // Reset cancel flag at the start of every new batch — a previous Stop
     // shouldn't poison the next run.
     generateCancelRef.current = false;
     setGenerateStopping(false);
+
+    // Per-batch verdict tally, accumulated as results land (single-threaded, so
+    // a shared object is safe across the worker continuations).
+    const tally = { accept: 0, defer: 0, none: 0 };
 
     let done = 0;
     let next = 0;
@@ -1074,6 +1156,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           });
           const json = await res.json();
           const suggestion: DictSuggestion | null = json?.success ? json.suggestion : null;
+          if (suggestion?.suggestion === 'accept') tally.accept++;
+          else if (suggestion?.suggestion === 'defer') tally.defer++;
+          else tally.none++;
           // Server returns the current versions on every response. Use them as
           // the at-write versions stored alongside the cache entry — they're
           // the freshest values seen, and the staleness check on next render
@@ -1110,6 +1195,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             },
           }));
         } catch {
+          tally.none++;
           setStates((prev) => ({
             ...prev,
             [key]: { ...(prev[key] ?? {}), suggestion: null, loadingSuggestion: false } as RowState,
@@ -1141,6 +1227,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     generateCancelRef.current = false;
     setGenerateStopping(false);
     setSuggestionProgress(null);
+    // Surface the per-batch verdict tally (headline feedback). Skipped for a
+    // single-row generate (noise) — the row's own chip already shows the result.
+    if (queue.length > 1) setLastBatchTally({ ...tally, total: queue.length });
+    // Bubble the tally up so the parent bumps the "generated so far" counter +
+    // verdict chips optimistically (accept + defer = newly generated).
+    onBatchGeneratedRef.current?.({ generated: tally.accept + tally.defer, accept: tally.accept, defer: tally.defer });
   }, []);
 
   // Panel is always open (no longer collapsible), so hydrate whenever rows load.
@@ -1166,10 +1258,23 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     [orderedRows, states],
   );
 
-  const generateAllPending = useCallback(() => {
-    if (pendingSuggestionRows.length === 0) return;
-    generateSuggestionsForRows(pendingSuggestionRows);
-  }, [pendingSuggestionRows, generateSuggestionsForRows]);
+  // How many the current batch box will actually fire — clamped to [1, 500] and
+  // to what's actually pending.
+  const effectiveBatch = Math.min(
+    Math.max(1, Number.isFinite(batchSize) ? batchSize : 1),
+    MAX_BATCH_GENERATE,
+    pendingSuggestionRows.length,
+  );
+
+  const generateBatch = useCallback(() => {
+    const n = Math.min(
+      Math.max(1, Number.isFinite(batchSize) ? batchSize : 1),
+      MAX_BATCH_GENERATE,
+      pendingSuggestionRows.length,
+    );
+    if (n <= 0) return;
+    generateSuggestionsForRows(pendingSuggestionRows.slice(0, n));
+  }, [batchSize, pendingSuggestionRows, generateSuggestionsForRows]);
 
   const generateOne = useCallback((row: GlobalUnmappedParam) => {
     generateSuggestionsForRows([row]);
@@ -2161,31 +2266,64 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </Typography>
         </Stack>
 
-        {/* Bulk Generate alert — surfaces only when there are uncached rows
-            eligible for suggestion generation. Hidden during in-flight progress
-            and when nothing is pending. Per-row Generate buttons (in the AI
-            translation cell) are available alongside this for one-at-a-time
-            usage. */}
+        {/* Per-batch tally — shown after a Generate run finishes so the engineer
+            sees the hit rate of the batch they just ran. Cleared when a new run
+            starts (or when the filter/view changes and this component resets). */}
+        {!suggestionProgress && lastBatchTally && (
+          <Alert
+            severity="success"
+            icon={<AutoAwesomeIcon fontSize="small" />}
+            sx={{ my: 1, py: 0.5 }}
+            onClose={() => setLastBatchTally(null)}
+          >
+            <Typography variant="body2">
+              Last batch of <strong>{lastBatchTally.total}</strong> →{' '}
+              <strong style={{ color: '#66bb6a' }}>{lastBatchTally.accept} Accept</strong> ·{' '}
+              <strong style={{ color: '#ffa726' }}>{lastBatchTally.defer} Defer</strong>
+              {lastBatchTally.none > 0 && <> · {lastBatchTally.none} no verdict</>}
+            </Typography>
+          </Alert>
+        )}
+
+        {/* Bulk Generate control — batch-size box (headline #2) + Generate. Fires
+            the first N un-generated rows in the current view. Hidden during
+            in-flight progress and when nothing is pending. Per-row Generate
+            buttons (in the AI translation cell) remain for one-at-a-time usage. */}
         {!suggestionProgress && pendingSuggestionRows.length > 0 && !allFlagged && (
           <Alert
             severity="info"
             icon={<AutoAwesomeIcon fontSize="small" />}
             sx={{ my: 1, py: 0.5 }}
             action={
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={generateAllPending}
-                startIcon={<AutoAwesomeIcon sx={{ fontSize: 14 }} />}
-              >
-                Generate {pendingSuggestionRows.length}
-              </Button>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <TextField
+                  type="number"
+                  size="small"
+                  label="How many"
+                  value={batchSize}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setBatchSize(Number.isFinite(n) ? Math.min(Math.max(1, n), MAX_BATCH_GENERATE) : 1);
+                  }}
+                  inputProps={{ min: 1, max: MAX_BATCH_GENERATE, step: 25, style: { width: 64 } }}
+                  sx={{ '& .MuiInputBase-input': { py: 0.5 } }}
+                />
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={generateBatch}
+                  startIcon={<AutoAwesomeIcon sx={{ fontSize: 14 }} />}
+                  sx={{ whiteSpace: 'nowrap' }}
+                >
+                  Generate {effectiveBatch}
+                </Button>
+              </Stack>
             }
           >
             <Typography variant="body2">
-              <strong>{pendingSuggestionRows.length}</strong> row{pendingSuggestionRows.length === 1 ? '' : 's'} need AI suggestions.
-              Each row costs ~$0.005 in API tokens (Sonnet 4.6) — generate only when you&apos;re ready to triage.
+              <strong>{pendingSuggestionRows.length.toLocaleString()}</strong> row{pendingSuggestionRows.length === 1 ? '' : 's'} in view need AI suggestions.
+              Choose a batch size (max {MAX_BATCH_GENERATE}) — each row costs ~$0.005 (Sonnet 4.6). Already-generated rows are free (served from the database).
             </Typography>
           </Alert>
         )}
@@ -3135,6 +3273,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             up front to avoid freezing the browser on 400+ row mount;
             subsequent batches are opt-in. */}
         {hasMore && (
+          <>
+          {/* Infinite-scroll sentinel — as it nears the viewport the table
+              auto-reveals loaded rows and prefetches the next server page, so
+              the engineer no longer clicks "Show more" to work through 25k. */}
+          <Box ref={sentinelRef} aria-hidden sx={{ height: 1 }} />
           <Stack direction="column" spacing={0.5} alignItems="center" sx={{ mt: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
             <Stack direction="row" spacing={2} alignItems="center" justifyContent="center">
               <Typography variant="caption" color="text.secondary">
@@ -3173,6 +3316,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </Typography>
             )}
           </Stack>
+          </>
         )}
       </Box>
 

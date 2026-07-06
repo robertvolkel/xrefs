@@ -46,6 +46,21 @@ const SHOW_TRIAGE_REGEN = false;
 const DEFAULT_PAGE_SIZE = 100;
 const AI_FILTER_PAGE_SIZE = 500;
 
+// Remember the last view (mode / status / AI-verdict) across visits so returning
+// to Triage drops the engineer back where they were (e.g. their Accept pile)
+// instead of the default "synonyms / open / first 50".
+const VIEW_LS_KEY = 'atlas-triage-view-v1';
+type SavedView = { mode?: TriageMode; statusFilter?: StatusFilter; aiVerdict?: TriageFilters['aiVerdict'] };
+function readSavedView(): SavedView {
+  if (typeof window === 'undefined') return {};
+  try { return JSON.parse(window.localStorage.getItem(VIEW_LS_KEY) || '{}') as SavedView; } catch { return {}; }
+}
+
+// One-time migration of browser-only AI suggestions into the durable DB so the
+// pre-launch pile counts toward "generated so far" and isn't re-charged.
+const SUGGEST_LS_PREFIX = 'atlas-ingest-ai-suggest-v7:';
+const BACKFILL_FLAG = 'atlas-triage-suggest-backfilled-v1';
+
 export default function AtlasDictTriagePanel() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -76,9 +91,18 @@ export default function AtlasDictTriagePanel() {
   // back to the URL (intentional — the URL is a starting point, not a
   // session-state mirror).
   const initialMfrSlug = searchParams.get('mfr');
-  const [filters, setFilters] = useState<TriageFilters>(() =>
-    initialMfrSlug ? { ...EMPTY_FILTERS, mfrSlugs: [initialMfrSlug] } : EMPTY_FILTERS,
-  );
+  const [filters, setFilters] = useState<TriageFilters>(() => {
+    const saved = readSavedView();
+    const base: TriageFilters = { ...EMPTY_FILTERS, aiVerdict: saved.aiVerdict ?? EMPTY_FILTERS.aiVerdict };
+    return initialMfrSlug ? { ...base, mfrSlugs: [initialMfrSlug] } : base;
+  });
+  // Optimistic delta added to the server's verdictCounts so the "generated so
+  // far" counter + chips move the instant a batch finishes (before the next
+  // fetch reconciles). Reset on every fetch (the server count is then fresh).
+  const [verdictDelta, setVerdictDelta] = useState({ generated: 0, accept: 0, defer: 0 });
+  const handleBatchGenerated = useCallback((t: { generated: number; accept: number; defer: number }) => {
+    setVerdictDelta((d) => ({ generated: d.generated + t.generated, accept: d.accept + t.accept, defer: d.defer + t.defer }));
+  }, []);
   // Notes per paramName — owned at the panel level so the filter bar can
   // scope rows by has-note (the rows-needing-followup workflow). Single
   // fetch on mount; subsequent edits reconcile via onNoteChange.
@@ -115,11 +139,71 @@ export default function AtlasDictTriagePanel() {
   }, []);
   // View mode — server-side. Changing the mode triggers a refetch since the
   // queue's classification (synonym vs auto-flagged) is computed in the route.
-  const [mode, setMode] = useState<TriageMode>('synonyms');
+  // Seeded from the last-visited view (remember-view).
+  const [mode, setMode] = useState<TriageMode>(() => readSavedView().mode ?? 'synonyms');
   // Status filter — server-side. 'open' (default) shows un-accepted rows;
   // 'accepted' / 'undone' surface the audit trail of past Accepts; 'all'
   // shows the union (useful when an engineer wants the full picture).
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => readSavedView().statusFilter ?? 'open');
+
+  // Persist the view (mode / status / AI-verdict) so the next visit restores it.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(VIEW_LS_KEY, JSON.stringify({ mode, statusFilter, aiVerdict: filters.aiVerdict }));
+    } catch { /* storage disabled — non-fatal */ }
+  }, [mode, statusFilter, filters.aiVerdict]);
+
+  // One-time browser→DB backfill of AI suggestions — protects the pre-launch
+  // pile (currently localStorage-only) and avoids re-charging to regenerate.
+  // Runs once per browser (guarded flag); chunked; non-fatal on error.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.localStorage.getItem(BACKFILL_FLAG)) return;
+    const items: Array<{ familyId: string; paramName: string; suggestion: unknown; cardVersion: string | null; schemaVersion: string | null }> = [];
+    try {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (!key || !key.startsWith(SUGGEST_LS_PREFIX)) continue;
+        const rest = key.slice(SUGGEST_LS_PREFIX.length);
+        const sep = rest.indexOf('::');
+        if (sep < 0) continue;
+        const raw = window.localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        const suggestion = parsed?.suggestion;
+        if (!suggestion || (suggestion.suggestion !== 'accept' && suggestion.suggestion !== 'defer')) continue;
+        items.push({
+          familyId: rest.slice(0, sep),
+          paramName: rest.slice(sep + 2),
+          suggestion,
+          cardVersion: parsed.cardVersionAtWrite ?? null,
+          schemaVersion: parsed.schemaVersionAtWrite ?? null,
+        });
+      }
+    } catch { /* ignore parse/storage errors */ }
+    if (items.length === 0) {
+      try { window.localStorage.setItem(BACKFILL_FLAG, '1'); } catch { /* */ }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        for (let i = 0; i < items.length; i += 500) {
+          if (cancelled) return;
+          await fetch('/api/admin/atlas/param-suggestions/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: items.slice(i, i + 500) }),
+          });
+        }
+        window.localStorage.setItem(BACKFILL_FLAG, '1');
+        if (!cancelled) refresh(); // pull fresh counts so the backfilled pile shows
+      } catch { /* leave flag unset to retry next mount */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mode switches reset filters explicitly. Without this, filters set in one
   // mode (e.g. MFR=Delta in Open Synonyms) silently strip every row in the
@@ -162,6 +246,9 @@ export default function AtlasDictTriagePanel() {
     if (filters.minProductCount > 0) params.set('min_prods', String(filters.minProductCount));
     if (filters.hasNote) params.set('has_note', '1');
     if (filters.flaggedOnly) params.set('flagged', '1');
+    // Server-side AI verdict filter (durable suggestions). 'accept' pulls the
+    // whole Accept pile paginated from the server — no load-everything dance.
+    if (filters.aiVerdict && filters.aiVerdict !== 'all') params.set('ai_verdict', filters.aiVerdict);
     return params.toString();
   }, [batchFilter, mode, statusFilter, filters, pageSize]);
 
@@ -180,6 +267,9 @@ export default function AtlasDictTriagePanel() {
       setData(json);
       setAccumRows((prev) => (append ? [...prev, ...rows] : rows));
       setPage(pageNum);
+      // Server verdictCounts are now fresh — clear the optimistic delta so we
+      // don't double-count the batch that's already reflected in the response.
+      setVerdictDelta({ generated: 0, accept: 0, defer: 0 });
     } catch (err) {
       if (!append) setError(err instanceof Error ? err.message : 'Failed to load triage queue');
     } finally {
@@ -560,6 +650,20 @@ export default function AtlasDictTriagePanel() {
   const unmappableCount = sc?.unmappable ?? 0;
   const mappedPct = grandTotal > 0 ? Math.round((mappedCount / grandTotal) * 100) : 0;
 
+  // ── Durable AI-suggestion counts (+ optimistic delta) ──
+  // generatedSoFar drives the "generated so far" counter (headline #1); the
+  // per-verdict counts feed the filter-bar chips (Accept = "Accepts waiting").
+  const vc = data?.verdictCounts;
+  const generatedSoFar = (vc?.generatedTotal ?? 0) + verdictDelta.generated;
+  const effectiveVerdictCounts = vc
+    ? {
+        generatedTotal: vc.generatedTotal + verdictDelta.generated,
+        accept: vc.accept + verdictDelta.accept,
+        defer: vc.defer + verdictDelta.defer,
+        none: Math.max(0, vc.none - verdictDelta.generated),
+      }
+    : undefined;
+
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
@@ -708,7 +812,16 @@ export default function AtlasDictTriagePanel() {
             statusCounts={data.statusCounts}
             noteCount={Object.keys(notesByParam).length}
             flaggedCount={flaggedCount}
+            verdictCounts={effectiveVerdictCounts}
           />
+          {/* "Generated so far" counter (headline #1) — lives here, next to the
+              Generate control at the top of the table, NOT in the mapped/left/
+              total header row (avoids crowding). Raw cumulative count so it only
+              climbs; the Accept chip above carries "Accepts waiting". */}
+          <Typography variant="body2" sx={{ mt: 1, mb: 0.5, color: 'text.secondary' }}>
+            <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>{generatedSoFar.toLocaleString()}</Box>
+            {' '}params generated so far
+          </Typography>
           {viewTotal === 0 || filteredRows.length === 0 ? (
             // The current view (server-filtered by mode/status/axes) is empty,
             // OR the loaded page emptied out client-side (e.g. optimistic
@@ -795,6 +908,7 @@ export default function AtlasDictTriagePanel() {
               serverTotal={viewTotal}
               onLoadMore={loadMore}
               loadingMore={loadingMore}
+              onBatchGenerated={handleBatchGenerated}
             />
           )}
         </>

@@ -30,6 +30,7 @@ import {
   type Classified,
   type GlobalUnmapped,
 } from '@/lib/services/triageQueueCompute';
+import type { AiVerdictFilter, VerdictCounts } from '@/lib/services/atlasParamSuggestionTypes';
 
 export type IncludeMode = 'synonyms' | 'auto_flagged' | 'all';
 export type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
@@ -44,6 +45,10 @@ export type TriageQueryParams = {
   minProds: number;
   flaggedOnly: boolean;
   hasNoteOnly: boolean;
+  /** Durable AI verdict filter (Decision: server-side Accept pile). 'all' = no
+   *  filter; 'accept'/'defer' keep rows with that verdict; 'none' keeps rows not
+   *  yet generated (no attached suggestion). */
+  aiVerdict: AiVerdictFilter;
   sort: 'impact';
   page: number;            // 1-based
   pageSize: number;        // 0 = count-only (rows: [])
@@ -57,9 +62,33 @@ export type TriageQueryResult = {
   totalFiltered: number;    // rows matching every filter, BEFORE slice
   triageCounts: TriageCounts;
   statusCounts: StatusCounts;
+  verdictCounts: VerdictCounts;
   mfrOptions: Array<{ slug: string; name: string }>;
   familyOptions: string[];
 };
+
+/** Verdict counts (Decision: durable suggestions). generatedTotal is a stable
+ *  cumulative count over ALL working rows with a verdict (any status/mode);
+ *  accept/defer/none are over the OPEN synonym queue — the population Generate
+ *  targets — so `accept` reads as "Accepts waiting" and `none` as "still to
+ *  generate". */
+function computeVerdictCounts(working: Classified[], openSynonyms: Classified[]): VerdictCounts {
+  let accept = 0;
+  let defer = 0;
+  let none = 0;
+  for (const r of openSynonyms) {
+    const v = r.suggestion?.verdict;
+    if (v === 'accept') accept++;
+    else if (v === 'defer') defer++;
+    else none++;
+  }
+  return {
+    generatedTotal: working.filter((r) => !!r.suggestion).length,
+    accept,
+    defer,
+    none,
+  };
+}
 
 function computeTriageCounts(openQueue: Classified[]): TriageCounts {
   return {
@@ -89,8 +118,16 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
     : classified;
 
   // ── Counts (over the working — batch-scoped or full — set) ──
-  const triageCounts = computeTriageCounts(workingClassified.filter(isInOpenQueue));
+  const openQueue = workingClassified.filter(isInOpenQueue);
+  const triageCounts = computeTriageCounts(openQueue);
   const statusCounts = computeStatusCounts(workingClassified);
+  // Verdict counts: generatedTotal over ALL working rows; accept/defer/none over
+  // the OPEN synonym queue (what Generate targets). Independent of the active
+  // ai_verdict filter so the chips always show the full picture.
+  const verdictCounts = computeVerdictCounts(
+    workingClassified,
+    openQueue.filter((r) => r.effective === 'synonym'),
+  );
 
   // ── Option lists: built AFTER batchFilter, BEFORE per-axis filters so the
   //    dropdowns stay stable as the user filters (matches the old client
@@ -153,6 +190,15 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
   if (p.flaggedOnly) visible = visible.filter((r) => r.isFlagged === true);
   if (p.hasNoteOnly) visible = visible.filter((r) => r.hasNote === true);
 
+  // ── AI verdict filter (server-side Accept pile) ──
+  //   accept/defer keep rows with that verdict; 'none' keeps not-yet-generated
+  //   rows (no attached suggestion). 'all' is a no-op.
+  if (p.aiVerdict === 'accept' || p.aiVerdict === 'defer') {
+    visible = visible.filter((r) => r.suggestion?.verdict === p.aiVerdict);
+  } else if (p.aiVerdict === 'none') {
+    visible = visible.filter((r) => !r.suggestion);
+  }
+
   // ── Sort ──
   //   - statusFilter='accepted': acceptedOverride.createdAt desc (most-recently-
   //     accepted at top — engineer reviewing recent work wants a journal,
@@ -196,5 +242,5 @@ export function queryTriage(classified: Classified[], p: TriageQueryParams): Tri
     return rest;
   });
 
-  return { rows, totalFiltered, triageCounts, statusCounts, mfrOptions, familyOptions };
+  return { rows, totalFiltered, triageCounts, statusCounts, verdictCounts, mfrOptions, familyOptions };
 }

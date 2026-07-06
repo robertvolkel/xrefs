@@ -29,6 +29,7 @@ import {
 import { getLogicTable } from '@/lib/logicTables';
 import { registerTriageCompute } from '@/lib/services/triageQueueCache';
 import { computeSimilarSiblings, type SiblingRef } from '@/lib/services/triageClustering';
+import type { RowSuggestion } from '@/lib/services/atlasParamSuggestionTypes';
 
 /** Slugify a manufacturer display name as a fallback when we can't resolve the
  *  canonical slug from atlas_manufacturers (e.g. row never registered there). */
@@ -121,6 +122,10 @@ export type GlobalUnmapped = {
   orphaned?: boolean;
   /** Set in computeMatchingImpact() after override annotation. */
   matchingImpact?: MatchingImpact;
+  /** Durable AI verdict, attached in the batches route from
+   *  atlas_param_suggestions (whole-queue verdict map + page-scoped detail).
+   *  Not produced by computeTriageAggregation itself. */
+  suggestion?: RowSuggestion;
 };
 export type Classified = GlobalUnmapped & { effective: 'synonym' | 'flagged' };
 export type OverrideMeta = {

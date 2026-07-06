@@ -35,12 +35,13 @@ import {
 } from '@/lib/services/atlasSuggestCache';
 import { computeSchemaVersion } from '@/lib/services/atlasSchemaVersion';
 import { createServiceClient } from '@/lib/supabase/service';
+import { getParamSuggestion, upsertParamSuggestion } from '@/lib/services/atlasParamSuggestionStore';
 
 
 /** POST /api/admin/atlas/dictionaries/suggest */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const { error: authError } = await requireAdmin();
+    const { user, error: authError } = await requireAdmin();
     if (authError) return authError;
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -94,6 +95,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({
           success: true,
           suggestion: cached.value,
+          schemaIds,
+          cached: true,
+          currentCardVersion,
+          currentSchemaVersion,
+        });
+      }
+    }
+
+    // Durable DB layer — if the in-memory cache missed (e.g. a redeploy cleared
+    // it) but this param was generated before, serve the persisted verdict
+    // instead of re-charging Sonnet. Warm the in-memory cache on the way out.
+    if (!force) {
+      const persisted = await getParamSuggestion(familyId, paramName);
+      if (persisted) {
+        setSuggestCacheEntry(cacheKey, persisted);
+        return NextResponse.json({
+          success: true,
+          suggestion: persisted,
           schemaIds,
           cached: true,
           currentCardVersion,
@@ -299,6 +318,18 @@ Respond in JSON only, no markdown:
     };
 
     setSuggestCacheEntry(cacheKey, suggestion);
+
+    // Persist durably so the verdict survives redeploys / browser changes and
+    // the queue can count + filter "Accept" server-side. Awaited but non-fatal
+    // (the store swallows its own errors); generated_by is best-effort.
+    await upsertParamSuggestion({
+      familyId,
+      rawParamName: paramName,
+      suggestion,
+      cardVersion: currentCardVersion,
+      schemaVersion: currentSchemaVersion,
+      generatedBy: user?.id ?? null,
+    });
 
     // Fire-and-forget context-flag write — drives the Domain Cards
     // panel's per-family health indicator. Only writes when the model

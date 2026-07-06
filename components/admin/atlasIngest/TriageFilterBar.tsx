@@ -84,9 +84,14 @@ interface Props {
   /** Total number of params the engineer has bookmark-flagged. Surfaced as
    *  a chip badge on the "Flagged" toggle. */
   flaggedCount?: number;
+  /** Server-computed durable AI verdict counts over the open synonym queue.
+   *  `accept` is surfaced on the Accept chip ("Accepts waiting"), `defer` on
+   *  Defer, `none` on None — so the chips are the single source for those
+   *  numbers (no separate banner). */
+  verdictCounts?: { generatedTotal: number; accept: number; defer: number; none: number };
 }
 
-export default function TriageFilterBar({ mfrOptions, familyOptions, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount }: Props) {
+export default function TriageFilterBar({ mfrOptions, familyOptions, filters, onChange, filteredCount, totalCount, mode, onModeChange, triageCounts, status, onStatusChange, statusCounts, noteCount, flaggedCount, verdictCounts }: Props) {
   // mfrOptions / familyOptions are now server-provided (full working set), so
   // the dropdowns stay complete + stable even though the client holds one page.
 
@@ -284,7 +289,7 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             (never generated). The actual filtering happens inside
             GlobalUnmappedParamsTable's orderedRows useMemo where the
             per-row suggestion state lives. */}
-        <Tooltip title="Filter by AI verdict: Accept (Sonnet proposes a clean mapping), Defer (Sonnet wants engineer judgment), None (no AI suggestion yet — click Generate). Applies to LOADED rows — the page size is raised while an AI filter is active so it usually covers the whole filtered view; click Show more to extend.">
+        <Tooltip title="Filter by AI verdict across the WHOLE queue (server-side): Accept (Sonnet proposes a clean mapping — this is your 'Accepts waiting' pile), Defer (Sonnet wants engineer judgment), None (not generated yet — click Generate). The counts are whole-queue, not just loaded rows.">
           <ToggleButtonGroup
             size="small"
             value={filters.aiVerdict}
@@ -298,12 +303,21 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             </ToggleButton>
             <ToggleButton value="accept" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
               <Box component="span" sx={{ fontSize: '0.75rem', color: filters.aiVerdict === 'accept' ? 'success.main' : undefined }}>Accept</Box>
+              {verdictCounts && (
+                <Chip size="small" label={verdictCounts.accept.toLocaleString()} sx={{ ml: 0.5, height: 18, fontSize: '0.65rem', bgcolor: 'success.dark', color: 'success.contrastText' }} />
+              )}
             </ToggleButton>
             <ToggleButton value="defer" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
               <Box component="span" sx={{ fontSize: '0.75rem', color: filters.aiVerdict === 'defer' ? 'warning.main' : undefined }}>Defer</Box>
+              {verdictCounts && (
+                <Chip size="small" label={verdictCounts.defer.toLocaleString()} sx={{ ml: 0.5, height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
+              )}
             </ToggleButton>
             <ToggleButton value="none" sx={{ whiteSpace: 'nowrap', px: 1, fontSize: '0.7rem' }}>
               <Box component="span" sx={{ fontSize: '0.75rem' }}>None</Box>
+              {verdictCounts && (
+                <Chip size="small" label={verdictCounts.none.toLocaleString()} sx={{ ml: 0.5, height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
+              )}
             </ToggleButton>
           </ToggleButtonGroup>
         </Tooltip>

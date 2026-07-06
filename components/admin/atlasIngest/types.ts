@@ -1,6 +1,10 @@
 // Shared client-side types for the Atlas Ingest admin UI.
 // Mirror lib/services/atlasIngestService.ts but importable from client components.
 
+import type { RowSuggestion, VerdictCounts, AiVerdictFilter } from '@/lib/services/atlasParamSuggestionTypes';
+
+export type { RowSuggestion, VerdictCounts, AiVerdictFilter };
+
 export type IngestRisk = 'clean' | 'review' | 'attention';
 export type IngestStatus = 'pending' | 'applied' | 'reverted' | 'expired';
 
@@ -275,6 +279,11 @@ export type GlobalUnmappedParam = {
     canonical: string | null;
     isEstimate: boolean;
   };
+  /** Durable AI verdict attached server-side from atlas_param_suggestions.
+   *  `verdict` is present on every generated row (from the whole-queue verdict
+   *  map); `detail` is hydrated only for the current page's rows so the Accept
+   *  card + Accept action render even in a fresh browser with no localStorage. */
+  suggestion?: RowSuggestion;
 };
 
 export type StatusFilter = 'open' | 'accepted' | 'undone' | 'deferred' | 'unmappable' | 'all';
@@ -329,6 +338,10 @@ export type BatchListResponse = {
    *  (reverted) override. Computed across all classified rows regardless of
    *  the include filter (mode). */
   statusCounts?: { open: number; accepted: number; undone: number; deferred: number; unmappable: number };
+  /** Durable AI-suggestion counts (see VerdictCounts). `generatedTotal` powers
+   *  the "generated so far" progress counter; `accept` is the "Accepts waiting"
+   *  chip. Computed server-side over the working (batch-scoped) set. */
+  verdictCounts?: VerdictCounts;
   /** Server-side pagination metadata (Decision #231). Present only on the
    *  new paged path (when the client sends `page`/filters). On the legacy
    *  full-set path these are absent and `unmappedParamsGlobal` is the entire

@@ -29,6 +29,7 @@ const BASE: TriageQueryParams = {
   minProds: 0,
   flaggedOnly: false,
   hasNoteOnly: false,
+  aiVerdict: 'all',
   sort: 'impact',
   page: 1,
   pageSize: 50,
@@ -199,6 +200,38 @@ describe('queryTriage', () => {
     const rows = [cls({ paramName: 'a' })];
     const res = queryTriage(rows, BASE);
     expect('effective' in res.rows[0]).toBe(false);
+  });
+
+  describe('ai verdict filter + verdictCounts', () => {
+    // Open synonym rows carrying attached verdicts (as the route attaches them).
+    const mkRows = () => [
+      cls({ paramName: 'acc1', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'acc2', suggestion: { verdict: 'accept' } }),
+      cls({ paramName: 'def1', suggestion: { verdict: 'defer' } }),
+      cls({ paramName: 'raw1' }), // not generated
+    ];
+
+    it('ai_verdict=accept keeps only accept-verdict rows', () => {
+      const res = queryTriage(mkRows(), { ...BASE, statusFilter: 'open', aiVerdict: 'accept' });
+      expect(res.rows.map((r) => r.paramName).sort()).toEqual(['acc1', 'acc2']);
+    });
+
+    it('ai_verdict=defer keeps only defer-verdict rows', () => {
+      const res = queryTriage(mkRows(), { ...BASE, statusFilter: 'open', aiVerdict: 'defer' });
+      expect(res.rows.map((r) => r.paramName)).toEqual(['def1']);
+    });
+
+    it('ai_verdict=none keeps only not-yet-generated rows', () => {
+      const res = queryTriage(mkRows(), { ...BASE, statusFilter: 'open', aiVerdict: 'none' });
+      expect(res.rows.map((r) => r.paramName)).toEqual(['raw1']);
+    });
+
+    it('verdictCounts reports generatedTotal + accept/defer/none independent of the active filter', () => {
+      const res = queryTriage(mkRows(), { ...BASE, statusFilter: 'open', aiVerdict: 'accept' });
+      // generatedTotal counts every row with a verdict (any status); accept/defer/
+      // none are over the open synonym queue and DON'T shrink under the filter.
+      expect(res.verdictCounts).toEqual({ generatedTotal: 3, accept: 2, defer: 1, none: 1 });
+    });
   });
 });
 
