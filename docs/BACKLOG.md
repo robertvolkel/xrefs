@@ -4,6 +4,18 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+## Durable Triage suggestions — follow-ups (Decision #265) (P2/P3)
+
+Branch `feat/triage-durable-suggestions` (commit 9bc5027) — durable AI Triage verdicts + batch box + "generated so far" counter + server-side Accept pile. Not merged; needs `scripts/supabase-atlas-param-suggestions-schema.sql` applied once in Supabase before it works live, and a hands-on click-through (built + 2846 tests + build pass, but live behavior unverified).
+
+- **(P2) Verdict-map cache invalidation is dev-HMR-fragile.** `atlasParamSuggestionStore.fetchVerdictMap` uses a module-scope 30s cache invalidated on every `/suggest` upsert. In Next.js dev, HMR can fragment module instances so the batches route's copy may not see the suggest route's `invalidateVerdictMapCache()` (same pattern as the [[cache-l2-source-of-truth]] lesson). The 30s TTL + client optimistic delta are the backstops; production shares the module so it's fine. If it bites, move to an L2 (Supabase) invalidation signal like the coverage/growth caches.
+- **(P3) Same-computer counter starts from the backfill, not a true global.** `generatedTotal` counts DB verdict rows attached to current queue rows; a brand-new browser sees 0 until the one-time backfill POSTs its localStorage pile. Acceptable (backfill runs on mount), but a first render can flash a low number before the backfill's `refresh()` lands.
+- **(P3) Batch-size number input is a controlled field** — clearing it snaps to 1 (can't blank-then-retype from scratch; use select-all or the ±25 spinner). Minor; fix with a string-backed intermediate state if it annoys.
+- **(P3) Under an Accept/Defer view, just-generated rows only *leave* on the next fetch** if the server verdict map was momentarily stale; the client re-confirm (`states ?? row.suggestion.verdict`) keeps display correct, but the server-side pile membership lags ≤30s. Refresh reconciles.
+- **(P3) `page_size` still bumps to 500 under an AI-verdict filter** ([AtlasDictTriagePanel](../components/admin/AtlasDictTriagePanel.tsx) `AI_FILTER_PAGE_SIZE`). With server-side filtering + auto-load this matters less; could drop back to 100 for a lighter first paint.
+
+---
+
 ## ~~Chinese-origin chat filter is partial — misses Chinese makers not tagged Atlas (P2)~~ — RESOLVED June 30, 2026 (Decision #263)
 
 Fixed and merged to main. `searchParts` now resolves `PartSummary.mfrOrigin` per unique MFR (mirrors `getRecommendations`); a deterministic client-side intercept (`detectSearchOriginRefinement` + `dispatchSearchOriginFilter`) applies the origin filter without depending on the model (which refused to call the tool over its "never assert MFR origin" discipline); the filter predicate mirrors the card's 🇨🇳 flag (`mfrOrigin === 'atlas' || dataSource === 'atlas'`); and `getRecommendations` was aligned to force `'atlas'` on Atlas-sourced candidates so the flag agrees across the search + recs panels. See Decision #263 for the full trace.
