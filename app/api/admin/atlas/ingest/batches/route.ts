@@ -55,6 +55,7 @@ import { queryTriage } from '@/lib/services/triageQueueQuery';
 import {
   fetchVerdictMap,
   fetchSuggestionDetails,
+  fetchGeneratedCount,
   scopeKeyForRow,
   normalizeParamKey,
   verdictMapKey,
@@ -302,10 +303,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         vals.flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
 
       // Attach durable AI verdicts (whole-queue map, cap-safe jsonb RPC) so
-      // queryTriage can filter + count by verdict. Spread ONLY generated rows
-      // into fresh objects; the rest pass by reference — NEVER mutate the cached
+      // queryTriage can filter + count by verdict. Alongside it, fetch the
+      // global generated count (cap-safe head-count) — the authoritative
+      // "generated so far" number (whole table, all scopes, monotonic), which
+      // overrides queryTriage's batch-scoped working-set count below. Both in
+      // parallel to keep the GET latency flat. Spread ONLY generated rows into
+      // fresh objects; the rest pass by reference — NEVER mutate the cached
       // `classified` array (shared with the manufacturers route).
-      const verdictMap = await fetchVerdictMap();
+      const [verdictMap, generatedCount] = await Promise.all([
+        fetchVerdictMap(),
+        fetchGeneratedCount(),
+      ]);
       const classifiedWithVerdicts: Classified[] = verdictMap.size === 0
         ? classified
         : classified.map((r) => {
@@ -352,7 +360,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         unmappedParamsGlobal: result.rows,
         triageCounts: result.triageCounts,
         statusCounts: result.statusCounts,
-        verdictCounts: result.verdictCounts,
+        // generatedTotal: prefer the global head-count (true cumulative "generated
+        // so far", not batch-scoped); fall back to queryTriage's working-set count
+        // if the count query failed.
+        verdictCounts: generatedCount != null
+          ? { ...result.verdictCounts, generatedTotal: generatedCount }
+          : result.verdictCounts,
         totalFiltered: result.totalFiltered,
         page,
         pageSize,

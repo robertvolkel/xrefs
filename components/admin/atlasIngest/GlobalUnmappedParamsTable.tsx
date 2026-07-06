@@ -612,7 +612,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Per-batch verdict tally shown after a Generate run completes (headline
   // feedback: "This batch → 28 Accept · 41 Defer · 31 none"). Cleared when a new
   // run starts.
-  const [lastBatchTally, setLastBatchTally] = useState<{ accept: number; defer: number; none: number; total: number } | null>(null);
+  const [lastBatchTally, setLastBatchTally] = useState<{ accept: number; defer: number; failed: number; total: number } | null>(null);
   // Per-paramName hydration guard. Previously a single bool ref ("did we
   // hydrate at all yet?") — that fired once on first mount and short-circuited
   // every subsequent filter change, so switching Status filter from Open to
@@ -1118,9 +1118,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     generateCancelRef.current = false;
     setGenerateStopping(false);
 
-    // Per-batch verdict tally, accumulated as results land (single-threaded, so
-    // a shared object is safe across the worker continuations).
-    const tally = { accept: 0, defer: 0, none: 0 };
+    // Per-batch tally, accumulated as results land (single-threaded, so a shared
+    // object is safe across the worker continuations). `failed` = the call
+    // errored / returned no usable verdict — nothing was persisted, so it did
+    // NOT count as generated and should be retried (distinct from Accept/Defer,
+    // which always persist). /suggest normalizes every success to accept|defer.
+    const tally = { accept: 0, defer: 0, failed: 0 };
 
     let done = 0;
     let next = 0;
@@ -1158,7 +1161,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           const suggestion: DictSuggestion | null = json?.success ? json.suggestion : null;
           if (suggestion?.suggestion === 'accept') tally.accept++;
           else if (suggestion?.suggestion === 'defer') tally.defer++;
-          else tally.none++;
+          else tally.failed++; // no usable verdict returned — nothing persisted
           // Server returns the current versions on every response. Use them as
           // the at-write versions stored alongside the cache entry — they're
           // the freshest values seen, and the staleness check on next render
@@ -1195,7 +1198,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
             },
           }));
         } catch {
-          tally.none++;
+          tally.failed++; // network/parse error — nothing persisted, retry later
           setStates((prev) => ({
             ...prev,
             [key]: { ...(prev[key] ?? {}), suggestion: null, loadingSuggestion: false } as RowState,
@@ -1231,7 +1234,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // single-row generate (noise) — the row's own chip already shows the result.
     if (queue.length > 1) setLastBatchTally({ ...tally, total: queue.length });
     // Bubble the tally up so the parent bumps the "generated so far" counter +
-    // verdict chips optimistically (accept + defer = newly generated).
+    // verdict chips optimistically. Only accept + defer persisted, so only they
+    // count as generated (failed calls persist nothing and stay in the queue).
     onBatchGeneratedRef.current?.({ generated: tally.accept + tally.defer, accept: tally.accept, defer: tally.defer });
   }, []);
 
@@ -2280,7 +2284,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               Last batch of <strong>{lastBatchTally.total}</strong> →{' '}
               <strong style={{ color: '#66bb6a' }}>{lastBatchTally.accept} Accept</strong> ·{' '}
               <strong style={{ color: '#ffa726' }}>{lastBatchTally.defer} Defer</strong>
-              {lastBatchTally.none > 0 && <> · {lastBatchTally.none} no verdict</>}
+              {lastBatchTally.failed > 0 && (
+                <> · <strong style={{ color: '#ef5350' }}>{lastBatchTally.failed} couldn&apos;t generate</strong> (try again)</>
+              )}
             </Typography>
           </Alert>
         )}

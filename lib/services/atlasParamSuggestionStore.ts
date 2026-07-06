@@ -220,36 +220,82 @@ export async function fetchVerdictMap(force = false): Promise<Map<string, Verdic
  * Full suggestion detail for a bounded set of (scope, param) pairs — used to
  * hydrate the CURRENT page's rows (≤ pageSize) for display + the Accept action,
  * so a fresh browser with no localStorage still renders the Accept card.
- * Queries by param_name IN (…) (bounded by the page) then filters to the exact
- * (family, param) pairs in JS — cap-safe for realistic page sizes.
+ *
+ * Queries are keyed on (family_id, param_name) — NOT param_name alone — and
+ * GROUPED BY family so each query is constrained to a single scope. That keeps
+ * every query's result bounded by the page (each PK matches ≤ 1 row), which is
+ * the whole point: a bare `.in('param_name', …)` would fan out across every
+ * family that shares a normalized param name (e.g. '电压' / 'type' appear under
+ * dozens of families), and at scale that cross-product can exceed the PostgREST
+ * 1000-row cap and silently drop some page rows' detail — exactly on the fresh
+ * browser this function exists to serve. Concurrency is capped (Supabase pool
+ * safety); a page realistically spans few families so this is a handful of
+ * fast indexed lookups.
  */
 export async function fetchSuggestionDetails(
   pairs: Array<{ familyId: string; paramName: string }>,
 ): Promise<Map<string, StoredSuggestion>> {
   const result = new Map<string, StoredSuggestion>();
   if (pairs.length === 0) return result;
-  const names = Array.from(new Set(pairs.map((p) => p.paramName)));
+  // Group the wanted param_names by their scope key so each query filters on
+  // family_id AND param_name (never param_name alone).
+  const byFamily = new Map<string, Set<string>>();
+  for (const p of pairs) {
+    const set = byFamily.get(p.familyId) ?? new Set<string>();
+    set.add(p.paramName);
+    byFamily.set(p.familyId, set);
+  }
   const wanted = new Set(pairs.map((p) => verdictMapKey(p.familyId, p.paramName)));
   try {
     const supabase = createServiceClient();
-    // Chunk the IN(...) list so a large Accept page (up to page size) can't blow
-    // the PostgREST URL-length limit. 150 CJK-ish names per query is well under.
-    const CHUNK = 150;
-    for (let i = 0; i < names.length; i += CHUNK) {
-      const slice = names.slice(i, i + CHUNK);
-      const { data, error } = await supabase
-        .from('atlas_param_suggestions')
-        .select('*')
-        .in('param_name', slice);
-      if (error || !Array.isArray(data)) continue;
-      for (const row of data as SuggestionRow[]) {
-        const key = verdictMapKey(row.family_id ?? '', row.param_name);
-        if (wanted.has(key)) result.set(key, rowToStored(row));
-      }
+    const groups = Array.from(byFamily.entries());
+    const CONCURRENCY = 5;   // cap parallel queries — Supabase pool safety
+    const NAME_CHUNK = 150;  // URL-length guard for one family's param_name list
+    for (let g = 0; g < groups.length; g += CONCURRENCY) {
+      const wave = groups.slice(g, g + CONCURRENCY);
+      await Promise.all(
+        wave.map(async ([familyId, nameSet]) => {
+          const names = Array.from(nameSet);
+          for (let j = 0; j < names.length; j += NAME_CHUNK) {
+            const chunk = names.slice(j, j + NAME_CHUNK);
+            const { data, error } = await supabase
+              .from('atlas_param_suggestions')
+              .select('*')
+              .eq('family_id', familyId)
+              .in('param_name', chunk);
+            if (error || !Array.isArray(data)) continue;
+            for (const row of data as SuggestionRow[]) {
+              const key = verdictMapKey(row.family_id ?? '', row.param_name);
+              if (wanted.has(key)) result.set(key, rowToStored(row));
+            }
+          }
+        }),
+      );
     }
   } catch {
     // Fail-open — missing detail just means the row renders without its cached
     // AI card (the client can still Generate/hydrate from localStorage).
   }
   return result;
+}
+
+/**
+ * Cap-safe global count of every persisted suggestion — the honest, cumulative
+ * "generated so far" number: every param ever run through the AI, across all
+ * families/scopes/batches. Monotonic (accepting a param doesn't delete its
+ * suggestion row). Uses a `count` (head request), NOT a row pull, so the
+ * PostgREST 1000-row cap can't freeze it. Fail-open to null → caller falls back
+ * to the working-set count.
+ */
+export async function fetchGeneratedCount(): Promise<number | null> {
+  try {
+    const supabase = createServiceClient();
+    const { count, error } = await supabase
+      .from('atlas_param_suggestions')
+      .select('*', { count: 'exact', head: true });
+    if (error || count == null) return null;
+    return count;
+  } catch {
+    return null;
+  }
 }
