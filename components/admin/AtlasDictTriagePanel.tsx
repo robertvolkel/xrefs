@@ -99,9 +99,31 @@ export default function AtlasDictTriagePanel() {
   // Optimistic delta added to the server's verdictCounts so the "generated so
   // far" counter + chips move the instant a batch finishes (before the next
   // fetch reconciles). Reset on every fetch (the server count is then fresh).
-  const [verdictDelta, setVerdictDelta] = useState({ generated: 0, accept: 0, defer: 0 });
+  // Signed adjustments to the server verdict counts, so the chips + "generated
+  // so far" + "not generated yet" move live between fetches (reset on every
+  // fetch). `generated` bumps generatedTotal; accept/defer/none are per-bucket.
+  // Generating moves rows OUT of none (none -= generated); accepting a param
+  // moves it OUT of its verdict bucket (see handleRowAcceptedBucket).
+  const [verdictDelta, setVerdictDelta] = useState({ generated: 0, accept: 0, defer: 0, none: 0 });
   const handleBatchGenerated = useCallback((t: { generated: number; accept: number; defer: number }) => {
-    setVerdictDelta((d) => ({ generated: d.generated + t.generated, accept: d.accept + t.accept, defer: d.defer + t.defer }));
+    setVerdictDelta((d) => ({
+      generated: d.generated + t.generated,
+      accept: d.accept + t.accept,
+      defer: d.defer + t.defer,
+      none: d.none - t.generated,
+    }));
+  }, []);
+  // Accepting a param removes it from the OPEN "accepts waiting" pile, so tick the
+  // bucket it left down live (the server only reflects it on the next fetch).
+  // Reverting is intentionally NOT the inverse: a reverted param is "undone", still
+  // not "open", so the server keeps it out of these counts — matching this.
+  const handleRowAcceptedBucket = useCallback((bucket: 'accept' | 'defer' | 'none') => {
+    setVerdictDelta((d) => ({
+      ...d,
+      accept: bucket === 'accept' ? d.accept - 1 : d.accept,
+      defer: bucket === 'defer' ? d.defer - 1 : d.defer,
+      none: bucket === 'none' ? d.none - 1 : d.none,
+    }));
   }, []);
   // Notes per paramName — owned at the panel level so the filter bar can
   // scope rows by has-note (the rows-needing-followup workflow). Single
@@ -269,7 +291,7 @@ export default function AtlasDictTriagePanel() {
       setPage(pageNum);
       // Server verdictCounts are now fresh — clear the optimistic delta so we
       // don't double-count the batch that's already reflected in the response.
-      setVerdictDelta({ generated: 0, accept: 0, defer: 0 });
+      setVerdictDelta({ generated: 0, accept: 0, defer: 0, none: 0 });
     } catch (err) {
       if (!append) setError(err instanceof Error ? err.message : 'Failed to load triage queue');
     } finally {
@@ -286,6 +308,32 @@ export default function AtlasDictTriagePanel() {
   // Load the next server page and append to the accumulator (the "Show more"
   // server-fetch path, wired into the table footer).
   const loadMore = useCallback(() => fetchPage(page + 1, true), [fetchPage, page]);
+
+  // Fetch the next N UN-GENERATED params straight from the server so the bulk
+  // "Generate" button can sweep the whole queue without the engineer scrolling
+  // rows into view. Standalone fetch — deliberately does NOT touch
+  // data/accumRows/loading (the displayed view is unchanged; this is a
+  // background sweep). Forces the generatable population (open synonyms with no
+  // AI verdict yet) so it matches the `verdictCounts.none` count on the button.
+  // Whole-queue by design (ignores the active mfr/family/search axes). Returns
+  // [] on any failure (button no-ops).
+  const fetchUngenerated = useCallback(async (n: number): Promise<GlobalUnmappedParam[]> => {
+    const params = new URLSearchParams();
+    if (batchFilter) params.set('batch', batchFilter);
+    params.set('include', 'synonyms');
+    params.set('status_filter', 'open');
+    params.set('ai_verdict', 'none');
+    params.set('page', '1');
+    params.set('page_size', String(Math.max(1, Math.min(n, 500))));
+    try {
+      const res = await fetch(`/api/admin/atlas/ingest/batches?${params.toString()}`, { cache: 'no-store' });
+      if (!res.ok) return [];
+      const json = (await res.json()) as BatchListResponse;
+      return json.unmappedParamsGlobal ?? [];
+    } catch {
+      return [];
+    }
+  }, [batchFilter]);
 
   // Debounce search so each keystroke doesn't fire a server round-trip. Other
   // filter axes (chips, dropdowns, min-prods, toggles) refetch immediately.
@@ -346,7 +394,10 @@ export default function AtlasDictTriagePanel() {
   // Optimistic in-place mutation of a row's acceptedOverride after a
   // successful Accept POST. Avoids the round-trip refetch entirely.
   // Adjusts the global statusCounts so the FilterBar chips update too.
-  const onRowAccepted = useCallback((paramName: string, override: NonNullable<BatchListResponse['unmappedParamsGlobal'][number]['acceptedOverride']>) => {
+  const onRowAccepted = useCallback((paramName: string, override: NonNullable<BatchListResponse['unmappedParamsGlobal'][number]['acceptedOverride']>, leftBucket?: 'accept' | 'defer' | 'none') => {
+    // Tick the AI-verdict chip the accepted param left ("accepts waiting" down by
+    // one, live) — the table only passes a bucket when the row was genuinely open.
+    if (leftBucket) handleRowAcceptedBucket(leftBucket);
     // Rows live in accumRows; counts live in data. Mutate both.
     setAccumRows((rows) => rows.map((r) =>
       r.paramName === paramName ? { ...r, acceptedOverride: override } : r,
@@ -380,7 +431,7 @@ export default function AtlasDictTriagePanel() {
         : prev.totalFiltered;
       return { ...prev, statusCounts: nextStatusCounts, triageCounts: nextTriageCounts, totalFiltered: nextTotalFiltered };
     });
-  }, [statusFilter]);
+  }, [statusFilter, handleRowAcceptedBucket]);
 
   // Optimistic in-place mutation after a successful Confirm-Flag or
   // Revert-Flag PUT. Mirrors the onRowAccepted / onRowReverted pattern so
@@ -658,11 +709,16 @@ export default function AtlasDictTriagePanel() {
   const effectiveVerdictCounts = vc
     ? {
         generatedTotal: vc.generatedTotal + verdictDelta.generated,
-        accept: vc.accept + verdictDelta.accept,
-        defer: vc.defer + verdictDelta.defer,
-        none: Math.max(0, vc.none - verdictDelta.generated),
+        accept: Math.max(0, vc.accept + verdictDelta.accept),
+        defer: Math.max(0, vc.defer + verdictDelta.defer),
+        none: Math.max(0, vc.none + verdictDelta.none),
       }
     : undefined;
+
+  // How many generatable (open-synonym, no-verdict) params remain — drives the
+  // whole-queue "Generate next N" control in the table. 0 in auto_flagged mode
+  // (that mode is Confirm/Revert, not Generate) so the control hides there.
+  const ungeneratedCount = mode === 'auto_flagged' ? 0 : (effectiveVerdictCounts?.none ?? 0);
 
   return (
     <Box sx={{ px: 3, pb: 3, pt: 2 }}>
@@ -909,6 +965,8 @@ export default function AtlasDictTriagePanel() {
               onLoadMore={loadMore}
               loadingMore={loadingMore}
               onBatchGenerated={handleBatchGenerated}
+              ungeneratedCount={ungeneratedCount}
+              fetchUngenerated={fetchUngenerated}
             />
           )}
         </>

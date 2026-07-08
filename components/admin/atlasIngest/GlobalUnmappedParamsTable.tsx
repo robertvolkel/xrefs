@@ -236,7 +236,7 @@ interface Props {
    *  acceptedOverride in-place so the UI transforms (Accept button → Revert
    *  button) without a full page refetch. Replaces the old "Accept → refresh
    *  → 30s skeleton" UX. */
-  onRowAccepted?: (paramName: string, override: NonNullable<GlobalUnmappedParam['acceptedOverride']>) => void;
+  onRowAccepted?: (paramName: string, override: NonNullable<GlobalUnmappedParam['acceptedOverride']>, leftBucket?: 'accept' | 'defer' | 'none') => void;
   /** Called after a successful Revert DELETE. Parent should set
    *  acceptedOverride.isActive=false in-place. Same optimistic-UI motivation
    *  as onRowAccepted. */
@@ -277,6 +277,14 @@ interface Props {
    *  Parent optimistically bumps the "generated so far" counter + verdict chips
    *  so the headline number reflects the batch without waiting for a refetch. */
   onBatchGenerated?: (t: { generated: number; accept: number; defer: number }) => void;
+  /** Whole-queue count of generatable (open-synonym, no-verdict) params — drives
+   *  the bulk "Generate next N" control so it's sized to the WHOLE queue, not just
+   *  the rows loaded on screen (that was the "Generate 1" bug). 0 hides the control. */
+  ungeneratedCount?: number;
+  /** Fetches the next N un-generated params from the server (independent of what's
+   *  loaded/scrolled) so the bulk Generate can sweep the whole queue. Returns []
+   *  on failure. */
+  fetchUngenerated?: (n: number) => Promise<GlobalUnmappedParam[]>;
 }
 
 interface RowState {
@@ -591,11 +599,18 @@ const MAX_BATCH_GENERATE = 500;
 // so the engineer stops clicking "Show more".
 const AUTO_LOAD_MAX_VISIBLE = 600;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
   // Stable ref so generateSuggestionsForRows (deps []) can notify the parent
   // without re-creating the callback.
   const onBatchGeneratedRef = useRef(onBatchGenerated);
   useEffect(() => { onBatchGeneratedRef.current = onBatchGenerated; }, [onBatchGenerated]);
+  // Stable ref for the server-fetch-un-generated callback, same reason.
+  const fetchUngeneratedRef = useRef(fetchUngenerated);
+  useEffect(() => { fetchUngeneratedRef.current = fetchUngenerated; }, [fetchUngenerated]);
+  // True from the moment the bulk Generate is clicked until the per-row worker
+  // takes over (suggestionProgress set) — guards against a second click starting
+  // a concurrent batch during the async server fetch.
+  const [startingBatch, setStartingBatch] = useState(false);
   const [states, setStates] = useState<Record<string, RowState>>({});
   const [suggestionProgress, setSuggestionProgress] = useState<{ done: number; total: number } | null>(null);
   // Cancel flag for the bulk AI Generate run. Set true by the Stop button;
@@ -976,8 +991,12 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           deepAnalysis: cachedDeep?.analysis ?? null,
           loadingDeepAnalysis: false,
           deepAnalysisError: null,
-          suggestionCardVersionAtWrite: cachedRecord?.cardVersionAtWrite ?? null,
-          suggestionSchemaVersionAtWrite: cachedRecord?.schemaVersionAtWrite ?? null,
+          // localStorage version wins (may be newer); else fall back to the
+          // server-carried at-write version so a DB-hydrated suggestion is only
+          // "stale" when the rules genuinely changed — not just because it was
+          // loaded from the database (that was the false-stale bug).
+          suggestionCardVersionAtWrite: cachedRecord?.cardVersionAtWrite ?? row.suggestion?.detail?.cardVersionAtWrite ?? null,
+          suggestionSchemaVersionAtWrite: cachedRecord?.schemaVersionAtWrite ?? row.suggestion?.detail?.schemaVersionAtWrite ?? null,
           deepAnalysisCardVersionAtWrite: cachedDeep?.cardVersionAtWrite ?? null,
           deepAnalysisSchemaVersionAtWrite: cachedDeep?.schemaVersionAtWrite ?? null,
         };
@@ -1246,39 +1265,42 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
   }, [rows, hydrateFromCache]);
 
-  // ─── Pending-suggestion accounting ──────────────────────
-  // Rows that don't have a suggestion AND aren't auto-flagged AND aren't
-  // currently loading are eligible for the bulk Generate button. Computed
-  // over `orderedRows` (the rows matching the CURRENT view) — NOT all loaded
-  // `rows` — so the "Generate N" count always reflects what's on screen:
-  //   • Accept / Defer filter → those rows all have a verdict already, so this
-  //     is empty and the banner disappears (nothing blank is visible).
-  //   • None filter → counts exactly the blank rows the filter is showing.
-  //   • No filter → counts the blank rows in the loaded set, as before.
-  // Without this it counted blank rows hidden by the active filter, so under
-  // an Accept filter it read "Generate 499" while every visible row was mapped.
-  const pendingSuggestionRows = useMemo(
-    () => orderedRows.filter((r) => !r.autoFlag && !states[r.paramName]?.suggestion && !states[r.paramName]?.loadingSuggestion),
-    [orderedRows, states],
-  );
+  // The bulk Generate control is now sized by the whole-queue `ungeneratedCount`
+  // (server-computed) and pulls its rows from the server on click, so there's no
+  // longer a loaded-rows "pending" list to compute here. Per-row Generate buttons
+  // handle one-at-a-time generation of visible rows.
 
-  // How many the current batch box will actually fire — clamped to [1, 500] and
-  // to what's actually pending.
+  // How many the batch box will actually fire — clamped to [1, 500] and to the
+  // WHOLE-queue un-generated count (not just loaded rows), so it reads
+  // "Generate 100", never "Generate 1" while thousands remain un-generated.
   const effectiveBatch = Math.min(
     Math.max(1, Number.isFinite(batchSize) ? batchSize : 1),
     MAX_BATCH_GENERATE,
-    pendingSuggestionRows.length,
+    ungeneratedCount,
   );
 
-  const generateBatch = useCallback(() => {
+  // Server-backed bulk generate: pull the next N un-generated params straight
+  // from the server (independent of what's loaded/scrolled) and generate them.
+  // The generation runs quietly in the background — the displayed rows don't
+  // change; feedback is the progress bar + tally + the counter. startingBatch
+  // guards the async fetch window against a double-click starting a 2nd batch.
+  const generateBatch = useCallback(async () => {
     const n = Math.min(
       Math.max(1, Number.isFinite(batchSize) ? batchSize : 1),
       MAX_BATCH_GENERATE,
-      pendingSuggestionRows.length,
+      ungeneratedCount,
     );
     if (n <= 0) return;
-    generateSuggestionsForRows(pendingSuggestionRows.slice(0, n));
-  }, [batchSize, pendingSuggestionRows, generateSuggestionsForRows]);
+    const fetcher = fetchUngeneratedRef.current;
+    if (!fetcher) return;
+    setStartingBatch(true);
+    try {
+      const targetRows = await fetcher(n);
+      if (targetRows.length > 0) await generateSuggestionsForRows(targetRows);
+    } finally {
+      setStartingBatch(false);
+    }
+  }, [batchSize, ungeneratedCount, generateSuggestionsForRows]);
 
   const generateOne = useCallback((row: GlobalUnmappedParam) => {
     generateSuggestionsForRows([row]);
@@ -1597,6 +1619,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           updatedAt: string;
           isActive: boolean;
         };
+        // Which "accepts waiting" bucket this param leaves so the parent can tick
+        // the chip down live. Only when the row was genuinely OPEN (no prior
+        // override) — re-accepting an already-undone row wasn't in the open count,
+        // so we skip the decrement (undefined) to avoid driving it negative.
+        const leftBucket: 'accept' | 'defer' | 'none' | undefined = row.acceptedOverride
+          ? undefined
+          : state.suggestion?.suggestion === 'accept'
+            ? 'accept'
+            : state.suggestion?.suggestion === 'defer'
+              ? 'defer'
+              : 'none';
         onRowAccepted(row.paramName, {
           id: d.id,
           attributeId: d.attributeId ?? state.editedAttributeId.trim(),
@@ -1608,7 +1641,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           updatedAt: d.updatedAt,
           isActive: d.isActive,
           wasEdited: false,
-        });
+        }, leftBucket);
         // If this Accept was the outcome of a deep-AI investigation,
         // close the audit loop: log the resulting override id on the
         // investigation row. Fire-and-forget — Accept already succeeded.
@@ -1670,6 +1703,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           updatedAt: string;
           isActive: boolean;
         };
+        // Cosmetic-variant siblings are essentially always un-generated, so they
+        // leave the 'none' (still-to-generate) bucket. Passing it lets the parent
+        // tick the counts down for bulk accepts too; self-reconciles on next fetch.
         onRowAccepted(match.paramName, {
           id: d.id,
           attributeId: d.attributeId ?? overrideValues.attributeId,
@@ -1681,7 +1717,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           updatedAt: d.updatedAt,
           isActive: d.isActive,
           wasEdited: false,
-        });
+        }, 'none');
         // Mark the match's local state so any in-flight RowState sees it
         // as accepted (the parent's onRowAccepted update covers the parent
         // queue, but this table also keeps per-row edit state).
@@ -2253,6 +2289,54 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         </Stack>
       </Box>
       <Box sx={{ px: 2, pb: 2 }}>
+        {/* Bulk "Generate next N" — server-backed sweep of the WHOLE un-generated
+            queue (not just the rows loaded on screen), placed at the TOP so it's
+            the first action and never buried. Sized by ungeneratedCount so it
+            reads "Generate 100", never "Generate 1". Generation runs quietly in
+            the background — the displayed rows don't change; the engineer reviews
+            wins via the Accept tab. Hidden during an in-flight run and in
+            auto_flagged mode (ungeneratedCount = 0). */}
+        {!suggestionProgress && ungeneratedCount > 0 && !allFlagged && (
+          <Alert
+            severity="info"
+            icon={<AutoAwesomeIcon fontSize="small" />}
+            sx={{ mb: 1.5, py: 0.5 }}
+            action={
+              <Stack direction="row" spacing={1} alignItems="center">
+                <TextField
+                  type="number"
+                  size="small"
+                  label="How many"
+                  value={batchSize}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setBatchSize(Number.isFinite(n) ? Math.min(Math.max(1, n), MAX_BATCH_GENERATE) : 1);
+                  }}
+                  inputProps={{ min: 1, max: MAX_BATCH_GENERATE, step: 25, style: { width: 64 } }}
+                  sx={{ '& .MuiInputBase-input': { py: 0.5 } }}
+                />
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={generateBatch}
+                  disabled={startingBatch}
+                  startIcon={startingBatch ? <CircularProgress size={14} color="inherit" /> : <AutoAwesomeIcon sx={{ fontSize: 14 }} />}
+                  sx={{ whiteSpace: 'nowrap' }}
+                >
+                  {startingBatch ? 'Starting…' : `Generate ${effectiveBatch.toLocaleString()}`}
+                </Button>
+              </Stack>
+            }
+          >
+            <Typography variant="body2">
+              <strong>{ungeneratedCount.toLocaleString()}</strong> param{ungeneratedCount === 1 ? '' : 's'} not generated yet.
+              Pick a batch size (max {MAX_BATCH_GENERATE}) and click Generate — it sweeps the next batch from the whole queue, no scrolling.
+              Each costs ~$0.005 (Sonnet 4.6); already-generated params are free (from the database).
+              Watch the count above climb, then open the <strong>Accept</strong> tab to review.
+            </Typography>
+          </Alert>
+        )}
         <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="body2" color="text.secondary">
             {allFlagged ? (
@@ -2291,48 +2375,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </Alert>
         )}
 
-        {/* Bulk Generate control — batch-size box (headline #2) + Generate. Fires
-            the first N un-generated rows in the current view. Hidden during
-            in-flight progress and when nothing is pending. Per-row Generate
-            buttons (in the AI translation cell) remain for one-at-a-time usage. */}
-        {!suggestionProgress && pendingSuggestionRows.length > 0 && !allFlagged && (
-          <Alert
-            severity="info"
-            icon={<AutoAwesomeIcon fontSize="small" />}
-            sx={{ my: 1, py: 0.5 }}
-            action={
-              <Stack direction="row" spacing={1} alignItems="center">
-                <TextField
-                  type="number"
-                  size="small"
-                  label="How many"
-                  value={batchSize}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    setBatchSize(Number.isFinite(n) ? Math.min(Math.max(1, n), MAX_BATCH_GENERATE) : 1);
-                  }}
-                  inputProps={{ min: 1, max: MAX_BATCH_GENERATE, step: 25, style: { width: 64 } }}
-                  sx={{ '& .MuiInputBase-input': { py: 0.5 } }}
-                />
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="primary"
-                  onClick={generateBatch}
-                  startIcon={<AutoAwesomeIcon sx={{ fontSize: 14 }} />}
-                  sx={{ whiteSpace: 'nowrap' }}
-                >
-                  Generate {effectiveBatch}
-                </Button>
-              </Stack>
-            }
-          >
-            <Typography variant="body2">
-              <strong>{pendingSuggestionRows.length.toLocaleString()}</strong> row{pendingSuggestionRows.length === 1 ? '' : 's'} in view need AI suggestions.
-              Choose a batch size (max {MAX_BATCH_GENERATE}) — each row costs ~$0.005 (Sonnet 4.6). Already-generated rows are free (served from the database).
-            </Typography>
-          </Alert>
-        )}
 
         {/* Proactive staleness banner — replaces the previous always-visible
             "Refresh AI suggestions / investigations" buttons. Renders ONLY

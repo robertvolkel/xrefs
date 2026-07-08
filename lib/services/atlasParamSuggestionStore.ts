@@ -48,6 +48,8 @@ interface SuggestionRow {
   confidence: string | null;
   reasoning: string | null;
   explanation: string | null;
+  card_version_at_write: string | null;
+  schema_version_at_write: string | null;
 }
 
 function rowToStored(row: SuggestionRow): StoredSuggestion {
@@ -60,6 +62,10 @@ function rowToStored(row: SuggestionRow): StoredSuggestion {
     reasoning: row.reasoning ?? null,
     suggestion: row.verdict === 'accept' || row.verdict === 'defer' ? row.verdict : null,
     explanation: row.explanation ?? null,
+    // Carry the at-write versions so the client's staleness check is honest for
+    // server-hydrated suggestions (else a null version reads as "stale").
+    cardVersionAtWrite: row.card_version_at_write ?? null,
+    schemaVersionAtWrite: row.schema_version_at_write ?? null,
   };
 }
 

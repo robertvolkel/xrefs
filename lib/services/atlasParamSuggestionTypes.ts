@@ -23,6 +23,12 @@ export interface StoredSuggestion {
   reasoning: string | null;
   suggestion: Verdict | null;
   explanation: string | null;
+  /** Card/schema versions the suggestion was generated against — load-bearing
+   *  for the staleness signal (Decision #187). Carried through the DB read path
+   *  so a server-hydrated suggestion (fresh browser) is only flagged stale when
+   *  the rules ACTUALLY changed, not just because it came from the DB. */
+  cardVersionAtWrite?: string | null;
+  schemaVersionAtWrite?: string | null;
 }
 
 /** Attached per queue row. `verdict` comes from the whole-queue verdict map
