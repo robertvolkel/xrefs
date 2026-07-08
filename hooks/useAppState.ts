@@ -1851,13 +1851,19 @@ export function useAppState() {
       // survives to the post-recs filter step in showRecsAndDeferAssessment.
       pendingIntentQueryRef.current = intent ? query : null;
       setState((prev) => ({ ...prev, pendingIntent: intent }));
-      if (state.llmAvailable === false) {
-        await handleSearchDeterministic(query);
-      } else {
-        await handleSearchWithLLM(query);
-      }
+      // Always give the LLM a fresh try. handleSearchWithLLM self-falls-back to
+      // handleSearchDeterministic on error (its catch block), so a transient
+      // Anthropic hiccup only degrades the ONE message that hit it — the next
+      // message retries the AI. Previously this branched on the sticky
+      // `llmAvailable === false` flag, which latched on the first error and
+      // never flipped back within a session, silently downgrading every later
+      // search to the keyword-only backup until a page reload / new chat. In a
+      // genuinely-unconfigured deployment the retry costs one fast failed
+      // round-trip per message (immediate 500), which is the right trade for
+      // automatic recovery the moment the AI comes back.
+      await handleSearchWithLLM(query);
     },
-    [state.llmAvailable, state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchOriginFilter, handleSearchWithLLM, handleSearchDeterministic, priceAtQuantity]
+    [state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchOriginFilter, handleSearchWithLLM, priceAtQuantity]
   );
 
   const handleConfirmPart = useCallback(
