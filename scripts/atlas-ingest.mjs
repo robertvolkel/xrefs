@@ -3390,6 +3390,13 @@ async function loadCollidingEnNames() {
       const { data, error } = await supabase
         .from('atlas_manufacturers')
         .select('name_en')
+        // Stable ordering — without it PostgREST paginates arbitrarily and
+        // silently drops rows past the 1000-row boundary. Mirror of the
+        // Decision #232 fix in loadAndApplyDictOverrides below; the same
+        // trap caused zero-effect overrides and a "N missing" bucket in
+        // the backfill flow. Verified empirically: unordered runs dropped
+        // ~35% of atlas_products/manufacturer=Good-Ark rows on first pass.
+        .order('id', { ascending: true })
         .range(from, from + 999);
       if (error) { console.warn(`  (colliding-name load skipped: ${error.message})`); return { count: 0 }; }
       for (const r of data ?? []) {
@@ -3693,6 +3700,7 @@ async function fetchExistingProducts(mfrName) {
       .from('atlas_products')
       .select('id, mpn, manufacturer, description, category, subcategory, family_id, status, datasheet_url, package, parameters, atlas_source_file, atlas_raw, manufacturer_country')
       .eq('manufacturer', mfrName)
+      .order('id', { ascending: true })  // stable pagination — see loadAndApplyDictOverrides comment
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`fetchExistingProducts: ${error.message}`);
     if (!data || data.length === 0) break;
@@ -3721,6 +3729,7 @@ async function fetchExistingForBackfill(mfrName) {
       .from('atlas_products')
       .select('id, mpn, category, parameters')
       .eq('manufacturer', mfrName)
+      .order('id', { ascending: true })  // stable pagination — see loadAndApplyDictOverrides comment
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`fetchExistingForBackfill: ${error.message}`);
     if (!data || data.length === 0) break;
@@ -4369,6 +4378,7 @@ async function runRevert(batchId) {
       .from('atlas_products_snapshots')
       .select('*')
       .eq('batch_id', batchId)
+      .order('id', { ascending: true })  // stable pagination — revert loses rows silently if pages skip
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Snapshot fetch failed: ${error.message}`);
     if (!data || data.length === 0) break;
@@ -4953,6 +4963,7 @@ async function runRescanUnmappedParams() {
       .from('atlas_ingest_batches')
       .select('batch_id, manufacturer, status, report')
       .in('status', ['applied', 'pending', 'discovery'])
+      .order('batch_id', { ascending: true })  // stable pagination — see loadAndApplyDictOverrides comment
       .range(from, from + 999);
     if (error) { console.error(error.message); return; }
     if (!data || !data.length) break;
