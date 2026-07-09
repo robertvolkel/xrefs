@@ -4378,7 +4378,7 @@ async function runRevert(batchId) {
       .from('atlas_products_snapshots')
       .select('*')
       .eq('batch_id', batchId)
-      .order('id', { ascending: true })  // stable pagination — revert loses rows silently if pages skip
+      .order('snapshot_id', { ascending: true })  // stable pagination — PK is snapshot_id, not id (see supabase-atlas-ingest-pipeline-schema.sql:140)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Snapshot fetch failed: ${error.message}`);
     if (!data || data.length === 0) break;
