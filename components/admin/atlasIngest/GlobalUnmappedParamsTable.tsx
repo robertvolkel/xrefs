@@ -28,6 +28,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -39,6 +40,7 @@ import {
   MenuItem,
   Paper,
   Popover,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -51,6 +53,7 @@ import {
   Typography,
   LinearProgress,
 } from '@mui/material';
+import StarIcon from '@mui/icons-material/Star';
 import CheckIcon from '@mui/icons-material/Check';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
@@ -73,6 +76,7 @@ import { getLogicTable } from '@/lib/logicTables';
 import { isValidFamilyId } from '@/lib/services/validFamilyIds';
 import { isGenericTerm } from '@/lib/services/paramNameSimilarity';
 import { paramUid } from '@/lib/services/paramUid';
+import { isStarrableRow } from '@/lib/services/triageBatchApprove';
 import { ClusterPreviewModal } from './ClusterPreviewModal';
 import UnmappedParamNoteCell, { type NoteRecord } from './UnmappedParamNoteCell';
 import DeepAnalysisDrawer from './DeepAnalysisDrawer';
@@ -241,6 +245,15 @@ interface Props {
    *  acceptedOverride.isActive=false in-place. Same optimistic-UI motivation
    *  as onRowAccepted. */
   onRowReverted?: (paramName: string) => void;
+  /** Batched optimistic accept after a successful Batch Accept POST. ONE
+   *  setState over the whole set (vs N onRowAccepted calls = O(N²) freeze).
+   *  `leftBucket` per row lets the parent tick the "accepts waiting" chip. */
+  onRowsAccepted?: (
+    updates: Array<{ paramName: string; override: NonNullable<GlobalUnmappedParam['acceptedOverride']>; leftBucket?: 'accept' | 'defer' | 'none' }>,
+  ) => void;
+  /** Batched optimistic revert (Undo of a Batch Accept). Sets
+   *  acceptedOverride.isActive=false for every paramName in one setState. */
+  onRowsReverted?: (paramNames: string[]) => void;
   /** Called after a successful flag mutation (PUT /unmapped-param-notes).
    *  Parent should set the row's noteStatus + flaggedBy in-place so the row
    *  transforms (or disappears from Open view) without waiting on a queue
@@ -599,7 +612,7 @@ const MAX_BATCH_GENERATE = 500;
 // so the engineer stops clicking "Show more".
 const AUTO_LOAD_MAX_VISIBLE = 600;
 
-export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
+export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowsAccepted, onRowsReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
   // Stable ref so generateSuggestionsForRows (deps []) can notify the parent
   // without re-creating the callback.
   const onBatchGeneratedRef = useRef(onBatchGenerated);
@@ -798,6 +811,126 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     return [...stale, ...fresh];
   }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter]);
   const visibleRows = orderedRows.slice(0, visibleCount);
+
+  // ── Batch Accept: star high-confidence rows, tick, accept in one click ──
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchAccepting, setBatchAccepting] = useState(false);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+  const [undoInfo, setUndoInfo] = useState<{ overrideIds: string[]; paramNames: string[]; count: number } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [, startSelectTransition] = useTransition();
+
+  // Rows currently rendered that qualify for the star + checkbox (high-confidence
+  // accept, writable, still open). Cheap filter over the render window.
+  const visibleStarred = visibleRows.filter(isStarrableRow);
+  const selectedCount = selected.size;
+  const allVisibleStarredSelected = visibleStarred.length > 0 && visibleStarred.every((r) => selected.has(r.paramName));
+  const someVisibleStarredSelected = !allVisibleStarredSelected && visibleStarred.some((r) => selected.has(r.paramName));
+
+  const toggleRowSelected = useCallback((paramName: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(paramName)) next.delete(paramName);
+      else next.add(paramName);
+      return next;
+    });
+  }, []);
+
+  const toggleAllVisibleStarred = useCallback(() => {
+    const names = visibleStarred.map((r) => r.paramName);
+    const allSelected = names.length > 0 && names.every((n) => selected.has(n));
+    startSelectTransition(() => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (allSelected) for (const n of names) next.delete(n);
+        else for (const n of names) next.add(n);
+        return next;
+      });
+    });
+  }, [visibleStarred, selected, startSelectTransition]);
+
+  const handleBatchAccept = useCallback(async () => {
+    // Build items from the FULL loaded set (selection survives the render
+    // window), re-checking starrability so a stale selection can't submit an
+    // ineligible row. Mapping values come from the AI suggestion detail.
+    const items: Array<{ familyId: string; paramName: string; attributeId: string; attributeName: string; unit?: string }> = [];
+    for (const r of rows) {
+      if (!selected.has(r.paramName) || !isStarrableRow(r)) continue;
+      const d = r.suggestion!.detail!;
+      const scope = getOverrideScope(r);
+      if (!scope) continue;
+      items.push({
+        familyId: scope.key,
+        paramName: r.paramName,
+        attributeId: d.suggestedAttributeId!.trim(),
+        attributeName: d.suggestedAttributeName!.trim(),
+        unit: d.suggestedUnit?.trim() || undefined,
+      });
+    }
+    if (items.length === 0) return;
+    setBatchAccepting(true);
+    setBatchNotice(null);
+    try {
+      const res = await fetch('/api/admin/atlas/dictionaries/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || `Batch accept failed (${res.status})`);
+      const approvedList = (json.approved ?? []) as Array<{
+        paramName: string;
+        familyId: string;
+        override: Omit<NonNullable<GlobalUnmappedParam['acceptedOverride']>, 'createdByName' | 'wasEdited'>;
+      }>;
+      const updates = approvedList.map((a) => ({
+        paramName: a.paramName,
+        override: { ...a.override, createdByName: 'You', wasEdited: false } as NonNullable<GlobalUnmappedParam['acceptedOverride']>,
+        // Starred rows are open accept rows → they leave the "accepts waiting" bucket.
+        leftBucket: 'accept' as const,
+      }));
+      if (updates.length > 0) onRowsAccepted?.(updates);
+      setSelected(new Set());
+      const overrideIds = (json.approvedIds ?? []) as string[];
+      if (overrideIds.length > 0) {
+        setUndoInfo({ overrideIds, paramNames: updates.map((u) => u.paramName), count: updates.length });
+      }
+      const parts: string[] = [`Accepted ${updates.length}`];
+      const deduped = (json.deduped ?? 0) as number;
+      const skippedN = ((json.skipped ?? []) as unknown[]).length;
+      const failedN = ((json.failed ?? []) as unknown[]).length;
+      if (deduped > 0) parts.push(`${deduped} duplicate${deduped === 1 ? '' : 's'} merged`);
+      if (skippedN > 0) parts.push(`${skippedN} skipped`);
+      if (failedN > 0) parts.push(`${failedN} failed`);
+      setBatchNotice(parts.join(' · '));
+    } catch (err) {
+      setBatchNotice(err instanceof Error ? err.message : 'Batch accept failed');
+    } finally {
+      setBatchAccepting(false);
+    }
+  }, [rows, selected, onRowsAccepted]);
+
+  const handleUndoBatch = useCallback(async () => {
+    if (!undoInfo) return;
+    setUndoing(true);
+    try {
+      const res = await fetch('/api/admin/atlas/dictionaries/batch/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overrideIds: undoInfo.overrideIds }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Undo failed');
+      onRowsReverted?.(undoInfo.paramNames);
+      setUndoInfo(null);
+      setBatchNotice(null);
+    } catch (err) {
+      setBatchNotice(err instanceof Error ? err.message : 'Undo failed');
+    } finally {
+      setUndoing(false);
+    }
+  }, [undoInfo, onRowsReverted]);
+
   // Two-level pagination (Decision #231):
   //   renderHidden = rows loaded but not yet rendered (the client render window
   //     — keeps a big page from painting 500 MUI rows at once, the documented
@@ -2480,6 +2613,41 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </Box>
         )}
 
+        {/* Batch-accept selection toolbar — appears once ≥1 starred row is
+            ticked. Approves every checked high-confidence row in one request
+            (one cache invalidation server-side) and offers a one-click Undo. */}
+        {selectedCount > 0 && (
+          <Box
+            sx={{
+              my: 1,
+              px: 1.5,
+              py: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              borderRadius: 1,
+              bgcolor: 'action.selected',
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {selectedCount} selected
+            </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              color="success"
+              startIcon={batchAccepting ? <CircularProgress size={14} color="inherit" /> : <StarIcon sx={{ fontSize: 16 }} />}
+              disabled={batchAccepting}
+              onClick={handleBatchAccept}
+            >
+              {batchAccepting ? 'Accepting…' : `Batch Accept (${selectedCount})`}
+            </Button>
+            <Button size="small" color="inherit" disabled={batchAccepting} onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+          </Box>
+        )}
+
         <TableContainer>
           {/* table-layout: fixed forces the browser to honor explicit column widths
               instead of auto-sizing to content. Without this, the longest cell text
@@ -2488,6 +2656,21 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           <Table size="small" sx={{ tableLayout: 'fixed' }}>
             <TableHead>
               <TableRow>
+                <TableCell sx={{ fontWeight: 600, width: 56, padding: '6px 4px', textAlign: 'center' }}>
+                  <Tooltip title="Select all high-confidence rows shown">
+                    <span>
+                      <Checkbox
+                        size="small"
+                        sx={{ p: 0.25 }}
+                        checked={allVisibleStarredSelected}
+                        indeterminate={someVisibleStarredSelected}
+                        disabled={visibleStarred.length === 0}
+                        onChange={toggleAllVisibleStarred}
+                        inputProps={{ 'aria-label': 'Select all high-confidence rows shown' }}
+                      />
+                    </span>
+                  </Tooltip>
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 90 }}>UID</TableCell>
                 <TableCell sx={{ fontWeight: 600, width: 40, padding: '6px 4px', textAlign: 'center' }} aria-label="Flag" />
                 <TableCell sx={{ fontWeight: 600, width: 40, padding: '6px 4px' }} aria-label="Note" />
@@ -2532,6 +2715,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const suggestionStaleReason = getRowSuggestionStaleness(r);
                 const investigationStaleReason = getRowInvestigationStaleness(r);
                 const isStale = !!(suggestionStaleReason || investigationStaleReason);
+                // High-confidence accept + writable + still open → gets a star
+                // and a batch-accept checkbox.
+                const starred = isStarrableRow(r);
                 return (
                   <Fragment key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}::${rowIdx}`}>
                   <TableRow
@@ -2551,6 +2737,22 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                         : (isStale ? 'warning.main' : undefined),
                     }}
                   >
+                    <TableCell sx={{ width: 56, padding: '4px', textAlign: 'center' }}>
+                      {starred && (
+                        <Stack direction="row" alignItems="center" justifyContent="center" spacing={0}>
+                          <Checkbox
+                            size="small"
+                            sx={{ p: 0.25 }}
+                            checked={selected.has(r.paramName)}
+                            onChange={() => toggleRowSelected(r.paramName)}
+                            inputProps={{ 'aria-label': `Select ${r.paramName} for batch accept` }}
+                          />
+                          <Tooltip title="High confidence — quick to batch-accept">
+                            <StarIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                          </Tooltip>
+                        </Stack>
+                      )}
+                    </TableCell>
                     <TableCell sx={{ width: 90, padding: '4px 8px' }}>
                       <Tooltip title={`Copy ${paramUid(r.paramName)} (paste into search to find this row again)`} placement="top">
                         <Chip
@@ -3367,6 +3569,24 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           </>
         )}
       </Box>
+
+      {/* Batch-accept result + one-click Undo. Auto-hides after 12s; closing
+          ends the in-memory undo window (the [batch:<uuid>] change_reason tag
+          keeps the batch reversible later from the Atlas Dictionaries panel). */}
+      <Snackbar
+        open={!!batchNotice}
+        autoHideDuration={12000}
+        onClose={() => { setBatchNotice(null); setUndoInfo(null); }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        message={batchNotice ?? ''}
+        action={
+          undoInfo ? (
+            <Button color="secondary" size="small" disabled={undoing} onClick={handleUndoBatch}>
+              {undoing ? 'Undoing…' : `Undo (${undoInfo.count})`}
+            </Button>
+          ) : undefined
+        }
+      />
 
       {/* Bulk-refresh confirm dialog. Per-call cost: ~$0.005 (Sonnet
           4.6 /suggest) or ~$0.05 (Sonnet 4.6 /investigate). Total

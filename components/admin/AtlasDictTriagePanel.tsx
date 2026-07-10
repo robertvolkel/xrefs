@@ -558,6 +558,76 @@ export default function AtlasDictTriagePanel() {
     });
   }, []);
 
+  // Batched optimistic accept after a Batch Accept POST. ONE setAccumRows map +
+  // ONE setData over the whole set — calling onRowAccepted N times would be
+  // O(N²) (a full array map per row) and freeze on a hundreds-row batch.
+  const onRowsAccepted = useCallback((
+    updates: Array<{ paramName: string; override: NonNullable<BatchListResponse['unmappedParamsGlobal'][number]['acceptedOverride']>; leftBucket?: 'accept' | 'defer' | 'none' }>,
+  ) => {
+    if (updates.length === 0) return;
+    const byParam = new Map(updates.map((u) => [u.paramName, u.override]));
+    setAccumRows((rows) => rows.map((r) => (byParam.has(r.paramName) ? { ...r, acceptedOverride: byParam.get(r.paramName)! } : r)));
+    // Tick the AI "accepts waiting" chips down by how many rows left each bucket.
+    const acceptLeft = updates.filter((u) => u.leftBucket === 'accept').length;
+    const deferLeft = updates.filter((u) => u.leftBucket === 'defer').length;
+    const noneLeft = updates.filter((u) => u.leftBucket === 'none').length;
+    if (acceptLeft || deferLeft || noneLeft) {
+      setVerdictDelta((d) => ({ ...d, accept: d.accept - acceptLeft, defer: d.defer - deferLeft, none: d.none - noneLeft }));
+    }
+    // Rows that were genuinely open (leftBucket set) move open→accepted and leave
+    // the synonym bucket + current Open view.
+    const openLeaving = updates.filter((u) => u.leftBucket).length;
+    const n = updates.length;
+    setData((prev) => {
+      if (!prev) return prev;
+      const nextStatusCounts = prev.statusCounts
+        ? {
+            open: Math.max(0, prev.statusCounts.open - openLeaving),
+            accepted: prev.statusCounts.accepted + n,
+            undone: prev.statusCounts.undone,
+            deferred: prev.statusCounts.deferred,
+            unmappable: prev.statusCounts.unmappable,
+          }
+        : prev.statusCounts;
+      const nextTriageCounts = prev.triageCounts
+        ? {
+            synonyms: Math.max(0, prev.triageCounts.synonyms - openLeaving),
+            autoFlagged: prev.triageCounts.autoFlagged,
+            total: Math.max(0, prev.triageCounts.total - openLeaving),
+          }
+        : prev.triageCounts;
+      const leavesView = statusFilter === 'open';
+      const nextTotalFiltered = leavesView && typeof prev.totalFiltered === 'number'
+        ? Math.max(0, prev.totalFiltered - openLeaving)
+        : prev.totalFiltered;
+      return { ...prev, statusCounts: nextStatusCounts, triageCounts: nextTriageCounts, totalFiltered: nextTotalFiltered };
+    });
+  }, [statusFilter]);
+
+  // Batched optimistic revert (Undo of a Batch Accept). Flips acceptedOverride
+  // .isActive=false for every paramName + moves accepted→undone in one pass.
+  const onRowsReverted = useCallback((paramNames: string[]) => {
+    if (paramNames.length === 0) return;
+    const names = new Set(paramNames);
+    setAccumRows((rows) => rows.map((r) => (names.has(r.paramName) && r.acceptedOverride
+      ? { ...r, acceptedOverride: { ...r.acceptedOverride, isActive: false } }
+      : r)));
+    const n = paramNames.length;
+    setData((prev) => {
+      if (!prev) return prev;
+      const nextStatusCounts = prev.statusCounts
+        ? {
+            open: prev.statusCounts.open,
+            accepted: Math.max(0, prev.statusCounts.accepted - n),
+            undone: prev.statusCounts.undone + n,
+            deferred: prev.statusCounts.deferred,
+            unmappable: prev.statusCounts.unmappable,
+          }
+        : prev.statusCounts;
+      return { ...prev, statusCounts: nextStatusCounts };
+    });
+  }, []);
+
   // Worker-pool flush — REGEN_CONCURRENCY subprocesses in flight at once.
   // Tracks progress so the button shows "Regenerating 3 of 8…" feedback.
   const flushPendingRegens = useCallback(async () => {
@@ -956,6 +1026,8 @@ export default function AtlasDictTriagePanel() {
               onRegenerateAffected={onRegenerateAffected}
               onRowAccepted={onRowAccepted}
               onRowReverted={onRowReverted}
+              onRowsAccepted={onRowsAccepted}
+              onRowsReverted={onRowsReverted}
               onRowFlagged={onRowFlagged}
               notesByParam={notesByParam}
               onNoteChange={onNoteChange}
