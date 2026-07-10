@@ -68,6 +68,12 @@ function normalizeUnit(raw) {
   s = s.replace(/[μµ]/g, 'u');
   // Ohm fold — canonicalize to lowercase 'ohm'
   s = s.replace(/[ΩΩ]/g, 'ohm').replace(/Ω/g, 'ohm');
+  // Literal-word 'Ohm' / 'OHM' fold (case-insensitive on the atom, prefix
+  // character untouched). Engineers type 'MOhm' / 'kOhm' more than 'MΩ' / 'kΩ'.
+  // 'MOhm' → 'Mohm' (mega-ohm) hits KNOWN_UNITS after the atom fold, while
+  // 'mOhm' → 'mohm' (milli-ohm) stays distinct — the case-sensitive prefix
+  // that unitsMatch relies on is preserved.
+  s = s.replace(/[Oo][Hh][Mm]/g, 'ohm');
   // Degree fold
   s = s.replace(/[º]/g, '°');
   // Common variants
@@ -77,8 +83,11 @@ function normalizeUnit(raw) {
 
 // Canonical unit atoms + their prefixed forms. Case-sensitive on prefix
 // (m ≠ M) because that IS the distinction — 'mV' vs 'MV' is 1e6 apart.
+// 'T' appears as BOTH an atom (tesla) and a prefix (tera). The empty-prefix
+// entry keeps bare 'T' valid; adding 'T' as a prefix picks up 'THz', 'TW',
+// 'TV', 'Ts' etc. — none of which collide with existing entries.
 const UNIT_ATOMS = ['A', 'V', 'F', 'H', 'Hz', 'W', 's', 'ohm', 'bar', 'T'];
-const PREFIXES = ['f', 'p', 'n', 'u', 'm', '', 'k', 'M', 'G'];
+const PREFIXES = ['f', 'p', 'n', 'u', 'm', '', 'k', 'M', 'G', 'T'];
 const KNOWN_UNITS = new Set();
 for (const atom of UNIT_ATOMS) {
   for (const pfx of PREFIXES) {
@@ -155,13 +164,30 @@ async function fetchAllOverrides() {
 const all = await fetchAllOverrides();
 
 const suspects = [];
+const noOverrideUnitRows = [];
 let stats = { total: all.length, hasParenUnit: 0, matched: 0, mismatched: 0, noOverrideUnit: 0 };
 
 for (const row of all) {
   const paramUnit = extractParamNameUnit(row.param_name);
   if (!paramUnit) continue;
   stats.hasParenUnit++;
-  if (!row.unit) { stats.noOverrideUnit++; continue; }
+  if (!row.unit) {
+    stats.noOverrideUnit++;
+    // These are cases where the paramName parenthetical DECLARES a unit but
+    // the override has none — potential silent data corruption (Decision #217
+    // prefix normalization has nothing to work with). Emit in JSON so it's
+    // actionable.
+    noOverrideUnitRows.push({
+      id: row.id,
+      family_id: row.family_id,
+      param_name: row.param_name,
+      attribute_id: row.attribute_id,
+      attribute_name: row.attribute_name,
+      paramname_unit: paramUnit,
+      normalized_paramname: normalizeUnit(paramUnit),
+    });
+    continue;
+  }
   const match = unitsMatch(paramUnit, row.unit);
   if (match === true) { stats.matched++; continue; }
   stats.mismatched++;
@@ -178,15 +204,19 @@ for (const row of all) {
   });
 }
 
-// Sort: group by attribute_id, then family
+// Sort: group by attribute_id (nulls last), then family. Coalesce nulls to ''
+// so localeCompare doesn't throw on null attribute_id (rare — 'remove' action
+// overrides can legitimately have attribute_id=null).
 suspects.sort((a, b) => {
-  if (a.attribute_id !== b.attribute_id) return a.attribute_id.localeCompare(b.attribute_id);
+  const aAttr = a.attribute_id || '';
+  const bAttr = b.attribute_id || '';
+  if (aAttr !== bAttr) return aAttr.localeCompare(bAttr);
   if ((a.family_id || '') !== (b.family_id || '')) return (a.family_id || '').localeCompare(b.family_id || '');
   return a.param_name.localeCompare(b.param_name);
 });
 
 if (format === 'json') {
-  console.log(JSON.stringify({ stats, suspects }, null, 2));
+  console.log(JSON.stringify({ stats, suspects, noOverrideUnit: noOverrideUnitRows }, null, 2));
   process.exit(0);
 }
 

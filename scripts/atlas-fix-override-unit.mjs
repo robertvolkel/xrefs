@@ -71,14 +71,26 @@ function getArg(name) {
 }
 
 const id = getArg('--id');
-const toUnit = getArg('--to');
+const toUnitRaw = getArg('--to');
 const apply = args.includes('--apply');
 
-if (!id || !toUnit) {
+if (!id || !toUnitRaw) {
   console.error('Usage: node scripts/atlas-fix-override-unit.mjs --id <uuid> --to <unit> [--apply]');
   console.error('  --id    Override UUID (from atlas_dictionary_overrides.id)');
   console.error('  --to    New unit string (e.g. "mA", "mW")');
   console.error('  --apply Write the change (dry-run by default)');
+  process.exit(1);
+}
+
+// Trim + shape-check the new unit. A shell like `--to "mA "` with a trailing
+// space would silently store a broken unit string that never round-trips
+// through the paramName-extractor. Reject any whitespace inside the value.
+// We deliberately DON'T validate against a known-unit set here — the audit
+// script (atlas-audit-paramname-unit-mismatch.mjs) will re-check the whole
+// override table on the next pass and surface anything that stayed wrong.
+const toUnit = toUnitRaw.trim();
+if (!toUnit || /\s/.test(toUnit)) {
+  console.error(`Invalid --to value: "${toUnitRaw}" — must be non-empty and contain no whitespace.`);
   process.exit(1);
 }
 
@@ -116,8 +128,13 @@ if (!row.is_active) {
   console.log('⚠ This override is INACTIVE (is_active=false). Aborting — reactivate before editing.\n');
   process.exit(1);
 }
-if (row.unit === toUnit) {
-  console.log(`No change — override.unit is already "${toUnit}". Nothing to do.\n`);
+// Unicode-normalize both sides before comparing — 'μA' (U+03BC) and 'µA'
+// (U+00B5, the "micro sign") render identically but are distinct code points,
+// so a naive `===` would trigger a needless write cycle when the operator
+// pastes a visually-identical value.
+const nfc = (s) => (s == null ? s : String(s).normalize('NFC'));
+if (nfc(row.unit) === nfc(toUnit)) {
+  console.log(`No change — override.unit is already "${toUnit}" (Unicode-equivalent). Nothing to do.\n`);
   process.exit(0);
 }
 
