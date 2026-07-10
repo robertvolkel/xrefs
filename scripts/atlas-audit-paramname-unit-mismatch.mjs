@@ -119,14 +119,14 @@ function extractParamNameUnit(paramName) {
   return null;
 }
 
-// Are two units the same after normalization? We already respect prefix case.
+// Are two units the same after normalization? Case-SENSITIVE on prefix — that
+// IS the distinction we're auditing ('m' vs 'M' is 1e9 apart). Case-folding
+// would defeat the whole point of this audit: a mV vs MV mismatch would be
+// hidden. If a legitimate compound-unit case variant needs to be tolerated
+// (e.g. 'V/us' vs 'V/uS'), add both forms to KNOWN_UNITS explicitly.
 function unitsMatch(a, b) {
   if (!a || !b) return null; // can't compare
-  const na = normalizeUnit(a);
-  const nb = normalizeUnit(b);
-  if (na === nb) return true;
-  // Fall back to case-insensitive for compound units
-  return na.toLowerCase() === nb.toLowerCase();
+  return normalizeUnit(a) === normalizeUnit(b);
 }
 
 // --- Fetch + scan ---------------------------------------------------------

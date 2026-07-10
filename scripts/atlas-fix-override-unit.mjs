@@ -59,9 +59,15 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 
 const args = process.argv.slice(2);
 
+// Reject values that look like another flag — otherwise `--to --apply` would
+// silently interpret `--apply` as the unit string and write nonsense to
+// override.unit. Returns null so downstream usage/help fires.
 function getArg(name) {
   const i = args.indexOf(name);
-  return i !== -1 && args[i + 1] ? args[i + 1] : null;
+  if (i === -1) return null;
+  const v = args[i + 1];
+  if (!v || v.startsWith('--')) return null;
+  return v;
 }
 
 const id = getArg('--id');
@@ -135,6 +141,12 @@ if (updErr) {
 
 console.log(`✓ Wrote unit="${toUnit}" to override id=${id}`);
 console.log(`  (was: "${row.unit}")`);
+console.log('');
+console.log('⚠ The running Next.js server holds a 60s in-memory cache of dict overrides');
+console.log('  (lib/services/atlasDictOverrides.ts). Live queries may see the OLD unit');
+console.log('  until the cache expires. If you need it fresh right now, either wait ~60s');
+console.log('  or restart the dev server. Backfill (below) reads Supabase directly and is');
+console.log('  unaffected.');
 console.log('');
 console.log('Next: run `npm run atlas:backfill -- --mfr <MFR>` to correct already-stored');
 console.log('parameter values on existing atlas_products rows for the affected MFR(s).');

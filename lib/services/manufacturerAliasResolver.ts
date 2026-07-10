@@ -309,14 +309,19 @@ let inflight: Promise<void> | null = null;
 async function fetchAtlas(): Promise<AtlasRow[] | null> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from('atlas_manufacturers')
-      .select('slug, name_display, name_en, name_zh, aliases, partsio_name');
-    if (error) {
-      console.warn('manufacturerAliasResolver: Atlas error:', error.message);
-      return [];
-    }
-    return (data ?? []) as AtlasRow[];
+    // atlas_manufacturers is right at the 1000-row PostgREST cap (~1011 rows
+    // and growing). Without pagination, boundary rows silently drop, so a
+    // handful of MFRs stop resolving through this cache (they'd fall through
+    // to substring matching, mis-crediting products, or fail 🇨🇳-flag /
+    // origin-filter logic downstream). Same class of bug as the Western table
+    // fetches below. See Decisions #206 / #232 / #249.
+    return await fetchAllPages<AtlasRow>((from, to) =>
+      supabase
+        .from('atlas_manufacturers')
+        .select('slug, name_display, name_en, name_zh, aliases, partsio_name')
+        .order('slug')
+        .range(from, to),
+    );
   } catch (err) {
     console.warn('manufacturerAliasResolver: Atlas fetch failed:', err);
     return [];
