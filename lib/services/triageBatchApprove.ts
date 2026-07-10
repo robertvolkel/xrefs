@@ -18,6 +18,8 @@ export interface StarrableRowInput {
       suggestion?: 'accept' | 'defer' | null;
       suggestedAttributeId?: string | null;
       suggestedAttributeName?: string | null;
+      explanation?: string | null;
+      reasoning?: string | null;
     } | null;
   };
   dominantFamily: string | null;
@@ -25,6 +27,46 @@ export interface StarrableRowInput {
   autoFlag?: unknown;
   noteStatus?: string | null;
   acceptedOverride?: { isActive: boolean };
+}
+
+/**
+ * Lowercase substrings that signal the AI wants a human to LOOK at something
+ * before this is committed — whether about the mapping OR the underlying data
+ * values (a wide value spread, a possible unit typo, an outlier, etc.). Per the
+ * feature's rule: if the AI flags anything worth inspecting, the row is NOT
+ * "nothing to look at", so it forfeits the star even at high confidence.
+ *
+ * Deliberately biased toward catching hedges: a false positive only un-stars a
+ * fine row (it stays a normal manual row — harmless), while a false negative is
+ * the exact failure we're removing (a "spot-check before committing" row wearing
+ * a one-click star). Kept off ubiquitous words ("match", "consistent",
+ * "confidence") so genuinely clean explanations still star.
+ */
+export const CAVEAT_MARKERS: readonly string[] = [
+  'spot-check', 'spot check',
+  'double-check', 'double check',
+  'cross-check', 'cross check',
+  'sanity check', 'sanity-check',
+  'verif',            // verify / verification / verifying
+  'inspect',
+  'before committing', 'before accepting', 'before you accept',
+  'transcription', 'typo',
+  'outlier',
+  'manually', 'manual review', 'manual check',
+  'worth noting', 'worth checking', 'worth a look',
+  'not necessarily',
+  'data-quality flag', 'data quality flag', 'quality flag',
+  'caveat', 'caution',
+  'uncertain', 'ambiguous', 'ambiguity',
+  'recommend the engineer', 'engineer should', 'should be checked', 'should double',
+  'please confirm', 'to confirm', 'worth confirming',
+];
+
+/** True when the AI's explanation/reasoning asks for any human inspection. */
+export function explanationHasCaveat(explanation?: string | null, reasoning?: string | null): boolean {
+  const text = `${explanation ?? ''} ${reasoning ?? ''}`.toLowerCase();
+  if (!text.trim()) return false;
+  return CAVEAT_MARKERS.some((m) => text.includes(m));
 }
 
 export function isStarrableRow(r: StarrableRowInput): boolean {
@@ -37,6 +79,10 @@ export function isStarrableRow(r: StarrableRowInput): boolean {
 
   // High confidence only.
   if ((d.confidence ?? '').toLowerCase() !== 'high') return false;
+
+  // ...AND with no caveat. If the AI's own explanation asks to inspect anything
+  // (mapping OR data values), it's not "nothing to look at" → no star.
+  if (explanationHasCaveat(d.explanation, d.reasoning)) return false;
 
   // Must carry a writable mapping.
   if (!d.suggestedAttributeId || !d.suggestedAttributeId.trim()) return false;

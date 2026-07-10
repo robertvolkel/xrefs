@@ -2,6 +2,7 @@ import {
   isStarrableRow,
   prepareBatchItems,
   normalizeBatchParamName,
+  explanationHasCaveat,
   type StarrableRowInput,
 } from '@/lib/services/triageBatchApprove';
 
@@ -90,6 +91,48 @@ describe('isStarrableRow', () => {
 
   it('re-stars a row whose override was reverted (inactive)', () => {
     expect(isStarrableRow(makeRow({ acceptedOverride: { isActive: false } }))).toBe(true);
+  });
+
+  it('un-stars a high-confidence row whose explanation asks for a spot-check', () => {
+    const explanation = "This is a clean match to the rds_on canonical. One data-quality flag worth noting: the sample values span 1.7 mΩ to 9,500 mΩ — recommend the engineer spot-check the high-end outliers against their source MPNs to confirm unit consistency before committing.";
+    expect(isStarrableRow(makeRow({
+      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'rds_on', suggestedAttributeName: 'On-State Resistance', explanation } },
+    }))).toBe(false);
+  });
+
+  it('keeps the star on a clean high-confidence explanation with no caveat', () => {
+    const explanation = "Direct token match to the previously-accepted 'avalanche_current' canonical.";
+    expect(isStarrableRow(makeRow({
+      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'avalanche_current', suggestedAttributeName: 'Avalanche Current', explanation } },
+    }))).toBe(true);
+  });
+
+  it('un-stars when the caveat is in reasoning rather than explanation', () => {
+    expect(isStarrableRow(makeRow({
+      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'x', suggestedAttributeName: 'X', reasoning: 'Values look ambiguous — verify before accepting.' } },
+    }))).toBe(false);
+  });
+});
+
+describe('explanationHasCaveat', () => {
+  it('is false for empty / clean text', () => {
+    expect(explanationHasCaveat(null, null)).toBe(false);
+    expect(explanationHasCaveat('Direct token match to the canonical.', null)).toBe(false);
+    expect(explanationHasCaveat('Consistent with standard datasheets; a high-confidence match.', null)).toBe(false);
+  });
+
+  it('catches inspection / verification / data-quality hedges', () => {
+    for (const s of [
+      'recommend the engineer spot-check the outliers',
+      'please verify the mapping before committing',
+      'the values look like a possible transcription error',
+      'one data-quality flag worth noting',
+      'these numbers are outliers worth checking',
+      'the unit is ambiguous',
+      'double-check this one',
+    ]) {
+      expect(explanationHasCaveat(s, null)).toBe(true);
+    }
   });
 });
 
