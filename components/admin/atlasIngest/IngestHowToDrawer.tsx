@@ -69,6 +69,11 @@ const PHASE_1_ROWS: PhaseRow[] = [
     why: 'Every accept becomes a live dict override that the Proceed step will apply at ingest time.',
   },
   {
+    step: '5★',
+    action: <><b>Sweep the ⭐ rows first</b>: filter to <b>AI: ACCEPT</b>, tick the starred rows (the header checkbox ticks every starred row on screen), then click <b>Batch Accept (N)</b></>,
+    why: 'A star means AI verdict = accept AND high confidence AND no caveat anywhere in its explanation — i.e. nothing the AI would ask you to look at. It is the fast lane, not an auto-approve: you still tick each box, every row warning still shows, and the snackbar offers one-click Undo for the whole batch. Typical yield: ~40% of a fresh Generate batch comes back accept, ~85% of those are starred.',
+  },
+  {
     step: '5a',
     action: <><b>Edit attributeId before accepting</b> when the AI picks a sub-optimal canonical (e.g. L2-context name when an L3 canonical equivalent exists)</>,
     why: 'Just change the attributeId field, leave name/unit alone, then Accept. Future-proofs against later product reclassification.',
