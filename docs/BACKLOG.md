@@ -4,6 +4,32 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 
 ---
 
+
+## CLAUDE.md diet — it is 202KB and loads in FULL every session (P1)
+
+**Measured July 12, 2026:** `CLAUDE.md` is **201,429 bytes ≈ 50,000 tokens**, injected into *every* session before the user types anything. Two sections hold 57% of it:
+
+| Section | Bytes | Share |
+|---|---|---|
+| Key Patterns | 61,550 | 31% |
+| Product Direction | 54,055 | 27% |
+
+**Root cause (same disease as the July 2026 MEMORY.md truncation):** `CLAUDE.md` is supposed to say *how the app works now*. Instead it has become a second copy of the decision log — **42 of the 51 "Key Patterns" bullets are `Decision #NNN` write-ups totalling 58.7KB (29% of the file)**, several of them pure archaeology ("#251 briefly gated this behind a toggle; #252 reverted that"). The longest single bullet is 5.2KB.
+
+**Why a trim is safe:** every one of the 119 decisions referenced in `CLAUDE.md` has a full entry in `docs/DECISIONS.md` (verified — older ones use the `## 81.` heading style rather than `## Decision #81 —`). The story is recoverable; only the *pointer* needs to stay.
+
+**The rule for the trim — lossless by construction:**
+- **KEEP** every invariant, gotcha and constraint — the things that cause a bug if broken (cache-version bumps, "never `.or()` composite tuples", "`enableCssLayer` must be false", load-bearing ordering).
+- **DROP** the narrative: the trigger story, what we tried first, what got reverted, the measured-yield anecdotes.
+- **REPLACE** each decision bullet with: current behaviour in 1–3 lines + `(Decision #N)` pointer.
+- **NEVER** delete a fact that isn't already in `DECISIONS.md`. Check before cutting — on the MEMORY.md compaction the same day, one open item existed *only* in the prose and was nearly lost.
+
+**Expected:** ~200KB → ~80–90KB, i.e. **~30,000 tokens back in every future session**, with no loss of anything load-bearing.
+
+**Do it as a dedicated pass**, not as a tail-end cleanup — this is the file that governs every session, and a botched trim fails silently (a dropped invariant surfaces as a bug months later, not as an error). Phase it: Product Direction first (mostly narrative, lowest risk), then the 42 Key Patterns bullets.
+
+---
+
 ## Durable Triage suggestions — follow-ups (Decision #265) (P2/P3)
 
 Branch `feat/triage-durable-suggestions` (commit 9bc5027) — durable AI Triage verdicts + batch box + "generated so far" counter + server-side Accept pile. Not merged; needs `scripts/supabase-atlas-param-suggestions-schema.sql` applied once in Supabase before it works live, and a hands-on click-through (built + 2846 tests + build pass, but live behavior unverified).
