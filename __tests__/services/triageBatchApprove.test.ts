@@ -109,8 +109,17 @@ describe('isStarrableRow', () => {
 
   it('un-stars when the caveat is in reasoning rather than explanation', () => {
     expect(isStarrableRow(makeRow({
-      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'x', suggestedAttributeName: 'X', reasoning: 'Values look ambiguous — verify before accepting.' } },
+      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'x', suggestedAttributeName: 'X', reasoning: 'Values look off — verify before accepting.' } },
     }))).toBe(false);
+  });
+
+  it('KEEPS the star when the AI says the mapping is "unambiguously" correct', () => {
+    // Regression: "ambiguous" used to substring-match "unambiguously" (a
+    // maximum-certainty word) and wrongly strip the star.
+    const explanation = "Schema-canonical match — 'IO_Max (A)' is unambiguously the average rectified forward current (Io). The unit is amperes and the sample values are physically consistent. Safe to accept.";
+    expect(isStarrableRow(makeRow({
+      suggestion: { verdict: 'accept', detail: { confidence: 'high', suggestion: 'accept', suggestedAttributeId: 'io_avg', suggestedAttributeName: 'Average Rectified Forward Current', explanation } },
+    }))).toBe(true);
   });
 });
 
@@ -121,15 +130,32 @@ describe('explanationHasCaveat', () => {
     expect(explanationHasCaveat('Consistent with standard datasheets; a high-confidence match.', null)).toBe(false);
   });
 
-  it('catches inspection / verification / data-quality hedges', () => {
+  it('does NOT match certainty words that contain a marker as a substring', () => {
+    expect(explanationHasCaveat("this is unambiguously the correct canonical", null)).toBe(false);
+    expect(explanationHasCaveat("the mapping is unambiguous and safe", null)).toBe(false);
+  });
+
+  it('does NOT count a NEGATED hedge (positive statement)', () => {
+    for (const s of [
+      'no ambiguity here; safe to accept',
+      'no need to verify — direct match',
+      'nothing to spot-check',
+      'no caveats, clean mapping',
+      'without any outlier concerns',
+    ]) {
+      expect(explanationHasCaveat(s, null)).toBe(false);
+    }
+  });
+
+  it('catches genuine (non-negated) inspection / verification / data-quality hedges', () => {
     for (const s of [
       'recommend the engineer spot-check the outliers',
       'please verify the mapping before committing',
       'the values look like a possible transcription error',
-      'one data-quality flag worth noting',
-      'these numbers are outliers worth checking',
-      'the unit is ambiguous',
+      'one data-quality flag: spot-check the high-end values',
+      'these numbers are worth checking against the source',
       'double-check this one',
+      'recommend the engineer confirm unit consistency to confirm no typo',
     ]) {
       expect(explanationHasCaveat(s, null)).toBe(true);
     }

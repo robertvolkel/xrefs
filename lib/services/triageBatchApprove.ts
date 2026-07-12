@@ -47,26 +47,46 @@ export const CAVEAT_MARKERS: readonly string[] = [
   'double-check', 'double check',
   'cross-check', 'cross check',
   'sanity check', 'sanity-check',
-  'verif',            // verify / verification / verifying
+  'verify', 'verification', 'verifying',
   'inspect',
   'before committing', 'before accepting', 'before you accept',
   'transcription', 'typo',
   'outlier',
   'manually', 'manual review', 'manual check',
-  'worth noting', 'worth checking', 'worth a look',
-  'not necessarily',
+  'worth checking',
   'data-quality flag', 'data quality flag', 'quality flag',
-  'caveat', 'caution',
-  'uncertain', 'ambiguous', 'ambiguity',
-  'recommend the engineer', 'engineer should', 'should be checked', 'should double',
+  'caveat',
+  'recommend the engineer', 'engineer should', 'should be checked', 'should double-check',
   'please confirm', 'to confirm', 'worth confirming',
 ];
+// Intentionally NOT markers: "ambiguous"/"ambiguity"/"uncertain" — the AI uses
+// their POSITIVE forms ("unambiguously", "no ambiguity", "not uncertain") to
+// express HIGH certainty, so substring-matching them mis-strips clean rows
+// (real ambiguity is a 'defer', already excluded by verdict). Weak/ubiquitous
+// hedges ("worth noting", "not necessarily", "caution") dropped for the same
+// false-positive reason — the strong markers above still catch genuine caveats.
 
-/** True when the AI's explanation/reasoning asks for any human inspection. */
+// A caveat marker preceded (within ~14 chars) by a negator is a POSITIVE
+// statement ("no need to verify", "nothing to spot-check", "no caveats") and
+// must not count as a caveat.
+const NEGATION_BEFORE = /\b(no|not|never|without|nothing|none|zero|n't)\b[\s\w'-]{0,14}$/;
+
+/** True when the AI's explanation/reasoning asks for any human inspection —
+ *  ignoring negated mentions. Kept as a legacy backstop for suggestions
+ *  generated before "high confidence" was defined to exclude caveats; new
+ *  generations forfeit "high" at the source (the /suggest prompt). */
 export function explanationHasCaveat(explanation?: string | null, reasoning?: string | null): boolean {
   const text = `${explanation ?? ''} ${reasoning ?? ''}`.toLowerCase();
   if (!text.trim()) return false;
-  return CAVEAT_MARKERS.some((m) => text.includes(m));
+  for (const marker of CAVEAT_MARKERS) {
+    let idx = text.indexOf(marker);
+    while (idx !== -1) {
+      const before = text.slice(Math.max(0, idx - 20), idx);
+      if (!NEGATION_BEFORE.test(before)) return true; // a non-negated hedge
+      idx = text.indexOf(marker, idx + marker.length);
+    }
+  }
+  return false;
 }
 
 export function isStarrableRow(r: StarrableRowInput): boolean {
