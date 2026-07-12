@@ -34,8 +34,6 @@ import { invalidateDictOverrideCache } from '@/lib/services/atlasDictOverrides';
 import { invalidateTriageQueueCache } from '@/lib/services/triageQueueCache';
 import { prepareBatchItems, type PreparedBatchItem } from '@/lib/services/triageBatchApprove';
 
-type PreparedItem = PreparedBatchItem;
-
 interface InsertedRow {
   id: string;
   param_name: string;
@@ -78,14 +76,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const changeReason = `Batch-accepted (AI high-confidence) [batch:${batchId}]`;
 
     // Group by family so every deactivate/insert is scoped to one family_id.
-    const byFamily = new Map<string, PreparedItem[]>();
+    const byFamily = new Map<string, PreparedBatchItem[]>();
     for (const p of prepared) {
       const arr = byFamily.get(p.familyId) ?? [];
       arr.push(p);
       byFamily.set(p.familyId, arr);
     }
 
-    const pushApproved = (row: InsertedRow, it: PreparedItem) => {
+    const pushApproved = (row: InsertedRow, it: PreparedBatchItem) => {
       approvedIds.push(row.id);
       approved.push({
         paramName: it.rawParamName,

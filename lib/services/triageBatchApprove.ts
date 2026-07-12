@@ -10,6 +10,8 @@
  * aid, not a safety gate; existing on-row warnings still render alongside it.
  */
 
+import { normalizeParamKey } from './atlasParamSuggestionTypes';
+
 export interface StarrableRowInput {
   suggestion?: {
     verdict?: 'accept' | 'defer';
@@ -71,6 +73,14 @@ export const CAVEAT_MARKERS: readonly string[] = [
 // must not count as a caveat.
 const NEGATION_BEFORE = /\b(no|not|never|without|nothing|none|zero|n't)\b[\s\w'-]{0,14}$/;
 
+// One precompiled alternation instead of N indexOf scans per call: this runs
+// once per rendered row on every keystroke/tick in a table that already has a
+// documented freeze risk on long queues.
+const CAVEAT_RE = new RegExp(
+  CAVEAT_MARKERS.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+  'g',
+);
+
 /** True when the AI's explanation/reasoning asks for any human inspection —
  *  ignoring negated mentions. Kept as a legacy backstop for suggestions
  *  generated before "high confidence" was defined to exclude caveats; new
@@ -78,12 +88,13 @@ const NEGATION_BEFORE = /\b(no|not|never|without|nothing|none|zero|n't)\b[\s\w'-
 export function explanationHasCaveat(explanation?: string | null, reasoning?: string | null): boolean {
   const text = `${explanation ?? ''} ${reasoning ?? ''}`.toLowerCase();
   if (!text.trim()) return false;
-  for (const marker of CAVEAT_MARKERS) {
-    let idx = text.indexOf(marker);
-    while (idx !== -1) {
-      const before = text.slice(Math.max(0, idx - 20), idx);
-      if (!NEGATION_BEFORE.test(before)) return true; // a non-negated hedge
-      idx = text.indexOf(marker, idx + marker.length);
+  CAVEAT_RE.lastIndex = 0; // shared /g regex — reset before AND after any early exit
+  let m: RegExpExecArray | null;
+  while ((m = CAVEAT_RE.exec(text)) !== null) {
+    const before = text.slice(Math.max(0, m.index - 20), m.index);
+    if (!NEGATION_BEFORE.test(before)) {
+      CAVEAT_RE.lastIndex = 0;
+      return true; // a non-negated hedge
     }
   }
   return false;
@@ -121,13 +132,15 @@ export function isStarrableRow(r: StarrableRowInput): boolean {
 
 // ── Batch write input preparation (shared by the batch route + tests) ────────
 
-/** NFC + lowercase + trim — byte-for-byte the single-write route's + queue
- *  lookup's normalization. Load-bearing: two cosmetic variants that collapse to
- *  the same (familyId, paramName) must be deduped before a bulk insert, else the
- *  partial unique index rejects the whole chunk. */
-export function normalizeBatchParamName(s: string): string {
-  return s.normalize('NFC').toLowerCase().trim();
-}
+/** The canonical param-name normalizer (NFC + lowercase + trim), re-exported
+ *  under the batch name. NOT a second copy: if this ever drifted from the
+ *  single-write route's + queue lookup's normalization, every batch-accepted
+ *  mapping would be written under a key the queue can't find, silently
+ *  re-opening rows the engineer already accepted (the Decision #186(d) bug).
+ *  It is also load-bearing for the partial unique index: two cosmetic variants
+ *  that collapse to the same (familyId, paramName) must be deduped before a
+ *  bulk insert, else Postgres rejects the whole chunk. */
+export const normalizeBatchParamName = normalizeParamKey;
 
 export interface RawBatchItem {
   familyId?: unknown;

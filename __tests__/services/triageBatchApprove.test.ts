@@ -5,6 +5,7 @@ import {
   explanationHasCaveat,
   type StarrableRowInput,
 } from '@/lib/services/triageBatchApprove';
+import { normalizeParamKey } from '@/lib/services/atlasParamSuggestionTypes';
 
 // ── isStarrableRow ───────────────────────────────────────────────────────────
 
@@ -147,6 +148,16 @@ describe('explanationHasCaveat', () => {
     }
   });
 
+  it('is stateless across repeated calls (shared /g regex must not leak lastIndex)', () => {
+    const caveat = 'please verify the values before committing';
+    const clean = 'Direct token match to the canonical.';
+    // Interleave so a leaked lastIndex from one call would corrupt the next.
+    for (let i = 0; i < 5; i++) {
+      expect(explanationHasCaveat(caveat, null)).toBe(true);
+      expect(explanationHasCaveat(clean, null)).toBe(false);
+    }
+  });
+
   it('catches genuine (non-negated) inspection / verification / data-quality hedges', () => {
     for (const s of [
       'recommend the engineer spot-check the outliers',
@@ -213,5 +224,12 @@ describe('prepareBatchItems', () => {
 
   it('normalizeBatchParamName is NFC + lowercase + trim', () => {
     expect(normalizeBatchParamName('  ABC  ')).toBe('abc');
+  });
+
+  it('normalizeBatchParamName IS the canonical normalizer (no second copy to drift)', () => {
+    // Load-bearing: if the batch path normalized differently from the queue's
+    // override lookup, every batch-accepted mapping would be written under a key
+    // the queue can't find — silently re-opening rows already accepted.
+    expect(normalizeBatchParamName).toBe(normalizeParamKey);
   });
 });

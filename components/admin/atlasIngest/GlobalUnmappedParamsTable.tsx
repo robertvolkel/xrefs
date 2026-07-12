@@ -753,6 +753,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // every single action on long queues.
   useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE_ROWS);
+    // Drop any batch-accept ticks too: a selection made under the previous
+    // filter can point at rows this view never loads, so keeping it would make
+    // the "Batch Accept (N)" count claim rows the engineer can no longer see.
+    setSelected(new Set());
   }, [viewKey]);
   // Safety clamp: if the filtered set shrinks below the current visible count
   // (e.g. accepting a row in Open status drops it from filteredRows), keep
@@ -810,7 +814,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
     return [...stale, ...fresh];
   }, [rows, states, cardVersionByFamily, schemaVersionByFamily, staleFirstSort, aiVerdictFilter]);
-  const visibleRows = orderedRows.slice(0, visibleCount);
+  const visibleRows = useMemo(() => orderedRows.slice(0, visibleCount), [orderedRows, visibleCount]);
 
   // ── Batch Accept: star high-confidence rows, tick, accept in one click ──
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -821,9 +825,20 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const [, startSelectTransition] = useTransition();
 
   // Rows currently rendered that qualify for the star + checkbox (high-confidence
-  // accept, writable, still open). Cheap filter over the render window.
-  const visibleStarred = visibleRows.filter(isStarrableRow);
-  const selectedCount = selected.size;
+  // accept, writable, still open). Memoized (and reused as the per-row `starred`
+  // lookup below) because isStarrableRow runs a text scan — recomputing it for
+  // every rendered row on every keystroke/tick is the documented freeze risk.
+  const visibleStarred = useMemo(() => visibleRows.filter(isStarrableRow), [visibleRows]);
+  const starredParamNames = useMemo(() => new Set(visibleStarred.map((r) => r.paramName)), [visibleStarred]);
+
+  // The rows a Batch Accept would ACTUALLY submit — same predicate the submit
+  // path uses, so the button's count can never over-promise (a ticked row that
+  // has since been accepted/flagged drops out of both together).
+  const selectedRows = useMemo(
+    () => rows.filter((r) => selected.has(r.paramName) && isStarrableRow(r)),
+    [rows, selected],
+  );
+  const selectedCount = selectedRows.length;
   const allVisibleStarredSelected = visibleStarred.length > 0 && visibleStarred.every((r) => selected.has(r.paramName));
   const someVisibleStarredSelected = !allVisibleStarredSelected && visibleStarred.some((r) => selected.has(r.paramName));
 
@@ -838,77 +853,20 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
 
   const toggleAllVisibleStarred = useCallback(() => {
     const names = visibleStarred.map((r) => r.paramName);
-    const allSelected = names.length > 0 && names.every((n) => selected.has(n));
+    if (names.length === 0) return;
     startSelectTransition(() => {
       setSelected((prev) => {
+        // Read "are they all already ticked?" off `prev`, not off a captured
+        // `selected` — under startTransition the captured value can be a render
+        // behind, which flips select-all into a no-op.
+        const allSelected = names.every((n) => prev.has(n));
         const next = new Set(prev);
         if (allSelected) for (const n of names) next.delete(n);
         else for (const n of names) next.add(n);
         return next;
       });
     });
-  }, [visibleStarred, selected, startSelectTransition]);
-
-  const handleBatchAccept = useCallback(async () => {
-    // Build items from the FULL loaded set (selection survives the render
-    // window), re-checking starrability so a stale selection can't submit an
-    // ineligible row. Mapping values come from the AI suggestion detail.
-    const items: Array<{ familyId: string; paramName: string; attributeId: string; attributeName: string; unit?: string }> = [];
-    for (const r of rows) {
-      if (!selected.has(r.paramName) || !isStarrableRow(r)) continue;
-      const d = r.suggestion!.detail!;
-      const scope = getOverrideScope(r);
-      if (!scope) continue;
-      items.push({
-        familyId: scope.key,
-        paramName: r.paramName,
-        attributeId: d.suggestedAttributeId!.trim(),
-        attributeName: d.suggestedAttributeName!.trim(),
-        unit: d.suggestedUnit?.trim() || undefined,
-      });
-    }
-    if (items.length === 0) return;
-    setBatchAccepting(true);
-    setBatchNotice(null);
-    try {
-      const res = await fetch('/api/admin/atlas/dictionaries/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error || `Batch accept failed (${res.status})`);
-      const approvedList = (json.approved ?? []) as Array<{
-        paramName: string;
-        familyId: string;
-        override: Omit<NonNullable<GlobalUnmappedParam['acceptedOverride']>, 'createdByName' | 'wasEdited'>;
-      }>;
-      const updates = approvedList.map((a) => ({
-        paramName: a.paramName,
-        override: { ...a.override, createdByName: 'You', wasEdited: false } as NonNullable<GlobalUnmappedParam['acceptedOverride']>,
-        // Starred rows are open accept rows → they leave the "accepts waiting" bucket.
-        leftBucket: 'accept' as const,
-      }));
-      if (updates.length > 0) onRowsAccepted?.(updates);
-      setSelected(new Set());
-      const overrideIds = (json.approvedIds ?? []) as string[];
-      if (overrideIds.length > 0) {
-        setUndoInfo({ overrideIds, paramNames: updates.map((u) => u.paramName), count: updates.length });
-      }
-      const parts: string[] = [`Accepted ${updates.length}`];
-      const deduped = (json.deduped ?? 0) as number;
-      const skippedN = ((json.skipped ?? []) as unknown[]).length;
-      const failedN = ((json.failed ?? []) as unknown[]).length;
-      if (deduped > 0) parts.push(`${deduped} duplicate${deduped === 1 ? '' : 's'} merged`);
-      if (skippedN > 0) parts.push(`${skippedN} skipped`);
-      if (failedN > 0) parts.push(`${failedN} failed`);
-      setBatchNotice(parts.join(' · '));
-    } catch (err) {
-      setBatchNotice(err instanceof Error ? err.message : 'Batch accept failed');
-    } finally {
-      setBatchAccepting(false);
-    }
-  }, [rows, selected, onRowsAccepted]);
+  }, [visibleStarred, startSelectTransition]);
 
   const handleUndoBatch = useCallback(async () => {
     if (!undoInfo) return;
@@ -1533,6 +1491,85 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       console.error('recordInvestigationAction failed:', err);
     }
   }, [states]);
+
+  const handleBatchAccept = useCallback(async () => {
+    // Mapping values come from each row's AI suggestion detail. `selectedRows`
+    // is already re-checked against isStarrableRow, so a stale tick can't submit
+    // an ineligible row.
+    const items: Array<{ familyId: string; paramName: string; attributeId: string; attributeName: string; unit?: string }> = [];
+    const rowByParam = new Map<string, GlobalUnmappedParam>();
+    for (const r of selectedRows) {
+      const d = r.suggestion!.detail!;
+      const scope = getOverrideScope(r);
+      if (!scope) continue;
+      rowByParam.set(r.paramName, r);
+      items.push({
+        familyId: scope.key,
+        paramName: r.paramName,
+        attributeId: d.suggestedAttributeId!.trim(),
+        attributeName: d.suggestedAttributeName!.trim(),
+        unit: d.suggestedUnit?.trim() || undefined,
+      });
+    }
+    if (items.length === 0) return;
+    setBatchAccepting(true);
+    setBatchNotice(null);
+    // Retire the previous batch's Undo before this one runs: if THIS batch
+    // fails, an Undo button left pointing at the previous (successful) batch
+    // would silently reverse the wrong work.
+    setUndoInfo(null);
+    try {
+      const res = await fetch('/api/admin/atlas/dictionaries/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || `Batch accept failed (${res.status})`);
+      const approvedList = (json.approved ?? []) as Array<{
+        paramName: string;
+        familyId: string;
+        override: Omit<NonNullable<GlobalUnmappedParam['acceptedOverride']>, 'createdByName' | 'wasEdited'>;
+      }>;
+      const updates = approvedList.map((a) => {
+        const row = rowByParam.get(a.paramName);
+        return {
+          paramName: a.paramName,
+          override: { ...a.override, createdByName: 'You', wasEdited: false } as NonNullable<GlobalUnmappedParam['acceptedOverride']>,
+          // Which bucket this param leaves, mirroring the single-row Accept: a
+          // starred row is always an accept-verdict row, but one whose override
+          // was previously UNDONE is still starrable and was never counted in
+          // the open pile — decrementing for it would drive the count negative.
+          leftBucket: row?.acceptedOverride ? undefined : ('accept' as const),
+        };
+      });
+      if (updates.length > 0) onRowsAccepted?.(updates);
+      // Close the AI audit loop for any row the engineer had investigated
+      // (no-op for the rest). Fire-and-forget — the accept already landed.
+      for (const a of approvedList) {
+        const row = rowByParam.get(a.paramName);
+        const overrideId = (a.override as { id?: string })?.id;
+        if (row && overrideId) void recordInvestigationAction(row, 'override_created', overrideId);
+      }
+      setSelected(new Set());
+      const overrideIds = (json.approvedIds ?? []) as string[];
+      if (overrideIds.length > 0) {
+        setUndoInfo({ overrideIds, paramNames: updates.map((u) => u.paramName), count: updates.length });
+      }
+      const parts: string[] = [`Accepted ${updates.length}`];
+      const deduped = (json.deduped ?? 0) as number;
+      const skippedN = ((json.skipped ?? []) as unknown[]).length;
+      const failedN = ((json.failed ?? []) as unknown[]).length;
+      if (deduped > 0) parts.push(`${deduped} duplicate${deduped === 1 ? '' : 's'} merged`);
+      if (skippedN > 0) parts.push(`${skippedN} skipped`);
+      if (failedN > 0) parts.push(`${failedN} failed`);
+      setBatchNotice(parts.join(' · '));
+    } catch (err) {
+      setBatchNotice(err instanceof Error ? err.message : 'Batch accept failed');
+    } finally {
+      setBatchAccepting(false);
+    }
+  }, [selectedRows, onRowsAccepted, recordInvestigationAction]);
 
   const confirmFlag = useCallback(async (row: GlobalUnmappedParam) => {
     // Two sources feed this handler:
@@ -2716,8 +2753,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const investigationStaleReason = getRowInvestigationStaleness(r);
                 const isStale = !!(suggestionStaleReason || investigationStaleReason);
                 // High-confidence accept + writable + still open → gets a star
-                // and a batch-accept checkbox.
-                const starred = isStarrableRow(r);
+                // and a batch-accept checkbox. Reuses the memoized set rather
+                // than re-running the predicate per row on every render.
+                const starred = starredParamNames.has(r.paramName);
                 return (
                   <Fragment key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}::${rowIdx}`}>
                   <TableRow
