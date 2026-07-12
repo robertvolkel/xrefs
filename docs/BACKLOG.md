@@ -738,6 +738,8 @@ Created `.env.example` with all required variables, placeholder values, and comm
 
 Admins can now edit rule weights, logic types, thresholds, hierarchies, and context questions/options/effects from the admin UI without code deploys. Overrides stored in Supabase, merged at runtime on top of TS base. See Decision #60.
 
+**Still open (P1, from the Decision #60 follow-up list):** *preview the scoring impact of a rule override before saving it.* Today an admin edits a weight/type and only finds out what it did to real recommendations by re-running a search. A "score N recent candidates with this override applied, show the before/after" preview in `RuleOverrideDrawer` would close that loop. (Recorded here July 12, 2026 — it had been carried only in MEMORY.md and was nearly lost when that index was compacted.)
+
 ---
 
 ### ~~External API access for sister products~~ COMPLETED
