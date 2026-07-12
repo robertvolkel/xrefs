@@ -186,7 +186,7 @@ Given a Chinese parameter name from a component datasheet, provide:
 2. The best matching attribute from the schema below (if any)
 3. A suggested attributeId and attributeName if no schema match exists
 4. The likely unit of measurement (if determinable from the name or sample values)
-5. Confidence: "high" if translation is certain AND schema match is clear, "medium" if translation is certain but schema match is approximate, "low" if uncertain
+5. Confidence: "high" ONLY if translation is certain AND schema match is clear AND there is NOTHING — about the mapping OR the sample values — that you would ask a human to inspect (no data-quality flag, no outliers/wide-spread values to sanity-check, no unit ambiguity, no possible transcription error, no "verify/spot-check/confirm before committing"). "medium" if the mapping is sound but you have ANY reservation a human should check — INCLUDING a data-value concern even when the mapping itself is obvious — or the schema match is approximate. "low" if the translation itself is uncertain. Decisive test: if your explanation would recommend the engineer verify, spot-check, confirm, or double-check ANYTHING, the confidence is NOT "high" — downgrade to "medium".
 6. A suggestion: "accept" (the suggested attributeId is safe to commit as a dictionary override) OR "defer" (something is off — the engineer should leave a team note and investigate before accepting)
 7. An explanation written in the same voice and detail an engineer would write a team note. Full sentences, specific, concrete. ALWAYS populate this field — Accept and Defer get the same depth of evidence.
 
