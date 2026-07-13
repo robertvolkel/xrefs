@@ -205,7 +205,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       Array.from({ length: Math.min(FAMILY_CONCURRENCY, familyEntries.length) }, async () => {
         while (familyCursor < familyEntries.length) {
           const [familyId, items] = familyEntries[familyCursor++];
-          await processFamily(familyId, items);
+          // Contain a family-level throw (transport failure — supabase-js returns
+          // query errors as { error } rather than throwing). Letting it escape would
+          // reject Promise.all and 500 the request WITHOUT cancelling the sibling
+          // workers: their inserts still land, but arrive after the response, so they
+          // are absent from `approved` (invisible), absent from `approvedIds` (NOT
+          // undoable), and never covered by the invalidation below (which is skipped).
+          // Degrading to a per-family failure keeps the batch a partial success with
+          // an accurate approvedIds + a correct invalidation — strictly better than
+          // both the old sequential loop and an uncontained pool.
+          try {
+            await processFamily(familyId, items);
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : 'family write failed';
+            for (const it of items) failed.push({ paramName: it.rawParamName, familyId, reason });
+          }
         }
       }),
     );

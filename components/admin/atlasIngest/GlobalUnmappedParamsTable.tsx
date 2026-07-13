@@ -2973,6 +2973,18 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  Click the × to scope the accept to just the primary row. Click the
    *  smaller "just this row" chip (in opted-out state) to re-enable. */
   const acceptAndRegenerate = useCallback(async (row: GlobalUnmappedParam) => {
+    // Snapshot the bulk-apply inputs BEFORE the accept. `normalizedMatchesByRow` is
+    // derived from the `rows` prop, and a successful accept drops the row OUT of
+    // `rows` in the default Open view — so reading the ref AFTER the await can find
+    // the entry already gone, silently skipping every sibling paramName (no error,
+    // no UI signal, siblings never get their override). It happens to work today
+    // only because React flushes the parent's setState on a macrotask while this
+    // continuation runs on a microtask — i.e. by scheduling accident. Snapshotting
+    // restores the pre-refactor semantics (the old deps captured these by value).
+    const matches = normalizedMatchesByRowRef.current[row.paramName] ?? [];
+    const optedOut = bulkOptedOutRef.current.has(row.paramName);
+    const primaryState = statesRef.current[row.paramName];
+
     const result = await acceptRow(row);
     if (!result.ok) return;
 
@@ -2981,10 +2993,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // for every sibling in parallel. The primary accept already succeeded
     // by this point, so any match failure is contained — the engineer can
     // retry that match's row individually.
-    const matches = normalizedMatchesByRowRef.current[row.paramName] ?? [];
-    const doBulk = matches.length > 0 && !bulkOptedOutRef.current.has(row.paramName);
+    const doBulk = matches.length > 0 && !optedOut;
     if (doBulk) {
-      const primaryState = statesRef.current[row.paramName];
       if (primaryState && primaryState.editedAttributeId.trim()) {
         const overrideValues = {
           attributeId: primaryState.editedAttributeId.trim(),
@@ -3204,11 +3214,21 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   }, [onNoteChange]);
 
   const markUnmappable = useCallback(async (row: GlobalUnmappedParam) => {
+    // Snapshot the PRE-optimistic status BEFORE calling onRowFlagged. The rollback
+    // in the catch must restore what the row looked like before we touched it — and
+    // `notesByParamRef` mirrors live state, so by the time the await resolves it
+    // already holds OUR optimistic write. Reading the ref in the catch would "roll
+    // back" to 'unmappable'/'engineer', i.e. do nothing, leaving the row silently
+    // parked in the Unmappable bucket with nothing persisted server-side (and the
+    // error message invisible, since the row has already left the Open view).
+    // Same pattern as reopenRow / toggleFlag below.
+    const existing = notesByParamRef.current[row.paramName];
+    const prevStatus = existing?.status ?? row.noteStatus ?? null;
+    const prevFlaggedBy = existing?.flaggedBy ?? row.flaggedBy ?? null;
     // Optimistic — chip counts (deferred / unmappable / open) in the parent's
     // statusCounts also depend on onRowFlagged, not just notesByParam.
     onRowFlagged?.(row.paramName, 'unmappable', 'engineer');
     try {
-      const existing = notesByParamRef.current[row.paramName];
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -3230,8 +3250,9 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // Close the AI audit loop. Fire-and-forget.
       void recordInvestigationAction(row, 'marked_unmappable');
     } catch (err) {
-      // Roll back the optimistic chip-count update.
-      onRowFlagged?.(row.paramName, notesByParamRef.current[row.paramName]?.status ?? null, notesByParamRef.current[row.paramName]?.flaggedBy ?? null);
+      // Roll back the optimistic chip-count update — from the PRE-optimistic locals,
+      // never from the ref (which now mirrors our own optimistic write).
+      onRowFlagged?.(row.paramName, prevStatus, prevFlaggedBy);
       const msg = err instanceof Error ? err.message : 'Failed to mark unmappable';
       setStates((prev) => ({
         ...prev,
@@ -3282,10 +3303,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // overlay. (Mirrors the Mark-Unmappable path, which closes its menu first.)
     setDeferPopover(null);
     setDeferReason('');
+    // Snapshot BEFORE the optimistic write — see markUnmappable. Rolling back from
+    // `notesByParamRef` in the catch would restore 'deferred' (our own optimistic
+    // value), silently leaving the row in the Deferred bucket with nothing persisted.
+    // Worse here than in markUnmappable: this catch has no error UI at all, so the
+    // rollback IS the only signal that the defer failed.
+    const existing = notesByParamRef.current[row.paramName];
+    const prevStatus = existing?.status ?? row.noteStatus ?? null;
+    const prevFlaggedBy = existing?.flaggedBy ?? row.flaggedBy ?? null;
     // Optimistic — flip the row's noteStatus + parent chip counts.
     onRowFlagged?.(row.paramName, 'deferred', 'engineer');
     try {
-      const existing = notesByParamRef.current[row.paramName];
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -3305,9 +3333,8 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         onNoteChange(row.paramName, (json as { item: NoteRecord }).item);
       }
     } catch {
-      // Roll back optimistic chip-count update on error.
-      const fallback = notesByParamRef.current[row.paramName];
-      onRowFlagged?.(row.paramName, fallback?.status ?? null, fallback?.flaggedBy ?? null);
+      // Roll back from the PRE-optimistic locals, never from the ref.
+      onRowFlagged?.(row.paramName, prevStatus, prevFlaggedBy);
     }
   }, [deferPopover, deferReason, onRowFlagged, onNoteChange]);
 
@@ -3699,7 +3726,18 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
                 const investigationStaleReason = getRowInvestigationStaleness(r);
                 return (
                   <TriageRow
-                    key={r.paramName}
+                    // paramName alone is NOT a unique row identity: the same param can
+                    // be accepted under SEVERAL families, and every override beyond the
+                    // one the aggregate row claims is synthesized as its own orphan row
+                    // carrying the SAME paramName (triageQueueCompute: `[...overrideAnnotated,
+                    // ...orphans]`, no dedupe by paramName). Two rows would then share a
+                    // React key, and reconciliation collapses them — clicking Revert on one
+                    // can update the other, or drop it. Not visible in the Open view (orphans
+                    // always carry an override, so they're filtered out) but real in
+                    // Accepted / Reverted / All. Scope + override id makes it unique.
+                    // Deliberately NO row index: that would change the key on every re-sort
+                    // and defeat the memo this whole component exists for.
+                    key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}`}
                     r={r}
                     state={states[r.paramName]}
                     note={notesByParam[r.paramName]}

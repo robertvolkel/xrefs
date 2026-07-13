@@ -2765,3 +2765,17 @@ Bulk Triage (scrolling hundreds of rows, batch-accepting) should run against a p
 If changed, the Open predicate must move in lockstep on **both** sides — the client `filteredRows` above **and** the server's `isInOpenQueue()` in [triageQueueCompute.ts](../lib/services/triageQueueCompute.ts) — or the on-screen rows and the status counts will disagree. Also check `leftBucket` in the batch-accept optimistic update, which assumes an undone row was never in the open pile.
 
 **Not a regression from Decision #269** — that commit never touched `AtlasDictTriagePanel.tsx`.
+
+---
+
+### Triage — pre-existing issues surfaced by the Decision #269 code review — P3
+
+Found by the review of #269/#270. **None are regressions from those commits**; logging so they aren't rediscovered.
+
+**(a) `grandTotal` double-counts overlapping buckets.** [AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) (~:755) sums `open + accepted + undone + deferred + unmappable`, but the buckets overlap: `isDeferred`/`isUnmappable` don't exclude accepted rows, and `isAccepted` doesn't exclude parked ones. An accepted-and-deferred row is counted twice.
+
+**(b) Rows sharing a paramName share edit state.** `states` and `notesByParam` are keyed by **`paramName` alone**, but the same param can exist as several rows (one per family — see the row-key fix in #269). So typing an attributeId into one row edits the other. The row *key* is now scope-qualified; the state maps are not. Fix = key them by `(scope, paramName)`.
+
+**(c) Relative timestamps freeze on memoized rows.** `formatRelative(...)` ("5m ago") on the accept chip used to refresh on any parent render; now that `TriageRow` is memoized it only re-renders when its own props change, so a chip can sit at "0s ago". Cosmetic. Fix = a low-frequency ticker prop, or render absolute times.
+
+**(d) localStorage family-schema list is never refreshed.** The `setSchemaByFamily` don't-clobber guard (`prev[fam] ? prev : …`) means a stale cached `schemaIds` list is never replaced by the server's fresher one. Affects only the canonical-vs-invented chip, not the memo (a family arriving `undefined → Set` still re-renders the row).
