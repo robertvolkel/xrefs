@@ -2749,3 +2749,19 @@ Option (1) is the right answer for the holistic cleanup. The "internal only" int
 **Discovered July 13, 2026 (Decision #269).** The dev React build instruments every fiber and double-renders every component: a memo bail-out that costs microseconds in production cost **~4ms per row** in dev. Measured **~4.5x** end-to-end (worst scroll chunk 3772ms dev vs 839ms prod, identical code and rows).
 
 Bulk Triage (scrolling hundreds of rows, batch-accepting) should run against a production build — the deployed app, or `npm run build && npm start` locally. Consider a one-line note in the Triage UI or `docs/RUNBOOK_INGESTION.md` so the next engineer doesn't rediscover this the hard way.
+
+---
+
+### Triage — Revert silently loses the row from view ("It's gone. WTF") — P2 (UX)
+
+**Found July 13, 2026** while functionally testing Decision #269. An engineer accepted `RDS(on) /(mΩ) typ 2.5V`, then reverted it, and could not find it in **Open** or **Accepted**. It wasn't lost — Revert deactivates the override rather than deleting it (audit trail), and a row with an inactive `acceptedOverride` matches neither Open (`ov` is truthy → excluded) nor Accepted (`!ov.isActive` → excluded). It lands under the **Undone** filter. Working as designed; **discoverable as designed it is not.**
+
+**Two separate things to fix:**
+
+**(a) Tell the user where it went (small, display-only).** On a successful Revert, surface a brief "Reverted — moved to Undone" message (or flash the Undone chip's count). Today the row simply vanishes from the view the engineer is standing in, with zero signal. This is the cheap one and it removes the entire surprise.
+
+**(b) Decide whether a reverted row should return to the Open queue (behavior change — think first).** [AtlasDictTriagePanel.tsx](../components/admin/AtlasDictTriagePanel.tsx) `filteredRows`: `if (statusFilter === 'open' && (ov || isParked)) return false;` — a row with **any** override, even a reverted one, is excluded from Open **permanently**. So a param that was accepted-then-reverted can never rejoin the Open pile, even though the whole point of reverting is usually "that mapping was wrong, I want to redo it." It IS still workable from Undone (`isStarrableRow` deliberately permits a previously-undone row, and the batch-accept `leftBucket` logic already special-cases it so the open count doesn't go negative), so this is a workflow wart, not a dead end.
+
+If changed, the Open predicate must move in lockstep on **both** sides — the client `filteredRows` above **and** the server's `isInOpenQueue()` in [triageQueueCompute.ts](../lib/services/triageQueueCompute.ts) — or the on-screen rows and the status counts will disagree. Also check `leftBucket` in the batch-accept optimistic update, which assumes an undone row was never in the open pile.
+
+**Not a regression from Decision #269** — that commit never touched `AtlasDictTriagePanel.tsx`.
