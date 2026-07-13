@@ -8760,3 +8760,37 @@ A 70-candidate part now fans out in ~4 concurrency rounds, all within the per-mi
 **Deferred (BACKLOG).** Phase 3 — attribute filtering on search cards ("remove SOT-363 parts", "hide the 45V ones"). Cards carry only ~3 `keyParameters` + a description string (no `matchDetails`), so it needs a match-against-visible-data predicate plus an honest "these cards don't list that spec" path.
 
 **Verification.** Bug reproduced first with a throwaway test (printing the wrong-filter output above), then fixed. 36 new/updated unit tests pinning every status word, multi-status unions, the group words, the only-inversion, the Active-collateral guard, the question-not-a-filter case, and the "inactive" ≠ "active" boundary. Full suite 2,887 passing (the 11 `mfrMatchPicker`/`manufacturerAliasResolver` failures are pre-existing — verified identical on clean `main`); `tsc` error count unchanged from baseline (92→92, none in touched files); eslint 0 errors on touched files; build compiles clean.
+
+---
+
+## Decision #269 — Triage row is memoized; the freeze was render cost, not the server — and the dev build was half of it (July 13, 2026)
+
+**Symptom.** In Admin → Triage, filtering AI Suggestion = Accept, scrolling to load ~350 rows, selecting all High Confidence and hitting Batch Accept froze Chrome ("page unresponsive") and took a minute+. The accepts all landed correctly — it was purely a speed bug.
+
+**Root cause.** A Triage row is **162 MUI elements** (35 of them `Tooltip`s, each Popper-backed). The row JSX was inlined in the parent's `visibleRows.map()`, so React had no memoization boundary: **any** parent state change — a checkbox tick, a scroll that loaded 50 more rows, the Batch Accept button entering its busy state — synchronously re-rendered **every row on screen**. At 350 rows that is ~57,000 elements per redraw. Cost therefore grew with how far you had scrolled (adding 50 rows redrew the 300 already there), which is why the freezes compounded: measured main-thread blocks of 671ms → 2052ms → 5114ms → 9308ms → **14,140ms**, *from scrolling alone, before Batch Accept was involved at all*.
+
+**Fix.**
+1. **`TriageRow` extracted + `React.memo`'d** (the 789-line row JSX moved byte-for-byte). Everything it displays now arrives as a **prop**, and the parent resolves whole-collection reads into per-row primitives (`selected.has(p)` → `isSelected: boolean`, `revertingIds` → `isReverting`, `schemaByFamily[k]` → `familySchema`). Pass primitives, never containers, or the shallow compare never bails.
+2. **Ten row callbacks were identity-unstable** and would have silently made the memo a no-op — `confirmFlag`, `acceptAndRegenerate`, `runInvestigate`, `openDeferPopover`, `reopenRow`, `acceptRow`, `recordInvestigationAction`, `toggleFlag` all listed `states` or `notesByParam` in their deps (`states` is rewritten on **every keystroke** in a row's text field), and `renderBulkMatchChip` / `renderFindSimilarButton` weren't memoized at all. Fixed with **live ref mirrors** (`statesRef`, `notesByParamRef`, `bulkOptedOutRef`, `normalizedMatchesByRowRef`) so deps collapse to `[]`/props-only. **Refs are safe for event handlers ONLY** (they run after render and want the freshest value); a memoized row that read a ref during *render* would go stale — so the two render helpers were inlined into `TriageRow` and made props-driven instead.
+3. **`getFamilyDisplayName` now caches by familyId.** It returned a fresh `{short, full}` object per call and is passed as a prop, so every auto-flagged row would have had a new prop identity each render and never bailed. Found by auditing prop identity, not by any test — nothing would have caught it.
+4. Supporting: `hydrateFromCache` no longer calls `setStates` with an empty object (it re-fires on every `rows` identity change — the optimistic accept rebuilds the array — and `{...prev}` is a new object React can't bail out of, forcing a whole extra full-list redraw per accept); header stats memoized; the Batch Accept commit wrapped in `startTransition`; the fire-and-forget `recordInvestigationAction` loop bounded to 4 (it opened one fetch per approved row).
+5. **Server** ([batch/route.ts](../app/api/admin/atlas/dictionaries/batch/route.ts)): the per-family loop was **sequential** — 3 awaited Supabase round trips per family, up to ~57 scopes (43 families + 14 L2 categories) = ~171 serialized trips. Now a **bounded pool of 5** over families (the 3 calls *within* a family stay ordered; different families touch disjoint `(family_id, param_name)` keys). Every guarantee preserved: dedupe, idempotent same-attribute skip, per-row insert fallback, exactly-ONE cache invalidation (Decision #267).
+
+**Measured** (throwaway harness mounting the real table with realistic synthetic rows; worst chunk = loading rows 350→400):
+
+| | memo OFF (before) | memo ON (after) |
+|---|---|---|
+| **dev build** | 9705ms | **3772ms** |
+| **production build** | 4720ms | **839ms** |
+
+The memo is worth **2.6× in dev, 5.6× in prod**; the production build is worth another ~4.5×. Together **~11×** (9705ms → 839ms).
+
+**The finding that matters most, and it needed no code:** the engineer was doing Triage against the **dev server**. The dev React build instruments every fiber (`logComponentRender`, `addValueToProperties`, `createTask` all showed up in the CPU profile) and double-renders every component. A memo *bail-out* — which costs microseconds in production — was costing ~4ms per row in dev. **Do bulk Triage against a production build, not `npm run dev`.**
+
+**Two wrong diagnoses, both killed by measurement — this is the lesson.** (1) The plan originally ranked the *server* fix first; the 14s freeze happened while merely scrolling, when the server isn't involved, so it was a footnote. (2) After the memo landed and the numbers didn't move, the next hypothesis was browser `<table>` layout (a table re-computes column widths globally, so insertions look O(n²)) — but splitting the commit into `reactMs` (useLayoutEffect) vs `browserMs` (useEffect, post-paint) showed **`browserMs` flat at ~10ms the whole time**. It was never layout. Reasoning produced two plausible, confidently-argued, wrong answers in a row; the render-counter and the CPU profile produced the right one. **Instrument the actual thing.**
+
+**Also worth knowing:** the engineer's own before/after (14.1s → 15.4s, "no improvement") was **confounded** — production builds, the full test suite and headless Chrome were running on the same machine during the "after" measurement. Same-machine, back-to-back harness runs are the only trustworthy comparison.
+
+**Not done (BACKLOG).** Cost still grows with rows on screen (319ms at 100 rows → 839ms at 400, prod). Virtualization — keeping only the ~20 visible rows mounted — would make it flat. Deferred: it changes scroll ownership (sticky header, scroll container, variable row heights) on the engineer's daily-driver table, and prod+memo is already a hitch rather than a freeze.
+
+**Verification.** Full suite 2,887 passing (the same 11 `mfrMatchPicker`/`manufacturerAliasResolver` failures are pre-existing — verified identical on a clean tree via `git stash`); the 27 `triageBatchApprove` tests pass **unedited**, which is the check that the server's pure helpers were untouched by the parallelization; `tsc` and `eslint` clean on both files (the `react-hooks/exhaustive-deps` rule was **test-fired on a deliberate violation** to confirm it was actually enabled before trusting a clean run); production build compiles.

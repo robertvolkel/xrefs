@@ -23,7 +23,7 @@
  *   - Failed suggestion fetches degrade to a manual entry row with no auto-fill.
  */
 
-import { Fragment, useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
+import { Fragment, memo, useCallback, useEffect, useState, useMemo, useRef, useTransition } from 'react';
 import {
   Alert,
   Box,
@@ -101,15 +101,28 @@ function formatRelative(iso: string): string {
  *  (e.g. "Rectifier Diodes"). The full familyName from the logic table often
  *  carries a descriptive suffix after an em dash or parens that's noisy in a
  *  narrow column — strip it for display, surface the full name on hover. */
+// Cached by familyId. The result is a fresh OBJECT, and it is passed as a prop to
+// the memoized TriageRow — so returning a new `{short, full}` on every call would
+// give every auto-flagged row a new prop identity each render and the memo would
+// never bail out. Pure function of familyId, so caching it is free and safe.
+const familyDisplayNameCache = new Map<string, { short: string; full: string } | null>();
+
 function getFamilyDisplayName(familyId: string | null): { short: string; full: string } | null {
   if (!familyId) return null;
+  const cached = familyDisplayNameCache.get(familyId);
+  if (cached !== undefined) return cached;
   const t = getLogicTable(familyId);
-  if (!t) return null;
+  if (!t) {
+    familyDisplayNameCache.set(familyId, null);
+    return null;
+  }
   const full = t.familyName;
   // Cut at the first em dash / en dash / parenthesis — whichever appears first.
   const cut = full.search(/[—–(]/);
   const short = (cut > 0 ? full.slice(0, cut) : full).trim();
-  return { short, full };
+  const result = { short, full };
+  familyDisplayNameCache.set(familyId, result);
+  return result;
 }
 
 /** Override scope for a row — either an L3 familyId ('B5') or an L2 category
@@ -612,6 +625,984 @@ const MAX_BATCH_GENERATE = 500;
 // so the engineer stops clicking "Show more".
 const AUTO_LOAD_MAX_VISIBLE = 600;
 
+
+/** Frozen empty list so an absent `bulkMatches` prop keeps a stable identity —
+ *  a fresh `[]` per render would defeat the memo below. */
+const EMPTY_SIBLINGS: SimilarSibling[] = [];
+
+interface TriageRowProps {
+  r: GlobalUnmappedParam;
+  state: RowState | undefined;
+  note: NoteRecord | undefined;
+  familySchema: Set<string> | undefined;
+  flagged: boolean;
+  flagBusy: boolean;
+  flagError: string | null;
+  suggestedFam: { short: string; full: string } | null;
+  confirmedFlag: boolean;
+  suggestionStaleReason: string | null;
+  isStale: boolean;
+  starred: boolean;
+  isSelected: boolean;
+  isReverting: boolean;
+  bulkMatches: SimilarSibling[] | undefined;
+  isBulkOptedOut: boolean;
+  // Every callback below MUST be identity-stable or the memo never bails out.
+  // useState setters are stable by React guarantee; the rest are useCallback'd
+  // with churning deps (`states`, `notesByParam`) read via refs instead.
+  toggleRowSelected: (paramName: string) => void;
+  setStates: React.Dispatch<React.SetStateAction<Record<string, RowState>>>;
+  setDrawerParamName: React.Dispatch<React.SetStateAction<string | null>>;
+  setParkedMenuAnchor: React.Dispatch<React.SetStateAction<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>>;
+  setBulkOptedOut: React.Dispatch<React.SetStateAction<Set<string>>>;
+  setClusterFocalParam: React.Dispatch<React.SetStateAction<string | null>>;
+  generateOne: (row: GlobalUnmappedParam) => void;
+  generateSuggestionsForRows: (targetRows: GlobalUnmappedParam[], opts?: { force?: boolean }) => Promise<void>;
+  confirmFlag: (row: GlobalUnmappedParam) => Promise<void>;
+  revertFlag: (row: GlobalUnmappedParam) => Promise<void>;
+  acceptAndRegenerate: (row: GlobalUnmappedParam) => Promise<void>;
+  revertOverride: (row: GlobalUnmappedParam) => Promise<void>;
+  reopenRow: (row: GlobalUnmappedParam) => Promise<void>;
+  toggleFlag: (row: GlobalUnmappedParam, nextFlagged: boolean) => Promise<void>;
+  openDeferPopover: (row: GlobalUnmappedParam, anchor: HTMLElement) => void;
+  runInvestigate: (row: GlobalUnmappedParam) => Promise<void>;
+  onNoteChange: (paramName: string, next: NoteRecord | null) => void;
+}
+
+/**
+ * ONE Triage row, memoized.
+ *
+ * WHY THIS EXISTS: the row is ~160 MUI elements (35 of them Tooltips). It used
+ * to be inlined in the parent's `visibleRows.map()`, so ANY parent state change
+ * — a checkbox tick, a scroll that loaded 50 more rows, the Batch Accept button
+ * entering its busy state — synchronously re-rendered EVERY row on screen. With
+ * ~350 rows loaded that is ~57,000 elements per redraw; measured main-thread
+ * blocks reached 14s just from scrolling, which is what triggered Chrome's
+ * "page unresponsive" dialog.
+ *
+ * Memoized here, a selection tick re-renders ONE row and a scroll mounts only
+ * the 50 new ones. Everything the row displays therefore arrives as a PROP:
+ * pass primitives (`isSelected`), never whole containers (the `selected` Set),
+ * or the shallow prop compare never bails.
+ */
+const TriageRow = memo(function TriageRow({
+  r,
+  state,
+  note,
+  familySchema,
+  flagged,
+  flagBusy,
+  flagError,
+  suggestedFam,
+  confirmedFlag,
+  suggestionStaleReason,
+  isStale,
+  starred,
+  isSelected,
+  isReverting,
+  bulkMatches,
+  isBulkOptedOut,
+  toggleRowSelected,
+  setStates,
+  setDrawerParamName,
+  setParkedMenuAnchor,
+  setBulkOptedOut,
+  setClusterFocalParam,
+  generateOne,
+  generateSuggestionsForRows,
+  confirmFlag,
+  revertFlag,
+  acceptAndRegenerate,
+  revertOverride,
+  reopenRow,
+  toggleFlag,
+  openDeferPopover,
+  runInvestigate,
+  onNoteChange,
+}: TriageRowProps) {
+  const renderBulkMatchChip = (r: GlobalUnmappedParam) => {
+    const matches = bulkMatches ?? EMPTY_SIBLINGS;
+    if (matches.length === 0) return null;
+    const isOptedOut = isBulkOptedOut;
+    if (isOptedOut) {
+      return (
+        <Tooltip title="Bulk-apply disabled. Click to re-enable so the same override also maps the similar paramNames.">
+          <Chip
+            label="just this row"
+            size="small"
+            variant="outlined"
+            onClick={() => setBulkOptedOut((prev) => {
+              const next = new Set(prev);
+              next.delete(r.paramName);
+              return next;
+            })}
+            sx={{ fontSize: '0.6rem', height: 18, color: 'text.disabled', borderStyle: 'dashed' }}
+          />
+        </Tooltip>
+      );
+    }
+    return (
+      <Tooltip
+        title={
+          <Box sx={{ p: 0.5 }}>
+            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+              Accept will also map {matches.length} similar paramName{matches.length === 1 ? '' : 's'}:
+            </Typography>
+            {matches.slice(0, 6).map((m, i) => (
+              <Typography key={i} variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                · {m.paramName}
+                {m.sampleValues.length > 0 && ` (e.g. ${m.sampleValues.slice(0, 3).join(', ')})`}
+              </Typography>
+            ))}
+            {matches.length > 6 && (
+              <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', fontStyle: 'italic' }}>
+                …and {matches.length - 6} more
+              </Typography>
+            )}
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.65rem' }}>
+              Click × to apply to just this row.
+            </Typography>
+          </Box>
+        }
+      >
+        <Chip
+          label={`+${matches.length} similar`}
+          size="small"
+          color="info"
+          variant="outlined"
+          onDelete={() => setBulkOptedOut((prev) => {
+            const next = new Set(prev);
+            next.add(r.paramName);
+            return next;
+          })}
+          sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-deleteIcon': { fontSize: 12 } }}
+        />
+      </Tooltip>
+    );
+  };
+
+  /** Tier 2 trigger — opens the AI Cluster modal for the focal row. Enabled
+   *  iff the row has a usable override mapping (engineer-edited or AI-suggested
+   *  attributeId) AND is in a scope (family or category). Disabled state
+   *  surfaces the reason in the tooltip. */
+  const renderFindSimilarButton = (r: GlobalUnmappedParam) => {
+    const hasMapping = !!state?.editedAttributeId?.trim();
+    const scope = getOverrideScope(r);
+    const disabled = !hasMapping || !scope;
+    const disabledReason = !scope
+      ? 'Unscoped row — set a dominantFamily or dominantCategory before clustering.'
+      : !hasMapping
+      ? 'Generate or enter an attributeId mapping first — the modal applies it to selected matches.'
+      : '';
+    return (
+      <Tooltip title={disabled ? disabledReason : 'Use AI to find near-duplicate paramNames in scope (CJK synonyms, semantic equivalents) and bulk-apply this row’s mapping.'}>
+        <span>
+          <IconButton
+            size="small"
+            disabled={disabled}
+            onClick={() => setClusterFocalParam(r.paramName)}
+            sx={{ p: 0.5 }}
+          >
+            <AutoAwesomeIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    );
+  };
+
+  return (
+                  <TableRow
+                    sx={{
+                      // Three "done" states drop opacity:
+                      //   - state.accepted (synonym mapping accepted)
+                      //   - confirmedFlag (auto-flag confirmed by engineer)
+                      // Both visually recede so unreviewed work is at eye level.
+                      opacity: state?.accepted ? 0.5 : (confirmedFlag ? 0.55 : 1),
+                      // Left-border accent: red for flagged (highest signal),
+                      // amber for stale (high signal, lower than flagged), none
+                      // when neither. Keeps the strongest signal visible when
+                      // both states overlap on the same row.
+                      borderLeft: flagged || isStale ? '4px solid' : undefined,
+                      borderLeftColor: flagged
+                        ? (confirmedFlag ? 'text.disabled' : 'error.main')
+                        : (isStale ? 'warning.main' : undefined),
+                    }}
+                  >
+                    <TableCell sx={{ width: 56, padding: '4px', textAlign: 'center' }}>
+                      {starred && (
+                        <Stack direction="row" alignItems="center" justifyContent="center" spacing={0}>
+                          <Checkbox
+                            size="small"
+                            sx={{ p: 0.25 }}
+                            checked={isSelected}
+                            onChange={() => toggleRowSelected(r.paramName)}
+                            inputProps={{ 'aria-label': `Select ${r.paramName} for batch accept` }}
+                          />
+                          <Tooltip title="High confidence — quick to batch-accept">
+                            <StarIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                          </Tooltip>
+                        </Stack>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ width: 90, padding: '4px 8px' }}>
+                      <Tooltip title={`Copy ${paramUid(r.paramName)} (paste into search to find this row again)`} placement="top">
+                        <Chip
+                          label={paramUid(r.paramName)}
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                              void navigator.clipboard.writeText(paramUid(r.paramName));
+                            }
+                          }}
+                          sx={{
+                            fontSize: '0.62rem',
+                            height: 18,
+                            fontFamily: 'monospace',
+                            cursor: 'pointer',
+                            '& .MuiChip-label': { px: 0.75 },
+                          }}
+                        />
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
+                      {(() => {
+                        const flagged = !!note?.flagged;
+                        return (
+                          <Tooltip title={flagged ? 'Flagged for follow-up — click to unflag' : 'Flag for follow-up'}>
+                            <IconButton
+                              size="small"
+                              onClick={() => toggleFlag(r, !flagged)}
+                              sx={{ p: 0.25 }}
+                            >
+                              {flagged
+                                ? <FlagIcon sx={{ fontSize: 16, color: 'error.main' }} />
+                                : <OutlinedFlagIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
+                            </IconButton>
+                          </Tooltip>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
+                      <UnmappedParamNoteCell
+                        paramName={r.paramName}
+                        note={note}
+                        onChange={onNoteChange}
+                        aiDraft={state?.suggestion?.suggestion === 'defer' ? state.suggestion.explanation : undefined}
+                        aiDraftHint={state?.suggestion?.suggestion === 'defer'}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', width: 140, wordBreak: 'break-word' }}>
+                      {r.paramName}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem' }}>
+                      {flagged && r.autoFlag ? (
+                        // Show "B1 → B6" transition with the flag icon — at-a-glance
+                        // diagnosis without needing the tooltip.
+                        <Tooltip title={`${r.dominantFamily ?? '?'} → ${r.autoFlag.suggestedFamily} ${suggestedFam ? `(${suggestedFam.short})` : ''} — see diagnosis`}>
+                          <Stack direction="row" spacing={0.25} alignItems="center">
+                            <FlagIcon sx={{ fontSize: 14, color: 'error.main' }} />
+                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>{r.dominantFamily}</Box>
+                            <Box component="span" sx={{ fontSize: '0.65rem', color: 'error.main', fontWeight: 700 }}>→</Box>
+                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'error.main', fontWeight: 700 }}>{r.autoFlag.suggestedFamily}</Box>
+                          </Stack>
+                        </Tooltip>
+                      ) : flagged ? (
+                        <Tooltip title="Manually flagged as wrong family">
+                          <Chip size="small" icon={<FlagIcon sx={{ fontSize: 12 }} />} label={r.dominantFamily ?? '?'} sx={{ fontSize: '0.6rem', height: 18, bgcolor: 'error.dark', color: 'error.contrastText' }} />
+                        </Tooltip>
+                      ) : r.dominantFamily ? (
+                        // Tooltip surfaces the human-readable family name so
+                        // engineers can map "C3" → "Gate Drivers" without
+                        // having to memorize the L3 ID list. Other admin
+                        // panels (Dictionary, Logic, Param Mappings) all use
+                        // the full English name in their family pickers.
+                        (() => {
+                          const fam = getFamilyDisplayName(r.dominantFamily);
+                          return (
+                            <Tooltip title={fam ? `${r.dominantFamily} — ${fam.full}` : r.dominantFamily}>
+                              <Chip size="small" label={r.dominantFamily} variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                            </Tooltip>
+                          );
+                        })()
+                      ) : r.dominantCategory ? (
+                        // L2-only row (no logic-table family). Show "L2"
+                        // marker so engineers see at a glance that this is
+                        // category-scoped, not family-scoped — matters for
+                        // people who mix the two views.
+                        <Tooltip title={`L2 category: ${r.dominantCategory} (no logic-table family — override scoped to category)`}>
+                          <Chip size="small" label="L2" variant="outlined" color="info" sx={{ fontSize: '0.6rem', height: 18 }} />
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title="No dominant family or category — manual selection required">
+                          <Chip size="small" label="?" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                      {(() => {
+                        // For flagged rows, surface the suggested family's
+                        // human-readable name so the engineer sees "Rectifier
+                        // Diodes → BJTs" not just "B1 → B6".
+                        const fromFam = getFamilyDisplayName(r.dominantFamily);
+                        if (flagged && suggestedFam) {
+                          return (
+                            <Tooltip title={`${fromFam?.full ?? r.dominantFamily ?? '?'} → ${suggestedFam.full}`}>
+                              <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+                                <Box component="span" sx={{ textDecoration: 'line-through', color: 'text.disabled' }}>{fromFam?.short ?? '?'}</Box>
+                                <Box component="span" sx={{ color: 'error.light', fontWeight: 600 }}>→ {suggestedFam.short}</Box>
+                              </Stack>
+                            </Tooltip>
+                          );
+                        }
+                        if (fromFam) {
+                          return (
+                            <Tooltip title={fromFam.full}>
+                              <span>{fromFam.short}</span>
+                            </Tooltip>
+                          );
+                        }
+                        // No L3 family — fall through to L2 category if present.
+                        // The category string is already human-readable (e.g.
+                        // 'Microcontrollers'), so no helper resolution needed.
+                        if (r.dominantCategory) {
+                          return (
+                            <Tooltip title={`L2 category — override will scope to "${r.dominantCategory}"`}>
+                              <span>{r.dominantCategory}</span>
+                            </Tooltip>
+                          );
+                        }
+                        return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
+                      })()}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary', maxWidth: 180 }}>
+                      {r.sampleValues.slice(0, 3).map((v) => (
+                        <Box key={v} component="code" sx={{ bgcolor: 'action.hover', px: 0.5, mr: 0.5, borderRadius: 0.5, display: 'inline-block', mb: 0.25 }}>{v}</Box>
+                      ))}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: '0.7rem' }}>
+                      {r.affectedManufacturers && r.affectedManufacturers.length > 0 ? (
+                        <Tooltip
+                          title={
+                            <Box>
+                              <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                                {r.productCount} products across {r.affectedManufacturers.length} MFR{r.affectedManufacturers.length === 1 ? '' : 's'}:
+                              </Typography>
+                              {r.affectedManufacturers.slice(0, 12).map((m) => (
+                                <Typography key={m.slug} variant="caption" sx={{ display: 'block' }}>
+                                  • {m.name} ({m.productCount})
+                                </Typography>
+                              ))}
+                              {r.affectedManufacturers.length > 12 && (
+                                <Typography variant="caption" sx={{ display: 'block', fontStyle: 'italic' }}>
+                                  +{r.affectedManufacturers.length - 12} more
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                        >
+                          <Box sx={{ cursor: 'help' }}>
+                            <Box>{r.productCount}</Box>
+                            <Box sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
+                              {r.affectedManufacturers.length === 1
+                                ? r.affectedManufacturers[0].name
+                                : `${r.affectedManufacturers.length} MFRs`}
+                            </Box>
+                          </Box>
+                        </Tooltip>
+                      ) : (
+                        r.productCount
+                      )}
+                    </TableCell>
+
+                    <TableCell sx={{ fontSize: '0.7rem', padding: '4px 8px' }}>
+                      <ImpactChip impact={r.matchingImpact} productCount={r.productCount} />
+                    </TableCell>
+
+                    <TableCell sx={{ fontSize: '0.7rem', maxWidth: 200 }}>
+                      {flagged && r.autoFlag ? (
+                        // Diagnosis card content — full reasoning visible at
+                        // a glance, no expansion needed. Tooltip carries the
+                        // matched param + source family for the audit story.
+                        <Tooltip title={`Matched on "${r.autoFlag.matchingParam}" — see Confirm/Revert`}>
+                          <Typography
+                            variant="caption"
+                            sx={{ display: 'block', color: 'error.light', lineHeight: 1.3 }}
+                          >
+                            {r.autoFlag.reasoning}
+                          </Typography>
+                        </Tooltip>
+                      ) : flagged ? (
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                          Manually flagged as wrong family
+                        </Typography>
+                      ) : state?.loadingSuggestion ? (
+                        <CircularProgress size={12} />
+                      ) : state?.suggestion?.translation ? (
+                        <Stack spacing={0.5}>
+                          <Stack direction="row" spacing={0.5} alignItems="flex-start">
+                            <Tooltip title={state.suggestion.reasoning ?? ''}>
+                              <Typography variant="caption" sx={{ fontStyle: 'italic', flex: 1 }}>
+                                {state.suggestion.translation}
+                              </Typography>
+                            </Tooltip>
+                            {/* Per-row refresh ↻ — always rendered when a cached
+                                suggestion exists. Stale rows (Decision #187 — card
+                                or schema version drift) render the icon in warning
+                                color with prepended ⚠; non-stale rows render it
+                                muted as a manual on-demand refresh affordance.
+                                Click re-fires /suggest with force=true so the
+                                server skips its cache too. */}
+                            <Tooltip title={
+                              suggestionStaleReason
+                                ? `⚠ Stale — ${suggestionStaleReason}. Click to refresh this row's AI suggestion.`
+                                : `Refresh AI suggestion for this row (re-runs /suggest with the latest prompt).`
+                            }>
+                              <IconButton
+                                size="small"
+                                onClick={() => generateSuggestionsForRows([r], { force: true })}
+                                sx={{
+                                  p: 0.25,
+                                  color: suggestionStaleReason ? 'warning.main' : 'text.disabled',
+                                  '&:hover': { color: suggestionStaleReason ? 'warning.dark' : 'text.secondary' },
+                                }}
+                                aria-label={suggestionStaleReason ? 'Refresh stale AI suggestion' : 'Refresh AI suggestion'}
+                              >
+                                <RefreshIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Tooltip>
+                          </Stack>
+                          {state.suggestion.explanation && (
+                            // Symmetric in-cell explanation — visible by default
+                            // for BOTH Accept and Defer rows so Claude doesn't
+                            // get an opaque "trust me" chip on Accepts. Color
+                            // hints which suggestion the explanation supports;
+                            // line-clamp at 3 keeps row height bounded, full
+                            // text on tooltip hover.
+                            <Tooltip title={<Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{state.suggestion.explanation}</Box>} placement="left" arrow>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: state.suggestion.suggestion === 'defer' ? 'warning.light' : 'success.light',
+                                  fontSize: '0.65rem',
+                                  lineHeight: 1.35,
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  cursor: 'help',
+                                }}
+                              >
+                                {state.suggestion.explanation}
+                              </Typography>
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      ) : (
+                        // Uncached, non-loading row — offer per-row Generate as
+                        // an alternative to the bulk button at top of table.
+                        // Costs one Sonnet roundtrip; only fires on click.
+                        <Tooltip title="Generate AI suggestion for this row only (~$0.005)" placement="right">
+                          <Button
+                            size="small"
+                            variant="text"
+                            color="primary"
+                            startIcon={<AutoAwesomeIcon sx={{ fontSize: 12 }} />}
+                            onClick={() => generateOne(r)}
+                            sx={{ fontSize: '0.65rem', py: 0, px: 0.5, minWidth: 0, textTransform: 'none' }}
+                          >
+                            Generate
+                          </Button>
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ width: 300 }}>
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled', fontStyle: 'italic' }}>
+                          Don&apos;t map — investigate upstream
+                        </Box>
+                      ) : (() => {
+                        const editedId = state?.editedAttributeId?.trim() ?? '';
+                        const schemaKnown = !!familySchema && familySchema.size > 0;
+                        const isCanonical = schemaKnown && editedId.length > 0 && familySchema!.has(editedId);
+                        // Three states: canonical (green check), invented (amber warn),
+                        // unknown-because-no-schema (no chip — we can't validate). The
+                        // border on the input mirrors the chip color so it reads at a glance.
+                        const borderColor = !editedId
+                          ? undefined
+                          : isCanonical
+                            ? 'success.main'
+                            : schemaKnown ? 'warning.main' : undefined;
+                        return (
+                          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: '100%' }}>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              value={state?.editedAttributeId ?? ''}
+                              onChange={(e) => setStates((prev) => ({
+                                ...prev,
+                                [r.paramName]: { ...prev[r.paramName], editedAttributeId: e.target.value },
+                              }))}
+                              disabled={state?.accepted || state?.accepting}
+                              placeholder="—"
+                              sx={{
+                                '& .MuiInputBase-input': { fontSize: '0.7rem', fontFamily: 'monospace', py: 0.5 },
+                                '& .MuiOutlinedInput-notchedOutline': borderColor ? { borderColor } : {},
+                              }}
+                            />
+                            {editedId && schemaKnown && (
+                              isCanonical ? (
+                                <Tooltip title="Canonical: this attributeId has a rule in the family's logic table — matching engine will use it.">
+                                  <VerifiedOutlinedIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                                </Tooltip>
+                              ) : (
+                                <Tooltip title="Invented: this attributeId is not in the family's logic table. The override will be saved and the value stored, but no matching rule will use it (display-only)." >
+                                  <HelpOutlineOutlinedIcon sx={{ fontSize: 16, color: 'warning.main' }} />
+                                </Tooltip>
+                              )
+                            )}
+                          </Stack>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell sx={{ width: 240 }}>
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
+                      ) : (
+                        <TextField
+                          size="small"
+                          fullWidth
+                          value={state?.editedAttributeName ?? ''}
+                          onChange={(e) => setStates((prev) => ({
+                            ...prev,
+                            [r.paramName]: { ...prev[r.paramName], editedAttributeName: e.target.value },
+                          }))}
+                          disabled={state?.accepted || state?.accepting}
+                          placeholder="—"
+                          sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ width: 90 }}>
+                      {flagged ? (
+                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
+                      ) : (
+                        <>
+                          <TextField
+                            size="small"
+                            fullWidth
+                            value={state?.editedUnit ?? ''}
+                            onChange={(e) => setStates((prev) => ({
+                              ...prev,
+                              [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
+                            }))}
+                            disabled={state?.accepted || state?.accepting}
+                            placeholder="—"
+                            sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
+                          />
+                          {(() => {
+                            const sample = r.sampleValues?.[0];
+                            const preview = previewConversion(sample ?? '', state?.editedUnit ?? '');
+                            if (!preview) return null;
+                            return (
+                              <Tooltip
+                                title={
+                                  preview.suspicious
+                                    ? `Sample value embeds a unit that differs from the dict unit above. Value-string parsing wins at ingest, so math will be correct — but double-check the dict unit captures the typical vendor convention.`
+                                    : `At ingest, sample "${sample}" with unit "${state?.editedUnit}" becomes numericValue ${preview.numericValue} (base SI). Verify this magnitude is physically plausible for ${r.paramName}.`
+                                }
+                                placement="top"
+                                arrow
+                              >
+                                <Box
+                                  sx={{
+                                    fontSize: '0.62rem',
+                                    color: preview.suspicious ? 'warning.main' : 'text.secondary',
+                                    fontFamily: 'monospace',
+                                    mt: 0.3,
+                                    cursor: 'help',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                  }}
+                                >
+                                  {preview.suspicious ? '⚠ ' : ''}{preview.display}
+                                </Box>
+                              </Tooltip>
+                            );
+                          })()}
+                        </>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {flagged ? (
+                        r.noteStatus === 'wrong_family' ? (
+                          <Chip
+                            size="small"
+                            icon={<CheckIcon sx={{ fontSize: 12 }} />}
+                            label="Confirmed"
+                            sx={{ bgcolor: 'error.dark', color: 'error.contrastText', fontSize: '0.6rem', height: 18, fontWeight: 700 }}
+                          />
+                        ) : (
+                          <Chip
+                            size="small"
+                            icon={<FlagIcon sx={{ fontSize: 12 }} />}
+                            label="Wrong family"
+                            sx={{ bgcolor: 'error.main', color: 'error.contrastText', fontSize: '0.6rem', height: 18 }}
+                          />
+                        )
+                      ) : (() => {
+                        // Suggestion chip — advisory only. When a deeper
+                        // /investigate verdict exists, it SUPERSEDES the cheap
+                        // /suggest chip — the investigator pulled richer
+                        // context and produced a concrete action, so showing
+                        // the original Defer alongside would look contradictory.
+                        // Buckets map to: green Accept (mint flow), red Flag,
+                        // grey Skip, amber Unscoped. No deep analysis → fall
+                        // back to the cheap /suggest verdict.
+                        const sug = state?.suggestion;
+                        const deep = state?.deepAnalysis;
+
+                        if (deep) {
+                          const meta = (() => {
+                            switch (deep.bucket) {
+                              case 'new_canonical':
+                              case 'unit_mismatch':
+                              case 'disambiguation':
+                                return { label: 'Accept', bg: 'success.dark', fg: 'success.contrastText', icon: <CheckIcon sx={{ fontSize: 12 }} /> };
+                              case 'wrong_family':
+                                return { label: 'Flag', bg: 'error.dark', fg: 'error.contrastText', icon: <FlagIcon sx={{ fontSize: 12 }} /> };
+                              case 'unmappable':
+                                return { label: 'Skip', bg: 'action.disabledBackground', fg: 'text.secondary', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                              case 'unscoped_products':
+                                return { label: 'Unscoped', bg: 'warning.dark', fg: 'warning.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                              default:
+                                return { label: 'Review', bg: 'info.dark', fg: 'info.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
+                            }
+                          })();
+                          const tooltipBody = (
+                            <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+                                Click to open full analysis · Confidence: {deep.confidence}
+                              </Typography>
+                              {deep.recommendation?.summary && (
+                                <Typography variant="caption" sx={{ display: 'block' }}>
+                                  {deep.recommendation.summary}
+                                </Typography>
+                              )}
+                            </Box>
+                          );
+                          return (
+                            <Tooltip title={tooltipBody} placement="left" arrow>
+                              <Chip
+                                size="small"
+                                icon={meta.icon}
+                                label={meta.label}
+                                onClick={() => setDrawerParamName(r.paramName)}
+                                sx={{
+                                  bgcolor: meta.bg,
+                                  color: meta.fg,
+                                  fontSize: '0.6rem',
+                                  height: 18,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  '&:hover': { filter: 'brightness(1.15)' },
+                                }}
+                              />
+                            </Tooltip>
+                          );
+                        }
+
+                        if (!sug?.suggestion) {
+                          return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
+                        }
+                        const isAccept = sug.suggestion === 'accept';
+                        // When stale, modify the existing chip's appearance
+                        // (no new chip): dotted warning border + reduced
+                        // opacity so it visually recedes. The tooltip body
+                        // gets a leading "⚠ Stale — …" line so the engineer
+                        // sees WHY at a glance.
+                        const stale = suggestionStaleReason;
+                        const tooltipBody = (
+                          <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                            {stale && (
+                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5, color: 'warning.light' }}>
+                                ⚠ Stale — {stale}. Click ↻ to refresh.
+                              </Typography>
+                            )}
+                            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
+                              Suggestion: {isAccept ? 'Accept' : 'Defer'} · Confidence: {sug.confidence}
+                            </Typography>
+                            {sug.explanation && (
+                              <Typography variant="caption" sx={{ display: 'block' }}>
+                                {sug.explanation}
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                        return (
+                          <Tooltip title={tooltipBody} placement="left" arrow>
+                            <Chip
+                              size="small"
+                              icon={isAccept ? <CheckIcon sx={{ fontSize: 12 }} /> : <NoteAltOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label={isAccept ? 'Accept' : 'Defer'}
+                              sx={{
+                                bgcolor: isAccept ? 'success.dark' : 'warning.dark',
+                                color: isAccept ? 'success.contrastText' : 'warning.contrastText',
+                                fontSize: '0.6rem',
+                                height: 18,
+                                fontWeight: 600,
+                                ...(stale && {
+                                  opacity: 0.7,
+                                  border: '1.5px dotted',
+                                  borderColor: 'warning.main',
+                                }),
+                              }}
+                            />
+                          </Tooltip>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell>
+                      {/* Inline accept audit + revert. When this row already
+                          has an active override, render Revert (instead of
+                          Accept) and a chip showing who accepted + when. When
+                          undone, show a "↺ Reverted" chip and re-enable
+                          Accept. Takes precedence over the flagged-row UI
+                          since accept supersedes flag (the engineer made a
+                          decision). */}
+                      {r.acceptedOverride && r.acceptedOverride.isActive ? (
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={`${r.acceptedOverride.wasEdited ? 'Edited' : 'Accepted'} by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)}${r.orphaned ? ' · No longer in any pending batch' : ''}`}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={<CheckIcon sx={{ fontSize: 12 }} />}
+                              label={r.orphaned ? 'Accepted (orphaned)' : 'Accepted'}
+                              sx={{
+                                bgcolor: r.orphaned ? 'warning.dark' : 'success.dark',
+                                color: r.orphaned ? 'warning.contrastText' : 'success.contrastText',
+                                fontSize: '0.6rem', height: 18,
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip title="Revert: deactivates the override; row returns to the Open queue.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                disabled={isReverting}
+                                onClick={() => revertOverride(r)}
+                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                {isReverting ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      ) : r.acceptedOverride && !r.acceptedOverride.isActive ? (
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={`Reverted (originally accepted by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)})`}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label="Undone"
+                              sx={{ bgcolor: 'action.disabledBackground', color: 'text.secondary', fontSize: '0.6rem', height: 18 }}
+                            />
+                          </Tooltip>
+                          {!r.orphaned && (
+                            <Tooltip title={state?.acceptError ?? 'Re-accept this row to restore a fresh override.'} disableHoverListener={!state?.acceptError}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color={state?.acceptError ? 'error' : 'primary'}
+                                  disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
+                                  onClick={() => acceptAndRegenerate(r)}
+                                  sx={{ fontSize: '0.65rem', minWidth: 80 }}
+                                >
+                                  {state?.accepting ? <CircularProgress size={12} /> : 'Re-accept'}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                          {renderBulkMatchChip(r)}
+                          {renderFindSimilarButton(r)}
+                        </Stack>
+                      ) : (r.noteStatus === 'deferred' || r.noteStatus === 'unmappable') ? (
+                        // Parked row — engineer chose to defer or mark
+                        // unmappable. Show a status chip + Reopen button so
+                        // the engineer can unlock the row back to OPEN.
+                        // Reopen preserves the engineer note as context.
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip
+                            title={r.noteStatus === 'deferred'
+                              ? 'Parked for later — Reopen to return to the Open queue.'
+                              : 'Marked unmappable — Reopen to allow mapping again.'}
+                            placement="top"
+                          >
+                            <Chip
+                              size="small"
+                              icon={r.noteStatus === 'deferred'
+                                ? <PauseCircleOutlineIcon sx={{ fontSize: 12 }} />
+                                : <BlockOutlinedIcon sx={{ fontSize: 12 }} />}
+                              label={r.noteStatus === 'deferred' ? 'Deferred' : 'Unmappable'}
+                              sx={{
+                                bgcolor: r.noteStatus === 'deferred' ? 'warning.dark' : 'action.disabledBackground',
+                                color: r.noteStatus === 'deferred' ? 'warning.contrastText' : 'text.secondary',
+                                fontSize: '0.6rem', height: 18,
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip title="Reopen — returns the row to the Open queue. Engineer note is preserved.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                onClick={() => reopenRow(r)}
+                                startIcon={<PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                Reopen
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      ) : flagged ? (
+                        // Confirm + Revert. After Confirm the persisted status
+                        // is 'wrong_family' so the "Confirm" button hides; only
+                        // Revert remains so the engineer can undo if it turns
+                        // out to be a false positive.
+                        <Stack direction="row" spacing={0.5}>
+                          {r.noteStatus !== 'wrong_family' && r.autoFlag && (
+                            <Tooltip title={flagError ?? 'Confirm this row as a misclassification — products with this param need upstream investigation.'}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="error"
+                                  disabled={flagBusy}
+                                  onClick={() => confirmFlag(r)}
+                                  sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                                >
+                                  {flagBusy ? <CircularProgress size={10} color="inherit" /> : 'Confirm'}
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                          <Tooltip title={r.noteStatus === 'wrong_family' ? 'Undo the wrong-family flag.' : 'False positive — suppress the auto-flag for this paramName.'}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                disabled={flagBusy}
+                                onClick={() => revertFlag(r)}
+                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
+                              >
+                                {flagBusy && r.noteStatus === 'wrong_family' ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Stack>
+                      ) : state?.accepted ? (
+                        <Chip size="small" icon={<CheckIcon sx={{ fontSize: 14 }} />} label="Saved" color="success" sx={{ fontSize: '0.6rem', height: 18 }} />
+                      ) : (
+                        <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Tooltip title={state?.acceptError ?? ''} disableHoverListener={!state?.acceptError}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color={state?.acceptError ? 'error' : 'primary'}
+                                disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
+                                onClick={() => acceptAndRegenerate(r)}
+                                sx={{ fontSize: '0.65rem', minWidth: 80 }}
+                              >
+                                {state?.accepting ? <CircularProgress size={12} /> : 'Accept'}
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="Defer — park this row out of the OPEN queue for later review. Reversible via Reopen.">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="text"
+                                color="warning"
+                                onClick={(e) => openDeferPopover(r, e.currentTarget)}
+                                startIcon={<PauseCircleOutlineIcon sx={{ fontSize: 12 }} />}
+                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
+                              >
+                                Defer
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="More actions">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => setParkedMenuAnchor({ anchor: e.currentTarget, row: r })}
+                              sx={{ p: 0.25 }}
+                            >
+                              <MoreVertIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
+                          </Tooltip>
+                          {renderBulkMatchChip(r)}
+                          {renderFindSimilarButton(r)}
+                          {/* Investigate button. Visible when the row is either
+                              unscoped (Accept grayed) or the AI verdict was
+                              defer (Accept would be unsafe). Fires the deeper
+                              /investigate pass which returns a bucketed action
+                              with evidence. Hidden on confident-accept rows
+                              where the engineer just needs to click Accept. */}
+                          {(!getOverrideScope(r) || state?.suggestion?.suggestion === 'defer') && (
+                            <>
+                              {/* View: re-opens the cached deepAnalysis in the
+                                  drawer without re-running /investigate. Only
+                                  shown once an analysis exists. */}
+                              {state?.deepAnalysis && (
+                                <Tooltip title="View AI investigation">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => setDrawerParamName(r.paramName)}
+                                    sx={{ p: 0.25 }}
+                                  >
+                                    <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              <Tooltip title={state?.deepAnalysisError ?? 'Investigate: AI runs a deeper analysis pulling affected products, cross-scope overrides, and proposes a concrete next action.'}>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    color={state?.deepAnalysisError ? 'error' : 'secondary'}
+                                    disabled={state?.loadingDeepAnalysis}
+                                    onClick={() => runInvestigate(r)}
+                                    startIcon={state?.loadingDeepAnalysis ? <CircularProgress size={10} color="inherit" /> : <SearchIcon sx={{ fontSize: 14 }} />}
+                                    sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
+                                  >
+                                    {state?.deepAnalysis ? 'Refresh' : 'Investigate'}
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                            </>
+                          )}
+                        </Stack>
+                      )}
+                    </TableCell>
+                  </TableRow>
+  );
+});
+
 export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, pendingBatchCount, notesByParam, onNoteChange, onRowAccepted, onRowReverted, onRowsAccepted, onRowsReverted, onRowFlagged, viewKey, aiVerdictFilter = 'all', serverRemaining = 0, serverTotal, onLoadMore, loadingMore = false, onBatchGenerated, ungeneratedCount = 0, fetchUngenerated }: Props) {
   // Stable ref so generateSuggestionsForRows (deps []) can notify the parent
   // without re-creating the callback.
@@ -745,6 +1736,28 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
     return result;
   }, [rows]);
+
+  // ── Live mirrors for identity-stable event handlers ────────────────────
+  // `states`, `notesByParam`, `bulkOptedOut` and `normalizedMatchesByRow` all
+  // churn constantly (`states` is rewritten on every keystroke in a row's text
+  // fields). Any handler listing them as a useCallback dep therefore gets a NEW
+  // identity on every change — which would defeat React.memo on the row and make
+  // the memoization pointless. Handlers read these refs instead, so their deps
+  // collapse to [] (or props-only) and their identity is stable for the session.
+  //
+  // Safe ONLY for event handlers, which run after render and want the freshest
+  // value anyway. NEVER read these from a ref during a memoized row's RENDER:
+  // the row wouldn't re-render when the underlying value changed and the UI would
+  // go stale. Render-time data reaches the row as PROPS (see TriageRow).
+  const statesRef = useRef(states);
+  statesRef.current = states;
+  const notesByParamRef = useRef(notesByParam);
+  notesByParamRef.current = notesByParam;
+  const bulkOptedOutRef = useRef(bulkOptedOut);
+  bulkOptedOutRef.current = bulkOptedOut;
+  const normalizedMatchesByRowRef = useRef(normalizedMatchesByRow);
+  normalizedMatchesByRowRef.current = normalizedMatchesByRow;
+
   // Reset visible count when the parent's filter context changes — a filter
   // narrowing shouldn't carry over an expanded "show all" state from the
   // previous view. Crucially this is NOT keyed off `rows`: optimistic
@@ -823,6 +1836,11 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const [undoInfo, setUndoInfo] = useState<{ overrideIds: string[]; paramNames: string[]; count: number } | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [, startSelectTransition] = useTransition();
+  // Batch Accept's post-response commit drops every accepted row out of the Open
+  // view at once — a mass unmount that stays chunky even with TriageRow memoized.
+  // A transition lets React yield to the browser mid-commit, so Chrome never sees
+  // a long enough block to offer to kill the page.
+  const [, startBatchTransition] = useTransition();
 
   // Rows currently rendered that qualify for the star + checkbox (high-confidence
   // accept, writable, still open). Memoized (and reused as the per-row `starred`
@@ -964,14 +1982,21 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   // Notes (notesByParam, onNoteChange) come from the parent panel via props
   // so the filter bar can scope rows by has-note. See AtlasDictTriagePanel.
 
-  const total = rows.length;
-  // sum of per-param product counts — this counts a product N times if it has N
-  // unmapped params, so we label it as "param-mentions" not "products"
-  const totalParamMentions = rows.reduce((s, r) => s + r.productCount, 0);
-  // When the visible rows are entirely (or mostly) auto-flagged, the synonym
-  // workflow header text is misleading — flip the description.
-  const flaggedVisibleCount = rows.filter((r) => !!r.autoFlag || r.noteStatus === 'wrong_family').length;
-  const allFlagged = total > 0 && flaggedVisibleCount === total;
+  // Memoized on `rows`: these scan the WHOLE accumulator, and without the
+  // memo they re-ran on every render — including every checkbox tick, where
+  // nothing they read has changed.
+  const { totalParamMentions, allFlagged } = useMemo(() => {
+    // sum of per-param product counts — this counts a product N times if it has N
+    // unmapped params, so we label it as "param-mentions" not "products"
+    const mentions = rows.reduce((s, r) => s + r.productCount, 0);
+    // When the visible rows are entirely (or mostly) auto-flagged, the synonym
+    // workflow header text is misleading — flip the description.
+    const flaggedCount = rows.filter((r) => !!r.autoFlag || r.noteStatus === 'wrong_family').length;
+    return {
+      totalParamMentions: mentions,
+      allFlagged: rows.length > 0 && flaggedCount === rows.length,
+    };
+  }, [rows]);
 
   // Show the suggestion-fetch progress in the header even when collapsed so users
   // see processing happening before they expand.
@@ -1148,7 +2173,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         };
       }
     }
-    setStates((prev) => ({ ...prev, ...initialStates }));
+    // Guard the no-op. This effect re-fires on every `rows` IDENTITY change, and
+    // the optimistic accept/revert updates rebuild the array — so on a batch
+    // accept every row is already hydrated and `initialStates` comes back empty.
+    // `{...prev}` would still be a NEW object, which React cannot bail out of, so
+    // an empty hydrate was forcing a full re-render of the whole list.
+    if (Object.keys(initialStates).length > 0) {
+      setStates((prev) => ({ ...prev, ...initialStates }));
+    }
     if (Object.keys(initialSchemaByFamily).length > 0) {
       setSchemaByFamily((prev) => ({ ...prev, ...initialSchemaByFamily }));
     }
@@ -1470,7 +2502,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     action: 'override_created' | 'flagged_wrong_family' | 'marked_unmappable' | 'dismissed',
     resultingOverrideId?: string,
   ) => {
-    const state = states[row.paramName];
+    const state = statesRef.current[row.paramName];
     const analysis = state?.deepAnalysis;
     if (!analysis) return;
     const scope = getOverrideScope(row);
@@ -1490,7 +2522,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     } catch (err) {
       console.error('recordInvestigationAction failed:', err);
     }
-  }, [states]);
+  }, []);
 
   const handleBatchAccept = useCallback(async () => {
     // Mapping values come from each row's AI suggestion detail. `selectedRows`
@@ -1512,6 +2544,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       });
     }
     if (items.length === 0) return;
+
     setBatchAccepting(true);
     setBatchNotice(null);
     // Retire the previous batch's Undo before this one runs: if THIS batch
@@ -1543,19 +2576,34 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
           leftBucket: row?.acceptedOverride ? undefined : ('accept' as const),
         };
       });
-      if (updates.length > 0) onRowsAccepted?.(updates);
-      // Close the AI audit loop for any row the engineer had investigated
-      // (no-op for the rest). Fire-and-forget — the accept already landed.
-      for (const a of approvedList) {
-        const row = rowByParam.get(a.paramName);
-        const overrideId = (a.override as { id?: string })?.id;
-        if (row && overrideId) void recordInvestigationAction(row, 'override_created', overrideId);
-      }
-      setSelected(new Set());
+      // Close the AI audit loop for any row the engineer had investigated (no-op
+      // for the rest). Fire-and-forget — the accept already landed — but bounded:
+      // an unbounded loop over hundreds of approvals opens hundreds of concurrent
+      // fetches, saturating the browser's connection pool and stalling the tab.
+      const auditable = approvedList
+        .map((a) => ({ row: rowByParam.get(a.paramName), overrideId: (a.override as { id?: string })?.id }))
+        .filter((x): x is { row: GlobalUnmappedParam; overrideId: string } => !!x.row && !!x.overrideId);
+      void (async () => {
+        let i = 0;
+        const worker = async () => {
+          while (i < auditable.length) {
+            const item = auditable[i++];
+            await recordInvestigationAction(item.row, 'override_created', item.overrideId);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, auditable.length) }, worker));
+      })();
+
       const overrideIds = (json.approvedIds ?? []) as string[];
-      if (overrideIds.length > 0) {
-        setUndoInfo({ overrideIds, paramNames: updates.map((u) => u.paramName), count: updates.length });
-      }
+      // The heavy commit: every accepted row leaves the Open view at once. Deferred
+      // so React can yield to the browser while it unmounts them.
+      startBatchTransition(() => {
+        if (updates.length > 0) onRowsAccepted?.(updates);
+        setSelected(new Set());
+        if (overrideIds.length > 0) {
+          setUndoInfo({ overrideIds, paramNames: updates.map((u) => u.paramName), count: updates.length });
+        }
+      });
       const parts: string[] = [`Accepted ${updates.length}`];
       const deduped = (json.deduped ?? 0) as number;
       const skippedN = ((json.skipped ?? []) as unknown[]).length;
@@ -1582,7 +2630,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     //      signature" button inside the deep-analysis card.
     // Either source provides the autoDiagnosis payload that gets snapshotted
     // onto atlas_unmapped_param_notes for the audit record.
-    const deep = states[row.paramName]?.deepAnalysis;
+    const deep = statesRef.current[row.paramName]?.deepAnalysis;
     const investigationVerdict =
       deep?.bucket === 'wrong_family' ? deep : null;
 
@@ -1693,7 +2741,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       const msg = err instanceof Error ? err.message : 'Confirm failed';
       setFlagState((p) => ({ ...p, [row.paramName]: { busy: false, error: msg } }));
     }
-  }, [onRegenerateAffected, recordInvestigationAction, states, onRowFlagged]);
+  }, [onRegenerateAffected, recordInvestigationAction, onRowFlagged]);
 
   const revertFlag = useCallback(async (row: GlobalUnmappedParam) => {
     setFlagState((p) => ({ ...p, [row.paramName]: { busy: true, error: null } }));
@@ -1730,7 +2778,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
 
   // ─── Per-row Accept ────────────────────────────────────
   const acceptRow = useCallback(async (row: GlobalUnmappedParam): Promise<{ ok: boolean; error?: string }> => {
-    const state = states[row.paramName];
+    const state = statesRef.current[row.paramName];
     if (!state || state.accepted) return { ok: true };
     if (!state.editedAttributeId.trim() || !state.editedAttributeName.trim()) {
       return { ok: false, error: 'attributeId and attributeName required' };
@@ -1826,7 +2874,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       }));
       return { ok: false, error: msg };
     }
-  }, [states, onRowAccepted, recordInvestigationAction]);
+  }, [onRowAccepted, recordInvestigationAction]);
 
   /** Fire an override creation for one of the primary row's normalized
    *  matches using the SAME attributeId/Name/Unit the engineer just used
@@ -1924,97 +2972,6 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  is visible and on Accept the same override fires for every variant.
    *  Click the × to scope the accept to just the primary row. Click the
    *  smaller "just this row" chip (in opted-out state) to re-enable. */
-  const renderBulkMatchChip = (r: GlobalUnmappedParam) => {
-    const matches = normalizedMatchesByRow[r.paramName] ?? [];
-    if (matches.length === 0) return null;
-    const isOptedOut = bulkOptedOut.has(r.paramName);
-    if (isOptedOut) {
-      return (
-        <Tooltip title="Bulk-apply disabled. Click to re-enable so the same override also maps the similar paramNames.">
-          <Chip
-            label="just this row"
-            size="small"
-            variant="outlined"
-            onClick={() => setBulkOptedOut((prev) => {
-              const next = new Set(prev);
-              next.delete(r.paramName);
-              return next;
-            })}
-            sx={{ fontSize: '0.6rem', height: 18, color: 'text.disabled', borderStyle: 'dashed' }}
-          />
-        </Tooltip>
-      );
-    }
-    return (
-      <Tooltip
-        title={
-          <Box sx={{ p: 0.5 }}>
-            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
-              Accept will also map {matches.length} similar paramName{matches.length === 1 ? '' : 's'}:
-            </Typography>
-            {matches.slice(0, 6).map((m, i) => (
-              <Typography key={i} variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem' }}>
-                · {m.paramName}
-                {m.sampleValues.length > 0 && ` (e.g. ${m.sampleValues.slice(0, 3).join(', ')})`}
-              </Typography>
-            ))}
-            {matches.length > 6 && (
-              <Typography variant="caption" sx={{ display: 'block', fontSize: '0.65rem', fontStyle: 'italic' }}>
-                …and {matches.length - 6} more
-              </Typography>
-            )}
-            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.65rem' }}>
-              Click × to apply to just this row.
-            </Typography>
-          </Box>
-        }
-      >
-        <Chip
-          label={`+${matches.length} similar`}
-          size="small"
-          color="info"
-          variant="outlined"
-          onDelete={() => setBulkOptedOut((prev) => {
-            const next = new Set(prev);
-            next.add(r.paramName);
-            return next;
-          })}
-          sx={{ fontSize: '0.6rem', height: 18, '& .MuiChip-deleteIcon': { fontSize: 12 } }}
-        />
-      </Tooltip>
-    );
-  };
-
-  /** Tier 2 trigger — opens the AI Cluster modal for the focal row. Enabled
-   *  iff the row has a usable override mapping (engineer-edited or AI-suggested
-   *  attributeId) AND is in a scope (family or category). Disabled state
-   *  surfaces the reason in the tooltip. */
-  const renderFindSimilarButton = (r: GlobalUnmappedParam) => {
-    const state = states[r.paramName];
-    const hasMapping = !!state?.editedAttributeId?.trim();
-    const scope = getOverrideScope(r);
-    const disabled = !hasMapping || !scope;
-    const disabledReason = !scope
-      ? 'Unscoped row — set a dominantFamily or dominantCategory before clustering.'
-      : !hasMapping
-      ? 'Generate or enter an attributeId mapping first — the modal applies it to selected matches.'
-      : '';
-    return (
-      <Tooltip title={disabled ? disabledReason : 'Use AI to find near-duplicate paramNames in scope (CJK synonyms, semantic equivalents) and bulk-apply this row’s mapping.'}>
-        <span>
-          <IconButton
-            size="small"
-            disabled={disabled}
-            onClick={() => setClusterFocalParam(r.paramName)}
-            sx={{ p: 0.5 }}
-          >
-            <AutoAwesomeIcon sx={{ fontSize: 14 }} />
-          </IconButton>
-        </span>
-      </Tooltip>
-    );
-  };
-
   const acceptAndRegenerate = useCallback(async (row: GlobalUnmappedParam) => {
     const result = await acceptRow(row);
     if (!result.ok) return;
@@ -2024,10 +2981,10 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // for every sibling in parallel. The primary accept already succeeded
     // by this point, so any match failure is contained — the engineer can
     // retry that match's row individually.
-    const matches = normalizedMatchesByRow[row.paramName] ?? [];
-    const doBulk = matches.length > 0 && !bulkOptedOut.has(row.paramName);
+    const matches = normalizedMatchesByRowRef.current[row.paramName] ?? [];
+    const doBulk = matches.length > 0 && !bulkOptedOutRef.current.has(row.paramName);
     if (doBulk) {
-      const primaryState = states[row.paramName];
+      const primaryState = statesRef.current[row.paramName];
       if (primaryState && primaryState.editedAttributeId.trim()) {
         const overrideValues = {
           attributeId: primaryState.editedAttributeId.trim(),
@@ -2051,7 +3008,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     }
 
     await onRegenerateAffected(row.affectedBatchIds);
-  }, [acceptRow, onRegenerateAffected, normalizedMatchesByRow, bulkOptedOut, states, acceptMatchWithPrimaryOverride]);
+  }, [acceptRow, onRegenerateAffected, acceptMatchWithPrimaryOverride]);
 
   // Per-row deep investigation — fires only on explicit click. Returns one
   // of six action buckets with evidence + a concrete next-step. The result
@@ -2064,7 +3021,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // the server's in-memory cache to pick up freshly-deployed code paths
     // (e.g. richer evidence fetches). Also clear the localStorage cache
     // here so the new result writes a fresh entry.
-    const isRefresh = !!states[row.paramName]?.deepAnalysis;
+    const isRefresh = !!statesRef.current[row.paramName]?.deepAnalysis;
     if (isRefresh && typeof window !== 'undefined') {
       try {
         const cacheKey = INVESTIGATE_LS_PREFIX + (scopeKey ?? '__none__') + '::' + row.paramName;
@@ -2128,7 +3085,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         } as RowState,
       }));
     }
-  }, [states]);
+  }, []);
 
   // ─── Bulk refresh handlers ────────────────────────────
   // Declared AFTER runInvestigate so the closure can safely reference it
@@ -2196,7 +3153,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
    *  clobber them. Optimistic UI: we update notesByParam immediately
    *  and roll back on error. */
   const toggleFlag = useCallback(async (row: GlobalUnmappedParam, nextFlagged: boolean) => {
-    const existing = notesByParam[row.paramName];
+    const existing = notesByParamRef.current[row.paramName];
     // Build the optimistic NoteRecord that the parent will store. Use
     // the existing note/status/etc when present so we don't drop them.
     const optimistic: NoteRecord = {
@@ -2244,14 +3201,14 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     } catch {
       onNoteChange(row.paramName, existing ?? null);
     }
-  }, [notesByParam, onNoteChange]);
+  }, [onNoteChange]);
 
   const markUnmappable = useCallback(async (row: GlobalUnmappedParam) => {
     // Optimistic — chip counts (deferred / unmappable / open) in the parent's
     // statusCounts also depend on onRowFlagged, not just notesByParam.
     onRowFlagged?.(row.paramName, 'unmappable', 'engineer');
     try {
-      const existing = notesByParam[row.paramName];
+      const existing = notesByParamRef.current[row.paramName];
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -2274,7 +3231,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       void recordInvestigationAction(row, 'marked_unmappable');
     } catch (err) {
       // Roll back the optimistic chip-count update.
-      onRowFlagged?.(row.paramName, notesByParam[row.paramName]?.status ?? null, notesByParam[row.paramName]?.flaggedBy ?? null);
+      onRowFlagged?.(row.paramName, notesByParamRef.current[row.paramName]?.status ?? null, notesByParamRef.current[row.paramName]?.flaggedBy ?? null);
       const msg = err instanceof Error ? err.message : 'Failed to mark unmappable';
       setStates((prev) => ({
         ...prev,
@@ -2284,7 +3241,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
         } as RowState,
       }));
     }
-  }, [onNoteChange, onRowFlagged, notesByParam, recordInvestigationAction]);
+  }, [onNoteChange, onRowFlagged, recordInvestigationAction]);
 
   // ─── Defer + Reopen (per-row "park for later" workflow) ───────
   // Defer is the engineer-side counterpart to the AI verdict 'defer':
@@ -2297,15 +3254,15 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
   const [parkedMenuAnchor, setParkedMenuAnchor] = useState<{ anchor: HTMLElement; row: GlobalUnmappedParam } | null>(null);
 
   const openDeferPopover = useCallback((row: GlobalUnmappedParam, anchor: HTMLElement) => {
-    const aiExplanation = states[row.paramName]?.suggestion?.suggestion === 'defer'
-      ? (states[row.paramName]?.suggestion?.explanation ?? '')
+    const aiExplanation = statesRef.current[row.paramName]?.suggestion?.suggestion === 'defer'
+      ? (statesRef.current[row.paramName]?.suggestion?.explanation ?? '')
       : '';
-    const existingNote = notesByParam[row.paramName]?.note ?? '';
+    const existingNote = notesByParamRef.current[row.paramName]?.note ?? '';
     // Prefer the existing engineer note when present (they wrote it for a
     // reason); otherwise seed with the AI defer explanation if it exists.
     setDeferReason(existingNote.trim().length > 0 ? existingNote : aiExplanation);
     setDeferPopover({ anchor, row });
-  }, [states, notesByParam]);
+  }, []);
 
   const closeDeferPopover = useCallback(() => {
     setDeferPopover(null);
@@ -2328,7 +3285,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
     // Optimistic — flip the row's noteStatus + parent chip counts.
     onRowFlagged?.(row.paramName, 'deferred', 'engineer');
     try {
-      const existing = notesByParam[row.paramName];
+      const existing = notesByParamRef.current[row.paramName];
       const res = await fetch(`/api/admin/atlas/unmapped-param-notes/${encodeURIComponent(row.paramName)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -2349,17 +3306,17 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       }
     } catch {
       // Roll back optimistic chip-count update on error.
-      const fallback = notesByParam[row.paramName];
+      const fallback = notesByParamRef.current[row.paramName];
       onRowFlagged?.(row.paramName, fallback?.status ?? null, fallback?.flaggedBy ?? null);
     }
-  }, [deferPopover, deferReason, notesByParam, onRowFlagged, onNoteChange]);
+  }, [deferPopover, deferReason, onRowFlagged, onNoteChange]);
 
   // Reopen — clears 'deferred' or 'unmappable' back to NULL so the row
   // re-enters the OPEN queue. Preserves the engineer note (it's still
   // useful context). If the row had no other signal (no note + no flag),
   // the server-side PUT handler deletes the row entirely.
   const reopenRow = useCallback(async (row: GlobalUnmappedParam) => {
-    const existing = notesByParam[row.paramName];
+    const existing = notesByParamRef.current[row.paramName];
     const prevStatus = existing?.status ?? row.noteStatus ?? null;
     const prevFlaggedBy = existing?.flaggedBy ?? row.flaggedBy ?? null;
     // Optimistic
@@ -2389,7 +3346,7 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
       // Roll back
       onRowFlagged?.(row.paramName, prevStatus, prevFlaggedBy);
     }
-  }, [notesByParam, onRowFlagged, onNoteChange]);
+  }, [onRowFlagged, onNoteChange]);
 
   // Per-row Revert — soft-deletes the override (sets is_active=false).
   // The DELETE endpoint preserves the audit row so the queue can show it
@@ -2733,823 +3690,50 @@ export default function GlobalUnmappedParamsTable({ rows, onRegenerateAffected, 
               </TableRow>
             </TableHead>
             <TableBody>
-              {visibleRows.map((r, rowIdx) => {
-                const state = states[r.paramName];
-                // Effective flag state per-row. autoFlag = live registry hit;
-                // noteStatus='wrong_family' = persisted (auto-confirmed or
-                // manually flagged). Either makes the row a "flagged" row
-                // for UI purposes — Confirm / Revert actions take over the
-                // synonym workflow's Accept button.
-                const flagged = !!r.autoFlag || r.noteStatus === 'wrong_family';
-                const flagBusy = flagState[r.paramName]?.busy ?? false;
-                const flagError = flagState[r.paramName]?.error ?? null;
-                const suggestedFam = r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null;
-                const confirmedFlag = r.noteStatus === 'wrong_family';
-                // Staleness signals — drive the per-row visual cues described
-                // in the staleness banner section. Amber border, receded chip,
-                // and ↻ icon. Computed once per row to avoid recomputing in
-                // multiple cells.
+              {visibleRows.map((r) => {
+                // Everything the row needs, resolved HERE so the row itself can be
+                // memoized on primitives + stable identities. Whole-collection reads
+                // (selected/revertingIds/schemaByFamily) collapse to per-row values.
+                const rowScope = getOverrideScope(r);
                 const suggestionStaleReason = getRowSuggestionStaleness(r);
                 const investigationStaleReason = getRowInvestigationStaleness(r);
-                const isStale = !!(suggestionStaleReason || investigationStaleReason);
-                // High-confidence accept + writable + still open → gets a star
-                // and a batch-accept checkbox. Reuses the memoized set rather
-                // than re-running the predicate per row on every render.
-                const starred = starredParamNames.has(r.paramName);
                 return (
-                  <Fragment key={`${r.paramName}::${r.dominantFamily ?? ''}::${r.dominantCategory ?? ''}::${r.acceptedOverride?.id ?? 'no-ov'}::${rowIdx}`}>
-                  <TableRow
-                    sx={{
-                      // Three "done" states drop opacity:
-                      //   - state.accepted (synonym mapping accepted)
-                      //   - confirmedFlag (auto-flag confirmed by engineer)
-                      // Both visually recede so unreviewed work is at eye level.
-                      opacity: state?.accepted ? 0.5 : (confirmedFlag ? 0.55 : 1),
-                      // Left-border accent: red for flagged (highest signal),
-                      // amber for stale (high signal, lower than flagged), none
-                      // when neither. Keeps the strongest signal visible when
-                      // both states overlap on the same row.
-                      borderLeft: flagged || isStale ? '4px solid' : undefined,
-                      borderLeftColor: flagged
-                        ? (confirmedFlag ? 'text.disabled' : 'error.main')
-                        : (isStale ? 'warning.main' : undefined),
-                    }}
-                  >
-                    <TableCell sx={{ width: 56, padding: '4px', textAlign: 'center' }}>
-                      {starred && (
-                        <Stack direction="row" alignItems="center" justifyContent="center" spacing={0}>
-                          <Checkbox
-                            size="small"
-                            sx={{ p: 0.25 }}
-                            checked={selected.has(r.paramName)}
-                            onChange={() => toggleRowSelected(r.paramName)}
-                            inputProps={{ 'aria-label': `Select ${r.paramName} for batch accept` }}
-                          />
-                          <Tooltip title="High confidence — quick to batch-accept">
-                            <StarIcon sx={{ fontSize: 16, color: 'success.main' }} />
-                          </Tooltip>
-                        </Stack>
-                      )}
-                    </TableCell>
-                    <TableCell sx={{ width: 90, padding: '4px 8px' }}>
-                      <Tooltip title={`Copy ${paramUid(r.paramName)} (paste into search to find this row again)`} placement="top">
-                        <Chip
-                          label={paramUid(r.paramName)}
-                          size="small"
-                          variant="outlined"
-                          onClick={() => {
-                            if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                              void navigator.clipboard.writeText(paramUid(r.paramName));
-                            }
-                          }}
-                          sx={{
-                            fontSize: '0.62rem',
-                            height: 18,
-                            fontFamily: 'monospace',
-                            cursor: 'pointer',
-                            '& .MuiChip-label': { px: 0.75 },
-                          }}
-                        />
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
-                      {(() => {
-                        const flagged = !!notesByParam[r.paramName]?.flagged;
-                        return (
-                          <Tooltip title={flagged ? 'Flagged for follow-up — click to unflag' : 'Flag for follow-up'}>
-                            <IconButton
-                              size="small"
-                              onClick={() => toggleFlag(r, !flagged)}
-                              sx={{ p: 0.25 }}
-                            >
-                              {flagged
-                                ? <FlagIcon sx={{ fontSize: 16, color: 'error.main' }} />
-                                : <OutlinedFlagIcon sx={{ fontSize: 16, color: 'text.disabled' }} />}
-                            </IconButton>
-                          </Tooltip>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell sx={{ width: 40, padding: '4px 0', textAlign: 'center' }}>
-                      <UnmappedParamNoteCell
-                        paramName={r.paramName}
-                        note={notesByParam[r.paramName]}
-                        onChange={onNoteChange}
-                        aiDraft={state?.suggestion?.suggestion === 'defer' ? state.suggestion.explanation : undefined}
-                        aiDraftHint={state?.suggestion?.suggestion === 'defer'}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.7rem', width: 140, wordBreak: 'break-word' }}>
-                      {r.paramName}
-                    </TableCell>
-                    <TableCell sx={{ fontSize: '0.7rem' }}>
-                      {flagged && r.autoFlag ? (
-                        // Show "B1 → B6" transition with the flag icon — at-a-glance
-                        // diagnosis without needing the tooltip.
-                        <Tooltip title={`${r.dominantFamily ?? '?'} → ${r.autoFlag.suggestedFamily} ${suggestedFam ? `(${suggestedFam.short})` : ''} — see diagnosis`}>
-                          <Stack direction="row" spacing={0.25} alignItems="center">
-                            <FlagIcon sx={{ fontSize: 14, color: 'error.main' }} />
-                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>{r.dominantFamily}</Box>
-                            <Box component="span" sx={{ fontSize: '0.65rem', color: 'error.main', fontWeight: 700 }}>→</Box>
-                            <Box component="span" sx={{ fontSize: '0.6rem', color: 'error.main', fontWeight: 700 }}>{r.autoFlag.suggestedFamily}</Box>
-                          </Stack>
-                        </Tooltip>
-                      ) : flagged ? (
-                        <Tooltip title="Manually flagged as wrong family">
-                          <Chip size="small" icon={<FlagIcon sx={{ fontSize: 12 }} />} label={r.dominantFamily ?? '?'} sx={{ fontSize: '0.6rem', height: 18, bgcolor: 'error.dark', color: 'error.contrastText' }} />
-                        </Tooltip>
-                      ) : r.dominantFamily ? (
-                        // Tooltip surfaces the human-readable family name so
-                        // engineers can map "C3" → "Gate Drivers" without
-                        // having to memorize the L3 ID list. Other admin
-                        // panels (Dictionary, Logic, Param Mappings) all use
-                        // the full English name in their family pickers.
-                        (() => {
-                          const fam = getFamilyDisplayName(r.dominantFamily);
-                          return (
-                            <Tooltip title={fam ? `${r.dominantFamily} — ${fam.full}` : r.dominantFamily}>
-                              <Chip size="small" label={r.dominantFamily} variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
-                            </Tooltip>
-                          );
-                        })()
-                      ) : r.dominantCategory ? (
-                        // L2-only row (no logic-table family). Show "L2"
-                        // marker so engineers see at a glance that this is
-                        // category-scoped, not family-scoped — matters for
-                        // people who mix the two views.
-                        <Tooltip title={`L2 category: ${r.dominantCategory} (no logic-table family — override scoped to category)`}>
-                          <Chip size="small" label="L2" variant="outlined" color="info" sx={{ fontSize: '0.6rem', height: 18 }} />
-                        </Tooltip>
-                      ) : (
-                        <Tooltip title="No dominant family or category — manual selection required">
-                          <Chip size="small" label="?" variant="outlined" color="warning" sx={{ fontSize: '0.6rem', height: 18 }} />
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                    <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
-                      {(() => {
-                        // For flagged rows, surface the suggested family's
-                        // human-readable name so the engineer sees "Rectifier
-                        // Diodes → BJTs" not just "B1 → B6".
-                        const fromFam = getFamilyDisplayName(r.dominantFamily);
-                        if (flagged && suggestedFam) {
-                          return (
-                            <Tooltip title={`${fromFam?.full ?? r.dominantFamily ?? '?'} → ${suggestedFam.full}`}>
-                              <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-                                <Box component="span" sx={{ textDecoration: 'line-through', color: 'text.disabled' }}>{fromFam?.short ?? '?'}</Box>
-                                <Box component="span" sx={{ color: 'error.light', fontWeight: 600 }}>→ {suggestedFam.short}</Box>
-                              </Stack>
-                            </Tooltip>
-                          );
-                        }
-                        if (fromFam) {
-                          return (
-                            <Tooltip title={fromFam.full}>
-                              <span>{fromFam.short}</span>
-                            </Tooltip>
-                          );
-                        }
-                        // No L3 family — fall through to L2 category if present.
-                        // The category string is already human-readable (e.g.
-                        // 'Microcontrollers'), so no helper resolution needed.
-                        if (r.dominantCategory) {
-                          return (
-                            <Tooltip title={`L2 category — override will scope to "${r.dominantCategory}"`}>
-                              <span>{r.dominantCategory}</span>
-                            </Tooltip>
-                          );
-                        }
-                        return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
-                      })()}
-                    </TableCell>
-                    <TableCell sx={{ fontSize: '0.7rem', color: 'text.secondary', maxWidth: 180 }}>
-                      {r.sampleValues.slice(0, 3).map((v) => (
-                        <Box key={v} component="code" sx={{ bgcolor: 'action.hover', px: 0.5, mr: 0.5, borderRadius: 0.5, display: 'inline-block', mb: 0.25 }}>{v}</Box>
-                      ))}
-                    </TableCell>
-                    <TableCell sx={{ fontSize: '0.7rem' }}>
-                      {r.affectedManufacturers && r.affectedManufacturers.length > 0 ? (
-                        <Tooltip
-                          title={
-                            <Box>
-                              <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
-                                {r.productCount} products across {r.affectedManufacturers.length} MFR{r.affectedManufacturers.length === 1 ? '' : 's'}:
-                              </Typography>
-                              {r.affectedManufacturers.slice(0, 12).map((m) => (
-                                <Typography key={m.slug} variant="caption" sx={{ display: 'block' }}>
-                                  • {m.name} ({m.productCount})
-                                </Typography>
-                              ))}
-                              {r.affectedManufacturers.length > 12 && (
-                                <Typography variant="caption" sx={{ display: 'block', fontStyle: 'italic' }}>
-                                  +{r.affectedManufacturers.length - 12} more
-                                </Typography>
-                              )}
-                            </Box>
-                          }
-                        >
-                          <Box sx={{ cursor: 'help' }}>
-                            <Box>{r.productCount}</Box>
-                            <Box sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
-                              {r.affectedManufacturers.length === 1
-                                ? r.affectedManufacturers[0].name
-                                : `${r.affectedManufacturers.length} MFRs`}
-                            </Box>
-                          </Box>
-                        </Tooltip>
-                      ) : (
-                        r.productCount
-                      )}
-                    </TableCell>
-
-                    <TableCell sx={{ fontSize: '0.7rem', padding: '4px 8px' }}>
-                      <ImpactChip impact={r.matchingImpact} productCount={r.productCount} />
-                    </TableCell>
-
-                    <TableCell sx={{ fontSize: '0.7rem', maxWidth: 200 }}>
-                      {flagged && r.autoFlag ? (
-                        // Diagnosis card content — full reasoning visible at
-                        // a glance, no expansion needed. Tooltip carries the
-                        // matched param + source family for the audit story.
-                        <Tooltip title={`Matched on "${r.autoFlag.matchingParam}" — see Confirm/Revert`}>
-                          <Typography
-                            variant="caption"
-                            sx={{ display: 'block', color: 'error.light', lineHeight: 1.3 }}
-                          >
-                            {r.autoFlag.reasoning}
-                          </Typography>
-                        </Tooltip>
-                      ) : flagged ? (
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
-                          Manually flagged as wrong family
-                        </Typography>
-                      ) : state?.loadingSuggestion ? (
-                        <CircularProgress size={12} />
-                      ) : state?.suggestion?.translation ? (
-                        <Stack spacing={0.5}>
-                          <Stack direction="row" spacing={0.5} alignItems="flex-start">
-                            <Tooltip title={state.suggestion.reasoning ?? ''}>
-                              <Typography variant="caption" sx={{ fontStyle: 'italic', flex: 1 }}>
-                                {state.suggestion.translation}
-                              </Typography>
-                            </Tooltip>
-                            {/* Per-row refresh ↻ — always rendered when a cached
-                                suggestion exists. Stale rows (Decision #187 — card
-                                or schema version drift) render the icon in warning
-                                color with prepended ⚠; non-stale rows render it
-                                muted as a manual on-demand refresh affordance.
-                                Click re-fires /suggest with force=true so the
-                                server skips its cache too. */}
-                            <Tooltip title={
-                              suggestionStaleReason
-                                ? `⚠ Stale — ${suggestionStaleReason}. Click to refresh this row's AI suggestion.`
-                                : `Refresh AI suggestion for this row (re-runs /suggest with the latest prompt).`
-                            }>
-                              <IconButton
-                                size="small"
-                                onClick={() => generateSuggestionsForRows([r], { force: true })}
-                                sx={{
-                                  p: 0.25,
-                                  color: suggestionStaleReason ? 'warning.main' : 'text.disabled',
-                                  '&:hover': { color: suggestionStaleReason ? 'warning.dark' : 'text.secondary' },
-                                }}
-                                aria-label={suggestionStaleReason ? 'Refresh stale AI suggestion' : 'Refresh AI suggestion'}
-                              >
-                                <RefreshIcon sx={{ fontSize: 14 }} />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
-                          {state.suggestion.explanation && (
-                            // Symmetric in-cell explanation — visible by default
-                            // for BOTH Accept and Defer rows so Claude doesn't
-                            // get an opaque "trust me" chip on Accepts. Color
-                            // hints which suggestion the explanation supports;
-                            // line-clamp at 3 keeps row height bounded, full
-                            // text on tooltip hover.
-                            <Tooltip title={<Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>{state.suggestion.explanation}</Box>} placement="left" arrow>
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  color: state.suggestion.suggestion === 'defer' ? 'warning.light' : 'success.light',
-                                  fontSize: '0.65rem',
-                                  lineHeight: 1.35,
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                  cursor: 'help',
-                                }}
-                              >
-                                {state.suggestion.explanation}
-                              </Typography>
-                            </Tooltip>
-                          )}
-                        </Stack>
-                      ) : (
-                        // Uncached, non-loading row — offer per-row Generate as
-                        // an alternative to the bulk button at top of table.
-                        // Costs one Sonnet roundtrip; only fires on click.
-                        <Tooltip title="Generate AI suggestion for this row only (~$0.005)" placement="right">
-                          <Button
-                            size="small"
-                            variant="text"
-                            color="primary"
-                            startIcon={<AutoAwesomeIcon sx={{ fontSize: 12 }} />}
-                            onClick={() => generateOne(r)}
-                            sx={{ fontSize: '0.65rem', py: 0, px: 0.5, minWidth: 0, textTransform: 'none' }}
-                          >
-                            Generate
-                          </Button>
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                    <TableCell sx={{ width: 300 }}>
-                      {flagged ? (
-                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled', fontStyle: 'italic' }}>
-                          Don&apos;t map — investigate upstream
-                        </Box>
-                      ) : (() => {
-                        const editedId = state?.editedAttributeId?.trim() ?? '';
-                        const rowScope = getOverrideScope(r);
-                        const familySchema = rowScope ? schemaByFamily[rowScope.key] : undefined;
-                        const schemaKnown = !!familySchema && familySchema.size > 0;
-                        const isCanonical = schemaKnown && editedId.length > 0 && familySchema!.has(editedId);
-                        // Three states: canonical (green check), invented (amber warn),
-                        // unknown-because-no-schema (no chip — we can't validate). The
-                        // border on the input mirrors the chip color so it reads at a glance.
-                        const borderColor = !editedId
-                          ? undefined
-                          : isCanonical
-                            ? 'success.main'
-                            : schemaKnown ? 'warning.main' : undefined;
-                        return (
-                          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: '100%' }}>
-                            <TextField
-                              size="small"
-                              fullWidth
-                              value={state?.editedAttributeId ?? ''}
-                              onChange={(e) => setStates((prev) => ({
-                                ...prev,
-                                [r.paramName]: { ...prev[r.paramName], editedAttributeId: e.target.value },
-                              }))}
-                              disabled={state?.accepted || state?.accepting}
-                              placeholder="—"
-                              sx={{
-                                '& .MuiInputBase-input': { fontSize: '0.7rem', fontFamily: 'monospace', py: 0.5 },
-                                '& .MuiOutlinedInput-notchedOutline': borderColor ? { borderColor } : {},
-                              }}
-                            />
-                            {editedId && schemaKnown && (
-                              isCanonical ? (
-                                <Tooltip title="Canonical: this attributeId has a rule in the family's logic table — matching engine will use it.">
-                                  <VerifiedOutlinedIcon sx={{ fontSize: 16, color: 'success.main' }} />
-                                </Tooltip>
-                              ) : (
-                                <Tooltip title="Invented: this attributeId is not in the family's logic table. The override will be saved and the value stored, but no matching rule will use it (display-only)." >
-                                  <HelpOutlineOutlinedIcon sx={{ fontSize: 16, color: 'warning.main' }} />
-                                </Tooltip>
-                              )
-                            )}
-                          </Stack>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell sx={{ width: 240 }}>
-                      {flagged ? (
-                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
-                      ) : (
-                        <TextField
-                          size="small"
-                          fullWidth
-                          value={state?.editedAttributeName ?? ''}
-                          onChange={(e) => setStates((prev) => ({
-                            ...prev,
-                            [r.paramName]: { ...prev[r.paramName], editedAttributeName: e.target.value },
-                          }))}
-                          disabled={state?.accepted || state?.accepting}
-                          placeholder="—"
-                          sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell sx={{ width: 90 }}>
-                      {flagged ? (
-                        <Box sx={{ fontSize: '0.7rem', color: 'text.disabled' }}>—</Box>
-                      ) : (
-                        <>
-                          <TextField
-                            size="small"
-                            fullWidth
-                            value={state?.editedUnit ?? ''}
-                            onChange={(e) => setStates((prev) => ({
-                              ...prev,
-                              [r.paramName]: { ...prev[r.paramName], editedUnit: e.target.value },
-                            }))}
-                            disabled={state?.accepted || state?.accepting}
-                            placeholder="—"
-                            sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', py: 0.5 } }}
-                          />
-                          {(() => {
-                            const sample = r.sampleValues?.[0];
-                            const preview = previewConversion(sample ?? '', state?.editedUnit ?? '');
-                            if (!preview) return null;
-                            return (
-                              <Tooltip
-                                title={
-                                  preview.suspicious
-                                    ? `Sample value embeds a unit that differs from the dict unit above. Value-string parsing wins at ingest, so math will be correct — but double-check the dict unit captures the typical vendor convention.`
-                                    : `At ingest, sample "${sample}" with unit "${state?.editedUnit}" becomes numericValue ${preview.numericValue} (base SI). Verify this magnitude is physically plausible for ${r.paramName}.`
-                                }
-                                placement="top"
-                                arrow
-                              >
-                                <Box
-                                  sx={{
-                                    fontSize: '0.62rem',
-                                    color: preview.suspicious ? 'warning.main' : 'text.secondary',
-                                    fontFamily: 'monospace',
-                                    mt: 0.3,
-                                    cursor: 'help',
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                  }}
-                                >
-                                  {preview.suspicious ? '⚠ ' : ''}{preview.display}
-                                </Box>
-                              </Tooltip>
-                            );
-                          })()}
-                        </>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {flagged ? (
-                        r.noteStatus === 'wrong_family' ? (
-                          <Chip
-                            size="small"
-                            icon={<CheckIcon sx={{ fontSize: 12 }} />}
-                            label="Confirmed"
-                            sx={{ bgcolor: 'error.dark', color: 'error.contrastText', fontSize: '0.6rem', height: 18, fontWeight: 700 }}
-                          />
-                        ) : (
-                          <Chip
-                            size="small"
-                            icon={<FlagIcon sx={{ fontSize: 12 }} />}
-                            label="Wrong family"
-                            sx={{ bgcolor: 'error.main', color: 'error.contrastText', fontSize: '0.6rem', height: 18 }}
-                          />
-                        )
-                      ) : (() => {
-                        // Suggestion chip — advisory only. When a deeper
-                        // /investigate verdict exists, it SUPERSEDES the cheap
-                        // /suggest chip — the investigator pulled richer
-                        // context and produced a concrete action, so showing
-                        // the original Defer alongside would look contradictory.
-                        // Buckets map to: green Accept (mint flow), red Flag,
-                        // grey Skip, amber Unscoped. No deep analysis → fall
-                        // back to the cheap /suggest verdict.
-                        const sug = state?.suggestion;
-                        const deep = state?.deepAnalysis;
-
-                        if (deep) {
-                          const meta = (() => {
-                            switch (deep.bucket) {
-                              case 'new_canonical':
-                              case 'unit_mismatch':
-                              case 'disambiguation':
-                                return { label: 'Accept', bg: 'success.dark', fg: 'success.contrastText', icon: <CheckIcon sx={{ fontSize: 12 }} /> };
-                              case 'wrong_family':
-                                return { label: 'Flag', bg: 'error.dark', fg: 'error.contrastText', icon: <FlagIcon sx={{ fontSize: 12 }} /> };
-                              case 'unmappable':
-                                return { label: 'Skip', bg: 'action.disabledBackground', fg: 'text.secondary', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
-                              case 'unscoped_products':
-                                return { label: 'Unscoped', bg: 'warning.dark', fg: 'warning.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
-                              default:
-                                return { label: 'Review', bg: 'info.dark', fg: 'info.contrastText', icon: <NoteAltOutlinedIcon sx={{ fontSize: 12 }} /> };
-                            }
-                          })();
-                          const tooltipBody = (
-                            <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
-                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
-                                Click to open full analysis · Confidence: {deep.confidence}
-                              </Typography>
-                              {deep.recommendation?.summary && (
-                                <Typography variant="caption" sx={{ display: 'block' }}>
-                                  {deep.recommendation.summary}
-                                </Typography>
-                              )}
-                            </Box>
-                          );
-                          return (
-                            <Tooltip title={tooltipBody} placement="left" arrow>
-                              <Chip
-                                size="small"
-                                icon={meta.icon}
-                                label={meta.label}
-                                onClick={() => setDrawerParamName(r.paramName)}
-                                sx={{
-                                  bgcolor: meta.bg,
-                                  color: meta.fg,
-                                  fontSize: '0.6rem',
-                                  height: 18,
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  '&:hover': { filter: 'brightness(1.15)' },
-                                }}
-                              />
-                            </Tooltip>
-                          );
-                        }
-
-                        if (!sug?.suggestion) {
-                          return <span style={{ color: 'rgba(255,255,255,0.3)' }}>—</span>;
-                        }
-                        const isAccept = sug.suggestion === 'accept';
-                        // When stale, modify the existing chip's appearance
-                        // (no new chip): dotted warning border + reduced
-                        // opacity so it visually recedes. The tooltip body
-                        // gets a leading "⚠ Stale — …" line so the engineer
-                        // sees WHY at a glance.
-                        const stale = suggestionStaleReason;
-                        const tooltipBody = (
-                          <Box sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
-                            {stale && (
-                              <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5, color: 'warning.light' }}>
-                                ⚠ Stale — {stale}. Click ↻ to refresh.
-                              </Typography>
-                            )}
-                            <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.5 }}>
-                              Suggestion: {isAccept ? 'Accept' : 'Defer'} · Confidence: {sug.confidence}
-                            </Typography>
-                            {sug.explanation && (
-                              <Typography variant="caption" sx={{ display: 'block' }}>
-                                {sug.explanation}
-                              </Typography>
-                            )}
-                          </Box>
-                        );
-                        return (
-                          <Tooltip title={tooltipBody} placement="left" arrow>
-                            <Chip
-                              size="small"
-                              icon={isAccept ? <CheckIcon sx={{ fontSize: 12 }} /> : <NoteAltOutlinedIcon sx={{ fontSize: 12 }} />}
-                              label={isAccept ? 'Accept' : 'Defer'}
-                              sx={{
-                                bgcolor: isAccept ? 'success.dark' : 'warning.dark',
-                                color: isAccept ? 'success.contrastText' : 'warning.contrastText',
-                                fontSize: '0.6rem',
-                                height: 18,
-                                fontWeight: 600,
-                                ...(stale && {
-                                  opacity: 0.7,
-                                  border: '1.5px dotted',
-                                  borderColor: 'warning.main',
-                                }),
-                              }}
-                            />
-                          </Tooltip>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      {/* Inline accept audit + revert. When this row already
-                          has an active override, render Revert (instead of
-                          Accept) and a chip showing who accepted + when. When
-                          undone, show a "↺ Reverted" chip and re-enable
-                          Accept. Takes precedence over the flagged-row UI
-                          since accept supersedes flag (the engineer made a
-                          decision). */}
-                      {r.acceptedOverride && r.acceptedOverride.isActive ? (
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                          <Tooltip
-                            title={`${r.acceptedOverride.wasEdited ? 'Edited' : 'Accepted'} by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)}${r.orphaned ? ' · No longer in any pending batch' : ''}`}
-                            placement="top"
-                          >
-                            <Chip
-                              size="small"
-                              icon={<CheckIcon sx={{ fontSize: 12 }} />}
-                              label={r.orphaned ? 'Accepted (orphaned)' : 'Accepted'}
-                              sx={{
-                                bgcolor: r.orphaned ? 'warning.dark' : 'success.dark',
-                                color: r.orphaned ? 'warning.contrastText' : 'success.contrastText',
-                                fontSize: '0.6rem', height: 18,
-                              }}
-                            />
-                          </Tooltip>
-                          <Tooltip title="Revert: deactivates the override; row returns to the Open queue.">
-                            <span>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color="error"
-                                disabled={revertingIds.has(r.acceptedOverride.id)}
-                                onClick={() => revertOverride(r)}
-                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
-                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
-                              >
-                                {revertingIds.has(r.acceptedOverride.id) ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
-                              </Button>
-                            </span>
-                          </Tooltip>
-                        </Stack>
-                      ) : r.acceptedOverride && !r.acceptedOverride.isActive ? (
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                          <Tooltip
-                            title={`Reverted (originally accepted by ${r.acceptedOverride.createdByName} · ${formatRelative(r.acceptedOverride.createdAt)})`}
-                            placement="top"
-                          >
-                            <Chip
-                              size="small"
-                              icon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
-                              label="Undone"
-                              sx={{ bgcolor: 'action.disabledBackground', color: 'text.secondary', fontSize: '0.6rem', height: 18 }}
-                            />
-                          </Tooltip>
-                          {!r.orphaned && (
-                            <Tooltip title={state?.acceptError ?? 'Re-accept this row to restore a fresh override.'} disableHoverListener={!state?.acceptError}>
-                              <span>
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  color={state?.acceptError ? 'error' : 'primary'}
-                                  disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
-                                  onClick={() => acceptAndRegenerate(r)}
-                                  sx={{ fontSize: '0.65rem', minWidth: 80 }}
-                                >
-                                  {state?.accepting ? <CircularProgress size={12} /> : 'Re-accept'}
-                                </Button>
-                              </span>
-                            </Tooltip>
-                          )}
-                          {renderBulkMatchChip(r)}
-                          {renderFindSimilarButton(r)}
-                        </Stack>
-                      ) : (r.noteStatus === 'deferred' || r.noteStatus === 'unmappable') ? (
-                        // Parked row — engineer chose to defer or mark
-                        // unmappable. Show a status chip + Reopen button so
-                        // the engineer can unlock the row back to OPEN.
-                        // Reopen preserves the engineer note as context.
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                          <Tooltip
-                            title={r.noteStatus === 'deferred'
-                              ? 'Parked for later — Reopen to return to the Open queue.'
-                              : 'Marked unmappable — Reopen to allow mapping again.'}
-                            placement="top"
-                          >
-                            <Chip
-                              size="small"
-                              icon={r.noteStatus === 'deferred'
-                                ? <PauseCircleOutlineIcon sx={{ fontSize: 12 }} />
-                                : <BlockOutlinedIcon sx={{ fontSize: 12 }} />}
-                              label={r.noteStatus === 'deferred' ? 'Deferred' : 'Unmappable'}
-                              sx={{
-                                bgcolor: r.noteStatus === 'deferred' ? 'warning.dark' : 'action.disabledBackground',
-                                color: r.noteStatus === 'deferred' ? 'warning.contrastText' : 'text.secondary',
-                                fontSize: '0.6rem', height: 18,
-                              }}
-                            />
-                          </Tooltip>
-                          <Tooltip title="Reopen — returns the row to the Open queue. Engineer note is preserved.">
-                            <span>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color="inherit"
-                                onClick={() => reopenRow(r)}
-                                startIcon={<PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />}
-                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
-                              >
-                                Reopen
-                              </Button>
-                            </span>
-                          </Tooltip>
-                        </Stack>
-                      ) : flagged ? (
-                        // Confirm + Revert. After Confirm the persisted status
-                        // is 'wrong_family' so the "Confirm" button hides; only
-                        // Revert remains so the engineer can undo if it turns
-                        // out to be a false positive.
-                        <Stack direction="row" spacing={0.5}>
-                          {r.noteStatus !== 'wrong_family' && r.autoFlag && (
-                            <Tooltip title={flagError ?? 'Confirm this row as a misclassification — products with this param need upstream investigation.'}>
-                              <span>
-                                <Button
-                                  size="small"
-                                  variant="contained"
-                                  color="error"
-                                  disabled={flagBusy}
-                                  onClick={() => confirmFlag(r)}
-                                  sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
-                                >
-                                  {flagBusy ? <CircularProgress size={10} color="inherit" /> : 'Confirm'}
-                                </Button>
-                              </span>
-                            </Tooltip>
-                          )}
-                          <Tooltip title={r.noteStatus === 'wrong_family' ? 'Undo the wrong-family flag.' : 'False positive — suppress the auto-flag for this paramName.'}>
-                            <span>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color="inherit"
-                                disabled={flagBusy}
-                                onClick={() => revertFlag(r)}
-                                startIcon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
-                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.25 }}
-                              >
-                                {flagBusy && r.noteStatus === 'wrong_family' ? <CircularProgress size={10} color="inherit" /> : 'Revert'}
-                              </Button>
-                            </span>
-                          </Tooltip>
-                        </Stack>
-                      ) : state?.accepted ? (
-                        <Chip size="small" icon={<CheckIcon sx={{ fontSize: 14 }} />} label="Saved" color="success" sx={{ fontSize: '0.6rem', height: 18 }} />
-                      ) : (
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                          <Tooltip title={state?.acceptError ?? ''} disableHoverListener={!state?.acceptError}>
-                            <span>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color={state?.acceptError ? 'error' : 'primary'}
-                                disabled={state?.accepting || state?.loadingSuggestion || !state?.editedAttributeId || !getOverrideScope(r)}
-                                onClick={() => acceptAndRegenerate(r)}
-                                sx={{ fontSize: '0.65rem', minWidth: 80 }}
-                              >
-                                {state?.accepting ? <CircularProgress size={12} /> : 'Accept'}
-                              </Button>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="Defer — park this row out of the OPEN queue for later review. Reversible via Reopen.">
-                            <span>
-                              <Button
-                                size="small"
-                                variant="text"
-                                color="warning"
-                                onClick={(e) => openDeferPopover(r, e.currentTarget)}
-                                startIcon={<PauseCircleOutlineIcon sx={{ fontSize: 12 }} />}
-                                sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
-                              >
-                                Defer
-                              </Button>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="More actions">
-                            <IconButton
-                              size="small"
-                              onClick={(e) => setParkedMenuAnchor({ anchor: e.currentTarget, row: r })}
-                              sx={{ p: 0.25 }}
-                            >
-                              <MoreVertIcon sx={{ fontSize: 14 }} />
-                            </IconButton>
-                          </Tooltip>
-                          {renderBulkMatchChip(r)}
-                          {renderFindSimilarButton(r)}
-                          {/* Investigate button. Visible when the row is either
-                              unscoped (Accept grayed) or the AI verdict was
-                              defer (Accept would be unsafe). Fires the deeper
-                              /investigate pass which returns a bucketed action
-                              with evidence. Hidden on confident-accept rows
-                              where the engineer just needs to click Accept. */}
-                          {(!getOverrideScope(r) || state?.suggestion?.suggestion === 'defer') && (
-                            <>
-                              {/* View: re-opens the cached deepAnalysis in the
-                                  drawer without re-running /investigate. Only
-                                  shown once an analysis exists. */}
-                              {state?.deepAnalysis && (
-                                <Tooltip title="View AI investigation">
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => setDrawerParamName(r.paramName)}
-                                    sx={{ p: 0.25 }}
-                                  >
-                                    <VisibilityOutlinedIcon sx={{ fontSize: 14 }} />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              <Tooltip title={state?.deepAnalysisError ?? 'Investigate: AI runs a deeper analysis pulling affected products, cross-scope overrides, and proposes a concrete next action.'}>
-                                <span>
-                                  <Button
-                                    size="small"
-                                    variant="text"
-                                    color={state?.deepAnalysisError ? 'error' : 'secondary'}
-                                    disabled={state?.loadingDeepAnalysis}
-                                    onClick={() => runInvestigate(r)}
-                                    startIcon={state?.loadingDeepAnalysis ? <CircularProgress size={10} color="inherit" /> : <SearchIcon sx={{ fontSize: 14 }} />}
-                                    sx={{ fontSize: '0.6rem', minWidth: 0, px: 0.5 }}
-                                  >
-                                    {state?.deepAnalysis ? 'Refresh' : 'Investigate'}
-                                  </Button>
-                                </span>
-                              </Tooltip>
-                            </>
-                          )}
-                        </Stack>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  </Fragment>
+                  <TriageRow
+                    key={r.paramName}
+                    r={r}
+                    state={states[r.paramName]}
+                    note={notesByParam[r.paramName]}
+                    familySchema={rowScope ? schemaByFamily[rowScope.key] : undefined}
+                    flagged={!!r.autoFlag || r.noteStatus === 'wrong_family'}
+                    flagBusy={flagState[r.paramName]?.busy ?? false}
+                    flagError={flagState[r.paramName]?.error ?? null}
+                    suggestedFam={r.autoFlag ? getFamilyDisplayName(r.autoFlag.suggestedFamily) : null}
+                    confirmedFlag={r.noteStatus === 'wrong_family'}
+                    suggestionStaleReason={suggestionStaleReason}
+                    isStale={!!(suggestionStaleReason || investigationStaleReason)}
+                    starred={starredParamNames.has(r.paramName)}
+                    isSelected={selected.has(r.paramName)}
+                    isReverting={!!r.acceptedOverride && revertingIds.has(r.acceptedOverride.id)}
+                    bulkMatches={normalizedMatchesByRow[r.paramName]}
+                    isBulkOptedOut={bulkOptedOut.has(r.paramName)}
+                    toggleRowSelected={toggleRowSelected}
+                    setStates={setStates}
+                    setDrawerParamName={setDrawerParamName}
+                    setParkedMenuAnchor={setParkedMenuAnchor}
+                    setBulkOptedOut={setBulkOptedOut}
+                    setClusterFocalParam={setClusterFocalParam}
+                    generateOne={generateOne}
+                    generateSuggestionsForRows={generateSuggestionsForRows}
+                    confirmFlag={confirmFlag}
+                    revertFlag={revertFlag}
+                    acceptAndRegenerate={acceptAndRegenerate}
+                    revertOverride={revertOverride}
+                    reopenRow={reopenRow}
+                    toggleFlag={toggleFlag}
+                    openDeferPopover={openDeferPopover}
+                    runInvestigate={runInvestigate}
+                    onNoteChange={onNoteChange}
+                  />
                 );
               })}
             </TableBody>

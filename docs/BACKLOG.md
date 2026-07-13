@@ -2725,3 +2725,27 @@ Option (1) is the right answer for the holistic cleanup. The "internal only" int
   **Still deferred (P3):** (i) **multi-attr** parametric widening — currently single-attr (first eligible), mirroring `computeAtlasWidening`; (ii) attrs with **no Digikey param-map entry** (e.g. `izt`) can't match a facet, so they widen Atlas-only (acceptable); (iii) **parts.io value-search** widening — needs the parts.io production endpoint + a param schema-discovery pass (it's a Solr listings API; today it's an MPN-keyed equivalence/enrichment source only).
 
 **Deferred review findings** (from the Decision #238 review; full detail in [acceptance-criteria-followups.md](acceptance-criteria-followups.md)): (#3) lift acceptance eligibility from the two hardcoded UI allowlists to per-rule logic-table metadata (e.g. `rule.acceptanceKind`); (#6) revisit the `numericValue==='number'` range gate that re-introduces parser dependence; (#8) add an `acceptedValues` clause to `overrideMerger` CLEANUP for defense-in-depth; (#9) scope `candidateValuesByAttribute` to set-eligible params; (#10) cosmetic — rename `TOLERANCE_MAX`/`MARKS`, extract the shared editor shell.
+
+---
+
+### Triage table — virtualize the row list (make scroll cost flat) — P2
+
+**Discovered July 13, 2026 (Decision #269).** After memoizing `TriageRow`, scroll cost is no longer *quadratic*, but it is still **linear in rows-on-screen**: loading the next 50 rows costs 319ms at 100 rows and 839ms at 400 (production build; ~4x that in dev). React still walks every mounted row's fiber to decide the memo bail-out, and GC pressure rises with the tree (the CPU profile showed **15.9% garbage collector**).
+
+**Fix:** virtualize so only the ~20 visible rows are mounted. Cost becomes flat — the 400th row loads as fast as the 50th, in dev as well as prod.
+
+**Why it was deferred:** it changes scroll ownership on the engineer's daily-driver table — sticky header, scroll container, and **variable row heights** (a row's height depends on its AI card / diagnosis content). `TableVirtuoso` (react-virtuoso) handles `<table>` semantics + dynamic measurement; `@tanstack/react-virtual` is the lighter alternative. Either adds a dependency.
+
+**Do NOT re-litigate these two, they are settled by measurement (Decision #269):**
+- It is **not** browser `<table>` layout. `browserMs` (post-paint) measured flat at ~10ms regardless of row count. The cost is React's.
+- The memo **is** working (verified: with it off, rows-rendered == rows-on-screen; with it on, only the 50 new ones render). Virtualization is additive to it, not a replacement.
+
+**Prerequisite already paid:** every row callback is now identity-stable and every row input is a prop, so the row can be dropped into a virtualizer without re-plumbing.
+
+---
+
+### Bulk Triage should not be done against the dev server — P3 (workflow, no code)
+
+**Discovered July 13, 2026 (Decision #269).** The dev React build instruments every fiber and double-renders every component: a memo bail-out that costs microseconds in production cost **~4ms per row** in dev. Measured **~4.5x** end-to-end (worst scroll chunk 3772ms dev vs 839ms prod, identical code and rows).
+
+Bulk Triage (scrolling hundreds of rows, batch-accepting) should run against a production build — the deployed app, or `npm run build && npm start` locally. Consider a one-line note in the Triage UI or `docs/RUNBOOK_INGESTION.md` so the next engineer doesn't rediscover this the hard way.

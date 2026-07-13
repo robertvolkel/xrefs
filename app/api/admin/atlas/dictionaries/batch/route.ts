@@ -101,7 +101,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     };
 
-    for (const [familyId, items] of byFamily) {
+    // One family = three round trips that MUST stay ordered (existing-check →
+    // deactivate → insert). Different families touch disjoint (family_id,
+    // param_name) keys, so they can safely overlap — and must, or a 350-param
+    // batch spanning F families serializes 3xF round trips (up to ~57 scopes =
+    // 43 families + 14 L2 categories). Bounded at 5 rather than unleashed: this
+    // is one admin request, and hammering Supabase with unbounded parallelism is
+    // how the resource-exhaustion cascade happened before.
+    const processFamily = async (familyId: string, items: PreparedBatchItem[]): Promise<void> => {
       const names = items.map((i) => i.paramName);
 
       // Skip rows already mapped to the SAME attribute_id (idempotent — no churn).
@@ -122,7 +129,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         return true;
       });
-      if (toWrite.length === 0) continue;
+      if (toWrite.length === 0) return;
 
       affectedFamilies.add(familyId);
       const writeNames = toWrite.map((i) => i.paramName);
@@ -184,7 +191,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (it) pushApproved(row, it);
         }
       }
-    }
+    };
+
+    // Bounded worker pool over families. The shared result arrays (approved /
+    // approvedIds / skipped / failed) are appended from multiple in-flight
+    // families, but JS is single-threaded and every push is synchronous, so no
+    // interleaving is possible. Result ORDER becomes non-deterministic — nothing
+    // downstream depends on it (the client keys everything by paramName).
+    const FAMILY_CONCURRENCY = 5;
+    const familyEntries = [...byFamily.entries()];
+    let familyCursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(FAMILY_CONCURRENCY, familyEntries.length) }, async () => {
+        while (familyCursor < familyEntries.length) {
+          const [familyId, items] = familyEntries[familyCursor++];
+          await processFamily(familyId, items);
+        }
+      }),
+    );
 
     // ── Exactly ONE invalidation pass at the very end ─────────────────────
     for (const fam of affectedFamilies) invalidateDictOverrideCache(fam);
