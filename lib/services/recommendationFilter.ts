@@ -6,8 +6,17 @@ export interface AttributeFilter {
   value: string;
 }
 
-/** Canonical display order for lifecycle statuses — drives filter labels. */
-const STATUS_ORDER: PartStatus[] = ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+/** Every lifecycle status that is not Active. Backs "hide EOL" / "only active". */
+export const NON_ACTIVE_STATUSES: PartStatus[] = ['Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+
+/**
+ * THE canonical lifecycle-status list, in display order. Every consumer derives from
+ * this one array — the intent detector's inversion set, the filter labels, and both
+ * LLM tool-schema enums — so adding a sixth `PartStatus` is a single-line change here
+ * rather than five silently-independent literals. (An array literal that omits a union
+ * member still type-checks, so duplicated lists drift without a compiler error.)
+ */
+export const ALL_STATUSES: PartStatus[] = ['Active', ...NON_ACTIVE_STATUSES];
 
 const STATUS_LABELS: Record<PartStatus, string> = {
   Active: 'Active',
@@ -16,9 +25,6 @@ const STATUS_LABELS: Record<PartStatus, string> = {
   NRND: 'NRND',
   LastTimeBuy: 'Last Time Buy',
 };
-
-/** Every lifecycle status that is not Active. Backs "hide EOL" / "only active". */
-export const NON_ACTIVE_STATUSES: PartStatus[] = ['Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
 
 /**
  * Resolve the set of lifecycle statuses a filter should hide. Shared by the
@@ -61,7 +67,7 @@ export function describeExcludedStatuses(excluded: Set<PartStatus>): string | nu
   if (!excluded.has('Active') && NON_ACTIVE_STATUSES.every(s => excluded.has(s))) {
     return 'active parts only';
   }
-  const names = STATUS_ORDER.filter(s => excluded.has(s)).map(s => STATUS_LABELS[s]);
+  const names = ALL_STATUSES.filter(s => excluded.has(s)).map(s => STATUS_LABELS[s]);
   return `hiding ${names.join(' + ')}`;
 }
 

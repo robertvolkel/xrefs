@@ -1,7 +1,7 @@
 import type { XrefRecommendation, RecommendationCategory, PartStatus } from '../types';
 import type { FilterInput } from './recommendationFilter';
 import type { SearchFilterInput } from './searchResultFilter';
-import { NON_ACTIVE_STATUSES, describeExcludedStatuses } from './recommendationFilter';
+import { ALL_STATUSES, NON_ACTIVE_STATUSES, describeExcludedStatuses } from './recommendationFilter';
 import { namesComponentType } from './componentVocabulary';
 
 /**
@@ -56,88 +56,135 @@ const FILTER_VERB_RE = /\b(?:show\s+(?:me\s+)?(?:only|just)?|just\s+(?:show\s+(?
  *  fires when followed/preceded by a manufacturer-like token. */
 const SOFT_FILTER_RE = /\b(?:from|by|made by)\s+\S/i;
 
-/** Every lifecycle status, for "keep ONLY these" inversion. */
-const ALL_STATUSES: PartStatus[] = ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+/**
+ * Lifecycle-status detection is CUE-ADJACENT: a status word only counts when a
+ * narrowing cue governs it directly ("hide discontinued"), never merely because both
+ * appear somewhere in the message. Adjacency is the whole safety mechanism —
+ * a global "is there a cue? is there a status word?" test hijacks unrelated requests
+ * ("hide the Vishay ones, they're discontinued anyway" would hide every discontinued
+ * part and never apply the Vishay filter) and turns questions into destructive
+ * filters ("can you show me if any are discontinued?").
+ *
+ * Filler words permitted between the cue and the status it governs. These carry no
+ * meaning of their own, so the cue still reaches the status ("remove parts that are
+ * discontinued"), but any real noun breaks the chain — which is what stops a cue
+ * from jumping across an unrelated subject.
+ */
+const FILLER = String.raw`(?:me|us|the|a|an|any|all|those|these|parts?|ones?|items?|that|which|are|is|were|been|of|them|it|anything|everything)`;
 
 /**
- * Words the user might use for each lifecycle status, mapped to the EXACT statuses
- * they name. This precision is the whole point: the previous implementation collapsed
- * obsolete / eol / discontinued / not-recommended into one `exclude_obsolete` boolean
- * whose predicate only ever deleted `Obsolete` — so "hide discontinued" removed the
- * user's OBSOLETE parts and left the discontinued ones on screen.
- *
- * `eol` / `end of life` / `inactive` / `dead` are genuinely group words (no single
- * status owns them), so they name the whole non-Active set. Everything else names one.
+ * `active` is ALSO an everyday electronics term — "active low", "active high",
+ * "active filter", "active mode" are pin/circuit descriptions, not lifecycle states.
+ * The lookahead refuses those readings. (`dead` was previously treated as a lifecycle
+ * word and is now gone entirely: "dead time" is a real gate-driver spec, and
+ * "show me parts with 100ns dead time" was hiding every Active part.)
  */
-const STATUS_WORDS: Array<{ re: RegExp; statuses: PartStatus[] }> = [
-  { re: /\bobsolete\b/i, statuses: ['Obsolete'] },
-  { re: /\bdiscontinued\b/i, statuses: ['Discontinued'] },
-  { re: /\bnrnd\b|\bnot\s+recommended(?:\s+for\s+new\s+designs?)?\b/i, statuses: ['NRND'] },
-  { re: /\blast[\s-]?time[\s-]?buys?\b|\bltb\b/i, statuses: ['LastTimeBuy'] },
-  { re: /\beol\b|\bend[\s-]?of[\s-]?life\b|\binactive\b|\bdead\b/i, statuses: NON_ACTIVE_STATUSES },
-  { re: /\bactive\b/i, statuses: ['Active'] },
+const ACTIVE_TOKEN = String.raw`active\b(?!\s*-?\s*(?:low|high|mode|filter|filters|current|region|power|clamp|balanc\w*|discharge|cooling|pull\w*|load|state|edge|termination))`;
+
+/**
+ * Status vocabulary → the EXACT statuses each phrase names. Ordered LONGEST-FIRST so
+ * multi-word phrases win before their substrings ("no longer active" must be consumed
+ * as a group word before the bare `active` token can claim it).
+ *
+ * `eol` / `end of life` / `inactive` / `no longer active` are genuine GROUP words (no
+ * single status owns them) → the whole non-Active set. Everything else names exactly one.
+ */
+const STATUS_TOKENS: Array<{ src: string; statuses: PartStatus[] }> = [
+  { src: String.raw`not\s+recommended(?:\s+for\s+new\s+designs?)?`, statuses: ['NRND'] },
+  { src: String.raw`no\s+longer\s+active`, statuses: NON_ACTIVE_STATUSES },
+  { src: String.raw`last[\s-]?time[\s-]?buys?`, statuses: ['LastTimeBuy'] },
+  { src: String.raw`end[\s-]?of[\s-]?life`, statuses: NON_ACTIVE_STATUSES },
+  { src: String.raw`discontinued`, statuses: ['Discontinued'] },
+  { src: String.raw`obsolete`, statuses: ['Obsolete'] },
+  { src: String.raw`inactive`, statuses: NON_ACTIVE_STATUSES },
+  { src: String.raw`nrnd`, statuses: ['NRND'] },
+  { src: String.raw`ltb`, statuses: ['LastTimeBuy'] },
+  { src: String.raw`eol`, statuses: NON_ACTIVE_STATUSES },
+  { src: ACTIVE_TOKEN, statuses: ['Active'] },
 ];
 
-/** Unambiguous "take these away" cues — safe to match anywhere in the message. */
-const EXCLUDE_CUE_RE = /\b(?:hide|exclude|drop|remove|filter\s+out|skip|ignore|omit|without|don'?t\s+(?:show|want|include)|do\s+not\s+(?:show|want|include)|no\s+longer)\b/i;
+const STATUS_ALT = STATUS_TOKENS.map(t => t.src).join('|');
+/** One or more statuses joined by "and" / "or" / commas — "hide obsolete and discontinued". */
+const STATUS_CHAIN = String.raw`(?:${STATUS_ALT})(?:\s*(?:,|/|\+|\band\b|\bor\b)\s*(?:the\s+)?(?:${STATUS_ALT}))*`;
 
-/** Weak cues ("no", "not") only count when they sit directly on the status word —
- *  "no obsolete parts" is a filter; "no, show me the obsolete ones" is not. */
-const WEAK_EXCLUDE_ADJACENT_RE = /\b(?:no|not)\s+(?:the\s+)?(?:obsolete|discontinued|nrnd|eol|inactive|dead|last[\s-]?time[\s-]?buy)\b/i;
+/** Unambiguous "take these away" cues. May target ANY status, including Active. */
+const STRONG_EXCLUDE = String.raw`hide|exclude|drop|remove|filter\s+out|skip|ignore|omit|without|don'?t\s+(?:show|want|include)|do\s+not\s+(?:show|want|include)`;
+/** Weak cues. Must sit DIRECTLY on the status (no filler), and may never target Active:
+ *  "exclude discontinued, not active" means "not the ACTIVE ones" — i.e. keep them. */
+const WEAK_EXCLUDE = String.raw`no|not`;
+/** "keep only these" cues. Deliberately NOT the broad FILTER_VERB_RE — a bare "show me"
+ *  is not an only-cue, and treating it as one turned every "show me … <status word> …"
+ *  question into a filter. */
+const ONLY_CUE = String.raw`only|just|solely|keep\s+only|nothing\s+but`;
 
-/** "keep only these" cues. */
-const ONLY_CUE_RE = /\b(?:only|just|keep\s+only)\b/i;
+// Built fresh per call — these are /g regexes and a shared instance would carry
+// `lastIndex` across calls (a stateful-regex bug we have shipped before).
+const excludeStrongRe = () => new RegExp(String.raw`\b(?:${STRONG_EXCLUDE})(?:\s+${FILLER})*\s+(?:the\s+)?(${STATUS_CHAIN})`, 'gi');
+const excludeWeakRe = () => new RegExp(String.raw`\b(?:${WEAK_EXCLUDE})\s+(?:the\s+)?(${STATUS_CHAIN})`, 'gi');
+const onlyLeadRe = () => new RegExp(String.raw`\b(?:${ONLY_CUE})(?:\s+${FILLER})*\s+(?:the\s+)?(${STATUS_CHAIN})`, 'gi');
+const onlyTrailRe = () => new RegExp(String.raw`\b(${STATUS_CHAIN})(?:\s+${FILLER})*\s+only\b`, 'gi');
 
-/** "hide active" — the one case where Active itself is the target. Requires the cue
- *  to sit on the word, so "show active, hide discontinued" never hides Active. */
-const EXCLUDE_ACTIVE_ADJACENT_RE = /\b(?:hide|exclude|drop|remove|filter\s+out|skip|ignore|omit|without|no|not)\s+(?:the\s+)?active\b/i;
-
-/** Which statuses does this message name at all? */
-function namedStatuses(query: string): Set<PartStatus> {
+/** Resolve a matched status phrase to statuses. Consumes longest-first, so a group
+ *  phrase ("no longer active") can't also register its substring (`active`). */
+function statusesInPhrase(phrase: string): PartStatus[] {
+  let rest = phrase;
   const found = new Set<PartStatus>();
-  for (const { re, statuses } of STATUS_WORDS) {
-    if (re.test(query)) statuses.forEach(s => found.add(s));
+  for (const { src, statuses } of STATUS_TOKENS) {
+    const re = new RegExp(String.raw`\b(?:${src})`, 'gi');
+    if (re.test(rest)) {
+      statuses.forEach(s => found.add(s));
+      rest = rest.replace(new RegExp(String.raw`\b(?:${src})`, 'gi'), ' ');
+    }
   }
-  return found;
+  return [...found];
+}
+
+/** Canonical order, so the emitted list is deterministic. */
+function ordered(set: Set<PartStatus>): PartStatus[] {
+  return ALL_STATUSES.filter(s => set.has(s));
 }
 
 /**
- * Detect a lifecycle-status filter, PRECISELY: each status word hides exactly the
- * status it names ("hide discontinued" → Discontinued and nothing else), multiple
- * words union ("hide obsolete and discontinued"), and "only active" inverts to hide
- * every non-Active status.
+ * Detect a lifecycle-status filter, precisely and only when a cue actually governs a
+ * status word.
  *
- * Polarity rules (first match wins):
- *  - EXCLUDE (an exclude cue is present) → hide the named statuses. Active is only
- *    hidden when a cue sits directly on it, so "show the active ones but drop
- *    discontinued" hides Discontinued only — never the Active parts the user asked for.
- *  - ONLY (an only-cue is present) → keep the named statuses, hide all the others.
- *    This is what turns "show only active" into hide-every-non-Active.
+ *  - EXCLUDE wins over ONLY, so "show me the active ones but drop discontinued" hides
+ *    Discontinued and leaves the Active parts the user asked to see.
+ *  - ONLY inverts: "show only active" keeps Active and hides every other status.
+ *  - No governing cue → null. A status word alone is a question ("is this
+ *    discontinued?"), not an instruction, and belongs to the LLM.
  */
 function detectStatusIntent(query: string): FilterIntent | null {
-  const named = namedStatuses(query);
-  if (named.size === 0) return null;
+  const excluded = new Set<PartStatus>();
 
-  const hasExcludeCue = EXCLUDE_CUE_RE.test(query) || WEAK_EXCLUDE_ADJACENT_RE.test(query);
-  const hasOnlyCue = ONLY_CUE_RE.test(query) || FILTER_VERB_RE.test(query);
-
-  let excluded: PartStatus[];
-  if (hasExcludeCue) {
-    // Hide what was named — but never Active unless it was explicitly targeted.
-    excluded = [...named].filter(s => s !== 'Active');
-    if (EXCLUDE_ACTIVE_ADJACENT_RE.test(query)) excluded.push('Active');
-  } else if (hasOnlyCue) {
-    // Keep what was named — hide everything else.
-    excluded = ALL_STATUSES.filter(s => !named.has(s));
-  } else {
-    // A status word with no narrowing cue is a question, not a filter
-    // ("is this part discontinued?") — leave it to the LLM.
-    return null;
+  for (const m of query.matchAll(excludeStrongRe())) {
+    statusesInPhrase(m[1]).forEach(s => excluded.add(s));
+  }
+  for (const m of query.matchAll(excludeWeakRe())) {
+    // Weak cues never take Active away — see WEAK_EXCLUDE.
+    statusesInPhrase(m[1]).forEach(s => { if (s !== 'Active') excluded.add(s); });
+  }
+  if (excluded.size > 0) {
+    return {
+      filterInput: { exclude_statuses: ordered(excluded) },
+      label: describeExcludedStatuses(excluded) ?? 'filtered',
+    };
   }
 
-  if (excluded.length === 0) return null;
-  const label = describeExcludedStatuses(new Set(excluded)) ?? 'filtered';
-  return { filterInput: { exclude_statuses: excluded }, label };
+  const kept = new Set<PartStatus>();
+  for (const m of [...query.matchAll(onlyLeadRe()), ...query.matchAll(onlyTrailRe())]) {
+    statusesInPhrase(m[1]).forEach(s => kept.add(s));
+  }
+  if (kept.size > 0) {
+    const inverted = new Set(ALL_STATUSES.filter(s => !kept.has(s)));
+    if (inverted.size > 0) {
+      return {
+        filterInput: { exclude_statuses: ordered(inverted) },
+        label: describeExcludedStatuses(inverted) ?? 'filtered',
+      };
+    }
+  }
+  return null;
 }
 
 /** Detect a min-match-percentage filter (≥80%, above 75, etc.). */

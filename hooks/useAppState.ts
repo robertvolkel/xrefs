@@ -19,7 +19,7 @@ import {
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, extractQuantity, extractBestPriceQuantity, PendingIntent } from '@/lib/services/intentDetector';
 import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent, detectSearchOriginRefinement, detectSearchStatusRefinement } from '@/lib/services/filterIntentDetector';
-import { applySearchResultFilter, type SearchFilterInput } from '@/lib/services/searchResultFilter';
+import { applySearchResultFilter, describeSearchFilterInput, type SearchFilterInput } from '@/lib/services/searchResultFilter';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
@@ -194,10 +194,12 @@ export function useAppState() {
   // sequential origin asks ("the Chinese ones" then "the Western ones") each
   // filter the complete set rather than stacking on the prior narrowed view.
   const searchFullMatchesRef = useRef<PartSummary[]>([]);
-  // Mirrors state.currentSearchFilterLabel so handleSearch (a useCallback) can tell
-  // "a filter is active, so 'show me all' means CLEAR it" from "no filter is
-  // active, so 'show me everything' is just a message for the LLM".
-  const searchFilterRef = useRef<string | null>(null);
+  // The active search-card filter PREDICATE (not just its label). Load-bearing for
+  // two things: handleSearch needs "is a filter active?" to know that "show me all"
+  // means CLEAR it, and dispatchSearchFilter needs the predicate itself so a second
+  // filter COMPOSES with the first ("the Chinese ones" → "hide discontinued") instead
+  // of silently replacing it.
+  const searchFilterInputRef = useRef<SearchFilterInput | null>(null);
   // Mirrors state.sourceAttributes so the orchestrator gets the canonical
   // supplier/lifecycle/compliance snapshot on every turn (drives
   // summarizeSourcePart()). Without this the LLM fabricates supplier names
@@ -1194,7 +1196,10 @@ export function useAppState() {
       setState((prev) => ({ ...prev, recommendations: filtered, currentFilter: filterInput, currentFilterLabel: label }));
 
       const top3 = filtered.slice(0, 3);
-      const headline = `Filtered to **${filtered.length}** ${label} replacement${filtered.length === 1 ? '' : 's'}.`;
+      // Label goes AFTER the noun — labels are no longer all adjectival ("Würth"),
+      // some are verb phrases ("hiding Discontinued"), and the old inline slot
+      // produced "Filtered to 5 hiding Discontinued replacements."
+      const headline = `Filtered to **${filtered.length}** replacement${filtered.length === 1 ? '' : 's'} — ${label}.`;
       const lines: string[] = [headline];
       if (top3.length > 0) {
         lines.push('', 'Top picks:');
@@ -1226,23 +1231,40 @@ export function useAppState() {
    *  Narrows from the FULL match set (searchFullMatchesRef) so sequential filters
    *  ("Chinese ones" → "hide discontinued") each apply to the complete result
    *  rather than compounding onto an already-narrowed view. */
+  /** The full, pre-filter card set — capturing it lazily on first use if a fresh
+   *  search never populated the ref (cache hit, dev reload, hydrated conversation).
+   *  Without this capture, the FIRST filter would leave the ref empty and a later
+   *  "show me all" would restore *nothing* and wipe the panel. */
+  const captureFullMatches = useCallback((): PartSummary[] => {
+    if (searchFullMatchesRef.current.length === 0) {
+      const onScreen = searchResultRef.current?.matches ?? [];
+      if (onScreen.length > 0) searchFullMatchesRef.current = onScreen;
+    }
+    return searchFullMatchesRef.current;
+  }, []);
+
   const dispatchSearchFilter = useCallback(
-    (input: SearchFilterInput, label: string, query: string) => {
+    (input: SearchFilterInput, query: string) => {
       addMessage('user', query);
       conversationRef.current.push({ role: 'user', content: query });
 
-      // Narrow from the FULL set when we captured it, but fall back to the cards
-      // currently on screen if the full-set ref was never populated (cache hit,
-      // dev reload, etc.). Never let an empty ref turn this into a no-op.
-      const fullMatches = (searchFullMatchesRef.current.length > 0
-        ? searchFullMatchesRef.current
-        : searchResultRef.current?.matches) ?? [];
-      const filtered = applySearchResultFilter(fullMatches, input);
+      const fullMatches = captureFullMatches();
+
+      // COMPOSE with the active filter rather than replacing it: "show me the Chinese
+      // ones" then "hide discontinued" must mean Chinese AND not-discontinued. Applying
+      // only the new predicate against the full set would silently resurrect the Western
+      // parts the user already filtered away. A repeat of the SAME key overwrites
+      // (so a Chinese → Western flip still flips), which is what a spread gives us.
+      const merged: SearchFilterInput = { ...(searchFilterInputRef.current ?? {}), ...input };
+      const filtered = applySearchResultFilter(fullMatches, merged);
+      const label = describeSearchFilterInput(merged);
 
       if (filtered.length === 0) {
-        // Honest dead-end: say nothing matched and leave the cards up, rather
-        // than emptying the panel (which reads as a crash).
-        const note = `None of the current ${fullMatches.length} results match that — still showing all ${fullMatches.length}.`;
+        // Honest dead-end: leave the cards up rather than emptying the panel (which
+        // reads as a crash). Count what is ACTUALLY on screen — quoting the full-set
+        // size here would misreport when a filter is already narrowing the view.
+        const onScreen = searchResultRef.current?.matches?.length ?? fullMatches.length;
+        const note = `Nothing in the ${fullMatches.length} results matches ${label} — leaving the ${onScreen} on screen unchanged.`;
         addMessage('assistant', note);
         conversationRef.current.push({ role: 'assistant', content: note });
         return;
@@ -1254,11 +1276,11 @@ export function useAppState() {
         sourcesContributed: searchResultRef.current?.sourcesContributed,
       };
       searchResultRef.current = newResult;
-      searchFilterRef.current = label;
+      searchFilterInputRef.current = merged;
       setState((prev) => ({ ...prev, searchResult: newResult, currentSearchFilterLabel: label }));
 
-      // Always report the arithmetic (N of M). A filter that reports nothing is
-      // how the old one hid the fact that it was removing the wrong parts.
+      // Always report the arithmetic (N of M). A filter that reports nothing is how the
+      // old one hid the fact that it was removing the wrong parts.
       const hidden = fullMatches.length - filtered.length;
       const headline = hidden === 0
         ? `All ${filtered.length} results already match — ${label}. Click the one you'd like to use.`
@@ -1270,23 +1292,31 @@ export function useAppState() {
         content: `Filtered the search-result cards to ${filtered.length} of ${fullMatches.length} — ${label}. The user can see the narrowed cards now.`,
       });
     },
-    [addMessage, triggerSearchDistributorEnrichment],
+    [addMessage, captureFullMatches, triggerSearchDistributorEnrichment],
   );
 
-  /** Clear the active filter on the search-result cards — restores the full match
+  /** Clear ALL active filters on the search-result cards — restores the full match
    *  set. Mirrors dispatchClearFilter for the recommendations panel. */
   const dispatchClearSearchFilter = useCallback((query: string) => {
     addMessage('user', query);
     conversationRef.current.push({ role: 'user', content: query });
 
-    const fullMatches = searchFullMatchesRef.current;
+    const fullMatches = captureFullMatches();
+    if (fullMatches.length === 0) {
+      // Never restore an empty set — that would blank the panel and report "all 0".
+      const note = 'There are no search results to restore.';
+      addMessage('assistant', note);
+      conversationRef.current.push({ role: 'assistant', content: note });
+      return;
+    }
+
     const newResult: SearchResult = {
       type: fullMatches.length === 1 ? 'single' : 'multiple',
       matches: fullMatches,
       sourcesContributed: searchResultRef.current?.sourcesContributed,
     };
     searchResultRef.current = newResult;
-    searchFilterRef.current = null;
+    searchFilterInputRef.current = null;
     setState((prev) => ({ ...prev, searchResult: newResult, currentSearchFilterLabel: null }));
 
     const headline = `Filter cleared — showing all ${fullMatches.length} results. Click the one you'd like to use.`;
@@ -1296,7 +1326,7 @@ export function useAppState() {
       role: 'assistant',
       content: `Cleared the search-card filter; showing all ${fullMatches.length} results again.`,
     });
-  }, [addMessage, triggerSearchDistributorEnrichment]);
+  }, [addMessage, captureFullMatches, triggerSearchDistributorEnrichment]);
 
   /** Clear the active filter on the recommendations panel — restores the
    *  full set. No-op (with a friendly chat note) when no filter is active. */
@@ -1470,10 +1500,11 @@ export function useAppState() {
         // searchFilterLabel) so the deterministic filter intercepts narrow from the
         // complete set — sequential "Chinese ones" → "hide discontinued" both work.
         // A fresh search also RESETS the active card filter; an LLM-applied filter
-        // (searchFilterLabel present) records it, so a later "show me all" clears it.
+        // records its PREDICATE, so a follow-up client-side filter composes with it
+        // and a later "show me all" knows there is something to clear.
         if (searchResult && (searchResult.matches?.length ?? 0) > 0) {
           if (!searchFilterLabel) searchFullMatchesRef.current = searchResult.matches;
-          searchFilterRef.current = searchFilterLabel ?? null;
+          searchFilterInputRef.current = response.searchFilterInput ?? null;
         }
         const partResetFields = searchResult ? {
           sourcePart: null as AppState['sourcePart'],
@@ -1671,7 +1702,7 @@ export function useAppState() {
         // mode never set this before, so its flip fell back to the already-filtered
         // subset and came back empty. A fresh search also drops any active filter.
         searchFullMatchesRef.current = result.type === 'none' ? [] : result.matches;
-        searchFilterRef.current = null;
+        searchFilterInputRef.current = null;
 
         if (result.type === 'none') {
           addMessage(
@@ -1835,13 +1866,13 @@ export function useAppState() {
         // parts again" must restore the full set, not be re-read as a new filter.
         // Only intercept when a filter is actually active — otherwise "show me
         // everything" on an unfiltered list is a legitimate message for the LLM.
-        if (searchFilterRef.current && detectClearFilterIntent(query)) {
+        if (searchFilterInputRef.current && detectClearFilterIntent(query)) {
           dispatchClearSearchFilter(query);
           return;
         }
         const originRefine = detectSearchOriginRefinement(query);
         if (originRefine) {
-          dispatchSearchFilter({ mfr_origin_filter: originRefine.origin }, originRefine.label, query);
+          dispatchSearchFilter({ mfr_origin_filter: originRefine.origin }, query);
           return;
         }
         // Lifecycle status ("don't show me discontinued parts", "only active").
@@ -1850,7 +1881,7 @@ export function useAppState() {
         // looks identical to one that fired and did nothing.
         const statusRefine = detectSearchStatusRefinement(query);
         if (statusRefine) {
-          dispatchSearchFilter(statusRefine.input, statusRefine.label, query);
+          dispatchSearchFilter(statusRefine.input, query);
           return;
         }
       }
@@ -2188,6 +2219,10 @@ export function useAppState() {
     allRecsRef.current = [];
     sourceAttributesRef.current = null;
     acceptanceCriteriaRef.current = {};
+    // The card-filter refs are the clear-path's source of truth — leaving them set
+    // would carry a stale filter (and a stale full-match set) across a reset.
+    searchFullMatchesRef.current = [];
+    searchFilterInputRef.current = null;
     // Price/stock visibility is a remembered preference — preserve it across a reset.
     setStatus('');
     setState({ ...initialState, commercialEnabled: commercialEnabledRef.current });

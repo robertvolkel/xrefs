@@ -921,6 +921,11 @@ export interface OrchestratorResponse {
    *  the client renders a deterministic "filtered to N (label)" message instead of
    *  the fresh-search "I found N parts" wording (Decision #242 substitution). */
   searchFilterLabel?: string;
+  /** The predicate behind `searchFilterLabel`. The client keeps it as the active
+   *  card filter so a follow-up deterministic filter COMPOSES with it (an LLM
+   *  "show the Chinese ones" then a client-side "hide discontinued" must mean both)
+   *  and so "show me all" knows a filter is active and can clear it. */
+  searchFilterInput?: import('@/lib/services/searchResultFilter').SearchFilterInput;
 }
 
 // ============================================================

@@ -6,6 +6,8 @@ import {
 import type { XrefRecommendation, PartStatus } from '@/lib/types';
 
 const rec = (mpn: string, status?: PartStatus): XrefRecommendation => ({
+  // `status` is required on Part, but live data can arrive without it (that is the
+  // whole point of the missing-status case below) — so the omission is deliberate.
   part: {
     mpn,
     manufacturer: 'Panasonic Industry',
@@ -14,7 +16,7 @@ const rec = (mpn: string, status?: PartStatus): XrefRecommendation => ({
     category: 'Transistors',
     subcategory: 'BJT',
     ...(status ? { status } : {}),
-  },
+  } as XrefRecommendation['part'],
   matchPercentage: 90,
   matchDetails: [],
 });

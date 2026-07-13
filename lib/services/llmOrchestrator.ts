@@ -258,7 +258,7 @@ const filterRecommendationsTool: Anthropic.Tool = {
       },
       exclude_statuses: {
         type: 'array',
-        items: { type: 'string', enum: ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'] },
+        items: { type: 'string', enum: ALL_STATUSES },
         description: 'Hide parts with these EXACT lifecycle statuses. Pass precisely what the user named and nothing more — "hide discontinued" is ["Discontinued"], "hide obsolete" is ["Obsolete"], "hide obsolete and discontinued" is both. These are DISTINCT statuses: do not substitute one for another. For group words — "EOL", "end of life", "inactive", "dead" — or for "only active", pass every non-Active status: ["Obsolete","Discontinued","NRND","LastTimeBuy"].',
       },
       exclude_obsolete: {
@@ -343,7 +343,7 @@ const filterSearchResultsTool: Anthropic.Tool = {
       },
       exclude_statuses: {
         type: 'array',
-        items: { type: 'string', enum: ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'] },
+        items: { type: 'string', enum: ALL_STATUSES },
         description: 'Drop cards with these EXACT lifecycle statuses. Pass precisely what the user named and nothing more — "hide discontinued" is ["Discontinued"], "hide obsolete" is ["Obsolete"], "hide obsolete and discontinued" is both. These are DISTINCT statuses: do not substitute one for another. For group words — "EOL", "end of life", "inactive", "dead" — or for "only active", pass every non-Active status: ["Obsolete","Discontinued","NRND","LastTimeBuy"].',
       },
       exclude_obsolete: {
@@ -358,7 +358,7 @@ const filterSearchResultsTool: Anthropic.Tool = {
   },
 };
 
-import { applyRecommendationFilter, describeFilterInput, type FilterInput } from './recommendationFilter';
+import { applyRecommendationFilter, describeFilterInput, ALL_STATUSES, type FilterInput } from './recommendationFilter';
 import { applySearchResultFilter, describeSearchFilterInput, type SearchFilterInput } from './searchResultFilter';
 
 // applyRecommendationFilter + types moved to lib/services/recommendationFilter.ts
@@ -955,6 +955,9 @@ interface ToolResultData {
   comparison?: ComparisonTable;
   /** Human label when the LLM narrowed search-result cards via filter_search_results. */
   searchFilterLabel?: string;
+  /** The predicate behind searchFilterLabel — the client keeps it so a follow-up
+   *  deterministic filter composes with it rather than replacing it. */
+  searchFilterInput?: SearchFilterInput;
 }
 
 // ==============================================================
@@ -1589,6 +1592,7 @@ async function executeTool(
         sourcesContributed: currentSearchResult?.sourcesContributed,
       };
       data.searchFilterLabel = describeSearchFilterInput(filterInput);
+      data.searchFilterInput = filterInput;
       return JSON.stringify({
         matched: filtered.length,
         total: pool.length,
@@ -2072,6 +2076,7 @@ export async function chat(
   }
   if (toolData.searchFilterLabel) {
     result.searchFilterLabel = toolData.searchFilterLabel;
+    result.searchFilterInput = toolData.searchFilterInput;
   }
 
   // Grounded-MPN measurement + backstop (docs/mpn-grounding-gate-plan.md, steps 3 & 5).

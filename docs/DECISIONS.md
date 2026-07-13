@@ -8827,3 +8827,26 @@ Some params carried **three** dead versions each (`ifsm(a)`, `pd(w)`, `id[a]`, `
 **Cache.** The triage queue is cached (`admin_stats_cache` key `triage-queue`, L1 30s / L2 persistent, **no schema version**). The corrected counts appear after one `invalidateTriageQueueCache()` — which fires automatically on the next dict accept. No manual step required, but the bucket won't visibly drop until then.
 
 **Adjacent, still open (BACKLOG).** Revert gives no signal about where the row went (it silently leaves Open *and* Accepted and lands in Reverted), and a reverted param can never rejoin the **Open** queue. Both logged separately.
+
+### Decision #268 — follow-up: self-review caught the recognition layer over-firing (July 13, 2026)
+
+An xhigh code review of #268 found the per-status *predicate* was sound but the *phrase-recognition* layer bolted on top was dangerously loose: it tested "is there a cue anywhere?" and "is there a status word anywhere?" as two independent global checks. Reproduced, then fixed:
+
+| Input | Old (broken) behaviour |
+|---|---|
+| "show me parts with 100ns **dead** time" | `exclude_statuses: ['Active']` → **hid every Active part** |
+| "show me parts with **active** low enable" | hid every non-Active part |
+| "can you show me if any are discontinued?" | filtered the list down to only discontinued (a QUESTION became a filter) |
+| "hide the Vishay ones, they're **discontinued** anyway" | hid every discontinued part; the Vishay filter never ran |
+| "exclude discontinued, **not active**" | hid Active too — the exact collateral the guard existed to prevent |
+
+**Root cause:** `hasOnlyCue` was keyed off `FILTER_VERB_RE`, which matches a bare "show me" — so any message containing "show me" + any status word became a keep-only filter. Compounded by `dead` and bare `active` being treated as lifecycle words when both are everyday electronics specs (dead time; active low / active filter).
+
+**Fix — recognition is now CUE-ADJACENT.** A status word only counts when a cue *governs it directly*, across a whitelist of meaningless filler ("remove parts that are discontinued" ✓) but never across a real noun ("hide the Vishay ones, they're discontinued" ✗). `dead` is gone entirely; `active` carries a negative lookahead for spec readings (low/high/mode/filter/current/…). Weak cues (`no`/`not`) require strict adjacency and may never target Active. `no longer active` / `inactive` / `eol` are group words. Strong cues may target Active explicitly ("hide active parts"). EXCLUDE beats ONLY, so "show the active ones but drop discontinued" hides only Discontinued.
+
+**Three more review findings fixed in the same pass:**
+1. **Filters now COMPOSE.** `dispatchSearchFilter` applied only the *new* predicate against the full set, so "the Chinese ones" → "hide discontinued" silently resurrected the Western parts. It now merges onto the active predicate (`{...active, ...next}` — same-key still replaces, so a Chinese→Western flip flips). Root cause was reducing `currentSearchFilter` to just a label; the predicate is now kept in `searchFilterInputRef`, and `OrchestratorResponse.searchFilterInput` carries the LLM's predicate back so an LLM filter and a client-side filter compose across the boundary too.
+2. **Clearing a filter could wipe the panel to zero.** `dispatchClearSearchFilter` read `searchFullMatchesRef` with no fallback, so when a fresh search never populated it (cache hit / dev reload / hydrated conversation) "show me all" restored `[]` and reported "showing all 0 results". New `captureFullMatches()` lazily captures the pre-filter set on first use, plus an empty-set guard.
+3. **Honest counts + copy.** The zero-match message quoted the full-set size as "still showing"; it now counts what is actually on screen. The recs headline is `Filtered to **5** replacements — hiding Discontinued.` (was the ungrammatical "Filtered to **5** hiding Discontinued replacements."). `ALL_STATUSES` is now a single exported list derived from `NON_ACTIVE_STATUSES` and consumed by the detector's inversion, the labels, and BOTH LLM tool enums — the five hardcoded copies were the same drift risk this decision set out to kill.
+
+**Verification.** 12 new guard tests, one per confirmed defect, each pinning the old broken output as the thing that must never return. Full suite 2,910 passing (11 pre-existing `mfrMatchPicker`/`manufacturerAliasResolver` failures unchanged); `tsc` 92 errors = baseline, none in touched files; eslint 0 errors on touched files; build clean. **Lesson: the fix was right and the recognition layer around it was wrong — a narrow correct predicate behind a loose trigger is still a filter that does the wrong thing.**
