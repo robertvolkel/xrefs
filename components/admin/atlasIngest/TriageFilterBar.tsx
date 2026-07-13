@@ -192,11 +192,14 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
               </Stack>
             </Tooltip>
           </ToggleButton>
-          <ToggleButton value="undone" aria-label="Undone — reverted">
-            <Tooltip title="Params with previously-accepted overrides that were later reverted. Audit trail." placement="top">
+          {/* Label is "Reverted", not "Undone" — in plain English "undone" reads as
+              "not done yet" (i.e. still to do), which is the OPPOSITE of what this
+              bucket holds. The underlying status value stays 'undone' everywhere. */}
+          <ToggleButton value="undone" aria-label="Reverted — accepted, then undone">
+            <Tooltip title="Params you accepted and later reverted. The mapping is no longer in effect; the record is kept as an audit trail." placement="top">
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <HistoryToggleOffIcon fontSize="small" />
-                <Box component="span" sx={{ fontSize: '0.75rem' }}>Undone</Box>
+                <Box component="span" sx={{ fontSize: '0.75rem' }}>Reverted</Box>
                 <Chip size="small" label={statusCounts?.undone ?? 0} sx={{ height: 18, fontSize: '0.65rem', bgcolor: 'action.selected' }} />
               </Stack>
             </Tooltip>
@@ -220,7 +223,7 @@ export default function TriageFilterBar({ mfrOptions, familyOptions, filters, on
             </Tooltip>
           </ToggleButton>
           <ToggleButton value="all" aria-label="All status">
-            <Tooltip title="Open + Accepted + Undone + Deferred + Unmappable combined." placement="top">
+            <Tooltip title="Open + Accepted + Reverted + Deferred + Unmappable combined." placement="top">
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <VisibilityOutlinedIcon fontSize="small" />
                 <Box component="span" sx={{ fontSize: '0.75rem' }}>All</Box>

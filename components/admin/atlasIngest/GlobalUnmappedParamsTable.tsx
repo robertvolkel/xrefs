@@ -1413,7 +1413,7 @@ const TriageRow = memo(function TriageRow({
                             <Chip
                               size="small"
                               icon={<UndoOutlinedIcon sx={{ fontSize: 12 }} />}
-                              label="Undone"
+                              label="Reverted"
                               sx={{ bgcolor: 'action.disabledBackground', color: 'text.secondary', fontSize: '0.6rem', height: 18 }}
                             />
                           </Tooltip>
