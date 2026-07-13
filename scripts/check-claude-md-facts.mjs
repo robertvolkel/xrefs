@@ -23,7 +23,12 @@ import { execSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const baseRef = process.argv[2] ?? 'HEAD';
+/** The PRE-DIET baseline (CLAUDE.md at 197KB, 1,971 facts), pinned deliberately.
+ *  Defaulting to HEAD was a trap: each trim would only be checked against the
+ *  previously-trimmed file, so a fact dropped in phase N is "already gone" by
+ *  phase N+1 and the loss becomes invisible. Always measure against the original. */
+const PRE_DIET_BASELINE = '8795a3cbb73f1b024df5e4bce9d7910e0da61550';
+const baseRef = process.argv[2] ?? PRE_DIET_BASELINE;
 
 /** A "hard fact" is a token a future session could BREAK by not knowing it.
  *  Deliberately over-inclusive: a false positive costs one grep; a false
