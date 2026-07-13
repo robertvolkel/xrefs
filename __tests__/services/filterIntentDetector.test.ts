@@ -110,18 +110,70 @@ describe('detectFilterIntent — qualification (AEC-Q)', () => {
   });
 });
 
-describe('detectFilterIntent — status (active / hide obsolete)', () => {
-  it('matches "hide obsolete"', () => {
-    const result = detectFilterIntent('hide obsolete', sampleRecs);
-    expect(result?.filterInput.exclude_obsolete).toBe(true);
+describe('detectFilterIntent — status', () => {
+  // Each lifecycle word must resolve to EXACTLY the status it names. The original
+  // detector collapsed obsolete / discontinued / eol / not-recommended into one
+  // `exclude_obsolete` boolean whose predicate only ever removed 'Obsolete' — so
+  // "hide discontinued" deleted the user's OBSOLETE parts and left the discontinued
+  // ones on screen. These assert the words can never be conflated again.
+  const statuses = (q: string) => detectFilterIntent(q, sampleRecs)?.filterInput.exclude_statuses;
+
+  it('"hide obsolete" hides Obsolete and NOTHING else', () => {
+    expect(statuses('hide obsolete')).toEqual(['Obsolete']);
   });
 
-  it('matches "exclude EOL parts"', () => {
-    expect(detectFilterIntent('exclude eol parts', sampleRecs)?.filterInput.exclude_obsolete).toBe(true);
+  it('"hide discontinued" hides Discontinued and NOTHING else — never Obsolete', () => {
+    expect(statuses('hide discontinued parts')).toEqual(['Discontinued']);
   });
 
-  it('matches "show only active"', () => {
-    expect(detectFilterIntent('show only active parts', sampleRecs)?.filterInput.exclude_obsolete).toBe(true);
+  it("the reported phrasing — \"don't show me discontinued parts\"", () => {
+    expect(statuses("don't show me discontinued parts")).toEqual(['Discontinued']);
+  });
+
+  it('hides NRND on its own', () => {
+    expect(statuses('exclude NRND parts')).toEqual(['NRND']);
+    expect(statuses('hide not recommended for new designs')).toEqual(['NRND']);
+  });
+
+  it('hides Last Time Buy on its own', () => {
+    expect(statuses('hide last time buy parts')).toEqual(['LastTimeBuy']);
+  });
+
+  it('unions multiple named statuses', () => {
+    expect(statuses('hide obsolete and discontinued parts')?.sort())
+      .toEqual(['Discontinued', 'Obsolete']);
+  });
+
+  it('"exclude EOL parts" is a GROUP word — hides every non-Active status', () => {
+    expect(statuses('exclude eol parts')?.sort())
+      .toEqual(['Discontinued', 'LastTimeBuy', 'NRND', 'Obsolete']);
+  });
+
+  it('"show only active" inverts to hide every non-Active status', () => {
+    expect(statuses('show only active parts')?.sort())
+      .toEqual(['Discontinued', 'LastTimeBuy', 'NRND', 'Obsolete']);
+  });
+
+  it('"only" + a dead status keeps that status and hides the rest', () => {
+    expect(statuses('show me only the obsolete ones')?.sort())
+      .toEqual(['Active', 'Discontinued', 'LastTimeBuy', 'NRND']);
+  });
+
+  it('never hides Active as collateral when Active is the thing being asked FOR', () => {
+    // "show the active ones but drop discontinued" names both statuses. Hiding
+    // Active here would delete exactly what the user asked to see.
+    expect(statuses('show me the active ones but drop discontinued')).toEqual(['Discontinued']);
+  });
+
+  it('a status word with no narrowing cue is a QUESTION, not a filter', () => {
+    expect(statuses('is this part discontinued?')).toBeUndefined();
+    expect(detectFilterIntent('is this part discontinued?', sampleRecs)).toBeNull();
+  });
+
+  it('"inactive" does not trip the bare \\bactive\\b matcher', () => {
+    // Would be catastrophic: hiding every non-Active status when the user asked
+    // to SEE the inactive ones.
+    expect(statuses('show me only inactive parts')?.sort()).toEqual(['Active']);
   });
 });
 

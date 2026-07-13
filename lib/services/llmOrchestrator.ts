@@ -256,9 +256,14 @@ const filterRecommendationsTool: Anthropic.Tool = {
         type: 'number',
         description: 'Minimum match percentage threshold (e.g. 80)',
       },
+      exclude_statuses: {
+        type: 'array',
+        items: { type: 'string', enum: ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'] },
+        description: 'Hide parts with these EXACT lifecycle statuses. Pass precisely what the user named and nothing more — "hide discontinued" is ["Discontinued"], "hide obsolete" is ["Obsolete"], "hide obsolete and discontinued" is both. These are DISTINCT statuses: do not substitute one for another. For group words — "EOL", "end of life", "inactive", "dead" — or for "only active", pass every non-Active status: ["Obsolete","Discontinued","NRND","LastTimeBuy"].',
+      },
       exclude_obsolete: {
         type: 'boolean',
-        description: 'If true, hide obsolete/discontinued parts',
+        description: 'Deprecated alias for exclude_statuses: ["Obsolete"]. Prefer exclude_statuses — it is the only way to hide Discontinued / NRND / Last Time Buy.',
       },
       exclude_failing_parameters: {
         type: 'array',
@@ -336,9 +341,14 @@ const filterSearchResultsTool: Anthropic.Tool = {
         enum: ['atlas', 'western'],
         description: 'Narrow by manufacturer origin. "atlas" = Chinese makers, "western" = US/EU/JP and other non-Chinese. Use this for "the Chinese ones" / "Chinese options" / "Asian alternatives" (atlas) or "Western / American / European / non-Chinese ones" (western). Keys off each part\'s resolved origin — catches Chinese makers even when their part came through the regular catalog — so it is the ONLY correct way to filter search cards by origin (never hand-pick Chinese MPNs with present_part_options).',
       },
+      exclude_statuses: {
+        type: 'array',
+        items: { type: 'string', enum: ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'] },
+        description: 'Drop cards with these EXACT lifecycle statuses. Pass precisely what the user named and nothing more — "hide discontinued" is ["Discontinued"], "hide obsolete" is ["Obsolete"], "hide obsolete and discontinued" is both. These are DISTINCT statuses: do not substitute one for another. For group words — "EOL", "end of life", "inactive", "dead" — or for "only active", pass every non-Active status: ["Obsolete","Discontinued","NRND","LastTimeBuy"].',
+      },
       exclude_obsolete: {
         type: 'boolean',
-        description: 'Drop parts whose lifecycle status is Obsolete.',
+        description: 'Deprecated alias for exclude_statuses: ["Obsolete"]. Prefer exclude_statuses — it is the only way to hide Discontinued / NRND / Last Time Buy.',
       },
       aec_qualified_only: {
         type: 'boolean',
@@ -2147,7 +2157,8 @@ Your role:
 
 Tool usage:
 - Use filter_recommendations when the user wants to narrow the existing list (e.g. "show only TDK", "hide obsolete parts", "only parts with >80% match", "only Accuris certified", "automotive qualified ≥10V Accuris certified").
-- Combine multiple predicates into a SINGLE filter_recommendations call — the tool ANDs them (manufacturer_filter, min_match_percentage, exclude_obsolete, exclude_failing_parameters, attribute_filters, category_filter, mfr_origin_filter).
+- Combine multiple predicates into a SINGLE filter_recommendations call — the tool ANDs them (manufacturer_filter, min_match_percentage, exclude_statuses, exclude_failing_parameters, attribute_filters, category_filter, mfr_origin_filter).
+- Lifecycle status: use exclude_statuses and pass EXACTLY the statuses the user named. Obsolete, Discontinued, NRND and Last Time Buy are DIFFERENT statuses — "hide discontinued" must not hide obsolete parts, and vice versa.
 - For attribute filters, copy parameter names EXACTLY from the "Filterable parameters" list in the context — never invent or rephrase (e.g. use "Voltage Rated" verbatim, not "Rated Voltage").
 - Use refine_replacements when the user provides a NEW requirement that changes how parts are evaluated (e.g. "I need AEC-Q200 compliance", "voltage must be 50V").
 - Do NOT use any tool for general questions — answer from context.

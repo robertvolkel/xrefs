@@ -1,5 +1,7 @@
-import type { XrefRecommendation, RecommendationCategory } from '../types';
+import type { XrefRecommendation, RecommendationCategory, PartStatus } from '../types';
 import type { FilterInput } from './recommendationFilter';
+import type { SearchFilterInput } from './searchResultFilter';
+import { NON_ACTIVE_STATUSES, describeExcludedStatuses } from './recommendationFilter';
 import { namesComponentType } from './componentVocabulary';
 
 /**
@@ -54,20 +56,88 @@ const FILTER_VERB_RE = /\b(?:show\s+(?:me\s+)?(?:only|just)?|just\s+(?:show\s+(?
  *  fires when followed/preceded by a manufacturer-like token. */
 const SOFT_FILTER_RE = /\b(?:from|by|made by)\s+\S/i;
 
-/** Detect a status filter (active-only / hide-obsolete). */
+/** Every lifecycle status, for "keep ONLY these" inversion. */
+const ALL_STATUSES: PartStatus[] = ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+
+/**
+ * Words the user might use for each lifecycle status, mapped to the EXACT statuses
+ * they name. This precision is the whole point: the previous implementation collapsed
+ * obsolete / eol / discontinued / not-recommended into one `exclude_obsolete` boolean
+ * whose predicate only ever deleted `Obsolete` — so "hide discontinued" removed the
+ * user's OBSOLETE parts and left the discontinued ones on screen.
+ *
+ * `eol` / `end of life` / `inactive` / `dead` are genuinely group words (no single
+ * status owns them), so they name the whole non-Active set. Everything else names one.
+ */
+const STATUS_WORDS: Array<{ re: RegExp; statuses: PartStatus[] }> = [
+  { re: /\bobsolete\b/i, statuses: ['Obsolete'] },
+  { re: /\bdiscontinued\b/i, statuses: ['Discontinued'] },
+  { re: /\bnrnd\b|\bnot\s+recommended(?:\s+for\s+new\s+designs?)?\b/i, statuses: ['NRND'] },
+  { re: /\blast[\s-]?time[\s-]?buys?\b|\bltb\b/i, statuses: ['LastTimeBuy'] },
+  { re: /\beol\b|\bend[\s-]?of[\s-]?life\b|\binactive\b|\bdead\b/i, statuses: NON_ACTIVE_STATUSES },
+  { re: /\bactive\b/i, statuses: ['Active'] },
+];
+
+/** Unambiguous "take these away" cues — safe to match anywhere in the message. */
+const EXCLUDE_CUE_RE = /\b(?:hide|exclude|drop|remove|filter\s+out|skip|ignore|omit|without|don'?t\s+(?:show|want|include)|do\s+not\s+(?:show|want|include)|no\s+longer)\b/i;
+
+/** Weak cues ("no", "not") only count when they sit directly on the status word —
+ *  "no obsolete parts" is a filter; "no, show me the obsolete ones" is not. */
+const WEAK_EXCLUDE_ADJACENT_RE = /\b(?:no|not)\s+(?:the\s+)?(?:obsolete|discontinued|nrnd|eol|inactive|dead|last[\s-]?time[\s-]?buy)\b/i;
+
+/** "keep only these" cues. */
+const ONLY_CUE_RE = /\b(?:only|just|keep\s+only)\b/i;
+
+/** "hide active" — the one case where Active itself is the target. Requires the cue
+ *  to sit on the word, so "show active, hide discontinued" never hides Active. */
+const EXCLUDE_ACTIVE_ADJACENT_RE = /\b(?:hide|exclude|drop|remove|filter\s+out|skip|ignore|omit|without|no|not)\s+(?:the\s+)?active\b/i;
+
+/** Which statuses does this message name at all? */
+function namedStatuses(query: string): Set<PartStatus> {
+  const found = new Set<PartStatus>();
+  for (const { re, statuses } of STATUS_WORDS) {
+    if (re.test(query)) statuses.forEach(s => found.add(s));
+  }
+  return found;
+}
+
+/**
+ * Detect a lifecycle-status filter, PRECISELY: each status word hides exactly the
+ * status it names ("hide discontinued" → Discontinued and nothing else), multiple
+ * words union ("hide obsolete and discontinued"), and "only active" inverts to hide
+ * every non-Active status.
+ *
+ * Polarity rules (first match wins):
+ *  - EXCLUDE (an exclude cue is present) → hide the named statuses. Active is only
+ *    hidden when a cue sits directly on it, so "show the active ones but drop
+ *    discontinued" hides Discontinued only — never the Active parts the user asked for.
+ *  - ONLY (an only-cue is present) → keep the named statuses, hide all the others.
+ *    This is what turns "show only active" into hide-every-non-Active.
+ */
 function detectStatusIntent(query: string): FilterIntent | null {
-  const lower = query.toLowerCase();
-  const hasFilterVerb = FILTER_VERB_RE.test(query);
-  if (!hasFilterVerb) return null;
-  // "hide obsolete" / "exclude obsolete" / "drop obsolete" / "remove obsolete" / "no obsolete"
-  if (/\b(?:hide|exclude|drop|remove|filter\s+out|skip|ignore|no)\s+(?:the\s+)?(?:obsolete|eol|discontinued|not\s+recommended)\b/i.test(query)) {
-    return { filterInput: { exclude_obsolete: true }, label: 'active parts (obsolete hidden)' };
+  const named = namedStatuses(query);
+  if (named.size === 0) return null;
+
+  const hasExcludeCue = EXCLUDE_CUE_RE.test(query) || WEAK_EXCLUDE_ADJACENT_RE.test(query);
+  const hasOnlyCue = ONLY_CUE_RE.test(query) || FILTER_VERB_RE.test(query);
+
+  let excluded: PartStatus[];
+  if (hasExcludeCue) {
+    // Hide what was named — but never Active unless it was explicitly targeted.
+    excluded = [...named].filter(s => s !== 'Active');
+    if (EXCLUDE_ACTIVE_ADJACENT_RE.test(query)) excluded.push('Active');
+  } else if (hasOnlyCue) {
+    // Keep what was named — hide everything else.
+    excluded = ALL_STATUSES.filter(s => !named.has(s));
+  } else {
+    // A status word with no narrowing cue is a question, not a filter
+    // ("is this part discontinued?") — leave it to the LLM.
+    return null;
   }
-  // "only active" / "show me active" / "active only"
-  if (/\b(?:only|just|show)\b.*\bactive\b/i.test(lower) && !/\binactive\b/i.test(lower)) {
-    return { filterInput: { exclude_obsolete: true }, label: 'active parts only' };
-  }
-  return null;
+
+  if (excluded.length === 0) return null;
+  const label = describeExcludedStatuses(new Set(excluded)) ?? 'filtered';
+  return { filterInput: { exclude_statuses: excluded }, label };
 }
 
 /** Detect a min-match-percentage filter (≥80%, above 75, etc.). */
@@ -168,6 +238,30 @@ export function detectSearchOriginRefinement(
   if (!origin) return null;
   if (namesComponentType(query)) return null; // a part type was named → new search
   return { origin, label: intent!.label };
+}
+
+/**
+ * Detect a lifecycle-status refinement of the current search-result CARDS
+ * ("don't show me discontinued parts", "hide the obsolete ones", "only active").
+ *
+ * Runs DETERMINISTICALLY for the same reason the origin refinement does: relying on
+ * the LLM to reach for the filter tool is a coin-flip, and a filter that silently
+ * doesn't fire is indistinguishable from one that fired and matched nothing.
+ *
+ * Guarded by `namesComponentType` symmetrically with origin: "show me only active
+ * MLCCs" while transistor cards are on screen is a PIVOT (new search), not a refine,
+ * so it goes to the LLM. That fall-through is now safe either way — the shared
+ * predicate underneath the LLM's tool is fixed too, so the worst case is
+ * non-deterministic, not wrong.
+ */
+export function detectSearchStatusRefinement(
+  query: string,
+): { input: SearchFilterInput; label: string } | null {
+  const intent = detectStatusIntent(query);
+  const statuses = intent?.filterInput.exclude_statuses;
+  if (!statuses || statuses.length === 0) return null;
+  if (namesComponentType(query)) return null; // a part type was named → new search
+  return { input: { exclude_statuses: statuses }, label: intent!.label };
 }
 
 /** Detect a manufacturer filter — needs both a verb and a manufacturer name

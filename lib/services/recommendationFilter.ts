@@ -1,9 +1,68 @@
-import { XrefRecommendation, RecommendationCategory, deriveRecommendationCategories } from '../types';
+import { XrefRecommendation, RecommendationCategory, PartStatus, deriveRecommendationCategories } from '../types';
 
 export interface AttributeFilter {
   parameter: string;
   operator: 'equals' | 'contains' | 'gte' | 'lte';
   value: string;
+}
+
+/** Canonical display order for lifecycle statuses — drives filter labels. */
+const STATUS_ORDER: PartStatus[] = ['Active', 'Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+
+const STATUS_LABELS: Record<PartStatus, string> = {
+  Active: 'Active',
+  Obsolete: 'Obsolete',
+  Discontinued: 'Discontinued',
+  NRND: 'NRND',
+  LastTimeBuy: 'Last Time Buy',
+};
+
+/** Every lifecycle status that is not Active. Backs "hide EOL" / "only active". */
+export const NON_ACTIVE_STATUSES: PartStatus[] = ['Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'];
+
+/**
+ * Resolve the set of lifecycle statuses a filter should hide. Shared by the
+ * recommendations filter AND the search-card filter so the two can never drift.
+ *
+ * `exclude_statuses` is the precise, per-status control: "hide discontinued" must
+ * remove Discontinued and NOTHING else. It exists because the original design had
+ * only the `exclude_obsolete` boolean below, implemented as a literal
+ * `status !== 'Obsolete'` check — so EVERY other lifecycle word ("discontinued",
+ * "NRND", "last time buy") silently deleted the user's Obsolete parts and left the
+ * ones they actually asked to remove. The word "obsolete" only appeared to work
+ * because it happens to equal the enum value.
+ *
+ * `exclude_obsolete` is retained as a legacy alias (the LLM tool schema still
+ * accepts it, and it means exactly what it says: hide `Obsolete`). The two UNION
+ * rather than override, so a caller emitting both never silently loses one.
+ */
+export function resolveExcludedStatuses(input: {
+  exclude_statuses?: PartStatus[];
+  exclude_obsolete?: boolean;
+}): Set<PartStatus> {
+  const excluded = new Set<PartStatus>(input.exclude_statuses ?? []);
+  if (input.exclude_obsolete) excluded.add('Obsolete');
+  return excluded;
+}
+
+/** Whether a part's lifecycle status is in the hidden set. A part with NO status
+ *  data counts as Active: missing data must never hide a part (same philosophy as
+ *  the matching engine, where a missing attribute is `review`, never `fail`). */
+export function statusIsExcluded(status: PartStatus | undefined, excluded: Set<PartStatus>): boolean {
+  if (excluded.size === 0) return false;
+  return excluded.has(status ?? 'Active');
+}
+
+/** Human-readable label for a hidden-status set — "hiding Discontinued",
+ *  "hiding Obsolete + NRND", or "active parts only" when every non-Active status
+ *  is hidden. Returns null when nothing is hidden. */
+export function describeExcludedStatuses(excluded: Set<PartStatus>): string | null {
+  if (excluded.size === 0) return null;
+  if (!excluded.has('Active') && NON_ACTIVE_STATUSES.every(s => excluded.has(s))) {
+    return 'active parts only';
+  }
+  const names = STATUS_ORDER.filter(s => excluded.has(s)).map(s => STATUS_LABELS[s]);
+  return `hiding ${names.join(' + ')}`;
 }
 
 /**
@@ -15,6 +74,11 @@ export interface AttributeFilter {
 export interface FilterInput {
   manufacturer_filter?: string;
   min_match_percentage?: number;
+  /** Precise per-status lifecycle filter — hide EXACTLY these statuses. "hide
+   *  discontinued" → ['Discontinued']; "only active" → every non-Active status.
+   *  Preferred over `exclude_obsolete`. */
+  exclude_statuses?: PartStatus[];
+  /** Legacy alias for `exclude_statuses: ['Obsolete']`. Unions with the above. */
   exclude_obsolete?: boolean;
   exclude_failing_parameters?: string[];
   attribute_filters?: AttributeFilter[];
@@ -52,7 +116,8 @@ export function describeFilterInput(f: FilterInput): string {
   }
   if (typeof f.min_match_percentage === 'number') parts.push(`≥${f.min_match_percentage}% match`);
   if (f.aec_qualified_only) parts.push('AEC-qualified');
-  if (f.exclude_obsolete) parts.push('active parts');
+  const statusLabel = describeExcludedStatuses(resolveExcludedStatuses(f));
+  if (statusLabel) parts.push(statusLabel);
   if (f.exclude_failing_parameters?.length) parts.push('no failing params');
   if (f.attribute_filters?.length) {
     for (const a of f.attribute_filters) parts.push(`${a.parameter} ${a.operator} ${a.value}`);
@@ -113,8 +178,9 @@ export function applyRecommendationFilter(
   if (input.min_match_percentage != null) {
     filtered = filtered.filter(r => r.matchPercentage >= input.min_match_percentage!);
   }
-  if (input.exclude_obsolete) {
-    filtered = filtered.filter(r => r.part.status !== 'Obsolete');
+  const excludedStatuses = resolveExcludedStatuses(input);
+  if (excludedStatuses.size > 0) {
+    filtered = filtered.filter(r => !statusIsExcluded(r.part.status, excludedStatuses));
   }
   if (input.category_filter) {
     const target = input.category_filter;

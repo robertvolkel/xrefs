@@ -1,4 +1,9 @@
-import { PartSummary } from '../types';
+import { PartSummary, PartStatus } from '../types';
+import {
+  resolveExcludedStatuses,
+  statusIsExcluded,
+  describeExcludedStatuses,
+} from './recommendationFilter';
 
 /**
  * Input shape for narrowing the current search-result card list. Mirrors the
@@ -21,7 +26,11 @@ export interface SearchFilterInput {
   meets_spec?: boolean;
   /** Keep only parts whose manufacturer name contains this string (case-insensitive). */
   manufacturer_filter?: string;
-  /** Drop parts whose lifecycle status is Obsolete. */
+  /** Precise per-status lifecycle filter — drop EXACTLY these statuses. "hide
+   *  discontinued" → ['Discontinued']; "only active" → every non-Active status.
+   *  Shares resolveExcludedStatuses with the recommendations filter. */
+  exclude_statuses?: PartStatus[];
+  /** Legacy alias for `exclude_statuses: ['Obsolete']`. Unions with the above. */
   exclude_obsolete?: boolean;
   /** Keep only parts carrying an AEC-Q100/Q101/Q200 automotive qualification. */
   aec_qualified_only?: boolean;
@@ -48,7 +57,8 @@ export function describeSearchFilterInput(f: SearchFilterInput): string {
   if (f.manufacturer_filter) parts.push(f.manufacturer_filter);
   if (f.mfr_origin_filter) parts.push(f.mfr_origin_filter === 'atlas' ? 'Chinese MFRs' : 'Western MFRs');
   if (f.aec_qualified_only) parts.push('AEC-qualified');
-  if (f.exclude_obsolete) parts.push('active parts');
+  const statusLabel = describeExcludedStatuses(resolveExcludedStatuses(f));
+  if (statusLabel) parts.push(statusLabel);
   return parts.length > 0 ? parts.join(' + ') : 'filtered';
 }
 
@@ -75,8 +85,9 @@ export function applySearchResultFilter(
     const query = input.manufacturer_filter.toLowerCase();
     filtered = filtered.filter(p => p.manufacturer.toLowerCase().includes(query));
   }
-  if (input.exclude_obsolete) {
-    filtered = filtered.filter(p => p.status !== 'Obsolete');
+  const excludedStatuses = resolveExcludedStatuses(input);
+  if (excludedStatuses.size > 0) {
+    filtered = filtered.filter(p => !statusIsExcluded(p.status, excludedStatuses));
   }
   if (input.aec_qualified_only) {
     filtered = filtered.filter(partIsAecQualified);

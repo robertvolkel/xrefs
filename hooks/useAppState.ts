@@ -18,8 +18,8 @@ import {
 } from '@/lib/types';
 import { computeBestPrice, formatPrice, BestPriceResult } from '@/lib/services/bestPriceCalculator';
 import { detectQueryIntent, extractQuantity, extractBestPriceQuantity, PendingIntent } from '@/lib/services/intentDetector';
-import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent, detectSearchOriginRefinement } from '@/lib/services/filterIntentDetector';
-import { applySearchResultFilter } from '@/lib/services/searchResultFilter';
+import { detectFilterIntent, detectClearFilterIntent, detectOriginIntent, detectSearchOriginRefinement, detectSearchStatusRefinement } from '@/lib/services/filterIntentDetector';
+import { applySearchResultFilter, type SearchFilterInput } from '@/lib/services/searchResultFilter';
 import { applyRecommendationFilter } from '@/lib/services/recommendationFilter';
 import { buildRecsSummary } from '@/lib/services/recommendationSummary';
 import { buildSearchSummary, looksLikeMpn } from '@/lib/services/searchSummary';
@@ -92,6 +92,13 @@ interface AppState {
    *  when parts.io / FC enrichment completes and replaces allRecommendations. */
   currentFilter: import('@/lib/services/recommendationFilter').FilterInput | null;
   currentFilterLabel: string | null;
+  /** Label of the active filter on the search-result CARDS (set by
+   *  dispatchSearchFilter or the LLM's filter_search_results tool); null when the
+   *  cards are unfiltered. Separate from `currentFilterLabel` because the two
+   *  panels filter independently. Only the LABEL is kept — unlike the recs panel,
+   *  no background pass rebuilds the card set, so there is nothing to re-apply the
+   *  predicate to. Cleared on every fresh search and by dispatchClearSearchFilter. */
+  currentSearchFilterLabel: string | null;
   /** Canonical names of Atlas MFRs the LLM has looked up via
    *  get_manufacturer_profile across the current session. Accumulated so the
    *  chat UI can linkify mentions of those MFRs in assistant prose without
@@ -140,6 +147,7 @@ const initialState: AppState = {
   comparisonError: false,
   currentFilter: null,
   currentFilterLabel: null,
+  currentSearchFilterLabel: null,
   chatAtlasMfrs: new Set<string>(),
   chatMentionedParts: new Map<string, PartAttributes>(),
   acceptanceCriteria: {},
@@ -186,6 +194,10 @@ export function useAppState() {
   // sequential origin asks ("the Chinese ones" then "the Western ones") each
   // filter the complete set rather than stacking on the prior narrowed view.
   const searchFullMatchesRef = useRef<PartSummary[]>([]);
+  // Mirrors state.currentSearchFilterLabel so handleSearch (a useCallback) can tell
+  // "a filter is active, so 'show me all' means CLEAR it" from "no filter is
+  // active, so 'show me everything' is just a message for the LLM".
+  const searchFilterRef = useRef<string | null>(null);
   // Mirrors state.sourceAttributes so the orchestrator gets the canonical
   // supplier/lifecycle/compliance snapshot on every turn (drives
   // summarizeSourcePart()). Without this the LLM fabricates supplier names
@@ -720,6 +732,7 @@ export function useAppState() {
         allRecommendations: recs,
         currentFilter: null,
         currentFilterLabel: null,
+        currentSearchFilterLabel: null,
       }));
 
       // (Conversation-history trigger push removed — it was bait for the
@@ -1200,29 +1213,36 @@ export function useAppState() {
     [addMessage],
   );
 
-  /** Apply a Chinese/Western origin filter to the CURRENT search-result cards,
-   *  DETERMINISTICALLY. The LLM is unreliable here — its "never assert MFR origin"
-   *  discipline makes it prose-answer ("none are Chinese") instead of calling the
-   *  origin filter. Narrows from the FULL match set (searchFullMatchesRef) so
-   *  sequential "Chinese ones" → "Western ones" each filter the complete result,
-   *  and keys off the resolved PartSummary.mfrOrigin so every Chinese maker is
-   *  caught (not just Atlas-sourced rows). */
-  const dispatchSearchOriginFilter = useCallback(
-    (origin: 'atlas' | 'western', label: string, query: string) => {
+  /** Apply a filter to the CURRENT search-result cards, DETERMINISTICALLY — the
+   *  single dispatcher behind every client-intercepted search-card refinement
+   *  (manufacturer origin, lifecycle status, …).
+   *
+   *  Deterministic because leaving these to the LLM does not reliably work: for
+   *  origin its "never assert MFR origin" discipline makes it prose-answer ("none
+   *  are Chinese") instead of calling the tool, and for status a filter that
+   *  quietly never fires is indistinguishable from one that fired and matched
+   *  nothing. Both failure modes read to the user as "the app ignored me".
+   *
+   *  Narrows from the FULL match set (searchFullMatchesRef) so sequential filters
+   *  ("Chinese ones" → "hide discontinued") each apply to the complete result
+   *  rather than compounding onto an already-narrowed view. */
+  const dispatchSearchFilter = useCallback(
+    (input: SearchFilterInput, label: string, query: string) => {
       addMessage('user', query);
       conversationRef.current.push({ role: 'user', content: query });
 
-      // Narrow from the FULL set when we captured it (so sequential Chinese →
-      // Western each see the complete result), but fall back to the cards
+      // Narrow from the FULL set when we captured it, but fall back to the cards
       // currently on screen if the full-set ref was never populated (cache hit,
       // dev reload, etc.). Never let an empty ref turn this into a no-op.
       const fullMatches = (searchFullMatchesRef.current.length > 0
         ? searchFullMatchesRef.current
         : searchResultRef.current?.matches) ?? [];
-      const filtered = applySearchResultFilter(fullMatches, { mfr_origin_filter: origin });
+      const filtered = applySearchResultFilter(fullMatches, input);
 
       if (filtered.length === 0) {
-        const note = `None of the current ${fullMatches.length} results are from ${label}.`;
+        // Honest dead-end: say nothing matched and leave the cards up, rather
+        // than emptying the panel (which reads as a crash).
+        const note = `None of the current ${fullMatches.length} results match that — still showing all ${fullMatches.length}.`;
         addMessage('assistant', note);
         conversationRef.current.push({ role: 'assistant', content: note });
         return;
@@ -1234,18 +1254,49 @@ export function useAppState() {
         sourcesContributed: searchResultRef.current?.sourcesContributed,
       };
       searchResultRef.current = newResult;
-      setState((prev) => ({ ...prev, searchResult: newResult }));
+      searchFilterRef.current = label;
+      setState((prev) => ({ ...prev, searchResult: newResult, currentSearchFilterLabel: label }));
 
-      const headline = `Filtered to ${filtered.length} ${filtered.length === 1 ? 'part' : 'parts'} — ${label}. Click the one you'd like to use.`;
+      // Always report the arithmetic (N of M). A filter that reports nothing is
+      // how the old one hid the fact that it was removing the wrong parts.
+      const hidden = fullMatches.length - filtered.length;
+      const headline = hidden === 0
+        ? `All ${filtered.length} results already match — ${label}. Click the one you'd like to use.`
+        : `Filtered to ${filtered.length} of ${fullMatches.length} ${fullMatches.length === 1 ? 'part' : 'parts'} — ${label} (${hidden} hidden). Click the one you'd like to use.`;
       const msg = addMessage('assistant', headline, { type: 'options', parts: filtered });
       triggerSearchDistributorEnrichment(msg.id, filtered);
       conversationRef.current.push({
         role: 'assistant',
-        content: `Filtered the search-result cards to ${filtered.length} ${label} (from ${fullMatches.length}). The user can see the narrowed cards now.`,
+        content: `Filtered the search-result cards to ${filtered.length} of ${fullMatches.length} — ${label}. The user can see the narrowed cards now.`,
       });
     },
     [addMessage, triggerSearchDistributorEnrichment],
   );
+
+  /** Clear the active filter on the search-result cards — restores the full match
+   *  set. Mirrors dispatchClearFilter for the recommendations panel. */
+  const dispatchClearSearchFilter = useCallback((query: string) => {
+    addMessage('user', query);
+    conversationRef.current.push({ role: 'user', content: query });
+
+    const fullMatches = searchFullMatchesRef.current;
+    const newResult: SearchResult = {
+      type: fullMatches.length === 1 ? 'single' : 'multiple',
+      matches: fullMatches,
+      sourcesContributed: searchResultRef.current?.sourcesContributed,
+    };
+    searchResultRef.current = newResult;
+    searchFilterRef.current = null;
+    setState((prev) => ({ ...prev, searchResult: newResult, currentSearchFilterLabel: null }));
+
+    const headline = `Filter cleared — showing all ${fullMatches.length} results. Click the one you'd like to use.`;
+    const msg = addMessage('assistant', headline, { type: 'options', parts: fullMatches });
+    triggerSearchDistributorEnrichment(msg.id, fullMatches);
+    conversationRef.current.push({
+      role: 'assistant',
+      content: `Cleared the search-card filter; showing all ${fullMatches.length} results again.`,
+    });
+  }, [addMessage, triggerSearchDistributorEnrichment]);
 
   /** Clear the active filter on the recommendations panel — restores the
    *  full set. No-op (with a friendly chat note) when no filter is active. */
@@ -1416,10 +1467,13 @@ export function useAppState() {
           attributesAskedRef.current = false;
         }
         // Capture the FULL match set of a FRESH search (a filter carries a
-        // searchFilterLabel) so the deterministic origin-filter intercept narrows
-        // from the complete set — sequential "Chinese ones" → "Western ones" both work.
-        if (searchResult && !searchFilterLabel && (searchResult.matches?.length ?? 0) > 0) {
-          searchFullMatchesRef.current = searchResult.matches;
+        // searchFilterLabel) so the deterministic filter intercepts narrow from the
+        // complete set — sequential "Chinese ones" → "hide discontinued" both work.
+        // A fresh search also RESETS the active card filter; an LLM-applied filter
+        // (searchFilterLabel present) records it, so a later "show me all" clears it.
+        if (searchResult && (searchResult.matches?.length ?? 0) > 0) {
+          if (!searchFilterLabel) searchFullMatchesRef.current = searchResult.matches;
+          searchFilterRef.current = searchFilterLabel ?? null;
         }
         const partResetFields = searchResult ? {
           sourcePart: null as AppState['sourcePart'],
@@ -1429,6 +1483,9 @@ export function useAppState() {
           selectedRecommendation: null as AppState['selectedRecommendation'],
           comparisonAttributes: null as AppState['comparisonAttributes'],
           applicationContext: null as AppState['applicationContext'],
+          // A fresh search clears the card filter; an LLM-applied filter records
+          // its label so the "filter cleared" path knows one is active.
+          currentSearchFilterLabel: searchFilterLabel ?? null,
         } : {};
 
         // A system-built comparison table (present_comparison) must survive even when
@@ -1546,6 +1603,7 @@ export function useAppState() {
         applicationContext: null,
         currentFilter: null,
         currentFilterLabel: null,
+        currentSearchFilterLabel: null,
       }));
 
       // Tell the LLM the user confirmed
@@ -1608,11 +1666,12 @@ export function useAppState() {
         const result = await searchParts(query);
         setStatus('');
 
-        // Capture the fresh full match set so the origin-filter intercept + the
-        // sequential Chinese→Western flip narrow from the COMPLETE result (mirrors
-        // the LLM path at ~L1376). Deterministic mode never set this before, so its
-        // flip fell back to the already-filtered subset and came back empty.
+        // Capture the fresh full match set so the filter intercepts (origin, status)
+        // narrow from the COMPLETE result (mirrors the LLM path above). Deterministic
+        // mode never set this before, so its flip fell back to the already-filtered
+        // subset and came back empty. A fresh search also drops any active filter.
         searchFullMatchesRef.current = result.type === 'none' ? [] : result.matches;
+        searchFilterRef.current = null;
 
         if (result.type === 'none') {
           addMessage(
@@ -1712,6 +1771,7 @@ export function useAppState() {
         applicationContext: null,
         currentFilter: null,
         currentFilterLabel: null,
+        currentSearchFilterLabel: null,
       }));
       // loadAttributesAndRecommendations flips sourceAttrsReadyRef true on success
       // and leaves it false on error — gating stays correct without forcing it.
@@ -1771,9 +1831,26 @@ export function useAppState() {
       // search's cards when the current view has none.
       const haveSearchCards = (searchResultRef.current?.matches?.length ?? 0) > 0;
       if (currentRecs.length === 0 && haveSearchCards) {
+        // Clear FIRST, same reasoning as the recs path above: "show me all the
+        // parts again" must restore the full set, not be re-read as a new filter.
+        // Only intercept when a filter is actually active — otherwise "show me
+        // everything" on an unfiltered list is a legitimate message for the LLM.
+        if (searchFilterRef.current && detectClearFilterIntent(query)) {
+          dispatchClearSearchFilter(query);
+          return;
+        }
         const originRefine = detectSearchOriginRefinement(query);
         if (originRefine) {
-          dispatchSearchOriginFilter(originRefine.origin, originRefine.label, query);
+          dispatchSearchFilter({ mfr_origin_filter: originRefine.origin }, originRefine.label, query);
+          return;
+        }
+        // Lifecycle status ("don't show me discontinued parts", "only active").
+        // Deterministic for the same reason as origin: the LLM reaching for the
+        // filter tool is a coin-flip, and a filter that silently never fires
+        // looks identical to one that fired and did nothing.
+        const statusRefine = detectSearchStatusRefinement(query);
+        if (statusRefine) {
+          dispatchSearchFilter(statusRefine.input, statusRefine.label, query);
           return;
         }
       }
@@ -1863,7 +1940,7 @@ export function useAppState() {
       // automatic recovery the moment the AI comes back.
       await handleSearchWithLLM(query);
     },
-    [state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchOriginFilter, handleSearchWithLLM, priceAtQuantity]
+    [state.sourcePart, addMessage, dispatchIntent, dispatchFilterIntent, dispatchClearFilter, dispatchSearchFilter, dispatchClearSearchFilter, handleSearchWithLLM, priceAtQuantity]
   );
 
   const handleConfirmPart = useCallback(
@@ -2374,6 +2451,7 @@ export function useAppState() {
       comparisonError: false,
       currentFilter: null,
       currentFilterLabel: null,
+      currentSearchFilterLabel: null,
       chatAtlasMfrs: new Set<string>(),
       chatMentionedParts: new Map<string, PartAttributes>(),
       acceptanceCriteria: {},

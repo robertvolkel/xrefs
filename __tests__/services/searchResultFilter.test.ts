@@ -70,10 +70,69 @@ describe('applySearchResultFilter', () => {
     expect(result.map(p => p.mpn).sort()).toEqual(['MMBT3904', 'PN2222']);
   });
 
-  it('exclude_obsolete drops Obsolete parts only', () => {
+  it('exclude_obsolete (legacy alias) drops Obsolete parts only', () => {
     const result = applySearchResultFilter(vetted, { exclude_obsolete: true });
     expect(result.map(p => p.mpn)).not.toContain('BC817');
     expect(result).toHaveLength(4);
+  });
+
+  // Lifecycle statuses are DISTINCT. The original predicate was a literal
+  // `status !== 'Obsolete'` check driven by one boolean, and the fixture set above
+  // carries no Discontinued part — which is exactly why the suite stayed green
+  // while "hide discontinued" was deleting the user's Obsolete parts instead.
+  describe('exclude_statuses — per-status precision', () => {
+    const mixed: PartSummary[] = [
+      part({ mpn: 'ACT', status: 'Active' }),
+      part({ mpn: 'OBS', status: 'Obsolete' }),
+      part({ mpn: 'DISC', status: 'Discontinued' }),
+      part({ mpn: 'NR', status: 'NRND' }),
+      part({ mpn: 'LTB', status: 'LastTimeBuy' }),
+      part({ mpn: 'NOSTATUS' }), // no lifecycle data at all
+    ];
+
+    it('hides Discontinued WITHOUT touching Obsolete', () => {
+      const out = applySearchResultFilter(mixed, { exclude_statuses: ['Discontinued'] });
+      expect(out.map(p => p.mpn)).not.toContain('DISC');
+      expect(out.map(p => p.mpn)).toContain('OBS'); // the original bug: OBS was dropped instead
+    });
+
+    it('hides Obsolete WITHOUT touching Discontinued', () => {
+      const out = applySearchResultFilter(mixed, { exclude_statuses: ['Obsolete'] });
+      expect(out.map(p => p.mpn)).not.toContain('OBS');
+      expect(out.map(p => p.mpn)).toContain('DISC');
+    });
+
+    it('hides NRND and LastTimeBuy independently', () => {
+      expect(applySearchResultFilter(mixed, { exclude_statuses: ['NRND'] }).map(p => p.mpn)).not.toContain('NR');
+      expect(applySearchResultFilter(mixed, { exclude_statuses: ['LastTimeBuy'] }).map(p => p.mpn)).not.toContain('LTB');
+    });
+
+    it('hides several statuses at once', () => {
+      const out = applySearchResultFilter(mixed, { exclude_statuses: ['Obsolete', 'Discontinued'] });
+      expect(out.map(p => p.mpn).sort()).toEqual(['ACT', 'LTB', 'NOSTATUS', 'NR']);
+    });
+
+    it('"only active" hides every non-Active status', () => {
+      const out = applySearchResultFilter(mixed, {
+        exclude_statuses: ['Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'],
+      });
+      expect(out.map(p => p.mpn).sort()).toEqual(['ACT', 'NOSTATUS']);
+    });
+
+    it('a part with NO status data is treated as Active — missing data never hides a part', () => {
+      const out = applySearchResultFilter(mixed, {
+        exclude_statuses: ['Obsolete', 'Discontinued', 'NRND', 'LastTimeBuy'],
+      });
+      expect(out.map(p => p.mpn)).toContain('NOSTATUS');
+    });
+
+    it('unions with the legacy exclude_obsolete flag rather than overriding it', () => {
+      const out = applySearchResultFilter(mixed, {
+        exclude_statuses: ['Discontinued'],
+        exclude_obsolete: true,
+      });
+      expect(out.map(p => p.mpn).sort()).toEqual(['ACT', 'LTB', 'NOSTATUS', 'NR']);
+    });
   });
 
   it('aec_qualified_only keeps parts with an AEC badge', () => {

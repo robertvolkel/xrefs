@@ -135,6 +135,19 @@ Fixed and merged to main. `searchParts` now resolves `PartSummary.mfrOrigin` per
 
 ---
 
+## Attribute filtering on search-result cards (Phase 3 of Decision #268) (P2)
+
+**Context.** Decision #268 fixed lifecycle-status filtering (per-status + deterministic + honest reporting). The other half of the same user request — *"if the user wants to take out parts with certain attributes it needs to do that also"* — is not built. Today the recommendations panel supports `attribute_filters` (it has full `matchDetails`), but the **search cards do not**: `PartSummary` carries only ~3 lightweight `keyParameters` plus the `description` string.
+
+**The work.**
+- Add `attribute_filters?: AttributeFilter[]` to `SearchFilterInput`, reusing the existing `AttributeFilter` shape + `parseNumericFromString` from `recommendationFilter.ts` (no re-definition).
+- Implement the predicate in `applySearchResultFilter` against BOTH `keyParameters` (name/value) AND the `description` string — descriptions usually embed package + voltage + current (e.g. "TRANS NPN 20V 0.015A MINI3-G3-B"), which covers the common asks ("remove SOT-363 parts", "hide the 20V ones").
+- Expose `attribute_filters` on the `filter_search_results` tool schema. Attribute intent is too open-ended to detect deterministically, so the LLM builds the structured filter ("above 45V" → `{parameter:'voltage', operator:'gte', value:'45'}`) and the app APPLIES it deterministically.
+
+**The load-bearing part — the missing-data path.** Numeric filters will frequently find nothing to compare against on a sparse card. The predicate must distinguish three outcomes per part (comparable / **unevaluable** / fail) and never silently drop-all or keep-all. When a filter is all-unevaluable, say so honestly ("these cards don't list voltage — they only show X, Y; want me to pull full specs for the top ~10?") and offer the on-demand pull via the existing `get_batch_attributes` (max 10) rather than emptying or silently ignoring. **A filter that quietly does nothing is the exact failure mode #268 was about.**
+
+---
+
 ## Chat-prompt remaining work — grounding leaks + cleanup (follow-ups to Decision #241 + the greenfield deterministic fix) (P2/P3)
 
 **Context.** The chat() SYSTEM_PROMPT refactor (Decision #241) + the deterministic greenfield search-presentation fix (commit `e2b200c`) banked the high-value work — the worst, most-reliable grounding leak (greenfield "curate-a-recommendation" over broad search results) is fixed structurally. These are the remaining, lower-value/higher-risk items, deferred deliberately (not low-risk despite being lower-value; prompt edits are behaviorally risky with manual-only coverage). Full state in [memory/chat-prompt-refactor.md] + [docs/chat-prompt-regression-checklist.md].
