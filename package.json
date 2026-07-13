@@ -12,7 +12,8 @@
     "mcp:dev": "tsx mcp-server/index.ts",
     "mcp:inspect": "npx @modelcontextprotocol/inspector tsx mcp-server/index.ts",
     "atlas:backfill": "node scripts/atlas-ingest.mjs --backfill-translations",
-    "atlas:backfill:dry": "node scripts/atlas-ingest.mjs --backfill-translations --dry-run"
+    "atlas:backfill:dry": "node scripts/atlas-ingest.mjs --backfill-translations --dry-run",
+    "docs:check": "node scripts/check-claude-md-facts.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

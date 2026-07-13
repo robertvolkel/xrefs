@@ -5,28 +5,29 @@ Known gaps, incomplete features, and inconsistencies found during project audit 
 ---
 
 
-## CLAUDE.md diet — it is 202KB and loads in FULL every session (P1)
+## ~~CLAUDE.md diet — it is 202KB and loads in FULL every session~~ DONE (July 12, 2026)
 
-**Measured July 12, 2026:** `CLAUDE.md` is **201,429 bytes ≈ 50,000 tokens**, injected into *every* session before the user types anything. Two sections hold 57% of it:
+**Result: 197.2KB → 112.4KB (-43%), ~21,000 tokens back in every session. Zero facts lost.**
 
-| Section | Bytes | Share |
-|---|---|---|
-| Key Patterns | 61,550 | 31% |
-| Product Direction | 54,055 | 27% |
+**My first plan was wrong and the evidence killed it.** I claimed a trim to ~85KB by compressing the 42 `Decision #NNN` bullets to "one line + a pointer". Two holes, found by attacking my own plan:
 
-**Root cause (same disease as the July 2026 MEMORY.md truncation):** `CLAUDE.md` is supposed to say *how the app works now*. Instead it has become a second copy of the decision log — **42 of the 51 "Key Patterns" bullets are `Decision #NNN` write-ups totalling 58.7KB (29% of the file)**, several of them pure archaeology ("#251 briefly gated this behind a toggle; #252 reverted that"). The longest single bullet is 5.2KB.
+1. **"Recoverable from DECISIONS.md" is the wrong test.** A pointer only helps if you *know to go look*. Most of those bullets are things you don't know you need until you've already broken one. Relocating them doesn't preserve them.
+2. **The 85KB number was invented.** Measured: **89% of CLAUDE.md sentences carry a hard fact** (identifier/path/constant/threshold), there is **zero duplication**, and the 42 bullets alone hold **634 code identifiers**. Cutting all fact-free prose lands at ~180KB, not 85KB.
 
-**Why a trim is safe:** every one of the 119 decisions referenced in `CLAUDE.md` has a full entry in `docs/DECISIONS.md` (verified — older ones use the `## 81.` heading style rather than `## Decision #81 —`). The story is recoverable; only the *pointer* needs to stay.
+**The principle that made a safe trim possible — sort facts by whether you know to look them up:**
 
-**The rule for the trim — lossless by construction:**
-- **KEEP** every invariant, gotcha and constraint — the things that cause a bug if broken (cache-version bumps, "never `.or()` composite tuples", "`enableCssLayer` must be false", load-bearing ordering).
-- **DROP** the narrative: the trigger story, what we tried first, what got reverted, the measured-yield anecdotes.
-- **REPLACE** each decision bullet with: current behaviour in 1–3 lines + `(Decision #N)` pointer.
-- **NEVER** delete a fact that isn't already in `DECISIONS.md`. Check before cutting — on the MEMORY.md compaction the same day, one open item existed *only* in the prose and was nearly lost.
+- **Trip-wire facts** — you break them by *not knowing* them (`enableCssLayer` must be false; never `.or()` composite tuples; bump the cache version). Nothing prompts you to look, so **a pointer is worthless. These stay INLINE, verbatim, forever.** → the `Key Patterns` section, **left byte-identical**.
+- **Reference facts** — you look them up because the work announces the topic (touching family B5 sends you to read B5). **These are safe to move**, because the work itself is the trigger to fetch them.
 
-**Expected:** ~200KB → ~80–90KB, i.e. **~30,000 tokens back in every future session**, with no loss of anything load-bearing.
+**What moved** (each its own commit, each verified):
+- Data Sources + User Context Model + the Digikey/Parts.io/FindChips integration sections → [docs/DATA_SOURCES.md](DATA_SOURCES.md)
+- Per-family detail (C3–F2, variants) + Digikey L3 parameter coverage → [docs/FAMILIES.md](FAMILIES.md); the 43-family registry table stays inline as the map.
 
-**Do it as a dedicated pass**, not as a tail-end cleanup — this is the file that governs every session, and a botched trim fails silently (a dropped invariant surfaces as a bug months later, not as an error). Phase it: Product Direction first (mostly narrative, lowest risk), then the 42 Key Patterns bullets.
+**The safety net — `npm run docs:check`** ([scripts/check-claude-md-facts.mjs](../scripts/check-claude-md-facts.mjs)): extracts all **1,971 hard facts** from the pinned pre-diet baseline and asserts each is still reachable in `CLAUDE.md` or `docs/*.md`. Content may MOVE; it may not DISAPPEAR. Proven against a deliberate deletion (caught 90 losses). **Trap it dodges:** the checker originally defaulted to `HEAD`, which would only compare each phase to the *previously-trimmed* file — a fact dropped in phase N is "already gone" by phase N+1 and the loss goes invisible. The baseline is now pinned to the original commit.
+
+**Its limitation, stated honestly:** the checker guards the *corpus*, not the trip-wire rule — most `Key Patterns` facts also exist in `DECISIONS.md`, so it would happily allow deleting them. That discipline stays human: **`Key Patterns` is not to be trimmed.**
+
+**What actually keeps it fixed:** the routing rule. The file reached 202KB because every decision got pasted in. New decisions now get 1–3 lines of current behaviour plus a `(Decision #N)` pointer; the story lives in `DECISIONS.md`, which is only read on demand.
 
 ---
 
