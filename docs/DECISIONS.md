@@ -8794,3 +8794,36 @@ The memo is worth **2.6× in dev, 5.6× in prod**; the production build is worth
 **Not done (BACKLOG).** Cost still grows with rows on screen (319ms at 100 rows → 839ms at 400, prod). Virtualization — keeping only the ~20 visible rows mounted — would make it flat. Deferred: it changes scroll ownership (sticky header, scroll container, variable row heights) on the engineer's daily-driver table, and prod+memo is already a hitch rather than a freeze.
 
 **Verification.** Full suite 2,887 passing (the same 11 `mfrMatchPicker`/`manufacturerAliasResolver` failures are pre-existing — verified identical on a clean tree via `git stash`); the 27 `triageBatchApprove` tests pass **unedited**, which is the check that the server's pure helpers were untouched by the parallelization; `tsc` and `eslint` clean on both files (the `react-hooks/exhaustive-deps` rule was **test-fired on a deliberate violation** to confirm it was actually enabled before trusting a clean run); production build compiles.
+
+---
+
+## Decision #270 — Superseded ≠ Reverted: the Triage "Reverted" bucket was 95% phantoms (July 13, 2026)
+
+**Symptom.** The engineer asked why Triage showed ~180 "Reverted" params when he remembered reverting "a dozen or so" — and why **so many of them had no sample values**. Both turned out to be one bug.
+
+**Root cause.** The override write path is **deactivate-then-insert**: every edit / re-accept of a mapping flips the previous row to `is_active=false` and inserts a new one. That dead row is *history* — the param is mapped and working right now via its active sibling.
+
+`computeTriageAggregation` ([triageQueueCompute.ts](../lib/services/triageQueueCompute.ts)) builds its orphan pass from **both** `activeOverrideMap` and `inactiveOverrideMap`, de-duping only by **override id**. For a param carrying both an active and a superseded override, the live batch row consumes the **active** id (`lookupOverride` prefers active) — so the **inactive** id is never consumed, falls through to the orphan pass, and is synthesized as a row with `sampleValues: []` / `productCount: 0`, which then classifies as `isUndone`.
+
+Hence both symptoms at once: **phantom "Reverted" rows, with no sample values, for params that were never reverted.**
+
+**Measured on live data** (read-only audit of `atlas_dictionary_overrides`, 2,247 rows):
+
+| | |
+|---|---|
+| active overrides | 2,029 |
+| **inactive** | **218** |
+| — of which **SUPERSEDED** (an active sibling exists for the same family+param) | **209** |
+| — of which **genuinely reverted** (no active sibling) | **9** |
+| "Reverted" rows shown BEFORE (deduped by family:param) | **181** |
+| "Reverted" rows shown AFTER | **9** |
+
+Some params carried **three** dead versions each (`ifsm(a)`, `pd(w)`, `id[a]`, `長(公釐)`).
+
+**Fix.** New pure predicate `isSupersededOverride(ov, activeKeys)`: an **inactive** override whose `(familyId, normalizeOverrideKey(paramName))` key has an **active** sibling is superseded history — skip it in the orphan pass. A genuinely reverted param has no active sibling and still surfaces. **Nothing is deleted from the DB** — the history rows stay, they just stop pretending to be reverts.
+
+**The asymmetry that matters:** hiding too much would silently swallow a *real* revert, which is far worse than showing a phantom. So the "no active sibling → KEEP" case is pinned at least as hard as the hiding case (8 unit tests: family scoping, param scoping, never-hide-an-active, NFC/case/whitespace normalization matching how the maps are keyed, CJK names, L2-category scopes). Verified against live data: the engineer's own hand-revert (`B5:rds(on) /(mω) typ 2.5v`) survives the filter.
+
+**Cache.** The triage queue is cached (`admin_stats_cache` key `triage-queue`, L1 30s / L2 persistent, **no schema version**). The corrected counts appear after one `invalidateTriageQueueCache()` — which fires automatically on the next dict accept. No manual step required, but the bucket won't visibly drop until then.
+
+**Adjacent, still open (BACKLOG).** Revert gives no signal about where the row went (it silently leaves Open *and* Accepted and lands in Reverted), and a reverted param can never rejoin the **Open** queue. Both logged separately.

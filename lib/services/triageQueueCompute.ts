@@ -150,6 +150,31 @@ export function isAccepted(r: Classified): boolean {
 export function isUndone(r: Classified): boolean {
   return !!r.acceptedOverride && !r.acceptedOverride.isActive;
 }
+
+/**
+ * SUPERSEDED ≠ REVERTED.
+ *
+ * The override write path is deactivate-then-insert, so every edit / re-accept of
+ * a mapping leaves the PREVIOUS row behind with `is_active=false`. That row is
+ * history — the param is mapped and working right now via its active sibling. It
+ * is emphatically NOT something the engineer reverted.
+ *
+ * Without this guard those dead rows fell through to the orphan pass, which
+ * synthesizes a row with `sampleValues: []` / `productCount: 0`, which then
+ * classifies as `isUndone` — so the "Reverted" bucket filled up with
+ * sample-value-less phantoms of params nobody had ever reverted. Measured on live
+ * data (July 13, 2026): 218 inactive overrides, of which **209 were merely
+ * superseded** and only **9** were real reverts.
+ *
+ * A genuinely reverted param has NO active sibling, so it still surfaces.
+ */
+export function isSupersededOverride(
+  ov: { isActive: boolean; familyId: string; paramName: string },
+  activeKeys: { has(key: string): boolean },
+): boolean {
+  if (ov.isActive) return false;
+  return activeKeys.has(`${ov.familyId}:${normalizeOverrideKey(ov.paramName)}`);
+}
 export function isDeferred(r: Classified): boolean {
   return r.noteStatus === 'deferred';
 }
@@ -469,6 +494,7 @@ export async function computeTriageAggregation(): Promise<{
   const orphans: GlobalUnmapped[] = [];
   for (const ov of [...activeOverrideMap.values(), ...inactiveOverrideMap.values()]) {
     if (seenOverrideIds.has(ov.id)) continue;
+    if (isSupersededOverride(ov, activeOverrideMap)) continue;
     orphans.push({
       paramName: ov.paramName,
       sampleValues: [],
