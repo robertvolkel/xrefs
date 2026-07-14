@@ -67,23 +67,27 @@ const COL_L2 = { num: 36, attrId: 160, attrName: 200, digikey: 240 };
  * means you have to already suspect it is there.
  */
 function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
+  const { t } = useTranslation();
   if (!sel) return null;
 
+  // Labels are short because they sit inline beside the attribute name on every row; the
+  // tooltip carries the full meaning for anyone who needs it. (The reason text itself comes
+  // from docs/min_attr_sets.md and is English-only — it is engineering rationale, not UI copy.)
   const chip = {
     required: {
-      label: 'Required to search',
+      label: t('admin.tierRequired', 'Required'),
       color: 'primary' as const,
-      tip: 'Always asked, before any search runs.',
+      tip: t('admin.tierRequiredTip', 'Required to search — always asked, before any search runs.'),
     },
     narrows: {
-      label: 'Narrows results',
+      label: t('admin.tierNarrows', 'Narrows'),
       color: 'default' as const,
-      tip: 'Asked only when the result set is too large to be useful.',
+      tip: t('admin.tierNarrowsTip', 'Narrows results — asked only when the result set is too large to be useful.'),
     },
     not_asked: {
-      label: 'Not asked',
+      label: t('admin.tierNotAsked', 'Not asked'),
       color: 'default' as const,
-      tip: 'Never asked when a user is choosing a part by description.',
+      tip: t('admin.tierNotAskedTip', 'Never asked when a user is choosing a part by description.'),
     },
   }[sel.state];
 
@@ -114,7 +118,7 @@ function SelectionChip({ sel }: { sel: SelectionStateInfo | null }) {
           variant="caption"
           sx={{ color: 'text.secondary', fontSize: '0.65rem', fontStyle: 'italic', opacity: 0.8 }}
         >
-          {sel.reason || 'no reason recorded — not ruled on yet'}
+          {sel.reason || t('admin.tierNoReason', 'no reason recorded — not ruled on yet')}
         </Typography>
       )}
     </>
